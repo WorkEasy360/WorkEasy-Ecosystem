@@ -1,0 +1,23 @@
+# Declared exceptions to the no-event-cycle rule.
+#
+# CI builds the publish/consume graph from every module manifest and fails on a
+# cycle unless the pair appears here with a written justification.
+#
+# A cycle is A publishes -> B consumes -> B publishes -> A consumes. Cycles are
+# not always wrong, but they are never accidental: they must be bounded, and the
+# handler on each side must be able to terminate the loop.
+#
+# Runtime guard regardless of what is listed here: DomainEvent.causation_depth
+# is capped at 10; the dispatcher rejects anything deeper and raises a P1 alert.
+
+cycles: []
+# Example of the required shape:
+#
+# - pair: ["crm.deal.won", "books.invoice.paid"]
+#   justification: >
+#     Books marks a deal as invoiced on payment; CRM updates deal health. The
+#     loop terminates because CRM's handler does not re-publish deal.won.
+#   termination: "CRM handler is a projection update only; publishes nothing."
+#   owner: crm
+#   added: 2026-09-21
+#   review_by: 2027-03-21

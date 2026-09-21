@@ -1,0 +1,77 @@
+[project]
+name = "workeasy360"
+version = "0.1.0"
+description = "One Ecosystem to Run Your Entire Business."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+pythonpath = ["backend"]
+testpaths = ["backend/tests", "backend/workeasy360"]
+python_files = ["test_*.py"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+]
+markers = [
+    "isolation: tenant isolation and RLS tests",
+    "architecture: dependency and fitness rules",
+    "concurrency: tests that exercise real concurrency",
+    "security: security control tests",
+    "slow: excluded from the fast feedback loop",
+]
+filterwarnings = ["error::DeprecationWarning:workeasy360.*"]
+
+[tool.ruff]
+line-length = 90
+target-version = "py310"
+src = ["backend"]
+exclude = ["*/migrations/*", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "DJ", "S", "RUF"]
+ignore = [
+    "E501",    # line length is handled by the formatter
+    "B008",    # Django idiom: callables in field defaults
+    "RUF012",  # Django class attrs are not immutable by convention
+    "S101",    # assert is how tests assert
+]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/tests/*" = ["S", "B", "E402"]
+"backend/**/test_*.py" = ["S", "B"]
+"backend/config/settings/*" = ["F403", "F405", "E402"]
+"backend/tests/spikes/*" = ["S", "B", "E402", "F401"]
+# Every identifier in the RLS/FK helpers is validated and quoted by _ident();
+# values are never interpolated. Parameterised identifiers do not exist in
+# SQL, so this is the only way to emit DDL - and test_no_raw_sql_built_with_
+# f_strings plus code review cover the risk S608 is pointing at.
+"backend/workeasy360/platform/tenancy/migrations_helpers.py" = ["S608"]
+# The grant statements interpolate a role name that comes from settings, not
+# from user input, and identifiers cannot be bound as parameters.
+"backend/conftest.py" = ["S608"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["workeasy360", "config"]
+
+[tool.black]
+line-length = 90
+target-version = ["py310"]
+extend-exclude = "migrations"
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+ignore_missing_imports = true
+# Typing is adopted incrementally: contracts/ is the strict core because it is
+# the layer every other module depends on, and a wrong type there propagates.
+files = ["backend/workeasy360/contracts"]
+strict = true
+
+[[tool.mypy.overrides]]
+module = "workeasy360.contracts.*"
+disallow_untyped_defs = true
+
+[tool.bandit]
+exclude_dirs = ["backend/tests", ".venv", "*/migrations/*"]

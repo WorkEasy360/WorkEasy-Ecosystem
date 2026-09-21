@@ -1,0 +1,264 @@
+name: CI
+
+# Quality gates. A PR that fails one of these does not merge.
+#
+# The jobs are split so a failure names its own cause: "architecture" failing
+# means a dependency rule was broken, not that a test is flaky. A single
+# monolithic job would report only "CI failed".
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.12"
+  W360_ENVIRONMENT: ci
+  W360_DB_NAME: workeasy360
+  W360_DB_APP_USER: w360_app
+  W360_DB_APP_PASSWORD: w360_app_pw
+  W360_DB_MIGRATOR_USER: w360_migrator
+  W360_DB_MIGRATOR_PASSWORD: w360_migrator_pw
+  W360_DB_DIRECT_HOST: 127.0.0.1
+  W360_DB_DIRECT_PORT: "5432"
+  W360_DB_HOST: 127.0.0.1
+  W360_DB_PORT: "6432"
+  W360_REDIS_URL: redis://127.0.0.1:6379/0
+  W360_BROKER_URL: amqp://w360:w360_pw@127.0.0.1:5672//
+
+jobs:
+  # --- fast feedback: no services needed ---------------------------------
+
+  format-and-lint:
+    name: Format and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - name: Ruff (lint)
+        run: ruff check backend
+      - name: Ruff (format)
+        run: ruff format --check backend
+
+  typing:
+    name: Typing (contracts/)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      # Typing is adopted incrementally. contracts/ is strict because it is
+      # the layer every other module depends on, and a wrong type there
+      # propagates everywhere.
+      - run: mypy
+
+  architecture:
+    name: Architecture dependency rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      # The console script, not `python -m importlinter.cli`: the module form
+      # exits 0 silently when it cannot resolve the root package, which would
+      # make this gate pass while checking nothing.
+      - name: Import contracts (F-1 ... F-8)
+        run: lint-imports
+        env:
+          PYTHONPATH: backend
+
+  # --- security scanning --------------------------------------------------
+
+  secret-scan:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: a secret removed in a later commit is still
+          # exposed, and detection is treated as exposure.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install detect-secrets
+      - name: Scan working tree
+        run: |
+          detect-secrets scan --all-files \
+            --exclude-files '\.venv/.*' \
+            --exclude-files 'package-lock\.json' \
+            > .secrets.scan.json
+          python - <<'PY'
+          import json, sys
+          with open(".secrets.scan.json") as fh:
+              report = json.load(fh)
+          findings = report.get("results", {})
+          if findings:
+              for path, items in findings.items():
+                  for item in items:
+                      print(f"{path}:{item.get('line_number')} {item.get('type')}")
+              sys.exit("Potential secrets detected. Rotate anything real.")
+          print("No secrets detected.")
+          PY
+      - name: Assert no environment files are tracked
+        run: |
+          if git ls-files | grep -E '^\.env$|^\.env\.(?!example)' ; then
+            echo "A .env file is tracked in Git."
+            exit 1
+          fi
+          echo "No environment files tracked."
+
+  sast:
+    name: Static security analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - name: Bandit
+        run: bandit -c pyproject.toml -r backend/workeasy360 backend/config -ll
+
+  dependency-audit:
+    name: Dependency vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install pip-audit
+      - name: pip-audit
+        run: pip-audit -r requirements.txt -r requirements-dev.txt --strict
+
+  # --- the full suite, against real infrastructure -----------------------
+
+  tests:
+    name: Tests (PostgreSQL + PgBouncer + Redis + broker)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: workeasy360
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      rabbitmq:
+        image: rabbitmq:3.13
+        env:
+          RABBITMQ_DEFAULT_USER: w360
+          RABBITMQ_DEFAULT_PASS: w360_pw
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s --health-timeout 10s --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+
+      - name: Create database roles
+        # Two roles, neither able to bypass RLS. CI must run as the non-owner
+        # application role or every isolation test would pass without proving
+        # anything (13-deployment-evolution.md section 2.2).
+        run: psql "$PSQL_URL" -v ON_ERROR_STOP=1 -f infra/postgres/init.sql
+        env:
+          PSQL_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+          PGPASSWORD: postgres
+
+      - name: Start PgBouncer in transaction mode
+        # Parity, not performance. R-01 is the highest-risk operational
+        # coupling in the design, so CI exercises the real pooler.
+        run: |
+          docker run -d --name pgbouncer --network host \
+            -v "${{ github.workspace }}/infra/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro" \
+            -v "${{ github.workspace }}/infra/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro" \
+            edoburu/pgbouncer:v1.23.1-p2
+          for _ in $(seq 1 30); do
+            nc -z 127.0.0.1 6432 && break
+            sleep 1
+          done
+          nc -z 127.0.0.1 6432 || (docker logs pgbouncer && exit 1)
+        env:
+          # The compose file points PgBouncer at the "postgres" hostname;
+          # on the CI host network it is loopback.
+          PGBOUNCER_HOST: 127.0.0.1
+
+      - name: Migration checks
+        run: |
+          python backend/manage.py makemigrations --check --dry-run
+          python backend/manage.py migrate
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.migration
+
+      - name: System checks (W360.E001 - E009)
+        run: python backend/manage.py check --deploy --fail-level WARNING
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.migration
+
+      - name: Full test suite
+        run: pytest -q --cov=backend/workeasy360 --cov-report=term-missing
+
+      - name: Verification spikes
+        # The three Sprint 0 spikes run in CI so a regression in RLS
+        # isolation, broker semantics or entitlement latency is caught rather
+        # than rediscovered.
+        run: |
+          python backend/tests/spikes/spike_r01_rls_pgbouncer.py
+          python backend/tests/spikes/spike_r09_broker.py
+          python backend/tests/spikes/spike_r14_entitlement_latency.py
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.development
+          W360_LOG_LEVEL: ERROR
+
+      - name: Upload spike results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spike-results
+          path: backend/tests/spikes/*.json
+          if-no-files-found: ignore
+
+  gate:
+    name: Phase 1 quality gate
+    runs-on: ubuntu-latest
+    needs:
+      - format-and-lint
+      - typing
+      - architecture
+      - secret-scan
+      - sast
+      - dependency-audit
+      - tests
+    steps:
+      - run: echo "All Phase 1 quality gates passed."

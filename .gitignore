@@ -1,0 +1,44 @@
+# --- Secrets. Nothing here may ever enter Git (12-security.md section 5).
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.yml
+secrets.yaml
+credentials.json
+service-account*.json
+
+# --- Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+
+# --- Local runtime artefacts
+.files/
+staticfiles/
+media/
+*.log
+*.sqlite3
+
+# --- Spike output. Results are published to docs/phase-1/ instead, so the
+# raw JSON does not drift from the written conclusions.
+backend/tests/spikes/*.json
+
+# --- Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

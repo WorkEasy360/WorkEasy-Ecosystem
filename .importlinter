@@ -1,0 +1,120 @@
+; Architecture dependency contracts (02-dependency-rules.md section 6.1).
+;
+; A PR that violates one of these does not merge. Weakening this file requires
+; an ADR and a dated debt-register entry - that asymmetry is the enforcement
+; mechanism.
+;
+; Note the `workeasy360.` prefix: the six documented top-level modules live
+; inside that package because a top-level `platform` package shadows the
+; Python standard library module of the same name (ADR-013). The directory
+; names and every layer rule are unchanged.
+
+[importlinter]
+root_package = workeasy360
+include_external_packages = True
+
+[importlinter:contract:top-level-layers]
+name = Top-level layering: contracts < platform < integration < products|commercial < interfaces
+type = layers
+layers =
+    workeasy360.interfaces
+    workeasy360.products | workeasy360.commercial
+    workeasy360.integration
+    workeasy360.platform
+    workeasy360.contracts
+exhaustive = false
+
+[importlinter:contract:contracts-are-pure]
+name = contracts/ depends on nothing internal and not on Django
+type = forbidden
+source_modules =
+    workeasy360.contracts
+forbidden_modules =
+    workeasy360.platform
+    workeasy360.integration
+    workeasy360.commercial
+    workeasy360.products
+    workeasy360.interfaces
+    django
+
+[importlinter:contract:products-are-independent]
+name = F-1: no product imports another product
+type = independence
+modules =
+    workeasy360.products.crm
+    workeasy360.products.books
+    workeasy360.products.inventory
+    workeasy360.products.projects
+    workeasy360.products.marketing
+    workeasy360.products.support
+    workeasy360.products.hr
+    workeasy360.products.payroll
+    workeasy360.products.commerce
+
+[importlinter:contract:products-never-see-commercial]
+name = F-2: products must not import commercial
+type = forbidden
+source_modules =
+    workeasy360.products
+forbidden_modules =
+    workeasy360.commercial
+
+[importlinter:contract:commercial-never-sees-products]
+name = F-3: commercial must not import products
+type = forbidden
+source_modules =
+    workeasy360.commercial
+forbidden_modules =
+    workeasy360.products
+
+[importlinter:contract:platform-internal-layers]
+name = platform internal layering P0 < P1 < P2 < P3 (F-5)
+type = layers
+layers =
+    workeasy360.platform.files | workeasy360.platform.notifications | workeasy360.platform.workflows
+    workeasy360.platform.authz | workeasy360.platform.entitlements | workeasy360.platform.feature_flags | workeasy360.platform.audit
+    workeasy360.platform.identity | workeasy360.platform.organizations
+    workeasy360.platform.tenancy
+    workeasy360.platform.observability
+exhaustive = false
+
+[importlinter:contract:entitlements-single-writer]
+name = A10: only commercial/provisioning may import entitlement write services
+type = forbidden
+source_modules =
+    workeasy360.products
+    workeasy360.platform.authz
+    workeasy360.platform.audit
+    workeasy360.platform.files
+    workeasy360.platform.notifications
+    workeasy360.integration
+    workeasy360.interfaces
+    workeasy360.commercial.catalog
+    workeasy360.commercial.pricing
+    workeasy360.commercial.subscriptions
+    workeasy360.commercial.billing
+    workeasy360.commercial.partners
+    workeasy360.commercial.commissions
+forbidden_modules =
+    workeasy360.platform.entitlements.services.write
+
+[importlinter:contract:platform-never-imports-upward]
+name = F-4: platform must not import integration, commercial, products or interfaces
+type = forbidden
+source_modules =
+    workeasy360.platform
+forbidden_modules =
+    workeasy360.integration
+    workeasy360.commercial
+    workeasy360.products
+    workeasy360.interfaces
+
+[importlinter:contract:integration-never-imports-upward]
+name = integration must not import commercial, products or interfaces
+type = forbidden
+source_modules =
+    workeasy360.integration
+forbidden_modules =
+    workeasy360.commercial
+    workeasy360.products
+    workeasy360.interfaces
