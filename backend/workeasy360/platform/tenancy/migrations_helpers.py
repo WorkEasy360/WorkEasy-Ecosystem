@@ -136,35 +136,53 @@ def add_tenant_fk(
     ref_col = _ident(references_column)
     constraint = _ident(f"fk_{table}_{column}_tenant")
 
-    return migrations.RunSQL(
-        sql=f"""
+    # Two statements, deliberately separate.
+    #
+    # The first finds and drops Django's single-column FK, whatever it was
+    # named (the name carries a hash). It takes the table and column as
+    # **bound parameters** rather than interpolating them: they are values
+    # here - compared against pg_catalog columns - not identifiers, and
+    # values always bind. `%%I` escapes the format() placeholders so psycopg
+    # does not mistake them for its own.
+    #
+    # The second adds the composite FK, which uses identifiers only. Those
+    # cannot be bound - SQL has no parameter form for an identifier - so each
+    # one goes through _ident(), which validates the shape and quotes it.
+    drop_legacy_fk = """
         DO $$
         DECLARE
             existing text;
         BEGIN
-            -- Drop Django's single-column FK on this column, whatever it is named.
             SELECT con.conname INTO existing
             FROM pg_constraint con
             JOIN pg_class rel ON rel.oid = con.conrelid
             JOIN pg_attribute att
                  ON att.attrelid = rel.oid AND att.attnum = con.conkey[1]
-            WHERE rel.relname = '{table}'
+            WHERE rel.relname = %s
               AND con.contype = 'f'
               AND array_length(con.conkey, 1) = 1
-              AND att.attname = '{column}';
+              AND att.attname = %s;
             IF existing IS NOT NULL THEN
-                EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I',
-                               '{table}', existing);
+                EXECUTE format('ALTER TABLE %%I DROP CONSTRAINT %%I',
+                               %s, existing);
             END IF;
         END $$;
+    """
 
+    add_composite_fk = f"""
         ALTER TABLE {t}
             ADD CONSTRAINT {constraint}
             FOREIGN KEY ({col}, {tcol})
             REFERENCES {ref_t} ({ref_col}, {tcol})
             ON DELETE {on_delete}
             DEFERRABLE INITIALLY DEFERRED;
-        """,
+    """
+
+    return migrations.RunSQL(
+        sql=[
+            (drop_legacy_fk, [table, column, table]),
+            (add_composite_fk, None),
+        ],
         reverse_sql=f"ALTER TABLE {t} DROP CONSTRAINT IF EXISTS {constraint};",
         elidable=False,
     )

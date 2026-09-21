@@ -1,7 +1,7 @@
 # Phase 1 Test Report
 
 **Date:** 2026-09-21
-**Result: 378 passed, 0 failed, 0 skipped, 0 xfailed**
+**Result: 379 passed, 0 failed, 0 skipped, 0 xfailed**
 **Runtime:** 26.5 s (full suite, against real PostgreSQL + PgBouncer)
 
 ---
@@ -10,7 +10,7 @@
 
 ```
 $ pytest -q
-378 passed in 26.50s
+379 passed in 26.50s
 
 $ ruff check backend
 All checks passed!
@@ -154,7 +154,7 @@ so the suite is self-healing. It does not affect any result.
 ```bash
 make up          # PostgreSQL, PgBouncer, Redis, RabbitMQ
 make migrate     # as the owner role
-make test        # 378 tests
+make test        # 379 tests
 make ci          # lint + typecheck + import contracts + system checks + tests
 make spikes      # re-run the three verification spikes
 ```

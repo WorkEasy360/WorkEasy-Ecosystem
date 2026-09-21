@@ -13,7 +13,7 @@ the Phase 1 brief.
 | Severity | Count | Status |
 |---|---|---|
 | **P0** | 5 | **All fixed during Phase 1** |
-| **P1** | 4 | 2 fixed, 2 carried with owners |
+| **P1** | 6 | 4 fixed, 2 carried with owners |
 | **P2** | 5 | Documented, carried |
 
 No unresolved P0 remains.
@@ -113,7 +113,37 @@ may not" with "we broke" and making error rate useless as a signal. Added
 exceptions to their declared status and leaves everything else to Django so
 no unrecognised exception's message is echoed.
 
-### P1-3 · Breach-corpus password check is not implemented — **carried**
+### P1-3 · Pinned dependencies carried known CVEs — **fixed**
+
+`pip-audit --strict` reported 15 advisories against the initially pinned
+versions: 12 for Django 5.1.6, 2 for DRF 3.15.2 and 1 for python-dotenv 1.0.1.
+Upgraded to Django 5.2.17, DRF 3.18.1 and python-dotenv 1.2.3 — **no known
+vulnerabilities remain**. The full suite passes unchanged on the new versions.
+
+Worth stating plainly: the versions were pinned from memory rather than from
+the index, which is exactly the failure `pip-audit` in CI exists to catch, and
+it caught it on the first run. An unpinned range would have hidden the problem
+by quietly resolving to something newer.
+
+### P1-4 · Three tenant-to-tenant FKs had no composite constraint — **fixed**
+
+`RoleAssignment.granted_by`, `SeatAssignment.assigned_by` and
+`Invitation.invited_by` are all Membership references from tenant tables, and
+all three kept Django's plain single-column FK. A cross-tenant `granted_by`
+was therefore *representable* (R-05).
+
+All three are nullable attribution fields, which is why they were missed —
+attention goes to the structural relationships. Fixed in
+`tenancy/0002_composite_fk_coverage`, with `SET NULL` rather than `CASCADE`:
+removing the member who granted a role must lose the attribution, not the
+authorization.
+
+The permanent guard is structural rather than a list:
+`test_every_tenant_to_tenant_fk_has_a_composite_constraint` derives the
+expected set from the live model registry and compares it against the live
+schema. It found the third gap after the first two had been fixed by hand.
+
+### P1-5 · Breach-corpus password check is not implemented — **carried**
 
 12-security.md §3 requires it. `BreachCorpusValidator` exists with the
 integration point marked and is **deliberately not registered**, so its
@@ -121,7 +151,7 @@ absence is visible rather than simulated. A validator that silently passes
 everything would be worse than none.
 **Owner:** Platform · **Due:** before first production customer.
 
-### P1-4 · Malware scanning is a null implementation — **carried**
+### P1-6 · Malware scanning is a null implementation — **carried**
 
 `NullScanner` reports clean for allowlisted types. The *interface*, the
 quarantine state and the not-servable-by-default behaviour all exist, so

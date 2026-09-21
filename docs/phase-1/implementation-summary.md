@@ -20,8 +20,8 @@ system checks, fitness tests).
 | Test lines | 5 018 |
 | Spike lines | 1 983 |
 | Django models | 24 (15 tenant-scoped, 9 control-plane) |
-| Migrations | 10 |
-| Tests | **378 passing** |
+| Migrations | 11 |
+| Tests | **379 passing** |
 | Import contracts | **9 kept, 0 broken** |
 | System checks | W360.E001–E009, all passing |
 
@@ -77,7 +77,7 @@ Workeasy360/
 | 14 | Security baseline | settings + `interfaces/api/errors.py` | Secure cookies, CSRF, CORS allowlist, HSTS, trusted hosts, safe error responses, admin/staff separation. |
 | 15 | Database safety | `config/settings/base.py` | `CONN_MAX_AGE=0`, statement/lock/idle timeouts, cursors and prepared statements disabled, migration checks in CI. |
 | 16 | Dependency enforcement | `.importlinter`, `tenancy/checks.py`, `tests/architecture/` | 9 contracts + 9 system checks + 21 fitness tests. The linter is itself tested. |
-| 17 | Testing baseline | `conftest.py`, `tests/` | pytest + real PostgreSQL as the **non-owner role**, through PgBouncer. 378 tests, negative cases throughout. |
+| 17 | Testing baseline | `conftest.py`, `tests/` | pytest + real PostgreSQL as the **non-owner role**, through PgBouncer. 379 tests, negative cases throughout. |
 | 18 | CI gates | `.github/workflows/ci.yml` | Format, lint, typing, architecture, secret scan, SAST, dependency audit, full suite, spikes. |
 
 ## 4. Frozen Phase 0 decisions — all preserved
@@ -161,7 +161,7 @@ rows.
 make setup      # virtualenv + dependencies
 make up         # infrastructure
 make migrate    # as the owner role
-make test       # 378 tests
+make test       # 379 tests
 make ci         # everything CI runs
 make spikes     # the three verification spikes
 ```

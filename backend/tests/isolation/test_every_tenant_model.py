@@ -161,3 +161,55 @@ def test_has_an_organization_leading_index(model):
         f"{model._meta.label} has no index leading with organization; the RLS "
         f"predicate would scan."
     )
+
+
+def test_every_tenant_to_tenant_fk_has_a_composite_constraint():
+    """B4 / Layer 4. RLS stops you *reading* another tenant's row; it does not
+    stop you writing a row in your own tenant that *points at* one, if you
+    somehow obtained the id (R-05).
+
+    A composite FK closes that at the schema level: the child's own
+    organization_id must match the parent's, so the reference cannot exist
+    regardless of what the application believes.
+
+    Checked against the live schema rather than the migration list, because a
+    migration that was written but never applied would pass the latter. This
+    caught two nullable attribution fields (granted_by, assigned_by) that were
+    easy to miss precisely because they are optional.
+    """
+    from django.db import models
+
+    tenant_tables = {m._meta.db_table for m in ALL_TENANT_MODELS}
+
+    # Every FK from a tenant model to another tenant model.
+    expected: set[tuple[str, str]] = set()
+    for model in ALL_TENANT_MODELS:
+        for field in model._meta.get_fields():
+            if not isinstance(field, models.ForeignKey):
+                continue
+            target = field.related_model
+            if target is None or target._meta.db_table not in tenant_tables:
+                continue
+            expected.add((model._meta.db_table, field.attname))
+
+    assert expected, "No tenant-to-tenant FKs found - the check would be vacuous."
+
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT rel.relname, att.attname
+            FROM pg_constraint con
+            JOIN pg_class rel ON rel.oid = con.conrelid
+            JOIN pg_attribute att
+                 ON att.attrelid = rel.oid AND att.attnum = con.conkey[1]
+            WHERE con.contype = 'f' AND array_length(con.conkey, 1) = 2
+            """
+        )
+        composite = {(table, column) for table, column in cur.fetchall()}
+
+    missing = sorted(expected - composite)
+    assert not missing, (
+        "Tenant-to-tenant foreign keys without a composite constraint, so a "
+        "cross-tenant reference is representable:\n"
+        + "\n".join(f"  {table}.{column}" for table, column in missing)
+    )

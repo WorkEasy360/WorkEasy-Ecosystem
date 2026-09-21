@@ -198,21 +198,38 @@ jobs:
 
       - name: Start PgBouncer in transaction mode
         # Parity, not performance. R-01 is the highest-risk operational
-        # coupling in the design, so CI exercises the real pooler.
+        # coupling in the design, so CI exercises the real pooler rather than
+        # connecting directly and discovering pooling problems in production.
         run: |
+          # docker-compose reaches PostgreSQL by its service name; on the CI
+          # host network it is loopback. Everything else about the config -
+          # transaction mode, the tiny pool, no reset query - is shared, so
+          # CI and local exercise the same pooler behaviour.
+          mkdir -p /tmp/pgbouncer
+          sed 's/host=postgres/host=127.0.0.1/' \
+            infra/pgbouncer/pgbouncer.ini > /tmp/pgbouncer/pgbouncer.ini
+          cp infra/pgbouncer/userlist.txt /tmp/pgbouncer/userlist.txt
+          grep -q 'host=127.0.0.1' /tmp/pgbouncer/pgbouncer.ini \
+            || { echo "host rewrite failed"; exit 1; }
+
           docker run -d --name pgbouncer --network host \
-            -v "${{ github.workspace }}/infra/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro" \
-            -v "${{ github.workspace }}/infra/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro" \
+            -v /tmp/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro \
+            -v /tmp/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro \
             edoburu/pgbouncer:v1.23.1-p2
+
           for _ in $(seq 1 30); do
             nc -z 127.0.0.1 6432 && break
             sleep 1
           done
-          nc -z 127.0.0.1 6432 || (docker logs pgbouncer && exit 1)
-        env:
-          # The compose file points PgBouncer at the "postgres" hostname;
-          # on the CI host network it is loopback.
-          PGBOUNCER_HOST: 127.0.0.1
+          nc -z 127.0.0.1 6432 || { docker logs pgbouncer; exit 1; }
+
+          # Prove traffic actually reaches PostgreSQL through the pooler.
+          # Without this the suite could silently fall back to a direct
+          # connection and stop testing what R-01 is about.
+          PGPASSWORD=w360_app_pw psql \
+            "postgresql://w360_app@127.0.0.1:6432/workeasy360" \
+            -v ON_ERROR_STOP=1 -c "SELECT 1" \
+            || { docker logs pgbouncer; exit 1; }
 
       - name: Migration checks
         run: |

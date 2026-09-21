@@ -1,12 +1,18 @@
 -r requirements.txt
+
+# Test
 pytest==8.3.4
 pytest-django==4.9.0
 pytest-cov==6.0.0
+
+# Quality gates. Each one is a CI job, so "it passed locally" means the same
+# thing as "it will pass in CI".
 import-linter==2.1
 ruff==0.9.6
-black==25.1.0
 mypy==1.15.0
 django-stubs==5.1.3
+
+# Security scanning
 bandit==1.8.2
 pip-audit==2.8.0
 detect-secrets==1.5.0

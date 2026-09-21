@@ -24,7 +24,7 @@ Requires Docker and Python 3.10+.
 make setup      # virtualenv and dependencies
 make up         # PostgreSQL, PgBouncer, Redis, RabbitMQ
 make migrate    # schema, RLS policies and grants, as the owner role
-make test       # 378 tests
+make test       # 379 tests
 ```
 
 `make help` lists everything else.

@@ -32,7 +32,7 @@
 | 16 | Health / liveness / readiness are correct | ✅ | Liveness survives a database outage with zero queries |
 | 17 | Structured observability exists | ✅ | JSON logs, correlation spine, redaction, cardinality guard |
 | 18 | Architecture rules enforced in CI | ✅ | 9 import contracts + 9 system checks + 21 fitness tests; the linter is itself tested |
-| 19 | Full test suite passes | ✅ | **378 passed, 0 failed** |
+| 19 | Full test suite passes | ✅ | **379 passed, 0 failed** |
 | 20 | No unresolved P0 | ✅ | 5 found, 5 fixed with regression coverage |
 
 ## 2. Verification spikes
@@ -46,7 +46,7 @@
 ## 3. Results
 
 ```
-pytest            378 passed, 0 failed, 0 skipped        26.5 s
+pytest            379 passed, 0 failed, 0 skipped        26.5 s
 ruff check        All checks passed
 ruff format       167 files already formatted
 mypy              Success: no issues in 16 source files
@@ -69,14 +69,16 @@ manage.py check   no issues (0 silenced)
 Findings 1, 3 and 4 are defence-in-depth working: the inner layer refused what
 the outer layer had permitted.
 
-### P1 — 4 found, 2 fixed, 2 carried
+### P1 — 6 found, 4 fixed, 2 carried
 
 | # | Finding | Status |
 |---|---|---|
 | 1 | `IntegrityError` caught without a savepoint, poisoning the caller's transaction | **Fixed** |
 | 2 | Domain errors surfaced as unhandled 500s | **Fixed** |
-| 3 | Breach-corpus password check not implemented | **Carried.** Interface exists, deliberately unregistered so the gap is visible. **Platform · before first customer** |
-| 4 | Malware scanning is a null implementation | **Carried.** Quarantine and not-servable-by-default are real. **Platform · before uploads are enabled** |
+| 3 | Pinned dependencies carried 15 known CVEs (Django 5.1.6, DRF 3.15.2, python-dotenv 1.0.1) | **Fixed** — upgraded to Django 5.2.17 / DRF 3.18.1 / dotenv 1.2.3; `pip-audit --strict` clean |
+| 4 | Three tenant-to-tenant FKs had no composite constraint, so a cross-tenant `granted_by` was representable | **Fixed** — `tenancy/0002`, plus a structural fitness test that found the third one |
+| 5 | Breach-corpus password check not implemented | **Carried.** Interface exists, deliberately unregistered so the gap is visible. **Platform · before first customer** |
+| 6 | Malware scanning is a null implementation | **Carried.** Quarantine and not-servable-by-default are real. **Platform · before uploads are enabled** |
 
 Plus, from the reviews:
 
