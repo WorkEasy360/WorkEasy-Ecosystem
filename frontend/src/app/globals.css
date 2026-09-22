@@ -1,0 +1,263 @@
+:root {
+  --w360-bg: #f7f8fa;
+  --w360-surface: #ffffff;
+  --w360-surface-raised: #ffffff;
+  --w360-border: #e2e5eb;
+  --w360-border-strong: #c9ced9;
+  --w360-text: #14171f;
+  --w360-text-muted: #5c6470;
+  --w360-text-faint: #8a92a0;
+  --w360-brand: #4338ca;
+  --w360-brand-hover: #3730a3;
+  --w360-brand-contrast: #ffffff;
+  --w360-focus-ring: #4338ca;
+  --w360-success: #0f7a4c;
+  --w360-success-bg: #e7f6ee;
+  --w360-warning: #92600a;
+  --w360-warning-bg: #fdf3df;
+  --w360-danger: #b3261e;
+  --w360-danger-bg: #fbeaea;
+  --w360-neutral-bg: #eef0f4;
+  --w360-radius-sm: 6px;
+  --w360-radius-md: 10px;
+  --w360-radius-lg: 16px;
+  --w360-shadow-sm: 0 1px 2px rgba(20, 23, 31, 0.06);
+  --w360-shadow-md: 0 4px 16px rgba(20, 23, 31, 0.08);
+  --w360-space-1: 4px;
+  --w360-space-2: 8px;
+  --w360-space-3: 12px;
+  --w360-space-4: 16px;
+  --w360-space-5: 24px;
+  --w360-space-6: 32px;
+  --w360-space-7: 48px;
+  --w360-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --w360-bg: #0f1115;
+    --w360-surface: #171a21;
+    --w360-surface-raised: #1d212a;
+    --w360-border: #2a2f3a;
+    --w360-border-strong: #3a4152;
+    --w360-text: #eef0f4;
+    --w360-text-muted: #a4abb8;
+    --w360-text-faint: #767e8c;
+    --w360-brand: #818cf8;
+    --w360-brand-hover: #a5b0fb;
+    --w360-brand-contrast: #14171f;
+    --w360-focus-ring: #a5b0fb;
+    --w360-success: #4ade80;
+    --w360-success-bg: #113224;
+    --w360-warning: #fbbf24;
+    --w360-warning-bg: #332506;
+    --w360-danger: #f87171;
+    --w360-danger-bg: #341313;
+    --w360-neutral-bg: #232734;
+    --w360-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --w360-shadow-md: 0 4px 20px rgba(0, 0, 0, 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  --w360-bg: #0f1115;
+  --w360-surface: #171a21;
+  --w360-surface-raised: #1d212a;
+  --w360-border: #2a2f3a;
+  --w360-border-strong: #3a4152;
+  --w360-text: #eef0f4;
+  --w360-text-muted: #a4abb8;
+  --w360-text-faint: #767e8c;
+  --w360-brand: #818cf8;
+  --w360-brand-hover: #a5b0fb;
+  --w360-brand-contrast: #14171f;
+  --w360-focus-ring: #a5b0fb;
+  --w360-success: #4ade80;
+  --w360-success-bg: #113224;
+  --w360-warning: #fbbf24;
+  --w360-warning-bg: #332506;
+  --w360-danger: #f87171;
+  --w360-danger-bg: #341313;
+  --w360-neutral-bg: #232734;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background: var(--w360-bg);
+  color: var(--w360-text);
+  font-family: var(--w360-font);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--w360-brand);
+}
+
+/* One visible, consistent focus treatment everywhere (Task 28) - never
+   color/icon alone (Task 8, Task 28). */
+:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--w360-radius-sm);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+.w360-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.w360-skip-link {
+  position: absolute;
+  left: 8px;
+  top: -48px;
+  background: var(--w360-brand);
+  color: var(--w360-brand-contrast);
+  padding: var(--w360-space-2) var(--w360-space-4);
+  border-radius: var(--w360-radius-sm);
+  z-index: 100;
+  transition: top 0.15s ease;
+}
+
+.w360-skip-link:focus {
+  top: 8px;
+}
+
+.w360-container {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 var(--w360-space-5);
+}
+
+.w360-card {
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-lg);
+  box-shadow: var(--w360-shadow-sm);
+}
+
+.w360-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--w360-space-2);
+  border-radius: var(--w360-radius-sm);
+  border: 1px solid transparent;
+  padding: 9px 16px;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.2;
+  min-height: 40px;
+}
+
+.w360-btn-primary {
+  background: var(--w360-brand);
+  color: var(--w360-brand-contrast);
+}
+
+.w360-btn-primary:hover {
+  background: var(--w360-brand-hover);
+}
+
+.w360-btn-secondary {
+  background: var(--w360-surface);
+  border-color: var(--w360-border-strong);
+  color: var(--w360-text);
+}
+
+.w360-btn-secondary:hover {
+  background: var(--w360-neutral-bg);
+}
+
+.w360-btn:disabled {
+  opacity: 0.55;
+}
+
+.w360-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-surface);
+  color: var(--w360-text);
+  min-height: 40px;
+}
+
+.w360-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: var(--w360-space-1);
+  color: var(--w360-text-muted);
+}
+
+.w360-error-text {
+  color: var(--w360-danger);
+  font-size: 13px;
+  margin-top: var(--w360-space-1);
+}
+
+.w360-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.w360-badge-success {
+  background: var(--w360-success-bg);
+  color: var(--w360-success);
+}
+
+.w360-badge-warning {
+  background: var(--w360-warning-bg);
+  color: var(--w360-warning);
+}
+
+.w360-badge-neutral {
+  background: var(--w360-neutral-bg);
+  color: var(--w360-text-muted);
+}
+
+.w360-badge-danger {
+  background: var(--w360-danger-bg);
+  color: var(--w360-danger);
+}

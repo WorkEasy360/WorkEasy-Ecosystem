@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.views.decorators.http import require_http_methods
 
@@ -52,14 +53,25 @@ def launch_view(request: HttpRequest, org_slug: str, product_code: str) -> HttpR
     this is the launcher's own state transition - "I am now leaving the
     platform for this product" - and CSRF protection applies normally, as
     it does to every other tenant-scoped write in this codebase.
+
+    **Denial is a redirect, not a JSON error.** The frontend submits this as
+    a genuine HTML form POST (never ``fetch``) so the browser follows the
+    success path's redirect as a real top-level navigation rather than
+    silently fetching the product's page in the background (Task 54). A
+    plain form submission has no way to read a JSON body, so a denial has
+    to be answered the same way success is - a redirect the browser
+    actually navigates - back to the launcher with the reason in the query
+    string, where the shell renders it (Task 26: an explicit error state,
+    never a raw JSON response filling the tab).
     """
     ctx = request.tenant_context  # type: ignore[attr-defined]
     decision = services.launch(ctx, product_code)
 
     if not decision.state.can_launch:
         metrics.increment("launcher_launch_denied_total", state=decision.state.value)
-        return JsonResponse(
-            {"code": "launch_denied", "state": decision.state.value}, status=409
+        query = urlencode({"launch_error": decision.state.value, "product": product_code})
+        return HttpResponseRedirect(
+            f"{settings.W360_FRONTEND_URL}/o/{org_slug}/apps?{query}"
         )
 
     metrics.increment("launcher_launch_allowed_total")

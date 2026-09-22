@@ -4,15 +4,21 @@ organization is selected, which is the whole point of existing.
 
 **CSRF.** Login is the one write in this module that is genuinely
 unauthenticated when it starts, and it still goes through the ordinary CSRF
-middleware rather than being exempted: the double-submit cookie is set on
-the very first response any browser receives from this origin (Django's
-``CsrfViewMiddleware`` issues it on any request that renders
-``{% csrf_token %}`` or reads ``get_token``), so the frontend's login form
-can carry a real token even though no session exists yet. Exempting login
-would be the actual hole - a forged cross-site login POST that authenticates
-the *attacker's* account into the victim's browser is a session-fixation-
+middleware rather than being exempted - exempting it would be the actual
+hole, since a forged cross-site login POST that authenticates the
+*attacker's* account into the victim's browser is a session-fixation-
 adjacent attack CSRF protection exists to prevent regardless of which side
 starts unauthenticated.
+
+The double-submit cookie, though, does **not** appear on its own here the
+way it would on a template-rendered site: Django's ``CsrfViewMiddleware``
+only issues it when something in the request cycle calls
+``get_token()`` - normally ``{% csrf_token %}`` in a template, which a JSON
+API never renders. ``session_view`` is therefore decorated with
+``@ensure_csrf_cookie``: it is the endpoint the frontend shell calls on
+every load to answer "is a session live", so it doubles as the point that
+guarantees the cookie exists before the browser could ever need to submit
+one back on ``login_view``.
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ from typing import Any
 from django.contrib.auth import login as django_login
 from django.contrib.auth import logout as django_logout
 from django.http import HttpRequest, JsonResponse
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 
 from workeasy360.platform.identity.middleware import SESSION_EPOCH_KEY
@@ -69,9 +76,16 @@ def logout_view(request: HttpRequest) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
+@ensure_csrf_cookie
 def session_view(request: HttpRequest) -> JsonResponse:
     """Whether a session is live, for the frontend shell to decide whether
-    to render signed-out UI without a failed API call first."""
+    to render signed-out UI without a failed API call first.
+
+    ``@ensure_csrf_cookie`` - see the module docstring: this is the call the
+    frontend makes early enough (on shell mount, before any form can be
+    submitted) that the CSRF cookie is guaranteed to exist by the time
+    ``login_view`` or any other write is reachable.
+    """
     user = getattr(request, "user", None)
     if user is None or not user.is_authenticated:
         return JsonResponse({"authenticated": False})

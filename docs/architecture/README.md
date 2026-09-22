@@ -67,6 +67,7 @@ Start with [ARCHITECTURE.md](../../ARCHITECTURE.md) at the repository root — i
 | [018](adrs/ADR-018-openid-connect-for-product-sso.md) | **OpenID Connect for remote product SSO**, served from `platform/ecosystem` |
 | [019](adrs/ADR-019-product-service-authentication.md) | How a product authenticates itself to the platform |
 | [020](adrs/ADR-020-signing-keys-and-the-control-plane-code.md) | Signing keys live outside the database; the authorization code is control plane |
+| [021](adrs/ADR-021-launcher-access-decision-and-seat-projection.md) | **The launcher's access decision, the seat read projection, and platform layer P4** |
 
 ## The five ideas that matter most
 

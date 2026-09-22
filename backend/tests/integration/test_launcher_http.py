@@ -2,12 +2,16 @@
 directory, launch, and seat administration (Tasks 4, 5, 6, 7, 13, 16, 45).
 
 Every request goes through the real middleware stack - session cookies,
-CSRF, the tenancy resolver - the same reason ``test_oidc_flow.py`` does.
+the tenancy resolver - the same reason ``test_oidc_flow.py`` does. CSRF is
+exercised separately, with ``enforce_csrf_checks=True``: Django's default
+test ``Client`` does not enforce it, so every other test in this file would
+pass identically whether or not CSRF protection actually worked. Task 33.
 """
 
 from __future__ import annotations
 
 import pytest
+from django.test import Client
 
 pytestmark = pytest.mark.django_db
 
@@ -106,6 +110,45 @@ def test_session_reports_unauthenticated_with_no_session(client):
     assert client.get(SESSION).json() == {"authenticated": False}
 
 
+def test_session_endpoint_issues_the_csrf_cookie(client):
+    """The frontend calls this on shell mount specifically so the cookie
+    exists before any form can be submitted (auth_views module docstring)."""
+    from django.conf import settings
+
+    client.get(SESSION)
+    assert settings.CSRF_COOKIE_NAME in client.cookies
+
+
+def test_login_without_a_csrf_token_is_refused(user_factory):
+    """The property every other test in this file cannot see, because the
+    default test Client does not enforce CSRF (module docstring)."""
+    strict_client = Client(enforce_csrf_checks=True)
+    user = user_factory(password="pw")
+
+    # No prior GET to /auth/session, so no CSRF cookie exists at all yet -
+    # the least forgiving case.
+    response = strict_client.post(
+        LOGIN, {"email": user.email, "password": "pw"}, content_type="application/json"
+    )
+    assert response.status_code == 403
+
+
+def test_login_with_the_issued_csrf_token_succeeds(user_factory):
+    strict_client = Client(enforce_csrf_checks=True)
+    user = user_factory(password="pw")
+
+    strict_client.get(SESSION)  # issues the cookie, per test above
+    token = strict_client.cookies["w360_csrf"].value
+
+    response = strict_client.post(
+        LOGIN,
+        {"email": user.email, "password": "pw"},
+        content_type="application/json",
+        HTTP_X_CSRFTOKEN=token,
+    )
+    assert response.status_code == 200
+
+
 def test_logout_ends_the_session(client, user_factory):
     user = user_factory(password="pw")
     client.post(
@@ -174,6 +217,22 @@ def test_a_users_organizations_are_isolated_from_another_users(
 # --- app directory / launch / seats -----------------------------------------
 
 
+def test_organization_settings_view_returns_the_current_organization(
+    client, organization_factory, tenant_ctx_factory, grant_permissions, in_tenant
+):
+    org, membership, user = organization_factory(display_name="Acme Inc")
+    with in_tenant(tenant_ctx_factory(org, membership, user)):
+        grant_permissions(org, membership, ["platform.organization.view"])
+
+    client.force_login(user)
+    response = client.get(_org_path({"org": org}, "organization"))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["slug"] == org.slug
+    assert body["display_name"] == "Acme Inc"
+    assert body["write_allowed"] is True
+
+
 def test_the_app_directory_reflects_entitlement_and_seat_state(
     client, catalog, register_product, entitled_org, in_tenant
 ):
@@ -218,17 +277,21 @@ def test_launch_redirects_to_the_registered_launch_url_with_organization_context
 
 
 def test_launch_is_denied_server_side_for_a_no_seat_member_even_if_the_browser_asks(
-    client, catalog, register_product, entitled_org, in_tenant
+    client, catalog, register_product, entitled_org, in_tenant, settings
 ):
     """Task 16: the launch endpoint re-checks; it never trusts that the
-    frontend rendered an Open button."""
+    frontend rendered an Open button. Denial redirects back to the launcher
+    with the reason, exactly as a plain form POST needs (Task 26) - never a
+    JSON body a form submission could not render usefully."""
     register_product("crm")
     org = entitled_org("crm", seat=False)
 
     client.force_login(org["user"])
     response = client.post(_org_path(org, "apps/crm/launch"))
-    assert response.status_code == 409
-    assert response.json()["state"] == "no_seat"
+    assert response.status_code == 302
+    assert response["Location"] == (
+        f"{settings.W360_FRONTEND_URL}/o/{org['org'].slug}/apps?launch_error=no_seat&product=crm"
+    )
 
 
 def test_seat_overview_requires_the_seat_assign_permission(

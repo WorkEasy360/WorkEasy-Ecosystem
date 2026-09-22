@@ -66,6 +66,24 @@ def memberships_view(request: HttpRequest, org_slug: str) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
+def organization_view(request: HttpRequest, org_slug: str) -> JsonResponse:
+    """The current organization's own display data (Task 39: organization
+    settings). ``platform.organization.view`` is a baseline permission every
+    system role carries - see ``platform.authz.services``' role table - so
+    this is the one settings read every member, not only an admin, may make.
+    """
+    from workeasy360.platform.organizations.selectors import organization_summary
+
+    ctx = request.tenant_context  # type: ignore[attr-defined]
+    authz.require(ctx, "platform.organization.view")
+
+    summary = organization_summary(ctx)
+    if summary is None:
+        return JsonResponse({"code": "not_found"}, status=404)
+    return JsonResponse(summary)
+
+
+@require_http_methods(["GET"])
 def entitlements_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     """What this organization currently holds."""
     ctx = request.tenant_context  # type: ignore[attr-defined]

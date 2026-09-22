@@ -1,0 +1,138 @@
+.shell {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  border-bottom: 1px solid var(--w360-border);
+  background: var(--w360-surface);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.headerInner {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-5);
+  height: 64px;
+}
+
+.brandGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+  flex-shrink: 0;
+}
+
+.brand {
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+.orgSwitcher {
+  background: var(--w360-neutral-bg);
+  border: 1px solid transparent;
+  border-radius: var(--w360-radius-sm);
+  padding: 6px 12px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--w360-text-muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orgSwitcher:hover {
+  border-color: var(--w360-border-strong);
+  color: var(--w360-text);
+}
+
+.nav {
+  display: flex;
+  gap: var(--w360-space-2);
+  flex: 1;
+}
+
+.navLink {
+  padding: 8px 14px;
+  border-radius: var(--w360-radius-sm);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--w360-text-muted);
+  text-decoration: none;
+}
+
+.navLink:hover {
+  background: var(--w360-neutral-bg);
+  color: var(--w360-text);
+}
+
+.navLink[data-active] {
+  background: var(--w360-neutral-bg);
+  color: var(--w360-text);
+}
+
+.userMenuWrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.userButton {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--w360-brand);
+  color: var(--w360-brand-contrast);
+  border: none;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.userMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  background: var(--w360-surface-raised);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  box-shadow: var(--w360-shadow-md);
+  min-width: 200px;
+  padding: var(--w360-space-2);
+  display: flex;
+  flex-direction: column;
+}
+
+.userMenuItem {
+  display: block;
+  text-align: left;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--w360-radius-sm);
+  font-size: 14px;
+  background: none;
+  border: none;
+  color: var(--w360-text);
+  text-decoration: none;
+}
+
+.userMenuItem:hover {
+  background: var(--w360-neutral-bg);
+}
+
+@media (max-width: 720px) {
+  .headerInner {
+    flex-wrap: wrap;
+    height: auto;
+    padding-block: var(--w360-space-2);
+  }
+
+  .nav {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+  }
+}

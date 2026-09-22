@@ -44,7 +44,7 @@ interfaces/    L4   routing and composition only. No business logic.
 | `products/<p>` | — (reserved, empty) | everything — a product is a separate application |
 | `interfaces/` | everything | — (but no business logic) |
 
-Inside `platform/`: **P0** `tenancy`, `observability` → **P1** `identity`, `organizations` → **P2** `authz`, `entitlements`, `feature_flags`, `audit` → **P3** `files`, `notifications`, `workflows`, `ecosystem`. Lower layers only; siblings communicate via events.
+Inside `platform/`: **P0** `tenancy`, `observability` → **P1** `identity`, `organizations` → **P2** `authz`, `entitlements`, `feature_flags`, `audit` → **P3** `files`, `notifications`, `workflows`, `ecosystem` → **P4** `launcher`. Lower layers only; siblings communicate via events. `launcher` (Phase 4, [ADR-021](docs/architecture/adrs/ADR-021-launcher-access-decision-and-seat-projection.md)) composes `ecosystem` in addition to everything `ecosystem` itself composes, which is why it sits one layer above rather than beside it.
 
 ## 3. The eight forbidden edges
 
@@ -88,6 +88,8 @@ These are enforced in CI. A PR that violates one does not merge.
 | A17 | Product health never reaches `/healthz/live`, `/healthz/ready` or `/healthz/startup` | Probe-registry test + a readiness test with an empty registry |
 | A18 | Every `platform.integration.*` write permission is `dangerous` | Registry test |
 | A19 | The issued token claim set matches the advertised one | Fitness test against the discovery document |
+| A20 | `platform/launcher` sits above `platform/ecosystem` (P4), not beside it | import-linter `platform-internal-layers` |
+| A21 | The launcher's product-access decision reads `platform/ecosystem` only through a narrow selector carrying no credential or redirect data | `test_no_cross_module_orm_access` (F-6) |
 
 ### Tenancy and isolation
 

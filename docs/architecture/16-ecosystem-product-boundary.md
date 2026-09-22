@@ -46,7 +46,7 @@ owns, and the contract between them.
 | Notifications delivery, file storage, audit trail | **Platform** | Capability, not trigger |
 | Observability primitives, health, correlation | **Platform** | Ecosystem health; product-internal health stays product-side |
 | Partner / reseller / white-label / affiliate | **Platform** (`commercial/`) | Commercial constructs, never forks |
-| App registration, app directory, launcher metadata | **Platform** (planned — §7) | |
+| App registration, app directory, launcher metadata | **Platform** (`platform/launcher`, Phase 4) | |
 | Contacts, deals, invoices, ledgers, items, tasks, employees | **Product** | Never in this repository |
 | Product HTTP routes, serializers, screens | **Product** | Platform routes nothing product-shaped |
 | Product database schema and migrations | **Product** | Its own store (§9) |
@@ -351,7 +351,7 @@ launcher UI was explicitly out of scope for this cleanup.
 | G-1 | No remote authentication assertion / SSO (§8) | Any separate product serving a user | **Closed** — OpenID Connect provider in `platform/ecosystem` |
 | G-2 | No HTTP entitlement-verification endpoint | Any separate product checking access | **Closed** — `POST /api/v1/integrations/entitlements/verify` |
 | G-3 | No product registry / manifest submission (§7) | Launcher, health aggregation, permission declaration | **Closed** for registry and manifest; permission declaration remains G-7 |
-| G-4 | No app directory / launcher metadata API | Launcher | Open (P2). The registry now holds `launch_url`, `display_name` and status |
+| G-4 | No app directory / launcher metadata API | Launcher | **Closed** — Phase 4, `GET /api/v1/orgs/<slug>/apps` ([docs/phase-4/02-app-directory.md](../phase-4/02-app-directory.md)) |
 | G-5 | No outbound webhook delivery to product subscribers | Product event consumption | Open (P2). **Will reach the SSRF trigger** — the platform currently fetches nothing |
 | G-6 | No HTTP surface for files or notifications | Products using those capabilities | Open (P2) |
 | G-7 | Permission registry is in-process only | Products declaring their privilege surface | Open (P2) |

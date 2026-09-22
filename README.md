@@ -25,12 +25,17 @@ through its contracts.
     repo)          repo)        repo)       repo)
 ```
 
-**Status: Phase 3 complete — a separate product can now integrate.** Phase 0
-(architecture), Phase 1 (platform foundations), Phase 2 (commercial core) and
-Phase 3R (scope correction) are built and tested. Phase 3 added the remote
-contracts: the platform is now an **OpenID Provider**, with a product
-integration registry, asymmetric token signing with key rotation, and an HTTP
-entitlement API. **912 tests, 0 failed, 0 skipped.**
+**Status: Phase 4 complete — a user can sign in once and launch entitled,
+seated products across the ecosystem.** Phase 0 (architecture), Phase 1
+(platform foundations), Phase 2 (commercial core) and Phase 3 (remote
+product SSO, an OpenID Provider with an integration registry, key rotation
+and an HTTP entitlement API) are built and tested. Phase 4 adds the
+unified frontend shell (`frontend/`, Next.js) — login, organization chooser,
+a data-driven app launcher, and seat/member administration — and closes the
+seat-enforcement gap Phase 3's audit identified: a per-seat product with
+every seat assigned now refuses an unseated member at the OIDC protocol
+level, not only in the UI. **973 backend tests, 0 failed, 0 skipped** (fresh
+database); **11 frontend tests, 0 failed** (clean install).
 
 No product features live here, and none ever will — `products/` is a reserved,
 permanently empty namespace with an unconditional build check.
@@ -44,24 +49,32 @@ this codebase.
 - [16 — Ecosystem / Product Boundary](docs/architecture/16-ecosystem-product-boundary.md) — **what belongs here and what does not**
 - [ADR-017](docs/architecture/adrs/ADR-017-products-are-separate-applications.md) — why products are separate applications
 - [ADR-018](docs/architecture/adrs/ADR-018-openid-connect-for-product-sso.md) — why OpenID Connect, and where it lives
+- [ADR-021](docs/architecture/adrs/ADR-021-launcher-access-decision-and-seat-projection.md) — the launcher's access decision and platform layer P4
+- [docs/phase-4/](docs/phase-4/00-overview.md) — the frontend, the launcher, seat enforcement, in full
 - [docs/phase-3/](docs/phase-3/00-overview.md) — the remote integration contracts, in full
-- [docs/architecture/](docs/architecture/) — the full design, 17 documents and 20 ADRs
+- [docs/architecture/](docs/architecture/) — the full design, 17 documents and 21 ADRs
 - [docs/phase-3R/](docs/phase-3R/) — the scope audit and what it kept
 
 ---
 
 ## Getting started
 
-Requires Docker and Python 3.10+.
+Requires Docker, Python 3.10+ and Node 20+.
 
 ```bash
 make setup      # virtualenv and dependencies
 make up         # PostgreSQL, PgBouncer, Redis, RabbitMQ
 make migrate    # schema, RLS policies and grants, as the owner role
 make test       # the full platform suite
+
+cd frontend
+cp .env.local.example .env.local   # point BACKEND_ORIGIN at the backend above
+npm install
+npm run dev                         # the platform shell, at localhost:3000
 ```
 
-`make help` lists everything else.
+`make help` lists everything else. `frontend/README.md` has the frontend's
+own scripts.
 
 ## Why the local stack looks like it does
 

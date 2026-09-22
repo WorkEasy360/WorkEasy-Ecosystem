@@ -48,6 +48,11 @@ urlpatterns = [
         name="memberships",
     ),
     path(
+        "orgs/<slug:org_slug>/organization",
+        views.organization_view,
+        name="organization",
+    ),
+    path(
         "orgs/<slug:org_slug>/entitlements",
         views.entitlements_view,
         name="entitlements",

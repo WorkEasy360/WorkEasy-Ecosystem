@@ -1,0 +1,47 @@
+.card {
+  padding: var(--w360-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--w360-space-3);
+  height: 100%;
+}
+
+.top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--w360-space-3);
+}
+
+.icon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-brand);
+  color: var(--w360-brand-contrast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.name {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.description {
+  color: var(--w360-text-muted);
+  font-size: 13px;
+  margin: 0;
+  flex: 1;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-2);
+}
