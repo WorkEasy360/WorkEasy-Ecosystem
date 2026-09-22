@@ -493,6 +493,16 @@ def test_unscoped_manager_use_is_allowlisted():
         # under any tenant context. Narrowed to one file so grep gives the
         # complete list of system writers.
         "commercial/subscriptions/system.py",
+        # --- Phase 4 addition ---
+        #
+        # organizations_for_user(): the login/org-chooser bootstrap (Task 5).
+        # No tenant context can exist yet - resolving one is what the query
+        # is for - so it reads control-plane Organization rows unscoped and
+        # enters each candidate's own database scope before reading
+        # Membership, exactly the pattern platform/organizations/resolver.py
+        # already uses for the single-organization case (ADR-021,
+        # docs/phase-4/05-organization-selection.md).
+        "platform/organizations/selectors.py",
     )
 
     offenders = []

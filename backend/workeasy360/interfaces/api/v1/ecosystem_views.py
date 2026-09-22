@@ -192,7 +192,9 @@ def resume(request: HttpRequest) -> HttpResponse:
         # No verified destination is known for an unrecognised token - see
         # ``resume_pending``'s docstring. Sent back to the platform's own
         # login page, never to any product-supplied URL.
-        return HttpResponseRedirect(f"{settings.W360_FRONTEND_URL}/login?error=resume_invalid")
+        return HttpResponseRedirect(
+            f"{settings.W360_FRONTEND_URL}/login?error=resume_invalid"
+        )
 
     user = getattr(request, "user", None)
     if user is None or not user.is_authenticated:
@@ -222,7 +224,9 @@ def resume(request: HttpRequest) -> HttpResponse:
         subject = authorization.resolve_subject(
             user_id=user.pk, organization_id=organization_id, aal=_session_aal(request)
         )
-        authorization.require_entitlement(subject, pending_request.integration.product_code)
+        authorization.require_entitlement(
+            subject, pending_request.integration.product_code
+        )
         authorization.require_seat(subject, pending_request.integration.product_code)
         granted = authorization.issue_code(pending_request, subject)
     except protocol.OAuthError as exc:
@@ -240,7 +244,9 @@ def _park_and_redirect(request_obj: Any, exc: protocol.OAuthError) -> HttpRespon
     pending = authorization.create_pending(request_obj)
     path = "/login" if exc.error == protocol.LOGIN_REQUIRED else "/organizations/select"
     metrics.increment("ecosystem_authorization_parked_total", kind=exc.error)
-    return HttpResponseRedirect(f"{settings.W360_FRONTEND_URL}{path}?resume={pending.token}")
+    return HttpResponseRedirect(
+        f"{settings.W360_FRONTEND_URL}{path}?resume={pending.token}"
+    )
 
 
 # --- token endpoint -------------------------------------------------------
@@ -479,10 +485,14 @@ def _redirect_error(resolution: Any, exc: protocol.OAuthError) -> HttpResponse:
     therefore one the product registered - never one the request supplied.
     """
     metrics.increment("ecosystem_authorizations_total", result="denied")
-    return HttpResponseRedirect(_error_redirect_url(resolution.redirect_uri, resolution.state, exc))
+    return HttpResponseRedirect(
+        _error_redirect_url(resolution.redirect_uri, resolution.state, exc)
+    )
 
 
-def _redirect_pending_error(pending_request: Any, exc: protocol.OAuthError) -> HttpResponse:
+def _redirect_pending_error(
+    pending_request: Any, exc: protocol.OAuthError
+) -> HttpResponse:
     """Deliver a failure to a *resumed* request's verified redirect URI.
 
     Identical contract to ``_redirect_error``: ``pending_request.redirect_uri``

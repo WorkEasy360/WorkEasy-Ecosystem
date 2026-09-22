@@ -926,7 +926,8 @@ def entitled_org(db, organization_factory, tenant_ctx_factory, entitled):
         if seat:
             descriptor = get_product_directory().get(ProductCode(product_code))
             is_per_seat = (
-                descriptor is not None and descriptor.licensing_mode == LicensingMode.PER_SEAT
+                descriptor is not None
+                and descriptor.licensing_mode == LicensingMode.PER_SEAT
             )
         if is_per_seat:
             kwargs.setdefault("seats", 5)

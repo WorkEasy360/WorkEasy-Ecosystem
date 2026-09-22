@@ -133,6 +133,18 @@ class EntitlementGate(Protocol):
         """Raise ``EntitlementDenied`` unless the feature is granted."""
         ...
 
+    def check(
+        self, organization_id: UUID, product: ProductCode, *, write: bool = False
+    ) -> EntitlementDecision:
+        """The non-raising form. Present on the gate for the identical
+        reason ``has_seat`` is: a caller on the raising boundary
+        (``platform/launcher``'s access decision, Task 9) needs to *branch*
+        on the answer to render a specific state (``NO_ENTITLEMENT``,
+        ``INTEGRATION_SUSPENDED``, ...) rather than catch the generic
+        ``EntitlementDenied`` every other raising-form method produces.
+        """
+        ...
+
     def has_seat(
         self, organization_id: UUID, membership_id: UUID, product: ProductCode
     ) -> bool:

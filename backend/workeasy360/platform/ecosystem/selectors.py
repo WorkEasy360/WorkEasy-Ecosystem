@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from workeasy360.contracts.values.manifest import from_stored_manifest
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.authz import services as authz
 
@@ -133,6 +134,76 @@ def credentials(ctx: TenantContext, *, client_id: str) -> list[CredentialDTO]:
         )
         for row in rows
     ]
+
+
+@dataclass(frozen=True, slots=True)
+class LaunchTargetDTO:
+    """The one, narrow projection ``platform/launcher`` may read (ADR-021).
+
+    Deliberately smaller than :class:`IntegrationDTO`: no manifest, no
+    redirect URI set, no scopes, no client id. A member browsing the app
+    directory is not staff, and the launcher's job needs exactly one fact
+    ``platform/ecosystem`` alone can answer - "is there a product to send
+    this browser to, and where" - not the registration record.
+
+    Semantic booleans rather than the raw status string or
+    ``IntegrationStatus`` itself (F-6): a selector's whole purpose is that a
+    caller is welded to *this* schema, not to ``platform.ecosystem.models``,
+    and handing out the model's own enum would weld it to that module's
+    internal vocabulary instead - asserted structurally by
+    ``test_no_cross_module_orm_access``.
+    """
+
+    product_code: str
+    display_name: str
+    launch_url: str
+    #: Only ``active`` integrations may authenticate a user.
+    can_authenticate: bool
+    #: A reversible operational stop - the integration will very likely
+    #: resume. Distinct from "not built" so the launcher can render
+    #: "temporarily unavailable" rather than "coming soon" (Task 24/48).
+    is_suspended: bool
+    #: ``retired``: terminal, will not return. Grouped with ``draft`` by the
+    #: launcher (neither has anywhere to send a browser today), but kept as
+    #: its own field rather than folded into a single "unavailable" boolean,
+    #: so a future caller that *does* need to distinguish them still can.
+    is_terminal: bool
+
+
+def launch_target(product_code: str) -> LaunchTargetDTO | None:
+    """The launchable integration for a product code, or ``None`` if the
+    platform has never registered one.
+
+    No authorization check: unlike every other function in this module, this
+    one is not staff-gated, because any signed-in member of any organization
+    is entitled to know whether a product they might use exists at all - the
+    same information the app directory renders as "coming soon" (Task 21).
+    What it must never do is what it does not do here: return a credential,
+    a redirect URI, or anything ``IntegrationDTO`` carries that this member
+    has no business seeing.
+    """
+    from workeasy360.platform.ecosystem.models import (
+        IntegrationStatus,
+        ProductIntegration,
+    )
+
+    row = (
+        ProductIntegration.objects.filter(product_code=str(product_code))
+        .values("product_code", "status", "manifest")
+        .first()
+    )
+    if row is None:
+        return None
+    manifest = from_stored_manifest(row["manifest"])
+    status = IntegrationStatus(row["status"])
+    return LaunchTargetDTO(
+        product_code=row["product_code"],
+        display_name=manifest.display_name,
+        launch_url=manifest.launch_url,
+        can_authenticate=status.can_authenticate,
+        is_suspended=status is IntegrationStatus.SUSPENDED,
+        is_terminal=status.is_terminal,
+    )
 
 
 def _integration_dto(row: Any) -> IntegrationDTO:

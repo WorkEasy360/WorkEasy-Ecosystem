@@ -557,7 +557,9 @@ class PendingAuthorization(models.Model):
     token_hash = models.CharField(max_length=64, unique=True)
 
     integration = models.ForeignKey(
-        ProductIntegration, on_delete=models.CASCADE, related_name="pending_authorizations"
+        ProductIntegration,
+        on_delete=models.CASCADE,
+        related_name="pending_authorizations",
     )
 
     redirect_uri = models.CharField(max_length=512)

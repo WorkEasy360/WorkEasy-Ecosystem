@@ -80,10 +80,23 @@ forbidden_modules =
 ; control-plane write), organizations (membership resolution) and identity
 ; (the subject), so it must sit above all of them - and it is imported by
 ; nothing inside platform/, which is what keeps P3 a leaf.
+;
+; platform/launcher joins P4, added in Phase 4 (ADR-021). Its one job - the
+; authoritative "can this member launch this product?" decision (Task 9) -
+; is a strict superset of what ecosystem's authorization flow already
+; composes: it reaches ecosystem for integration/launch status *in addition
+; to* entitlements, organizations and authz. Placing it beside ecosystem in
+; P3 would make it a same-layer import, forbidden by this same contract;
+; placing it above is what "launcher composes ecosystem" actually means. See
+; ADR-021 for why this is a new layer rather than a new contracts/ port: the
+; latter pattern exists to cross the platform/commercial boundary a product
+; must never see across, and launcher and ecosystem are both platform code
+; with nothing to hide from each other.
 [importlinter:contract:platform-internal-layers]
-name = platform internal layering P0 < P1 < P2 < P3 (F-5)
+name = platform internal layering P0 < P1 < P2 < P3 < P4 (F-5)
 type = layers
 layers =
+    workeasy360.platform.launcher
     workeasy360.platform.files | workeasy360.platform.notifications | workeasy360.platform.workflows | workeasy360.platform.ecosystem
     workeasy360.platform.authz | workeasy360.platform.entitlements | workeasy360.platform.feature_flags | workeasy360.platform.audit
     workeasy360.platform.identity | workeasy360.platform.organizations

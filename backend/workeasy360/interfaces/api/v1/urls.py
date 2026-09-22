@@ -17,13 +17,23 @@ from __future__ import annotations
 from django.urls import path
 
 from workeasy360.interfaces.api.v1 import (
+    auth_views,
     commercial_views,
     ecosystem_views,
     integration_admin_views,
+    launcher_views,
     views,
 )
 
 urlpatterns = [
+    # --- platform authentication and the organization chooser ---
+    #
+    # Not under the tenant path shape: reached before any organization is
+    # selected, which is the whole point of existing (Tasks 4, 5).
+    path("auth/login", auth_views.login_view, name="auth-login"),
+    path("auth/logout", auth_views.logout_view, name="auth-logout"),
+    path("auth/session", auth_views.session_view, name="auth-session"),
+    path("organizations", auth_views.organizations_view, name="organizations"),
     # A minimal tenant-scoped surface, present so the tenancy middleware,
     # the suspension block and the isolation tests have a real HTTP path to
     # exercise rather than a synthetic one.
@@ -41,6 +51,31 @@ urlpatterns = [
         "orgs/<slug:org_slug>/entitlements",
         views.entitlements_view,
         name="entitlements",
+    ),
+    # --- app launcher: directory, launch, seat administration ---
+    #
+    # Tasks 6, 7, 13, 16. Under the tenant path shape like everything else
+    # in this section - the launcher's every answer is specific to one
+    # organization and one member.
+    path(
+        "orgs/<slug:org_slug>/apps",
+        launcher_views.app_directory_view,
+        name="launcher-apps",
+    ),
+    path(
+        "orgs/<slug:org_slug>/apps/<str:product_code>/launch",
+        launcher_views.launch_view,
+        name="launcher-launch",
+    ),
+    path(
+        "orgs/<slug:org_slug>/apps/<str:product_code>/seats",
+        launcher_views.seat_overview_view,
+        name="launcher-seats",
+    ),
+    path(
+        "orgs/<slug:org_slug>/apps/<str:product_code>/seats/<uuid:membership_id>",
+        launcher_views.seat_member_view,
+        name="launcher-seat-member",
     ),
     # --- commercial: catalog and pricing administration ---
     #

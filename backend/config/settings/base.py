@@ -52,7 +52,7 @@ DJANGO_APPS = [
     "django.contrib.staticfiles",
 ]
 
-# Ordered by platform layer (P0 -> P3) so that a missing dependency surfaces as
+# Ordered by platform layer (P0 -> P4) so that a missing dependency surfaces as
 # an import error at the right place rather than as a mysterious app-registry
 # failure.
 PLATFORM_APPS = [
@@ -71,6 +71,12 @@ PLATFORM_APPS = [
     # inside platform/ because everything it owns is identity, tenancy,
     # access and audit - never commerce (ADR-018).
     "workeasy360.platform.ecosystem",
+    # P4 (Phase 4, ADR-021). The app launcher: the one authoritative
+    # "can this member launch this product" decision, and the app-directory
+    # read model built from it. Sits above ecosystem because it composes
+    # ecosystem's integration/launch data in addition to everything
+    # ecosystem itself already composes.
+    "workeasy360.platform.launcher",
 ]
 
 INTEGRATION_APPS = [
@@ -119,6 +125,9 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Immediately after: every view downstream must see a revoked session as
+    # logged out, not merely be able to check for it (Phase 4, Task 33).
+    "workeasy360.platform.identity.middleware.SessionEpochMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "workeasy360.platform.observability.middleware.RequestLogMiddleware",
@@ -504,9 +513,7 @@ OIDC_AUTHORIZATION_CODE_TTL_S = env.int("W360_OIDC_AUTHORIZATION_CODE_TTL_S", 60
 # does not stay live in someone's inbox or browser history for long. Compare
 # OIDC_AUTHORIZATION_CODE_TTL_S, which is 60s because it crosses no human
 # interaction at all - this one deliberately does.
-OIDC_PENDING_AUTHORIZATION_TTL_S = env.int(
-    "W360_OIDC_PENDING_AUTHORIZATION_TTL_S", 600
-)
+OIDC_PENDING_AUTHORIZATION_TTL_S = env.int("W360_OIDC_PENDING_AUTHORIZATION_TTL_S", 600)
 
 # Tolerance for clock difference between the platform and a product, applied
 # to `exp`/`nbf`/`iat`. Deliberately small: a large window extends the life of

@@ -165,6 +165,90 @@ def all_organization_ids(*, batch_size: int = 1000) -> list[UUID]:
     )
 
 
+def organizations_for_user(
+    user_id: UUID, *, max_organizations_scanned: int = 2000
+) -> list[dict[str, Any]]:
+    """Every organization this user actively belongs to - the login/org-
+    chooser bootstrap query (Phase 4, Task 5).
+
+    **A known, documented scale limit, not an oversight.** ``Membership``
+    carries row-level security keyed on *one* organization at a time
+    (``organization_id = current_setting('app.organization_id')``,
+    ``FORCE ROW LEVEL SECURITY`` - ``migrations_helpers.enable_rls``), and the
+    application role is deliberately ``NOBYPASSRLS`` (ADR-009). There is
+    therefore no single query that answers "which organizations is this user
+    in" - not because nobody wrote one, but because the isolation model that
+    protects every tenant's data makes a cross-tenant *filter* impossible by
+    construction, the same reason ``all_organization_ids`` documents for
+    background jobs: "running a single query across every tenant is
+    forbidden even for jobs that legitimately span them."
+
+    This function takes the only path that pattern leaves open - the one
+    ``all_organization_ids`` itself is built for: enumerate the (unprotected,
+    control-plane) organization list and check membership inside each one's
+    own scope. That is O(organizations on the platform) per login, bounded by
+    ``max_organizations_scanned`` so a very large platform degrades rather
+    than hangs, and is the reason ``ix_membership_user`` - an index leading
+    with ``user_id`` rather than ``organization_id`` - already exists: it is
+    what keeps each per-organization membership check to an index seek rather
+    than a scan, not what makes the query cross-tenant in one call.
+
+    **The scale fix, deliberately not built now:** a denormalised, RLS-exempt
+    projection table (``(user_id, organization_id, status)``, control-plane
+    like ``Organization`` itself), written alongside every membership change.
+    Not built in Phase 4 because every membership write path would need
+    auditing to keep it synchronised, which is real scope this phase's
+    brief does not ask for. Recorded as a proposed Phase 5 decision
+    (docs/phase-4/05-organization-selection.md) rather than shipped
+    speculatively - a projection that can silently drift from ``Membership``
+    is worse than an honestly-bounded scan.
+    """
+    from workeasy360.contracts.enums import MembershipStatus
+    from workeasy360.platform.observability.metrics import metrics
+    from workeasy360.platform.organizations.models import Membership, Organization
+    from workeasy360.platform.tenancy.db import organization_db_scope
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    results: list[dict[str, Any]] = []
+    with unscoped_access(
+        reason="Login/org-chooser bootstrap: no tenant context exists yet",
+        module="platform.organizations.selectors",
+    ):
+        organizations = list(
+            Organization.objects.filter(deleted_at__isnull=True)
+            .order_by("created_at", "id")
+            .values("id", "slug", "display_name", "status")[:max_organizations_scanned]
+        )
+        if len(organizations) == max_organizations_scanned:
+            # Truncated. Metric, not an exception: a user missing from their
+            # own chooser is a real incident, but this function's contract
+            # is "the organizations found within the scanned window", stated
+            # precisely rather than silently wrong.
+            metrics.increment("organizations_for_user_scan_truncated_total")
+
+        for org in organizations:
+            with organization_db_scope(org["id"]):
+                membership = (
+                    Membership.unscoped.filter(
+                        user_id=user_id, status=MembershipStatus.ACTIVE.value
+                    )
+                    .values("id", "is_owner")
+                    .first()
+                )
+            if membership is not None:
+                results.append(
+                    {
+                        "organization_id": str(org["id"]),
+                        "slug": org["slug"],
+                        "display_name": org["display_name"],
+                        "status": org["status"],
+                        "membership_id": str(membership["id"]),
+                        "is_owner": membership["is_owner"],
+                    }
+                )
+    return results
+
+
 def organization_status(organization_id: UUID) -> OrganizationStatus | None:
     """One organization's status, without a tenant context.
 

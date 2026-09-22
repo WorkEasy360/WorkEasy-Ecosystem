@@ -198,11 +198,21 @@ def test_the_token_endpoint_has_a_bounded_query_budget(
     once per product sign-in, alongside an RS256 signature that costs ~28 ms
     on its own - the database round trips are not what a user waits for.
 
-    **Phase 4:** +3, from ``_revalidate_subject`` now also re-running
+    **Phase 4:** +4. +3 from ``_revalidate_subject`` now also re-running
     ``require_seat`` (a per-seat product's re-validation must re-check the
     seat, not only the entitlement, or an unassigned-mid-flight seat would
     still yield a token - the same argument that motivated re-validation at
-    all, applied one check further).
+    all, applied one check further). +1 from ``SessionEpochMiddleware``
+    (Task 33): it reads ``request.user`` on every request to enforce
+    immediate session revocation, and this specific test's client happens to
+    carry a session cookie from ``signed_in`` even though the token endpoint
+    authenticates by client credential and ignores it
+    (``test_credentialed_endpoints_ignore_session_authentication``) - reading
+    it costs one session-table lookup that nothing previously triggered.
+    Real, small, and paid on every request rather than once per sign-in; not
+    worth special-casing the middleware for credentialed endpoints, which
+    would reintroduce exactly the kind of "does this endpoint check the
+    session or not" ambiguity that test exists to rule out.
     """
     registration = register_product("crm")
     org = entitled_org("crm")
@@ -212,7 +222,7 @@ def test_the_token_endpoint_has_a_bounded_query_budget(
     granted = client.get(AUTHORIZE, _authorize_params(registration, org, challenge))
     code = parse_qs(urlsplit(granted["Location"]).query)["code"][0]
 
-    with django_assert_max_num_queries(29):
+    with django_assert_max_num_queries(30):
         response = client.post(
             TOKEN,
             {

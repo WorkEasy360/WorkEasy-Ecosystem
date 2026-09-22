@@ -66,6 +66,26 @@ def assigned_count(organization_id: UUID, *, pool_key: str) -> int:
     ).count()
 
 
+def held_by(organization_id: UUID, *, pool_key: str) -> set[UUID]:
+    """Every membership currently holding a seat in the pool.
+
+    For the seat-assignment UI (Task 13): rendering "who has a seat" against
+    a member list needs the *set*, not only the count ``assigned_count``
+    already answers. One query, one purpose - callers building anything more
+    elaborate belong to a selector of their own rather than growing this
+    function's return type.
+    """
+    from workeasy360.platform.entitlements.models import SeatAssignment
+
+    return set(
+        SeatAssignment.objects.filter(
+            organization_id=organization_id,
+            seat_grant__pool_key=pool_key,
+            released_at__isnull=True,
+        ).values_list("membership_id", flat=True)
+    )
+
+
 def assign_seat(
     organization_id: UUID,
     *,

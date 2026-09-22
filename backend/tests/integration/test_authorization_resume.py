@@ -166,7 +166,9 @@ def test_no_organization_named_parks_at_the_chooser_then_resumes(
     assert urlsplit(parked["Location"]).path == "/organizations/select"
     token = _resume_token(parked["Location"])
 
-    resumed = client.get(RESUME, {"resume": token, "organization_id": org["organization_id"]})
+    resumed = client.get(
+        RESUME, {"resume": token, "organization_id": org["organization_id"]}
+    )
     assert resumed.status_code == 302
     assert resumed["Location"].startswith(registration["redirect_uri"])
     assert "code" in parse_qs(urlsplit(resumed["Location"]).query)
@@ -261,13 +263,14 @@ def test_a_product_supplied_organization_cannot_be_substituted_at_resume(
 
     # Attempt substitution: the request was parked for org_a, but the
     # resume call asks for org_b.
-    resumed = client.get(RESUME, {"resume": token, "organization_id": org_b["organization_id"]})
+    resumed = client.get(
+        RESUME, {"resume": token, "organization_id": org_b["organization_id"]}
+    )
     assert resumed.status_code == 302
     assert resumed["Location"].startswith(registration["redirect_uri"])
     code = parse_qs(urlsplit(resumed["Location"]).query)["code"][0]
 
     # Redeem it and check the token names org_a, never the browser's org_b.
-    from workeasy360.platform.ecosystem import tokens
 
     verifier = "irrelevant-pkce-mismatch-only-matters-for-success-path"
     exchanged = client.post(
