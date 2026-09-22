@@ -36,7 +36,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlencode
+from uuid import UUID
 
+from django.conf import settings
 from django.http import (
     HttpRequest,
     HttpResponse,
@@ -102,9 +104,17 @@ def authorize(request: HttpRequest) -> HttpResponse:
     """Begin an authorization. Browser-facing, session-authenticated.
 
     GET only. The authorization request is a navigation, not a state change,
-    so there is nothing for CSRF to protect - and the consent/organization
-    chooser that *would* POST is platform UI which does not exist in this
-    repository yet (see the login_required branch below).
+    so there is nothing for CSRF to protect.
+
+    **Phase 4.** ``login_required`` and ``organization_required`` no longer
+    bounce the browser back to the product with an error. A platform UI now
+    exists (docs/phase-4/05-organization-selection.md), and standards-based
+    OIDC behaviour is for the *provider* to interrupt the flow with its own
+    login page or organization chooser and resume afterwards - see
+    ``resume`` below, and ``PendingAuthorization``'s docstring for why a
+    parked row rather than reconstructing the request from the browser a
+    second time. Every other failure is still delivered to the product,
+    unchanged.
     """
     # Phase 1: who is asking, and where may an answer go? Until both are
     # established nothing may be redirected anywhere (RFC 6749 4.1.2.1).
@@ -129,17 +139,12 @@ def authorize(request: HttpRequest) -> HttpResponse:
         return _error_response(exc)
 
     # Phase 2. The client and its redirect URI are now verified, so every
-    # failure below is delivered to the product in the protocol's own shape -
-    # including the ones that share an error code with phase 1.
+    # failure below is delivered to the product in the protocol's own shape,
+    # or parks the request for the platform's own UI - see the docstring.
     try:
         parsed = authorization.parse_request(resolution, request.GET)
         user = getattr(request, "user", None)
         if user is None or not user.is_authenticated:
-            # OIDC would normally redirect to the provider's login page. That
-            # page is platform UI and is Phase 4's work; until it exists the
-            # product receives `login_required`, which is the standard signal
-            # to send the user to the platform to sign in and try again
-            # (docs/phase-3/03-sso-architecture.md section 9).
             raise protocol.OAuthError(
                 protocol.LOGIN_REQUIRED,
                 "No authenticated Workeasy360 session.",
@@ -154,12 +159,88 @@ def authorize(request: HttpRequest) -> HttpResponse:
         authorization.require_seat(subject, parsed.integration.product_code)
         granted = authorization.issue_code(parsed, subject)
     except protocol.OAuthError as exc:
+        if exc.error in (protocol.LOGIN_REQUIRED, protocol.ORGANIZATION_REQUIRED):
+            return _park_and_redirect(parsed, exc)
         return _redirect_error(resolution, exc)
 
     metrics.increment("ecosystem_authorizations_total", result="granted")
     return HttpResponseRedirect(
         _with_query(granted.redirect_uri, {"code": granted.code, "state": granted.state})
     )
+
+
+# --- resume: completing a parked request after login/org selection --------
+
+
+@require_GET
+@never_cache
+def resume(request: HttpRequest) -> HttpResponse:
+    """Complete a request the browser parked at ``/login`` or
+    ``/organizations/select``. Reached by a full top-level navigation from
+    the platform frontend, never by a background fetch, so the session
+    cookie the login page just set is present.
+
+    Single-use: a resume link works once, whether it succeeds or fails.
+    ``authorization.resume_pending`` enforces that with the same conditional
+    UPDATE ``redeem_code`` uses, so a token clicked twice - a doubled tab, a
+    replayed URL - resumes at most once (Task 32).
+    """
+    token = request.GET.get("resume") or ""
+    try:
+        pending_request = authorization.resume_pending(token=token)
+    except protocol.OAuthError:
+        # No verified destination is known for an unrecognised token - see
+        # ``resume_pending``'s docstring. Sent back to the platform's own
+        # login page, never to any product-supplied URL.
+        return HttpResponseRedirect(f"{settings.W360_FRONTEND_URL}/login?error=resume_invalid")
+
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        # The token is already spent (single use). This is not a resumable
+        # retry - the product's client library sees `login_required` via its
+        # own redirect_uri and the browser restarts the flow from scratch.
+        return _redirect_pending_error(
+            pending_request, protocol.OAuthError(protocol.LOGIN_REQUIRED, "")
+        )
+
+    organization_id = pending_request.organization_id
+    if organization_id is None:
+        raw = request.GET.get("organization_id") or ""
+        try:
+            organization_id = UUID(raw)
+        except ValueError:
+            # The chooser did not supply one either. Re-park under a fresh
+            # token rather than fail to the product - the user is signed in
+            # and the only missing piece is which organization, which the
+            # platform's own chooser is what asks (Task 5).
+            requeued = authorization.create_pending(pending_request)
+            return HttpResponseRedirect(
+                f"{settings.W360_FRONTEND_URL}/organizations/select?resume={requeued.token}"
+            )
+
+    try:
+        subject = authorization.resolve_subject(
+            user_id=user.pk, organization_id=organization_id, aal=_session_aal(request)
+        )
+        authorization.require_entitlement(subject, pending_request.integration.product_code)
+        authorization.require_seat(subject, pending_request.integration.product_code)
+        granted = authorization.issue_code(pending_request, subject)
+    except protocol.OAuthError as exc:
+        return _redirect_pending_error(pending_request, exc)
+
+    metrics.increment("ecosystem_authorizations_total", result="granted")
+    return HttpResponseRedirect(
+        _with_query(granted.redirect_uri, {"code": granted.code, "state": granted.state})
+    )
+
+
+def _park_and_redirect(request_obj: Any, exc: protocol.OAuthError) -> HttpResponse:
+    """Park a verified request and send the browser to the platform's own
+    login page or organization chooser. See ``authorize``'s docstring."""
+    pending = authorization.create_pending(request_obj)
+    path = "/login" if exc.error == protocol.LOGIN_REQUIRED else "/organizations/select"
+    metrics.increment("ecosystem_authorization_parked_total", kind=exc.error)
+    return HttpResponseRedirect(f"{settings.W360_FRONTEND_URL}{path}?resume={pending.token}")
 
 
 # --- token endpoint -------------------------------------------------------
@@ -398,15 +479,33 @@ def _redirect_error(resolution: Any, exc: protocol.OAuthError) -> HttpResponse:
     therefore one the product registered - never one the request supplied.
     """
     metrics.increment("ecosystem_authorizations_total", result="denied")
+    return HttpResponseRedirect(_error_redirect_url(resolution.redirect_uri, resolution.state, exc))
+
+
+def _redirect_pending_error(pending_request: Any, exc: protocol.OAuthError) -> HttpResponse:
+    """Deliver a failure to a *resumed* request's verified redirect URI.
+
+    Identical contract to ``_redirect_error``: ``pending_request.redirect_uri``
+    was verified once, by ``resolve_client``, before it was ever parked - see
+    ``PendingAuthorization``'s docstring. One helper, so the two paths cannot
+    drift on what belongs in the query string.
+    """
+    metrics.increment("ecosystem_authorizations_total", result="denied")
+    return HttpResponseRedirect(
+        _error_redirect_url(pending_request.redirect_uri, pending_request.state, exc)
+    )
+
+
+def _error_redirect_url(redirect_uri: str, state: str, exc: protocol.OAuthError) -> str:
     params = {"error": exc.error}
     if exc.description:
         params["error_description"] = exc.description
-    if resolution.state:
+    if state:
         # Echoed verbatim, including on the error path. A client that cannot
         # correlate an error with the request it made will surface it against
         # the wrong user's session.
-        params["state"] = resolution.state
-    return HttpResponseRedirect(_with_query(resolution.redirect_uri, params))
+        params["state"] = state
+    return _with_query(redirect_uri, params)
 
 
 def _with_query(url: str, params: dict[str, str]) -> str:

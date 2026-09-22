@@ -507,26 +507,34 @@ def test_an_unsupported_grant_type_is_refused(client, signing_key, register_prod
 # --- who may authorize ----------------------------------------------------
 
 
-def test_an_unauthenticated_user_gets_login_required(
-    client, signing_key, register_product, entitled_org
+def test_an_unauthenticated_user_is_parked_at_the_platform_login_page(
+    client, signing_key, register_product, entitled_org, settings
 ):
-    """The standard signal to send the user to the platform to sign in.
+    """No product-facing error at all: the browser goes to the platform's
+    own login page, carrying a single-use resume token - never to the
+    product with an error requiring it to restart the flow itself.
 
-    The login page itself is platform UI and is not built in this phase - see
-    docs/phase-3/03-sso-architecture.md section 9 for where it lives.
+    See ``test_authorization_resume.py`` for what completing the resume
+    actually does (docs/phase-4/05-organization-selection.md,
+    docs/phase-4/06-sso-ui-integration.md).
     """
     registration = register_product("crm")
     org = entitled_org("crm")
     response = client.get(AUTHORIZE, _authorize_params(registration, org))
-    assert _error_from(response) == "login_required"
+    assert response.status_code == 302
+    location = urlsplit(response["Location"])
+    assert f"{location.scheme}://{location.netloc}" == settings.W360_FRONTEND_URL
+    assert location.path == "/login"
+    assert "resume" in parse_qs(location.query)
 
 
-def test_an_organization_must_be_named(
-    client, signing_key, register_product, entitled_org, signed_in
+def test_a_signed_in_user_with_no_organization_named_is_parked_at_the_chooser(
+    client, signing_key, register_product, entitled_org, signed_in, settings
 ):
     """Deliberately not "pick the user's only organization": an implicit
     choice is one the user did not make and cannot see, and it silently
-    changes behaviour the day they join a second organization."""
+    changes behaviour the day they join a second organization. The browser
+    goes to the platform's own organization chooser, not to the product."""
     registration = register_product("crm")
     org = entitled_org("crm")
     signed_in(org["user"])
@@ -534,7 +542,11 @@ def test_an_organization_must_be_named(
     params = _authorize_params(registration, org)
     params.pop("organization")
     response = client.get(AUTHORIZE, params)
-    assert _error_from(response) == "organization_required"
+    assert response.status_code == 302
+    location = urlsplit(response["Location"])
+    assert f"{location.scheme}://{location.netloc}" == settings.W360_FRONTEND_URL
+    assert location.path == "/organizations/select"
+    assert "resume" in parse_qs(location.query)
 
 
 def test_a_suspended_integration_cannot_authenticate(

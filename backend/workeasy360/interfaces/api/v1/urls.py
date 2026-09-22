@@ -154,6 +154,14 @@ urlpatterns = [
         ecosystem_views.authorize,
         name="oidc-authorize",
     ),
+    # Phase 4. Reached by the platform's own login/organization-chooser
+    # pages after they complete, never by a product - see
+    # ecosystem_views.resume and PendingAuthorization.
+    path(
+        "integrations/oauth/resume",
+        ecosystem_views.resume,
+        name="oidc-authorize-resume",
+    ),
     path(
         "integrations/oauth/token",
         ecosystem_views.token,
