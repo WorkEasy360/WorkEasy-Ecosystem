@@ -22,6 +22,17 @@ DEBUG = False
 
 ALLOWED_HOSTS = ["testserver", "localhost", "127.0.0.1"]
 
+# The OIDC issuer for the suite, matching the test client's host so that the
+# `iss` claim, the discovery document and the client-assertion audience all
+# agree without a fixture having to patch them. Set here rather than in an
+# autouse fixture because it is a property of the environment, and a fixture
+# would silently rewrite a setting for every unrelated test in the suite.
+OIDC_ISSUER = "http://testserver"
+# Loopback callbacks: the fixtures register http://localhost:9100, which is
+# what a product's local development deployment looks like. Production refuses
+# this and test_production_refuses_insecure_configuration proves it.
+OIDC_ALLOW_INSECURE_REDIRECT_URIS = True
+
 # Cookies are not sent over the test client's plain HTTP.
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False

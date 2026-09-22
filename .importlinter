@@ -37,6 +37,14 @@ forbidden_modules =
     workeasy360.interfaces
     django
 
+; F-1 through F-3 below name the packages under `products/`. Those packages
+; are a RESERVED, PERMANENTLY EMPTY namespace: every business product is a
+; separate application in its own repository (ADR-017). The contracts are
+; kept, and the packages with them, precisely because they are the guard -
+; together with test_products_are_structural_placeholders_only, they are what
+; fails the build the moment product code reappears here. Deleting the
+; namespace would delete the guard. See docs/architecture/debt-register.md
+; D-007.
 [importlinter:contract:products-are-independent]
 name = F-1: no product imports another product
 type = independence
@@ -67,16 +75,45 @@ source_modules =
 forbidden_modules =
     workeasy360.products
 
+; platform/ecosystem joins P3. It composes authz (staff + dangerous
+; permissions), entitlements (the access decision), audit (every
+; control-plane write), organizations (membership resolution) and identity
+; (the subject), so it must sit above all of them - and it is imported by
+; nothing inside platform/, which is what keeps P3 a leaf.
 [importlinter:contract:platform-internal-layers]
 name = platform internal layering P0 < P1 < P2 < P3 (F-5)
 type = layers
 layers =
-    workeasy360.platform.files | workeasy360.platform.notifications | workeasy360.platform.workflows
+    workeasy360.platform.files | workeasy360.platform.notifications | workeasy360.platform.workflows | workeasy360.platform.ecosystem
     workeasy360.platform.authz | workeasy360.platform.entitlements | workeasy360.platform.feature_flags | workeasy360.platform.audit
     workeasy360.platform.identity | workeasy360.platform.organizations
     workeasy360.platform.tenancy
     workeasy360.platform.observability
 exhaustive = false
+
+; The ecosystem boundary's own rule, and the reason ADR-018 places this
+; module inside platform/ rather than beside commercial/.
+;
+; A product must never learn *how* a capability was purchased - it asks "is
+; this org entitled?" and gets yes/no (ADR-005). The module that answers that
+; question over HTTP is therefore the one module where an import of
+; commercial/ would be most tempting and most damaging: a single
+; `from workeasy360.commercial...` here would put plan and subscription data
+; one attribute access away from a response body that leaves the building.
+;
+; F-4 already forbids it platform-wide. This contract states it separately so
+; that a future refactor which moves this module cannot lose the rule
+; silently, and so the failure message names the actual reason.
+[importlinter:contract:ecosystem-never-sees-commercial]
+name = platform/ecosystem must reach the catalog through contracts, never by importing commercial
+type = forbidden
+source_modules =
+    workeasy360.platform.ecosystem
+forbidden_modules =
+    workeasy360.commercial
+    workeasy360.integration
+    workeasy360.products
+    workeasy360.interfaces
 
 [importlinter:contract:entitlements-single-writer]
 name = A10: only commercial/provisioning may import entitlement write services

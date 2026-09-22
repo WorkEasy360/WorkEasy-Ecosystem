@@ -18,6 +18,7 @@ assumption untested). Isolation tests would pass while production was broken
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import timedelta
 
@@ -26,6 +27,7 @@ from django.conf import settings
 from django.db import connection
 from django.utils import timezone
 
+from tests.factories.manifests import PRODUCT_ORIGIN, TEST_ISSUER, manifest_for
 from workeasy360.contracts.enums import MembershipStatus, OrganizationStatus
 from workeasy360.contracts.values.tenant import TenantContext
 
@@ -430,6 +432,17 @@ COMMERCIAL_PERMISSIONS = (
     "commercial.pricing.manage",
     "commercial.subscription.view",
     "commercial.subscription.manage",
+    # Phase 3. The same internal staff identity administers the product
+    # integration registry, because in reality it is the same people: whoever
+    # can publish a product as a SKU is whoever registers the application
+    # behind it. Held together here for the same reason as above - the tests
+    # that assert *which* permission gates *which* operation grant them
+    # individually (tests/security/test_ecosystem_security.py).
+    "platform.integration.view",
+    "platform.integration.register",
+    "platform.integration.update",
+    "platform.integration.lifecycle",
+    "platform.integration.credential",
 )
 
 
@@ -661,5 +674,238 @@ def billing_account(db, in_tenant):
             return billing.open_billing_account(
                 ctx, currency=currency, billing_region=region
             )
+
+    return make
+
+
+# --- remote product integration (Phase 3) ---------------------------------
+#
+# These live here rather than beside the module because two suites need them:
+# the module's own tests under workeasy360/platform/ecosystem/tests/, and the
+# acceptance proof under tests/integration/. Duplicating "what a registered
+# product looks like" is how two subtly different definitions of a
+# registration end up in one codebase - the same argument this file's header
+# makes about tenants.
+#
+# Two of them carry most of the weight.
+#
+# `signing_key` puts a real key pair in place: a generated private half in the
+# process environment, where EnvSigningKeyProvider will find it, and the
+# public half in the database. Nothing is stubbed - tokens in these tests are
+# genuinely signed and genuinely verified, because a fake signer would make
+# every tampering assertion prove nothing.
+#
+# `register_product` runs the real registration path, through the real
+# services, with real authorization - not ProductIntegration.objects.create.
+# A fixture that wrote rows directly would let a test pass against a shape the
+# registration service would never produce.
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    """Clear the limiter's in-process fallback between tests.
+
+    The shared cache is already cleared by the root ``_clear_cache`` fixture,
+    but the in-process window survives it - it exists precisely for when the
+    cache is unavailable. Without this, a test that exhausts a bucket would
+    leak that into the next one and fail it for the wrong reason.
+    """
+    from workeasy360.platform.ecosystem import ratelimit
+
+    ratelimit.reset()
+    yield
+    ratelimit.reset()
+
+
+@pytest.fixture
+def signing_key(db, settings):
+    """An active RS256 signing key, with its private half in the environment.
+
+    Returns the ``SigningKey`` row. The private PEM is placed in
+    ``os.environ`` rather than in a setting because that is where
+    ``EnvSigningKeyProvider`` looks, and testing the provider through its real
+    lookup is the point - a fixture that monkeypatched the provider would
+    leave the resolution path untested.
+    """
+    from workeasy360.platform.ecosystem import keys
+    from workeasy360.platform.ecosystem.models import SigningKey, SigningKeyStatus
+
+    reference = f"test{uuid.uuid4().hex[:8]}"
+    private_pem, public_pem = keys.generate_key_pair("RS256")
+    variable = keys.EnvSigningKeyProvider().variable_name(reference)
+    os.environ[variable] = private_pem
+
+    key = SigningKey.objects.create(
+        kid=keys.new_kid(),
+        algorithm="RS256",
+        public_key_pem=public_pem,
+        private_key_ref=reference,
+        status=SigningKeyStatus.ACTIVE.value,
+    )
+    key.private_pem = private_pem  # type: ignore[attr-defined]
+    yield key
+    os.environ.pop(variable, None)
+
+
+@pytest.fixture
+def new_signing_key(db):
+    """A factory for additional keys, for the rotation tests."""
+    from workeasy360.platform.ecosystem import keys
+    from workeasy360.platform.ecosystem.models import SigningKey, SigningKeyStatus
+
+    created: list[str] = []
+
+    def make(status=SigningKeyStatus.PENDING, algorithm="RS256"):
+        reference = f"test{uuid.uuid4().hex[:8]}"
+        private_pem, public_pem = keys.generate_key_pair(algorithm)
+        variable = keys.EnvSigningKeyProvider().variable_name(reference)
+        os.environ[variable] = private_pem
+        created.append(variable)
+
+        key = SigningKey.objects.create(
+            kid=keys.new_kid(),
+            algorithm=algorithm,
+            public_key_pem=public_pem,
+            private_key_ref=reference,
+            status=status.value,
+        )
+        key.private_pem = private_pem  # type: ignore[attr-defined]
+        return key
+
+    yield make
+    for variable in created:
+        os.environ.pop(variable, None)
+
+
+@pytest.fixture
+def register_product(db, platform_admin, catalog, in_tenant):
+    """Register and (by default) activate an integration, through the services.
+
+    Depends on ``catalog`` because registration verifies the product code
+    against it through ``contracts/ports/catalog.py`` - a product must be a
+    sellable SKU before an application can be registered against it. The
+    dependency is the contract working, not fixture coupling.
+
+    Returns a dict carrying the client id, the redirect URI, the credential
+    and - for a ``public_key`` credential - the product's private key, which
+    is what the reference client signs its assertions with.
+    """
+    from workeasy360.platform.ecosystem import keys, services
+
+    ctx = platform_admin["ctx"]
+
+    def make(
+        product_code: str,
+        *,
+        origin: str = PRODUCT_ORIGIN,
+        activate: bool = True,
+        scopes: tuple[str, ...] = ("openid",),
+        credential_kind: str = "public_key",
+        manifest: dict | None = None,
+    ) -> dict:
+        payload = manifest or manifest_for(product_code, origin=origin, scopes=scopes)
+
+        with in_tenant(ctx):
+            integration = services.register_integration(ctx, manifest=payload)
+            if activate:
+                services.transition(
+                    ctx, client_id=integration.client_id, to_status="active"
+                )
+
+            private_pem = ""
+            if credential_kind == "public_key":
+                private_pem, public_pem = keys.generate_key_pair("RS256")
+                issued = services.create_credential(
+                    ctx,
+                    client_id=integration.client_id,
+                    kind="public_key",
+                    public_key_pem=public_pem,
+                    algorithm="RS256",
+                    label="test",
+                )
+            else:
+                issued = services.create_credential(
+                    ctx, client_id=integration.client_id, kind="client_secret"
+                )
+
+        return {
+            "integration": integration,
+            "client_id": integration.client_id,
+            "product_code": product_code,
+            "origin": origin,
+            "redirect_uri": f"{origin}/auth/callback",
+            "credential_id": issued.credential_id,
+            "client_secret": issued.secret,
+            "private_key_pem": private_pem,
+        }
+
+    return make
+
+
+@pytest.fixture
+def product_client(client):
+    """Build a :class:`ReferenceProductClient` over a registration.
+
+    ``client`` is Django's test client, used purely as transport. The
+    reference client imports nothing from ``workeasy360`` - asserted by
+    ``test_reference_client_imports_no_platform_module``.
+    """
+    from tests.factories.reference_product_client import ReferenceProductClient
+
+    def make(registration: dict, *, http=None) -> ReferenceProductClient:
+        return ReferenceProductClient(
+            http=http or client,
+            issuer=TEST_ISSUER,
+            client_id=registration["client_id"],
+            redirect_uri=registration["redirect_uri"],
+            private_key_pem=registration["private_key_pem"],
+            credential_kid=registration["credential_id"],
+            client_secret=registration["client_secret"],
+        )
+
+    return make
+
+
+@pytest.fixture
+def signed_in(client, db):
+    """Sign a user into the platform's own session, with an assurance level.
+
+    The authorization endpoint is the one place in this phase that reads a
+    browser session rather than a credential, so these suites need a real one.
+    ``force_login`` establishes it exactly as the platform's login flow would;
+    ``w360_aal`` is the claim that flow writes.
+    """
+
+    def make(user, *, aal: int = 1):
+        client.force_login(user)
+        session = client.session
+        session["w360_aal"] = aal
+        session.save()
+        return client
+
+    return make
+
+
+@pytest.fixture
+def entitled_org(db, organization_factory, tenant_ctx_factory, entitled):
+    """An organization holding a product, ready to authenticate into it.
+
+    Granted through ``commercial/provisioning``, which is the sole sanctioned
+    entitlement writer (A10). Writing ``Entitlement`` rows directly would test
+    a state the system cannot actually reach.
+    """
+
+    def make(product_code: str = "crm", *, slug: str | None = None, **kwargs):
+        org, membership, user = organization_factory(
+            slug=slug or f"org-{uuid.uuid4().hex[:10]}"
+        )
+        entitled(org.id, product_code, **kwargs)
+        return {
+            "org": org,
+            "membership": membership,
+            "user": user,
+            "ctx": tenant_ctx_factory(org, membership, user),
+            "organization_id": str(org.id),
+        }
 
     return make

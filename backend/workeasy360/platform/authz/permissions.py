@@ -1,17 +1,20 @@
 """Platform permission declarations.
 
-This file is the platform's complete privilege surface. Products declare their
-own in ``products/<p>/permissions.py``; none exist in Phase 1, but the naming
-convention is fixed here so the first product has a pattern to follow rather
-than inventing one:
+This file is the platform's complete privilege surface, and under ADR-017 it
+is the *only* privilege surface this repository declares. Products are
+separate applications; they own their own permissions and will declare them
+to the platform through the registration contract
+(16-ecosystem-product-boundary.md section 7), not by adding entries here.
+
+The naming convention is fixed here so every product follows one shape:
 
     <product>.<resource>.<action>     crm.contact.view, crm.contact.create
     platform.<resource>.<action>      platform.member.invite
 
-The CRM keys below appear only in ``EXAMPLE_PRODUCT_PERMISSIONS`` as a
-documented convention. They are **not registered** - registering permissions
-for a product that does not exist would let them be granted, and a grantable
-permission with no enforcement behind it is worse than none.
+``EXAMPLE_PRODUCT_PERMISSIONS`` below is that convention written down, and
+nothing more. Those keys are **not registered**: a grantable permission with
+nothing enforcing it is worse than none, and the code that would enforce a
+product permission does not live in this repository at all.
 """
 
 from __future__ import annotations
@@ -195,8 +198,9 @@ PLATFORM_PERMISSIONS: Final = (
 permission_registry.register_all(PLATFORM_PERMISSIONS)
 
 
-#: Naming convention for products, documented but deliberately unregistered.
-#: These become real when ``products/crm/permissions.py`` declares them.
+#: The naming convention, documented and deliberately unregistered. Every key
+#: here belongs to a product built outside this repository; none is grantable
+#: (asserted by ``test_example_product_permissions_remain_unregistered``).
 EXAMPLE_PRODUCT_PERMISSIONS: Final = (
     "crm.contact.view",
     "crm.contact.create",

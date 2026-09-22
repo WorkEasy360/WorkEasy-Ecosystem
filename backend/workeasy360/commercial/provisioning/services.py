@@ -294,7 +294,7 @@ def _expected_snapshot(computed: ComputedEntitlements) -> dict[str, Any]:
     """
     from workeasy360.platform.entitlements.services.read import (
         _more_generous_feature,
-        _more_generous_product,
+        more_generous_product,
     )
 
     products: dict[str, Any] = {}
@@ -307,7 +307,7 @@ def _expected_snapshot(computed: ComputedEntitlements) -> dict[str, Any]:
                 product.grace_ends_at.isoformat() if product.grace_ends_at else None
             ),
         }
-        products[product.product_code] = _more_generous_product(
+        products[product.product_code] = more_generous_product(
             products.get(product.product_code), candidate
         )
 

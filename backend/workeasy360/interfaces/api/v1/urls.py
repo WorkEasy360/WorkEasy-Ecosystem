@@ -16,7 +16,12 @@ from __future__ import annotations
 
 from django.urls import path
 
-from workeasy360.interfaces.api.v1 import commercial_views, views
+from workeasy360.interfaces.api.v1 import (
+    commercial_views,
+    ecosystem_views,
+    integration_admin_views,
+    views,
+)
 
 urlpatterns = [
     # A minimal tenant-scoped surface, present so the tenancy middleware,
@@ -128,4 +133,74 @@ urlpatterns = [
         commercial_views.change_plan_view,
         name="subscription-change-plan",
     ),
+    # --- remote product integration: the external trust boundary ---
+    #
+    # NOT under the tenant path shape, and that is the point. These endpoints
+    # are reached by an application that has no Workeasy360 session and no
+    # organization context yet - establishing one is what they are for. The
+    # tenancy middleware therefore resolves no tenant here, so every one of
+    # them performs its own explicit verification: the authorization endpoint
+    # resolves and checks a membership, the token endpoint reads the
+    # organization from the code it redeems, and the entitlement endpoint
+    # takes the product from the authenticated client. Any tenant-model query
+    # they attempted without doing so would raise rather than run unscoped,
+    # which is the fail-closed property rather than a gap.
+    #
+    # `/integrations/` rather than a product name: this is the platform's
+    # integration surface, and no route here is named after any product
+    # (test_api_exposes_no_product_domain_routes).
+    path(
+        "integrations/oauth/authorize",
+        ecosystem_views.authorize,
+        name="oidc-authorize",
+    ),
+    path(
+        "integrations/oauth/token",
+        ecosystem_views.token,
+        name="oidc-token",
+    ),
+    path(
+        "integrations/oauth/userinfo",
+        ecosystem_views.userinfo,
+        name="oidc-userinfo",
+    ),
+    path(
+        "integrations/entitlements/verify",
+        ecosystem_views.verify_entitlement,
+        name="integration-entitlement-verify",
+    ),
+    # --- product integration administration (staff control plane) ---
+    #
+    # Under the tenant path, unlike the four above, because these are
+    # performed by an identified staff member whose TenantContext supplies
+    # the authorization subject and the audit trail - the same shape as
+    # commercial catalog administration.
+    path(
+        "orgs/<slug:org_slug>/integrations",
+        integration_admin_views.integrations_view,
+        name="integrations",
+    ),
+    path(
+        "orgs/<slug:org_slug>/integrations/<str:client_id>",
+        integration_admin_views.integration_detail_view,
+        name="integration-detail",
+    ),
+    path(
+        "orgs/<slug:org_slug>/integrations/<str:client_id>/status",
+        integration_admin_views.integration_status_view,
+        name="integration-status",
+    ),
+    path(
+        "orgs/<slug:org_slug>/integrations/<str:client_id>/credentials",
+        integration_admin_views.credentials_view,
+        name="integration-credentials",
+    ),
+    path(
+        "orgs/<slug:org_slug>/integrations/<str:client_id>/credentials/<str:credential_id>",
+        integration_admin_views.credential_detail_view,
+        name="integration-credential-detail",
+    ),
+    # No product-domain routes. Products are separate applications and expose
+    # their own domain APIs (ADR-017, 16-ecosystem-product-boundary.md s5).
+    # Asserted by test_api_exposes_no_product_domain_routes.
 ]

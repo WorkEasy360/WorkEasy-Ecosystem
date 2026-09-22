@@ -1,15 +1,35 @@
 # Runtime dependencies. Pinned exactly: 12-security.md section 15 forbids
 # floating versions, and a lockfile is what makes a build reproducible.
 #
-# Versions are the latest patched releases as of 2026-09-21. `pip-audit
+# Versions are the latest patched releases as of 2026-09-22. `pip-audit
 # --strict` runs in CI on every build and daily; a critical finding blocks
 # release.
+#
+# Every entry below is imported by this repository, directly or through a
+# Django setting: `redis` backs django.core.cache.backends.redis.RedisCache
+# and the Celery result backend; `argon2-cffi` backs Argon2PasswordHasher.
+# Removed 2026-09-22 (Phase 3R audit, both unused since before Phase 3):
+# djangorestframework (never imported, never installed as an app) and
+# python-dotenv (config/env.py implements its own .env loader).
 Django==5.2.17
-djangorestframework==3.18.1
 psycopg[binary]==3.2.4
 celery==5.4.0
 kombu==5.4.2
 redis==5.2.1
 structlog==24.4.0
 argon2-cffi==23.1.0
-python-dotenv==1.2.3
+
+# --- Remote product integration (Phase 3) --------------------------------
+#
+# JOSE only: RFC 7515/7517/7519 signing, verification and JWK Set rendering
+# for the OIDC identity tokens products verify offline. The authorization
+# flow itself is not delegated to a library - it has to bind organization
+# context, membership validity and entitlement, which is this platform's
+# domain and not any library's. See docs/phase-3/03-sso-architecture.md s7
+# for the evaluation against Authlib and django-oauth-toolkit.
+#
+# `cryptography` is PyJWT's asymmetric backend and is also used directly by
+# platform/ecosystem/keys.py to generate and serialise key pairs. It is a
+# direct dependency, not an accident of the extra, so it is pinned here.
+PyJWT==2.14.0
+cryptography==50.0.1

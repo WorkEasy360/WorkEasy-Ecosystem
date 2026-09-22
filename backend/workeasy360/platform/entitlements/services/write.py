@@ -385,7 +385,7 @@ def _rewrite_snapshot(org_id: UUID, computed: ComputedEntitlements, now: Any) ->
     from workeasy360.platform.entitlements.models import EntitlementSnapshot
     from workeasy360.platform.entitlements.services.read import (
         _more_generous_feature,
-        _more_generous_product,
+        more_generous_product,
     )
 
     products: dict[str, dict[str, Any]] = {}
@@ -398,7 +398,7 @@ def _rewrite_snapshot(org_id: UUID, computed: ComputedEntitlements, now: Any) ->
                 product.grace_ends_at.isoformat() if product.grace_ends_at else None
             ),
         }
-        products[product.product_code] = _more_generous_product(
+        products[product.product_code] = more_generous_product(
             products.get(product.product_code), candidate
         )
 

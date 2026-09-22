@@ -94,10 +94,15 @@ def test_unregistered_event_type_is_refused(two_tenants, in_tenant):
     a = two_tenants["a"]
     with in_tenant(a["ctx"]):
         bad = DomainEvent(
-            event_type="crm.deal.won",  # not registered in Phase 1
+            # A namespace that will never be a real product code, so this
+            # stays unregistered no matter what any product publishes. It
+            # used to be "crm.deal.won", which made the test depend on CRM
+            # never registering it - a dependency on a product's behaviour,
+            # from a platform test.
+            event_type="nonexistent_module.widget.frobnicated",
             event_version=1,
             organization_id=a["org"].id,
-            aggregate_type="crm.deal",
+            aggregate_type="nonexistent_module.widget",
             aggregate_id=str(uuid.uuid4()),
             payload={},
         )

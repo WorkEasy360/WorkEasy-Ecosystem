@@ -378,28 +378,32 @@ def test_every_permission_follows_the_naming_convention():
         assert parsed.action
 
 
-#: Namespaces that may register permissions. Both are infrastructure, not
-#: products: ``platform`` is the kernel and ``commercial`` sells the products
-#: rather than being one. The point of the list is that it does **not**
-#: contain a product code - a product that could register permissions could
-#: grant itself privileges before any enforcement existed for them.
+#: Namespaces this repository may register permissions under. Both are
+#: platform infrastructure, not products: ``platform`` is the kernel and
+#: ``commercial`` sells the products rather than being one (widened to
+#: include it in Phase 2, when it gained a real privilege surface -
+#: catalog, pricing and subscription administration).
+#:
+#: The point of the list is that it does **not** contain a product code.
+#: Under ADR-017 a product is a separate application, so the code enforcing
+#: a product permission is not in this repository at all - registering one
+#: here would make it grantable with nothing behind it, which is worse than
+#: not having it.
 NON_PRODUCT_PERMISSION_NAMESPACES = {"platform", "commercial"}
 
 
 def test_only_non_product_namespaces_register_permissions():
-    """Product permissions belong in ``products/<p>/permissions.py``.
+    """No product permission is registered by the platform repository.
 
-    Widened from "platform only" in Phase 2, when ``commercial`` gained a real
-    privilege surface (catalog, pricing and subscription administration). The
-    rule the assertion protects is unchanged: no product may register a
-    permission before its module exists, because a grantable permission with
-    no enforcement behind it is worse than none.
+    Products declare their privilege surface to the platform through the
+    registration contract (16-ecosystem-product-boundary.md section 7), which
+    is data submitted at deploy time - not a tuple in this source tree.
     """
     for declaration in permission_registry.all():
         assert declaration.product in NON_PRODUCT_PERMISSION_NAMESPACES, (
             f"{declaration.key} is registered under {declaration.product!r}, "
             f"which is not one of {sorted(NON_PRODUCT_PERMISSION_NAMESPACES)}. "
-            f"Product permissions belong in products/<p>/permissions.py."
+            f"Product permissions belong to the product (ADR-017)."
         )
 
 
@@ -429,12 +433,12 @@ def test_no_system_role_grants_catalog_or_pricing_management():
         )
 
 
-def test_no_product_permissions_are_registered_in_phase_1():
-    """CRM keys exist as a documented convention only.
+def test_example_product_permissions_remain_unregistered():
+    """``EXAMPLE_PRODUCT_PERMISSIONS`` is a naming convention, not a grant.
 
-    Registering permissions for a product that does not exist would make them
-    grantable, and a grantable permission with no enforcement behind it is
-    worse than none.
+    Every key in it belongs to a product built outside this repository.
+    Registering one would make it grantable with nothing enforcing it, which
+    is worse than not having it at all.
     """
     from workeasy360.platform.authz.permissions import EXAMPLE_PRODUCT_PERMISSIONS
 

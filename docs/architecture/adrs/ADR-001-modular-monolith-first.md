@@ -1,5 +1,15 @@
 # ADR-001 — Modular Monolith First
 
+> **CORRECTION (2026-09-22, [ADR-017](ADR-017-products-are-separate-applications.md)).**
+> This document was written when product domains were to live *inside* this
+> repository, under `products/`. They no longer do: each business product is
+> a separate application in its own repository. Everything here about
+> layering, ownership, isolation and enforcement still holds — but wherever
+> it places a product's code in this repository, read
+> [16 — Ecosystem / Product Boundary](../16-ecosystem-product-boundary.md)
+> instead.
+
+
 **Status:** Accepted
 **Date:** 2026-09-21
 **Deciders:** Architecture

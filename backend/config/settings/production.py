@@ -19,6 +19,16 @@ from config.settings.base import (
     env,
 )
 
+# --- Remote product integration -----------------------------------------
+#
+# The issuer is what every deployed product pins and verifies, so it must be
+# a real https origin rather than the development default. Insecure redirect
+# URIs are refused outright: an authorization code delivered over plaintext
+# http is a disclosed credential, and the loopback exemption that makes local
+# development workable has no meaning on a public deployment.
+OIDC_ISSUER = env.str("W360_OIDC_ISSUER", required=True)
+OIDC_ALLOW_INSECURE_REDIRECT_URIS = False
+
 ENVIRONMENT = "production"
 
 # Non-negotiable. DEBUG=True in production leaks settings, SQL and stack
@@ -137,6 +147,22 @@ env.check(
 env.check(
     bool(CELERY_BROKER_URL),
     "W360_BROKER_URL is required.",
+)
+env.check(
+    OIDC_ISSUER.startswith("https://"),
+    "W360_OIDC_ISSUER must be an https origin. It is the `iss` claim every "
+    "product pins, and a plaintext issuer means the discovery document and "
+    "the key set can both be replaced in transit.",
+)
+env.check(
+    not OIDC_ISSUER.endswith("/"),
+    "W360_OIDC_ISSUER must not have a trailing slash: the `iss` claim is "
+    "compared by exact string equality (OpenID Connect Core section 3.1.3.7), "
+    "so a stray slash makes every product reject every token.",
+)
+env.check(
+    not OIDC_ALLOW_INSECURE_REDIRECT_URIS,
+    "W360_OIDC_ALLOW_INSECURE_REDIRECT_URIS must be False in production.",
 )
 
 env.require_all(context="production configuration")

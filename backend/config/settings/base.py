@@ -65,6 +65,12 @@ PLATFORM_APPS = [
     "workeasy360.platform.audit",
     "workeasy360.platform.files",
     "workeasy360.platform.notifications",
+    # P3. The ecosystem front door: the registry of remotely integrated
+    # products, their credentials, the signing keys and the OIDC flow. Sits
+    # above authz/entitlements/audit because it composes all three, and
+    # inside platform/ because everything it owns is identity, tenancy,
+    # access and audit - never commerce (ADR-018).
+    "workeasy360.platform.ecosystem",
 ]
 
 INTEGRATION_APPS = [
@@ -83,9 +89,13 @@ COMMERCIAL_APPS = [
     "workeasy360.commercial.provisioning",
 ]
 
-# Products are structural placeholders in Phase 1. They are deliberately not
-# installed apps: an empty app that migrates nothing is noise, and their
-# packages exist so the independence contract has something to check.
+# Products are NOT part of this application. Each business product (CRM,
+# Books, Inventory, ...) is a separate application in its own repository,
+# integrating through the contracts in 16-ecosystem-product-boundary.md.
+# The packages under products/ are a reserved, permanently empty namespace:
+# they exist only so the import-linter independence contracts and
+# test_products_are_structural_placeholders_only have modules to bind to.
+# This list must stay empty (ADR-017; test_no_product_apps_are_installed).
 PRODUCT_APPS: list[str] = []
 
 INSTALLED_APPS = (
@@ -385,6 +395,15 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": env.float("W360_BEAT_PRUNE_S", 86400.0),
         "options": {"queue": "heavy", "expires": 3600},
     },
+    # Authorization codes are issued on every product sign-in, live for sixty
+    # seconds, and are then worthless. Without this the table grows for the
+    # life of the deployment and the redemption lookup - which a user waits
+    # for - gets slower with every login that ever happened.
+    "ecosystem-prune-authorization-codes": {
+        "task": "platform.ecosystem.prune_authorization_codes",
+        "schedule": env.float("W360_BEAT_AUTHCODE_PRUNE_S", 3600.0),
+        "options": {"queue": "heavy", "expires": 3500},
+    },
 }
 
 # Bounded retry policy shared by every task (09-failure-resilience.md s4.3).
@@ -405,6 +424,96 @@ OUTBOX_RETENTION_DAYS = env.int("W360_OUTBOX_RETENTION_DAYS", 30)
 ENTITLEMENT_CACHE_TTL_S = env.int("W360_ENTITLEMENT_CACHE_TTL_S", 300)
 ENTITLEMENT_P50_BUDGET_MS = env.float("W360_ENTITLEMENT_P50_BUDGET_MS", 1.0)
 ENTITLEMENT_P95_BUDGET_MS = env.float("W360_ENTITLEMENT_P95_BUDGET_MS", 5.0)
+
+# --- Remote product integration (OIDC) -----------------------------------
+#
+# The settings behind docs/phase-3/. Every one of them is a security or
+# availability trade-off that an operator may need to move without a code
+# change, which is why none of them is a constant in the module that uses it.
+
+# The `iss` claim, and the base of the discovery document. Products pin this
+# value and reject any token whose issuer differs, so changing it invalidates
+# every deployed integration - it is deliberately not derived from the
+# request Host header, which is client-supplied and therefore never truthful
+# (TB-1).
+OIDC_ISSUER = env.str("W360_OIDC_ISSUER", "http://localhost:8000")
+
+# Token lifetimes. The security/availability trade-off is stated in full in
+# docs/phase-3/09-product-integration-guide.md section 6: signatures are
+# verified offline, so a revoked user keeps a *valid token* until it expires.
+# The ID token's lifetime is therefore the maximum revocation window, and it
+# is short because the product exchanges it once for its own session rather
+# than presenting it per request.
+OIDC_ID_TOKEN_TTL_S = env.int("W360_OIDC_ID_TOKEN_TTL_S", 300)
+OIDC_ACCESS_TOKEN_TTL_S = env.int("W360_OIDC_ACCESS_TOKEN_TTL_S", 900)
+
+# An authorization code is a bearer credential in a URL, in a browser's
+# history and in any referrer header. 60 seconds is ample for a server-side
+# exchange and hostile to a stolen code (RFC 6749 section 4.1.2 recommends a
+# maximum of ten minutes; there is no reason to take it).
+OIDC_AUTHORIZATION_CODE_TTL_S = env.int("W360_OIDC_AUTHORIZATION_CODE_TTL_S", 60)
+
+# Tolerance for clock difference between the platform and a product, applied
+# to `exp`/`nbf`/`iat`. Deliberately small: a large window extends the life of
+# every expired token by that amount. 30s is well inside what NTP-synchronised
+# hosts drift and well under the ID token lifetime.
+OIDC_CLOCK_SKEW_S = env.int("W360_OIDC_CLOCK_SKEW_S", 30)
+
+# How old a private_key_jwt client assertion may be. Short, because the
+# assertion is single-use by `jti` and a long window enlarges the replay
+# cache for no benefit.
+OIDC_CLIENT_ASSERTION_MAX_AGE_S = env.int("W360_OIDC_CLIENT_ASSERTION_MAX_AGE_S", 300)
+
+# RS256 or ES256. RS256 is the default because OpenID Connect Core requires
+# every implementation to support it, so it is the one algorithm an
+# independently written product is guaranteed to verify. ES256 is offered for
+# deployments that prefer smaller keys and tokens; the code path is identical.
+OIDC_SIGNING_ALGORITHM = env.choice(
+    "W360_OIDC_SIGNING_ALGORITHM", ("RS256", "ES256"), default="RS256"
+)
+
+# Where EnvSigningKeyProvider looks: a SigningKey row storing
+# private_key_ref="k1" resolves to W360_OIDC_SIGNING_KEY_K1. The private half
+# never enters the database (contracts/ports/signing.py).
+OIDC_SIGNING_KEY_ENV_PREFIX = env.str(
+    "W360_OIDC_SIGNING_KEY_ENV_PREFIX", "W360_OIDC_SIGNING_KEY_"
+)
+
+# How long a product should wait before re-asking "may this org still use
+# me?". Returned to the product in every verification response so the cadence
+# is the platform's to change, not each product's to guess.
+OIDC_ENTITLEMENT_REVALIDATE_AFTER_S = env.int(
+    "W360_OIDC_ENTITLEMENT_REVALIDATE_AFTER_S", 900
+)
+
+# http:// redirect URIs on loopback hosts. Permitted for local development
+# and the conformance fixtures; production overrides this to False and an
+# assertion in production.py pins it.
+OIDC_ALLOW_INSECURE_REDIRECT_URIS = env.bool(
+    "W360_OIDC_ALLOW_INSECURE_REDIRECT_URIS", ENVIRONMENT != "production"
+)
+
+# Targeted limits on the externally reachable trust boundary, as
+# (max_requests, window_seconds). Nothing else in the platform is throttled by
+# this: a global throttle would make one product's misbehaviour everyone's
+# outage, which is the failure mode the ecosystem design exists to prevent
+# (docs/phase-3/11-security-threat-model.md T-12).
+ECOSYSTEM_RATE_LIMITS = {
+    # Per (client, client IP). Generous: a real launcher sends one per user
+    # sign-in, and an over-tight limit here breaks a customer's morning.
+    "authorize": (env.int("W360_RL_AUTHORIZE", 60), 60),
+    # Per client. A token exchange follows an authorization, so the ceiling
+    # only has to exceed the authorize rate.
+    "token": (env.int("W360_RL_TOKEN", 120), 60),
+    # Per client. Products revalidate on OIDC_ENTITLEMENT_REVALIDATE_AFTER_S,
+    # so this supports a large tenant population without being a free
+    # enumeration budget.
+    "verify": (env.int("W360_RL_VERIFY", 600), 60),
+    # Per client, counted only on *failed* authentication. An order of
+    # magnitude tighter than the success path: credential brute force is the
+    # thing this one exists for.
+    "client_auth_failure": (env.int("W360_RL_CLIENT_AUTH_FAILURE", 10), 60),
+}
 
 # --- Files ---------------------------------------------------------------
 

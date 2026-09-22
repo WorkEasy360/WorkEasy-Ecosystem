@@ -127,10 +127,33 @@ def check(
 
     ``write=True`` additionally requires a status that permits writes, so a
     suspended entitlement reads but does not mutate.
+
+    **Requires an active tenant context for ``organization_id``.** The
+    snapshot it reads is a ``TenantScopedModel``, so the scoped manager needs
+    Layer 2 bound and the RLS policy needs Layer 3 set. That is the normal
+    case - this is called from inside a request or a ``TenantTask``, both of
+    which establish both layers. A caller that legitimately has no context,
+    such as the remote entitlement API answering for an organization nobody
+    is signed in to, uses ``selectors.decision_for_organization`` instead;
+    both reach the same :func:`decide` so the two can never disagree.
     """
     resolved = _resolve(organization_id)
-    entry = resolved.product_entry(str(product))
+    return decide(resolved.product_entry(str(product)), product, write=write)
 
+
+def decide(
+    entry: dict[str, Any] | None, product: ProductCode | str, *, write: bool = False
+) -> EntitlementDecision:
+    """Turn one resolved snapshot entry into a decision.
+
+    Extracted so that there is exactly **one** implementation of "what does
+    this entitlement state mean", reachable from both the request path
+    (:func:`check`) and the service path
+    (``selectors.decision_for_organization``). Two copies of this ladder would
+    eventually disagree about what ``grace`` permits, and the disagreement
+    would be a customer being told different things by the platform and by
+    their product.
+    """
     if entry is None:
         metrics.increment(ENTITLEMENT_CHECKS, result="denied")
         return EntitlementDecision.denied(EntitlementReason.NOT_ENTITLED)
@@ -393,7 +416,7 @@ def _compute_live(organization_id: UUID) -> ResolvedEntitlements:
             "write": row.status_enum.allows_write,
             "grace_ends_at": row.grace_ends_at.isoformat() if row.grace_ends_at else None,
         }
-        products_out[row.product_code] = _more_generous_product(existing, candidate)
+        products_out[row.product_code] = more_generous_product(existing, candidate)
 
     features_out: dict[str, Any] = {}
     for row in FeatureEntitlement.objects.filter(organization_id=organization_id):
@@ -427,9 +450,16 @@ _STATUS_RANK = {
 }
 
 
-def _more_generous_product(
+def more_generous_product(
     existing: dict[str, Any] | None, candidate: dict[str, Any]
 ) -> dict[str, Any]:
+    """Rank two overlapping sources for the same product, most generous wins.
+
+    Public rather than private because ``selectors.decision_for_organization``
+    computes the same merge on the service path, where it must read through
+    the unscoped manager. One function, so the two paths cannot disagree about
+    what two overlapping subscriptions add up to.
+    """
     if existing is None:
         return candidate
     winner = (

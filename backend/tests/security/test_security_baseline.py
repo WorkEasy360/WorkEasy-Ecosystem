@@ -122,6 +122,11 @@ def _production_env(**overrides) -> dict[str, str]:
         "W360_FILE_STORAGE_BACKEND": "s3",
         "W360_REDIS_URL": "rediss://cache:6379/0",
         "W360_BROKER_URL": "amqps://broker:5671//",
+        # The `iss` claim every deployed product pins and verifies.
+        # Required in production and asserted to be an https origin
+        # with no trailing slash, because `iss` is compared by exact
+        # string equality (OpenID Connect Core section 3.1.3.7).
+        "W360_OIDC_ISSUER": "https://app.workeasy360.com",
     }
     base.update(overrides)
     return base
@@ -189,6 +194,12 @@ def test_production_refuses_to_start_without_a_critical_setting(missing, monkeyp
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "config.settings.production")
+    # A local .env (the documented `cp .env.example .env` developer
+    # workflow) would otherwise backfill the very key this test just
+    # deleted via Env.load_dotenv()'s setdefault - making the "missing"
+    # case silently not missing. This test's environment must be exactly
+    # what it constructs, nothing a stray file on disk contributes.
+    monkeypatch.setattr(Env, "load_dotenv", lambda self, path: None)
 
     sys.modules.pop("config.settings.production", None)
     sys.modules.pop("config.settings.base", None)
@@ -209,6 +220,11 @@ def test_production_refuses_to_start_without_a_critical_setting(missing, monkeyp
         ({"W360_FILE_STORAGE_BACKEND": "local"}, "not durable"),
         ({"W360_DB_APP_USER": "w360_migrator"}, "non-owner"),
         ({"W360_DB_APP_PASSWORD": "w360_app_pw"}, "development default"),
+        # Phase 3. A plaintext issuer means the discovery document and
+        # the key set can both be replaced in transit, and a trailing
+        # slash makes every product reject every token.
+        ({"W360_OIDC_ISSUER": "http://app.workeasy360.com"}, "https origin"),
+        ({"W360_OIDC_ISSUER": "https://app.workeasy360.com/"}, "trailing slash"),
     ],
 )
 def test_production_refuses_insecure_configuration(override, expected, monkeypatch):
@@ -223,6 +239,7 @@ def test_production_refuses_insecure_configuration(override, expected, monkeypat
     for key, value in _production_env(**override).items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "config.settings.production")
+    monkeypatch.setattr(Env, "load_dotenv", lambda self, path: None)
 
     sys.modules.pop("config.settings.production", None)
     sys.modules.pop("config.settings.base", None)
@@ -245,6 +262,7 @@ def test_production_accepts_a_valid_configuration(monkeypatch):
     for key, value in _production_env().items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "config.settings.production")
+    monkeypatch.setattr(Env, "load_dotenv", lambda self, path: None)
 
     sys.modules.pop("config.settings.production", None)
     sys.modules.pop("config.settings.base", None)
@@ -279,7 +297,14 @@ def test_no_secrets_committed_to_the_repository():
     patterns = [
         re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS access key id
         re.compile(r"sk_live_[0-9a-zA-Z]{24,}"),  # Stripe live key
-        re.compile(r"-----BEGIN (RSA |EC )?PRIVATE KEY-----"),
+        # Header **and** a body. A bare header is not key material - it
+        # appears in tests that assert no key reaches a log or a
+        # response, and flagging those would train people to phrase the
+        # assertion so the scanner misses it, which is worse than the
+        # false positive. A real committed key has base64 right after the
+        # header, so requiring it makes the check more precise rather
+        # than more permissive.
+        re.compile(r"-----BEGIN (RSA |EC )?PRIVATE KEY-----[\s\n]*[A-Za-z0-9+/]{40,}"),
         re.compile(r"ghp_[0-9a-zA-Z]{36}"),  # GitHub token
     ]
 
@@ -312,6 +337,36 @@ def test_no_secrets_committed_to_the_repository():
                 findings.append(f"{rel}: {pattern.pattern}")
 
     assert not findings, "Possible secrets committed:\n" + "\n".join(findings)
+
+
+def test_the_secret_scanner_detects_a_real_key():
+    """Prove the private-key pattern is not vacuous.
+
+    The pattern requires a header *and* a body, so that a test asserting "no
+    key reached this log" is not itself reported. That narrowing is only
+    acceptable if the pattern still catches the thing it exists for - a key
+    actually committed to the tree - which is what this asserts, against
+    genuinely generated material rather than against a hand-written sample.
+    """
+    import re
+
+    from workeasy360.platform.ecosystem import keys
+
+    private_pem, _ = keys.generate_key_pair("RS256")
+    pattern = re.compile(
+        r"-----BEGIN (RSA |EC )?PRIVATE KEY-----[\s\\n]*[A-Za-z0-9+/]{40,}"
+    )
+
+    assert pattern.search(private_pem), (
+        "The scanner would not detect a real RSA private key committed to the repository."
+    )
+    assert pattern.search(private_pem.replace("\n", "\\n")), (
+        "The scanner would not detect a key stored with escaped newlines, "
+        "which is how most secret-manager CLIs render a PEM."
+    )
+    # And the shape that caused the narrowing is correctly ignored, so the
+    # false positive it was narrowed for cannot come back.
+    assert not pattern.search('assert "-----BEGIN PRIVATE KEY-----" not in body')
 
 
 def test_env_file_is_git_ignored():

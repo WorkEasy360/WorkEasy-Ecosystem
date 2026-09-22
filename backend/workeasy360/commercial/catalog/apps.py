@@ -15,4 +15,9 @@ class CatalogConfig(AppConfig):
         # Populates the permission registry. A permission that is not
         # declared in code cannot be granted, so this import is what makes
         # catalog administration possible at all.
-        from workeasy360.commercial.catalog import permissions  # noqa: F401
+        from workeasy360.commercial.catalog import directory, permissions  # noqa: F401
+
+        # Supplies the contracts-level ProductDirectory, so platform code can
+        # ask "is this product code real?" without importing commercial -
+        # which F-4 forbids and ADR-005 depends on.
+        directory.register()

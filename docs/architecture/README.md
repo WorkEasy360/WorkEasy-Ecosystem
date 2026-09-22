@@ -2,13 +2,20 @@
 
 **Phase 0 — Architecture Foundation.** Status: complete. See [PHASE-0-STATUS.md](PHASE-0-STATUS.md).
 
+> **Scope correction, 2026-09-22.** This repository is the **ecosystem
+> platform only**. Business products are separate applications in their own
+> repositories ([ADR-017](adrs/ADR-017-products-are-separate-applications.md)).
+> Documents 01, 02, 07, 08 and 14 predate that decision and carry a
+> correction banner; **[16 — Ecosystem / Product Boundary](16-ecosystem-product-boundary.md)
+> is authoritative** wherever they disagree.
+
 Start with [ARCHITECTURE.md](../../ARCHITECTURE.md) at the repository root — it holds the rules every developer must know. These documents hold the reasoning behind them.
 
 ## Reading order
 
 **New to the project?** 00 → 01 → 02 → [ARCHITECTURE.md](../../ARCHITECTURE.md). That is enough to contribute safely.
 
-**Building a product module?** Add 03, 04, 06, 07, 14.
+**Building a product?** It does not live here. Read **16** first, then 03, 04, 06, 07.
 
 **Working on platform or commercial?** Read everything.
 
@@ -34,6 +41,7 @@ Start with [ARCHITECTURE.md](../../ARCHITECTURE.md) at the repository root — i
 | 13 | [Deployment & Evolution](13-deployment-evolution.md) | How it runs, how it scales, when to extract |
 | 14 | [Repository Structure](14-repository-structure.md) | Where code goes |
 | 15 | [Risk Register](15-risk-register.md) | What we know is risky |
+| 16 | [Ecosystem / Product Boundary](16-ecosystem-product-boundary.md) | What belongs in this repository, and what a separate product may depend on |
 
 ## Architecture Decision Records
 
@@ -51,12 +59,20 @@ Start with [ARCHITECTURE.md](../../ARCHITECTURE.md) at the repository root — i
 | [010](adrs/ADR-010-partner-reseller-whitelabel-model.md) | Capability-based partner model |
 | [011](adrs/ADR-011-shared-ai-platform.md) | Shared AI platform behind a port |
 | [012](adrs/ADR-012-failure-isolation-strategy.md) | Tiered dependencies and failure isolation |
+| [013](adrs/ADR-013-package-namespace.md) | `workeasy360.` package namespace |
+| [014](adrs/ADR-014-membership-fk-allowlist.md) | Membership as a fourth cross-module FK target |
+| [015](adrs/ADR-015-platform-p0-ordering.md) | Platform P0 ordering |
+| [016](adrs/ADR-016-intra-commercial-foreign-keys.md) | Intra-commercial foreign keys |
+| [017](adrs/ADR-017-products-are-separate-applications.md) | **Products are separate applications, not packages here** |
+| [018](adrs/ADR-018-openid-connect-for-product-sso.md) | **OpenID Connect for remote product SSO**, served from `platform/ecosystem` |
+| [019](adrs/ADR-019-product-service-authentication.md) | How a product authenticates itself to the platform |
+| [020](adrs/ADR-020-signing-keys-and-the-control-plane-code.md) | Signing keys live outside the database; the authorization code is control plane |
 
 ## The five ideas that matter most
 
 If you remember nothing else:
 
-1. **Products never import products.** Events for writes, ports for reads. This is what makes them independently sellable.
+1. **Products are not in this repository.** They are separate applications reaching the platform through versioned contracts — never an import, never a shared database. This is what makes them independently sellable *and* independently deployable.
 2. **Entitlements live in `platform/`, not `commercial/`.** That is what lets us ban `products → commercial` outright, which is what keeps packaging out of product code.
 3. **Tenant isolation is five layers deep**, because the application will eventually contain a bug that forgets to filter, and RLS is what survives it.
 4. **Uncertainty never changes access.** A payment timeout is not a failed payment. Revocation requires a positive, durable decision.

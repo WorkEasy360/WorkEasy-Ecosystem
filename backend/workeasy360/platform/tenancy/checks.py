@@ -81,6 +81,18 @@ TENANT_SCOPE_EXEMPT = frozenset(
         # a plain models.Model for exactly this reason).
         "events.OutboxEvent",
         "events.DeadLetterEvent",
+        # ADR-020. The token endpoint has no tenant context and cannot have
+        # one: there is no session, no membership and no organization until
+        # the authorization code is found, and the code is what establishes
+        # them. A tenant-scoped manager would require the answer in order to
+        # ask the question.
+        #
+        # Protected instead by being reachable only through the SHA-256 of a
+        # 256-bit random secret, additionally bound to one client, one
+        # redirect URI and one PKCE challenge, and valid for sixty seconds.
+        # This is the same class as identity.User - control-plane-adjacent,
+        # carrying a tenant reference it does not derive access from.
+        "ecosystem.AuthorizationCode",
     }
 )
 

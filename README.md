@@ -2,17 +2,51 @@
 
 > **One Ecosystem to Run Your Entire Business.**
 
-One multi-tenant platform hosting multiple **independently commercializable**
-product domains (CRM, Books, Inventory, Projects, …) on one shared kernel,
-sold through direct and partner channels that are commercial constructs —
-never forks or separate deployments.
+**This repository is the ecosystem platform. It contains no business
+products.**
 
-**Status: Phase 1 complete.** The platform foundations exist and are tested.
-No product features have been built.
+Workeasy360 is the shared multi-tenant kernel that business products plug
+into: one account, one organization, one identity, one permission system, one
+subscription relationship, one app launcher. CRM, Books, Inventory, Projects,
+Marketing, Support, HR, Payroll and Commerce are **separate applications in
+their own repositories**, sold through this platform's catalog and integrating
+through its contracts.
+
+```
+                        Workeasy360 (this repository)
+         identity · organizations · authz · entitlements · catalog
+         pricing · subscriptions · billing · events · notifications
+         files · audit · observability · partners · app launcher
+                                   │
+        ┌──────────────┬───────────┼───────────┬──────────────┐
+        ▼              ▼           ▼           ▼              ▼
+      CRM           Books      Inventory   Projects        …
+   (separate      (separate    (separate   (separate
+    repo)          repo)        repo)       repo)
+```
+
+**Status: Phase 3 complete — a separate product can now integrate.** Phase 0
+(architecture), Phase 1 (platform foundations), Phase 2 (commercial core) and
+Phase 3R (scope correction) are built and tested. Phase 3 added the remote
+contracts: the platform is now an **OpenID Provider**, with a product
+integration registry, asymmetric token signing with key rotation, and an HTTP
+entitlement API. **912 tests, 0 failed, 0 skipped.**
+
+No product features live here, and none ever will — `products/` is a reserved,
+permanently empty namespace with an unconditional build check.
+
+**Building a product?** Start with the
+[Product Integration Guide](docs/phase-3/09-product-integration-guide.md). You
+need an issuer URL, a client id, a credential and a JWT library — nothing from
+this codebase.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the rules. **Read this before making a structural change.**
-- [docs/architecture/](docs/architecture/) — the full design, 16 documents and 15 ADRs
-- [docs/phase-1/](docs/phase-1/) — what was built, what was measured, what is carried
+- [16 — Ecosystem / Product Boundary](docs/architecture/16-ecosystem-product-boundary.md) — **what belongs here and what does not**
+- [ADR-017](docs/architecture/adrs/ADR-017-products-are-separate-applications.md) — why products are separate applications
+- [ADR-018](docs/architecture/adrs/ADR-018-openid-connect-for-product-sso.md) — why OpenID Connect, and where it lives
+- [docs/phase-3/](docs/phase-3/00-overview.md) — the remote integration contracts, in full
+- [docs/architecture/](docs/architecture/) — the full design, 17 documents and 20 ADRs
+- [docs/phase-3R/](docs/phase-3R/) — the scope audit and what it kept
 
 ---
 
@@ -24,7 +58,7 @@ Requires Docker and Python 3.10+.
 make setup      # virtualenv and dependencies
 make up         # PostgreSQL, PgBouncer, Redis, RabbitMQ
 make migrate    # schema, RLS policies and grants, as the owner role
-make test       # 379 tests
+make test       # the full platform suite
 ```
 
 `make help` lists everything else.
@@ -58,16 +92,18 @@ backend/workeasy360/
 ├── contracts/     L0   interfaces, event schemas, value objects. No Django.
 ├── platform/      L1   tenancy · observability · identity · organizations
 │                       authz · entitlements · audit · files · notifications
-├── integration/   L2   transactional outbox, events
-├── commercial/    L3   provisioning (the sole entitlement writer)
-├── products/      L3   placeholders only in Phase 1
+├── integration/   L2   transactional outbox, events, idempotency
+├── commercial/    L3   catalog · pricing · subscriptions · billing
+│                       provisioning (the sole entitlement writer)
+├── products/      L3   RESERVED AND EMPTY — products are separate
+│                       applications (ADR-017). A file here fails the build.
 └── interfaces/    L4   routing and composition. No business logic.
 ```
 
 **Dependencies point downward. Never sideways at L3. Never upward.**
 
-Enforced, not encouraged: nine import-linter contracts, nine Django system
-checks and twenty-one fitness tests run on every PR. The linter is itself
+Enforced, not encouraged: eleven import-linter contracts, nine Django system
+checks and twenty-five fitness tests run on every PR. The linter is itself
 tested, because a contract that never fails is indistinguishable from no
 contract.
 
@@ -76,6 +112,14 @@ contract.
 > `platform.system()` — which Django, psycopg and pip all call. Directory
 > names and every layer rule are exactly as documented
 > ([ADR-013](docs/architecture/adrs/ADR-013-package-namespace.md)).
+
+## Building a product for Workeasy360?
+
+It does not go in this repository. Start with
+[16 — Ecosystem / Product Boundary](docs/architecture/16-ecosystem-product-boundary.md):
+it defines what the platform owns, what you own, what you may depend on, and
+what you must never do. Note §14 — several remote contracts a separate
+product needs are specified but **not yet built**.
 
 ## Before you open a PR
 
@@ -90,13 +134,16 @@ on it is the cheapest architectural test available:
 
 "Nothing — it only uses contracts and events" means the boundary is right.
 
-## The three things most likely to catch you out
+## The four things most likely to catch you out
 
-1. **`unscoped_access()` relaxes the ORM only.** PostgreSQL RLS still applies.
+1. **Product-domain code does not belong here.** Contacts, invoices, stock
+   items, tasks, employees — if one product owns it, it is not platform.
+   Five fitness tests enforce this; `products/` must stay empty.
+2. **`unscoped_access()` relaxes the ORM only.** PostgreSQL RLS still applies.
    A cross-tenant write also needs `organization_db_scope(org_id)`, entered
    per organization.
-2. **Tenant queries need a transaction.** The RLS variable is transaction-local
+3. **Tenant queries need a transaction.** The RLS variable is transaction-local
    by design; outside one, every tenant query returns zero rows.
-3. **Entitlement before permission.** "Your plan does not include Books" is a
+4. **Entitlement before permission.** "Your plan does not include Books" is a
    sales conversation; "you lack permission" is an admin one. Merging them
    produces a support ticket engineering cannot resolve.

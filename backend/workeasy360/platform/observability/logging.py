@@ -34,7 +34,14 @@ from workeasy360.platform.observability.correlation import (
 _SENSITIVE_KEY_PATTERNS: Final = re.compile(
     r"(password|passwd|secret|token|api_?key|authorization|auth|credential"
     r"|private_?key|session_?id|csrf|cookie|signature|otp|mfa_?code"
-    r"|card_?number|cvv|iban|sort_?code|account_?number|ssn|nino)",
+    r"|card_?number|cvv|iban|sort_?code|account_?number|ssn|nino"
+    # OAuth/OIDC bearer material. Named explicitly because none of the
+    # patterns above catches them: `client_assertion` is a signed credential
+    # that authenticates a whole product, `code_verifier` is the secret half
+    # of PKCE, and `authorization_code` is redeemable for an identity
+    # assertion. Nothing logs any of them today - this is the backstop for
+    # the day something does, which is the only reason this list exists.
+    r"|assertion|verifier|authorization_?code)",
     re.IGNORECASE,
 )
 

@@ -130,6 +130,7 @@ def add_tenant_fk(
     references_column: str = "id",
     tenant_column: str = "organization_id",
     on_delete: str = "CASCADE",
+    constraint_name: str | None = None,
 ) -> migrations.RunSQL:
     """Make a cross-tenant reference structurally impossible (Layer 4).
 
@@ -142,6 +143,17 @@ def add_tenant_fk(
     The plain single-column FK Django generated is dropped first, otherwise
     both constraints apply and the weaker one is redundant noise in the
     schema.
+
+    ``tenant_column`` need not literally be ``organization_id``. The same
+    "the child's second column must match the parent's" shape also expresses
+    a *non-tenant* structural invariant - "this row's parent must belong to
+    the same grandparent" - by naming that other column instead.
+
+    ``constraint_name`` exists for that case. The default name is derived
+    from the table and column alone (``fk_{table}_{column}_tenant``), so a
+    column needing **two** composite foreign keys - one for tenant safety,
+    one for a business invariant - would collide on it. Pass an explicit
+    name for the second.
     """
     if on_delete not in {"CASCADE", "RESTRICT", "NO ACTION", "SET NULL"}:
         raise ValueError(f"Unsupported ON DELETE action {on_delete!r}.")
@@ -151,7 +163,7 @@ def add_tenant_fk(
     tcol = _ident(tenant_column)
     ref_t = _ident(references_table)
     ref_col = _ident(references_column)
-    constraint = _ident(f"fk_{table}_{column}_tenant")
+    constraint = _ident(constraint_name or f"fk_{table}_{column}_tenant")
 
     # Two statements, deliberately separate.
     #

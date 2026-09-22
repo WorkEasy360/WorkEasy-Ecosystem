@@ -89,6 +89,100 @@ def active_grants(organization_id: UUID) -> list[GrantDTO]:
         ]
 
 
+def decision_for_organization(
+    organization_id: UUID, product_code: str, *, write: bool = False
+) -> Any:
+    """The entitlement decision for an organization, with **no tenant context**.
+
+    The read path for a caller that is not a signed-in user: the remote
+    entitlement API answering a product's "may this organization use me?" for
+    an organization nobody is currently signed in to, and which the calling
+    product may not even have a user for.
+
+    ``services.read.check`` cannot serve that caller. It reads a
+    ``TenantScopedModel`` through the scoped manager, so it needs Layer 2
+    bound - and binding Layer 2 means a ``TenantContext``, which means a
+    ``user_id`` and a ``membership_id``. There is no user here. Fabricating
+    one would put an invented person's identifier into the logs and traces of
+    every service-to-service entitlement check, which is the same objection
+    ``audit.record_system`` makes against a synthetic actor.
+
+    So this takes the route the rest of this module already takes for
+    legitimately cross-tenant reads: relax Layer 2 explicitly and audibly,
+    enter the organization's **database** scope so RLS still confines the read
+    to exactly one tenant, and assert that the scope is what was asked for.
+    Layer 3 is never relaxed - a bug here returns nothing rather than another
+    tenant's row.
+
+    The decision itself is delegated to ``services.read.decide``, the same
+    function the request path uses, so the platform and a product can never be
+    told different things about the same entitlement.
+    """
+    from workeasy360.platform.entitlements.models import Entitlement, EntitlementSnapshot
+    from workeasy360.platform.entitlements.services.read import (
+        decide,
+        more_generous_product,
+    )
+    from workeasy360.platform.tenancy.db import assert_tenant_scope, organization_db_scope
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    with (
+        unscoped_access(
+            reason="Remote entitlement verification answers for an organization "
+            "with no signed-in user",
+            module="platform.entitlements.selectors",
+        ),
+        organization_db_scope(organization_id),
+    ):
+        assert_tenant_scope(organization_id, what="decision_for_organization")
+        row = (
+            EntitlementSnapshot.unscoped.filter(organization_id=organization_id)
+            .values("products")
+            .first()
+        )
+        products: dict[str, Any] = (row["products"] or {}) if row is not None else {}
+
+        if row is None:
+            # No snapshot. Almost always an organization that has never
+            # bought anything, which resolves to a denial either way - but it
+            # is also what a lost snapshot looks like, and that case is a
+            # paying customer being locked out of a product they hold. So the
+            # answer is computed from the durable Entitlement rows instead of
+            # assumed, exactly as ``services.read`` does on the request path.
+            #
+            # Unlike that path, nothing is written back. Self-healing here
+            # would let an unauthenticated organization identifier drive a
+            # database write from outside the platform; repair belongs to the
+            # reconciliation job, which already owns it.
+            products = _live_products(Entitlement, organization_id, more_generous_product)
+
+    return decide(products.get(str(product_code)), product_code, write=write)
+
+
+def _live_products(model: Any, organization_id: UUID, merge: Any) -> dict[str, Any]:
+    """Resolve products straight from ``Entitlement`` rows, unscoped.
+
+    Called inside the organization's database scope, so RLS confines it to one
+    tenant regardless of the relaxed ORM manager. The merge is the same
+    function the request path uses.
+    """
+    from django.utils import timezone
+
+    now = timezone.now()
+    out: dict[str, Any] = {}
+    for row in model.unscoped.filter(organization_id=organization_id):
+        if not row.is_effective_at(now):
+            continue
+        candidate = {
+            "status": row.status,
+            "seats": row.seats_total,
+            "write": row.status_enum.allows_write,
+            "grace_ends_at": row.grace_ends_at.isoformat() if row.grace_ends_at else None,
+        }
+        out[row.product_code] = merge(out.get(row.product_code), candidate)
+    return out
+
+
 @dataclass(frozen=True, slots=True)
 class SnapshotDTO:
     """The materialised entitlement answer for one organization."""

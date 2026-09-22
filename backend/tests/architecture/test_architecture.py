@@ -515,12 +515,433 @@ def test_system_checks_pass():
     call_command("check", verbosity=0)
 
 
+# --- the product boundary (ADR-017) ---------------------------------------
+#
+# This repository is the ecosystem platform. Every business product - CRM,
+# Books, Inventory, Projects, ... - is a separate application in its own
+# repository, integrating through the contracts in
+# 16-ecosystem-product-boundary.md. The five tests below are what stops
+# product-domain code drifting back in, which is exactly how the boundary
+# was lost the first time: one product, built here "just to prove the
+# platform works".
+
+
 def test_products_are_structural_placeholders_only():
-    """Phase 1 implements no product features."""
+    """``products/`` is a reserved, permanently empty namespace.
+
+    Unconditional on purpose. Phase 3 built CRM here and carried an
+    ``IMPLEMENTED_PRODUCTS`` exemption to let this test keep passing; that
+    exemption is gone, and no replacement should be added. The packages
+    exist only so the import-linter independence contracts have modules to
+    bind to - if a product needs code, it needs a repository.
+    """
     for product_dir in (PACKAGE / "products").iterdir():
         if not product_dir.is_dir() or product_dir.name.startswith("_"):
             continue
         py_files = [p.name for p in product_dir.rglob("*.py")]
         assert py_files == ["__init__.py"], (
-            f"products/{product_dir.name} contains more than a placeholder: {py_files}"
+            f"products/{product_dir.name} contains more than a placeholder: "
+            f"{py_files}. Products are separate applications (ADR-017)."
         )
+
+
+def test_no_product_apps_are_installed():
+    """No product package is a Django app in this project.
+
+    An installed product app means models, migrations and tables - the
+    concrete form of the boundary being crossed.
+    """
+    from django.conf import settings
+
+    assert settings.PRODUCT_APPS == [], (
+        f"PRODUCT_APPS must stay empty; found {settings.PRODUCT_APPS}."
+    )
+    offenders = [a for a in settings.INSTALLED_APPS if ".products." in a]
+    assert not offenders, f"Product packages installed as apps: {offenders}"
+
+
+#: Product codes that must never appear as a *branch condition* in platform
+#: source. They may appear as catalog data, in fixtures and in docstrings -
+#: ``Product(code="crm")`` is a row, which is what the catalog is for.
+PRODUCT_CODES = (
+    "crm",
+    "books",
+    "inventory",
+    "projects",
+    "marketing",
+    "support",
+    "hr",
+    "payroll",
+    "commerce",
+)
+
+
+def test_no_platform_module_branches_on_a_product_code():
+    """Adding a product must never require editing the platform.
+
+    ``if product_code == "crm"`` is the failure this catches: the moment one
+    exists, every new product means finding and editing every such branch.
+    Generic handling - catalog, registry, manifest - is the alternative, and
+    it already exists for every case the platform has.
+
+    Comparisons are found in the AST, so a docstring or a comment naming a
+    product cannot trip it, and a fixture *creating* ``Product(code="crm")``
+    cannot either - only a comparison against a literal.
+    """
+    offenders = []
+    for path in _source_files():
+        rel = path.relative_to(PACKAGE).as_posix()
+        if rel.startswith("products/"):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Compare):
+                operands = [node.left, *node.comparators]
+            elif isinstance(node, ast.Match):
+                operands = [
+                    c.pattern.value
+                    for c in node.cases
+                    if isinstance(c.pattern, ast.MatchValue)
+                ]
+            else:
+                continue
+            for operand in operands:
+                if (
+                    isinstance(operand, ast.Constant)
+                    and isinstance(operand.value, str)
+                    and operand.value in PRODUCT_CODES
+                ):
+                    offenders.append(f"{rel}:{node.lineno} compares to {operand.value!r}")
+
+    assert not offenders, (
+        "Platform code branches on a product code; use catalog/registry data "
+        "instead (ADR-017):\n" + "\n".join(offenders)
+    )
+
+
+def test_api_exposes_no_product_domain_routes():
+    """The platform routes platform capabilities only.
+
+    A product serves its own domain API from its own application. A route
+    here named after a product is the boundary crossing in its most visible
+    form.
+    """
+    from django.urls import get_resolver
+
+    def walk(resolver, prefix=""):
+        for pattern in resolver.url_patterns:
+            route = prefix + str(getattr(pattern.pattern, "_route", pattern.pattern))
+            if hasattr(pattern, "url_patterns"):
+                yield from walk(pattern, route)
+            else:
+                yield route
+
+    offenders = [
+        route
+        for route in walk(get_resolver())
+        if any(f"/{code}/" in f"/{route}" for code in PRODUCT_CODES)
+    ]
+    assert not offenders, f"Product-domain routes served by the platform: {offenders}"
+
+
+def test_contracts_declares_no_product_domain_events():
+    """Event schemas in ``contracts/`` describe platform and commercial facts.
+
+    A product's events are the product's to define and version. Phase 3 put
+    eight ``crm.*`` schemas here; nothing consumed them, and they described
+    one product's internals in the layer with the strictest purity rules in
+    the system.
+    """
+    from workeasy360.contracts.events.registry import registry
+
+    offenders = [
+        ref for ref in registry.all_refs() if str(ref).split(".", 1)[0] in PRODUCT_CODES
+    ]
+    assert not offenders, (
+        f"Product-domain event schemas registered by the platform: {offenders}"
+    )
+
+
+# --- the remote product integration boundary (Phase 3) --------------------
+#
+# ADR-018 puts the ecosystem front door inside platform/ at P3. These guards
+# hold the three properties that placement is only safe because of: it never
+# reaches commercial, it never puts a product on the platform's critical
+# path, and it never fetches a URL a product gave it.
+
+
+def test_product_health_never_affects_platform_readiness():
+    """A product's problem must never de-pool a healthy platform instance.
+
+    Product health is Tier 3 *by definition*, because the platform does not
+    need a product to function (16-ecosystem-product-boundary.md section 10
+    rule 1). If an ecosystem probe could fail readiness, then an operator
+    forgetting to promote a signing key - or a product being down - would
+    pull every instance out of the load balancer while login, billing and
+    org management continued to work perfectly.
+
+    Asserted against the live probe registry rather than by reading the
+    source, so registering a probe into the wrong group fails here.
+    """
+    from workeasy360.platform.observability import health
+
+    for group in ("startup", "registries"):
+        assert "ecosystem" not in health.registered_probe_names(group), (
+            f"An ecosystem probe is registered in the {group!r} group, which "
+            f"gates whether an instance serves traffic. It belongs in 'deep'."
+        )
+    # And it *is* registered somewhere, so this is not vacuous.
+    assert "ecosystem" in health.registered_probe_names("deep")
+
+
+def test_readiness_does_not_touch_the_integration_registry(db):
+    """The behavioural half of the rule above.
+
+    A registry with no signing key and no integrations at all - the state a
+    fresh deployment is in - must still be ready.
+    """
+    from django.test import Client
+
+    from workeasy360.platform.ecosystem.models import ProductIntegration, SigningKey
+
+    assert not SigningKey.objects.exists()
+    assert not ProductIntegration.objects.exists()
+
+    response = Client().get("/healthz/ready")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+    assert "ecosystem" not in {c["name"] for c in response.json()["checks"]}
+
+
+def test_the_ecosystem_module_makes_no_outbound_http_request():
+    """The SSRF control, expressed structurally.
+
+    The registry stores three product-supplied URLs - launch, redirect and
+    health. A stored URL is not a fetched URL, and the reason this phase has
+    no SSRF surface is that **nothing fetches them**: there is no egress
+    allowlist to get wrong because there is no egress.
+
+    Checked by import rather than by grep for a function name, so adding a
+    client library to this module fails the build rather than quietly
+    reopening the question (docs/phase-3/11-security-threat-model.md T-11).
+    """
+    # Named precisely rather than by package root. ``urllib.parse`` is string
+    # parsing and is exactly what the manifest validator needs; ``urllib.request``
+    # opens sockets. Matching on the root would forbid the safe one and teach
+    # the next reader that the rule is arbitrary.
+    clients = {
+        "requests",
+        "httpx",
+        "aiohttp",
+        "urllib3",
+        "urllib.request",
+        "urllib.error",
+        "http.client",
+        "socket",
+        "ftplib",
+        "telnetlib",
+        "smtplib",
+        "xmlrpc.client",
+    }
+    offenders = []
+    for path in _source_files():
+        rel = path.relative_to(PACKAGE).as_posix()
+        if not rel.startswith("platform/ecosystem/"):
+            continue
+        for module in _imports(path):
+            if module in clients or any(module.startswith(f"{c}.") for c in clients):
+                offenders.append(f"{rel} imports {module}")
+
+    assert not offenders, (
+        "platform/ecosystem performs outbound I/O. Every URL it holds came "
+        "from a product, so fetching one is SSRF against the platform's own "
+        "network:\n" + "\n".join(offenders)
+    )
+
+
+def test_every_integration_write_permission_requires_step_up():
+    """The carried AAL2 trigger, reached and wired.
+
+    Registering an integration or changing a redirect URI is a full
+    account-takeover primitive against every user of that product; minting a
+    credential reads every organization's entitlement state; rotating the
+    signing key mints tokens for anyone. All of them are `dangerous`, which
+    the decision function turns into "AAL 2, and never under impersonation".
+    """
+    from workeasy360.platform.authz.registry import permission_registry
+
+    declarations = [
+        d
+        for d in permission_registry.all()
+        if str(d.key).startswith("platform.integration.")
+    ]
+    assert declarations, "No integration permissions are registered."
+
+    writes = [d for d in declarations if not str(d.key).endswith(".view")]
+    assert writes, "The check would be vacuous with no write permissions."
+    assert all(d.dangerous for d in writes), [
+        str(d.key) for d in writes if not d.dangerous
+    ]
+    # The read is deliberately *not* dangerous - see permissions.py.
+    assert not permission_registry.get("platform.integration.view").dangerous
+
+
+def test_the_token_claim_set_is_exactly_what_is_documented():
+    """A claim added without a decision is a claim products start depending
+    on, and removing it then breaks them.
+
+    Pinned against the discovery document's advertised list, which is the
+    external contract, so adding a claim means updating what the platform
+    tells the world it issues.
+    """
+    from workeasy360.platform.ecosystem import discovery, tokens
+
+    advertised = set(discovery.document()["claims_supported"])
+    assert set(tokens.BASE_CLAIMS) <= advertised
+
+    # The ecosystem's own claims, and no others. `membership_id` is the one
+    # to watch: it was considered and deliberately not issued, because a
+    # product keys its data on (sub, organization_id) and has no use for the
+    # platform's join row.
+    assert {"organization_id", "product_code", "aal"} <= advertised
+    assert "membership_id" not in advertised
+    assert "password" not in str(advertised)
+
+
+def test_no_product_code_is_hardcoded_in_the_ecosystem_module():
+    """Adding a product must never mean editing the front door.
+
+    Already covered generically by
+    test_no_platform_module_branches_on_a_product_code; asserted separately
+    here because this is the module where a special case would be most
+    tempting - "CRM needs a longer token", "Books skips the entitlement
+    check" - and most damaging.
+    """
+    offenders = []
+    for path in _source_files():
+        rel = path.relative_to(PACKAGE).as_posix()
+        if not rel.startswith("platform/ecosystem/"):
+            continue
+        source = path.read_text(encoding="utf-8")
+        for code in PRODUCT_CODES:
+            if f'"{code}"' in source or f"'{code}'" in source:
+                offenders.append(f"{rel} contains the literal {code}")
+    assert not offenders, offenders
+
+
+def test_the_manifest_contract_lives_in_contracts_and_stays_pure():
+    """The manifest is the boundary contract an external product submits, so
+    it must be usable by a documentation generator or an external conformance
+    harness with no Django and no platform present."""
+    import os
+
+    code = (
+        "import workeasy360.contracts.values.manifest as m;"
+        "import workeasy360.contracts.ports.catalog as c;"
+        "import workeasy360.contracts.ports.signing as s;"
+        "import sys;"
+        "assert 'django' not in sys.modules;"
+        "parsed = m.parse_manifest({"
+        "  'manifest_version': m.MANIFEST_VERSION,"
+        "  'product_code': 'crm',"
+        "  'launch_url': 'https://x.example/launch',"
+        "  'redirect_uris': ['https://x.example/cb']});"
+        "assert parsed.permits_redirect('https://x.example/cb');"
+        "assert not parsed.permits_redirect('https://x.example/cb/evil');"
+        "print('ok')"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "DJANGO_SETTINGS_MODULE"}
+    env["PYTHONPATH"] = str(BACKEND)
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=BACKEND,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ok" in result.stdout
+
+
+def test_every_published_error_code_is_one_the_platform_can_emit():
+    """The discovery document's error list must be neither short nor long.
+
+    ``workeasy360_error_codes`` is published so that an integrator can write
+    a switch and know it is exhaustive. Both directions of drift hurt, and
+    they hurt differently:
+
+    - a code the server emits but does not publish is a branch the
+      integrator never wrote, hit in production;
+    - a code published but never emitted is a branch they *did* write, which
+      never runs and which they will maintain forever.
+
+    The second is the one that had actually happened: ``access_denied`` and
+    ``unauthorized_client`` were declared, published and raised by nothing.
+
+    Derived from the AST rather than from a hand-kept list, because a
+    hand-kept list is the thing being checked.
+    """
+    from workeasy360.platform.ecosystem import discovery, protocol
+
+    protocol_path = PACKAGE / "platform" / "ecosystem" / "protocol.py"
+    sources = [
+        *sorted((PACKAGE / "platform" / "ecosystem").glob("*.py")),
+        PACKAGE / "interfaces" / "api" / "v1" / "ecosystem_views.py",
+    ]
+
+    # The constant *names* that carry a wire error code, so the scan can look
+    # for identifiers rather than for string literals - nothing raises a bare
+    # "invalid_grant", and it should stay that way.
+    by_name = {
+        name: value
+        for name, value in vars(protocol).items()
+        if name.isupper() and isinstance(value, str) and value in protocol.ERROR_CODES
+    }
+    assert len(by_name) == len(protocol.ERROR_CODES), (
+        "A code in ERROR_CODES has no constant naming it, so no raise site "
+        "could reference it by name."
+    )
+
+    emitted: set[str] = set()
+    for path in sources:
+        if path.name.startswith("test_"):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if path == protocol_path:
+            # The ERROR_CODES literal names every constant by construction.
+            # Without this the test would assert that the list matches
+            # itself, which is the most comfortable kind of nothing.
+            tree.body = [
+                node
+                for node in tree.body
+                if not (
+                    isinstance(node, ast.AnnAssign | ast.Assign)
+                    and "ERROR_CODES"
+                    in {
+                        t.id
+                        for t in (
+                            [node.target]
+                            if isinstance(node, ast.AnnAssign)
+                            else node.targets
+                        )
+                        if isinstance(t, ast.Name)
+                    }
+                )
+            ]
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in by_name:
+                emitted.add(by_name[node.attr])
+            elif (
+                isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Load)
+                and node.id in by_name
+            ):
+                emitted.add(by_name[node.id])
+
+    published = set(discovery.document()["workeasy360_error_codes"])
+    assert published == set(protocol.ERROR_CODES)
+    assert emitted == published, {
+        "published but never raised": sorted(published - emitted),
+        "raised but not published": sorted(emitted - published),
+    }

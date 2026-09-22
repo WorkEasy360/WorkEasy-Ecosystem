@@ -132,3 +132,51 @@ class EntitlementGate(Protocol):
     def require_feature(self, organization_id: UUID, key: FeatureKey) -> FeatureValue:
         """Raise ``EntitlementDenied`` unless the feature is granted."""
         ...
+
+
+# --- runtime registry -------------------------------------------------------
+#
+# The same runtime-registry pattern platform/observability/health.py uses for
+# probes, and for the same reason: a caller must reach entitlements through
+# this port and learn nothing else - not even which module implements it.
+# platform.entitlements registers its concrete gate at app-ready; a caller
+# asks get_gate() and never names an implementation.
+#
+# This is also the in-process rehearsal of the remote contract. Under
+# ADR-017 products are separate applications that will verify entitlement
+# over HTTP; because no caller names the implementation, swapping the local
+# gate for a client is a registration change rather than a caller change.
+# That is what makes G-2 in 16-ecosystem-product-boundary.md a bounded piece
+# of work. Keep it.
+
+_gate: EntitlementGate | None = None
+
+
+def register_gate(gate: EntitlementGate) -> None:
+    """Install the concrete entitlement gate. Called once, from
+    ``platform.entitlements``'s ``AppConfig.ready()``."""
+    global _gate
+    _gate = gate
+
+
+def get_gate() -> EntitlementGate:
+    """The registered gate, for a product to call.
+
+    Raises rather than returning ``None`` on a missing registration: a
+    product that cannot reach the entitlement gate must fail loudly, not
+    silently treat every organization as entitled to nothing (or, worse,
+    to everything).
+    """
+    if _gate is None:
+        raise RuntimeError(
+            "No EntitlementGate is registered. platform.entitlements must be "
+            "installed and its AppConfig.ready() must have run before any "
+            "product can check entitlements."
+        )
+    return _gate
+
+
+def reset_gate() -> None:
+    """Test hook only."""
+    global _gate
+    _gate = None

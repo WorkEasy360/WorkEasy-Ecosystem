@@ -235,6 +235,23 @@ Three verification spikes must complete before feature development begins. None 
 2. **Broker decision spike (R-09)** — SQS vs AmazonMQ on ordering, priority, visibility timeouts, observability and cost.
 3. **Entitlement latency benchmark (R-14)** — measure the check path against the 1 ms p50 / 5 ms p95 budget with a realistic dataset.
 
+## 7b. Phase 3R — risks opened by the product-boundary correction
+
+Added 2026-09-22 by [ADR-017](adrs/ADR-017-products-are-separate-applications.md).
+Products are now separate applications, so seven capabilities that exist
+in-process have no remote form. None is a regression — the in-repository
+design never needed them — but each blocks serving a separate product. Full
+detail in [16 section 14](16-ecosystem-product-boundary.md).
+
+| ID | Risk | Severity | Mitigation / owner |
+|---|---|---|---|
+| R-20 | **No authentication assertion.** A separate product has no way to learn who the caller is or which organization they act in. Building this badly is the single largest security risk in the ecosystem — a token that omits the organization, or accepts one from a header, re-opens TB-1/TB-2 at the ecosystem level. | **P1** | Design before any product integrates. Organization must be a signed claim, never a header. Audience-scoped, short-lived, revocable. Architecture. |
+| R-21 | **No remote entitlement verification.** Products cannot check access over the network. | **P1** | The `get_gate()` registry already isolates callers from the implementation, so this is a new adapter, not a redesign. Architecture. |
+| R-22 | **No product registry.** The platform cannot describe, locate, health-check or launch a product. | **P1** | Specified in [16 section 7](16-ecosystem-product-boundary.md). Not implemented. Architecture. |
+| R-23 | **Product-side tenant isolation is unverified.** The platform's five layers protect platform data only; a product's own store is its own responsibility, and a leak there damages ecosystem trust regardless of whose code caused it. | **P2** | Publish a certification checklist rather than assume compliance. Do not grant a product production entitlement data until it passes. Architecture + Security. |
+| R-24 | **Product health could be wired into readiness by mistake.** An engineer adding product health to `/healthz/ready` would make every product a hard dependency of the platform — the exact failure ADR-012 exists to prevent. | **P2** | Product health is Tier 3 **by definition**; readiness already refuses Tier 3. Keep it that way and review any change to `health.py::readiness`. |
+| R-25 | **Documentation drift.** Documents 01, 02, 07, 08 and 14 describe an in-repository product layout. They carry correction banners, but a reader who skips the banner is misled. | **P2** | Rewrite on next substantive edit of each. Until then doc 16 is authoritative. Architecture. |
+
 ## 8. Related documents
 
 - [03-multi-tenancy.md](03-multi-tenancy.md), [09-failure-resilience.md](09-failure-resilience.md), [10-performance-concurrency.md](10-performance-concurrency.md), [12-security.md](12-security.md)

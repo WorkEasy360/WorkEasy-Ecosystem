@@ -1,6 +1,6 @@
-"""products/crm - structural placeholder.
+"""products/crm - reserved name. No code lives here.
 
-Phase 1 creates no product features. This package exists so the import-linter
-independence contract has a module to check, and so that the first real
-product starts from the canonical layout rather than inventing one.
+Workeasy360 CRM is a separate application in its own repository
+(ADR-017). This package exists so the import-linter independence contract
+has a module to check; adding any other file to it fails the build.
 """

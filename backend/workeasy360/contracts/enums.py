@@ -21,6 +21,17 @@ class _StrEnum(str, Enum):
         return str(self.value)
 
 
+#: Public alias of the base above.
+#:
+#: A module outside ``contracts/`` whose enum is used by exactly one module
+#: declares it there rather than here (see this file's docstring), but it
+#: should still round-trip through JSON, database columns and Django choices
+#: the same way every other enum in the system does. Importing this is how it
+#: does that without redefining the base - and without importing an
+#: underscore-prefixed name across a module boundary.
+StrEnum = _StrEnum
+
+
 class OrganizationStatus(_StrEnum):
     """Tenant lifecycle. See 03-multi-tenancy.md §3.1.
 

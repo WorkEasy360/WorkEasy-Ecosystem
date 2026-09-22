@@ -7,24 +7,29 @@ Full documentation: [docs/architecture/](docs/architecture/) · Decisions: [docs
 
 ## 1. What Workeasy360 is
 
-> One multi-tenant business platform hosting multiple **independently commercializable** product domains (CRM, Books, Inventory, Projects, …) on **one shared platform kernel**, sold through direct and partner channels that are **commercial constructs — never forks or separate deployments**.
+> The shared multi-tenant **ecosystem platform** for a family of **independently commercializable** business products (CRM, Books, Inventory, Projects, …), sold through direct and partner channels that are **commercial constructs — never forks or separate deployments**.
 
-Three rules follow, and everything else in this document exists to protect them:
+**This repository is the platform. Products are separate applications in their own repositories** ([ADR-017](docs/architecture/adrs/ADR-017-products-are-separate-applications.md) · [16 — Ecosystem / Product Boundary](docs/architecture/16-ecosystem-product-boundary.md)). Business-domain code — contacts, deals, invoices, ledgers, stock items, tasks, employees — never lives here.
+
+Four rules follow, and everything else in this document exists to protect them:
 
 1. **A product must ship, run and be sold without any other product.**
 2. **A product must never know how a capability was purchased.** It asks "is this org entitled?" and gets a yes/no.
-3. **A partner never receives a copy of the product.** Partners get pricing, branding and relationship metadata on the same running system.
+3. **A product integrates through a versioned contract** — never an import, never a shared database, never a platform ORM model. Since Phase 3 that contract is live: OpenID Connect for identity, an HTTP endpoint for entitlement ([docs/phase-3/](docs/phase-3/00-overview.md)).
+4. **A partner never receives a copy of the product.** Partners get pricing, branding and relationship metadata on the same running system.
 
 ## 2. The module map
 
 ```
 contracts/     L0   interfaces, event schemas, value objects. NO internal deps, NO Django.
 platform/      L1   tenancy, identity, organizations, authz, entitlements,
-                    feature_flags, audit, files, notifications, workflows
+                    feature_flags, audit, files, notifications, workflows,
+                    ecosystem (the remote product front door — ADR-018)
 integration/   L2   events + outbox, webhooks, connectors, idempotency
 commercial/    L3   catalog, pricing, subscriptions, billing, partners,
                     commissions, provisioning
-products/      L3   crm, books, inventory, projects, marketing, support, hr, ...
+products/      L3   RESERVED AND EMPTY. Products are separate applications
+                    (ADR-017); any file here fails the build.
 interfaces/    L4   routing and composition only. No business logic.
 ```
 
@@ -36,10 +41,10 @@ interfaces/    L4   routing and composition only. No business logic.
 | `platform/<m>` | `contracts`, strictly lower platform layers | platform siblings, and everything above |
 | `integration/` | `contracts`, `platform` | `commercial`, `products`, `interfaces` |
 | `commercial/` | `contracts`, `platform`, `integration` | `products`, `interfaces` |
-| `products/<p>` | `contracts`, `platform`, `integration` | **any other product**, `commercial`, `interfaces` |
+| `products/<p>` | — (reserved, empty) | everything — a product is a separate application |
 | `interfaces/` | everything | — (but no business logic) |
 
-Inside `platform/`: **P0** `tenancy`, `observability` → **P1** `identity`, `organizations` → **P2** `authz`, `entitlements`, `feature_flags`, `audit` → **P3** `files`, `notifications`, `workflows`. Lower layers only; siblings communicate via events.
+Inside `platform/`: **P0** `tenancy`, `observability` → **P1** `identity`, `organizations` → **P2** `authz`, `entitlements`, `feature_flags`, `audit` → **P3** `files`, `notifications`, `workflows`, `ecosystem`. Lower layers only; siblings communicate via events.
 
 ## 3. The eight forbidden edges
 
@@ -74,6 +79,15 @@ These are enforced in CI. A PR that violates one does not merge.
 | A8 | No cross-module FK outside the allowlist | System check `W360.E003` |
 | A9 | No cross-module Django signal receivers | System check `W360.E009` |
 | A10 | Only `commercial/provisioning` imports entitlement write services | import-linter `forbidden` |
+| A11 | `products/` holds no code; no product package is an installed app | Fitness tests (unconditional — no exemption list) |
+| A12 | No platform module branches on a product code | AST scan over `==` and `match` |
+| A13 | The platform serves no product-domain route | Fitness test over the URL resolver |
+| A14 | `contracts/` declares no product-domain event schema | Fitness test over the event registry |
+| A15 | `platform/ecosystem` never imports `commercial/`; the catalog is reached through a `contracts/` port | import-linter `ecosystem-never-sees-commercial` |
+| A16 | No product-supplied URL is ever fetched by the platform | Import scan over `platform/ecosystem` |
+| A17 | Product health never reaches `/healthz/live`, `/healthz/ready` or `/healthz/startup` | Probe-registry test + a readiness test with an empty registry |
+| A18 | Every `platform.integration.*` write permission is `dangerous` | Registry test |
+| A19 | The issued token claim set matches the advertised one | Fitness test against the discovery document |
 
 ### Tenancy and isolation
 
@@ -216,4 +230,7 @@ That last question is the cheapest architectural test available. "Nothing — it
 | [13 Deployment & Evolution](docs/architecture/13-deployment-evolution.md) | Topology, scaling path, extraction criteria |
 | [14 Repository Structure](docs/architecture/14-repository-structure.md) | Folder layout, layer responsibilities, naming |
 | [15 Risk Register](docs/architecture/15-risk-register.md) | P0/P1/P2 risks and open verification |
-| [ADR-001 … ADR-012](docs/architecture/adrs/) | The twelve foundational decisions |
+| [16 Ecosystem / Product Boundary](docs/architecture/16-ecosystem-product-boundary.md) | **What belongs in this repository and what does not** |
+| [ADR-001 … ADR-020](docs/architecture/adrs/) | The twenty foundational decisions |
+| [Phase 3 — Remote Integration](docs/phase-3/00-overview.md) | How an external product connects: registry, SSO, entitlement API, key management |
+| [Product Integration Guide](docs/phase-3/09-product-integration-guide.md) | **Start here if you are building a product** |

@@ -336,6 +336,57 @@ class SeatRemediationRequired(CommercialError):
     code = "seat_remediation_required"
 
 
+# --- Product integration (the remote ecosystem boundary) -----------------
+#
+# These are the *control-plane* errors of product integration: registering an
+# application, changing its lifecycle, managing its credentials. The runtime
+# protocol errors an external product sees at the authorization and token
+# endpoints are a different family with a different wire shape, mandated by
+# RFC 6749 section 5.2, and live in platform/ecosystem/protocol.py. Mixing
+# the two would mean either a non-conforming OAuth response or an
+# administration API that speaks OAuth error codes at a human.
+
+
+class ProductIntegrationError(Workeasy360Error):
+    """Base for product integration registry failures.
+
+    409 by default, like ``CommercialError`` and for the same reason: these
+    are almost always conflicts with durable state ("that code is already
+    registered", "a retired integration cannot be activated") rather than
+    malformed input.
+    """
+
+    code = "product_integration_error"
+    http_status = 409
+
+
+class ProductIntegrationNotFound(ProductIntegrationError):
+    """No such integration, or the caller may not see it.
+
+    404 for both, deliberately and identically. Distinguishing them would
+    tell an attacker which client ids are real.
+    """
+
+    code = "product_integration_not_found"
+    http_status = 404
+
+
+class ManifestRejected(ProductIntegrationError):
+    """A submitted manifest failed validation.
+
+    400, because unlike the rest of this family it *is* bad input. ``field``
+    is echoed to the caller, which is safe: a manifest is data the caller
+    just sent, so naming the offending key discloses nothing they do not
+    already have and saves a support round trip.
+    """
+
+    code = "manifest_rejected"
+    http_status = 400
+
+    def __init__(self, message: str = "", *, field: str = "", **context: Any) -> None:
+        super().__init__(message or "The manifest was rejected.", field=field, **context)
+
+
 # --- Platform services ---------------------------------------------------
 
 

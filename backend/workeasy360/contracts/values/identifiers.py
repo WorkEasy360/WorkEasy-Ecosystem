@@ -21,10 +21,15 @@ _PERMISSION_KEY_RE: Final = re.compile(
 class ProductCode(str):
     """A sellable product's stable code: ``crm``, ``books``.
 
-    A string rather than a foreign key, deliberately. ``catalog.Product`` is a
-    sellable SKU; ``products/crm`` is code. An FK from catalog into product
-    modules would make catalog depend on every product, and adding a product
-    would require a catalog migration (01-domain-boundaries.md section 4).
+    A string rather than a foreign key, deliberately. ``catalog.Product`` is
+    a sellable **SKU**; the product it names is a separate application in its
+    own repository (ADR-017). There is nothing here to point a foreign key
+    at, and there should not be: a key into product code would make the
+    catalog depend on every product, and adding a product would require a
+    catalog migration (01-domain-boundaries.md section 4).
+
+    This is what lets the platform sell a product before - or without ever -
+    hosting its code.
     """
 
     __slots__ = ()

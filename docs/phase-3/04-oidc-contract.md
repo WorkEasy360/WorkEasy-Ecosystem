@@ -1,0 +1,173 @@
+# 04 — The OIDC Contract
+
+The machine-readable version of this document is served at
+`{issuer}/.well-known/openid-configuration`. **Read that, not this** — a
+product should construct no URL by hand, and
+`test_every_endpoint_the_discovery_document_names_resolves` guarantees every
+endpoint it advertises exists.
+
+This document explains the parts a discovery document cannot: what each
+parameter means here, and what each error means for the product.
+
+## 1. Discovery
+
+`GET /.well-known/openid-configuration` — public, no credentials,
+`Cache-Control: public, max-age=300`.
+
+```json
+{
+  "issuer": "https://app.workeasy360.com",
+  "authorization_endpoint": ".../api/v1/integrations/oauth/authorize",
+  "token_endpoint":         ".../api/v1/integrations/oauth/token",
+  "userinfo_endpoint":      ".../api/v1/integrations/oauth/userinfo",
+  "jwks_uri":               ".../.well-known/jwks.json",
+  "scopes_supported": ["openid", "profile", "email"],
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code"],
+  "code_challenge_methods_supported": ["S256"],
+  "id_token_signing_alg_values_supported": ["RS256", "ES256"],
+  "token_endpoint_auth_methods_supported": [
+    "private_key_jwt", "client_secret_basic", "client_secret_post"
+  ],
+  "subject_types_supported": ["public"],
+  "claims_supported": [...],
+  "workeasy360_entitlement_endpoint": ".../api/v1/integrations/entitlements/verify",
+  "workeasy360_entitlement_revalidate_after": 900,
+  "workeasy360_error_codes": [...]
+}
+```
+
+The `workeasy360_*` entries are not OIDC. They are advertised because a
+product needs the entitlement endpoint and the revalidation cadence to
+integrate correctly, and discovering them beats hard-coding them in nine
+repositories.
+
+**Notable absences**, each a decision:
+
+| Absent | Why |
+|---|---|
+| `registration_endpoint` | Dynamic client registration would let anyone create a client |
+| `refresh_token` in `grant_types_supported` | There are none ([05 §6](05-token-claims.md)) |
+| `end_session_endpoint` | RP-initiated logout is not implemented |
+| `request_uri` / `request` parameter support | Advertised as `false`; unused surface is unbuilt surface |
+
+## 2. Key set
+
+`GET /.well-known/jwks.json` — public, `max-age=300`.
+
+Returns every non-retired key: `pending`, `active` and `retiring`. Each entry
+carries `kid`, `alg` and `use: "sig"`.
+
+**Select the key by `kid` and take the algorithm from the key set entry, never
+from the token header.** Trusting the token's `alg` is the
+algorithm-confusion attack.
+
+**Cache it, and refresh on an unknown `kid`** — once, not unconditionally.
+That single refresh is what makes platform key rotation invisible to you; an
+unconditional refresh turns any garbage token into a request-amplification
+lever against the platform.
+
+## 3. Authorization
+
+`GET /api/v1/integrations/oauth/authorize`
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `response_type` | ✅ | `code` |
+| `client_id` | ✅ | |
+| `redirect_uri` | ✅ | Must match a registered URI **exactly** |
+| `scope` | ✅ | Must include `openid`; every scope must be registered |
+| `state` | recommended | Echoed verbatim, including on errors. **Your** CSRF defence — generate it, store it, compare it |
+| `nonce` | recommended | Echoed into the ID token. Compare it |
+| `code_challenge` | ✅ | BASE64URL(SHA256(verifier)), unpadded |
+| `code_challenge_method` | ✅ | `S256`. `plain` is refused, not defaulted |
+| `organization` | ✅ | The organization's UUID, from your launch URL |
+
+**Success:** `302` to your exact registered `redirect_uri` with `code` and
+`state`.
+
+**Failure:** either a rendered JSON error (client or redirect URI could not be
+verified) or a `302` to your `redirect_uri` with `error`, `error_description`
+and `state`.
+
+## 4. Token
+
+`POST /api/v1/integrations/oauth/token` — `application/x-www-form-urlencoded`,
+client-authenticated, `Cache-Control: no-store`.
+
+```
+grant_type=authorization_code
+code=<the code>
+redirect_uri=<the same one, exactly>
+code_verifier=<43-128 chars, the one you hashed>
++ client authentication (see 07)
+```
+
+```json
+{
+  "access_token": "eyJ…",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "id_token": "eyJ…",
+  "scope": "openid"
+}
+```
+
+## 5. UserInfo
+
+`GET /api/v1/integrations/oauth/userinfo` with
+`Authorization: Bearer <access_token>`.
+
+Returns `sub`, plus the claims your granted scopes permit. An ID token
+presented here is refused (`typ`).
+
+## 6. Entitlement verification
+
+See [06](06-entitlement-api.md).
+
+## 7. Error codes
+
+Standard RFC 6749 / OIDC Core codes, plus five Workeasy360 codes. The extra
+codes exist because `access_denied` alone would collapse five genuinely
+different remedies — pay, be invited, ask an admin, wait, contact support —
+into one message, and a product cannot render the right call to action from
+that.
+
+| Code | HTTP | Delivery | What it means for your product |
+|---|---|---|---|
+| `invalid_request` | 400 | Rendered **or** redirected | Malformed. If rendered, your `client_id` or `redirect_uri` is wrong — check your registration |
+| `invalid_client` | 401 | Rendered | Client authentication failed. Deliberately does not say *why* |
+| `invalid_grant` | 400 | Response | The code is invalid, expired, already used, not yours, **or the user's membership, organization status or entitlement changed since it was issued**. Deliberately does not say which — start the flow again and the authorization endpoint will tell you |
+| `unsupported_grant_type` | 400 | Response | Only `authorization_code` is served |
+| `invalid_scope` | 400 | Redirected | You asked for a scope you are not registered for |
+| `login_required` | 302 | Redirected | No Workeasy360 session. Send the user to the platform to sign in |
+| `organization_required` | 302 | Redirected | No `organization` parameter. You lost the launch context |
+| `membership_inactive` | 302 | Redirected | This user has no active membership in that organization. **Also returned when the organization does not exist** — the two are indistinguishable by design |
+| `organization_inactive` | 302 | Redirected | The organization cannot be signed in to (locked, deleted) |
+| `product_not_entitled` | 302 | Redirected | Show a purchase or upgrade path. This is a sales conversation, not an error |
+| `integration_suspended` | 302 / 403 | Redirected / response | Your integration is not active. Contact Workeasy360 |
+| `invalid_token` | 401 | Response | The access token is invalid or expired |
+| `temporarily_unavailable` | 429 / 503 | Response | Rate-limited (honour `Retry-After`) or the platform cannot answer. **Retry — do not treat as a denial** |
+| `server_error` | 503 | Response | Something failed on our side. You did nothing wrong |
+
+Every error body carries `correlation_id`. Quote it to support: it finds the
+exact request without the response having disclosed anything.
+
+### What errors never say
+
+They never name the value you sent, never say whether an organization or user
+exists, and never distinguish "no such client" from "wrong secret". Each of
+those is an oracle. The description is a **fixed string per condition**.
+
+## 8. Versioning
+
+| Thing | Versioned by | Changes when |
+|---|---|---|
+| Endpoints | The `/api/v1/` path | The transport changes incompatibly |
+| Manifest | `manifest_version` | The shape you submit changes |
+| Token claims | Additive only | A new claim is added; existing ones are never removed or repurposed without a new API version |
+| Entitlement reason codes | A closed, documented set | Mapped from an internal enum, so the platform's internals can change without breaking your switch |
+| Signing keys | `kid` | Rotation — handled automatically if you follow §2 |
+
+Discovery is unversioned, at the spec-mandated location, and describes
+whatever versioned endpoints are current.
