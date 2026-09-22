@@ -1,10 +1,12 @@
-"""Correlation and request-logging middleware."""
+"""Correlation, request-logging and security-header middleware."""
 
 from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from functools import lru_cache
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 
 from workeasy360.platform.observability.correlation import (
@@ -95,3 +97,67 @@ class RequestLogMiddleware:
         if match is not None and match.route:
             return f"/{match.route.lstrip('/')}"
         return "<unmatched>"
+
+
+class SecurityHeadersMiddleware:
+    """Emits Content-Security-Policy and Permissions-Policy on every response.
+
+    **The CSP trigger, closed.** Phase 3's audit found "no HTML surface
+    exists - zero templates in the repository" and recorded the CSP trigger
+    as not reached (docs/phase-3/17-audit-findings.md, "Verified, no
+    finding"). Phase 4 introduces a browser-facing frontend, and with it the
+    trigger: docs/phase-4/08-csp-and-browser-security.md.
+
+    **Why this process, when the frontend is a separate Next.js deployment.**
+    This Django process still answers browser requests that carry the session
+    cookie - the login, organization and app-directory endpoints chief among
+    them - and a strict CSP on every one of its responses is a real
+    defence-in-depth layer against a markup-injection bug in anything this
+    process ever renders, at zero cost to a JSON API that renders nothing
+    today. The frontend's *own* CSP is a Next.js concern, set on its own
+    responses, and is not this middleware's job (Task 35: "do not
+    duplicate/conflict across ... layers" - each layer sets its own, once).
+
+    **Why a five-line middleware and not a dependency.** The policy is one
+    header with a fixed value computed once at import time; ``django-csp``
+    would add a dependency (Task 56/57: justify every one) to do what
+    ``HttpResponse.__setitem__`` already does. If the policy ever needs
+    per-view nonces or reporting, that is the point to reconsider - not
+    before.
+
+    Placed last in ``MIDDLEWARE`` (nearest the response) so it runs on every
+    response this process emits, including one built entirely by an earlier
+    middleware, such as a 429 from the rate limiter.
+    """
+
+    def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
+        self.get_response = get_response
+
+    def __call__(self, request: HttpRequest) -> HttpResponse:
+        response = self.get_response(request)
+        csp = _csp_header_value()
+        if csp:
+            response.setdefault("Content-Security-Policy", csp)
+        policy = _permissions_policy_header_value()
+        if policy:
+            response.setdefault("Permissions-Policy", policy)
+        return response
+
+
+@lru_cache(maxsize=1)
+def _csp_header_value() -> str:
+    """Rendered once per process. The policy is process-wide static
+    configuration, not per-request state."""
+    directives = getattr(settings, "CONTENT_SECURITY_POLICY", None) or {}
+    return "; ".join(
+        f"{directive} {' '.join(sources)}" if sources else directive
+        for directive, sources in directives.items()
+    )
+
+
+@lru_cache(maxsize=1)
+def _permissions_policy_header_value() -> str:
+    policy = getattr(settings, "PERMISSIONS_POLICY", None) or {}
+    return ", ".join(
+        f"{feature}=({' '.join(allowlist)})" for feature, allowlist in policy.items()
+    )

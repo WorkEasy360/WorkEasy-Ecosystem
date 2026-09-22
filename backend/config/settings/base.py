@@ -128,6 +128,10 @@ MIDDLEWARE = [
     "workeasy360.platform.tenancy.middleware.TenancyMiddleware",
     # Inside tenancy, so the memo spans exactly the request that has a tenant.
     "workeasy360.platform.entitlements.middleware.EntitlementRequestScopeMiddleware",
+    # Last: nearest the response, so it stamps every response this process
+    # emits, including one built entirely by an earlier middleware (Phase 4,
+    # CSP trigger reached - see SecurityHeadersMiddleware's docstring).
+    "workeasy360.platform.observability.middleware.SecurityHeadersMiddleware",
 ]
 
 TEMPLATES = [
@@ -287,6 +291,46 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 # Never wildcarded, never reflected (12-security.md section 8).
 CORS_ALLOWED_ORIGINS = env.list("W360_CORS_ALLOWED_ORIGINS", [])
 CORS_ALLOW_CREDENTIALS = True
+
+# --- Frontend origin (Phase 4) --------------------------------------------
+#
+# The platform's own Next.js shell (docs/phase-4/01-frontend-architecture.md).
+# Used only to build the two URLs a *browser* is redirected to when an OIDC
+# authorization request cannot proceed without a human first - the login page
+# and the organization chooser (PendingAuthorization, Tasks 31/32). Never
+# used to build a URL a *product* is sent to; those come from
+# ProductIntegration's own registered manifest (Task 55), never from this
+# setting, and this value is not itself a registered redirect URI.
+W360_FRONTEND_URL = env.str("W360_FRONTEND_URL", "http://localhost:3000").rstrip("/")
+
+# --- Content Security Policy (Phase 4) ------------------------------------
+#
+# The CSP trigger stated in the Phase 4 brief: Phase 3 carried no HTML
+# surface (asserted unconditionally - zero templates in the repository) and
+# so had nothing to scope a policy around. The frontend changes that. This
+# platform serves no server-rendered HTML of its own even now - the Next.js
+# app is a separate deployment - but the API origin still answers browser
+# requests carrying the session cookie, and a strict CSP on *every* response
+# this Django process emits is a real defence-in-depth layer against a
+# markup-injection bug in any future HTML this process ever serves, at zero
+# cost to a JSON API that renders nothing (docs/phase-4/08-csp-and-browser-
+# security.md).
+#
+# default-src 'none' rather than 'self': there is no legitimate script,
+# style or media origin for a JSON API to declare, so the safer default is
+# refusing everything and naming exceptions, not the reverse.
+CONTENT_SECURITY_POLICY = {
+    "default-src": ["'none'"],
+    "frame-ancestors": ["'none'"],  # belt-and-braces alongside X-Frame-Options
+    "base-uri": ["'none'"],
+    "form-action": ["'none'"],
+}
+PERMISSIONS_POLICY = {
+    "camera": [],
+    "microphone": [],
+    "geolocation": [],
+    "payment": [],
+}
 
 # --- Password policy -----------------------------------------------------
 
@@ -452,6 +496,17 @@ OIDC_ACCESS_TOKEN_TTL_S = env.int("W360_OIDC_ACCESS_TOKEN_TTL_S", 900)
 # exchange and hostile to a stolen code (RFC 6749 section 4.1.2 recommends a
 # maximum of ten minutes; there is no reason to take it).
 OIDC_AUTHORIZATION_CODE_TTL_S = env.int("W360_OIDC_AUTHORIZATION_CODE_TTL_S", 60)
+
+# How long a parked authorization request survives while the browser
+# completes login or organization selection at the platform's own UI (Phase
+# 4, PendingAuthorization). Long enough for a human to type a password and,
+# if needed, pick an organization; short enough that an abandoned resume link
+# does not stay live in someone's inbox or browser history for long. Compare
+# OIDC_AUTHORIZATION_CODE_TTL_S, which is 60s because it crosses no human
+# interaction at all - this one deliberately does.
+OIDC_PENDING_AUTHORIZATION_TTL_S = env.int(
+    "W360_OIDC_PENDING_AUTHORIZATION_TTL_S", 600
+)
 
 # Tolerance for clock difference between the platform and a product, applied
 # to `exp`/`nbf`/`iat`. Deliberately small: a large window extends the life of

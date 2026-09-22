@@ -133,6 +133,23 @@ class EntitlementGate(Protocol):
         """Raise ``EntitlementDenied`` unless the feature is granted."""
         ...
 
+    def has_seat(
+        self, organization_id: UUID, membership_id: UUID, product: ProductCode
+    ) -> bool:
+        """Whether this member holds a seat in the product's pool.
+
+        A read, not a raise - callers on the raising boundary (the OIDC
+        authorization flow, the launcher's access decision) branch on it
+        themselves so they can produce a distinct ``no_seat`` outcome rather
+        than the generic ``EntitlementDenied`` this protocol's other methods
+        raise. Present on the gate, not only the read-only
+        ``EntitlementService``, because the two objects registered here are
+        the same instance (see ``services/read.py``'s
+        ``DjangoEntitlementService``) and a caller reaching it through
+        ``get_gate()`` must not need to know that.
+        """
+        ...
+
 
 # --- runtime registry -------------------------------------------------------
 #

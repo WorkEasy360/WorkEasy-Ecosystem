@@ -12,7 +12,8 @@ and every step denies:
     6. That user has an *active* membership in it       -> membership_inactive
     7. The organization's status permits login          -> organization_inactive
     8. The organization is entitled to the product      -> product_not_entitled
-    9. Only then: mint a code
+    9. A per-seat product: this member holds a seat     -> product_no_seat
+   10. Only then: mint a code
 
 Steps 1 and 2 come first because until both hold, **the platform does not
 know where the browser is allowed to go**, and every later error must be
@@ -55,6 +56,7 @@ import hmac
 import re
 import secrets
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -62,7 +64,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from workeasy360.contracts.enums import OrganizationStatus
+from workeasy360.contracts.enums import LicensingMode, OrganizationStatus
 from workeasy360.contracts.ports.entitlements import get_gate
 from workeasy360.contracts.values.manifest import REQUIRED_SCOPE
 from workeasy360.platform.ecosystem import protocol
@@ -301,7 +303,7 @@ def _granted_scope(integration: Any, requested: str) -> tuple[str, ...]:
     return tuple(s for s in integration.manifest_obj.scopes if s in set(asked))
 
 
-# --- steps 4-8: the person, the tenant and the entitlement ----------------
+# --- steps 4-9: the person, the tenant, the entitlement and the seat ------
 
 
 @dataclass(frozen=True, slots=True)
@@ -451,7 +453,175 @@ def require_entitlement(subject: ResolvedSubject, product_code: str) -> None:
         ) from None
 
 
-# --- step 9: mint --------------------------------------------------------
+def require_seat(subject: ResolvedSubject, product_code: str) -> None:
+    """Refuse the authorization if this product is per-seat licensed and this
+    member holds no seat in it.
+
+    **Phase 3's known gap, closed here.** The Phase 3 audit found that an
+    organization holding a product with every seat assigned still
+    authenticated a sixth user into it, and named the reason precisely: the
+    remote OIDC contract carries no ``membership_id``, so a product has no
+    field in which to ask "does *this* user hold a seat?" on the platform's
+    behalf (docs/phase-3/17-audit-findings.md, "Seat trigger"). The check
+    therefore has to live here, before a token is ever minted - not in the
+    product, and not only in the launcher's pre-flight decision
+    (``platform/launcher``), because the launcher's answer can be stale by
+    the time the browser completes the redirect. This is the same
+    revalidate-don't-trust-the-earlier-answer property ``require_entitlement``
+    already has, applied to the newer question.
+
+    **Only for per-seat products.** An organization-wide or usage-licensed
+    product has no member-level allocation to check; asking would be
+    guessing a licensing mode from seat count, which Task 11 of the brief
+    rules out explicitly. The mode is read from the catalog through the same
+    port ``require_entitlement`` reaches indirectly - never imported, never
+    assumed.
+
+    Entitlement is required to have already passed: an organization with no
+    entitlement at all fails there first, with the more informative
+    ``product_not_entitled``, rather than the seat-specific ``product_no_seat``
+    a caller would otherwise have to explain away.
+    """
+    from workeasy360.contracts.ports.catalog import get_product_directory
+    from workeasy360.contracts.values.identifiers import ProductCode
+    from workeasy360.platform.tenancy.context import tenant_context
+    from workeasy360.platform.tenancy.db import tenant_db_scope
+
+    descriptor = get_product_directory().get(ProductCode(product_code))
+    if descriptor is None or descriptor.licensing_mode != LicensingMode.PER_SEAT:
+        return
+
+    ctx = subject.to_context()
+    with tenant_context(ctx), tenant_db_scope(ctx):
+        held = get_gate().has_seat(
+            subject.organization_id, subject.membership_id, ProductCode(product_code)
+        )
+    if held:
+        return
+
+    metrics.increment(
+        "ecosystem_authorization_denied_total", reason=protocol.PRODUCT_NO_SEAT
+    )
+    logger.info("ecosystem.authorize.no_seat", product_code=product_code)
+    raise protocol.OAuthError(
+        protocol.PRODUCT_NO_SEAT,
+        "This organization holds this product, but you have not been "
+        "assigned a seat. Ask an administrator to assign you one.",
+    )
+
+
+# --- steps 4-5, interrupted: park the request at the platform's own UI ----
+#
+# Reached only for `login_required` and `organization_required` - see
+# `PendingAuthorization`'s docstring for why a row rather than a stateless
+# token, and this module's own docstring for the property this preserves:
+# nothing below trusts a browser-supplied field that was not already
+# verified once, by `resolve_client` and `parse_request`, before the park.
+
+
+@dataclass(frozen=True, slots=True)
+class PendingGrant:
+    """An opaque, single-use resume token and where it is good for."""
+
+    token: str
+    expires_in: int
+
+
+def create_pending(request: AuthorizationRequest) -> PendingGrant:
+    """Park a verified request. The browser is sent to the platform's own
+    login or organization-chooser page next, carrying only this token.
+
+    Everything the eventual resume needs is copied from ``request`` - which
+    was itself built by ``parse_request`` from a verified ``ClientResolution``
+    - onto the row. The token is the only thing that travels through the
+    browser between now and ``resume_pending``.
+    """
+    from workeasy360.platform.ecosystem.models import PendingAuthorization
+
+    token = secrets.token_urlsafe(CODE_BYTES)
+    ttl = int(settings.OIDC_PENDING_AUTHORIZATION_TTL_S)
+
+    PendingAuthorization.objects.create(
+        token_hash=hash_code(token),
+        integration=request.integration,
+        redirect_uri=request.redirect_uri,
+        state=request.state,
+        scope=" ".join(request.scope),
+        code_challenge=request.code_challenge,
+        code_challenge_method=request.code_challenge_method,
+        nonce=request.nonce,
+        organization_id=request.organization_id,
+        expires_at=timezone.now() + timedelta(seconds=ttl),
+    )
+    return PendingGrant(token=token, expires_in=ttl)
+
+
+def resume_pending(*, token: str) -> AuthorizationRequest:
+    """Reconstruct the parked request, exactly once.
+
+    Single use under concurrency by the identical mechanism
+    ``redeem_code`` uses - a conditional UPDATE, not a read then a write -
+    so a resume link clicked twice (a doubled tab, a replayed URL) resumes
+    at most once. The second attempt raises, uniformly, whether the token
+    is unknown, expired or already consumed: which of those it was is not
+    disclosed, for the same reason ``redeem_code``'s failures are uniform.
+
+    Raises :class:`protocol.OAuthError` with ``invalid_request`` -
+    deliberately **not** a redirectable code, because at this point the
+    platform may not yet know a verified place to send the browser: an
+    unknown token names no stored redirect URI at all. The caller renders
+    this rather than redirecting it, exactly as ``resolve_client``'s
+    failures are rendered and for the identical reason.
+    """
+    from workeasy360.platform.ecosystem.models import PendingAuthorization
+
+    row = (
+        PendingAuthorization.objects.select_related("integration")
+        .filter(token_hash=hash_code(token))
+        .first()
+    )
+    failure = protocol.OAuthError(
+        protocol.INVALID_REQUEST,
+        "This sign-in link is invalid, expired or already used. Start again "
+        "from the product you were opening.",
+    )
+    if row is None or row.expires_at <= timezone.now():
+        raise failure
+
+    with transaction.atomic():
+        spent = PendingAuthorization.objects.filter(
+            pk=row.pk, consumed_at__isnull=True
+        ).update(consumed_at=timezone.now())
+    if spent != 1:
+        logger.warning("ecosystem.resume.token_replayed")
+        metrics.increment("ecosystem_pending_authorization_replay_total")
+        raise failure
+
+    return AuthorizationRequest(
+        integration=row.integration,
+        redirect_uri=row.redirect_uri,
+        state=row.state,
+        scope=tuple(s for s in row.scope.split(" ") if s),
+        code_challenge=row.code_challenge,
+        code_challenge_method=row.code_challenge_method,
+        nonce=row.nonce,
+        organization_id=row.organization_id,
+    )
+
+
+def prune_expired_pending(*, older_than_seconds: int = 3600) -> int:
+    """Delete pending authorizations well past expiry. Mirrors
+    ``prune_expired`` below for the identical reason: these are tiny and
+    short-lived, but an unbounded table is an unbounded table regardless of
+    row size."""
+    from workeasy360.platform.ecosystem.models import PendingAuthorization
+
+    cutoff = timezone.now() - timedelta(seconds=older_than_seconds)
+    deleted, _ = PendingAuthorization.objects.filter(expires_at__lt=cutoff).delete()
+    return deleted
+
+
+# --- step 10: mint --------------------------------------------------------
 
 
 def issue_code(request: AuthorizationRequest, subject: ResolvedSubject) -> GrantedCode:
@@ -630,13 +800,14 @@ def _invalid_grant() -> protocol.OAuthError:
 def _revalidate_subject(row: Any) -> None:
     """Re-ask the three live-state questions the code only *recorded*.
 
-    Membership, organization status and entitlement were all true when the
-    code was minted. They are re-read here because the code outlives the
-    answer: up to sixty seconds separate the redirect from the exchange, and
-    an operator who revokes a membership inside that window is entitled to
-    expect that no new token is issued afterwards.
+    Membership, organization status, entitlement and (for a per-seat product)
+    the seat itself were all true when the code was minted. They are re-read
+    here because the code outlives the answer: up to sixty seconds separate
+    the redirect from the exchange, and an operator who revokes a membership
+    - or unassigns a seat - inside that window is entitled to expect that no
+    new token is issued afterwards.
 
-    The same two functions the authorization endpoint calls, deliberately -
+    The same three functions the authorization endpoint calls, deliberately -
     a second implementation of "is this person still allowed in?" is a second
     place for a rule to be forgotten, and the rule that gets forgotten is
     always the one about soft deletion.
@@ -660,6 +831,7 @@ def _revalidate_subject(row: Any) -> None:
             aal=row.aal,
         )
         require_entitlement(subject, row.integration.product_code)
+        require_seat(subject, row.integration.product_code)
     except protocol.OAuthError as denial:
         logger.warning(
             "ecosystem.token.subject_no_longer_valid",

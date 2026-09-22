@@ -63,6 +63,15 @@ ORGANIZATION_INACTIVE: Final = "organization_inactive"
 PRODUCT_NOT_ENTITLED: Final = "product_not_entitled"
 INTEGRATION_SUSPENDED: Final = "integration_suspended"
 ORGANIZATION_REQUIRED: Final = "organization_required"
+#: The organization holds the product but this member holds no seat in it.
+#: Distinct from ``product_not_entitled`` so a product's client library (and
+#: the launcher, which asks the identical question before it ever reaches
+#: here - see ``platform/launcher``) can render "ask your administrator for a
+#: seat" rather than "this organization has not purchased this product".
+#: ``EntitlementReason.NO_SEAT`` was reserved for exactly this since Phase 3
+#: (docs/phase-3/17-audit-findings.md, "Seat trigger"), so adding it is not a
+#: breaking change to an already-documented reason set.
+PRODUCT_NO_SEAT: Final = "product_no_seat"
 
 #: Every code this platform can emit - and nothing else. Published in the
 #: discovery document, and asserted against the actual raise sites by
@@ -87,6 +96,7 @@ ERROR_CODES: Final[frozenset[str]] = frozenset(
         PRODUCT_NOT_ENTITLED,
         INTEGRATION_SUSPENDED,
         ORGANIZATION_REQUIRED,
+        PRODUCT_NO_SEAT,
     }
 )
 

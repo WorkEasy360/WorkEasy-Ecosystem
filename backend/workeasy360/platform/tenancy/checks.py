@@ -93,6 +93,11 @@ TENANT_SCOPE_EXEMPT = frozenset(
         # This is the same class as identity.User - control-plane-adjacent,
         # carrying a tenant reference it does not derive access from.
         "ecosystem.AuthorizationCode",
+        # Phase 4. Identical reasoning to AuthorizationCode above - reachable
+        # only through the SHA-256 of a random secret, and the organization
+        # it names (when it names one) is re-verified against a live
+        # membership at resume, not trusted from this row.
+        "ecosystem.PendingAuthorization",
     }
 )
 

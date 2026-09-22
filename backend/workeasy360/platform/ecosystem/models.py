@@ -502,3 +502,93 @@ class AuthorizationCode(models.Model):
     # `authorization.redeem_code`, and it is not expressible as a property of
     # a row. A second, weaker definition of the same question is how the
     # weaker one eventually gets called.
+
+
+class PendingAuthorization(models.Model):
+    """A verified authorization request, parked while the browser completes
+    login or organization selection at the platform's own UI. Phase 4.
+
+    **The gap this closes.** ADR-018 accepted, as a stated consequence, that
+    an unauthenticated `/authorize` request had nowhere to send the browser
+    except back to the product with a `login_required` error - because no
+    platform UI existed yet to send it to instead. Now one does
+    (docs/phase-4/05-organization-selection.md), and the standards-conformant
+    behaviour is for the *provider* to interrupt the flow with its own login
+    page and resume afterwards, not to make every product implement that
+    round trip itself.
+
+    **Why a row, not a signed, stateless token.** A self-contained signed
+    token (a JWT-shaped blob naming the client, redirect URI, PKCE challenge
+    and organization) would need no database write and would work identically
+    across instances - the property the frozen Phase 3 rule "multi-instance-
+    safe security state" cares about, and PostgreSQL already gives it for
+    free here. What a stateless token cannot give is **revocation on first
+    use**: `AuthorizationCode` is single-use by exactly the same conditional
+    UPDATE this model reuses, and reusing that mechanism rather than
+    inventing a stateless variant is what stops a resume link, once clicked,
+    from being clickable a second time (Task 32: replay).
+
+    **Why every field is copied rather than re-derived from the query
+    string at resume time.** The request was already verified once, by
+    `resolve_client` and `parse_request`, against a browser navigation that
+    could not yet authenticate. Re-parsing untrusted query parameters a
+    second time - after login, when the stakes of getting it wrong are
+    higher - would mean the verified request and the resumed request are two
+    different objects that merely resemble each other. Storing the verified
+    one and replaying it unchanged is what makes "cross-client resume" and
+    "wrong organization substitution" (Task 32) structurally unreachable:
+    there is no field on this row a browser can influence except
+    `organization_id`, and only when the original request left it unset (see
+    `authorization.resume_pending`).
+
+    Exempt from tenant scoping (W360.E001, `TENANT_SCOPE_EXEMPT`) for the
+    identical reason `AuthorizationCode` is: reachable only through the
+    SHA-256 of a 256-bit secret, and the organization it names - when it
+    names one at all - has not yet been re-verified against a live
+    membership. That re-verification happens at resume, through the same
+    `resolve_subject` the authorization endpoint itself uses.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    #: SHA-256 of the resume token. The plaintext travels in a URL the
+    #: browser is redirected to and is never itself stored, for the same
+    #: reason `AuthorizationCode.code_hash` is not the plaintext code.
+    token_hash = models.CharField(max_length=64, unique=True)
+
+    integration = models.ForeignKey(
+        ProductIntegration, on_delete=models.CASCADE, related_name="pending_authorizations"
+    )
+
+    redirect_uri = models.CharField(max_length=512)
+    state = models.CharField(max_length=512, blank=True, default="")
+    scope = models.CharField(max_length=128)
+    code_challenge = models.CharField(max_length=128)
+    code_challenge_method = models.CharField(max_length=8)
+    nonce = models.CharField(max_length=255, blank=True, default="")
+
+    #: NULL when the original request named no organization - the product's
+    #: launch URL omitted it, or (rarer) a user reached `/authorize` directly.
+    #: Resolved by the organization chooser at resume time. Never overwritten
+    #: once set: see `authorization.resume_pending`.
+    organization_id = models.UUIDField(null=True, blank=True)
+
+    expires_at = models.DateTimeField()
+    #: Set by a conditional UPDATE, exactly as `AuthorizationCode.redeemed_at`
+    #: is - single use under concurrency needs no lock, only the WHERE clause.
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "ecosystem_pending_authorization"
+        indexes = [
+            # The pruning job's query, identical in shape to
+            # ix_authcode_expires: these are short-lived and the sweep must
+            # not be a full scan of everything ever issued.
+            models.Index(fields=["expires_at"], name="ix_pendingauth_expires"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        state = "consumed" if self.consumed_at else "pending"
+        return f"pending authorization for {self.integration_id} ({state})"

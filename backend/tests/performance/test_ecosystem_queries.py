@@ -153,13 +153,21 @@ def test_the_authorization_endpoint_has_a_bounded_query_budget(
 ):
     """Session, integration lookup, organization, membership, entitlement
     snapshot, code insert - plus the tenant-scope round trips around the
-    entitlement read."""
+    entitlement read.
+
+    **Phase 4:** +5, from ``require_seat`` (Task 11/``authorization.py``
+    step 9): a catalog lookup for the product's licensing mode, the seat
+    read itself, and the tenant-scope round trips around that read - the
+    identical shape ``require_entitlement`` already pays for the identical
+    reason. ``crm`` in this fixture is per-seat, so every authorization
+    against it pays this cost; an organization-wide product would not.
+    """
     registration = register_product("crm")
     org = entitled_org("crm")
     signed_in(org["user"])
     _, challenge = _pkce()
 
-    with django_assert_max_num_queries(20):
+    with django_assert_max_num_queries(25):
         response = client.get(AUTHORIZE, _authorize_params(registration, org, challenge))
     assert response.status_code == 302
 
@@ -189,6 +197,12 @@ def test_the_token_endpoint_has_a_bounded_query_budget(
     It is affordable here and would not be on a per-request path. This runs
     once per product sign-in, alongside an RS256 signature that costs ~28 ms
     on its own - the database round trips are not what a user waits for.
+
+    **Phase 4:** +3, from ``_revalidate_subject`` now also re-running
+    ``require_seat`` (a per-seat product's re-validation must re-check the
+    seat, not only the entitlement, or an unassigned-mid-flight seat would
+    still yield a token - the same argument that motivated re-validation at
+    all, applied one check further).
     """
     registration = register_product("crm")
     org = entitled_org("crm")
@@ -198,7 +212,7 @@ def test_the_token_endpoint_has_a_bounded_query_budget(
     granted = client.get(AUTHORIZE, _authorize_params(registration, org, challenge))
     code = parse_qs(urlsplit(granted["Location"]).query)["code"][0]
 
-    with django_assert_max_num_queries(26):
+    with django_assert_max_num_queries(29):
         response = client.post(
             TOKEN,
             {

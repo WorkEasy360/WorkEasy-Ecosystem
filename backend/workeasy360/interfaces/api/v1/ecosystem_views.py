@@ -151,6 +151,7 @@ def authorize(request: HttpRequest) -> HttpResponse:
             aal=_session_aal(request),
         )
         authorization.require_entitlement(subject, parsed.integration.product_code)
+        authorization.require_seat(subject, parsed.integration.product_code)
         granted = authorization.issue_code(parsed, subject)
     except protocol.OAuthError as exc:
         return _redirect_error(resolution, exc)

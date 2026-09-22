@@ -893,18 +893,62 @@ def entitled_org(db, organization_factory, tenant_ctx_factory, entitled):
     Granted through ``commercial/provisioning``, which is the sole sanctioned
     entitlement writer (A10). Writing ``Entitlement`` rows directly would test
     a state the system cannot actually reach.
-    """
 
-    def make(product_code: str = "crm", *, slug: str | None = None, **kwargs):
+    **Phase 4.** "Ready to authenticate into it" now includes a seat for a
+    per-seat product (``platform.ecosystem.authorization.require_seat`` -
+    Task 11 of the brief). Rather than push that setup onto every one of this
+    fixture's ten callers, it is done here, once, exactly as entitlement
+    itself already is - so a test written before Phase 4 that asked for "an
+    org that can authenticate into crm" keeps meaning that. A test that
+    specifically exercises the no-seat case passes ``seat=False`` and
+    assigns (or does not) explicitly.
+
+    The licensing mode is read through the same ``ProductDirectory`` port
+    production code uses (never assumed, never duplicated). A product the
+    catalog does not know - a test that granted entitlement without also
+    registering a catalog product - is left exactly as before: no seat
+    pool exists to assign from, which is also what ``require_seat`` does
+    when the catalog has nothing to say about the product.
+    """
+    from workeasy360.contracts.enums import LicensingMode
+    from workeasy360.contracts.ports.catalog import get_product_directory
+    from workeasy360.contracts.values.identifiers import ProductCode
+
+    def make(
+        product_code: str = "crm", *, slug: str | None = None, seat: bool = True, **kwargs
+    ):
         org, membership, user = organization_factory(
             slug=slug or f"org-{uuid.uuid4().hex[:10]}"
         )
+        ctx = tenant_ctx_factory(org, membership, user)
+
+        is_per_seat = False
+        if seat:
+            descriptor = get_product_directory().get(ProductCode(product_code))
+            is_per_seat = (
+                descriptor is not None and descriptor.licensing_mode == LicensingMode.PER_SEAT
+            )
+        if is_per_seat:
+            kwargs.setdefault("seats", 5)
         entitled(org.id, product_code, **kwargs)
+
+        if is_per_seat:
+            from workeasy360.platform.entitlements.services.seats import assign_seat
+            from workeasy360.platform.tenancy.context import tenant_context
+            from workeasy360.platform.tenancy.db import tenant_db_scope
+
+            # SeatAssignment is tenant-scoped (both isolation layers), and
+            # ``assign_seat`` is written to be called from a live request or
+            # task - exactly the two layers ``require_entitlement`` and
+            # ``require_seat`` establish for the identical reason.
+            with tenant_context(ctx), tenant_db_scope(ctx):
+                assign_seat(org.id, pool_key=product_code, membership_id=membership.id)
+
         return {
             "org": org,
             "membership": membership,
             "user": user,
-            "ctx": tenant_ctx_factory(org, membership, user),
+            "ctx": ctx,
             "organization_id": str(org.id),
         }
 
