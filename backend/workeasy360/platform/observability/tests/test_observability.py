@@ -291,3 +291,52 @@ def test_route_label_uses_the_url_pattern(client):
     assert snapshot
     for key in snapshot:
         assert "018f" not in key
+
+
+# --- declared metrics are actually emitted --------------------------------
+#
+# 11-observability.md §6 names three correctness alarms and says any non-zero
+# value pages. Naming them in the registry module is not emitting them, and
+# five of the declared constants had no call site at all - including the one
+# `unscoped.py` told the reader it was incrementing. A control that is
+# documented and not wired is worse than one that is neither, because it is
+# believed.
+
+
+def test_every_named_metric_has_an_emitter():
+    """A constant with no call site is a metric that will never fire.
+
+    Asserted over the source, so adding a name to the registry without wiring
+    it fails here rather than during an incident.
+    """
+    import ast
+    import pathlib
+
+    from workeasy360.platform.observability import metrics as metrics_module
+
+    root = pathlib.Path(metrics_module.__file__).resolve().parents[3]
+    declared = {
+        name
+        for name, value in vars(metrics_module).items()
+        if name.isupper()
+        and isinstance(value, str)
+        and value.endswith(("_total", "_seconds", "_count"))
+    }
+
+    used: set[str] = set()
+    for path in root.rglob("*.py"):
+        rel = path.relative_to(root).as_posix()
+        if rel.endswith("observability/metrics.py"):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:  # pragma: no cover
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id in declared:
+                used.add(node.id)
+
+    assert not (declared - used), (
+        "Declared metrics with no emitter anywhere: "
+        f"{sorted(declared - used)}. Either wire them or remove the constant."
+    )

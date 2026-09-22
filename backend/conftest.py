@@ -19,10 +19,12 @@ assumption untested). Isolation tests would pass while production was broken
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 import pytest
 from django.conf import settings
 from django.db import connection
+from django.utils import timezone
 
 from workeasy360.contracts.enums import MembershipStatus, OrganizationStatus
 from workeasy360.contracts.values.tenant import TenantContext
@@ -312,19 +314,17 @@ def in_tenant():
     """
     from contextlib import contextmanager
 
-    from django.db import transaction
-
     from workeasy360.platform.tenancy.context import tenant_context
-    from workeasy360.platform.tenancy.db import set_tenant_variable
+    from workeasy360.platform.tenancy.db import tenant_db_scope
 
     @contextmanager
     def enter(ctx: TenantContext):
-        # A transaction is mandatory, not incidental: set_config(..., true) is
-        # transaction-local, so outside one it is reverted immediately and
-        # every tenant query would return zero rows. This mirrors exactly what
-        # the tenancy middleware does per request.
-        with tenant_context(ctx), transaction.atomic():
-            set_tenant_variable(ctx.organization_id, is_break_glass=ctx.is_break_glass)
+        # Exactly what the tenancy middleware does per request, by calling the
+        # same helper rather than a lookalike. A fixture that reimplements the
+        # production mechanism tests the reimplementation - and this one used
+        # to, which is how the savepoint leak in tenant scoping survived a
+        # green suite.
+        with tenant_context(ctx), tenant_db_scope(ctx):
             yield ctx
 
     return enter
@@ -337,5 +337,329 @@ def entitled(db):
 
     def make(org_id, product: str = "crm", **kwargs):
         return grant_product(org_id, product, **kwargs)
+
+    return make
+
+
+# --- commercial fixtures --------------------------------------------------
+#
+# Phase 2 adds a second kind of setup: the control-plane catalog, which is
+# global rather than tenant-owned, and the privileged contexts that may write
+# it. Both live here rather than in the commercial suites so that "what a
+# catalog looks like" has one definition - two subtly different ones is how a
+# test passes against a shape production never produces.
+
+
+@pytest.fixture
+def sync_permissions(db):
+    """Mirror the code-declared permission registry into the database.
+
+    A deploy step in production. The registry is the source of truth; this
+    table is its projection, and exists so RolePermission can hold a foreign
+    key.
+    """
+    from workeasy360.platform.authz.models import Permission
+    from workeasy360.platform.authz.registry import permission_registry
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    with unscoped_access(
+        reason="Permission sync is control-plane reference data",
+        module="tests.conftest",
+    ):
+        for declaration in permission_registry.all():
+            Permission.objects.update_or_create(
+                key=str(declaration.key),
+                defaults={
+                    "label": declaration.label,
+                    "product": declaration.product,
+                    "category": declaration.category,
+                    "dangerous": declaration.dangerous,
+                    "implies": list(declaration.implies),
+                },
+            )
+    return Permission.objects.count()
+
+
+@pytest.fixture
+def grant_permissions(db, sync_permissions):
+    """Give a membership a role carrying specific permissions."""
+    from workeasy360.platform.authz import services as authz
+    from workeasy360.platform.authz.models import Role, RoleAssignment, RolePermission
+    from workeasy360.platform.tenancy.db import organization_db_scope
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    counter = {"n": 0}
+
+    def make(org, membership, keys):
+        counter["n"] += 1
+        role_key = f"commercial-{counter['n']}"
+        # authz_role carries the D-001 asymmetric RLS policy: writes must
+        # match the current tenant, so this runs inside the org's DB scope.
+        with (
+            unscoped_access(
+                reason="Test fixture seeds a commercial role",
+                module="tests.conftest",
+            ),
+            organization_db_scope(org.id),
+        ):
+            role = Role.objects.create(
+                organization_id=org.id,
+                key=role_key,
+                name="Commercial",
+                is_system=False,
+            )
+            for key in keys:
+                RolePermission.objects.create(role=role, permission_id=str(key))
+            assignment = RoleAssignment(
+                organization_id=org.id, membership_id=membership.id, role=role
+            )
+            assignment.save()
+        authz.bump_permission_version(org.id)
+        return role
+
+    return make
+
+
+#: Everything a Phase 2 command surface can need. Granted as one set because
+#: these tests are about commercial behaviour; the tests that assert *which*
+#: permission gates *which* operation grant them individually.
+COMMERCIAL_PERMISSIONS = (
+    "commercial.catalog.view",
+    "commercial.catalog.manage",
+    "commercial.pricing.view",
+    "commercial.pricing.manage",
+    "commercial.subscription.view",
+    "commercial.subscription.manage",
+)
+
+
+@pytest.fixture
+def platform_admin(db, organization_factory, grant_permissions, tenant_ctx_factory):
+    """An internal staff identity that may write the global catalog.
+
+    Two things make it privileged and both are required: the permissions, and
+    ``User.is_staff``. A customer administrator can be given the first by a
+    misconfigured role; only Workeasy360 can set the second.
+
+    ``aal=2`` because every ``manage`` permission is declared dangerous, and
+    the decision function refuses those below AAL 2.
+    """
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    slug = "w360-internal-" + uuid.uuid4().hex[:6]
+    org, membership, user = organization_factory(slug=slug)
+    with unscoped_access(
+        reason="Test fixture marks an identity as internal staff",
+        module="tests.conftest",
+    ):
+        user.is_staff = True
+        user.save(update_fields=["is_staff"])
+
+    grant_permissions(org, membership, COMMERCIAL_PERMISSIONS)
+    ctx = tenant_ctx_factory(org, membership, user, aal=2)
+    return {"org": org, "membership": membership, "user": user, "ctx": ctx}
+
+
+@pytest.fixture
+def customer(db, organization_factory, grant_permissions, tenant_ctx_factory):
+    """A customer organization whose admin may manage its own subscription.
+
+    Deliberately **not** granted catalog or pricing management: the whole
+    point of the control-plane split is that a customer cannot hold those.
+    """
+    slug = "cust-" + uuid.uuid4().hex[:8]
+    org, membership, user = organization_factory(slug=slug)
+    grant_permissions(
+        org,
+        membership,
+        ("commercial.subscription.view", "commercial.subscription.manage"),
+    )
+    ctx = tenant_ctx_factory(org, membership, user, aal=2)
+    return {"org": org, "membership": membership, "user": user, "ctx": ctx}
+
+
+@pytest.fixture
+def catalog(db, platform_admin, in_tenant):
+    """A small but complete catalog: two products, plans, prices, a bundle.
+
+    Shaped like the example in the brief - CRM Starter / Professional, Books
+    Professional, and a Sales Suite bundle - so the tests read as scenarios
+    rather than as fixtures.
+    """
+    from workeasy360.commercial.catalog import services as catalog_services
+    from workeasy360.commercial.pricing import services as pricing_services
+    from workeasy360.contracts.enums import (
+        BillingInterval,
+        BundleKind,
+        CatalogStatus,
+        FeatureKind,
+        LicensingMode,
+        PriceBookChannel,
+        ProductStatus,
+    )
+    from workeasy360.contracts.values.money import CurrencyCode
+
+    ctx = platform_admin["ctx"]
+    # The catalog has been live for a month. Backdated so that "what did this
+    # cost yesterday?" is a question the fixture can actually answer - a
+    # catalog created at `now` makes every historical assertion vacuous.
+    established = timezone.now() - timedelta(days=30)
+
+    with in_tenant(ctx):
+        crm = catalog_services.create_product(
+            ctx, code="crm", name="CRM", licensing_mode=LicensingMode.PER_SEAT
+        )
+        books = catalog_services.create_product(
+            ctx,
+            code="books",
+            name="Books",
+            licensing_mode=LicensingMode.PER_ORGANIZATION,
+        )
+        for product in (crm, books):
+            catalog_services.set_product_status(
+                ctx, product_id=product.id, status=ProductStatus.AVAILABLE
+            )
+
+        pipelines = catalog_services.create_feature(
+            ctx,
+            product_id=crm.id,
+            key="crm.pipelines.max",
+            name="Pipelines",
+            kind=FeatureKind.QUOTA,
+            unit="pipelines",
+            default_value=0,
+        )
+        forecasting = catalog_services.create_feature(
+            ctx,
+            product_id=crm.id,
+            key="crm.sales.forecast",
+            name="Sales forecasting",
+            kind=FeatureKind.BOOLEAN,
+            default_value=False,
+        )
+        multi_currency = catalog_services.create_feature(
+            ctx,
+            product_id=books.id,
+            key="books.ledger.multi_currency",
+            name="Multi-currency ledger",
+            kind=FeatureKind.BOOLEAN,
+            default_value=False,
+        )
+
+        plans = {}
+        versions = {}
+        specs = [
+            ("crm_starter", crm, "CRM Starter", {"crm.pipelines.max": 3}, 2, 14),
+            (
+                "crm_professional",
+                crm,
+                "CRM Professional",
+                {"crm.pipelines.max": 25, "crm.sales.forecast": True},
+                10,
+                14,
+            ),
+            (
+                "books_professional",
+                books,
+                "Books Professional",
+                {"books.ledger.multi_currency": True},
+                5,
+                0,
+            ),
+        ]
+        for code, product, name, features, seats, trial_days in specs:
+            plan = catalog_services.create_plan(
+                ctx, product_id=product.id, code=code, name=name
+            )
+            catalog_services.set_plan_status(
+                ctx, plan_id=plan.id, status=CatalogStatus.AVAILABLE
+            )
+            version = catalog_services.draft_plan_version(
+                ctx,
+                plan_id=plan.id,
+                features=features,
+                included_seats=seats,
+                trial_days=trial_days,
+                effective_from=established,
+            )
+            catalog_services.publish_plan_version(ctx, plan_version_id=version.id)
+            plans[code] = plan
+            versions[code] = version
+
+        book = pricing_services.create_price_book(
+            ctx,
+            code="direct_gbp",
+            name="Direct GBP",
+            currency=CurrencyCode.GBP,
+            channel=PriceBookChannel.DIRECT,
+            valid_from=established,
+        )
+        prices = {}
+        for code, amount in (
+            ("crm_starter", 1499),
+            ("crm_professional", 4999),
+            ("books_professional", 2999),
+        ):
+            prices[code] = pricing_services.publish_price(
+                ctx,
+                price_book_id=book.id,
+                plan_version_id=versions[code].id,
+                interval=BillingInterval.MONTHLY,
+                amount_minor=amount,
+                valid_from=established,
+            )
+
+        bundle = catalog_services.create_bundle(
+            ctx, code="sales_suite", name="Sales Suite", kind=BundleKind.PREDEFINED
+        )
+        bundle_version = catalog_services.draft_bundle_version(
+            ctx,
+            bundle_id=bundle.id,
+            items=[
+                {"plan_version_id": versions["crm_professional"].id},
+                {"plan_version_id": versions["books_professional"].id},
+            ],
+            effective_from=established,
+        )
+        catalog_services.publish_bundle_version(ctx, bundle_version_id=bundle_version.id)
+        catalog_services.set_bundle_status(
+            ctx, bundle_id=bundle.id, status=CatalogStatus.AVAILABLE
+        )
+        prices["sales_suite"] = pricing_services.publish_price(
+            ctx,
+            price_book_id=book.id,
+            bundle_version_id=bundle_version.id,
+            interval=BillingInterval.MONTHLY,
+            amount_minor=6999,
+            valid_from=established,
+        )
+
+    return {
+        "products": {"crm": crm, "books": books},
+        "features": {
+            "pipelines": pipelines,
+            "forecast": forecasting,
+            "multi_currency": multi_currency,
+        },
+        "plans": plans,
+        "versions": versions,
+        "price_book": book,
+        "prices": prices,
+        "bundle": bundle,
+        "bundle_version": bundle_version,
+    }
+
+
+@pytest.fixture
+def billing_account(db, in_tenant):
+    """Open a billing account, which fixes the organization's currency."""
+    from workeasy360.commercial.billing import services as billing
+    from workeasy360.contracts.values.money import CurrencyCode
+
+    def make(ctx, currency=CurrencyCode.GBP, region=""):
+        with in_tenant(ctx):
+            return billing.open_billing_account(
+                ctx, currency=currency, billing_region=region
+            )
 
     return make

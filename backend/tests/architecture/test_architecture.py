@@ -317,11 +317,25 @@ def test_no_raw_sql_built_with_f_strings():
 
 
 def test_no_writable_serializer_uses_fields_all():
-    """G6: mass assignment."""
+    """G6: mass assignment.
+
+    Read as an assignment rather than as text. A docstring that explains the
+    rule is documentation, not a violation, and a check that cannot tell the
+    two apart teaches people to avoid mentioning it - which is the opposite
+    of what a fitness rule is for.
+    """
     offenders = []
     for path in _source_files():
-        if 'fields = "__all__"' in path.read_text(encoding="utf-8"):
-            offenders.append(path.relative_to(PACKAGE).as_posix())
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Assign):
+                continue
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            if (
+                "fields" in names
+                and isinstance(node.value, ast.Constant)
+                and node.value.value == "__all__"
+            ):
+                offenders.append(path.relative_to(PACKAGE).as_posix())
     assert not offenders, offenders
 
 
@@ -462,6 +476,23 @@ def test_unscoped_manager_use_is_allowlisted():
         "platform/organizations/resolver.py",
         "platform/notifications/tasks.py",
         "commercial/provisioning/",
+        # --- Phase 2 additions, each mirroring an existing precedent ---
+        #
+        # record_system() audits clock-driven commercial transitions, which
+        # have no actor and therefore no tenant context. Same shape as
+        # platform/entitlements/selectors.py: the caller has entered the
+        # organization's database scope, so RLS still confines the write to
+        # one tenant.
+        "platform/audit/services.py",
+        # Provisioning reads commercial state outside a request context,
+        # exactly as it reads entitlement grants.
+        "commercial/subscriptions/selectors.py",
+        # The single system write pathway: trials ending, cancellations
+        # taking effect, periods rolling. It exists because those operations
+        # must work for a *suspended* organization, whose writes R-10 blocks
+        # under any tenant context. Narrowed to one file so grep gives the
+        # complete list of system writers.
+        "commercial/subscriptions/system.py",
     )
 
     offenders = []

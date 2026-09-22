@@ -13,6 +13,7 @@ one refactor away from taking a caller-supplied string (ARCHITECTURE.md G7).
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Final
 
 from django.db import migrations
@@ -21,6 +22,22 @@ _IDENT_RE: Final = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 TENANT_SETTING: Final = "app.organization_id"
 POLICY_NAME: Final = "tenant_isolation"
+
+#: The parent-publication lookup used by
+#: :func:`freeze_children_of_published_parent`, as a **constant**.
+#:
+#: Nothing is interpolated into it from Python. The table and column names
+#: arrive at run time as trigger arguments and are quoted by PostgreSQL's own
+#: ``format(%I)``, which is the only safe way to place an identifier into a
+#: query - SQL has no parameter form for one.
+#:
+#: Kept out of the surrounding f-string deliberately, so that the query text
+#: and the identifier substitution are visibly separate things. A reader (and
+#: a static analyser) can see at a glance that no query here is built by
+#: formatting.
+_PARENT_PUBLISH_LOOKUP: Final = (
+    "format('SELECT %I FROM %I WHERE id = $1', TG_ARGV[2], TG_ARGV[0])"
+)
 
 
 def _ident(name: str) -> str:
@@ -226,6 +243,202 @@ def make_append_only(table: str, *, app_role: str = "w360_app") -> migrations.Ru
         DROP TRIGGER IF EXISTS {trigger_fn} ON {t};
         DROP FUNCTION IF EXISTS {trigger_fn}();
         GRANT UPDATE, DELETE ON {t} TO {role};
+        """,
+        elidable=False,
+    )
+
+
+def make_immutable_when_published(
+    table: str,
+    *,
+    columns: Sequence[str],
+    publish_column: str = "published_at",
+) -> migrations.RunSQL:
+    """Refuse changes to ``columns`` once ``publish_column`` is set.
+
+    The generic form of F5 ("published catalog versions and prices are
+    immutable"). Editing a published plan or price in place retroactively
+    changes what a customer agreed to buy, and the application guard alone is
+    bypassed by a data-fix script, the admin or a bulk update.
+
+    A trigger that **raises** rather than the ``DO INSTEAD NOTHING`` rule the
+    Phase 0 sketch suggested: a rule silently discards the update, so the
+    caller sees success and the operator believes the change landed. A
+    refused write is recoverable; a silently ignored one is a support ticket
+    six months later.
+
+    ``publish_column`` itself is always protected, so a published record
+    cannot be un-published and then edited.
+    """
+    t = _ident(table)
+    flag = _ident(publish_column)
+    trigger_fn = _ident(f"{table}_reject_published_change")
+
+    protected = sorted({*columns, publish_column})
+    comparisons = " OR ".join(
+        f"NEW.{_ident(col)} IS DISTINCT FROM OLD.{_ident(col)}" for col in protected
+    )
+
+    return migrations.RunSQL(
+        sql=f"""
+        CREATE OR REPLACE FUNCTION {trigger_fn}() RETURNS trigger AS $$
+        BEGIN
+            IF OLD.{flag} IS NOT NULL AND ({comparisons}) THEN
+                RAISE EXCEPTION
+                    '% row % is published and its commercial terms are immutable',
+                    TG_TABLE_NAME, OLD.id
+                    USING ERRCODE = 'restrict_violation';
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+
+        DROP TRIGGER IF EXISTS {trigger_fn} ON {t};
+        CREATE TRIGGER {trigger_fn}
+            BEFORE UPDATE ON {t}
+            FOR EACH ROW EXECUTE FUNCTION {trigger_fn}();
+        """,
+        reverse_sql=f"""
+        DROP TRIGGER IF EXISTS {trigger_fn} ON {t};
+        DROP FUNCTION IF EXISTS {trigger_fn}();
+        """,
+        elidable=False,
+    )
+
+
+def freeze_columns(
+    table: str,
+    *,
+    columns: Sequence[str],
+) -> migrations.RunSQL:
+    """Refuse any change to ``columns`` once the row exists.
+
+    The unconditional sibling of :func:`make_immutable_when_published`, for
+    records that have no draft state to be published *from*. A subscription
+    line is agreed the moment it is written: there is no later event that
+    makes it final, so "immutable after insert" is the whole rule.
+
+    This is what makes the commercial snapshot on a subscription item worth
+    having. Its purpose is that historical facts survive a catalog row being
+    superseded, closed, or restored from a different backup than the
+    subscription - and a snapshot a ``QuerySet.update()`` can rewrite provides
+    none of that. The pinned ``PlanVersion`` and ``PlanPrice`` are already
+    protected by triggers; leaving the copy mutable made the copy the weakest
+    link rather than the belt to the braces.
+
+    Columns that *must* still change are deliberately absent from every call
+    site: ``removed_at`` is how a line is closed, and ``updated_at`` is
+    bookkeeping.
+    """
+    t = _ident(table)
+    trigger_fn = _ident(f"{table}_reject_history_change")
+
+    comparisons = " OR ".join(
+        f"NEW.{_ident(col)} IS DISTINCT FROM OLD.{_ident(col)}"
+        for col in sorted(set(columns))
+    )
+
+    return migrations.RunSQL(
+        sql=f"""
+        CREATE OR REPLACE FUNCTION {trigger_fn}() RETURNS trigger AS $$
+        BEGIN
+            IF ({comparisons}) THEN
+                RAISE EXCEPTION
+                    '% row % records a commercial fact and cannot be changed',
+                    TG_TABLE_NAME, OLD.id
+                    USING ERRCODE = 'restrict_violation';
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+
+        DROP TRIGGER IF EXISTS {trigger_fn} ON {t};
+        CREATE TRIGGER {trigger_fn}
+            BEFORE UPDATE ON {t}
+            FOR EACH ROW EXECUTE FUNCTION {trigger_fn}();
+        """,
+        reverse_sql=f"""
+        DROP TRIGGER IF EXISTS {trigger_fn} ON {t};
+        DROP FUNCTION IF EXISTS {trigger_fn}();
+        """,
+        elidable=False,
+    )
+
+
+def freeze_children_of_published_parent(
+    table: str,
+    *,
+    parent_table: str,
+    parent_fk_column: str,
+    publish_column: str = "published_at",
+) -> migrations.RunSQL:
+    """Refuse INSERT/UPDATE/DELETE on rows whose parent is published.
+
+    Immutability of a ``PlanVersion`` is worthless if its ``PlanFeature`` rows
+    can still be edited - the version's identity is unchanged while what it
+    grants is not. The same applies to a ``PlanPrice``'s tiers.
+
+    The parent's table, key column and publish column arrive as **trigger
+    arguments**, which are values, and the lookup is built inside PostgreSQL
+    with ``format(... %I ...)``. This is the same shape ``add_tenant_fk``
+    already uses, and it is the reason the Python string here contains no
+    interpolated query: a helper that formats a ``SELECT`` is one refactor
+    away from formatting a caller-supplied one.
+
+    ``to_jsonb(NEW)`` reads the foreign-key column by name rather than by
+    identifier, so even the column reference is a value.
+    """
+    t = _ident(table)
+    trigger_fn = _ident(f"{table}_reject_published_parent")
+
+    # Validated for shape even though they travel as values, so a malformed
+    # name fails when the migration is written rather than when it runs.
+    for name in (parent_table, parent_fk_column, publish_column):
+        _ident(name)
+
+    return migrations.RunSQL(
+        sql=f"""
+        CREATE OR REPLACE FUNCTION {trigger_fn}() RETURNS trigger AS $$
+        DECLARE
+            published timestamptz;
+            target uuid;
+            row_data jsonb;
+        BEGIN
+            IF TG_OP = 'DELETE' THEN
+                row_data := to_jsonb(OLD);
+            ELSE
+                row_data := to_jsonb(NEW);
+            END IF;
+            target := (row_data ->> TG_ARGV[1])::uuid;
+
+            EXECUTE {_PARENT_PUBLISH_LOOKUP}
+                INTO published
+                USING target;
+
+            IF published IS NOT NULL THEN
+                RAISE EXCEPTION
+                    '% cannot be modified: its parent % row is published',
+                    TG_TABLE_NAME, TG_ARGV[0]
+                    USING ERRCODE = 'restrict_violation';
+            END IF;
+
+            IF TG_OP = 'DELETE' THEN
+                RETURN OLD;
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+
+        DROP TRIGGER IF EXISTS {trigger_fn} ON {t};
+        CREATE TRIGGER {trigger_fn}
+            BEFORE INSERT OR UPDATE OR DELETE ON {t}
+            FOR EACH ROW EXECUTE FUNCTION {trigger_fn}(
+                '{parent_table}', '{parent_fk_column}', '{publish_column}'
+            );
+        """,
+        reverse_sql=f"""
+        DROP TRIGGER IF EXISTS {trigger_fn} ON {t};
+        DROP FUNCTION IF EXISTS {trigger_fn}();
         """,
         elidable=False,
     )

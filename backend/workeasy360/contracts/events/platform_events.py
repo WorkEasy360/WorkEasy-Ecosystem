@@ -156,6 +156,25 @@ ENTITLEMENT_STATUS_CHANGED_V1: Final = registry.register(
     )
 )
 
+ENTITLEMENT_DRIFT_REPAIRED_V1: Final = registry.register(
+    EventSchema(
+        event_type="entitlements.drift.repaired",
+        version=1,
+        aggregate_type="entitlements.entitlement",
+        description=(
+            "Reconciliation found stored entitlements disagreeing with what "
+            "commercial state implies, and repaired them. Drift is a bug and "
+            "is never silently fixed: a rising rate means provisioning logic "
+            "or event delivery is broken (06-entitlements.md §5.3)."
+        ),
+        fields=(
+            FieldSpec("organization_id", str),
+            FieldSpec("products_changed", list),
+            FieldSpec("features_changed", list),
+        ),
+    )
+)
+
 #: Convenience export for tests and the manifest graph check.
 ALL_PLATFORM_SCHEMAS: Final = (
     ORGANIZATION_CREATED_V1,
@@ -168,4 +187,5 @@ ALL_PLATFORM_SCHEMAS: Final = (
     ENTITLEMENT_GRANTED_V1,
     ENTITLEMENT_REVOKED_V1,
     ENTITLEMENT_STATUS_CHANGED_V1,
+    ENTITLEMENT_DRIFT_REPAIRED_V1,
 )

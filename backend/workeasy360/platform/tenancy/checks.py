@@ -44,6 +44,24 @@ ALLOWED_CROSS_MODULE_FK_TARGETS = frozenset(
 #: F-6 does not apply to them.
 MEMBERSHIP_FK_ALLOWED_PACKAGES = ("platform", "commercial")
 
+#: Packages whose modules may hold foreign keys to **each other**, added by
+#: ADR-016.
+#:
+#: F-6 exists because an FK welds the database to another module and makes
+#: that module unextractable on its own. Inside ``commercial/`` that argument
+#: does not apply: ADR-006 specifies these exact foreign keys
+#: (``PlanPrice.plan_version``, ``SubscriptionItem.plan_version``), and
+#: ADR-006's own extraction path moves catalog and pricing **together** as one
+#: unit. The integrity they buy is load-bearing - ``on_delete=PROTECT`` is
+#: what makes it impossible to delete a plan version a subscription pinned,
+#: which is the mechanism behind "historical pricing cannot mutate".
+#:
+#: Narrow on purpose: it permits commercial -> commercial only. ``platform``
+#: siblings stay forbidden (F-5 already bans even importing sideways there),
+#: products stay forbidden from everything, and no FK may leave ``commercial``
+#: except to the frozen allowlist above.
+INTRA_PACKAGE_FK_PACKAGES = frozenset({"commercial"})
+
 #: Models that legitimately carry a tenant column without being tenant-scoped,
 #: each for a documented reason. Exemptions are explicit rather than inferred:
 #: a model that quietly escapes the check is how isolation gaps appear.
@@ -173,6 +191,16 @@ def check_cross_module_foreign_keys(
                 continue
 
             target_label = f"{target_module}.{target.__name__}"
+
+            # ADR-016: commercial modules may reference each other.
+            target_package = (target.__module__ or "").split(".")[1:2]
+            if (
+                source_package
+                and source_package == target_package
+                and source_package[0] in INTRA_PACKAGE_FK_PACKAGES
+            ):
+                continue
+
             if target_label not in ALLOWED_CROSS_MODULE_FK_TARGETS:
                 errors.append(
                     Error(

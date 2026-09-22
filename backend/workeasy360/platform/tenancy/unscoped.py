@@ -16,6 +16,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
+from workeasy360.platform.observability.metrics import UNSCOPED_QUERY, metrics
+
 logger = logging.getLogger(__name__)
 
 _unscoped: ContextVar[UnscopedAccess | None] = ContextVar("w360_unscoped", default=None)
@@ -52,7 +54,11 @@ def unscoped_access(*, reason: str, module: str = "") -> Iterator[UnscopedAccess
         )
 
     grant = UnscopedAccess(reason=reason.strip(), module=module)
-    # Counted by metric unscoped_query_total{module} (11-observability.md s6).
+    # Counted by metric unscoped_query_total{module} (11-observability.md s6),
+    # which is the signal an anomalous volume of bypasses trips. The comment
+    # claiming this predated the call by a phase; a control that is documented
+    # and not wired is worse than one that is neither, because it is believed.
+    metrics.increment(UNSCOPED_QUERY, scope_module=module or "unattributed")
     # NOTE: the field is "scope_module", not "module": stdlib logging refuses
     # to let `extra` overwrite reserved LogRecord attributes, and `module` is
     # one of them. Using it raises KeyError at the log call - which would turn

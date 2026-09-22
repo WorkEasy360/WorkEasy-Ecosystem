@@ -23,6 +23,11 @@ from workeasy360.platform.observability.correlation import (
     current_correlation_id,
     set_correlation_id,
 )
+from workeasy360.platform.observability.metrics import (
+    TASK_FAILURES,
+    TASK_RETRIES,
+    metrics,
+)
 from workeasy360.platform.tenancy.context import (
     current_tenant_or_none,
     reset_tenant,
@@ -147,6 +152,11 @@ class TenantTask(Task):
     def on_failure(
         self, exc: BaseException, task_id: str, args: Any, kwargs: Any, einfo: Any
     ) -> None:
+        # Counted, not only logged. A log line is a forensic record; the
+        # failure *rate* is what an operator alerts on, and task_failures_total
+        # was declared in the metric registry for a phase without anything
+        # emitting it.
+        metrics.increment(TASK_FAILURES, task=self.name)
         logger.error(
             "task.failed",
             extra={
@@ -174,6 +184,7 @@ class TenantTask(Task):
         base = float(getattr(settings, "TASK_RETRY_BACKOFF_BASE_S", 2.0))
         cap = float(getattr(settings, "TASK_RETRY_BACKOFF_CAP_S", 3600.0))
         ceiling = min(cap, base * (2**attempt))
+        metrics.increment(TASK_RETRIES, task=self.name)
         return random.uniform(0, ceiling)  # noqa: S311 - retry jitter, not cryptography
 
 

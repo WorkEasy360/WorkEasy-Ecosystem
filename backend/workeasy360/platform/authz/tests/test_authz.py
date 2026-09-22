@@ -313,6 +313,7 @@ def test_revocation_takes_effect_after_version_bump(two_tenants, in_tenant, gran
     Version-keyed invalidation is one counter increment for the whole
     organization, with no key enumeration.
     """
+    from workeasy360.platform.tenancy.db import organization_db_scope
     from workeasy360.platform.tenancy.unscoped import unscoped_access
 
     a = two_tenants["a"]
@@ -321,11 +322,19 @@ def test_revocation_takes_effect_after_version_bump(two_tenants, in_tenant, gran
     with in_tenant(a["ctx"]):
         assert authz.check(a["ctx"], "platform.member.view").allowed
 
-    with unscoped_access(
-        reason="Test revokes a role assignment directly",
-        module="tests.authz",
+    # Both layers, as production requires. ``unscoped_access`` relaxes the ORM
+    # manager; RLS is untouched by it, so without the database scope this
+    # DELETE matches zero rows and the test would assert that a revocation
+    # nobody performed had no effect.
+    with (
+        unscoped_access(
+            reason="Test revokes a role assignment directly",
+            module="tests.authz",
+        ),
+        organization_db_scope(a["org"].id),
     ):
-        RoleAssignment.unscoped.filter(id=assignment.id).delete()
+        deleted, _ = RoleAssignment.unscoped.filter(id=assignment.id).delete()
+        assert deleted == 1, "the revocation under test did not delete anything"
     authz.bump_permission_version(a["org"].id)
 
     with in_tenant(a["ctx"]):
@@ -369,11 +378,54 @@ def test_every_permission_follows_the_naming_convention():
         assert parsed.action
 
 
-def test_platform_permissions_use_the_platform_prefix():
+#: Namespaces that may register permissions. Both are infrastructure, not
+#: products: ``platform`` is the kernel and ``commercial`` sells the products
+#: rather than being one. The point of the list is that it does **not**
+#: contain a product code - a product that could register permissions could
+#: grant itself privileges before any enforcement existed for them.
+NON_PRODUCT_PERMISSION_NAMESPACES = {"platform", "commercial"}
+
+
+def test_only_non_product_namespaces_register_permissions():
+    """Product permissions belong in ``products/<p>/permissions.py``.
+
+    Widened from "platform only" in Phase 2, when ``commercial`` gained a real
+    privilege surface (catalog, pricing and subscription administration). The
+    rule the assertion protects is unchanged: no product may register a
+    permission before its module exists, because a grantable permission with
+    no enforcement behind it is worse than none.
+    """
     for declaration in permission_registry.all():
-        assert declaration.product == "platform", (
-            f"{declaration.key} is registered but is not a platform permission. "
+        assert declaration.product in NON_PRODUCT_PERMISSION_NAMESPACES, (
+            f"{declaration.key} is registered under {declaration.product!r}, "
+            f"which is not one of {sorted(NON_PRODUCT_PERMISSION_NAMESPACES)}. "
             f"Product permissions belong in products/<p>/permissions.py."
+        )
+
+
+def test_no_system_role_grants_catalog_or_pricing_management():
+    """The catalog applies to every tenant at once.
+
+    A customer administrator must never be able to change what products
+    exist, what a plan includes or what it costs. Two independent barriers
+    enforce that; this asserts the first - that no role a customer can hold
+    carries the permission at all. The second (an internal platform identity)
+    is asserted in the commercial suite.
+    """
+    control_plane = {"commercial.catalog.manage", "commercial.pricing.manage"}
+    for name, spec in authz.SYSTEM_ROLES.items():
+        keys = spec["permissions"]
+        if keys == "*":
+            # The owner role is explicitly the organization's own superuser.
+            # It is scoped to that organization and its assignments are
+            # tenant rows; it cannot reach a control-plane table, because the
+            # services additionally require internal staff.
+            continue
+        granted = control_plane & set(keys)
+        assert not granted, (
+            f"System role {name!r} grants control-plane permission(s) "
+            f"{sorted(granted)}, which would let a customer edit the global "
+            f"catalog."
         )
 
 

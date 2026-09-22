@@ -33,6 +33,12 @@ from workeasy360.contracts.errors import (
     TenantContextMismatch,
 )
 from workeasy360.contracts.values.tenant import TenantContext
+from workeasy360.platform.observability.metrics import (
+    RLS_VIOLATION,
+    TENANT_CONTEXT_MISSING,
+    WRITE_BLOCKED_SUSPENDED,
+    metrics,
+)
 from workeasy360.platform.tenancy.context import current_tenant_or_none
 from workeasy360.platform.tenancy.unscoped import unscoped_access_active
 
@@ -44,6 +50,7 @@ def _require_context(model_name: str) -> TenantContext:
     if ctx is None:
         # Correctness alarm: metric tenant_context_missing_total must stay at
         # zero, and any non-zero value pages (11-observability.md section 6).
+        metrics.increment(TENANT_CONTEXT_MISSING, model=model_name)
         logger.error(
             "tenant.context.missing",
             extra={"event": "tenant.context.missing", "model": model_name},
@@ -72,6 +79,11 @@ def _require_writable(
     if model is not None and getattr(model, "tenancy_write_block_exempt", False):
         # Documented exemption - see TenantScopedModel.tenancy_write_block_exempt.
         return
+    metrics.increment(
+        WRITE_BLOCKED_SUSPENDED,
+        model=model_name,
+        organization_status=ctx.organization_status.value,
+    )
     logger.warning(
         "tenant.write_blocked",
         extra={
@@ -142,14 +154,24 @@ class TenantScopedQuerySet(models.QuerySet):
 
 
 class TenantScopedManager(models.Manager.from_queryset(TenantScopedQuerySet)):
-    """The default manager. Filters by the active organization, or raises."""
+    """The default manager. Filters by the active organization, or raises.
+
+    Both isolation layers are checked, not one. Layer 2 (this filter) without
+    Layer 3 (the RLS variable) is the shape of the worst defect Phase 2 found:
+    the query is perfectly well formed, the policy matches nothing, and the
+    caller reads zero rows as an answer. Checking only the layer this class
+    owns would leave that failure exactly as quiet as it was.
+    """
 
     # Keeps migrations and dumpdata from using this manager, which would make
     # them fail for want of a tenant context they cannot have.
     use_in_migrations = False
 
     def get_queryset(self) -> TenantScopedQuerySet:
+        from workeasy360.platform.tenancy.db import assert_tenant_scope
+
         ctx = _require_context(self.model.__name__)
+        assert_tenant_scope(ctx.organization_id, what=self.model.__name__)
         return super().get_queryset().filter(organization_id=ctx.organization_id)
 
 
@@ -192,6 +214,10 @@ def _stamp_organization(instance: models.Model, ctx: TenantContext) -> None:
     if current is None:
         instance.organization_id = ctx.organization_id
     elif current != ctx.organization_id:
+        # A correctness alarm, not a validation error: something tried to
+        # write one tenant's row while acting as another. Any non-zero value
+        # pages (11-observability.md section 6).
+        metrics.increment(RLS_VIOLATION, model=type(instance).__name__, phase="write")
         raise TenantContextMismatch(
             f"{type(instance).__name__}.organization_id={current} does not "
             f"match the active tenant context {ctx.organization_id}. One of "
@@ -205,6 +231,7 @@ def _stamp_organization(instance: models.Model, ctx: TenantContext) -> None:
 def _assert_same_tenant(instance: models.Model, ctx: TenantContext) -> None:
     current = getattr(instance, "organization_id", None)
     if current is not None and current != ctx.organization_id:
+        metrics.increment(RLS_VIOLATION, model=type(instance).__name__, phase="access")
         raise CrossTenantAccess(
             f"{type(instance).__name__} belongs to organization {current}, "
             f"not the active tenant {ctx.organization_id}.",

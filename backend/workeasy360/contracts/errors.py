@@ -204,11 +204,136 @@ class UnknownEventType(IntegrationError):
     http_status = 500
 
 
+class IdempotencyConflict(IntegrationError):
+    """The same idempotency key was replayed with a different payload.
+
+    A duplicate delivery replays the *same* command and must return the
+    original result. A different payload under the same key is either a
+    client bug or a deliberate attempt to have one authorisation perform two
+    different operations, so it is refused rather than served.
+    """
+
+    code = "idempotency_conflict"
+    http_status = 409
+
+
 class CausationDepthExceeded(IntegrationError):
     """An event chain exceeded the cycle guard (02-dependency-rules.md §5)."""
 
     code = "causation_depth_exceeded"
     http_status = 500
+
+
+# --- Commercial ----------------------------------------------------------
+
+
+class CommercialError(Workeasy360Error):
+    """Base for catalog, pricing, subscription and licensing failures.
+
+    409 rather than 400 by default: these are almost always conflicts with
+    durable state ("that version is published", "that transition is not
+    legal") rather than malformed input, and the remedy differs.
+    """
+
+    code = "commercial_error"
+    http_status = 409
+
+
+class CommercialRecordNotFound(CommercialError):
+    """A commercial record does not exist, or belongs to another tenant.
+
+    404 for both cases, deliberately and identically. Distinguishing "does
+    not exist" from "exists but is not yours" is an enumeration oracle: it
+    tells an attacker which subscription ids are real.
+    """
+
+    code = "commercial_record_not_found"
+    http_status = 404
+
+
+class CatalogValidationError(CommercialError):
+    """A catalog record would be internally inconsistent.
+
+    400, because unlike the rest of this family it *is* bad input: a feature
+    key that does not belong to its product, a bundle item whose plan belongs
+    to a retired product.
+    """
+
+    code = "catalog_validation_error"
+    http_status = 400
+
+
+class ImmutableRecord(CommercialError):
+    """An attempt to edit a published catalog or pricing record.
+
+    Editing a live plan or price in place retroactively changes what
+    customers agreed to buy. Changes create a new version; existing
+    subscriptions keep the version they pinned (F5, ADR-006).
+    """
+
+    code = "immutable_record"
+
+
+class InvalidStateTransition(CommercialError):
+    """A lifecycle transition that the state machine does not permit.
+
+    Raised rather than silently ignored: an activation that quietly does
+    nothing is indistinguishable from one that worked, and the difference is
+    whether the customer has access.
+    """
+
+    code = "invalid_state_transition"
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        entity: str | None = None,
+        from_status: str | None = None,
+        to_status: str | None = None,
+        **context: Any,
+    ) -> None:
+        super().__init__(
+            message or f"{entity}: {from_status} -> {to_status} is not permitted.",
+            entity=entity,
+            from_status=from_status,
+            to_status=to_status,
+            **context,
+        )
+
+
+class PriceNotAvailable(CommercialError):
+    """No price matched. Never a fallback currency, region or zero.
+
+    A missing price is a catalog defect that must surface loudly; a silent
+    fallback bills someone incorrectly (ADR-006).
+    """
+
+    code = "price_not_available"
+
+
+class UnsupportedCurrencyOperation(CommercialError):
+    """A cross-currency operation was attempted with no settlement model.
+
+    Refused rather than converted: a conversion needs a rate, a rate needs a
+    date and a source, and silently choosing one produces numbers nobody can
+    reconcile later.
+    """
+
+    code = "unsupported_currency_operation"
+    http_status = 400
+
+
+class SeatRemediationRequired(CommercialError):
+    """A downgrade would leave more seats assigned than the new plan allows.
+
+    Not an outright refusal and not a silent revocation: assignments beyond
+    the new limit are marked over-limit with a deadline, and this error
+    carries that deadline so the UI can present the choice
+    (06-entitlements.md §6).
+    """
+
+    code = "seat_remediation_required"
 
 
 # --- Platform services ---------------------------------------------------

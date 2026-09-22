@@ -48,8 +48,10 @@ from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import (
     ENTITLEMENT_CACHE_HITS,
     ENTITLEMENT_CACHE_MISSES,
+    ENTITLEMENT_CHECK_DURATION,
     ENTITLEMENT_CHECKS,
     metrics,
+    timed,
 )
 
 logger = get_logger(__name__)
@@ -78,9 +80,15 @@ _request_cache: ContextVar[_RequestCache | None] = ContextVar(
 def entitlement_request_scope() -> Iterator[_RequestCache]:
     """Memoise entitlement reads for the duration of a request or task.
 
-    Installed by the tenancy middleware and by TenantTask. Without it every
-    check re-reads the cache backend; with it, checks after the first are
-    dictionary lookups.
+    Installed for requests by ``EntitlementRequestScopeMiddleware``, which
+    sits inside the tenancy middleware. Without it every check re-reads the
+    cache backend; with it, checks after the first are dictionary lookups, and
+    that is the difference between the R-14 budget being per-request and being
+    per-check.
+
+    A task that performs many checks should enter it explicitly. It is not
+    installed by ``TenantTask``, because ``platform/tenancy`` sits below this
+    module in the platform layering contract and may not import it.
     """
     cache = _RequestCache()
     token = _request_cache.set(cache)
@@ -264,7 +272,17 @@ def products(organization_id: UUID) -> Sequence[ProductCode]:
 
 
 def _resolve(organization_id: UUID) -> ResolvedEntitlements:
-    """Fetch the resolved state, through the three cache layers."""
+    """Fetch the resolved state, through the three cache layers.
+
+    Timed, because ENTITLEMENT_P50_BUDGET_MS and ENTITLEMENT_P95_BUDGET_MS are
+    settings the system is supposed to be held to, and until this was observed
+    the only thing that ever measured them was the benchmark.
+    """
+    with timed(ENTITLEMENT_CHECK_DURATION):
+        return _resolve_timed(organization_id)
+
+
+def _resolve_timed(organization_id: UUID) -> ResolvedEntitlements:
     local = _request_cache.get()
     if local is not None:
         cached = local.snapshots.get(organization_id)

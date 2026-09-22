@@ -69,9 +69,17 @@ PLATFORM_APPS = [
 
 INTEGRATION_APPS = [
     "workeasy360.integration.events",
+    "workeasy360.integration.idempotency",
 ]
 
+# Ordered by internal dependency (catalog -> pricing -> billing ->
+# subscriptions -> provisioning), so a missing dependency surfaces as an
+# import error at the right place rather than as an app-registry failure.
 COMMERCIAL_APPS = [
+    "workeasy360.commercial.catalog",
+    "workeasy360.commercial.pricing",
+    "workeasy360.commercial.billing",
+    "workeasy360.commercial.subscriptions",
     "workeasy360.commercial.provisioning",
 ]
 
@@ -108,6 +116,8 @@ MIDDLEWARE = [
     # the request transaction (rolling it back) before the response is built.
     "workeasy360.interfaces.api.errors.DomainErrorMiddleware",
     "workeasy360.platform.tenancy.middleware.TenancyMiddleware",
+    # Inside tenancy, so the memo spans exactly the request that has a tenant.
+    "workeasy360.platform.entitlements.middleware.EntitlementRequestScopeMiddleware",
 ]
 
 TEMPLATES = [
@@ -326,6 +336,56 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TIMEZONE = "UTC"
 CELERY_ENABLE_UTC = True
+
+# --- Scheduled work ------------------------------------------------------
+#
+# Phase 1 deliberately left Beat unconfigured: the relay and sweeper tasks
+# existed but nothing depended on them running. Phase 2 changes that. The
+# commercial clock - trials ending, cancellations taking effect, periods
+# rolling - has no actor to trigger it, and entitlement drift repair is the
+# recovery mechanism the whole provisioning design rests on. Both need a
+# scheduler, so the documented trigger for Beat is now reached
+# (docs/phase-2/phase-2-status.md, Task 37).
+#
+# Intervals are deliberately unambitious. Every task here is idempotent, so
+# running one late is a delay and running one twice is a no-op; the cost of a
+# tight schedule is constant database load for no correctness gain.
+CELERY_BEAT_SCHEDULE = {
+    "outbox-relay": {
+        "task": "integration.events.relay_outbox",
+        "schedule": env.float("W360_BEAT_RELAY_S", 5.0),
+        "options": {"queue": "critical", "expires": 30},
+    },
+    "outbox-release-stale-claims": {
+        "task": "integration.events.release_stale_claims",
+        "schedule": env.float("W360_BEAT_STALE_CLAIMS_S", 300.0),
+        "options": {"queue": "default", "expires": 280},
+    },
+    "commercial-process-due": {
+        "task": "commercial.subscriptions.process_due",
+        "schedule": env.float("W360_BEAT_COMMERCIAL_CLOCK_S", 300.0),
+        "options": {"queue": "default", "expires": 280},
+    },
+    "entitlement-reconcile-all": {
+        "task": "commercial.provisioning.reconcile_all",
+        "schedule": env.float("W360_BEAT_RECONCILE_S", 3600.0),
+        "options": {"queue": "heavy", "expires": 3500},
+    },
+    # The recovery path for deliveries that were never queued because the
+    # broker was unreachable at commit time. 09-failure-resilience.md names it
+    # as the reason a broker blip delays a notification rather than losing it,
+    # which is only true if something runs it.
+    "notifications-sweep-pending": {
+        "task": "platform.notifications.sweep_pending",
+        "schedule": env.float("W360_BEAT_NOTIFICATION_SWEEP_S", 300.0),
+        "options": {"queue": "default", "expires": 280},
+    },
+    "outbox-prune-published": {
+        "task": "integration.events.prune_published",
+        "schedule": env.float("W360_BEAT_PRUNE_S", 86400.0),
+        "options": {"queue": "heavy", "expires": 3600},
+    },
+}
 
 # Bounded retry policy shared by every task (09-failure-resilience.md s4.3).
 TASK_MAX_RETRIES = env.int("W360_TASK_MAX_RETRIES", 5)

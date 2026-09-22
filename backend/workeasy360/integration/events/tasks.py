@@ -47,8 +47,10 @@ def relay_outbox(self, batch_size: int | None = None) -> dict[str, int]:
     from workeasy360.integration.events.services import (
         claim_batch,
         mark_published,
+        pending_age_seconds,
         schedule_retry,
     )
+    from workeasy360.platform.observability.metrics import OUTBOX_PENDING, metrics
 
     claimed = claim_batch(batch_size)
     published = failed = 0
@@ -63,6 +65,13 @@ def relay_outbox(self, batch_size: int | None = None) -> dict[str, int]:
             # of the batch.
             schedule_retry(row, exc)
             failed += 1
+
+    # Backlog, gauged from the relay rather than sampled by a separate job:
+    # this runs every few seconds and has already paid for the connection.
+    # Oldest-pending *age* rather than depth, because a large draining backlog
+    # is healthy while a small stuck one is not - the same SLI the deep health
+    # probe reports, now also a number an alert can be written against.
+    metrics.gauge(OUTBOX_PENDING, pending_age_seconds())
 
     if claimed:
         logger.info(

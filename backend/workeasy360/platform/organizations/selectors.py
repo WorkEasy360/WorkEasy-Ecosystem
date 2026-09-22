@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from workeasy360.contracts.enums import MembershipStatus
+from workeasy360.contracts.enums import MembershipStatus, OrganizationStatus
 from workeasy360.contracts.values.tenant import TenantContext
 
 #: Bounded, with no unbounded variant available to callers.
@@ -138,3 +138,51 @@ def _decode_cursor(cursor: str | None) -> tuple[Any, UUID] | None:
         return datetime.fromisoformat(payload["t"]), UUID(payload["i"])
     except (ValueError, KeyError, TypeError):
         return None
+
+
+def all_organization_ids(*, batch_size: int = 1000) -> list[UUID]:
+    """Every live tenant, for jobs that must visit each one in turn.
+
+    Read from ``organizations_organization``, which is **control plane** and
+    carries no RLS policy. That is the only way a cross-tenant enumeration
+    can work: every tenant table matches zero rows when no tenant variable is
+    set, by design, so a job that tried to enumerate from one would quietly
+    find nothing and conclude there was no work to do.
+
+    Callers must then enter each organization's scope individually. Running a
+    single query across every tenant is forbidden even for jobs that
+    legitimately span them (03-multi-tenancy.md).
+
+    Soft-deleted organizations are excluded: there is nothing to provision or
+    bill for a tenant that is being purged.
+    """
+    from workeasy360.platform.organizations.models import Organization
+
+    return list(
+        Organization.objects.filter(deleted_at__isnull=True)
+        .order_by("created_at", "id")
+        .values_list("id", flat=True)[: batch_size * 1000]
+    )
+
+
+def organization_status(organization_id: UUID) -> OrganizationStatus | None:
+    """One organization's status, without a tenant context.
+
+    For cross-tenant jobs that must build a context for an organization they
+    are visiting. Read from the **control plane**, which carries no RLS
+    policy, so it answers before any scope exists.
+
+    Exists so a job cannot invent a status. ``OrganizationStatus`` drives the
+    R-10 write block, and a job that assumed ``active`` would let a suspended
+    organization be written to from a background path while the request path
+    correctly refused - a write-block exemption created by accident rather
+    than by an ADR.
+    """
+    from workeasy360.platform.organizations.models import Organization
+
+    value = (
+        Organization.objects.filter(id=organization_id, deleted_at__isnull=True)
+        .values_list("status", flat=True)
+        .first()
+    )
+    return OrganizationStatus(value) if value is not None else None

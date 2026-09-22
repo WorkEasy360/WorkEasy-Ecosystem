@@ -52,12 +52,27 @@ def active_grants(organization_id: UUID) -> list[GrantDTO]:
     (06-entitlements.md section 5.4).
     """
     from workeasy360.platform.entitlements.models import EntitlementGrant
+    from workeasy360.platform.tenancy.db import assert_tenant_scope, organization_db_scope
     from workeasy360.platform.tenancy.unscoped import unscoped_access
 
-    with unscoped_access(
-        reason="Entitlement computation runs outside a request tenant context",
-        module="platform.entitlements.selectors",
+    # Both layers, always. ``unscoped_access`` relaxes the ORM manager
+    # (Layer 2); the RLS policy (Layer 3) is untouched by it, and with no
+    # tenant variable set the policy matches **zero rows**. Relaxing only the
+    # first therefore does not fail - it silently returns nothing, and a
+    # computation that reads no grants produces an entitlement state missing
+    # them. Fail-closed is the right default; silently-empty is not an
+    # acceptable way to reach it.
+    with (
+        unscoped_access(
+            reason="Entitlement computation runs outside a request tenant context",
+            module="platform.entitlements.selectors",
+        ),
+        organization_db_scope(organization_id),
     ):
+        # Expected scope verified, not assumed - the same guard
+        # ``commercial_state`` carries, for the same reason: a grant this read
+        # misses is access the recomputation silently withdraws.
+        assert_tenant_scope(organization_id, what="active_grants")
         rows = EntitlementGrant.unscoped.filter(
             organization_id=organization_id, revoked_at__isnull=True
         ).values("id", "product_code", "feature_key", "value", "created_at", "expires_at")
@@ -74,20 +89,45 @@ def active_grants(organization_id: UUID) -> list[GrantDTO]:
         ]
 
 
-def organizations_with_entitlements() -> list[UUID]:
-    """Every organization holding at least one entitlement.
+@dataclass(frozen=True, slots=True)
+class SnapshotDTO:
+    """The materialised entitlement answer for one organization."""
 
-    Used by the reconciliation job, which must iterate organizations and
-    enter tenant context per organization rather than running one unscoped
-    query across all tenants.
+    version: int
+    products: dict[str, Any]
+    features: dict[str, Any]
+
+
+def stored_snapshot(organization_id: UUID) -> SnapshotDTO | None:
+    """What is currently stored, for drift comparison.
+
+    Exists so that provisioning can compare its recomputation against the
+    stored answer without querying this module's tables. Reading another
+    module's models is forbidden even where the import is legal by layer
+    (F-6), and drift detection is exactly the kind of code that would
+    otherwise grow a queryset over a schema it does not own.
     """
-    from workeasy360.platform.entitlements.models import Entitlement
+    from workeasy360.platform.entitlements.models import EntitlementSnapshot
+    from workeasy360.platform.tenancy.db import assert_tenant_scope, organization_db_scope
     from workeasy360.platform.tenancy.unscoped import unscoped_access
 
-    with unscoped_access(
-        reason="Reconciliation enumerates organizations to visit",
-        module="platform.entitlements.selectors",
+    with (
+        unscoped_access(
+            reason="Drift detection reads the snapshot outside a request context",
+            module="platform.entitlements.selectors",
+        ),
+        organization_db_scope(organization_id),
     ):
-        return list(
-            Entitlement.unscoped.values_list("organization_id", flat=True).distinct()
+        assert_tenant_scope(organization_id, what="stored_snapshot")
+        row = (
+            EntitlementSnapshot.unscoped.filter(organization_id=organization_id)
+            .values("version", "products", "features")
+            .first()
         )
+    if row is None:
+        return None
+    return SnapshotDTO(
+        version=row["version"],
+        products=row["products"] or {},
+        features=row["features"] or {},
+    )

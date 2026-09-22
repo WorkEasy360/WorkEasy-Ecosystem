@@ -369,3 +369,123 @@ def test_organization_db_scope_confines_writes_to_one_tenant(two_tenants):
                     "VALUES (%s,%s,%s,'active',false,'internal',now(),now())",
                     [uuid.uuid4(), b["org"].id, b["user"].id],
                 )
+
+
+# --- scope nesting (the savepoint leak) -----------------------------------
+#
+# ``set_config(..., true)`` is reverted at transaction end, not at block end.
+# A savepoint that is *released* keeps it; only a savepoint rollback undoes
+# it. Django's transaction.atomic() is a savepoint whenever one is already
+# open, so every nested scope is one of these.
+#
+# Nothing in the suite asserted this, and the leak it produced was what made
+# an earlier version of the authorization suite pass: a revocation that
+# deleted zero rows looked like a revocation that worked.
+
+
+def test_a_nested_scope_does_not_leak_its_tenant_to_the_caller(two_tenants):
+    """The inner scope must put back what it found.
+
+    Without this, every statement after the inner block - in the caller's own
+    transaction, believing it is still scoped to its own tenant - reads the
+    inner scope's organization instead. There is no error anywhere.
+    """
+    a, b = two_tenants["a"]["org"].id, two_tenants["b"]["org"].id
+
+    with organization_db_scope(a):
+        assert current_tenant_variable() == str(a)
+        with organization_db_scope(b):
+            assert current_tenant_variable() == str(b)
+        assert current_tenant_variable() == str(a), (
+            "the inner scope left its organization bound to the outer "
+            "transaction: a silent cross-tenant read for everything after it"
+        )
+
+
+def test_a_nested_scope_does_not_widen_what_the_caller_can_read(two_tenants):
+    """The leak, stated as the thing that actually matters.
+
+    Asserted through the unscoped manager rather than by reading the variable
+    back, so it fails if the mechanism changes but the outcome does not.
+    """
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    a, b = two_tenants["a"], two_tenants["b"]
+
+    with (
+        unscoped_access(
+            reason="Test reads across tenants to prove the scope was restored",
+            module="tests.isolation",
+        ),
+        organization_db_scope(a["org"].id),
+    ):
+        with organization_db_scope(b["org"].id):
+            pass
+        visible = {m.organization_id for m in Membership.unscoped.all()}
+
+    assert visible == {a["org"].id}, f"read {visible} while scoped to {a['org'].id}"
+
+
+def test_a_failed_nested_scope_still_leaves_the_caller_scoped(two_tenants):
+    """The error path. A savepoint rollback reverts the setting by itself, so
+    the restore must not run - issuing a statement on a connection whose last
+    one failed would raise a second error on top of the real one."""
+    a, b = two_tenants["a"]["org"].id, two_tenants["b"]["org"].id
+
+    with organization_db_scope(a):
+        with pytest.raises(RuntimeError, match="deliberate"):
+            with organization_db_scope(b):
+                raise RuntimeError("deliberate failure inside the inner scope")
+        assert current_tenant_variable() == str(a)
+
+
+def test_an_outermost_scope_needs_no_restore(two_tenants):
+    """Its transaction ends, which discards the setting.
+
+    Asserted so that the skip in ``_db_scope`` is a tested decision rather
+    than an untested optimisation.
+    """
+    a = two_tenants["a"]["org"].id
+    assert current_tenant_variable() is None
+    with organization_db_scope(a):
+        assert current_tenant_variable() == str(a)
+    assert current_tenant_variable() is None
+
+
+# --- Layer 2 without Layer 3 ----------------------------------------------
+
+
+def test_a_tenant_query_without_a_database_scope_raises(two_tenants):
+    """The general form of the Phase 2 P0.
+
+    Application scoping satisfied, RLS scoping absent: the query is well
+    formed, the policy matches zero rows, and the caller reads that as "no
+    data". This is the shape a Celery task has, because TenantTask
+    re-establishes the context and nothing establishes the variable.
+
+    It must raise. A fail-closed control that returns an empty answer is the
+    most dangerous kind, because an empty answer looks like a result.
+    """
+    from workeasy360.platform.tenancy.context import tenant_context
+
+    a = two_tenants["a"]
+
+    with tenant_context(a["ctx"]):
+        with pytest.raises(MissingTenantContext, match="Row-Level Security"):
+            list(Membership.objects.all())
+
+
+def test_a_raw_set_tenant_variable_still_satisfies_the_scope_assertion(two_tenants):
+    """The assertion verifies the database, not only its own bookkeeping.
+
+    The isolation suite and the migration helpers set the variable directly,
+    without a scope helper. Those callers are correct and must not be
+    refused, so a mismatch falls back to asking PostgreSQL.
+    """
+    from workeasy360.platform.tenancy.context import tenant_context
+
+    a = two_tenants["a"]
+
+    with tenant_context(a["ctx"]), transaction.atomic():
+        set_tenant_variable(a["ctx"].organization_id)
+        assert [m.id for m in Membership.objects.all()] == [a["membership"].id]

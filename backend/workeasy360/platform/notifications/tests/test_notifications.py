@@ -292,3 +292,115 @@ def test_in_app_channel_works_when_email_is_down(two_tenants, in_tenant, monkeyp
         in_app_status = services.attempt_delivery(deliveries["in_app"].id)
 
     assert in_app_status == DeliveryStatus.SENT.value
+
+
+# --- the worker's own tenant scope ----------------------------------------
+#
+# ``TenantTask`` re-establishes the tenant *context* across the queue
+# boundary, which is application scoping. Nothing establishes the database
+# tenant variable, so a task that queried its own tenant's rows matched zero
+# of them and reported "missing" - no error, no retry, no delivery.
+#
+# The suite hid it completely: ``CELERY_TASK_ALWAYS_EAGER`` runs the task
+# inline, inside the caller's request scope, which is the one place the
+# variable is already set. These two run the task the way a worker does.
+
+
+def test_delivery_task_works_with_no_ambient_tenant_scope(two_tenants, in_tenant):
+    """What a real worker has: a context from the message, and nothing else."""
+    from workeasy360.platform.notifications.tasks import deliver_notification
+    from workeasy360.platform.tenancy.context import tenant_context
+    from workeasy360.platform.tenancy.db import current_tenant_variable
+
+    a = two_tenants["a"]
+    with in_tenant(a["ctx"]):
+        notification_id = services.notify(_request(a["org"].id, a["membership"].id))
+        delivery = NotificationDelivery.objects.get(notification_id=notification_id)
+
+    assert current_tenant_variable() is None, "the test itself is not scoped"
+    with tenant_context(a["ctx"]):
+        outcome = deliver_notification.run(str(delivery.id))
+
+    assert outcome != "missing", (
+        "the worker could not see the delivery it was dispatched for: RLS "
+        "matched zero rows and the task reported success having done nothing"
+    )
+    assert outcome == DeliveryStatus.SENT.value
+
+
+def test_the_sweeper_finds_pending_deliveries_without_a_tenant_variable(
+    two_tenants, in_tenant, monkeypatch
+):
+    """The broker-outage recovery path, which has to work from a worker.
+
+    A single cross-tenant scan of a tenant table finds nothing, always. This
+    is the enumeration half of the same defect the commercial sweeps already
+    regress, in the job 09-failure-resilience.md names as the reason a broker
+    blip delays a notification rather than losing it - which was only true if
+    something ran it, and only useful if it could see anything.
+
+    The dispatch is captured rather than performed, so the assertion is about
+    what the sweeper found and whether it could legally dispatch it. Dispatch
+    is refused outright without tenant context, so recording the context at
+    the call is part of the property under test.
+    """
+    from workeasy360.platform.notifications import tasks
+    from workeasy360.platform.tenancy.context import current_tenant_or_none
+    from workeasy360.platform.tenancy.db import current_tenant_variable
+
+    a = two_tenants["a"]
+    with in_tenant(a["ctx"]):
+        notification_id = services.notify(_request(a["org"].id, a["membership"].id))
+        NotificationDelivery.objects.filter(notification_id=notification_id).update(
+            status=DeliveryStatus.PENDING.value
+        )
+
+    dispatched: list[tuple[str, object]] = []
+
+    def capture(args=None, **kwargs):
+        ctx = current_tenant_or_none()
+        assert ctx is not None, (
+            "dispatched with no tenant context; TenantTask.apply_async refuses "
+            "that, so the sweeper would raise instead of re-queueing"
+        )
+        dispatched.append((args[0], ctx.organization_id))
+
+    monkeypatch.setattr(tasks.deliver_notification, "apply_async", capture)
+
+    assert current_tenant_variable() is None
+    assert tasks.sweep_pending_deliveries() >= 1, (
+        "the sweeper reported no work while a pending delivery existed"
+    )
+    assert [org for _, org in dispatched] == [a["org"].id]
+
+
+def test_the_sweeper_survives_a_broker_outage(two_tenants, in_tenant, monkeypatch):
+    """The condition it exists for must not be the condition that kills it.
+
+    A dispatch failure leaves the row pending, so the next pass retries it.
+    Letting one failed dispatch abort the pass would strand every delivery
+    behind it, and every organization after it.
+    """
+    from workeasy360.platform.notifications import tasks
+
+    a = two_tenants["a"]
+    with in_tenant(a["ctx"]):
+        notification_id = services.notify(_request(a["org"].id, a["membership"].id))
+        NotificationDelivery.objects.filter(notification_id=notification_id).update(
+            status=DeliveryStatus.PENDING.value
+        )
+
+    def explode(args=None, **kwargs):
+        raise OSError("broker unreachable")
+
+    monkeypatch.setattr(tasks.deliver_notification, "apply_async", explode)
+
+    assert tasks.sweep_pending_deliveries() == 0
+    with in_tenant(a["ctx"]):
+        assert (
+            NotificationDelivery.objects.filter(
+                notification_id=notification_id,
+                status=DeliveryStatus.PENDING.value,
+            ).count()
+            == 1
+        ), "a failed redispatch must leave the delivery pending for the next pass"

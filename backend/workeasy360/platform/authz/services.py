@@ -155,6 +155,48 @@ def require(
     return decision
 
 
+def is_platform_staff(ctx: TenantContext) -> bool:
+    """Whether the acting identity is Workeasy360 internal staff.
+
+    A **separate axis** from roles and permissions, deliberately. Role
+    assignments are tenant-owned data that a customer administrator controls;
+    staff status is control-plane data that they do not. Control-plane
+    configuration - the product catalog, published prices - must be gated on
+    something a tenant cannot grant itself, or a compromised customer admin
+    becomes a platform admin.
+
+    Staff status grants **no tenant data access** on its own
+    (04-identity-authz.md section 5); it only unlocks control-plane writes
+    when paired with the matching permission.
+    """
+    from workeasy360.platform.identity.models import User
+
+    return User.objects.filter(id=ctx.user_id, is_staff=True).exists()
+
+
+def require_platform_staff(ctx: TenantContext, *, operation: str) -> None:
+    """Raise ``PermissionDenied`` unless the actor is internal staff.
+
+    Denials are logged as a security event: a customer principal reaching a
+    control-plane write is either a bug in the calling service or an attempt,
+    and both need to be visible.
+    """
+    if is_platform_staff(ctx):
+        return
+    metrics.increment(AUTHZ_DENIALS, permission=operation, reason="not_platform_staff")
+    logger.warning(
+        "authz.control_plane.denied",
+        operation=operation,
+        reason="not_platform_staff",
+    )
+    raise PermissionDenied(
+        f"{operation} is control-plane configuration and requires an "
+        f"internal platform identity.",
+        permission=operation,
+        reason="not_platform_staff",
+    )
+
+
 def effective_permissions(ctx: TenantContext) -> frozenset[str]:
     """The compiled permission set for this membership.
 
@@ -246,11 +288,25 @@ def bump_permission_version(organization_id: Any) -> int:
     from django.db.models import F
 
     from workeasy360.platform.authz.models import PermissionSetVersion
+    from workeasy360.platform.tenancy.db import organization_db_scope
     from workeasy360.platform.tenancy.unscoped import unscoped_access
 
-    with unscoped_access(
-        reason="Permission cache invalidation touches the counter row directly",
-        module="platform.authz.services",
+    # Two independent layers must both be satisfied, and relaxing only the
+    # first is a silent failure waiting for a caller outside a request:
+    #
+    #   unscoped_access()      relaxes the ORM manager (Layer 2)
+    #   organization_db_scope() satisfies the RLS policy (Layer 3)
+    #
+    # Without the scope the INSERT is refused by WITH CHECK. A request-path
+    # caller happens to be inside the tenancy middleware's transaction, which
+    # has already set the variable, so the gap only appears for system and
+    # background callers - the ones with the least test coverage.
+    with (
+        unscoped_access(
+            reason="Permission cache invalidation touches the counter row directly",
+            module="platform.authz.services",
+        ),
+        organization_db_scope(organization_id),
     ):
         obj, created = PermissionSetVersion.unscoped.get_or_create(
             organization_id=organization_id, defaults={"version": 1}

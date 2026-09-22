@@ -196,6 +196,15 @@ class SeatAssignment(TenantScopedModel):
     )
     released_at = models.DateTimeField(null=True, blank=True)
 
+    #: Set when the pool's capacity dropped below the number of assignments -
+    #: a downgrade, or a bundle component removed. **Not a revocation**: the
+    #: member keeps access while the organization decides who releases a
+    #: seat. Silently locking someone out because of a billing change
+    #: produces "I was locked out mid-invoice" incidents
+    #: (06-entitlements.md section 6). Cleared automatically when capacity
+    #: returns.
+    over_limit_since = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         db_table = "entitlements_seat_assignment"
         constraints = [
@@ -211,6 +220,11 @@ class SeatAssignment(TenantScopedModel):
             ),
             models.Index(
                 fields=["organization", "membership"], name="ix_seatassign_org_member"
+            ),
+            models.Index(
+                fields=["organization", "over_limit_since"],
+                name="ix_seatassign_org_overlimit",
+                condition=models.Q(over_limit_since__isnull=False),
             ),
         ]
 

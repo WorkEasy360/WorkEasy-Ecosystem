@@ -97,6 +97,91 @@ def record(
         ) from exc
 
 
+def record_system(
+    organization_id: Any,
+    action: str,
+    *,
+    resource_type: str,
+    resource_id: str | Any = "",
+    changes: dict[str, Any] | None = None,
+    outcome: AuditOutcome = AuditOutcome.SUCCESS,
+    reason: str = "",
+) -> Any:
+    """Append an audit entry for an action **no user performed**.
+
+    Time-driven commercial work - a trial reaching its end, a scheduled
+    cancellation taking effect, a billing period rolling - changes a
+    customer's access with no request, no session and no membership behind
+    it. Those changes are exactly the ones a customer will later ask about,
+    so they must be audited; but :func:`record` needs a ``TenantContext``,
+    and a synthetic one carrying a fabricated user id would put a person's
+    name against something they did not do.
+
+    ``ActorKind.SYSTEM`` with null actor ids is the honest representation.
+
+    The unscoped manager is required because these operations run outside any
+    request tenant context: the caller has entered the organization's
+    *database* scope (Layer 3) but has no ORM context (Layer 2). RLS still
+    applies, so an entry can only be written for the organization whose scope
+    is open.
+    """
+    from workeasy360.platform.audit.models import AuditEvent
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    if not reason:
+        raise AuditWriteFailed(
+            "A system action must carry a reason. An unexplained automated "
+            "change to a customer's access is the thing this record exists "
+            "to make explainable."
+        )
+
+    try:
+        with (
+            unscoped_access(
+                reason="System commercial operations audit without a request context",
+                module="platform.audit.services",
+            ),
+            transaction.atomic(),
+        ):
+            prev_hash = (
+                AuditEvent.unscoped.filter(organization_id=organization_id)
+                .order_by("-occurred_at", "-id")
+                .values_list("entry_hash", flat=True)
+                .first()
+                or ""
+            )
+            event = AuditEvent(
+                organization_id=organization_id,
+                occurred_at=timezone.now(),
+                actor_kind=ActorKind.SYSTEM.value,
+                actor_user_id=None,
+                actor_membership_id=None,
+                on_behalf_of=None,
+                action=action,
+                resource_type=resource_type,
+                resource_id=str(resource_id or ""),
+                changes=redact(changes) if changes else None,
+                outcome=outcome.value,
+                reason=reason,
+                ip_hash="",
+                correlation_id=current_correlation_id(),
+                prev_hash=prev_hash,
+            )
+            event.save()
+            return event
+    except Exception as exc:
+        logger.critical(
+            "audit.write.failed",
+            action=action,
+            error_type=type(exc).__name__,
+        )
+        raise AuditWriteFailed(
+            f"Could not record system audit entry for {action}: "
+            f"{type(exc).__name__}. The operation is failed rather than "
+            f"completed unaudited."
+        ) from exc
+
+
 def _latest_hash(ctx: TenantContext) -> str:
     """The previous entry's hash for this organization.
 

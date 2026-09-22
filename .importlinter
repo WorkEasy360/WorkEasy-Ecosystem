@@ -98,6 +98,34 @@ source_modules =
 forbidden_modules =
     workeasy360.platform.entitlements.services.write
 
+; Seat *assignment* is a customer operation, not a commercial one, so it
+; cannot live behind the single-writer contract above - a customer admin
+; assigning a colleague must not require a commercial code path. It is still
+; barred from products: a product that could assign seats could grant itself
+; the access it is supposed to be checking.
+[importlinter:contract:products-never-write-seats]
+name = Products may not write seat assignments
+type = forbidden
+source_modules =
+    workeasy360.products
+forbidden_modules =
+    workeasy360.platform.entitlements.services.seats
+
+; Ordering inside commercial/, so the module graph stays acyclic as it grows.
+; provisioning reads subscriptions, subscriptions reads pricing and catalog,
+; pricing reads catalog. Any edge back up that chain is a cycle, and a cycle
+; here is what makes "who decides the price?" unanswerable.
+[importlinter:contract:commercial-internal-layers]
+name = commercial internal layering: catalog < pricing < billing < subscriptions < provisioning
+type = layers
+layers =
+    workeasy360.commercial.provisioning
+    workeasy360.commercial.subscriptions
+    workeasy360.commercial.billing
+    workeasy360.commercial.pricing
+    workeasy360.commercial.catalog
+exhaustive = false
+
 [importlinter:contract:platform-never-imports-upward]
 name = F-4: platform must not import integration, commercial, products or interfaces
 type = forbidden
