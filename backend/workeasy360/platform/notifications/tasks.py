@@ -1,7 +1,12 @@
 """Notification delivery tasks.
 
-Queue: ``default``. Notifications are Tier 3 - deferrable and never on a
-critical path - so they must not share a worker pool with the outbox relay.
+Queues. Delivery runs on ``critical`` (Phase 12, G-31): the emails it sends
+are password resets, address verification, invitations and owner activation -
+the sign-in path - and on ``default`` they queued behind payment-provider calls
+(up to 20 s each) and the five-minute commercial clocks. Each delivery is
+bounded by the SMTP timeout (10 s) and a 20 s soft limit, so it cannot hold a
+``critical`` worker for long. The sweeper, which only re-dispatches, stays on
+``default``.
 
 **Both isolation layers, in the worker too.** ``TenantTask`` re-establishes
 the tenant *context* across the queue boundary, which is Layer 2. It
@@ -16,6 +21,11 @@ from __future__ import annotations
 from uuid import UUID
 
 from celery import shared_task
+
+# Phase 12 (G-32): SoftTimeLimitExceeded subclasses Exception. Swallowed
+# here, a pass that outran its budget kept going until the hard kill, with
+# no summary, and the organizations enumerated last were never reached.
+from celery.exceptions import SoftTimeLimitExceeded
 
 from workeasy360.contracts.enums import OrganizationStatus
 from workeasy360.contracts.values.tenant import TenantContext
@@ -32,9 +42,9 @@ _NO_ACTOR = UUID(int=0)
 
 @shared_task(
     base=TenantTask,
-    queue="default",
-    soft_time_limit=30,
-    time_limit=60,
+    queue="critical",
+    soft_time_limit=20,
+    time_limit=30,
     name="platform.notifications.deliver",
     bind=True,
     max_retries=0,  # retry scheduling is owned by the service, not by Celery
@@ -47,17 +57,15 @@ def deliver_notification(self, delivery_id: str) -> str:
     would nest two retry policies and multiply attempts
     (09-failure-resilience.md section 4.3, "Nesting: forbidden").
 
-    The database scope is entered here rather than in ``attempt_delivery``,
-    which cannot know the organization until it has read the row it needs the
-    scope to see.
+    The organization comes from the task's tenant context; ``attempt_delivery``
+    enters its database scope for the claim and for the outcome separately,
+    so the provider call runs outside any transaction (Phase 12).
     """
     from workeasy360.platform.notifications.services import attempt_delivery
     from workeasy360.platform.tenancy.context import current_tenant
-    from workeasy360.platform.tenancy.db import organization_db_scope
 
     ctx = current_tenant()
-    with organization_db_scope(ctx.organization_id):
-        return attempt_delivery(delivery_id)
+    return attempt_delivery(delivery_id, organization_id=ctx.organization_id)
 
 
 @shared_task(
@@ -112,9 +120,12 @@ def sweep_pending_deliveries(limit: int = 500) -> int:
                 due = list(
                     NotificationDelivery.unscoped.filter(
                         organization_id=organization_id,
+                        # SENDING whose claim lease is over: the worker that
+                        # claimed it died before recording an outcome.
                         status__in=[
                             DeliveryStatus.PENDING.value,
                             DeliveryStatus.FAILED.value,
+                            DeliveryStatus.SENDING.value,
                         ],
                         available_at__lte=now,
                     ).values_list("id", flat=True)[:limit]
@@ -130,7 +141,7 @@ def sweep_pending_deliveries(limit: int = 500) -> int:
             if status is None:  # purged between enumeration and now
                 continue
 
-            with tenant_context(_routing_context(organization_id, status)):
+            with tenant_context(routing_context(organization_id, status)):
                 for delivery_id in due:
                     # Per delivery, because the outage this job recovers from
                     # is a broker outage: dispatching is the operation most
@@ -140,6 +151,8 @@ def sweep_pending_deliveries(limit: int = 500) -> int:
                     try:
                         deliver_notification.apply_async(args=[str(delivery_id)])
                         redispatched += 1
+                    except SoftTimeLimitExceeded:
+                        raise
                     except Exception as exc:
                         failed += 1
                         logger.warning(
@@ -147,6 +160,8 @@ def sweep_pending_deliveries(limit: int = 500) -> int:
                             delivery_id=str(delivery_id),
                             error_type=type(exc).__name__,
                         )
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as exc:
             failed += 1
             logger.error(
@@ -160,7 +175,7 @@ def sweep_pending_deliveries(limit: int = 500) -> int:
     return redispatched
 
 
-def _routing_context(organization_id: UUID, status: OrganizationStatus) -> TenantContext:
+def routing_context(organization_id: UUID, status: OrganizationStatus) -> TenantContext:
     """A tenant context that routes and does not claim to be anybody.
 
     ``TenantTask`` refuses to dispatch without a context, and rightly: a task

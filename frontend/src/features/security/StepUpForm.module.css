@@ -1,0 +1,10 @@
+.form {
+  margin-top: var(--w360-space-3);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  margin-top: var(--w360-space-3);
+}

@@ -42,6 +42,8 @@ from workeasy360.contracts.enums import (
     BillingInterval,
     ChangeTiming,
     CollectionMode,
+    PlanBillingType,
+    PlanKind,
     RenewalPolicy,
     SubscriptionStatus,
     TrialSource,
@@ -65,6 +67,11 @@ from workeasy360.platform.observability.metrics import metrics
 logger = get_logger(__name__)
 
 MANAGE = "commercial.subscription.manage"
+
+#: The most seats one line may carry. Far above any real customer, far below the
+#: 32-bit columns downstream (entitlement seat totals): an unbounded quantity
+#: is how a typo becomes a failed reconciliation.
+MAX_QUANTITY = 100_000
 
 SUBSCRIPTION_ACTIVATIONS = "commercial_subscription_activations_total"
 
@@ -218,6 +225,11 @@ def _quote_for(
         quantity=quantity,
         region=account.billing_region,
         at=at,
+        # The acting partner's book applies only while that partner is the one
+        # transacting, from a context built by the partner module after it
+        # verified the relationship. A direct customer's own purchase carries
+        # no partner and so can never see a partner price.
+        partner_id=ctx.partner_id,
     )
     if quote.currency is not currency:
         # Unreachable through resolve_price, which only ever returns the
@@ -287,10 +299,16 @@ def _create_plan_item(
     parent_item: Any | None = None,
     seat_pool: str = "",
     bundle_code: str = "",
+    snapshot: dict[str, Any] | None = None,
 ) -> Any:
+    """One subscription line. Priced by ``quote`` (resolved now) or by
+    ``snapshot`` (a price agreed earlier - a paid order's), or unpriced (a
+    bundle's component, which carries access, not price)."""
     from workeasy360.commercial.subscriptions.models import SubscriptionItem
 
-    snapshot = quote.as_snapshot() if quote is not None else {}
+    if quote is not None:
+        snapshot = quote.as_snapshot()
+    snapshot = snapshot or {}
     item = SubscriptionItem(
         organization_id=subscription.organization_id,
         subscription=subscription,
@@ -317,6 +335,72 @@ def _create_plan_item(
     return item
 
 
+def _create_bundle_lines(
+    *,
+    subscription: Any,
+    bundle: Any,
+    wanted: list[Any],
+    plans: dict[UUID, Any],
+    snapshot: dict[str, Any],
+    added_at: datetime,
+    publish: Any,
+) -> Any:
+    """A bundle's priced line and its derived per-plan lines. ``publish`` is
+    called with each derived line (the caller decides who the event says
+    acted). Returns the priced bundle line."""
+    from workeasy360.commercial.subscriptions.models import SubscriptionItem
+
+    bundle_line = SubscriptionItem(
+        organization_id=subscription.organization_id,
+        subscription=subscription,
+        bundle_version_id=bundle.id,
+        bundle_code=bundle.bundle_code,
+        # Empty product_code: a bundle line spans products, and leaving it
+        # empty keeps it out of the one-open-line-per-product constraint,
+        # which is about access rather than billing.
+        product_code="",
+        quantity=1,
+        added_at=added_at,
+        price_id=UUID(snapshot["price_id"]),
+        price_source=snapshot["price_source"],
+        price_reason=snapshot["price_reason"][:255],
+        unit_amount_minor=snapshot["unit_amount_minor"],
+        total_amount_minor=snapshot["total_amount_minor"],
+        currency=snapshot["currency"],
+        interval=snapshot["interval"],
+        price_model=snapshot["price_model"],
+        tax_behaviour=snapshot["tax_behaviour"],
+    )
+    bundle_line.save()
+    for bundle_item in wanted:
+        derived = _create_plan_item(
+            subscription=subscription,
+            plan=plans[bundle_item.plan_version_id],
+            quantity=bundle_item.quantity,
+            added_at=added_at,
+            quote=None,
+            parent_item=bundle_line,
+            seat_pool=bundle_item.seat_pool,
+            bundle_code=bundle.bundle_code,
+        )
+        publish(derived)
+    return bundle_line
+
+
+def _open_line_for(subscription: Any, product_codes: list[str]) -> list[str]:
+    """Which of ``product_codes`` the subscription already holds an open line
+    for - a product is held once, whether alone or through a bundle."""
+    from workeasy360.commercial.subscriptions.models import SubscriptionItem
+
+    return sorted(
+        SubscriptionItem.objects.filter(
+            subscription=subscription,
+            product_code__in=product_codes,
+            removed_at__isnull=True,
+        ).values_list("product_code", flat=True)
+    )
+
+
 # --- commands -------------------------------------------------------------
 
 
@@ -337,27 +421,41 @@ def purchase_plan(
     Idempotent on ``idempotency_key``: a retried checkout returns the item it
     created the first time rather than adding a second line.
     """
-    from workeasy360.commercial.subscriptions.models import SubscriptionItem
 
     authz.require(ctx, MANAGE)
     now = timezone.now()
     plan = catalog.require_plan_version(plan_version_id)
     _assert_sellable(plan)
+    free_trial = plan.billing_type is PlanBillingType.FREE_TRIAL
+    if free_trial:
+        # A free-trial offer is a trial by definition (Phase 8 extension).
+        with_trial = True
 
-    if quantity < 1:
-        raise CatalogValidationError("Quantity must be at least 1.", field="quantity")
+    if quantity < 1 or quantity > MAX_QUANTITY:
+        raise CatalogValidationError(
+            f"Quantity must be between 1 and {MAX_QUANTITY:,}.", field="quantity"
+        )
 
     with transaction.atomic():
         claim = idempotency.claim(
             organization_id=ctx.organization_id,
             scope="commercial.subscription.purchase_plan",
             key=idempotency_key,
-            arguments={"plan_version_id": plan_version_id, "quantity": quantity},
+            # Every argument that changes the outcome: a retry with a different
+            # interval or trial choice is a different command, not a replay.
+            arguments={
+                "plan_version_id": plan_version_id,
+                "quantity": quantity,
+                "with_trial": with_trial,
+                "billing_interval": billing_interval.value,
+            },
         )
         if claim.is_replay:
             return _resolve_item_ref(claim.result_ref)
 
         trial_days = _trial_days_for(ctx, plan) if with_trial else 0
+        if free_trial:
+            _assert_free_trial_available(trial_days=trial_days)
         subscription = _open_subscription(
             ctx,
             billing_interval=billing_interval,
@@ -368,12 +466,10 @@ def purchase_plan(
             trial_source=trial_source,
         )
         assert_mutable(subscription.status_enum, operation="purchase_plan")
+        if plan.plan_kind is PlanKind.ADD_ON:
+            _assert_add_on_base(subscription, plan)
 
-        if SubscriptionItem.objects.filter(
-            subscription=subscription,
-            product_code=plan.product_code,
-            removed_at__isnull=True,
-        ).exists():
+        if _open_line_for(subscription, [plan.product_code]):
             raise CommercialError(
                 f"This subscription already includes {plan.product_code!r}. "
                 f"Change the existing line's plan instead of adding a second.",
@@ -439,7 +535,6 @@ def purchase_bundle(
     Pricing the components would invent revenue, and granting from the bundle
     line directly would be the entitlement shortcut the architecture forbids.
     """
-    from workeasy360.commercial.subscriptions.models import SubscriptionItem
 
     authz.require(ctx, MANAGE)
     now = timezone.now()
@@ -451,6 +546,9 @@ def purchase_bundle(
             f"Bundle version {bundle.bundle_code} v{bundle.version} is not published.",
             field="bundle_version_id",
         )
+    free_trial = bundle.billing_type is PlanBillingType.FREE_TRIAL
+    if free_trial:
+        with_trial = True
 
     wanted = [item for item in bundle.items if item.plan_version_id not in declined]
     mandatory_declined = [
@@ -487,6 +585,17 @@ def purchase_bundle(
         trial_days = max(
             (plans[item.plan_version_id].trial_days for item in wanted), default=0
         )
+        if free_trial:
+            # The bundle's own trial, once per organization: any earlier trial
+            # of a product it grants spends it.
+            from workeasy360.commercial.subscriptions.selectors import has_used_a_trial
+
+            used = any(
+                has_used_a_trial(ctx.organization_id, product_code=item.product_code)
+                for item in wanted
+            )
+            trial_days = 0 if used else bundle.trial_days
+            _assert_free_trial_available(trial_days=trial_days)
         subscription = _open_subscription(
             ctx,
             billing_interval=billing_interval,
@@ -498,13 +607,7 @@ def purchase_bundle(
         )
         assert_mutable(subscription.status_enum, operation="purchase_bundle")
 
-        clashing = list(
-            SubscriptionItem.objects.filter(
-                subscription=subscription,
-                product_code__in=[item.product_code for item in wanted],
-                removed_at__isnull=True,
-            ).values_list("product_code", flat=True)
-        )
+        clashing = _open_line_for(subscription, [item.product_code for item in wanted])
         if clashing:
             raise CommercialError(
                 f"This subscription already includes {sorted(clashing)}, which "
@@ -519,44 +622,17 @@ def purchase_bundle(
             quantity=1,
             at=now,
         )
-        snapshot = quote.as_snapshot()
-        bundle_line = SubscriptionItem(
-            organization_id=subscription.organization_id,
-            subscription=subscription,
-            bundle_version_id=bundle.id,
-            bundle_code=bundle.bundle_code,
-            # Empty product_code: a bundle line spans products, and leaving it
-            # empty keeps it out of the one-open-line-per-product constraint,
-            # which is about access rather than billing.
-            product_code="",
-            quantity=1,
-            added_at=now,
-            price_id=UUID(snapshot["price_id"]),
-            price_source=snapshot["price_source"],
-            price_reason=snapshot["price_reason"][:255],
-            unit_amount_minor=snapshot["unit_amount_minor"],
-            total_amount_minor=snapshot["total_amount_minor"],
-            currency=snapshot["currency"],
-            interval=snapshot["interval"],
-            price_model=snapshot["price_model"],
-            tax_behaviour=snapshot["tax_behaviour"],
-        )
-        bundle_line.save()
-
         for bundle_item in wanted:
-            plan = plans[bundle_item.plan_version_id]
-            _assert_sellable(plan)
-            derived = _create_plan_item(
-                subscription=subscription,
-                plan=plan,
-                quantity=bundle_item.quantity,
-                added_at=now,
-                quote=None,
-                parent_item=bundle_line,
-                seat_pool=bundle_item.seat_pool,
-                bundle_code=bundle.bundle_code,
-            )
-            _publish_item_added(ctx, subscription, derived)
+            _assert_sellable(plans[bundle_item.plan_version_id])
+        bundle_line = _create_bundle_lines(
+            subscription=subscription,
+            bundle=bundle,
+            wanted=wanted,
+            plans=plans,
+            snapshot=quote.as_snapshot(),
+            added_at=now,
+            publish=lambda derived: _publish_item_added(ctx, subscription, derived),
+        )
 
         audit.record(
             ctx,
@@ -603,7 +679,13 @@ def activate_subscription(
             key=idempotency_key,
             arguments={"subscription_id": subscription_id},
         )
-        subscription = _lock(subscription_id, expected_version=expected_version)
+        # A replay's expected_version was consumed by the call it replays: the
+        # version has since moved on *because of* that call, so checking it
+        # again would turn every retry of a success into a 409.
+        subscription = _lock(
+            subscription_id,
+            expected_version=None if claim.is_replay else expected_version,
+        )
         if claim.is_replay:
             return subscription
 
@@ -885,7 +967,13 @@ def cancel_subscription(
             key=idempotency_key,
             arguments={"subscription_id": subscription_id, "immediate": immediate},
         )
-        subscription = _lock(subscription_id, expected_version=expected_version)
+        # A replay's expected_version was consumed by the call it replays: the
+        # version has since moved on *because of* that call, so checking it
+        # again would turn every retry of a success into a 409.
+        subscription = _lock(
+            subscription_id,
+            expected_version=None if claim.is_replay else expected_version,
+        )
         if claim.is_replay:
             return subscription
 
@@ -937,7 +1025,340 @@ def cancel_subscription(
     return subscription
 
 
+def suspend_subscription(
+    ctx: TenantContext,
+    *,
+    subscription_id: UUID,
+    idempotency_key: str,
+    reason_code: str,
+    expected_version: int | None = None,
+) -> Any:
+    """Move a subscription to ``suspended``: read-only, not locked out.
+
+    The operator-initiated twin of the dunning path in ``system.py``, and
+    **staff-only**: a customer suspending its own subscription would make its
+    own organization read-only for nothing. It applies exactly one legal
+    transition from the state machine, so it cannot do anything the domain
+    forbids - it only lets a person, rather than a clock, decide when.
+    """
+    authz.require(ctx, MANAGE)
+    authz.require_platform_staff(ctx, operation="subscription.suspend", permission=MANAGE)
+    return _staff_transition(
+        ctx,
+        scope="commercial.subscription.suspend",
+        subscription_id=subscription_id,
+        idempotency_key=idempotency_key,
+        expected_version=expected_version,
+        target=SubscriptionStatus.SUSPENDED,
+        reason_code=reason_code,
+    )
+
+
+def resume_subscription(
+    ctx: TenantContext,
+    *,
+    subscription_id: UUID,
+    idempotency_key: str,
+    reason_code: str,
+    expected_version: int | None = None,
+) -> Any:
+    """Return a suspended subscription to ``active``. Staff-only."""
+    authz.require(ctx, MANAGE)
+    authz.require_platform_staff(ctx, operation="subscription.resume", permission=MANAGE)
+    return _staff_transition(
+        ctx,
+        scope="commercial.subscription.resume",
+        subscription_id=subscription_id,
+        idempotency_key=idempotency_key,
+        expected_version=expected_version,
+        target=SubscriptionStatus.ACTIVE,
+        reason_code=reason_code,
+    )
+
+
+def _staff_transition(
+    ctx: TenantContext,
+    *,
+    scope: str,
+    subscription_id: UUID,
+    idempotency_key: str,
+    expected_version: int | None,
+    target: SubscriptionStatus,
+    reason_code: str,
+) -> Any:
+    reason = (reason_code or "").strip()
+    if not 3 <= len(reason) <= 64:
+        raise CatalogValidationError(
+            "reason_code is required (3-64 characters).", field="reason_code"
+        )
+
+    with transaction.atomic():
+        claim = idempotency.claim(
+            organization_id=ctx.organization_id,
+            scope=scope,
+            key=idempotency_key,
+            arguments={"subscription_id": subscription_id, "reason_code": reason},
+        )
+        # A replay's expected_version was consumed by the call it replays: the
+        # version has since moved on *because of* that call, so checking it
+        # again would turn every retry of a success into a 409.
+        subscription = _lock(
+            subscription_id,
+            expected_version=None if claim.is_replay else expected_version,
+        )
+        if claim.is_replay:
+            return subscription
+
+        previous = subscription.status_enum
+        assert_transition(previous, target)
+        if previous is target:
+            idempotency.complete(
+                claim, result_ref=f"subscriptions.subscription:{subscription.id}"
+            )
+            return subscription
+
+        subscription.status = target.value
+        _bump(subscription, ["status"])
+
+        if target is SubscriptionStatus.SUSPENDED:
+            schema = schemas.SUBSCRIPTION_SUSPENDED_V1
+            payload = {
+                "organization_id": str(ctx.organization_id),
+                "subscription_id": str(subscription.id),
+                "from_status": previous.value,
+                "reason_code": reason,
+            }
+        else:
+            schema = schemas.SUBSCRIPTION_ACTIVATED_V1
+            payload = {
+                "organization_id": str(ctx.organization_id),
+                "subscription_id": str(subscription.id),
+                "from_status": previous.value,
+                "to_status": target.value,
+                "product_codes": _open_product_codes(subscription),
+            }
+        events.publish(
+            events.build_event(
+                ctx,
+                schema.event_type,
+                1,
+                aggregate_type=schemas.SUBSCRIPTION_AGGREGATE,
+                aggregate_id=subscription.id,
+                payload=payload,
+            )
+        )
+        audit.record(
+            ctx,
+            f"commercial.subscription.{target.value}_by_staff",
+            resource_type="subscriptions.subscription",
+            resource_id=subscription.id,
+            changes={"from": previous.value, "to": target.value},
+            reason=reason,
+        )
+        idempotency.complete(
+            claim, result_ref=f"subscriptions.subscription:{subscription.id}"
+        )
+
+    notify_commercial_change(ctx.organization_id)
+    return subscription
+
+
+def change_quantity(
+    ctx: TenantContext,
+    *,
+    subscription_item_id: UUID,
+    quantity: int,
+    idempotency_key: str,
+    timing: ChangeTiming | None = None,
+    expected_version: int | None = None,
+) -> Any:
+    """Adjust how many of a plan a line buys (seats, for a per-seat plan).
+
+    Like a plan change this is **not an edit**: the outgoing line is closed at
+    the effective moment and a new line opens there with a freshly resolved
+    price, so history shows both quantities and the instant of the change.
+    Increases take effect immediately, decreases at the period end, and an
+    immediate decrease that would strand assigned seats is refused with the
+    number to release - the same rule a downgrade follows.
+    """
+    from workeasy360.commercial.subscriptions.models import SubscriptionItem
+
+    authz.require(ctx, MANAGE)
+    if (
+        isinstance(quantity, bool)
+        or not isinstance(quantity, int)
+        or not 1 <= quantity <= MAX_QUANTITY
+    ):
+        raise CatalogValidationError(
+            f"Quantity must be between 1 and {MAX_QUANTITY:,}.", field="quantity"
+        )
+    now = timezone.now()
+
+    with transaction.atomic():
+        claim = idempotency.claim(
+            organization_id=ctx.organization_id,
+            scope="commercial.subscription.change_quantity",
+            key=idempotency_key,
+            arguments={
+                "subscription_item_id": subscription_item_id,
+                "quantity": quantity,
+            },
+        )
+        if claim.is_replay:
+            return _resolve_item_ref(claim.result_ref)
+
+        current_item = (
+            SubscriptionItem.objects.select_related("subscription")
+            .filter(id=subscription_item_id, removed_at__isnull=True)
+            .first()
+        )
+        if current_item is None:
+            raise CommercialRecordNotFound(
+                f"No open subscription item {subscription_item_id}.",
+                subscription_item_id=str(subscription_item_id),
+            )
+        if current_item.is_derived or current_item.plan_version_id is None:
+            raise CommercialError(
+                "Only a directly purchased plan line has a quantity to change.",
+                subscription_item_id=str(subscription_item_id),
+            )
+
+        subscription = _lock(
+            current_item.subscription_id, expected_version=expected_version
+        )
+        assert_mutable(subscription.status_enum, operation="change_quantity")
+        if quantity == current_item.quantity:
+            raise InvalidStateTransition(
+                "The line already has this quantity.",
+                entity="subscriptions.SubscriptionItem",
+                from_status=str(current_item.quantity),
+                to_status=str(quantity),
+            )
+
+        plan = catalog.require_plan_version(current_item.plan_version_id)
+        direction = "upgrade" if quantity > current_item.quantity else "downgrade"
+        chosen = timing or default_timing(direction)
+        effective_at = max(
+            effective_moment(
+                timing=chosen, now=now, period_end=subscription.current_period_end
+            ),
+            current_item.added_at,
+        )
+
+        if direction == "downgrade" and effective_at <= now:
+            _check_quantity_headroom(
+                ctx,
+                subscription=subscription,
+                item=current_item,
+                plan=plan,
+                quantity=quantity,
+            )
+
+        quote = _quote_for(
+            ctx,
+            subscription=subscription,
+            plan_version_id=plan.id,
+            quantity=quantity,
+            at=effective_at,
+        )
+        current_item.removed_at = effective_at
+        current_item.save(update_fields=["removed_at", "updated_at"])
+        new_item = _create_plan_item(
+            subscription=subscription,
+            plan=plan,
+            quantity=quantity,
+            added_at=effective_at,
+            quote=quote,
+            seat_pool=current_item.seat_pool,
+        )
+
+        _publish_item_added(ctx, subscription, new_item)
+        audit.record(
+            ctx,
+            "commercial.subscription.quantity_changed",
+            resource_type="subscriptions.item",
+            resource_id=new_item.id,
+            changes={
+                "plan": plan.plan_code,
+                "from": current_item.quantity,
+                "to": quantity,
+                "direction": direction,
+                "timing": chosen.value,
+                "effective_at": effective_at.isoformat(),
+            },
+        )
+        idempotency.complete(claim, result_ref=f"subscriptions.item:{new_item.id}")
+        _bump(subscription, [])
+
+    notify_commercial_change(ctx.organization_id)
+    return new_item
+
+
+def _check_quantity_headroom(
+    ctx: TenantContext, *, subscription: Any, item: Any, plan: Any, quantity: int
+) -> None:
+    """Refuse an immediate reduction that would strand assigned seats."""
+    from workeasy360.contracts.errors import SeatRemediationRequired
+    from workeasy360.platform.entitlements.services import seats
+
+    pool_key = item.seat_pool or item.product_code
+    assigned = seats.assigned_count(ctx.organization_id, pool_key=pool_key)
+    capacity = plan.included_seats * quantity
+    if assigned > capacity:
+        raise SeatRemediationRequired(
+            f"{assigned} seats are assigned in {pool_key!r} but that quantity "
+            f"provides {capacity}. Release {assigned - capacity} seat(s), or "
+            f"schedule the reduction for the period end "
+            f"({subscription.current_period_end.isoformat()}).",
+            pool_key=pool_key,
+            assigned=assigned,
+            capacity=capacity,
+            period_end=subscription.current_period_end.isoformat(),
+        )
+
+
 # --- helpers used by the commands ----------------------------------------
+
+
+def _assert_free_trial_available(*, trial_days: int) -> None:
+    """A free-trial offer opens a *new* subscription as a trial, or nothing.
+
+    Refused when the organization already has a live subscription (a trial is
+    how a customer starts, not something added to what they pay for) and when
+    its trial is spent - otherwise a zero-priced "trial" would become a free
+    plan forever.
+    """
+    from workeasy360.commercial.subscriptions.models import Subscription
+
+    if trial_days <= 0:
+        raise CommercialError(
+            "This organization has already had its free trial of this product.",
+            reason="trial_used",
+        )
+    if Subscription.objects.exclude(status=SubscriptionStatus.EXPIRED.value).exists():
+        raise CommercialError(
+            "A free trial starts a new subscription, and this organization "
+            "already has one. Choose a paid plan instead.",
+            reason="subscription_exists",
+        )
+
+
+def _assert_add_on_base(subscription: Any, plan: Any) -> None:
+    """An add-on extends a product the subscription already holds."""
+    from workeasy360.commercial.subscriptions.models import SubscriptionItem
+
+    holds_base = SubscriptionItem.objects.filter(
+        subscription=subscription,
+        product_code=plan.addon_for_code,
+        removed_at__isnull=True,
+    ).exists()
+    if not holds_base:
+        raise CommercialError(
+            f"{plan.plan_name} is an add-on for {plan.addon_for_code!r}, which "
+            f"this subscription does not include.",
+            reason="add_on_requires_base",
+            requires=plan.addon_for_code,
+        )
 
 
 def _trial_days_for(ctx: TenantContext, plan: Any) -> int:

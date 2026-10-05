@@ -38,6 +38,13 @@ class PermissionDeclaration:
     #: the UI. Also blocked outright under impersonation.
     dangerous: bool = False
 
+    #: Belongs to the control plane (Workeasy360 staff or a partner), not to
+    #: a customer organization. **Never granted by a role**: the owner role's
+    #: ``"*"`` skips these, so a customer administrator cannot hold one even
+    #: through a misconfigured or hand-built role. Staff receive theirs from
+    #: ``StaffGrant`` rows and partner users from capability grants (ADR-027).
+    control_plane: bool = False
+
     @property
     def product(self) -> str:
         return self.key.product
@@ -86,6 +93,10 @@ class PermissionRegistry:
 
     def all(self) -> list[PermissionDeclaration]:
         return [self._declarations[k] for k in sorted(self._declarations)]
+
+    def tenant_keys(self) -> list[str]:
+        """Every permission a customer role may carry - the meaning of ``"*"``."""
+        return [str(d.key) for d in self.all() if not d.control_plane]
 
     def for_product(self, product: str) -> list[PermissionDeclaration]:
         return [d for d in self.all() if d.product == product]

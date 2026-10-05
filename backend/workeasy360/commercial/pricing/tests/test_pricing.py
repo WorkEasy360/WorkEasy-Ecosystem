@@ -205,10 +205,13 @@ def test_partner_books_are_not_selectable_without_a_relationship(
 ):
     """A reseller rate must not reach a direct customer.
 
-    ``commercial/partners`` does not exist yet, so the partner step of
-    resolution is absent rather than stubbed. Selecting a partner book by
-    region alone would be a revenue leak, not a missing feature.
+    A partner book prices for one named partner (Phase 7). Resolution only
+    consults it for a customer *related to that partner*; selecting a partner
+    book by region alone would be a revenue leak.
     """
+    import uuid
+
+    partner_id = uuid.uuid4()
     admin = platform_admin["ctx"]
     with in_tenant(admin):
         book = services.create_price_book(
@@ -218,6 +221,7 @@ def test_partner_books_are_not_selectable_without_a_relationship(
             currency=GBP,
             channel=PriceBookChannel.PARTNER,
             priority=1,
+            partner_id=partner_id,
         )
         services.publish_price(
             admin,

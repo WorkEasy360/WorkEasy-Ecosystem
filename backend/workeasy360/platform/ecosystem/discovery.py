@@ -39,7 +39,39 @@ PATHS: Final[dict[str, str]] = {
     "token": "/api/v1/integrations/oauth/token",
     "userinfo": "/api/v1/integrations/oauth/userinfo",
     "entitlement_verify": "/api/v1/integrations/entitlements/verify",
+    # Phase 6: where a product publishes its events. Advertised here so a
+    # product discovers it like every other endpoint rather than building
+    # the path by hand.
+    "event_ingest": "/api/v1/integrations/events",
+    # Phase 8: the shared AI, retrieval and analytics platform. Discovered,
+    # like everything above, never built by hand.
+    "ai_skills": "/api/v1/integrations/ai/skills",
+    "ai_skill_retire": "/api/v1/integrations/ai/skills/retire",
+    "ai_invoke": "/api/v1/integrations/ai/invoke",
+    "ai_request_status": "/api/v1/integrations/ai/requests/status",
+    "rag_documents": "/api/v1/integrations/rag/documents",
+    "rag_document_delete": "/api/v1/integrations/rag/documents/delete",
+    "rag_document_status": "/api/v1/integrations/rag/documents/status",
+    "rag_source_revoke": "/api/v1/integrations/rag/sources/revoke",
+    "rag_retrieve": "/api/v1/integrations/rag/retrieve",
+    "analytics_metrics": "/api/v1/integrations/analytics/metrics",
+    "analytics_query": "/api/v1/integrations/analytics/query",
 }
+
+#: The Phase 8 endpoints, advertised together under one discovery key.
+INTELLIGENCE_ENDPOINTS: Final = (
+    "ai_skills",
+    "ai_skill_retire",
+    "ai_invoke",
+    "ai_request_status",
+    "rag_documents",
+    "rag_document_delete",
+    "rag_document_status",
+    "rag_source_revoke",
+    "rag_retrieve",
+    "analytics_metrics",
+    "analytics_query",
+)
 
 
 def endpoint(name: str) -> str:
@@ -120,4 +152,10 @@ def document() -> dict[str, Any]:
             settings.OIDC_ENTITLEMENT_REVALIDATE_AFTER_S
         ),
         "workeasy360_error_codes": sorted(protocol.ERROR_CODES),
+        "workeasy360_event_endpoint": endpoint("event_ingest"),
+        # Phase 8. One object rather than eleven top-level keys: they are one
+        # contract (docs/phase-8/10-product-integration-guide.md).
+        "workeasy360_intelligence_endpoints": {
+            name: endpoint(name) for name in INTELLIGENCE_ENDPOINTS
+        },
     }

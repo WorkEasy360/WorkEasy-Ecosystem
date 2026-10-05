@@ -2,7 +2,7 @@
 
 **Status:** Accepted (Phase 0)
 **Owner:** Architecture
-**Last reviewed:** 2026-09-21
+**Last reviewed:** 2026-09-25
 
 ---
 
@@ -251,6 +251,51 @@ detail in [16 section 14](16-ecosystem-product-boundary.md).
 | R-23 | **Product-side tenant isolation is unverified.** The platform's five layers protect platform data only; a product's own store is its own responsibility, and a leak there damages ecosystem trust regardless of whose code caused it. | **P2** | Publish a certification checklist rather than assume compliance. Do not grant a product production entitlement data until it passes. Architecture + Security. |
 | R-24 | **Product health could be wired into readiness by mistake.** An engineer adding product health to `/healthz/ready` would make every product a hard dependency of the platform — the exact failure ADR-012 exists to prevent. | **P2** | Product health is Tier 3 **by definition**; readiness already refuses Tier 3. Keep it that way and review any change to `health.py::readiness`. |
 | R-25 | **Documentation drift.** Documents 01, 02, 07, 08 and 14 describe an in-repository product layout. They carry correction banners, but a reader who skips the banner is misled. | **P2** | Rewrite on next substantive edit of each. Until then doc 16 is authoritative. Architecture. |
+
+## 7c. Phase 6 — risks opened by the integration platform
+
+Added 2026-09-23. IDs are prefixed `R6-` because R-20 to R-25 are already
+used twice above. Detail in [docs/phase-6/](../phase-6/00-overview.md).
+
+| ID | Risk | Severity | Mitigation / owner |
+|---|---|---|---|
+| R6-1 | **SSRF through customer-configured URLs.** A webhook URL is an instruction to make the platform open a connection. | **P1**, mitigated | One egress module (AST-enforced). Every resolved address must be public, the connection is pinned to it, redirects are never followed, and TLS is always verified. Re-validated on every attempt ([ADR-025](adrs/ADR-025-outbound-http-and-ssrf-boundary.md)). **Residual:** a public address the customer controls can still receive the customer's own data, which is the product working as intended. Watch `egress_rejected_total`. Security. |
+| R6-2 | **One master key opens every signing secret** (D-018). | **P2** | Key distinct from all others, row-bound ciphertext, `MultiFernet` rotation. Move to KMS-wrapped per-tenant data keys when KMS exists; the change is local to `connectors/secrets.py`. Architecture. |
+| R6-3 | **Heavy-queue saturation by slow customer endpoints.** | **P2** | 15 s attempt deadline, ≤ 4 in flight per connection, circuit breaker, auto-suspend, and no integration work on `critical`. **Residual:** many simultaneously slow customers can still delay each other's deliveries, but never sign-in. Scale heavy workers on `egress_request_duration_seconds`. Operations. |
+| R6-4 | **Receivers mishandle at-least-once.** A receiver that does not deduplicate on `event.id` will act twice on a retried or replayed delivery. | **P2** | Documented truthfully (no exactly-once claim), `event.id` stable across retries and replays, and a reference receiver that deduplicates. Product and customer documentation. |
+| R6-5 | **Event payloads are not field-level encrypted.** | **P2**, accepted | Decision and revisit triggers in [06-security.md](../phase-6/06-security.md) section 9: RLS, disk encryption, 30-day retention, no payload in logs. Architecture. |
+| R6-6 | **Throughput unmeasured.** Only local query counts and plans exist. | **P2** | Shape is asserted (constant query counts at 0 to 500 subscriptions or rules), and plans are index-served on a padded table. A load test in a production-like environment is required before any throughput commitment. Performance. |
+| R6-7 | **Deploy-time role grants and the permission cache.** A deploy that changes system-role grants left pre-deploy cached permission sets readable for up to 5 minutes (found in the Phase 6 upgrade rehearsal). | Closed | The cache key carries a fingerprint of the system-role catalog (`authz.services._catalog_generation`), with a regression test. |
+
+## 7d. Phase 7 - risks opened by the control plane and the partner channel
+
+Added 2026-09-24. IDs are prefixed `R7-`. Detail in [docs/phase-7/](../phase-7/00-overview.md).
+
+| ID | Risk | Severity | Mitigation / owner |
+|---|---|---|---|
+| R7-1 | **Commission fraud by a dishonest partner.** A partner can create customers and sell them plans, and each sale earns commission - including sales to customers that never pay (no payment provider exists yet). AAL 2 stops a session thief, not a partner acting in bad faith. | **P1**, mitigated | Holdback before any commission is payable; **nothing earns until a subscription is activated** (a lapsed trial never earns - final audit A-03); a partner cannot provision a customer owned by its own member or convert its own referral (A-12); staff-only reversal with a closed reason set; payouts prepared and approved by two different people with AAL 2, where the approver also cannot be the author of a manual entry in the batch (A-08) and a batch whose entry was reversed after preparation cannot be approved (A-04); `reconcile` to detect drift; every sale, link and reversal audited. **Residual:** a partner using a second, unrelated identity as a paying-looking customer - with no payment provider, only the payout reviewer confirming customer payment catches it (runbook in docs/phase-7/11). Watch the ratio of reversals to accruals per partner. Commercial. |
+| R7-2 | **A compromised staff account.** Staff hold cross-customer power. | **P1**, mitigated | Grants are per-permission with a reason and an optional expiry (the expiry was documented but missing until the final audit, A-02); Django's `is_staff` confers nothing on any route (A-01 closed the legacy organization-scoped path); dangerous grants need AAL 2; a security administrator can grant only to identities an operator designated (`w360_staff_identity`), never to a fresh account; `--disable` ends every grant's effect at once; every action is audited with the actor; payouts need separation of duties; the last permanent security administrator cannot be removed. **Residual:** an AAL 2 staff account can do what its grants allow until revoked (immediate, uncached). Security. |
+| R7-3 | **Custom-domain takeover or phishing.** A partner serves branded sign-in on its own domain. | **P1**, mitigated | DNS proof of control, verified is not active, the platform's own domains cannot be claimed, one verified owner per hostname, scheduled re-verification, dangerous permission (AAL 2), brand content is text and a validated colour only, logo is a scanned PNG/JPEG served same-origin. Serving needs both `domain.manage` and `branding.manage` live, and revocation or suspension takes the host off air at once (final audit A-10); proof is tested against a real DNS server. **Residual:** the platform does not provision TLS or routing for partner domains (infrastructure); a partner controlling its own DNS controls its own page - including any session cookie issued on it. **Go-live gates before a partner domain is routed:** `/admin` and `/partner` on canonical hosts only; sign-in on a canonical host or host-bound sessions; certificates only for hostnames active in the platform. Security. |
+| R7-4 | **Ledger and payout arithmetic.** Money bugs are quiet. | **P1**, mitigated | Integer minor units and basis points only, `ROUND_HALF_UP` in one function, pure rule selection, unique idempotency keys, advisory locks, totals re-derived before approval, `reconcile`. **Residual:** no external reconciliation against a bank statement (payouts are manual). Finance. |
+| R7-5 | **Control-plane tables exempt from tenant scoping** (D-019). A bug in one of the five reads across tenants. | **P2** | Each is read only through a verified principal; the list is pinned by a test; RLS still protects every tenant table they reference. Architecture. |
+| R7-6 | **Capability sprawl.** Too many fine-grained capabilities become unreviewable. | **P3** | One registry file, a permission mapping per capability, a reason on every grant. Review on each addition. Architecture. |
+| R7-7 | ~~**A partner-provisioned owner cannot sign in** (D-020).~~ **Closed 2026-09-28 (Phase 10e).** | ~~**P1**, go-live gate~~ closed | The owner now receives a one-time activation link at provisioning, proves the mailbox, chooses a password (or signs in, if the address has an account) and becomes the owner through the existing onboarding rule; the provisioning partner and staff can resend or withdraw the link. Verified end to end in a real browser and by the Phase 10 backend suite. See [ADR-037](adrs/ADR-037-partner-consoles-and-owner-activation.md). Product + Security. |
+| R7-8 | **Upgrade rollback loses partner data.** The Phase 7 migrations reverse cleanly (rehearsed), but reversing drops the partner, commission and staff-grant tables. | **P2** | Reverse only before any Phase 7 data matters; afterwards prefer a forward fix. Rehearsal script: `scripts/rehearse_phase7_upgrade.py`. Operations. |
+
+## 7e. Phase 8 - risks opened by the shared AI, retrieval and analytics platform
+
+Added 2026-09-25. IDs are prefixed `R8-`. Detail in [docs/phase-8/](../phase-8/00-overview.md). R-16 (analytics read model underspecified) is **closed** by Phase 8: product-defined metrics over routed events, immutable facts, rebuildable aggregates, no cross-module joins (ADR-032).
+
+| ID | Risk | Severity | Mitigation / owner |
+|---|---|---|---|
+| R8-1 | **Cross-tenant or cross-product retrieval.** A vector search that ranks first and filters later leaks through rankings, counts and model context. | **P0**, mitigated | Authorization is in the ranking statement itself (organization predicate + RLS, calling product, own sources, serving versions, access tags, embedding model); no retrieve-then-filter path exists; nearest-neighbour isolation tests. Platform. |
+| R8-2 | **Prompt injection escalates.** Retrieved or product-supplied text instructs the model. | **P1**, mitigated | Models get no tools; nothing reads model output as state; `intelligence/` cannot import any authority (import-linter); delimiters neutralised; citations from stored metadata only. Residual: an injected answer's *text* reaches the product that asked, which must treat it as untrusted. Platform. |
+| R8-3 | **Runaway AI spend.** Concurrency races, crashed callers or retry storms exceed budgets. | **P1**, mitigated | Worst-case reservation under row locks before any call; lease timers charge a lost call in full; bounded retries inside one deadline; per-model breaker; platform cap on every organization; fail closed without the database. Platform. |
+| R8-4 | **Provider credential leak.** | **P1**, mitigated | Keys only in the process environment from the secret manager, read per call, sent in one header; no column, config JSON, log, response or prompt holds one (fitness tests). Rotation needs no deploy. Security. |
+| R8-5 | **Vendor data retention.** Content sent to a vendor may be retained outside the platform's control; deletion cannot reach it. | **P2** | Organization chooses permitted providers; no silent cross-vendor fallback; the limit is stated on Settings → AI; D-025 (verify vendor terms before go-live). Security + Legal. |
+| R8-6 | **Analytics keyspace or cost explosion.** Free-text dimension values or unbounded queries. | **P2**, mitigated | Enumerated dimensions (`other`/`unknown`), forbidden identifier dimension names, bounded ranges and row counts checked before the database, aggregates only. Platform. |
+| R8-7 | **pgvector not installed where the migration runs.** | **P2** | The migration refuses with an instruction; one-time superuser step in the runbook; CI and development images include it. Operations. |
+| R8-8 | **Upgrade rollback drops Phase 8 data.** Reversing the migrations removes executions, knowledge and facts. | **P2** | Phase 8 is additive and off until a plan grants AI; roll back code first, schema only before Phase 8 data matters (rehearsed). Operations. |
 
 ## 8. Related documents
 

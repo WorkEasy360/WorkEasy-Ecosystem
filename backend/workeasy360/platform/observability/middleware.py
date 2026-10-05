@@ -24,6 +24,47 @@ from workeasy360.platform.observability.metrics import (
 logger = get_logger(__name__)
 
 
+#: Orchestrator probes answered before host validation and the https redirect.
+_PROBE_PATHS: frozenset[str] = frozenset(
+    {"/healthz/live", "/healthz/ready", "/healthz/startup", "/healthz/metrics"}
+)
+
+
+class HealthProbeMiddleware:
+    """Answer orchestrator probes before ``SecurityMiddleware`` and
+    ``CommonMiddleware`` can refuse them (Phase 12, G-05).
+
+    A load balancer or container runtime probes over plain http, usually with
+    the task's own IP as ``Host``. In production ``SECURE_SSL_REDIRECT`` would
+    answer 301 and the ``ALLOWED_HOSTS`` check 400, so no instance could ever
+    become healthy. These three views read nothing from the request - no
+    host, no session, no body - and return nothing a caller could misuse, so
+    serving them ahead of those two checks is safe; every other path still
+    goes through both. ``/healthz/deep`` is staff-only and is not a probe.
+    """
+
+    def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
+        self.get_response = get_response
+
+    def __call__(self, request: HttpRequest) -> HttpResponse:
+        if request.method == "GET" and request.path_info in _PROBE_PATHS:
+            from workeasy360.platform.observability import health
+
+            view = {
+                "/healthz/live": health.liveness,
+                "/healthz/ready": health.readiness,
+                "/healthz/startup": health.startup,
+                # Bearer-token protected; the scraper reaches the API by its
+                # internal address, like a probe.
+                "/healthz/metrics": health.metrics_view,
+            }[request.path_info]
+            response = view(request)
+            # SecurityMiddleware, which normally adds it, is skipped here.
+            response["X-Content-Type-Options"] = "nosniff"
+            return response
+        return self.get_response(request)
+
+
 class CorrelationIdMiddleware:
     """Establishes the correlation spine. First in the chain.
 
@@ -49,6 +90,11 @@ class CorrelationIdMiddleware:
             return response
 
 
+_KNOWN_METHODS: frozenset[str] = frozenset(
+    {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+)
+
+
 class RequestLogMiddleware:
     """One structured line per request, plus RED metrics."""
 
@@ -62,16 +108,18 @@ class RequestLogMiddleware:
 
         route = self._route(request)
         status_class = f"{response.status_code // 100}xx"
+        # The method is client-supplied: any token passes the edge. Bounded to
+        # the methods the API serves, or anyone could spray label values
+        # (Phase 12).
+        method = request.method if request.method in _KNOWN_METHODS else "OTHER"
 
         metrics.increment(
             HTTP_REQUESTS,
-            method=request.method or "?",
+            method=method,
             route=route,
             status_class=status_class,
         )
-        metrics.observe(
-            HTTP_REQUEST_DURATION, duration, method=request.method or "?", route=route
-        )
+        metrics.observe(HTTP_REQUEST_DURATION, duration, method=method, route=route)
 
         # 5xx is an error; 4xx is an expected outcome. Logging a 404 at error
         # level destroys the value of error rate as a signal
@@ -97,6 +145,14 @@ class RequestLogMiddleware:
         if match is not None and match.route:
             return f"/{match.route.lstrip('/')}"
         return "<unmatched>"
+
+
+#: Every API response is ``no-store`` unless its view says otherwise. The
+#: API speaks for a signed-in principal almost everywhere (the session, the
+#: organization, the launcher, the control plane), and a prefix list of the
+#: sensitive areas is one forgotten prefix from a CDN serving one person's
+#: answer to another; the few deliberately cacheable responses set their own.
+_NO_STORE_PREFIXES = ("/api/",)
 
 
 class SecurityHeadersMiddleware:
@@ -125,9 +181,11 @@ class SecurityHeadersMiddleware:
     per-view nonces or reporting, that is the point to reconsider - not
     before.
 
-    Placed last in ``MIDDLEWARE`` (nearest the response) so it runs on every
-    response this process emits, including one built entirely by an earlier
-    middleware, such as a 429 from the rate limiter.
+    Placed **first** in ``MIDDLEWARE`` - the outermost layer - so it runs on
+    every response this process emits, including one built entirely by an
+    inner middleware without reaching a view, such as tenancy's 404/402
+    denials. (Django applies response processing bottom-up, so the *last*
+    entry would see only responses that came back from the view.)
     """
 
     def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
@@ -141,6 +199,15 @@ class SecurityHeadersMiddleware:
         policy = _permissions_policy_header_value()
         if policy:
             response.setdefault("Permissions-Policy", policy)
+        # Per-user data is never stored by a browser cache or a shared one,
+        # including on an error response: a 403 for one partner must not be
+        # replayed to another (Phase 7, Task 124; every /api/ path since the
+        # Phase 7 final audit).
+        if (
+            request.path.startswith(_NO_STORE_PREFIXES)
+            and "Cache-Control" not in response
+        ):
+            response["Cache-Control"] = "no-store"
         return response
 
 

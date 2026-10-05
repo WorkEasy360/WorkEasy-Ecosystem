@@ -1,0 +1,302 @@
+# Workeasy360 - production reference topology (Phase 12).
+#
+# One host, every tier, no hand-made state: the same file runs the staging
+# rehearsal (docs/phase-12/04-deployment.md) and a single-host controlled
+# go-live. The architecture target (13-deployment-evolution.md: ECS Fargate,
+# RDS Multi-AZ, ElastiCache, AmazonMQ, S3) maps onto it service by service;
+# what a managed service replaces is marked below.
+#
+#   docker compose -p w360 -f deploy/compose/production.yml --env-file <secrets.env> up -d
+#
+# Secrets come ONLY from the env file named on the command line (produced by
+# the secret store at deploy time, never committed - deploy/env/production.env.example).
+# Images are built once per release and referenced by tag (W360_RELEASE).
+#
+# Order is enforced, not remembered: `migrate` must complete successfully
+# before api/workers/beat start (depends_on: service_completed_successfully),
+# and nothing serves until PostgreSQL, PgBouncer, Redis and RabbitMQ are healthy.
+
+name: w360
+
+# Every container's stdout/stderr is the log stream the collector ships; on the
+# host it is kept only briefly and in bounded files. Docker's default json-file
+# driver keeps it forever (Phase 12, Step 57: disk growth).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+x-backend: &backend
+  image: ${W360_BACKEND_IMAGE:-workeasy360-backend}:${W360_RELEASE:?W360_RELEASE is required}
+  env_file: ${W360_ENV_FILE:?W360_ENV_FILE is required}
+  environment:
+    DJANGO_SETTINGS_MODULE: ${W360_SETTINGS_MODULE:-config.settings.production}
+    # Least privilege (Phase 12, final audit): the env file holds every secret
+    # of the deployment; an api or worker never needs the database superuser's
+    # or the table owner's password, so they are blanked here. The migrate task
+    # alone receives the owner's.
+    POSTGRES_PASSWORD: ""
+    W360_DB_MIGRATOR_PASSWORD: ""
+    # The release every log line and `w360_info` report is the tag this
+    # container runs - never a stale value left in the env file (Phase 12:
+    # staging logged "rc2" while running rc4).
+    W360_RELEASE: ${W360_RELEASE}
+  logging: *logging
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  networks: [internal]
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    pgbouncer:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+
+services:
+  # --- data tier (replace with RDS / ElastiCache / AmazonMQ in AWS) ---------
+
+  postgres:
+    image: pgvector/pgvector:pg16-trixie
+    logging: *logging
+    # Only what the image and roles.sh read - never the whole env file
+    # (least privilege, Phase 12). Interpolated from --env-file.
+    environment:
+      POSTGRES_DB: workeasy360
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      W360_DB_APP_PASSWORD: ${W360_DB_APP_PASSWORD:?W360_DB_APP_PASSWORD is required}
+      W360_DB_MIGRATOR_PASSWORD: ${W360_DB_MIGRATOR_PASSWORD:?W360_DB_MIGRATOR_PASSWORD is required}
+    # The WAL archive volume is created root-owned; PostgreSQL archives as
+    # `postgres`. Without this every archive_command failed ("Permission
+    # denied"), point-in-time recovery was impossible and pg_wal would have
+    # grown until the disk filled - found by the Phase 12 PITR rehearsal.
+    # The entrypoint starts as root, so it can hand the directory over first.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - mkdir -p /wal-archive && chown postgres:postgres /wal-archive && chmod 700 /wal-archive && exec docker-entrypoint.sh "$$@"
+      - --
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c wal_level=replica
+      -c archive_mode=on
+      -c archive_command='test ! -f /wal-archive/%f && cp %p /wal-archive/%f'
+      -c archive_timeout=300
+      -c log_min_duration_statement=500
+      -c log_lock_waits=on
+      -c log_temp_files=0
+      -c deadlock_timeout=1s
+    volumes:
+      - ../postgres/roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+      - pgdata:/var/lib/postgresql/data
+      - walarchive:/wal-archive
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d workeasy360"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    shm_size: 256mb
+    networks: [internal]
+
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.23.1-p2
+    logging: *logging
+    environment:
+      W360_DB_APP_PASSWORD: ${W360_DB_APP_PASSWORD:?W360_DB_APP_PASSWORD is required}
+    # start.sh writes the credential file here: memory, not the image layer.
+    tmpfs: [/tmp]
+    entrypoint: ["/bin/sh", "/deploy/pgbouncer/start.sh"]
+    volumes:
+      - ../pgbouncer:/deploy/pgbouncer:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 6432 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    networks: [internal]
+
+  redis:
+    image: redis:7
+    logging: *logging
+    environment:
+      W360_REDIS_PASSWORD: ${W360_REDIS_PASSWORD:?W360_REDIS_PASSWORD is required}
+    # Cache and rate-limit counters only - nothing here is authoritative, so no
+    # persistence (09-failure-resilience.md: Redis loss degrades latency).
+    command: >
+      sh -c 'exec redis-server --requirepass "$$W360_REDIS_PASSWORD" --save ""
+      --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru'
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$W360_REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    networks: [internal]
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    logging: *logging
+    hostname: rabbitmq  # the node name - and so the durable data - follows it
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?RABBITMQ_DEFAULT_USER is required}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS is required}
+    volumes:
+      - rabbitdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+    restart: unless-stopped
+    networks: [internal]
+
+  # --- the pre-deploy task ---------------------------------------------------
+
+  migrate:
+    image: ${W360_BACKEND_IMAGE:-workeasy360-backend}:${W360_RELEASE}
+    logging: *logging
+    env_file: ${W360_ENV_FILE}
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.migration
+      W360_RELEASE: ${W360_RELEASE}
+      POSTGRES_PASSWORD: ""  # the owner's password is enough to migrate
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  # --- application tier ------------------------------------------------------
+
+  api:
+    <<: *backend
+    # The startup gate first (RLS role, table ownership, DB timeouts,
+    # migrations): a container that fails it exits instead of serving
+    # (Phase 12). `exec` keeps gunicorn as PID 1 for signals.
+    command: ["sh", "-c", "python manage.py w360_startup_gate && exec gunicorn -c /app/deploy/gunicorn.conf.py config.wsgi:application"]
+    # Longer than gunicorn's graceful_timeout (30 s): in-flight requests finish
+    # instead of being killed at Docker's default 10 s (Phase 12).
+    stop_grace_period: 35s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz/ready', timeout=3).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      # Covers the startup gate's wait for the database (up to 30 s).
+      start_period: 60s
+
+  # One worker pool per queue group (R-12). `critical` holds sign-in email and
+  # the outbox relay, so AI, webhook, integration and report work (heavy) and
+  # provider calls (default) can never starve it (Phase 12, Step 28).
+  worker-critical:
+    <<: *backend
+    command: ["sh", "-c", "python manage.py w360_startup_gate && exec celery -A config worker -Q critical -n critical@%h
+              --concurrency ${W360_WORKERS_CRITICAL:-4} --prefetch-multiplier 1
+              -O fair --without-gossip --without-mingle"]
+    # Celery's warm shutdown lets running tasks finish: past the longest hard
+    # limit on this queue (90 s: the outbox relay and per-organization
+    # reconcile). Longer tasks on the other pools are cut at their grace and
+    # redelivered (acks_late, idempotent) - docs/phase-12/06-async-safety.md.
+    stop_grace_period: 95s
+
+  worker-default:
+    <<: *backend
+    command: ["sh", "-c", "python manage.py w360_startup_gate && exec celery -A config worker -Q default -n default@%h
+              --concurrency ${W360_WORKERS_DEFAULT:-4} --prefetch-multiplier 1
+              -O fair --without-gossip --without-mingle"]
+    stop_grace_period: 60s
+
+  worker-heavy:
+    <<: *backend
+    command: ["sh", "-c", "python manage.py w360_startup_gate && exec celery -A config worker -Q heavy -n heavy@%h
+              --concurrency ${W360_WORKERS_HEAVY:-2} --prefetch-multiplier 1
+              -O fair --without-gossip --without-mingle
+              --max-memory-per-child 400000"]
+    stop_grace_period: 60s
+
+  # Exactly one Beat. Every scheduled job is also safe to run twice
+  # (docs/phase-12/06-async-safety.md), so a duplicate Beat during a deploy
+  # overlap costs load, not correctness.
+  beat:
+    <<: *backend
+    command: ["celery", "-A", "config", "beat", "-s", "/tmp/celerybeat-schedule", "--pidfile="]
+    deploy:
+      replicas: 1
+
+  web:
+    image: ${W360_FRONTEND_IMAGE:-workeasy360-frontend}:${W360_RELEASE}
+    logging: *logging
+    # The frontend holds no secret: the canonical host is all it reads at
+    # runtime (BACKEND_ORIGIN is fixed at build).
+    environment:
+      W360_CANONICAL_HOST: ${W360_CANONICAL_HOST:?W360_CANONICAL_HOST is required}
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    volumes:
+      - nextcache:/app/.next/cache
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [internal]
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # --- the edge ----------------------------------------------------------------
+
+  edge:
+    image: caddy:2
+    logging: *logging
+    # The internet-facing container holds no secret (least privilege).
+    environment:
+      W360_CANONICAL_HOST: ${W360_CANONICAL_HOST:?W360_CANONICAL_HOST is required}
+      W360_TLS_ISSUER: ${W360_TLS_ISSUER:-acme}
+      W360_EDGE_TRUSTED_PROXIES: ${W360_EDGE_TRUSTED_PROXIES:-127.0.0.1/32}
+    ports:
+      - "${W360_EDGE_HTTP_PORT:-80}:80"
+      - "${W360_EDGE_HTTPS_PORT:-443}:443"
+    volumes:
+      - ../edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    restart: unless-stopped
+    networks: [internal, public]
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
+
+networks:
+  internal:
+    internal: false
+  public: {}
+
+volumes:
+  pgdata:
+  walarchive:
+  rabbitdata:
+  caddydata:
+  caddyconfig:
+  nextcache:

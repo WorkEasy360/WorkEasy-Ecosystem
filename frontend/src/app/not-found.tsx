@@ -2,7 +2,8 @@ import Link from "next/link";
 
 export default function NotFound() {
   return (
-    <div
+    <main
+      id="w360-main"
       style={{
         minHeight: "100dvh",
         display: "flex",
@@ -18,6 +19,6 @@ export default function NotFound() {
       <Link className="w360-btn w360-btn-primary" href="/">
         Back to Workeasy360
       </Link>
-    </div>
+    </main>
   );
 }

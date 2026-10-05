@@ -19,6 +19,7 @@ from uuid import UUID
 from django.db import transaction
 from django.utils import timezone
 
+from workeasy360.commercial.catalog import selectors as catalog
 from workeasy360.commercial.pricing.domain import TIERED_MODELS
 from workeasy360.contracts.enums import (
     BillingInterval,
@@ -28,6 +29,7 @@ from workeasy360.contracts.enums import (
 )
 from workeasy360.contracts.errors import (
     CatalogValidationError,
+    CommercialRecordNotFound,
     ImmutableRecord,
     UnsupportedCurrencyOperation,
 )
@@ -45,7 +47,24 @@ MANAGE = "commercial.pricing.manage"
 def _authorise(ctx: TenantContext, operation: str) -> None:
     """Price books are global control-plane data, like the catalog."""
     authz.require(ctx, MANAGE)
-    authz.require_platform_staff(ctx, operation=operation)
+    authz.require_platform_staff(ctx, operation=operation, permission=MANAGE)
+
+
+def _one(queryset: Any, **lookup: Any) -> Any:
+    """The single row ``lookup`` names, or a 404.
+
+    Every id reaching these services comes from a request body or path, so a
+    miss is the caller's mistake - a ``CommercialRecordNotFound`` (404) - and
+    never an unhandled ``DoesNotExist`` that surfaces as a 500 (Phase 7 final
+    audit: the admin catalog routes reached these with arbitrary ids).
+    """
+    row = queryset.filter(**lookup).first()
+    if row is None:
+        raise CommercialRecordNotFound(
+            f"No such {queryset.model._meta.verbose_name}.",
+            **{key: str(value) for key, value in lookup.items()},
+        )
+    return row
 
 
 # --- price books ----------------------------------------------------------
@@ -62,15 +81,27 @@ def create_price_book(
     priority: int = 100,
     valid_from: datetime | None = None,
     valid_to: datetime | None = None,
+    partner_id: UUID | None = None,
 ) -> Any:
     """Create a segment.
 
     ``region=""`` is the default book for a currency. A regional book uses an
     ISO 3166-1 alpha-2 code and a lower ``priority`` so it wins.
+
+    A ``partner`` book must name the partner it prices for, and no other
+    channel may. The caller that supplies ``partner_id`` (the partner
+    administration service) is responsible for having verified the partner
+    exists - pricing sits below partners and cannot look.
     """
     from workeasy360.commercial.pricing.models import PriceBook
 
     _authorise(ctx, "pricing.price_book.create")
+    if (channel is PriceBookChannel.PARTNER) != (partner_id is not None):
+        raise CatalogValidationError(
+            "A partner price book must name its partner, and only a partner "
+            "price book may.",
+            field="partner_id",
+        )
 
     with transaction.atomic():
         if PriceBook.objects.filter(code=code).exists():
@@ -81,6 +112,7 @@ def create_price_book(
             code=code,
             name=name,
             channel=channel.value,
+            partner_id=partner_id,
             region=region.upper() if region else "",
             currency=currency.value,
             priority=priority,
@@ -97,6 +129,7 @@ def create_price_book(
                 "channel": book.channel,
                 "currency": book.currency,
                 "region": book.region,
+                "partner_id": str(partner_id) if partner_id else None,
             },
         )
     return book
@@ -178,8 +211,17 @@ def publish_price(
     now = timezone.now()
     starts_at = valid_from or now
 
+    # The price's target must exist before it is written. Every FK here is
+    # DEFERRABLE INITIALLY DEFERRED, so an unknown id would otherwise pass the
+    # INSERT, the view would build its 201, and the request would die with an
+    # IntegrityError at COMMIT (Phase 5 deferred-FK audit).
+    if plan_version_id is not None:
+        catalog.require_plan_version(plan_version_id)
+    if bundle_version_id is not None:
+        catalog.require_bundle_version(bundle_version_id)
+
     with transaction.atomic():
-        book = PriceBook.objects.select_for_update().get(id=price_book_id)
+        book = _one(PriceBook.objects.select_for_update(), id=price_book_id)
 
         superseded = list(
             PlanPrice.objects.select_for_update().filter(
@@ -281,7 +323,7 @@ def close_price(ctx: TenantContext, *, price_id: UUID, at: datetime | None = Non
     _authorise(ctx, "pricing.price.close")
 
     with transaction.atomic():
-        price = PlanPrice.objects.select_for_update().get(id=price_id)
+        price = _one(PlanPrice.objects.select_for_update(), id=price_id)
         if price.valid_to is not None:
             raise ImmutableRecord(
                 "This price is already closed.", resource="pricing.plan_price"

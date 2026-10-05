@@ -30,10 +30,14 @@ logger = get_logger(__name__)
 class DomainErrorMiddleware:
     """Converts domain exceptions into their declared HTTP responses.
 
-    Sits *outside* the tenancy middleware in the stack, so the exception has
-    already propagated through the request's transaction and rolled it back
-    before the response is built. A denial must never leave partial writes
-    committed.
+    **Transaction semantics - read before relying on a rollback.** Listed
+    outside the tenancy middleware, but Django invokes ``process_exception``
+    inside the innermost handler, so this runs *inside* the tenant request
+    transaction, and the tenancy middleware rolls back only a >= 500
+    response. A write made before a 4xx domain error is therefore
+    **committed**. Services keep that from mattering by validating before
+    their first write or by writing inside an inner ``transaction.atomic()``
+    the error propagates out of (docs/architecture/debt-register.md D-016).
     """
 
     def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
@@ -72,3 +76,19 @@ def _route(request: HttpRequest) -> str:
     if match is not None and match.route:
         return f"/{match.route.lstrip('/')}"
     return "<unmatched>"
+
+
+def csrf_failure(request: HttpRequest, reason: str = "") -> JsonResponse:
+    """``CSRF_FAILURE_VIEW``: the API's own error shape instead of Django's
+    HTML page (Phase 12). Django's ``reason`` is logged, never returned - it
+    names the missing or mismatched cookie or origin, which only helps someone
+    probing the check."""
+    logger.info("http.csrf_refused", reason=reason, http_path=request.path)
+    return JsonResponse(
+        {
+            "code": "csrf_failed",
+            "detail": "This request could not be verified. Reload the page and try again.",
+            "correlation_id": str(current_correlation_id() or ""),
+        },
+        status=403,
+    )

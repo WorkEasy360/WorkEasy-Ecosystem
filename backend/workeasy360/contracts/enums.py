@@ -113,6 +113,10 @@ class UserStatus(_StrEnum):
     ACTIVE = "active"
     DISABLED = "disabled"
     LOCKED = "locked"
+    #: Registered through self-service signup and not yet verified: the
+    #: address has not proved it belongs to whoever chose the password, so the
+    #: account cannot sign in, join an organization or buy anything (Phase 9).
+    PENDING = "pending"
 
     @property
     def can_authenticate(self) -> bool:
@@ -217,6 +221,37 @@ class ProductStatus(_StrEnum):
         return self is ProductStatus.AVAILABLE
 
 
+class ProductListing(_StrEnum):
+    """Where a product may be *seen* (Phase 9), independent of whether it can
+    be *sold* (``ProductStatus``).
+
+    - ``listed``: on the public site and in Explore once it is available.
+    - ``coming_soon``: announced on the public site; not purchasable there.
+    - ``hidden``: private - sold only by staff, partners or contract, and
+      absent from the public site and Explore.
+    """
+
+    LISTED = "listed"
+    COMING_SOON = "coming_soon"
+    HIDDEN = "hidden"
+
+
+class PublicAvailability(_StrEnum):
+    """What the public site and the admin show for a product, derived from
+    ``ProductStatus`` and ``ProductListing`` by one function
+    (``commercial.catalog.domain.public_availability``) - never stored."""
+
+    AVAILABLE = "available"
+    COMING_SOON = "coming_soon"
+    PRIVATE = "private"
+    DISABLED = "disabled"
+    DRAFT = "draft"
+
+    @property
+    def is_public(self) -> bool:
+        return self in (PublicAvailability.AVAILABLE, PublicAvailability.COMING_SOON)
+
+
 class LicensingMode(_StrEnum):
     """How a product's value is consumed, and therefore how it is licensed.
 
@@ -265,6 +300,24 @@ _HONOURED_CATALOG_STATUSES = frozenset(
 )
 
 
+class PlanBillingType(_StrEnum):
+    """How a plan or bundle is sold (Phase 8 extension, the plan builder's
+    "Type"). A ``free_trial`` offer always starts as a trial, only for a
+    customer with no live subscription, and simply ends unless converted; it
+    must carry trial days. Informs selling - never entitlement."""
+
+    PAID = "paid"
+    FREE_TRIAL = "free_trial"
+
+
+class PlanKind(_StrEnum):
+    """``add_on``: bought *on top of* a subscription that already holds the
+    product it extends (``Plan.addon_for``) - never alone, never in a bundle."""
+
+    STANDARD = "standard"
+    ADD_ON = "add_on"
+
+
 class BundleKind(_StrEnum):
     """Why a bundle exists. Drives visibility, never entitlement."""
 
@@ -276,6 +329,8 @@ class BundleKind(_StrEnum):
 class BillingInterval(_StrEnum):
     MONTHLY = "monthly"
     QUARTERLY = "quarterly"
+    #: Phase 8 extension: every six months ("bi-annual" in the plan builder).
+    SEMI_ANNUAL = "semi_annual"
     ANNUAL = "annual"
     ONE_TIME = "one_time"
 
@@ -288,6 +343,7 @@ class BillingInterval(_StrEnum):
 _INTERVAL_MONTHS: dict[BillingInterval, int] = {
     BillingInterval.MONTHLY: 1,
     BillingInterval.QUARTERLY: 3,
+    BillingInterval.SEMI_ANNUAL: 6,
     BillingInterval.ANNUAL: 12,
     BillingInterval.ONE_TIME: 0,
 }
@@ -388,6 +444,23 @@ class TrialSource(_StrEnum):
     EXTENSION = "extension"
 
 
+class ProductTrialStatus(_StrEnum):
+    """Where one product's trial stands (Phase 11).
+
+    ``active`` grants a trial entitlement until ``ends_at``. The other three
+    are terminal and none can return to ``active``: a trial is once per
+    organization and product, and the database says so.
+    """
+
+    ACTIVE = "active"
+    #: The organization bought the product; the paid line took over.
+    CONVERTED = "converted"
+    #: The time ran out without a purchase.
+    EXPIRED = "expired"
+    #: The customer ended it early.
+    CANCELLED = "cancelled"
+
+
 class RenewalPolicy(_StrEnum):
     AUTO_RENEW = "auto_renew"
     MANUAL = "manual"
@@ -422,6 +495,11 @@ class ActorKind(_StrEnum):
     USER = "user"
     SERVICE = "service"
     SYSTEM = "system"
+    #: Workeasy360 staff acting through the control plane under an explicit
+    #: ``platform.staff_*`` grant. Distinct from STAFF_BREAK_GLASS, which is
+    #: impersonation of a customer identity (04-identity-authz.md section 6);
+    #: that mode is not implemented (ADR-027, Phase 7 Task 51).
+    STAFF = "staff"
     STAFF_BREAK_GLASS = "staff_break_glass"
     PARTNER = "partner"
 
@@ -474,3 +552,102 @@ class FileStatus(_StrEnum):
     @property
     def is_servable(self) -> bool:
         return self is FileStatus.CLEAN
+
+
+# --- Control-plane principals and the partner channel (Phase 7) -----------
+
+
+class PrincipalKind(_StrEnum):
+    """What kind of identity a ``TenantContext`` speaks for.
+
+    The authorization decision function has exactly one entry point
+    (``authz.check``) for every principal, so the kind is data on the context
+    rather than a second code path. What differs is only **where the
+    permission set comes from**: a member's role assignments, a staff
+    member's explicit ``platform.staff_*`` grants, or a partner user's
+    capability grants on a live partner relationship (ADR-027).
+    """
+
+    MEMBER = "member"
+    STAFF = "staff"
+    PARTNER = "partner"
+
+
+class PartnerStatus(_StrEnum):
+    """Partner lifecycle. Historical records survive every state."""
+
+    DRAFT = "draft"
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    TERMINATED = "terminated"
+
+    @property
+    def may_transact(self) -> bool:
+        """Only an active partner may perform new commercial actions."""
+        return self is PartnerStatus.ACTIVE
+
+
+class PartnerLinkStatus(_StrEnum):
+    """Partner-to-customer relationship lifecycle. ``ENDED`` is terminal."""
+
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    ENDED = "ended"
+
+
+class PartnerMemberRole(_StrEnum):
+    """A partner user's tier. Two tiers, deliberately.
+
+    ``ADMIN`` receives every permission the partner's capability grants
+    unlock; ``VIEWER`` receives only the read permissions among them. More
+    granular partner-user roles would be an RBAC system of their own, which
+    nothing needs yet.
+    """
+
+    ADMIN = "admin"
+    VIEWER = "viewer"
+
+
+class GrantStatus(_StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+
+
+class DomainStatus(_StrEnum):
+    """Custom-domain lifecycle (Phase 7 Task 32).
+
+    ``ACTIVE`` is reachable only through ``VERIFIED``, and ``VERIFIED`` only
+    through a successful DNS-control check performed by the platform.
+    """
+
+    REQUESTED = "requested"
+    VERIFICATION_PENDING = "verification_pending"
+    VERIFIED = "verified"
+    ACTIVE = "active"
+    FAILED = "failed"
+    DISABLED = "disabled"
+
+
+class ReferralStatus(_StrEnum):
+    CAPTURED = "captured"
+    CONVERTED = "converted"
+    EXPIRED = "expired"
+
+
+class AccrualKind(_StrEnum):
+    """The three things a commission ledger row can be. Never edited."""
+
+    ACCRUAL = "accrual"
+    REVERSAL = "reversal"
+    ADJUSTMENT = "adjustment"
+
+
+class PayoutStatus(_StrEnum):
+    """Payout lifecycle. ``PAID`` records a manual confirmation only; no
+    payment is executed by this platform (Phase 7 Task 47)."""
+
+    DRAFT = "draft"
+    READY = "ready"
+    APPROVED = "approved"
+    PAID = "paid"
+    CANCELLED = "cancelled"

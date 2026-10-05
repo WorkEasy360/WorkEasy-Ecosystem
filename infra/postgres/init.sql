@@ -13,9 +13,30 @@ CREATE ROLE w360_migrator WITH LOGIN PASSWORD 'w360_migrator_pw'
 CREATE ROLE w360_app WITH LOGIN PASSWORD 'w360_app_pw'
     NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB;
 
+-- Phase 12 (G-02). The runtime role's timeouts live on the ROLE, not only in
+-- the libpq `options` the settings module sends: PgBouncer in transaction mode
+-- drops that startup parameter (ignore_startup_parameters), so before this no
+-- pooled connection had a statement, lock or idle-in-transaction timeout.
+-- The application refuses to start without them (W360.E010 / startup probe).
+-- Values match config/settings/base.py's defaults.
+ALTER ROLE w360_app SET statement_timeout = '10s';
+ALTER ROLE w360_app SET lock_timeout = '5s';
+ALTER ROLE w360_app SET idle_in_transaction_session_timeout = '15s';
+
 ALTER DATABASE workeasy360 OWNER TO w360_migrator;
 
+-- Phase 8 (ADR-031): pgvector. The extension is not "trusted", so only a
+-- superuser may create it; the migrator deliberately is not one. Created in
+-- template1 so every database made later (the test database, rehearsal
+-- scratch databases) inherits it, and in workeasy360 itself below. On an
+-- existing deployment an operator runs the same statement once, as the
+-- superuser, before `migrate` (docs/phase-8/09-operations.md).
+\connect template1
+CREATE EXTENSION IF NOT EXISTS vector;
+
 \connect workeasy360
+
+CREATE EXTENSION IF NOT EXISTS vector;
 
 -- The migrator owns public; the app role only gets DML.
 ALTER SCHEMA public OWNER TO w360_migrator;

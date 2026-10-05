@@ -82,12 +82,15 @@ typecheck:
 
 .PHONY: check
 check:
-	DJANGO_SETTINGS_MODULE=config.settings.migration $(PY) $(BACKEND)/manage.py check --deploy
+	DJANGO_SETTINGS_MODULE=config.settings.migration $(PY) $(BACKEND)/manage.py check --fail-level WARNING
+	@echo "Deployment (--deploy) checks run against real production settings in"
+	@echo "backend/tests/security/test_security_baseline.py, not here: this"
+	@echo "settings module is the development one and would fail them by design."
 
 .PHONY: security
 security:
 	$(PY) -m bandit -c pyproject.toml -r $(BACKEND)/workeasy360 $(BACKEND)/config -ll
-	$(PY) -m pip_audit -r requirements.txt --strict
+	$(PY) -m pip_audit -r requirements.txt -r requirements-dev.txt --strict
 
 .PHONY: spikes
 spikes:

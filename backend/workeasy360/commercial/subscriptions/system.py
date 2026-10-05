@@ -40,6 +40,10 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+# Phase 12 (G-32): SoftTimeLimitExceeded subclasses Exception. Swallowed
+# here, a pass that outran its budget kept going until the hard kill, with
+# no summary, and the organizations enumerated last were never reached.
+from celery.exceptions import SoftTimeLimitExceeded
 from django.db import transaction
 from django.utils import timezone
 
@@ -107,6 +111,8 @@ def process_due_subscriptions(*, at: datetime | None = None) -> dict[str, int]:
         "trials_expired": 0,
         "cancellations_applied": 0,
         "periods_rolled": 0,
+        "product_trials_expired": 0,
+        "product_trials_converted": 0,
         "failed": 0,
     }
 
@@ -121,6 +127,8 @@ def process_due_subscriptions(*, at: datetime | None = None) -> dict[str, int]:
     for organization_id in all_organization_ids():
         try:
             due = subscriptions_due_for_attention(organization_id, at=moment)
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as exc:
             counts["failed"] += 1
             logger.error(
@@ -137,6 +145,8 @@ def process_due_subscriptions(*, at: datetime | None = None) -> dict[str, int]:
                 for key, value in applied.items():
                     counts[key] += value
                 changed = changed or any(applied.values())
+            except SoftTimeLimitExceeded:
+                raise
             except Exception as exc:
                 counts["failed"] += 1
                 logger.error(
@@ -144,12 +154,93 @@ def process_due_subscriptions(*, at: datetime | None = None) -> dict[str, int]:
                     organization_id=str(organization_id),
                     error_type=type(exc).__name__,
                 )
-        if changed:
+        try:
+            expired, converted = settle_product_trials(organization_id, at=moment)
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception as exc:
+            counts["failed"] += 1
+            logger.error(
+                "commercial.system.product_trials_failed",
+                organization_id=str(organization_id),
+                error_type=type(exc).__name__,
+            )
+            expired = converted = 0
+        counts["product_trials_expired"] += expired
+        counts["product_trials_converted"] += converted
+        if changed or expired or converted:
             notify_commercial_change(organization_id)
 
     if any(counts.values()):
         logger.info("commercial.system.sweep", **counts)
     return counts
+
+
+def settle_product_trials(
+    organization_id: UUID, *, at: datetime | None = None
+) -> tuple[int, int]:
+    """Close the product trials whose fate is now decided (Phase 11).
+
+    Two facts close an ``active`` trial, both durable and neither taken from a
+    caller:
+
+    - a **paid** line now holds the product -> ``converted``. (Provisioning
+      already stopped granting the trial the moment the paid line existed;
+      this only makes the record say so.)
+    - its ``ends_at`` has passed with no purchase -> ``expired``.
+
+    Returns ``(expired, converted)``. Idempotent: a closed trial is never
+    reopened, so a second run changes nothing. Runs for one organization, in
+    its own scope and transaction, like every other system operation here.
+    """
+    from workeasy360.commercial.subscriptions.models import ProductTrial
+    from workeasy360.commercial.subscriptions.selectors import (
+        commercial_state,
+        paid_product_codes,
+    )
+    from workeasy360.contracts.enums import ProductTrialStatus
+
+    moment = at or timezone.now()
+    expired = converted = 0
+    with (
+        system_scope(organization_id, reason="Clock-driven product trial settlement"),
+        transaction.atomic(),
+    ):
+        active = list(
+            ProductTrial.unscoped.select_for_update().filter(
+                organization_id=organization_id, status=ProductTrialStatus.ACTIVE.value
+            )
+        )
+        if not active:
+            return 0, 0
+        paid = paid_product_codes(commercial_state(organization_id), moment)
+        for trial in active:
+            if trial.product_code in paid:
+                new_status, action = (
+                    ProductTrialStatus.CONVERTED,
+                    "commercial.product_trial.converted",
+                )
+                converted += 1
+            elif trial.ends_at <= moment:
+                new_status, action = (
+                    ProductTrialStatus.EXPIRED,
+                    "commercial.product_trial.expired",
+                )
+                expired += 1
+            else:
+                continue
+            trial.status = new_status.value
+            trial.ended_at = moment
+            trial.save(update_fields=["status", "ended_at", "updated_at"])
+            audit.record_system(
+                organization_id,
+                action,
+                resource_type="subscriptions.product_trial",
+                resource_id=str(trial.id),
+                changes={"product_code": trial.product_code},
+                reason="Clock-driven product trial settlement",
+            )
+    return expired, converted
 
 
 def _process_one(
@@ -377,3 +468,296 @@ def _publish(subscription: Any, event_type: str, payload: dict[str, Any]) -> Non
             payload=payload,
         )
     )
+
+
+# --- Phase 8 extension: dunning and settlement, driven by payments -------------
+#
+# ``commercial/payments`` decides *when* (an invoice is overdue, a payment
+# settled it); these apply the one transition that decision implies, under the
+# same rules as every other system write here: one organization's scope, a
+# row lock, the state machine, an event and an audit entry with a reason.
+
+
+def _dunning_transition(
+    organization_id: UUID,
+    *,
+    subscription_id: UUID,
+    allowed_from: frozenset[SubscriptionStatus],
+    target: SubscriptionStatus,
+    action: str,
+    reason: str,
+) -> Any:
+    from workeasy360.commercial.subscriptions.models import Subscription
+
+    with system_scope(organization_id, reason=reason), transaction.atomic():
+        subscription = (
+            Subscription.unscoped.select_for_update()
+            .filter(id=subscription_id, organization_id=organization_id)
+            .first()
+        )
+        if subscription is None or subscription.status_enum not in allowed_from:
+            # Already moved (a payment landed first, staff acted): nothing to do.
+            return None
+        previous = subscription.status_enum
+        assert_transition(previous, target)
+        subscription.status = target.value
+        subscription.version += 1
+        subscription.save(update_fields=["status", "version", "updated_at"])
+        if target is SubscriptionStatus.ACTIVE:
+            _publish(
+                subscription,
+                schemas.SUBSCRIPTION_ACTIVATED_V1.event_type,
+                {
+                    "organization_id": str(organization_id),
+                    "subscription_id": str(subscription.id),
+                    "from_status": previous.value,
+                    "to_status": target.value,
+                    "product_codes": [],
+                },
+            )
+        audit.record_system(
+            organization_id,
+            action,
+            resource_type="subscriptions.subscription",
+            resource_id=subscription.id,
+            changes={"from": previous.value, "to": target.value},
+            reason=reason,
+        )
+        metrics.increment(SYSTEM_TRANSITIONS, transition=target.value)
+    notify_commercial_change(organization_id)
+    return subscription
+
+
+def mark_past_due(organization_id: UUID, *, subscription_id: UUID) -> Any:
+    """An invoice passed its due date unpaid. Access is unchanged (past due
+    restricts nothing - 06-entitlements.md); dunning has started."""
+    return _dunning_transition(
+        organization_id,
+        subscription_id=subscription_id,
+        allowed_from=frozenset({SubscriptionStatus.ACTIVE}),
+        target=SubscriptionStatus.PAST_DUE,
+        action="commercial.subscription.past_due",
+        reason="An invoice passed its due date without payment.",
+    )
+
+
+def enter_grace(organization_id: UUID, *, subscription_id: UUID) -> Any:
+    """Still unpaid after the past-due period: the last step before suspension."""
+    return _dunning_transition(
+        organization_id,
+        subscription_id=subscription_id,
+        allowed_from=frozenset({SubscriptionStatus.PAST_DUE}),
+        target=SubscriptionStatus.GRACE,
+        action="commercial.subscription.grace",
+        reason="An invoice stayed unpaid through the past-due period.",
+    )
+
+
+def settle_after_payment(
+    organization_id: UUID, *, subscription_id: UUID, lift_suspension: bool = False
+) -> Any:
+    """Every overdue invoice is now paid: a past-due or grace subscription is
+    active again. A *suspended* one only when ``lift_suspension`` - the caller
+    knows dunning itself suspended it; a suspension staff applied for another
+    reason is theirs to lift, and a payment must not quietly undo it."""
+    allowed = {SubscriptionStatus.PAST_DUE, SubscriptionStatus.GRACE}
+    if lift_suspension:
+        allowed.add(SubscriptionStatus.SUSPENDED)
+    return _dunning_transition(
+        organization_id,
+        subscription_id=subscription_id,
+        allowed_from=frozenset(allowed),
+        target=SubscriptionStatus.ACTIVE,
+        action="commercial.subscription.payment_settled",
+        reason="Outstanding invoices were paid.",
+    )
+
+
+# --- Phase 9: fulfilling a paid order ---------------------------------------------
+#
+# ``commercial/payments.orders`` decides *that* an order is paid (a signed
+# webhook or staff settled its invoice); these add what it bought, at the price
+# it paid. Both run inside the caller's transaction, with the order row locked
+# and a routing context (no actor) bound for the organization - the payment is
+# the authority, so there is no permission check here, which is why they are
+# in this module and never reachable from a request.
+
+
+def add_paid_line(
+    ctx: Any,
+    *,
+    plan_version_id: UUID | None,
+    bundle_version_id: UUID | None,
+    declined_plan_version_ids: list[UUID],
+    quantity: int,
+    billing_interval: Any,
+    snapshot: dict[str, Any],
+    order_number: str,
+) -> tuple[Any, Any]:
+    """Open the subscription (active, its first period starting now) or join
+    the running one, and add the plan or bundle the order bought. Returns
+    ``(subscription, line)``. Raises ``CommercialError`` with a ``reason``
+    when that is no longer possible - the caller refunds."""
+    from workeasy360.commercial.catalog import selectors as catalog
+    from workeasy360.commercial.subscriptions import services
+    from workeasy360.contracts.enums import CollectionMode, PlanKind
+    from workeasy360.contracts.errors import CommercialError
+
+    now = timezone.now()
+    subscription = services._open_subscription(
+        ctx,
+        billing_interval=billing_interval,
+        collection_mode=CollectionMode.AUTOMATIC,
+        renewal_policy=RenewalPolicy.AUTO_RENEW,
+        now=now,
+        trial_days=0,
+        trial_source=None,
+    )
+    if subscription.status_enum is not SubscriptionStatus.ACTIVE:
+        raise CommercialError(
+            "The subscription is no longer open for new lines.",
+            reason="subscription_not_open",
+        )
+    if subscription.billing_interval != billing_interval.value or (
+        snapshot.get("currency") and snapshot["currency"] != subscription.currency
+    ):
+        raise CommercialError(
+            "The subscription's billing terms changed after the order was placed.",
+            reason="interval_mismatch",
+        )
+
+    if plan_version_id is not None:
+        plan = catalog.require_plan_version(plan_version_id)
+        if plan.plan_kind is PlanKind.ADD_ON:
+            services._assert_add_on_base(subscription, plan)
+        if services._open_line_for(subscription, [plan.product_code]):
+            raise CommercialError("The product is already held.", reason="already_owned")
+        line = services._create_plan_item(
+            subscription=subscription,
+            plan=plan,
+            quantity=quantity,
+            added_at=now,
+            quote=None,
+            snapshot=snapshot,
+        )
+        _publish(
+            subscription,
+            schemas.SUBSCRIPTION_ITEM_ADDED_V1.event_type,
+            services._item_payload(subscription, line),
+        )
+        action, changes = (
+            "commercial.subscription.plan_purchased",
+            {"plan": plan.plan_code, "plan_version": plan.version, "quantity": quantity},
+        )
+    else:
+        bundle = catalog.require_bundle_version(bundle_version_id)
+        declined = set(declined_plan_version_ids)
+        wanted = [i for i in bundle.items if i.plan_version_id not in declined]
+        plans = catalog.plan_versions([i.plan_version_id for i in wanted])
+        if services._open_line_for(subscription, [i.product_code for i in wanted]):
+            raise CommercialError(
+                "A product in the bundle is already held.", reason="already_owned"
+            )
+        line = services._create_bundle_lines(
+            subscription=subscription,
+            bundle=bundle,
+            wanted=wanted,
+            plans=plans,
+            snapshot=snapshot,
+            added_at=now,
+            publish=lambda derived: _publish(
+                subscription,
+                schemas.SUBSCRIPTION_ITEM_ADDED_V1.event_type,
+                services._item_payload(subscription, derived),
+            ),
+        )
+        action, changes = (
+            "commercial.subscription.bundle_purchased",
+            {
+                "bundle": bundle.bundle_code,
+                "bundle_version": bundle.version,
+                "expanded_to": sorted(plans[i.plan_version_id].plan_code for i in wanted),
+            },
+        )
+    audit.record_system(
+        subscription.organization_id,
+        action,
+        resource_type="subscriptions.item",
+        resource_id=line.id,
+        changes={**changes, "order": order_number},
+        reason="A paid order was fulfilled.",
+    )
+    services._bump(subscription, [])
+    metrics.increment(SYSTEM_TRANSITIONS, transition="order_fulfilled")
+    return subscription, line
+
+
+def activate_paid(ctx: Any, *, subscription_id: UUID, order_number: str) -> Any:
+    """Convert a trial whose activation order was paid: active now, with a
+    fresh first paid period starting now (the period the order's invoice
+    covers). An already active subscription is left as it is."""
+    from workeasy360.commercial.subscriptions import services
+    from workeasy360.commercial.subscriptions.domain import add_months
+    from workeasy360.commercial.subscriptions.models import Subscription
+    from workeasy360.contracts.errors import CommercialError
+
+    subscription = (
+        Subscription.objects.select_for_update().filter(id=subscription_id).first()
+    )
+    if subscription is None:
+        raise CommercialError(
+            "The subscription no longer exists.", reason="subscription_not_open"
+        )
+    previous = subscription.status_enum
+    if previous is SubscriptionStatus.ACTIVE:
+        return subscription
+    if previous is not SubscriptionStatus.TRIALING:
+        raise CommercialError(
+            "Only a trial can be activated by an order.", reason="subscription_not_open"
+        )
+    now = timezone.now()
+    months = subscription.interval_enum.months
+    subscription.status = SubscriptionStatus.ACTIVE.value
+    subscription.activated_at = subscription.activated_at or now
+    subscription.trial_ends_at = now
+    subscription.current_period_start = now
+    subscription.current_period_end = (
+        add_months(now, months) if months else now + timezone.timedelta(days=365)
+    )
+    services._bump(
+        subscription,
+        [
+            "status",
+            "activated_at",
+            "trial_ends_at",
+            "current_period_start",
+            "current_period_end",
+        ],
+    )
+    payload = {
+        "organization_id": str(subscription.organization_id),
+        "subscription_id": str(subscription.id),
+    }
+    _publish(
+        subscription,
+        schemas.SUBSCRIPTION_ACTIVATED_V1.event_type,
+        {
+            **payload,
+            "from_status": previous.value,
+            "to_status": SubscriptionStatus.ACTIVE.value,
+            "product_codes": services._open_product_codes(subscription),
+        },
+    )
+    _publish(
+        subscription, schemas.TRIAL_ENDED_V1.event_type, {**payload, "converted": True}
+    )
+    audit.record_system(
+        subscription.organization_id,
+        "commercial.subscription.activated",
+        resource_type="subscriptions.subscription",
+        resource_id=subscription.id,
+        changes={"from": previous.value, "to": "active", "order": order_number},
+        reason="A paid activation order converted the trial.",
+    )
+    metrics.increment(SYSTEM_TRANSITIONS, transition="activated_by_order")
+    return subscription

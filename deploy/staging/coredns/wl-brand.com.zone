@@ -1,0 +1,6 @@
+$ORIGIN wl-brand.com.
+$TTL 5
+@   IN SOA ns.wl-brand.com. ops.wl-brand.com. ( 2026093001 60 60 600 5 )
+@   IN NS  ns.wl-brand.com.
+ns  IN A   172.31.240.53
+app IN A   172.31.240.10

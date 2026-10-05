@@ -11,9 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from uuid import UUID
 
-from workeasy360.contracts.enums import OrganizationStatus
 from workeasy360.contracts.errors import MissingTenantContext
 from workeasy360.contracts.values.tenant import TenantContext
 
@@ -78,27 +76,3 @@ def no_tenant() -> Iterator[None]:
     """
     with tenant_context(None):
         yield
-
-
-def build_context(
-    *,
-    organization_id: UUID,
-    membership_id: UUID,
-    user_id: UUID,
-    organization_status: OrganizationStatus = OrganizationStatus.ACTIVE,
-    aal: int = 1,
-    is_break_glass: bool = False,
-    reason: str | None = None,
-) -> TenantContext:
-    """Construct a context. Keyword-only: three same-typed UUIDs adjacent in a
-    positional signature is a swap waiting to happen, and swapping
-    ``user_id`` with ``organization_id`` would be a cross-tenant defect."""
-    return TenantContext(
-        organization_id=organization_id,
-        membership_id=membership_id,
-        user_id=user_id,
-        organization_status=organization_status,
-        aal=aal,
-        is_break_glass=is_break_glass,
-        reason=reason,
-    )

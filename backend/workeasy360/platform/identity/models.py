@@ -26,6 +26,7 @@ import uuid
 from typing import Any
 
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
+from django.contrib.sessions.base_session import AbstractBaseSession
 from django.db import models
 from django.utils import timezone
 
@@ -130,11 +131,30 @@ class User(AbstractBaseUser):
         help_text="Platform super admin. Control plane only.",
     )
 
+    class AcquisitionSource(models.TextChoices):
+        """How the account came to exist (Phase 9). Empty on accounts created
+        before it was recorded. Descriptive only - nothing authorizes on it."""
+
+        SELF_SIGNUP = "self_signup", "Self-service signup"
+        INVITATION = "invitation", "Organization invitation"
+        PARTNER = "partner", "Partner provisioning"
+        OPERATOR = "operator", "Platform operator"
+
+    acquisition_source = models.CharField(
+        max_length=16, choices=AcquisitionSource.choices, blank=True, default=""
+    )
+
     last_login_at = models.DateTimeField(null=True, blank=True)
     #: Counted for throttling. Lockout is time-boxed with jitter rather than
     #: permanent, so an attacker cannot lock a victim out at will.
     failed_login_count = models.PositiveIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
+    #: Consecutive failed MFA codes, and the step-up lock they have earned
+    #: (``identity.services.verify_step_up_code``). Separate from the login
+    #: counter above: only someone already holding the password can move
+    #: these, and they must not lock the password out with them.
+    mfa_failed_attempts = models.PositiveIntegerField(default=0)
+    mfa_locked_until = models.DateTimeField(null=True, blank=True)
 
     #: Any password change, credential reset or forced logout bumps this.
     #: Sessions carry the value they were issued under and are invalidated
@@ -180,13 +200,23 @@ class User(AbstractBaseUser):
 
     @property
     def is_active(self) -> bool:
-        """Django's contract for "may authenticate".
+        """Django's contract for "may authenticate", and whether a live
+        session still resolves to this user.
 
         Derived from ``status`` rather than stored separately: two sources of
         truth for whether an account works would eventually disagree, and the
         disagreement would be a security bug.
+
+        **Not** the failed-password lockout (Phase 12, G-16). That lockout is
+        a brake on password guessing, and ``identity.services.authenticate``
+        applies it before any password is compared. Folded in here, it also
+        made Django treat every *live* session of the account as anonymous -
+        so anyone who knew an address could sign its owner (a Super Admin
+        included) out of everything, for fifteen minutes at a time, with ten
+        wrong passwords. An administrator's LOCKED or DISABLED status still
+        ends every session: that is a decision about the account, not a guess.
         """
-        return UserStatus(self.status).can_authenticate and not self.is_locked_out
+        return UserStatus(self.status).can_authenticate
 
     @property
     def is_locked_out(self) -> bool:
@@ -210,6 +240,148 @@ class User(AbstractBaseUser):
         """
         self.session_epoch += 1
         self.save(update_fields=["session_epoch", "updated_at"])
+
+
+class UserSession(AbstractBaseSession):
+    """A browser session, as a row that knows whose it is (Phase 8 extension).
+
+    Django's own ``django_session`` table holds an opaque blob per key; nothing
+    in it says which user a session belongs to without decoding every row. That
+    made two things impossible: showing a person where they are signed in, and
+    ending one of those sessions without ending all of them
+    (``User.session_epoch`` remains the everywhere-at-once switch).
+
+    ``platform.identity.sessions.SessionStore`` maintains the extra columns from
+    the session's own data on every save, so they cost no additional query.
+    Deleting a row *is* revocation: the next request carrying that cookie finds
+    nothing and is anonymous.
+
+    **The session key never leaves this table.** It is the bearer secret in the
+    cookie; APIs identify a session by ``public_id``.
+    """
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    user = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="browser_sessions",
+    )
+    #: The epoch the session was issued under (``User.session_epoch``). A row
+    #: whose epoch is behind the user's is already dead - the middleware
+    #: flushes it on its next request - so listings exclude it.
+    session_epoch = models.PositiveIntegerField(default=0)
+    #: When this key was minted. Login rotates the key, so this is the moment
+    #: of sign-in for an authenticated session - and what the absolute
+    #: lifetime (``SESSION_ABSOLUTE_TIMEOUT``) is measured from.
+    created_at = models.DateTimeField(default=timezone.now)
+    last_activity_at = models.DateTimeField(default=timezone.now)
+    #: Coarse by design - see ``platform.identity.devices``.
+    ip_prefix = models.CharField(max_length=64, blank=True, default="")
+    device_label = models.CharField(max_length=64, blank=True, default="")
+
+    class Meta:
+        db_table = "identity_session"
+        indexes = [
+            models.Index(fields=["user", "-last_activity_at"], name="ix_session_user"),
+        ]
+
+    @classmethod
+    def get_session_store_class(cls):  # type: ignore[no-untyped-def]
+        from workeasy360.platform.identity.sessions import SessionStore
+
+        return SessionStore
+
+
+class AccountEvent(models.Model):
+    """One entry in a person's own account-security trail.
+
+    Sign-ins (and failed attempts against a real account), password changes
+    and session revocations. Global, like ``User``: signing in happens before
+    any organization is chosen. What an *organization* sees is
+    ``organizations.MemberSignIn``, which records entry into that organization
+    only - an administrator never learns how a member uses other tenants.
+
+    Coarse location only (``platform.identity.devices``). Pruned after
+    ``ACCOUNT_EVENT_RETENTION_DAYS``.
+    """
+
+    class Kind(models.TextChoices):
+        SIGN_IN = "sign_in", "Signed in"
+        SIGN_IN_FAILED = "sign_in_failed", "Sign-in failed"
+        PASSWORD_CHANGED = "password_changed", "Password changed"
+        SESSION_REVOKED = "session_revoked", "Session signed out"
+        OTHER_SESSIONS_REVOKED = "other_sessions_revoked", "Other sessions signed out"
+        SIGNED_OUT_EVERYWHERE = "signed_out_everywhere", "Signed out everywhere"
+        ACCOUNT_DISABLED = "account_disabled", "Account disabled"
+        ACCOUNT_ENABLED = "account_enabled", "Account enabled"
+        ACCOUNT_UNLOCKED = "account_unlocked", "Account unlocked"
+        EMAIL_VERIFIED = "email_verified", "Email address verified"
+        PASSWORD_RESET = "password_reset", "Password reset by email"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
+    occurred_at = models.DateTimeField(default=timezone.now)
+    kind = models.CharField(max_length=32, choices=Kind.choices)
+    #: For a failed sign-in: ``invalid_credentials`` | ``account_locked`` |
+    #: ``account_disabled``. For staff actions: who acted is in the
+    #: control-plane audit trail, not here.
+    reason = models.CharField(max_length=32, blank=True, default="")
+    ip_prefix = models.CharField(max_length=64, blank=True, default="")
+    device_label = models.CharField(max_length=64, blank=True, default="")
+
+    class Meta:
+        db_table = "identity_account_event"
+        indexes = [
+            models.Index(fields=["user", "-occurred_at"], name="ix_account_event_user"),
+            models.Index(fields=["occurred_at"], name="ix_account_event_time"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.kind} for {self.user_id}"
+
+
+class AccountToken(models.Model):
+    """A one-time link that proves possession of an email address (Phase 9):
+    verifying a new account's address, or resetting a forgotten password.
+
+    **Only the SHA-256 of the token is stored**, so a database dump yields no
+    working link - the same rule as ``organizations.Invitation``. The link
+    itself travels in a notification's sealed context and sits in the URL
+    fragment, which browsers never send to a server.
+
+    Single use (``used_at``) and short-lived (``expires_at``). Issuing a new
+    token of a purpose retires the account's earlier unused ones of that
+    purpose, so only the latest emailed link works.
+
+    ``organization_name`` carries the one thing a signup must remember until
+    the address is verified: the company the person asked to create. Nothing
+    else about the request is kept here.
+    """
+
+    class Purpose(models.TextChoices):
+        VERIFY_EMAIL = "verify_email", "Verify email address"
+        RESET_PASSWORD = "reset_password", "Reset password"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
+    purpose = models.CharField(max_length=16, choices=Purpose.choices)
+    token_hash = models.CharField(max_length=64, unique=True)
+    organization_name = models.CharField(max_length=150, blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "identity_account_token"
+        indexes = [
+            models.Index(fields=["user", "purpose"], name="ix_account_token_user"),
+            models.Index(fields=["expires_at"], name="ix_account_token_expiry"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.purpose} for {self.user_id}"
 
 
 class AuthFactor(models.Model):
@@ -241,8 +413,10 @@ class AuthFactor(models.Model):
 
     credential_id = models.BinaryField(null=True, blank=True)
     public_key = models.BinaryField(null=True, blank=True)
-    #: WebAuthn clone detection: a counter that goes backwards means the
-    #: credential has been copied.
+    #: A counter that may only move forward. WebAuthn: the authenticator's
+    #: signature counter (going backwards means the credential was copied).
+    #: TOTP: the last accepted time step - RFC 6238 section 5.2 replay
+    #: protection, so an accepted code can never be accepted again.
     sign_count = models.BigIntegerField(default=0)
 
     confirmed_at = models.DateTimeField(null=True, blank=True)

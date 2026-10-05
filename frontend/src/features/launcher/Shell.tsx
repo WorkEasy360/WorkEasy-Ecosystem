@@ -1,42 +1,151 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname, useParams, useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth/useSession";
-import { getOrganizationDetail } from "@/lib/api/organizations";
 import { logout } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
+import {
+  ACCESS_POLICY_DENIALS,
+  consoleApi,
+  type AccessPolicyDenial,
+  type ConsoleAccess,
+} from "@/lib/api/console";
 import { StatusScreen } from "@/components/StatusScreen";
-import styles from "./Shell.module.css";
-
-const NAV_LINKS = (orgSlug: string) => [
-  { href: `/o/${orgSlug}/apps`, label: "Apps" },
-  { href: `/o/${orgSlug}/settings/members`, label: "Members" },
-  { href: `/o/${orgSlug}/settings/products`, label: "Products" },
-];
+import {
+  AccountMenu,
+  SidebarShell,
+  type AccountMenuEntry,
+  type SidebarGroup,
+} from "@/components/sidebar/SidebarShell";
+import { useOrganizationBranding } from "@/features/controlplane/useBranding";
+import { OrgAccessContext } from "@/features/console/OrgAccess";
+import { PolicyGate } from "@/features/console/PolicyGate";
+import consoleStyles from "@/features/console/Console.module.css";
 
 type OrgState =
   | { status: "loading" }
   | { status: "not-a-member" }
   | { status: "error" }
-  | { status: "ready"; displayName: string };
+  | { status: "policy"; reason: AccessPolicyDenial }
+  | { status: "ready"; access: ConsoleAccess };
+
+/** The organization console's navigation (Phase 8 extension, Phase 9): the
+ * customer's own pages first - Dashboard, My products, Explore products,
+ * billing, orders - then what an administrator manages. Each entry appears
+ * only when the member holds the permission its page needs. */
+export function organizationNav(slug: string, can: (permission: string) => boolean): SidebarGroup[] {
+  const base = `/o/${slug}`;
+  const billing = can("platform.billing.view") || can("commercial.subscription.view");
+  return [
+    {
+      items: [
+        { href: `${base}/dashboard`, label: "Dashboard", icon: "dashboard" },
+        { href: `${base}/apps`, label: "My products", icon: "apps" },
+        { href: `${base}/explore`, label: "Explore products", icon: "store" },
+        { href: `${base}/settings/billing`, label: "Subscriptions & billing", icon: "card", when: billing },
+        { href: `${base}/orders`, label: "Orders", icon: "receipt", when: billing },
+      ],
+    },
+    {
+      title: "Organization & team",
+      items: [
+        { href: `${base}/settings/organization`, label: "Organization", icon: "building" },
+        { href: `${base}/settings/members`, label: "Members", icon: "users", when: can("platform.member.view") },
+        {
+          href: `${base}/settings/invitations`,
+          label: "Invitations",
+          icon: "mail",
+          when: can("platform.member.invite"),
+        },
+        { href: `${base}/settings/profile`, label: "Profile", icon: "users" },
+      ],
+    },
+    {
+      title: "App management",
+      items: [
+        {
+          href: `${base}/settings/products`,
+          label: "Product access",
+          icon: "puzzle",
+          when: can("platform.seat.assign"),
+        },
+        {
+          href: `${base}/settings/integrations`,
+          label: "Integrations",
+          icon: "network",
+          when: can("platform.connection.view"),
+        },
+        {
+          href: `${base}/settings/automations`,
+          label: "Automations",
+          icon: "bolt",
+          when: can("platform.automation.view"),
+        },
+        { href: `${base}/settings/ai`, label: "AI", icon: "sparkles", when: can("platform.ai.view") },
+        {
+          href: `${base}/settings/analytics`,
+          label: "Analytics",
+          icon: "chart",
+          when: can("platform.analytics.view"),
+        },
+      ],
+    },
+    {
+      title: "Security",
+      items: [
+        {
+          href: `${base}/settings/security/authentication`,
+          label: "Authentication",
+          icon: "lock",
+          when: can("platform.security.view"),
+        },
+        {
+          href: `${base}/settings/security/network`,
+          label: "Network access",
+          icon: "network",
+          when: can("platform.security.view"),
+        },
+        { href: `${base}/settings/security`, label: "My security", icon: "shield", exact: true },
+      ],
+    },
+    {
+      title: "Audit",
+      items: [
+        { href: `${base}/settings/audit`, label: "Audit log", icon: "audit", when: can("platform.audit.view") },
+        {
+          href: `${base}/settings/sign-ins`,
+          label: "Sign-in activity",
+          icon: "history",
+          when: can("platform.audit.view"),
+        },
+      ],
+    },
+    {
+      items: [{ href: `${base}/help`, label: "Support", icon: "diagnostics" }],
+    },
+  ];
+}
 
 /**
- * The unified platform shell (Task 3): branding, organization identity,
- * platform-level navigation only - no product navigation ever lives here
- * (Task 3, Task 22). Every child page renders inside this once the session
- * and organization membership are confirmed, so no page below has to repeat
- * that check itself.
+ * The organization console shell: session and membership are confirmed (and
+ * the organization's own access policy satisfied) before any page renders, so
+ * no page below repeats those checks. Navigation is derived from the member's
+ * permissions (`GET /orgs/<slug>/access`); the backend authorizes every call
+ * regardless.
  */
 export function Shell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const pathname = usePathname();
   const params = useParams<{ orgSlug: string }>();
   const orgSlug = params.orgSlug;
+  const brand = useOrganizationBranding(orgSlug);
   const session = useSession();
   const [org, setOrg] = useState<OrgState>({ status: "loading" });
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [tick, setTick] = useState(0);
+  // A failed sign-out must not look like a successful one.
+  const [signOutFailed, setSignOutFailed] = useState(false);
+  const reload = useCallback(() => setTick((n) => n + 1), []);
 
   useEffect(() => {
     if (session.status !== "ready") return;
@@ -44,19 +153,38 @@ export function Shell({ children }: { children: React.ReactNode }) {
       router.replace("/login");
       return;
     }
-    getOrganizationDetail(orgSlug)
-      .then((detail) => setOrg({ status: "ready", displayName: detail.display_name }))
+    let cancelled = false;
+    consoleApi
+      .access(orgSlug)
+      .then((access) => {
+        if (!cancelled) setOrg({ status: "ready", access });
+      })
       .catch((err: unknown) => {
-        if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+        if (cancelled) return;
+        if (err instanceof ApiError && (ACCESS_POLICY_DENIALS as readonly string[]).includes(err.code)) {
+          setOrg({ status: "policy", reason: err.code as AccessPolicyDenial });
+        } else if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
           setOrg({ status: "not-a-member" });
         } else {
           setOrg({ status: "error" });
         }
       });
-  }, [session, router, orgSlug]);
+    return () => {
+      cancelled = true;
+    };
+  }, [session, router, orgSlug, tick]);
 
   if (session.status === "loading" || org.status === "loading") {
     return <StatusScreen>Loading Workeasy360…</StatusScreen>;
+  }
+  if (org.status === "policy") {
+    return (
+      <PolicyGate
+        reason={org.reason}
+        mfaEnrolled={session.status === "ready" && Boolean(session.session.mfa_enrolled)}
+        onResolved={reload}
+      />
+    );
   }
   if (org.status === "not-a-member") {
     return (
@@ -83,95 +211,64 @@ export function Shell({ children }: { children: React.ReactNode }) {
     );
   }
 
+  const { access } = org;
+  const can = (permission: string) => access.permissions.includes(permission);
+  const who = session.status === "ready" ? session.session : null;
+  const consoles = who?.consoles;
+  const entries: AccountMenuEntry[] = [
+    { label: "Profile", href: `/o/${orgSlug}/settings/profile` },
+    { label: "My security", href: `/o/${orgSlug}/settings/security` },
+    ...(consoles?.staff ? [{ label: "Super Admin console", href: "/admin" }] : []),
+    ...(consoles?.partner ? [{ label: "Partner portal", href: "/partner" }] : []),
+    { label: "Switch organization", href: "/organizations/select" },
+    {
+      label: "Sign out",
+      onSelect: () => {
+        setSignOutFailed(false);
+        logout().then(
+          () => router.replace("/login"),
+          () => setSignOutFailed(true),
+        );
+      },
+    },
+  ];
+
   return (
-    <div className={styles.shell}>
-      <header className={styles.header}>
-        <div className={`w360-container ${styles.headerInner}`}>
-          <div className={styles.brandGroup}>
-            <span className={styles.brand}>Workeasy360</span>
-            <button
-              type="button"
-              className={styles.orgSwitcher}
-              onClick={() => router.push("/organizations/select")}
-              aria-label={`Current organization: ${org.displayName}. Switch organization.`}
-            >
-              {org.displayName}
-              <span aria-hidden="true"> ▾</span>
-            </button>
-          </div>
-
-          <nav aria-label="Platform" className={styles.nav}>
-            {NAV_LINKS(orgSlug).map((link) => {
-              const active = pathname.startsWith(link.href);
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className={styles.navLink}
-                  aria-current={active ? "page" : undefined}
-                  data-active={active || undefined}
-                >
-                  {link.label}
-                </Link>
-              );
-            })}
-          </nav>
-
-          <div className={styles.userMenuWrap}>
-            <button
-              type="button"
-              className={styles.userButton}
-              onClick={() => setMenuOpen((v) => !v)}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-            >
-              {session.status === "ready" && session.session.authenticated
-                ? initials(session.session.name || session.session.email || "?")
-                : "?"}
-            </button>
-            {menuOpen && (
-              <div className={styles.userMenu} role="menu">
-                <Link
-                  href={`/o/${orgSlug}/settings/profile`}
-                  role="menuitem"
-                  className={styles.userMenuItem}
-                  onClick={() => setMenuOpen(false)}
-                >
-                  Profile
-                </Link>
-                <Link
-                  href={`/o/${orgSlug}/settings/organization`}
-                  role="menuitem"
-                  className={styles.userMenuItem}
-                  onClick={() => setMenuOpen(false)}
-                >
-                  Organization settings
-                </Link>
-                <button
-                  role="menuitem"
-                  className={styles.userMenuItem}
-                  onClick={() => {
-                    setMenuOpen(false);
-                    logout().finally(() => router.replace("/login"));
-                  }}
-                >
-                  Sign out
-                </button>
-              </div>
+    <OrgAccessContext.Provider value={{ slug: orgSlug, access, reload }}>
+      <SidebarShell
+        area="Organization"
+        brandName={brand?.brand_name}
+        brandLogoUrl={brand?.logo_url}
+        context={
+          <button
+            type="button"
+            className={consoleStyles.contextButton}
+            onClick={() => router.push("/organizations/select")}
+            aria-label={`Current organization: ${access.organization.display_name}. Switch organization.`}
+          >
+            {access.organization.display_name}
+            <span aria-hidden="true"> ▾</span>
+          </button>
+        }
+        groups={organizationNav(orgSlug, can)}
+        account={<AccountMenu name={who?.name || who?.email || ""} entries={entries} />}
+        banner={
+          <>
+            {signOutFailed && (
+              <p role="alert" className={consoleStyles.banner}>
+                You are still signed in: signing out didn&apos;t complete. Try again, or close this browser.
+              </p>
             )}
-          </div>
-        </div>
-      </header>
-      <main id="w360-main" className="w360-container" style={{ paddingBlock: "var(--w360-space-6)" }}>
+            {!access.organization.write_allowed && (
+              <p role="status" className={`w360-badge w360-badge-warning ${consoleStyles.banner}`}>
+                This organization is read-only ({access.organization.status}). You can view and export data.
+              </p>
+            )}
+          </>
+        }
+      >
         {children}
-      </main>
-    </div>
+      </SidebarShell>
+    </OrgAccessContext.Provider>
   );
-}
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0][0]?.toUpperCase() ?? "?";
-  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }

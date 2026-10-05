@@ -25,22 +25,6 @@ from workeasy360.contracts.enums import (
 from workeasy360.platform.tenancy.models import TenantScopedModel
 
 
-class OrganizationQuerySet(models.QuerySet):
-    def active(self) -> OrganizationQuerySet:
-        return self.filter(
-            status=OrganizationStatus.ACTIVE.value, deleted_at__isnull=True
-        )
-
-    def readable(self) -> OrganizationQuerySet:
-        return self.filter(
-            status__in=[
-                OrganizationStatus.ACTIVE.value,
-                OrganizationStatus.SUSPENDED.value,
-                OrganizationStatus.PENDING_DELETION.value,
-            ]
-        )
-
-
 class Organization(models.Model):
     """The tenant.
 
@@ -84,6 +68,33 @@ class Organization(models.Model):
         "identity.User", on_delete=models.PROTECT, related_name="+"
     )
 
+    # --- access policy (Phase 8 extension) --------------------------------
+    #
+    # On the organization row itself, not a side table: the tenant resolver
+    # already loads this row (before any tenant scope exists, which a
+    # tenant-scoped policy table could not be read under), so enforcing the
+    # policy on every request costs no additional query. Applied by
+    # ``contracts.values.access_policy.evaluate`` after membership is verified;
+    # it can only deny. Written only by ``platform.administration``, with
+    # ``platform.security.update`` (dangerous) and an audit entry.
+
+    #: Members must verify a second factor in the session before reaching
+    #: this organization.
+    require_mfa = models.BooleanField(default=False)
+    #: Minutes after sign-in beyond which a session no longer reaches this
+    #: organization. NULL = the platform's own session lifetime.
+    session_max_age_minutes = models.PositiveIntegerField(null=True, blank=True)
+    #: Raises the platform minimum (never lowers it). Length only: composition
+    #: rules are deliberately not offered (12-security.md section 3).
+    password_min_length = models.PositiveSmallIntegerField(null=True, blank=True)
+    ip_allowlist_enabled = models.BooleanField(default=False)
+    #: Normalised CIDR strings (``access_policy.normalise_allowlist``).
+    ip_allowlist = models.JSONField(default=list, blank=True)
+    #: Optimistic token for policy edits: two administrators saving at once
+    #: must not silently overwrite each other's allow-list.
+    security_policy_version = models.PositiveIntegerField(default=1)
+    security_policy_updated_at = models.DateTimeField(null=True, blank=True)
+
     #: Soft delete, with a purge job after the retention window.
     deleted_at = models.DateTimeField(null=True, blank=True)
     suspended_at = models.DateTimeField(null=True, blank=True)
@@ -92,13 +103,15 @@ class Organization(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    objects = OrganizationQuerySet.as_manager()
-
     class Meta:
         db_table = "organizations_organization"
         indexes = [
             models.Index(fields=["status"], name="ix_org_status"),
             models.Index(fields=["slug"], name="ix_org_slug"),
+            # The staff directory pages "newest first" with a keyset cursor
+            # on exactly this ordering (Phase 7); without it every page sorts
+            # the whole table.
+            models.Index(fields=["-created_at", "-id"], name="ix_org_created_id"),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - display only
@@ -124,34 +137,8 @@ class Organization(models.Model):
     def allows_read(self) -> bool:
         return self.status_enum.allows_read and self.deleted_at is None
 
-    def suspend(self, *, reason: str = "") -> None:
-        """Set read-only. Data stays visible and exportable.
-
-        Suspension is not a lockout: a customer whose card expired must still
-        be able to see their invoices, export their data and pay. Hard lockout
-        maximises churn and generates data-protection complaints
-        (03-multi-tenancy.md section 3.1).
-        """
-        self.status = OrganizationStatus.SUSPENDED.value
-        self.suspended_at = timezone.now()
-        self.suspension_reason = reason
-        self.save(
-            update_fields=["status", "suspended_at", "suspension_reason", "updated_at"]
-        )
-
-    def reactivate(self) -> None:
-        """No data restoration is needed, because nothing was deleted."""
-        self.status = OrganizationStatus.ACTIVE.value
-        self.suspended_at = None
-        self.suspension_reason = ""
-        self.save(
-            update_fields=["status", "suspended_at", "suspension_reason", "updated_at"]
-        )
-
-
-class MembershipQuerySet(models.QuerySet):
-    def active(self) -> MembershipQuerySet:
-        return self.filter(status=MembershipStatus.ACTIVE.value)
+    # Suspension, reactivation, renaming and policy edits are written by
+    # ``platform.organizations.services`` - the one writer of this table.
 
 
 class Membership(TenantScopedModel):
@@ -185,6 +172,11 @@ class Membership(TenantScopedModel):
 
     joined_at = models.DateTimeField(null=True, blank=True)
     removed_at = models.DateTimeField(null=True, blank=True)
+    #: "Sign this member out of the organization" (Phase 8 extension): a
+    #: session signed in before this moment no longer reaches this
+    #: organization. Organization-scoped on purpose - the member's session is
+    #: theirs, and ending it everywhere is not this organization's call.
+    sessions_valid_after = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "organizations_membership"
@@ -245,11 +237,39 @@ class Invitation(TenantScopedModel):
     accepted_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
 
+    # --- Phase 8 extension: the invitation system, finally written ---------
+    #: The system role the invitee receives on acceptance. Never ``owner``:
+    #: ownership moves by transfer, not by invitation.
+    role_key = models.CharField(max_length=32, default="member")
+    #: Each resend rotates the token (only its hash is kept, so the old link
+    #: cannot be re-sent - and stops working).
+    send_count = models.PositiveIntegerField(default=1)
+    last_sent_at = models.DateTimeField(null=True, blank=True)
+    accepted_by = models.ForeignKey(
+        "identity.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
     class Meta:
         db_table = "organizations_invitation"
+        constraints = [
+            # One open invitation per address per organization. Expired ones
+            # are revoked by the service before a new one is issued.
+            models.UniqueConstraint(
+                fields=["organization", "email"],
+                condition=models.Q(accepted_at__isnull=True, revoked_at__isnull=True),
+                name="uq_invite_open_per_email",
+            ),
+        ]
         indexes = [
             models.Index(fields=["organization", "email"], name="ix_invite_org_email"),
             models.Index(fields=["organization", "expires_at"], name="ix_invite_org_exp"),
+            models.Index(
+                fields=["organization", "-created_at"], name="ix_invite_org_created"
+            ),
         ]
 
     @property
@@ -259,3 +279,183 @@ class Invitation(TenantScopedModel):
             and self.revoked_at is None
             and self.expires_at > timezone.now()
         )
+
+
+class MemberSignIn(TenantScopedModel):
+    """A member entering this organization, once per browser session.
+
+    What the organization console's "signed-in users" and "most signed-in
+    users" are built from. **Tenant-scoped and RLS-protected**, and written when
+    the member's session first opens this organization - not at platform
+    sign-in - so an administrator learns only how their own organization is
+    used, never when a member signs in to work for another tenant.
+
+    Idempotent per (membership, session): the unique constraint turns every
+    later page load of the same session into a no-op insert.
+    """
+
+    membership = models.ForeignKey(
+        Membership, on_delete=models.CASCADE, related_name="sign_ins"
+    )
+    user = models.ForeignKey("identity.User", on_delete=models.CASCADE, related_name="+")
+    #: The session's public id (``identity.UserSession.public_id``) - never
+    #: the session key, which is the cookie's bearer secret.
+    session_ref = models.UUIDField()
+    occurred_at = models.DateTimeField(default=timezone.now)
+    ip_prefix = models.CharField(max_length=64, blank=True, default="")
+    device_label = models.CharField(max_length=64, blank=True, default="")
+
+    class Meta:
+        db_table = "organizations_member_sign_in"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "membership", "session_ref"],
+                name="uq_member_sign_in_session",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "-occurred_at"], name="ix_member_sign_in_time"
+            ),
+            models.Index(
+                fields=["organization", "membership", "-occurred_at"],
+                name="ix_member_sign_in_member",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.membership_id} @ {self.occurred_at}"
+
+
+class OrganizationCreationRequest(models.Model):
+    """Idempotency ledger for ``create_organization`` (Phase 5, Task 6).
+
+    **Why this cannot be ``integration.idempotency.IdempotencyRecord``.**
+    That ledger is tenant-scoped (``organization_id`` required), and
+    ``integration/`` is L2 while ``platform/organizations`` is L1 - importing
+    it would be an upward edge (F-4) even if the shape fit. Organization
+    creation is also the one command that structurally *cannot* be scoped to
+    a tenant: there is no organization until the command succeeds. Scoped
+    instead by the verified ``user_id`` of the caller, which is the only
+    stable identity available before an organization exists - the same
+    substitution ``organizations_for_user`` makes for the read side.
+
+    Control-plane, like ``Organization`` itself: not a ``TenantScopedModel``,
+    no RLS. Safe because every write and read goes through
+    ``platform.organizations.services``, which always supplies the caller's
+    *own*, server-verified ``user_id`` - never a client-supplied one.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        "identity.User",
+        on_delete=models.CASCADE,
+        related_name="organization_creation_requests",
+    )
+    #: Caller-supplied idempotency key (e.g. a client-generated request id).
+    key = models.CharField(max_length=128)
+    #: SHA-256 of the normalised request arguments - same purpose and shape
+    #: as ``integration.idempotency``'s fingerprint: a replay of this key
+    #: with different arguments is refused rather than served.
+    fingerprint = models.CharField(max_length=64)
+    #: Set once the command completes. ``NULL`` while another request holds
+    #: the claim (mid-transaction) or, in the pathological crash-after-claim
+    #: case, forever - which is why this must be inserted in the *same*
+    #: transaction as the ``Organization`` row it will point to: a rollback
+    #: undoes the claim with it, and a claim can never outlive its result.
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="creation_requests",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "organizations_creation_request"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "key"], name="uq_org_creation_user_key"
+            )
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.user_id}:{self.key}"
+
+
+class UserOrganizationAccess(models.Model):
+    """Access-directory projection (Phase 5, Task 16-24; ADR-022).
+
+    Answers **"which organizations should appear in this user's chooser"** -
+    a fast, denormalised read model. It is explicitly **not** the
+    authorization authority: ``Membership`` remains that, and every request
+    that acts within an organization re-resolves membership from scratch
+    (``platform.tenancy.resolution``), independent of what this table says.
+    A stale or even maliciously-poisoned row here can make an organization
+    wrongly *appear* to a user; it cannot make an organization wrongly
+    *act upon* for them, because nothing reads this table on that path.
+
+    **Why not a ``TenantScopedModel``.** The one query this table exists to
+    answer - "every organization for user X" - is a cross-tenant read by
+    definition. RLS keyed on ``organization_id`` (Layer 3) would force this
+    table right back into the one-organization-at-a-time scan D-013 exists to
+    remove; that is precisely what "keep RLS off, protect by verified
+    user_id" bought ``organizations_for_user``'s control-plane read of
+    ``Organization`` on the write side (D-008 is the same shape: a table that
+    is not a tenant's own data, protected by an explicit narrow condition
+    rather than the tenant isolation layer meant for tenant-owned tables).
+
+    **Trust model, stated plainly (Task 18).** Every legitimate read is
+    filtered by ``user_id`` taken from the authenticated session - never
+    from a client-supplied value - by ``platform.organizations.selectors``.
+    There is no endpoint that accepts a caller-supplied ``user_id`` for this
+    table. An IDOR would require the application code itself to pass another
+    user's id, which the selector layer's signature makes structurally
+    unreachable from an HTTP parameter.
+
+    Kept deliberately narrow: display metadata only, no permission set, no
+    subscription, no entitlement. A wider table is more that can drift.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        "identity.User", on_delete=models.CASCADE, related_name="organization_access_rows"
+    )
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="user_access_rows"
+    )
+    #: Denormalised display metadata the chooser needs, so listing it costs
+    #: no join. Kept in sync by the same service call that changes the
+    #: source (Task 20); the drift checker (Task 24) is what a divergence
+    #: would show.
+    organization_slug = models.SlugField(max_length=63)
+    organization_display_name = models.CharField(max_length=255)
+    organization_status = models.CharField(max_length=20)
+    #: Soft reference, not a foreign key: ``Membership`` is tenant-scoped and
+    #: RLS-protected, and this table is deliberately read without a tenant
+    #: context. Selection always re-resolves the real membership row
+    #: (Task 19); this id is display/continuity metadata only.
+    membership_id = models.UUIDField()
+    is_owner = models.BooleanField(default=False)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "organizations_user_access"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "organization"], name="uq_user_org_access"
+            )
+        ]
+        indexes = [
+            # The lookup this table exists for: every organization for one
+            # user, newest-membership-first, index-served rather than
+            # scanned (Task 63).
+            models.Index(
+                fields=["user", "-updated_at", "id"], name="ix_user_org_access_user"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.user_id} -> {self.organization_id}"

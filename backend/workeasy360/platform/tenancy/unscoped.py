@@ -35,10 +35,6 @@ def unscoped_access_active() -> bool:
     return _unscoped.get() is not None
 
 
-def current_unscoped_access() -> UnscopedAccess | None:
-    return _unscoped.get()
-
-
 @contextmanager
 def unscoped_access(*, reason: str, module: str = "") -> Iterator[UnscopedAccess]:
     """Permit unscoped queries and cross-tenant writes inside this block.

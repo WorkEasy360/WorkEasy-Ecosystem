@@ -196,6 +196,22 @@ def test_an_unauthenticated_caller_gets_nothing(customer):
 
 
 # --- mass assignment ------------------------------------------------------
+#
+# A customer buys through a pay-first order (ADR-035): the order freezes the
+# server's price and nothing is granted until its invoice is paid. So the
+# assertions read the *order* - what payment will charge and fulfilment will
+# create - and that no subscription exists before the money does.
+
+
+def _orders_url(customer) -> str:
+    return reverse("orders", kwargs={"org_slug": customer["org"].slug})
+
+
+def _only_order(in_tenant, customer):
+    from workeasy360.commercial.payments.models import Order
+
+    with in_tenant(customer["ctx"]):
+        return Order.objects.get()
 
 
 def test_a_client_cannot_set_the_price_on_a_purchase(
@@ -204,66 +220,83 @@ def test_a_client_cannot_set_the_price_on_a_purchase(
     """Price tampering.
 
     The handler never reads an amount from the body; the price is resolved
-    server-side from the catalog. Extra fields are ignored rather than
-    honoured.
+    server-side from the catalog and frozen in the order. Extra fields are
+    ignored rather than honoured.
     """
     billing_account(customer["ctx"])
     client = client_for(customer["user"])
-    url = reverse("subscription-purchase", kwargs={"org_slug": customer["org"].slug})
     response = _post(
         client,
-        url,
+        _orders_url(customer),
         {
             "plan_version_id": str(catalog["versions"]["crm_professional"].id),
             "total_amount_minor": 1,
             "unit_amount_minor": 1,
+            "amount_due_minor": 1,
+            "recurring_amount_minor": 1,
             "price_id": str(uuid.uuid4()),
             "currency": "INR",
         },
         idempotency_key=key(),
     )
-    assert response.status_code == 201
+    assert response.status_code == 201, response.content
+    assert response.json()["amount_due_minor"] == 4999
 
-    with in_tenant(customer["ctx"]):
-        item = SubscriptionItem.objects.get()
-    assert item.total_amount_minor == 4999
-    assert item.currency == "GBP"
-    assert item.price_id == catalog["prices"]["crm_professional"].id
+    order = _only_order(in_tenant, customer)
+    assert order.recurring_amount_minor == order.amount_due_minor == 4999
+    assert order.currency == "GBP"
+    assert order.price_snapshot["price_id"] == str(
+        catalog["prices"]["crm_professional"].id
+    )
+    assert order.price_snapshot["total_amount_minor"] == 4999
 
 
 def test_a_client_cannot_set_the_subscription_status(
     catalog, customer, billing_account, in_tenant, client_for
 ):
-    """Status is reached only through the state machine."""
+    """Status is reached only through the state machine: asking for a paid,
+    fulfilled order with an active subscription gets an order awaiting
+    payment and no subscription at all."""
     billing_account(customer["ctx"])
     client = client_for(customer["user"])
-    _post(
+    response = _post(
         client,
-        reverse("subscription-purchase", kwargs={"org_slug": customer["org"].slug}),
+        _orders_url(customer),
         {
             "plan_version_id": str(catalog["versions"]["crm_professional"].id),
-            "status": "active",
+            "status": "fulfilled",
+            "paid_at": "2026-01-01T00:00:00Z",
+            "requires_payment": False,
+            "subscription_status": "active",
             "cancel_at": None,
             "version": 999,
         },
         idempotency_key=key(),
     )
+    assert response.status_code == 201, response.content
+    order = _only_order(in_tenant, customer)
+    assert order.status == "pending_payment"
+    assert order.paid_at is None
+    assert order.version < 999
     with in_tenant(customer["ctx"]):
-        subscription = Subscription.objects.get()
-    assert subscription.version < 999
+        assert not Subscription.objects.exists()
+        assert not SubscriptionItem.objects.exists()
 
 
 def test_a_client_cannot_set_the_organization_on_a_purchase(
     catalog, customer, billing_account, in_tenant, client_for, organization_factory
 ):
     """Cross-tenant write by body parameter."""
+    from workeasy360.commercial.payments.models import Order
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
     billing_account(customer["ctx"])
     other_org, _, _ = organization_factory()
     client = client_for(customer["user"])
 
-    _post(
+    response = _post(
         client,
-        reverse("subscription-purchase", kwargs={"org_slug": customer["org"].slug}),
+        _orders_url(customer),
         {
             "plan_version_id": str(catalog["versions"]["crm_starter"].id),
             "organization": str(other_org.id),
@@ -271,9 +304,16 @@ def test_a_client_cannot_set_the_organization_on_a_purchase(
         },
         idempotency_key=key(),
     )
+    assert response.status_code == 201, response.content
     with in_tenant(customer["ctx"]):
-        item = SubscriptionItem.objects.get()
-    assert item.organization_id == customer["org"].id
+        order = Order.objects.select_related("invoice").get()
+        assert order.organization_id == customer["org"].id
+        assert order.invoice.organization_id == customer["org"].id
+    with unscoped_access(
+        reason="Test asserts no order was written under another organization",
+        module="tests.security",
+    ):
+        assert not Order.unscoped.filter(organization_id=other_org.id).exists()
 
 
 # --- currency tampering ---------------------------------------------------
@@ -291,19 +331,20 @@ def test_a_purchase_cannot_be_made_in_an_arbitrary_currency(
 
     billing_account(customer["ctx"], currency=CurrencyCode.INR)
     client = client_for(customer["user"])
-    response = _post(
-        client,
-        reverse("subscription-purchase", kwargs={"org_slug": customer["org"].slug}),
-        {
-            "plan_version_id": str(catalog["versions"]["crm_professional"].id),
-            "currency": "GBP",
-        },
-        idempotency_key=key(),
-    )
-    # The organization bills in INR and no INR price exists, so the purchase
-    # is refused rather than silently priced in GBP.
-    assert response.status_code == 409
-    assert response.json()["code"] == "price_not_available"
+    for route in ("orders", "order-quote"):
+        response = _post(
+            client,
+            reverse(route, kwargs={"org_slug": customer["org"].slug}),
+            {
+                "plan_version_id": str(catalog["versions"]["crm_professional"].id),
+                "currency": "GBP",
+            },
+            idempotency_key=key(),
+        )
+        # The organization bills in INR and no INR price exists, so the order
+        # is refused rather than silently priced in GBP.
+        assert response.status_code == 409, (route, response.content)
+        assert response.json()["code"] == "price_not_available"
 
 
 # --- duplicate requests and replay ---------------------------------------
@@ -312,19 +353,22 @@ def test_a_purchase_cannot_be_made_in_an_arbitrary_currency(
 def test_a_replayed_request_does_not_buy_twice(
     catalog, customer, billing_account, in_tenant, client_for
 ):
+    from workeasy360.commercial.payments.models import Invoice, Order
+
     billing_account(customer["ctx"])
     client = client_for(customer["user"])
-    url = reverse("subscription-purchase", kwargs={"org_slug": customer["org"].slug})
     command = key()
     payload = {"plan_version_id": str(catalog["versions"]["crm_professional"].id)}
 
-    first = _post(client, url, payload, idempotency_key=command)
-    second = _post(client, url, payload, idempotency_key=command)
+    first = _post(client, _orders_url(customer), payload, idempotency_key=command)
+    second = _post(client, _orders_url(customer), payload, idempotency_key=command)
 
     assert first.status_code == second.status_code == 201
-    assert first.json()["subscription_item_id"] == second.json()["subscription_item_id"]
+    assert first.json()["order_id"] == second.json()["order_id"]
+    assert first.json()["invoice_id"] == second.json()["invoice_id"]
     with in_tenant(customer["ctx"]):
-        assert SubscriptionItem.objects.count() == 1
+        assert Order.objects.count() == 1
+        assert Invoice.objects.count() == 1
 
 
 def test_a_command_without_an_idempotency_key_is_refused(
@@ -336,7 +380,7 @@ def test_a_command_without_an_idempotency_key_is_refused(
     client = client_for(customer["user"])
     response = _post(
         client,
-        reverse("subscription-purchase", kwargs={"org_slug": customer["org"].slug}),
+        _orders_url(customer),
         {"plan_version_id": str(catalog["versions"]["crm_starter"].id)},
     )
     assert response.status_code == 400
@@ -349,18 +393,18 @@ def test_replaying_a_key_with_a_different_body_is_refused(
     """One authorisation, one operation."""
     billing_account(customer["ctx"])
     client = client_for(customer["user"])
-    url = reverse("subscription-purchase", kwargs={"org_slug": customer["org"].slug})
     command = key()
 
-    _post(
+    first = _post(
         client,
-        url,
+        _orders_url(customer),
         {"plan_version_id": str(catalog["versions"]["crm_starter"].id)},
         idempotency_key=command,
     )
+    assert first.status_code == 201, first.content
     response = _post(
         client,
-        url,
+        _orders_url(customer),
         {"plan_version_id": str(catalog["versions"]["books_professional"].id)},
         idempotency_key=command,
     )
@@ -374,19 +418,20 @@ def test_replaying_a_key_with_a_different_body_is_refused(
 def test_a_domain_error_does_not_leak_internals(
     catalog, customer, billing_account, client_for
 ):
-    """The client gets a code and a correlation id, never a traceback."""
+    """The client gets a code and a correlation id, never a traceback - also
+    for an identifier of something that is not on sale."""
     billing_account(customer["ctx"])
     client = client_for(customer["user"])
-    response = _post(
-        client,
-        reverse("subscription-purchase", kwargs={"org_slug": customer["org"].slug}),
+    for payload in (
         {"plan_version_id": str(uuid.uuid4())},
-        idempotency_key=key(),
-    )
-    body = response.json()
-    assert response.status_code == 400
-    assert set(body) >= {"code", "detail", "correlation_id"}
-    assert "Traceback" not in json.dumps(body)
+        {"plan_version_id": "not-a-uuid"},
+        {"bundle_version_id": str(uuid.uuid4()), "declined_plan_version_ids": ["x"]},
+    ):
+        response = _post(client, _orders_url(customer), payload, idempotency_key=key())
+        body = response.json()
+        assert 400 <= response.status_code < 500, (payload, response.content)
+        assert set(body) >= {"code", "detail", "correlation_id"}
+        assert "Traceback" not in json.dumps(body)
 
 
 def test_a_missing_record_and_a_foreign_record_look_identical(
@@ -435,7 +480,7 @@ def test_a_suspended_organization_cannot_buy(
     client = client_for(customer["user"])
     response = _post(
         client,
-        reverse("subscription-purchase", kwargs={"org_slug": customer["org"].slug}),
+        _orders_url(customer),
         {"plan_version_id": str(catalog["versions"]["crm_starter"].id)},
         idempotency_key=key(),
     )

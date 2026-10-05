@@ -1,0 +1,85 @@
+{
+  "_note": "Operator-owned definitions for `manage.py register_products`. Data only: no plan, no price, no credential and no trial is defined here (those are commercial decisions made in the Super Admin console). Descriptions and features are DRAFT copy to be confirmed by each product's owner and editable in the product manager. Each redirect URI is a PLACEHOLDER: a product must implement OIDC authorization code + PKCE and its owner must replace it (PUT the manifest) before single sign-on can work. Until an unrevoked credential exists the console reports 'SSO integration required'.",
+  "products": [
+    {
+      "code": "easy_crm",
+      "slug": "easy-crm",
+      "name": "Easy CRM",
+      "category": "Sales / CRM",
+      "icon": "customers",
+      "tagline": "Your sales pipeline and customer relationships.",
+      "description": "Easy CRM is a sales and customer relationship product. It runs as its own application: Workeasy360 provides your account, plan, seats and access, and your CRM data stays in Easy CRM.",
+      "licensing_mode": "per_seat",
+      "sort_order": 10,
+      "features": [
+        {"key": "easy_crm.sales.pipeline", "name": "Sales pipeline"},
+        {"key": "easy_crm.customers.records", "name": "Customer records"}
+      ],
+      "integration": {
+        "display_name": "Easy CRM",
+        "launch_url": "https://crm.workeasy360.com/",
+        "redirect_uris": ["https://crm.workeasy360.com/api/auth/callback/workeasy360"]
+      }
+    },
+    {
+      "code": "easybook",
+      "slug": "easybook",
+      "name": "EasyBook",
+      "category": "Finance / Accounting",
+      "icon": "book",
+      "tagline": "Accounting and finance records for your business.",
+      "description": "EasyBook is an accounting product. It runs as its own application: Workeasy360 provides your account, plan, seats and access, and your accounting data stays in EasyBook.",
+      "licensing_mode": "per_seat",
+      "sort_order": 20,
+      "features": [
+        {"key": "easybook.accounting.records", "name": "Accounting records"}
+      ],
+      "integration": {
+        "display_name": "EasyBook",
+        "launch_url": "https://book.workeasy360.com/",
+        "redirect_uris": ["https://book.workeasy360.com/api/auth/callback/workeasy360"]
+      }
+    },
+    {
+      "code": "easy_project",
+      "slug": "easy-project",
+      "name": "Easy Project",
+      "category": "Projects / Operations",
+      "icon": "board",
+      "tagline": "Plan projects, assign tasks and keep work moving.",
+      "description": "Easy Project is a project and operations product. It runs as its own application: Workeasy360 provides your account, plan, seats and access, and your projects and tasks stay in Easy Project.",
+      "licensing_mode": "per_seat",
+      "sort_order": 30,
+      "features": [
+        {"key": "easy_project.work.projects_tasks", "name": "Projects, tasks and subtasks"},
+        {"key": "easy_project.work.risks_issues", "name": "Risks and issues"},
+        {"key": "easy_project.work.dependencies", "name": "Task dependencies"},
+        {"key": "easy_project.automation.rules", "name": "Rule-based automation"}
+      ],
+      "integration": {
+        "display_name": "Easy Project",
+        "launch_url": "https://ops.workeasy360.com/",
+        "redirect_uris": ["https://ops.workeasy360.com/api/auth/callback/workeasy360"]
+      }
+    },
+    {
+      "code": "easy_helpdesk",
+      "slug": "easy-helpdesk",
+      "name": "Easy Help Desk",
+      "category": "Customer Support",
+      "icon": "headset",
+      "tagline": "Support requests handled in one place.",
+      "description": "Easy Help Desk is a customer support product. It runs as its own application: Workeasy360 provides your account, plan, seats and access, and your support tickets stay in Easy Help Desk.",
+      "licensing_mode": "per_seat",
+      "sort_order": 40,
+      "features": [
+        {"key": "easy_helpdesk.support.tickets", "name": "Support tickets"}
+      ],
+      "integration": {
+        "display_name": "Easy Help Desk",
+        "launch_url": "https://help.workeasy360.com/",
+        "redirect_uris": ["https://help.workeasy360.com/api/auth/callback/workeasy360"]
+      }
+    }
+  ]
+}

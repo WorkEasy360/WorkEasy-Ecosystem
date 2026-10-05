@@ -15,6 +15,8 @@ delivery becomes an independently retryable, independently failable record.
 
 from __future__ import annotations
 
+import uuid
+
 from django.db import models
 from django.utils import timezone
 
@@ -48,6 +50,11 @@ class Notification(TenantScopedModel):
 
     created_at_utc = models.DateTimeField(default=timezone.now, db_index=True)
     read_at = models.DateTimeField(null=True, blank=True)
+
+    #: Phase 8 extension: credential-bearing variables (an invitation link),
+    #: sealed and bound to this row (``notifications.sealing``), wiped once
+    #: delivery is final. Empty for every other notification.
+    sealed_context = models.TextField(blank=True, default="")
 
     class Meta:
         db_table = "notifications_notification"
@@ -162,3 +169,60 @@ class NotificationPreference(TenantScopedModel):
         indexes = [
             models.Index(fields=["organization", "membership"], name="ix_pref_org_member")
         ]
+
+
+class TemplateOverride(models.Model):
+    """A Super Admin's wording for one code-registered template.
+
+    **Control plane**, like the catalog: it changes what every organization's
+    email says, and no organization owns it. The template itself - its key and
+    the variables it may use - stays declared in code; an override replaces
+    only the subject and body text, and is validated to use nothing but those
+    declared variables (``communication.validate_override``), so it is never a
+    template-injection primitive (12-security.md section 7).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    template_key = models.CharField(max_length=128, unique=True)
+    subject = models.CharField(max_length=200)
+    body_text = models.TextField()
+    #: Optimistic token: two editors saving at once must not silently
+    #: overwrite each other.
+    version = models.PositiveIntegerField(default=1)
+    updated_by_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "notifications_template_override"
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return self.template_key
+
+
+class CommunicationSettings(models.Model):
+    """The platform's sender identity: one row (``id = 1``).
+
+    Only the *display name* and the reply-to address are editable. The sending
+    address stays the deployment's ``DEFAULT_FROM_EMAIL``, whose domain is the
+    one its mail provider authenticates (SPF/DKIM) - an editable from-address
+    would let anyone with this permission send as any domain.
+    """
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    sender_name = models.CharField(max_length=100, blank=True, default="")
+    reply_to = models.EmailField(max_length=254, blank=True, default="")
+    version = models.PositiveIntegerField(default=1)
+    updated_by_id = models.UUIDField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "notifications_communication_settings"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(id=1), name="ck_communication_settings_singleton"
+            )
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return self.sender_name or "communication settings"

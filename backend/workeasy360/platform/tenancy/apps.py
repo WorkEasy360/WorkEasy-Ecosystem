@@ -60,3 +60,13 @@ class TenancyConfig(AppConfig):
             return "role cannot bypass RLS"
 
         register_probe("startup", "rls_role", rls_role_probe)
+
+        def timeouts_probe() -> str:
+            from workeasy360.platform.tenancy.db import connection_timeout_problems
+
+            problems = connection_timeout_problems()
+            if problems:
+                raise RuntimeError("; ".join(problems))
+            return "statement, lock and idle-in-transaction timeouts set"
+
+        register_probe("startup", "db_timeouts", timeouts_probe)

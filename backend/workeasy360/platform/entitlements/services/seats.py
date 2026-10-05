@@ -66,6 +66,35 @@ def assigned_count(organization_id: UUID, *, pool_key: str) -> int:
     ).count()
 
 
+def usage_by_pool(organization_id: UUID) -> dict[str, tuple[int, int]]:
+    """``{pool_key: (seats_total, seats_assigned)}`` for every pool of the
+    organization, in **two** queries however many products it holds - the
+    dashboard draws a card per product and must not cost two queries each.
+
+    Same arithmetic as ``capacity`` and ``assigned_count`` (capacity summed
+    across sources, assignments not yet released); this is only the batch form.
+    """
+    from django.db.models import Count, Sum
+
+    from workeasy360.platform.entitlements.models import SeatAssignment, SeatGrant
+
+    totals = {
+        row["pool_key"]: int(row["total"] or 0)
+        for row in SeatGrant.objects.filter(organization_id=organization_id)
+        .values("pool_key")
+        .annotate(total=Sum("seats_total"))
+    }
+    used = {
+        row["seat_grant__pool_key"]: int(row["n"])
+        for row in SeatAssignment.objects.filter(
+            organization_id=organization_id, released_at__isnull=True
+        )
+        .values("seat_grant__pool_key")
+        .annotate(n=Count("id"))
+    }
+    return {pool: (total, used.get(pool, 0)) for pool, total in totals.items()}
+
+
 def held_by(organization_id: UUID, *, pool_key: str) -> set[UUID]:
     """Every membership currently holding a seat in the pool.
 
@@ -226,6 +255,26 @@ def release_seat(organization_id: UUID, *, pool_key: str, membership_id: UUID) -
     ).update(released_at=timezone.now(), over_limit_since=None)
     if released:
         logger.info("entitlement.seat.released", pool_key=pool_key)
+    return released
+
+
+def release_all_seats(organization_id: UUID, *, membership_id: UUID) -> int:
+    """Release every seat a member holds, in every pool. Idempotent.
+
+    For a member leaving the organization: a removed member can no longer
+    use a seat, and the seat screens list active members only, so a seat
+    left assigned to them could never be freed from the UI - the
+    organization would keep paying for capacity nobody can use.
+    """
+    from workeasy360.platform.entitlements.models import SeatAssignment
+
+    released = SeatAssignment.objects.filter(
+        organization_id=organization_id,
+        membership_id=membership_id,
+        released_at__isnull=True,
+    ).update(released_at=timezone.now(), over_limit_since=None)
+    if released:
+        logger.info("entitlement.seat.released_on_removal", released=released)
     return released
 
 

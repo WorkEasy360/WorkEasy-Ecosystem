@@ -76,6 +76,28 @@ class IntegrationStatus(StrEnum):
         return self is IntegrationStatus.RETIRED
 
 
+class IntegrationHealth(StrEnum):
+    """What the last bounded reachability check of a product saw (Phase 11).
+
+    **Technical, and separate from everything commercial.** ``catalog.Product``
+    says whether a product is *for sale*; ``IntegrationStatus`` says whether it
+    may *authenticate*; this says whether its address answered when last asked.
+    It gates nothing: an unhealthy product can still be launched, because a
+    probe can be wrong and refusing a paying customer on a guess is worse than
+    a slow page. It is only ever shown.
+
+    ``unknown`` is the honest default and stays until the first check.
+    """
+
+    UNKNOWN = "unknown"
+    #: The address answered with a success or a redirect.
+    HEALTHY = "healthy"
+    #: It answered, but with an error status.
+    DEGRADED = "degraded"
+    #: Nothing answered: DNS, connection, TLS or a timeout failed.
+    UNREACHABLE = "unreachable"
+
+
 #: Legal lifecycle transitions. A table rather than a chain of ifs, so the
 #: whole state machine is visible at once and a new state cannot be added
 #: without deciding what reaches it.
@@ -194,6 +216,18 @@ class ProductIntegration(models.Model):
     suspended_at = models.DateTimeField(null=True, blank=True)
     suspension_reason = models.TextField(blank=True, default="")
     retired_at = models.DateTimeField(null=True, blank=True)
+
+    # --- Phase 11: technical health, written only by ``health.record_health``
+    # from the bounded probe. Telemetry, never an access decision.
+    health_status = models.CharField(
+        max_length=16,
+        choices=_choices(IntegrationHealth),
+        default=IntegrationHealth.UNKNOWN.value,
+    )
+    health_checked_at = models.DateTimeField(null=True, blank=True)
+    #: A short category such as ``http_503`` or ``tls_error`` - never a
+    #: response body, a header or an address.
+    health_detail = models.CharField(max_length=64, blank=True, default="")
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -470,6 +504,15 @@ class AuthorizationCode(models.Model):
     #: OIDC Core section 3.1.2.1. Echoed into the ID token so the client can
     #: detect a replayed or substituted token.
     nonce = models.CharField(max_length=255, blank=True, default="")
+
+    #: What the authorizing browser session vouched for (sign-in time, second
+    #: factor, client address) when the organization's access policy allowed
+    #: it - re-judged against the live policy at redemption
+    #: (``authorization._revalidate_subject``, Phase 12). Nullable, so the
+    #: column is safe while the previous release is still writing codes; a
+    #: code without it is judged as the least-trusted session. Lives exactly
+    #: as long as the code (pruned with it).
+    session_facts = models.JSONField(null=True, blank=True)
 
     expires_at = models.DateTimeField()
     #: Set by a conditional UPDATE, which is what makes single use hold under

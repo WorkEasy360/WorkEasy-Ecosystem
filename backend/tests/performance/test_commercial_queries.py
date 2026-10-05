@@ -181,11 +181,14 @@ def test_entitlement_computation_is_bounded(full_customer):
     ctx = full_customer["ctx"]
     computed, queries = _count(lambda: compute_entitlements(ctx.organization_id))
     assert len(computed.products) == 2
-    # Three scoped reads (commercial state, plan versions, support grants),
-    # each carrying its own SAVEPOINT / bind / restore / RELEASE. Pinned so
-    # the count cannot grow quietly; the growth test below is the one that
-    # guards against an N+1.
-    assert queries <= 13, f"{queries} statements to compute entitlements"
+    # Four scoped reads (commercial state, product trials, plan versions,
+    # support grants), each carrying its own SAVEPOINT / bind / restore /
+    # RELEASE. Phase 11 added ``commercial_trials`` as a fourth input
+    # (ADR-038) - one more scoped read of the same shape as the other three,
+    # not a per-line-item lookup; the growth test below is the one that
+    # guards against an N+1, and it is unaffected by this addition. Pinned so
+    # the count cannot grow quietly.
+    assert queries <= 18, f"{queries} statements to compute entitlements"
 
 
 def test_entitlement_computation_does_not_scale_with_line_count(

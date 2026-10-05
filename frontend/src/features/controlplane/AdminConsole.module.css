@@ -1,0 +1,354 @@
+/* Super Admin console screens (Phase 8 extension): plan builder, pricing,
+   payments, users and communication. Tables, cards, forms and stats come from
+   ControlPlane.module.css; this file adds tabs, segmented choices, the
+   description editor, variable chips and the save-progress list. CSS modules
+   only - no inline styles (CSP), and nothing from the server is ever written
+   into a style. */
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--w360-space-3);
+}
+
+.header h1 {
+  margin: 0;
+}
+
+.section {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.section > * {
+  min-width: 0;
+}
+
+.sectionTitle {
+  font-size: 16px;
+  margin: 0;
+}
+
+/* --- tabs ----------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1);
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.tab {
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  padding: var(--w360-space-2) var(--w360-space-3);
+  font-weight: 600;
+  color: var(--w360-text-muted);
+  margin-bottom: -1px;
+}
+
+/* Selected is shown by weight, colour *and* an underline bar (not colour alone). */
+.tab[aria-selected="true"] {
+  color: var(--w360-text);
+  border-bottom-color: var(--w360-brand);
+}
+
+.tabPanel {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: minmax(0, 1fr);
+  padding-top: var(--w360-space-4);
+}
+
+.tabPanel > * {
+  min-width: 0;
+}
+
+/* --- segmented choice (native radios) --------------------------------------- */
+
+.fieldset {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.fieldset legend {
+  padding: 0;
+}
+
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-sm);
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.segment {
+  position: relative;
+  display: inline-flex;
+}
+
+.segment input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.segment span {
+  padding: 6px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--w360-text-muted);
+  cursor: pointer;
+  border-right: 1px solid var(--w360-border);
+}
+
+.segment:last-child span {
+  border-right: none;
+}
+
+.segment input:checked + span {
+  background: var(--w360-neutral-bg);
+  color: var(--w360-text);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.segment input:focus-visible + span {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: -2px;
+}
+
+.segment input:disabled + span {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* --- checkboxes and inline rows ----------------------------------------------- */
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--w360-space-2);
+  font-size: 14px;
+}
+
+.check input {
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.cycles {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.cycle {
+  display: grid;
+  gap: var(--w360-space-2);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 12rem);
+  align-items: center;
+}
+
+.twoCol {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+}
+
+.builder {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 760px;
+}
+
+.builder > * {
+  min-width: 0;
+}
+
+.panelTitle {
+  font-size: 18px;
+  margin: 0;
+}
+
+.subTitle {
+  font-size: 15px;
+  margin: 0;
+}
+
+/* --- description editor -------------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1);
+}
+
+.toolButton {
+  border: 1px solid var(--w360-border-strong);
+  background: var(--w360-surface);
+  border-radius: var(--w360-radius-sm);
+  padding: 2px 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.textarea {
+  min-height: 7rem;
+  resize: vertical;
+  max-width: 100%;
+}
+
+.preview {
+  border: 1px dashed var(--w360-border-strong);
+  border-radius: var(--w360-radius-sm);
+  padding: var(--w360-space-3);
+  background: var(--w360-surface);
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+
+.preview p,
+.preview ul {
+  margin: 0 0 var(--w360-space-2);
+}
+
+.preview > :last-child {
+  margin-bottom: 0;
+}
+
+.pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  margin: 0;
+}
+
+/* --- inclusions (plan builder) -------------------------------------------------- */
+
+.inclusions {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
+  align-items: start;
+}
+
+.productList {
+  display: grid;
+  gap: var(--w360-space-1);
+  border-right: 1px solid var(--w360-border);
+  padding-right: var(--w360-space-3);
+}
+
+.productTab {
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
+  border-radius: var(--w360-radius-sm);
+  padding: var(--w360-space-2);
+  font-size: 14px;
+  color: var(--w360-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.productTab[aria-selected="true"] {
+  color: var(--w360-text);
+  font-weight: 700;
+  border-left-color: var(--w360-brand);
+  background: var(--w360-neutral-bg);
+}
+
+/* --- variable chips (communication) ---------------------------------------------- */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.chip {
+  border: 1px solid var(--w360-border-strong);
+  background: var(--w360-neutral-bg);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+/* --- save progress ---------------------------------------------------------------- */
+
+.progress {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--w360-space-1);
+  font-size: 14px;
+}
+
+.progress li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: baseline;
+}
+
+.errorList {
+  margin: var(--w360-space-1) 0 0;
+  padding-left: var(--w360-space-5);
+}
+
+.list {
+  margin: 0;
+  padding-left: var(--w360-space-5);
+}
+
+.plainList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--w360-space-1);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: flex-start;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .inclusions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .productList {
+    border-right: none;
+    padding-right: 0;
+    border-bottom: 1px solid var(--w360-border);
+    padding-bottom: var(--w360-space-2);
+  }
+
+  .cycle {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

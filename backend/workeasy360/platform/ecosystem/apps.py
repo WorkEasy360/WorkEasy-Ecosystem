@@ -14,6 +14,7 @@ class EcosystemConfig(AppConfig):
     def ready(self) -> None:
         from workeasy360.contracts.ports.signing import register_signing_key_provider
         from workeasy360.platform.ecosystem import (  # noqa: F401
+            checks,
             keys,
             permissions,
             tasks,
@@ -37,6 +38,10 @@ class EcosystemConfig(AppConfig):
         # (16-ecosystem-product-boundary.md section 10, rule 1). Asserted by
         # test_product_health_never_affects_platform_readiness.
         health.register_probe("deep", "ecosystem", _probe_ecosystem)
+        # Phase 12: each registered product's last observed health, as a gauge
+        # for the "external product down" alert. Telemetry only - it gates
+        # nothing (the rule above).
+        health.register_gauges("products", _product_gauges)
 
 
 def _probe_ecosystem() -> str:
@@ -55,3 +60,30 @@ def _probe_ecosystem() -> str:
     if active == 0:
         return f"{published} key(s) published, NO ACTIVE SIGNING KEY"
     return f"{published} key(s) published, {active} active"
+
+
+def _product_gauges() -> list[tuple[str, dict[str, str], float]]:
+    """One-hot health per product, and how old that observation is."""
+    from django.utils import timezone
+
+    from workeasy360.platform.ecosystem.models import (
+        IntegrationHealth,
+        ProductIntegration,
+    )
+
+    now = timezone.now()
+    samples: list[tuple[str, dict[str, str], float]] = []
+    for code, status, checked in ProductIntegration.objects.values_list(
+        "product_code", "health_status", "health_checked_at"
+    ):
+        for state in IntegrationHealth:
+            samples.append(
+                (
+                    "w360_product_health",
+                    {"product_code": code, "status": state.value},
+                    1.0 if status == state.value else 0.0,
+                )
+            )
+        age = (now - checked).total_seconds() if checked else -1.0
+        samples.append(("w360_product_health_age_seconds", {"product_code": code}, age))
+    return samples

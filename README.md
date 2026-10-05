@@ -25,7 +25,21 @@ through its contracts.
     repo)          repo)        repo)       repo)
 ```
 
-**Status: Phase 4 complete — a user can sign in once and launch entitled,
+**Current status (Phase 12, 2026-09-30): production hardening done; go-live
+readiness FAIL.** The platform side passes its checks, but four products,
+DNS, email and payment providers are not ready. The platform checks include
+browser journeys for all four products, backup/restore/PITR, outage tests, the
+upgrade rehearsal and the security scans. Go-live blockers, owners and the path
+to YES: [docs/phase-12/phase-12-status.md](docs/phase-12/phase-12-status.md).
+Deployment: [docs/phase-12/04-deployment.md](docs/phase-12/04-deployment.md).
+
+*Earlier status (Phase 5):* **a new customer can create their organization,
+become its owner, find it through a scalable organization directory and
+satisfy MFA step-up** ([docs/phase-5/](docs/phase-5/00-overview.md); evidence in
+[phase-5-status.md](docs/phase-5/phase-5-status.md): 1,121 backend tests and
+41 frontend tests, 0 failed, fresh database).
+
+**Phase 4: a user can sign in once and launch entitled,
 seated products across the ecosystem.** Phase 0 (architecture), Phase 1
 (platform foundations), Phase 2 (commercial core) and Phase 3 (remote
 product SSO, an OpenID Provider with an integration registry, key rotation
@@ -34,8 +48,9 @@ unified frontend shell (`frontend/`, Next.js) — login, organization chooser,
 a data-driven app launcher, and seat/member administration — and closes the
 seat-enforcement gap Phase 3's audit identified: a per-seat product with
 every seat assigned now refuses an unseated member at the OIDC protocol
-level, not only in the UI. **973 backend tests, 0 failed, 0 skipped** (fresh
-database); **11 frontend tests, 0 failed** (clean install).
+level, not only in the UI. **1,010 backend tests, 0 failed, 0 skipped**
+(fresh database); **29 frontend tests, 0 failed** (clean install). Audited
+adversarially — [docs/phase-4/14-opus-audit.md](docs/phase-4/14-opus-audit.md).
 
 No product features live here, and none ever will — `products/` is a reserved,
 permanently empty namespace with an unconditional build check.

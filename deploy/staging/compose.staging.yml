@@ -1,0 +1,93 @@
+# Staging rehearsal overlay (Phase 12). Layered on production.yml:
+#
+#   docker compose -p w360stg -f deploy/compose/production.yml \
+#     -f deploy/staging/compose.staging.yml --env-file <staging.env> up -d
+#
+# Adds only what a real deployment gets from a provider, each a stand-in that
+# speaks the same protocol the production code uses:
+#   mailpit   SMTP relay       (production: a transactional email provider)
+#   coredns   authoritative DNS for the test partner domain, so custom-domain
+#             verification makes real DNS queries (W360_DNS_RESOLVERS)
+#   seaweedfs S3-compatible object store (production: AWS S3)
+#   prometheus scrapes /healthz/metrics and the edge, evaluates the alert rules
+# and switches the application to config.settings.staging (payments TEST).
+
+x-staging-env: &staging_env
+  DJANGO_SETTINGS_MODULE: config.settings.staging
+
+services:
+  api:
+    environment: *staging_env
+  worker-critical:
+    environment: *staging_env
+  worker-default:
+    environment: *staging_env
+  worker-heavy:
+    environment: *staging_env
+  beat:
+    environment: *staging_env
+
+  postgres:
+    ports:
+      - "127.0.0.1:${W360_STG_PG_PORT:-55442}:5432"
+
+  rabbitmq:
+    ports:
+      - "127.0.0.1:${W360_STG_RABBIT_UI_PORT:-55672}:15672"
+
+  mailpit:
+    image: axllent/mailpit:v1.31
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${W360_STG_MAIL_UI_PORT:-58026}:8025"
+    networks: [internal]
+
+  coredns:
+    image: coredns/coredns:1.12.1
+    command: ["-conf", "/etc/coredns/Corefile"]
+    volumes:
+      # Relative to deploy/compose, the first compose file's directory. A
+      # rehearsal points W360_STG_COREDNS_DIR at a scratch copy so that
+      # "publishing" an ownership record never edits the repository.
+      - ${W360_STG_COREDNS_DIR:-../staging/coredns}:/etc/coredns:ro
+    restart: unless-stopped
+    networks:
+      internal:
+        ipv4_address: 172.31.240.53
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333", "-master.volumeSizeLimitMB=64", "-volume.max=32"]
+    # A new bucket grows 7 volumes at once (replication 000): fewer slots than
+    # that and no bucket is ever writable (found by the Phase 12 browser run).
+    environment:
+      # SSE-S3 (the platform always sends AES256; production is AWS S3) needs a
+      # key here; without one every encrypted put fails. Generated per staging
+      # environment by make_env.py, read through --env-file interpolation.
+      WEED_S3_SSE_KEY: ${W360_STG_S3_SSE_KEY:?run deploy/staging/make_env.py and pass --env-file}
+    volumes:
+      - seaweed:/data
+    restart: unless-stopped
+    networks: [internal]
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=2d"]
+    # No env file: the scrape token is the mounted file below, nothing else.
+    volumes:
+      # prometheus.yml + alerts.yml from deploy/observability, and the scrape
+      # token, assembled by the rehearsal script (the token is a secret).
+      - ${W360_STG_PROM_CONFIG_DIR}:/etc/prometheus:ro
+    ports:
+      - "127.0.0.1:${W360_STG_PROM_PORT:-59090}:9090"
+    restart: unless-stopped
+    networks: [internal]
+
+networks:
+  internal:
+    ipam:
+      config:
+        - subnet: 172.31.240.0/24
+
+volumes:
+  seaweed:

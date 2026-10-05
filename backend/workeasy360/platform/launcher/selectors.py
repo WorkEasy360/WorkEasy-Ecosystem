@@ -33,7 +33,12 @@ def app_directory(ctx: TenantContext) -> list[AppAccessDecision]:
     from workeasy360.contracts.ports.catalog import get_product_directory
 
     return [
-        can_launch_product(ctx, str(descriptor.code))
+        # The descriptor is handed straight back rather than re-read per
+        # product: ``list_marketable()`` already fetched every one of them in
+        # a single query, and letting the decision re-fetch each was half the
+        # directory's entire query cost. See ``can_launch_product`` for why
+        # this changes no answer.
+        can_launch_product(ctx, str(descriptor.code), descriptor=descriptor)
         for descriptor in get_product_directory().list_marketable()
     ]
 

@@ -61,6 +61,16 @@ _bound_organization: ContextVar[UUID | None] = ContextVar(
 )
 
 
+def bound_organization() -> UUID | None:
+    """The organization the innermost scope helper has bound, if any.
+
+    Exposed so a caller can ask "am I already inside the scope I need?"
+    without a database round trip. It only ever reflects a scope entered
+    through this module's context managers.
+    """
+    return _bound_organization.get()
+
+
 def set_tenant_variable(
     organization_id: UUID | None, *, is_break_glass: bool = False
 ) -> None:
@@ -317,6 +327,57 @@ def assert_connection_role_cannot_bypass_rls() -> list[str]:
             f"Database role {role!r} has BYPASSRLS. Tenant isolation policies "
             f"would not apply. Grant NOBYPASSRLS to this role (R-02)."
         )
+
+    # Phase 12 (G-22). FORCE makes policies apply to a table's owner too, but
+    # an owner can still ``ALTER TABLE ... NO FORCE`` or ``DISABLE ROW LEVEL
+    # SECURITY`` and drop the append-only triggers. Until now only the test
+    # suite asserted that the runtime role owns nothing; a deployment that
+    # pointed W360_DB_APP_USER at the migrator booted cleanly.
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p') "
+            "AND c.relowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)"
+        )
+        owned = cur.fetchone()[0]
+    if owned:
+        problems.append(
+            f"Database role {role!r} owns {owned} table(s) in the application "
+            f"schema. A table owner can switch Row-Level Security off with "
+            f"ALTER TABLE; the application must connect as the non-owner "
+            f"runtime role and only migrations as the owner (ADR-009)."
+        )
+    return problems
+
+
+#: Session settings every application connection must carry (Phase 12, G-02).
+#: The values come from the role (``ALTER ROLE ... SET``), because a
+#: transaction-mode pooler drops the libpq ``options`` startup parameter the
+#: settings module also sends - through PgBouncer none of these reached
+#: PostgreSQL before Phase 12, so a runaway query or lock wait held a pooled
+#: server connection indefinitely.
+REQUIRED_CONNECTION_TIMEOUTS: tuple[str, ...] = (
+    "statement_timeout",
+    "lock_timeout",
+    "idle_in_transaction_session_timeout",
+)
+
+
+def connection_timeout_problems() -> list[str]:
+    """Timeouts that are disabled (``0``) on this connection, as problems."""
+    problems: list[str] = []
+    with connection.cursor() as cur:
+        for name in REQUIRED_CONNECTION_TIMEOUTS:
+            cur.execute("SELECT current_setting(%s)", [name])
+            value = str(cur.fetchone()[0]).strip()
+            if value in ("0", "0ms", "0s"):
+                problems.append(
+                    f"{name} is disabled on the application's database "
+                    f"connection. Set it on the runtime role (ALTER ROLE ... "
+                    f"SET {name} = ...; deploy/postgres/roles.sh): a pooler in "
+                    f"transaction mode drops per-connection options."
+                )
     return problems
 
 

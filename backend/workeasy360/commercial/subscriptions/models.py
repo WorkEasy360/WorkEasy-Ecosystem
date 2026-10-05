@@ -36,6 +36,7 @@ from django.db import models
 from workeasy360.contracts.enums import (
     BillingInterval,
     CollectionMode,
+    ProductTrialStatus,
     RenewalPolicy,
     SubscriptionStatus,
     TrialSource,
@@ -311,3 +312,75 @@ class SubscriptionItem(TenantScopedModel):
     @property
     def is_derived(self) -> bool:
         return self.parent_item_id is not None
+
+
+class ProductTrial(TenantScopedModel):
+    """One organization's free trial of one product (Phase 11).
+
+    **Why this is not a subscription.** An organization may hold only one open
+    subscription, and a subscription's trial covers everything on it. A
+    customer who has bought two products and wants to *try* a third cannot be
+    expressed that way. A product trial is instead a durable commercial fact
+    that ``provisioning`` reads as an **input** to entitlement computation
+    (source kind ``trial``): no subscription is created or changed, nothing is
+    invoiced, and the entitlement disappears by itself at ``ends_at``.
+
+    **Once, by the database.** ``uq_product_trial_once`` makes a second trial
+    of the same product by the same organization unrepresentable, whatever a
+    retry, a double click or a replay does.
+
+    The terms (``seats``, ``duration_days``, ``ends_at``) are copied from the
+    product's configuration when the trial starts: changing the configuration
+    later never shortens or extends a trial in progress.
+    """
+
+    product_code = models.CharField(max_length=32, db_index=True)
+    plan_version = models.ForeignKey(
+        "catalog.PlanVersion", on_delete=models.PROTECT, related_name="product_trials"
+    )
+    plan_code = models.CharField(max_length=64)
+    seats = models.PositiveIntegerField()
+    duration_days = models.PositiveSmallIntegerField()
+    source = models.CharField(
+        max_length=16,
+        choices=_choices(TrialSource),
+        default=TrialSource.SELF_SERVE.value,
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=_choices(ProductTrialStatus),
+        default=ProductTrialStatus.ACTIVE.value,
+        db_index=True,
+    )
+    started_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    #: When it stopped being ``active`` (converted, expired or cancelled).
+    ended_at = models.DateTimeField(null=True, blank=True)
+    started_by_user_id = models.UUIDField()
+
+    class Meta:
+        db_table = "subscriptions_product_trial"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "product_code"], name="uq_product_trial_once"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(ends_at__gt=models.F("started_at")),
+                name="ck_product_trial_window",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(seats__gte=1), name="ck_product_trial_seats"
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "status", "ends_at"], name="ix_product_trial_due"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"trial of {self.product_code} [{self.status}]"
+
+    @property
+    def status_enum(self) -> ProductTrialStatus:
+        return ProductTrialStatus(self.status)

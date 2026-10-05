@@ -1,0 +1,83 @@
+.figure {
+  margin: 0;
+  display: grid;
+  gap: var(--w360-space-3);
+  min-width: 0;
+}
+
+.caption {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.svg {
+  width: 100%;
+  height: 200px;
+  color: var(--w360-brand);
+}
+
+.bar {
+  fill: currentColor;
+}
+
+.axis {
+  stroke: var(--w360-border-strong);
+  stroke-width: 1;
+}
+
+.empty {
+  color: var(--w360-text-muted);
+  font-size: 14px;
+  margin: var(--w360-space-5) 0;
+}
+
+.details summary {
+  cursor: pointer;
+  color: var(--w360-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.table {
+  margin-top: var(--w360-space-2);
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 4px 12px 4px 0;
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile {
+  padding: var(--w360-space-4) var(--w360-space-5);
+  min-width: 0;
+}
+
+.tileLabel {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tileValue {
+  margin: var(--w360-space-1) 0 0;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.tileNote {
+  margin: var(--w360-space-1) 0 0;
+  color: var(--w360-text-muted);
+  font-size: 13px;
+}

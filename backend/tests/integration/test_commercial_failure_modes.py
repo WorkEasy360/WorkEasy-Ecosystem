@@ -262,6 +262,9 @@ def test_a_provisioning_failure_does_not_roll_back_the_purchase(
     def explode(organization_id):
         raise RuntimeError("entitlement store unavailable")
 
+    saved_listeners = list(
+        hooks._listeners
+    )  # restored below: other listeners must survive
     hooks.reset_listeners()
     hooks.on_commercial_change("exploding", explode)
 
@@ -278,10 +281,7 @@ def test_a_provisioning_failure_does_not_roll_back_the_purchase(
             # Access is not granted yet - stale, not wrong.
             assert not entitlements.check(ctx.organization_id, "crm").allowed
     finally:
-        hooks.reset_listeners()
-        from workeasy360.commercial.provisioning.services import reconcile as _reconcile
-
-        hooks.on_commercial_change("commercial.provisioning", _reconcile)
+        hooks._listeners[:] = saved_listeners
 
     # Reconciliation repairs it, with no commercial state lost.
     reconcile(ctx.organization_id)
@@ -298,6 +298,9 @@ def test_provisioning_failure_is_counted(catalog, customer, billing_account, in_
     def explode(organization_id):
         raise RuntimeError("boom")
 
+    saved_listeners = list(
+        hooks._listeners
+    )  # restored below: other listeners must survive
     hooks.reset_listeners()
     hooks.on_commercial_change("exploding", explode)
     ctx = customer["ctx"]
@@ -311,10 +314,7 @@ def test_provisioning_failure_is_counted(catalog, customer, billing_account, in_
             )
         assert metrics.value(hooks.PROVISIONING_FAILURES, listener="exploding") == 1
     finally:
-        hooks.reset_listeners()
-        from workeasy360.commercial.provisioning.services import reconcile as _reconcile
-
-        hooks.on_commercial_change("commercial.provisioning", _reconcile)
+        hooks._listeners[:] = saved_listeners
 
 
 def test_an_interrupted_bundle_expansion_leaves_nothing(

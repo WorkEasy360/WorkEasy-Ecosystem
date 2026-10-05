@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from workeasy360.contracts.values.manifest import (
+    LEGACY_MANIFEST_VERSION,
     MANIFEST_VERSION,
     MAX_REDIRECT_URIS,
     ManifestError,
@@ -225,6 +226,35 @@ def test_an_unsupported_manifest_version_is_refused_not_guessed():
     gets silently dropped."""
     with pytest.raises(ManifestError, match="Unsupported manifest_version"):
         parse_manifest(_manifest(manifest_version="2099-01-01"))
+
+
+def test_a_phase_5_manifest_still_loads_and_publishes_nothing():
+    """Registrations stored before Phase 6 are ``2026-09-01`` with no
+    ``events`` key. They keep authenticating unchanged after the upgrade;
+    they simply declare no events until the product moves to the new
+    version, so ingestion refuses anything they send as undeclared."""
+    stored = parse_manifest(_manifest(manifest_version=LEGACY_MANIFEST_VERSION)).as_dict()
+    assert "events" not in stored
+
+    manifest = from_stored_manifest(stored)
+    assert manifest.manifest_version == LEGACY_MANIFEST_VERSION
+    assert manifest.events == ()
+    assert not manifest.declares_event("product.crm.deal.won", 1)
+
+
+def test_a_legacy_manifest_cannot_declare_events():
+    """Events arrived with ``2026-10-01``; accepting them under the older
+    version would make the version number meaningless."""
+    with pytest.raises(ManifestError) as exc:
+        parse_manifest(
+            _manifest(
+                manifest_version=LEGACY_MANIFEST_VERSION,
+                events=[
+                    {"type": "product.crm.deal.won", "version": 1, "description": "x"}
+                ],
+            )
+        )
+    assert exc.value.field == "events"
 
 
 def test_an_invalid_product_code_is_refused():

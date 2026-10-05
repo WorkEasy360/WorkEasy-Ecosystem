@@ -63,8 +63,11 @@ def test_the_reference_client_imports_no_platform_module():
     Checked at the AST level so the constraint cannot be relaxed by adding an
     import inside a function body.
     """
-    source = pathlib.Path(
-        "backend/tests/factories/reference_product_client.py"
+    # Relative to this file, so the test passes from any working directory.
+    source = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "factories"
+        / "reference_product_client.py"
     ).read_text(encoding="utf-8")
 
     imported: list[str] = []

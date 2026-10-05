@@ -73,4 +73,5 @@ billing/checkout (Task 19 explicitly forbids faking it).
 | 11 | [Accessibility](11-accessibility.md) |
 | 12 | [Cleanup review](12-cleanup-review.md) |
 | 13 | [Test report](13-test-report.md) |
+| 14 | [**Adversarial audit**](14-opus-audit.md) — findings, fixes and the evidence for each |
 | — | [Phase 4 status](phase-4-status.md) |

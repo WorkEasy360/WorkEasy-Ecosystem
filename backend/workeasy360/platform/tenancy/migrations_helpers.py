@@ -260,6 +260,40 @@ def make_append_only(table: str, *, app_role: str = "w360_app") -> migrations.Ru
     )
 
 
+def forbid_truncate(table: str) -> migrations.RunSQL:
+    """Refuse ``TRUNCATE`` on an append-only table, for every role.
+
+    The row trigger :func:`make_append_only` installs cannot see a TRUNCATE -
+    it is a table-level operation that fires no row trigger - so without this
+    the table's owner could empty an append-only ledger with one statement
+    and no deliberate step. With it, even the owner must first run
+    ``ALTER TABLE ... DISABLE TRIGGER``: an explicit, visible maintenance act.
+    """
+    t = _ident(table)
+    trigger_fn = _ident(f"{table}_reject_truncate")
+    return migrations.RunSQL(
+        sql=f"""
+        CREATE OR REPLACE FUNCTION {trigger_fn}() RETURNS trigger AS $$
+        BEGIN
+            RAISE EXCEPTION
+                '% is append-only: TRUNCATE is not permitted', TG_TABLE_NAME
+                USING ERRCODE = 'restrict_violation';
+        END;
+        $$ LANGUAGE plpgsql;
+
+        DROP TRIGGER IF EXISTS {trigger_fn} ON {t};
+        CREATE TRIGGER {trigger_fn}
+            BEFORE TRUNCATE ON {t}
+            FOR EACH STATEMENT EXECUTE FUNCTION {trigger_fn}();
+        """,
+        reverse_sql=f"""
+        DROP TRIGGER IF EXISTS {trigger_fn} ON {t};
+        DROP FUNCTION IF EXISTS {trigger_fn}();
+        """,
+        elidable=False,
+    )
+
+
 def make_immutable_when_published(
     table: str,
     *,

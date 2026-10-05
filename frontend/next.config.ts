@@ -9,6 +9,9 @@ import type { NextConfig } from "next";
 const BACKEND_ORIGIN = process.env.BACKEND_ORIGIN ?? "http://localhost:8000";
 
 const nextConfig: NextConfig = {
+  // No `X-Powered-By: Next.js` on every response (Phase 12, G-21): it only
+  // tells a scanner which framework's advisories to try first.
+  poweredByHeader: false,
   async rewrites() {
     return [
       { source: "/api/:path*", destination: `${BACKEND_ORIGIN}/api/:path*` },

@@ -45,10 +45,15 @@ class PriceBook(models.Model):
     and never a code change - which is what makes "future pricing strategies"
     cheap rather than a migration each time.
 
-    ``RESELLER_GOLD`` is a price book code with ``channel=partner``. No
-    partner foreign key exists yet: ``commercial/partners`` is a later phase,
-    and a nullable FK to a table that does not exist would be a field nothing
-    can set.
+    ``RESELLER_GOLD`` is a price book code with ``channel=partner``.
+
+    **A partner book names its partner.** ``partner_id`` is a soft reference
+    (no foreign key): ``commercial/partners`` sits *above* pricing in the
+    commercial layering, so pricing cannot import or point at it. The
+    invariant the foreign key would have given is enforced twice: a check
+    constraint ties ``channel=partner`` to a non-null ``partner_id``, and the
+    only writer that sets one is the partner-administration service, which
+    verifies the partner exists.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -61,6 +66,8 @@ class PriceBook(models.Model):
         choices=_choices(PriceBookChannel),
         default=PriceBookChannel.DIRECT.value,
     )
+    #: The partner this book prices for. Set exactly when ``channel=partner``.
+    partner_id = models.UUIDField(null=True, blank=True)
     #: ISO 3166-1 alpha-2 or a region group. Empty means "any region", which
     #: is how the default book is expressed.
     region = models.CharField(max_length=16, blank=True, default="")
@@ -80,10 +87,22 @@ class PriceBook(models.Model):
     class Meta:
         db_table = "pricing_price_book"
         ordering = ["priority", "code"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(channel="partner", partner_id__isnull=False)
+                | (~models.Q(channel="partner") & models.Q(partner_id__isnull=True)),
+                name="ck_pricebook_partner_iff_partner_channel",
+            ),
+        ]
         indexes = [
             models.Index(
                 fields=["channel", "currency", "region", "priority"],
                 name="ix_pricebook_segment",
+            ),
+            models.Index(
+                fields=["partner_id", "currency"],
+                condition=models.Q(partner_id__isnull=False),
+                name="ix_pricebook_partner",
             ),
             models.Index(fields=["is_active", "valid_from"], name="ix_pricebook_active"),
         ]

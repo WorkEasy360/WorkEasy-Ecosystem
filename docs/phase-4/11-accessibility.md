@@ -26,17 +26,40 @@
   mode) - not independently measured against a contrast-checker tool (see
   below).
 
-## Not verified — a real gap, stated plainly
+## Verified — automated (Phase 4 audit)
 
-**No automated accessibility audit was run** (axe-core, Lighthouse
-accessibility score, or equivalent) and **no manual screen-reader pass**
-(VoiceOver/NVDA/JAWS) was performed. Everything above is correct by
-inspection against WCAG 2.1 AA criteria and by following each pattern's
-documented ARIA usage, not verified by a tool or a human using assistive
-technology. This is the single largest gap in this phase's accessibility
-work and should be the first thing a follow-up pass does before this ships
-to real users - see
-[phase-4-status.md](phase-4-status.md) §12.
+Two tools, run against the real production build, and what each one can
+actually see:
+
+**axe-core 4.13 in jsdom** (`frontend/src/accessibility.test.tsx`, part of
+`npm test`, 9 assertions): WCAG 2.1 A + AA rules over the rendered
+accessibility tree for the app card in all five `AppAccessState` values, the
+sign-in form, the seat-assignment table, and the loading and error status
+screens. **0 violations.**
+
+**Lighthouse 12.8.2** against `next start` on the production build,
+`/login`, Chrome headless, mobile form factor, simulated throttling:
+**accessibility 100**.
+
+**What neither tool checked, and why.** jsdom computes no styles and paints
+nothing, so axe cannot evaluate colour contrast, focus visibility, reflow at
+320px or motion; Lighthouse's automated accessibility category covers a
+subset of WCAG and explicitly does not substitute for manual review. The
+contrast claim above therefore remains "by construction, not measured", and
+**no manual screen-reader pass** (VoiceOver/NVDA/JAWS) has been performed.
+That is now the single remaining accessibility gap rather than the whole of
+it.
+
+**What the automated pass found.** No axe violations - but writing it
+surfaced a real defect the tool could not have: `AppCard` rendered
+`{app.description || copy.hint}`, so the "ask an administrator for a seat"
+and "contact your account team to activate" hints appeared **only** for a
+product whose catalog entry had no description. Every real product has one,
+so in practice a person looking at a card they could not open was never told
+what to do about it. The hint is now its own line. The two assertions under
+"accessibility properties axe cannot see" in that test file exist for
+exactly this class of problem: a perfectly labelled control that says
+nothing useful passes every automated rule.
 
 ## Responsive (Task 27)
 

@@ -115,11 +115,18 @@ def _production_env(**overrides) -> dict[str, str]:
         "W360_DB_APP_PASSWORD": "p" * 24,
         "W360_DB_APP_USER": "w360_app",
         "W360_FILE_URL_SIGNING_KEY": "f" * 40,
+        "W360_MFA_ENCRYPTION_KEY": "m" * 40,
+        # Phase 6: seals connection signing secrets; its own key.
+        "W360_INTEGRATION_SECRETS_KEYS": "i" * 40,
+        # Phase 8 extension: seals invitation links waiting to be emailed.
+        "W360_NOTIFICATION_SEAL_KEYS": "n" * 40,
         "W360_ALLOWED_HOSTS": "app.workeasy360.com",
         "W360_CSRF_TRUSTED_ORIGINS": "https://app.workeasy360.com",
-        "W360_CORS_ALLOWED_ORIGINS": "https://app.workeasy360.com",
         "W360_RELEASE": "2026.09.21-abc123",
         "W360_FILE_STORAGE_BACKEND": "s3",
+        # Phase 12: the S3 adapter needs its bucket; credentials come from the
+        # role/secret store, never from a setting.
+        "W360_S3_BUCKET": "w360-files-production",
         "W360_REDIS_URL": "rediss://cache:6379/0",
         "W360_BROKER_URL": "amqps://broker:5671//",
         # The `iss` claim every deployed product pins and verifies.
@@ -127,6 +134,18 @@ def _production_env(**overrides) -> dict[str, str]:
         # with no trailing slash, because `iss` is compared by exact
         # string equality (OpenID Connect Core section 3.1.3.7).
         "W360_OIDC_ISSUER": "https://app.workeasy360.com",
+        # D-009. How many proxy hops of our own infrastructure sit in front
+        # of this process. Required rather than defaulted because both wrong
+        # answers are silent: too low and every client behind the proxy
+        # shares one rate-limit bucket, too high and the caller names their
+        # own (platform/observability/client_ip.py).
+        "W360_TRUSTED_PROXY_COUNT": "1",
+        # Phase 12 (G-03, G-06): the SMTP relay, a real sending address and
+        # the https shell origin every emailed link is built on are required.
+        "W360_EMAIL_HOST": "smtp.mail-provider.net",
+        "W360_EMAIL_USE_TLS": "true",
+        "W360_DEFAULT_FROM_EMAIL": "no-reply@workeasy360.com",
+        "W360_FRONTEND_URL": "https://app.workeasy360.com",
     }
     base.update(overrides)
     return base
@@ -176,7 +195,10 @@ def test_invalid_types_are_reported_with_the_offending_key():
         "W360_ALLOWED_HOSTS",
         "W360_CSRF_TRUSTED_ORIGINS",
         "W360_FILE_URL_SIGNING_KEY",
+        "W360_MFA_ENCRYPTION_KEY",
+        "W360_INTEGRATION_SECRETS_KEYS",
         "W360_RELEASE",
+        "W360_TRUSTED_PROXY_COUNT",
     ],
 )
 def test_production_refuses_to_start_without_a_critical_setting(missing, monkeypatch):
@@ -215,7 +237,6 @@ def test_production_refuses_to_start_without_a_critical_setting(missing, monkeyp
     "override,expected",
     [
         ({"W360_ALLOWED_HOSTS": "*"}, "must not contain"),
-        ({"W360_CORS_ALLOWED_ORIGINS": "*"}, "must not contain"),
         ({"W360_CSRF_TRUSTED_ORIGINS": "http://app.workeasy360.com"}, "https"),
         ({"W360_FILE_STORAGE_BACKEND": "local"}, "not durable"),
         ({"W360_DB_APP_USER": "w360_migrator"}, "non-owner"),
@@ -225,6 +246,36 @@ def test_production_refuses_to_start_without_a_critical_setting(missing, monkeyp
         # slash makes every product reject every token.
         ({"W360_OIDC_ISSUER": "http://app.workeasy360.com"}, "https origin"),
         ({"W360_OIDC_ISSUER": "https://app.workeasy360.com/"}, "trailing slash"),
+        # Phase 5 final audit. Key separation by value, not only by name.
+        ({"W360_MFA_ENCRYPTION_KEY": "s" * 60}, "must differ"),
+        ({"W360_MFA_ENCRYPTION_KEY": "f" * 40}, "must differ"),
+        # Phase 6. The connection-secret key is separate by value too, and
+        # long enough to be a key rather than a password.
+        ({"W360_INTEGRATION_SECRETS_KEYS": "s" * 60}, "must differ"),
+        ({"W360_INTEGRATION_SECRETS_KEYS": "i" * 40 + ",m" + "m" * 39}, "must differ"),
+        ({"W360_INTEGRATION_SECRETS_KEYS": "too-short"}, "at least 32"),
+        # Phase 12. The S3 adapter: a bucket is required, and a custom
+        # (S3-compatible) endpoint must be https.
+        ({"W360_S3_BUCKET": ""}, "W360_S3_BUCKET is required"),
+        ({"W360_S3_ENDPOINT_URL": "http://minio:9000"}, "must be https"),
+        # Phase 12 (G-03, G-06). No silent fallback for mail, links or broker.
+        ({"W360_FRONTEND_URL": ""}, "W360_FRONTEND_URL is required"),
+        ({"W360_FRONTEND_URL": "http://app.workeasy360.com"}, "W360_FRONTEND_URL must"),
+        ({"W360_BROKER_URL": ""}, "W360_BROKER_URL is required"),
+        ({"W360_BROKER_URL": "amqp://broker:5672//"}, "broker must use TLS"),
+        ({"W360_EMAIL_HOST": ""}, "W360_EMAIL_HOST is required"),
+        ({"W360_EMAIL_USE_TLS": "false"}, "SMTP must use TLS"),
+        ({"W360_EMAIL_USE_SSL": "true"}, "mutually exclusive"),
+        (
+            {"W360_DEFAULT_FROM_EMAIL": "no-reply@workeasy360.test"},
+            "real sending address",
+        ),
+        (
+            {"W360_EMAIL_BACKEND": "django.core.mail.backends.console.EmailBackend"},
+            "W360_EMAIL_BACKEND=",
+        ),
+        # Phase 12 final audit: a guessable scrape token.
+        ({"W360_METRICS_TOKEN": "short-token"}, "W360_METRICS_TOKEN must be at least 32"),
     ],
 )
 def test_production_refuses_insecure_configuration(override, expected, monkeypatch):
@@ -259,7 +310,11 @@ def test_production_accepts_a_valid_configuration(monkeypatch):
     for key in list(os.environ):
         if key.startswith("W360_"):
             monkeypatch.delenv(key, raising=False)
-    for key, value in _production_env().items():
+    # Phase 6: an operator flag cannot loosen outbound HTTP in production -
+    # production pins both, whatever the environment says.
+    for key, value in _production_env(
+        W360_EGRESS_ALLOW_HTTP="true", W360_EGRESS_ALLOW_LOOPBACK="true"
+    ).items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "config.settings.production")
     monkeypatch.setattr(Env, "load_dotenv", lambda self, path: None)
@@ -268,6 +323,9 @@ def test_production_accepts_a_valid_configuration(monkeypatch):
     sys.modules.pop("config.settings.base", None)
 
     module = importlib.import_module("config.settings.production")
+    assert module.INTEGRATION_EGRESS_ALLOW_HTTP is False
+    assert module.INTEGRATION_EGRESS_ALLOW_LOOPBACK is False
+    assert len(module.INTEGRATION_SECRET_KEYS) == 1
 
     assert module.DEBUG is False
     assert module.SECURE_SSL_REDIRECT is True
@@ -275,6 +333,10 @@ def test_production_accepts_a_valid_configuration(monkeypatch):
     assert module.CSRF_COOKIE_SECURE is True
     assert module.SECURE_HSTS_SECONDS >= 31_536_000
     assert module.CELERY_TASK_ALWAYS_EAGER is False
+    # The proxy declaration and the header Django is allowed to believe are
+    # one decision, never two (D-009).
+    assert module.TRUSTED_PROXY_COUNT == 1
+    assert module.SECURE_PROXY_SSL_HEADER == ("HTTP_X_FORWARDED_PROTO", "https")
 
     sys.modules.pop("config.settings.production", None)
     sys.modules.pop("config.settings.base", None)
@@ -378,3 +440,58 @@ def test_env_file_is_git_ignored():
 
     for entry in (".env", "*.pem", ".venv"):
         assert entry in gitignore, f"{entry} is not git-ignored."
+
+
+@pytest.mark.parametrize(
+    "override,expected",
+    [
+        ({}, "W360_DB_MIGRATOR_PASSWORD is required"),
+        ({"W360_DB_MIGRATOR_PASSWORD": "w360_migrator_pw"}, "development default"),
+    ],
+)
+def test_production_migrations_need_a_real_owner_password(
+    override, expected, monkeypatch
+):
+    """Phase 12 (G-06): the migration settings used to fall back to the local
+    development password for the schema owner, silently, in production too."""
+    import importlib
+    import sys
+
+    for key in list(os.environ):
+        if key.startswith("W360_"):
+            monkeypatch.delenv(key, raising=False)
+    for key, value in _production_env(**override).items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "config.settings.migration")
+    monkeypatch.setattr(Env, "load_dotenv", lambda self, path: None)
+
+    for name in (
+        "config.settings.migration",
+        "config.settings.production",
+        "config.settings.base",
+    ):
+        sys.modules.pop(name, None)
+    with pytest.raises(ImproperlyConfigured, match=expected):
+        importlib.import_module("config.settings.migration")
+    for name in (
+        "config.settings.migration",
+        "config.settings.production",
+        "config.settings.base",
+    ):
+        sys.modules.pop(name, None)
+
+
+def test_every_process_entrypoint_defaults_to_production_settings():
+    """Phase 12 (G-07): WSGI, ASGI and Celery all default to production, so a
+    process started without DJANGO_SETTINGS_MODULE refuses to boot rather than
+    quietly running development settings. manage.py alone defaults to
+    development, deliberately: a bare command must be harmless."""
+    from pathlib import Path
+
+    config = Path(__file__).resolve().parents[2] / "config"
+    for name in ("wsgi.py", "asgi.py", "celery.py"):
+        source = (config / name).read_text(encoding="utf-8")
+        assert (
+            'os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")'
+            in source
+        ), name

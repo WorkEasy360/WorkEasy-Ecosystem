@@ -1,0 +1,185 @@
+# Workeasy360 - alert rules (Phase 12, Step 32).
+#
+# Every alert is actionable and names its runbook (docs/phase-12/10-runbooks.md).
+# `for:` windows are there to keep noise down: a single failed scrape, one slow
+# minute or a draining backlog does not page anyone.
+#
+# severity: page  -> wake someone (customer-facing or data-integrity risk)
+#           ticket -> business hours
+#
+# Alerts marked [log] and [exporter] need a signal this file cannot see by
+# itself; their equivalents are defined in docs/phase-12/08-observability-and-alerts.md.
+
+groups:
+  - name: w360-platform
+    rules:
+      - alert: W360ApiDown
+        expr: up{job="w360-api"} == 0
+        for: 2m
+        labels: {severity: page}
+        annotations:
+          summary: The API is not answering the metrics scrape.
+          runbook: docs/phase-12/10-runbooks.md#api-or-database-outage
+
+      - alert: W360DatabaseUnavailable
+        expr: w360_database_up == 0
+        for: 1m
+        labels: {severity: page}
+        annotations:
+          summary: The API cannot reach PostgreSQL. Readiness is failing; writes are refused.
+          runbook: docs/phase-12/10-runbooks.md#database-outage
+
+      # Backups: point-in-time recovery needs every WAL segment archived.
+      - alert: W360WalArchivingFailing
+        expr: increase(w360_wal_archive_failed_total[15m]) > 0
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: WAL segments are failing to archive - point-in-time recovery is broken and pg_wal is growing.
+          runbook: docs/phase-12/10-runbooks.md#backup-failure
+
+      - alert: W360WalArchiveStale
+        expr: w360_wal_archive_enabled == 1 and w360_wal_last_archived_age_seconds > 3600
+        for: 10m
+        labels: {severity: page}
+        annotations:
+          summary: No WAL segment archived for an hour (archive_timeout is 5 minutes).
+          runbook: docs/phase-12/10-runbooks.md#backup-failure
+
+      - alert: W360BrokerUnavailable
+        expr: w360_broker_up == 0
+        for: 2m
+        labels: {severity: page}
+        annotations:
+          summary: RabbitMQ is unreachable. Background work is queued in the database and will catch up.
+          runbook: docs/phase-12/10-runbooks.md#rabbitmq-outage
+
+      - alert: W360CacheUnavailable
+        expr: w360_cache_up == 0
+        for: 5m
+        labels: {severity: ticket}
+        annotations:
+          summary: Redis is unreachable. Correctness is unaffected; latency and rate-limit precision degrade.
+          runbook: docs/phase-12/10-runbooks.md#redis-outage
+
+      - alert: W360High5xxRate
+        expr: |
+          sum(rate(caddy_http_request_duration_seconds_count{code=~"5.."}[5m]))
+            / clamp_min(sum(rate(caddy_http_request_duration_seconds_count[5m])), 1) > 0.02
+        for: 10m
+        labels: {severity: page}
+        annotations:
+          summary: More than 2% of requests are failing with 5xx at the edge.
+          runbook: docs/phase-12/10-runbooks.md#elevated-5xx
+
+      - alert: W360WorkerPoolDown
+        expr: w360_queue_consumers == 0
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: 'Queue {{ $labels.queue }} has no consumer: its work is not running.'
+          runbook: docs/phase-12/10-runbooks.md#rabbitmq-outage
+
+      - alert: W360CriticalQueueLag
+        expr: w360_queue_messages{queue="critical"} > 100
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: Sign-in email and the outbox relay are backing up on the critical queue.
+          runbook: docs/phase-12/10-runbooks.md#queue-backlog
+
+      - alert: W360QueueLag
+        expr: w360_queue_messages{queue="default"} > 500 or w360_queue_messages{queue="heavy"} > 2000
+        for: 15m
+        labels: {severity: ticket}
+        annotations:
+          summary: 'Queue {{ $labels.queue }} has a sustained backlog.'
+          runbook: docs/phase-12/10-runbooks.md#queue-backlog
+
+      - alert: W360OutboxStuck
+        expr: w360_outbox_oldest_pending_seconds > 300
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: An outbox event has waited more than five minutes to be relayed.
+          runbook: docs/phase-12/10-runbooks.md#queue-backlog
+
+      - alert: W360DueWorkLag
+        expr: w360_due_work_oldest_overdue_seconds > 600
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: Webhook retries, checkouts or AI jobs are more than ten minutes overdue.
+          runbook: docs/phase-12/10-runbooks.md#queue-backlog
+
+      - alert: W360DeadLetters
+        expr: increase(w360_outbox_dead_letters[1h]) > 0
+        labels: {severity: ticket}
+        annotations:
+          summary: New dead-lettered events need an operator's decision.
+          runbook: docs/phase-12/10-runbooks.md#queue-backlog
+
+      - alert: W360DatabaseConnectionsHigh
+        expr: sum(w360_database_connections) > 160
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: PostgreSQL connections are above 80% of max_connections.
+          runbook: docs/phase-12/10-runbooks.md#database-outage
+
+      - alert: W360MetricsSourceFailing
+        expr: w360_gauge_source_up == 0
+        for: 15m
+        labels: {severity: ticket}
+        annotations:
+          summary: 'Gauge source {{ $labels.source }} cannot be read, so its alerts are blind.'
+          runbook: docs/phase-12/10-runbooks.md#api-or-database-outage
+
+  - name: w360-ecosystem
+    rules:
+      - alert: W360ProductUnreachable
+        expr: w360_product_health{status="unreachable"} == 1
+        for: 15m
+        labels: {severity: ticket}
+        annotations:
+          summary: 'Product {{ $labels.product_code }} is unreachable. The platform is unaffected; tell the product team.'
+          runbook: docs/phase-12/10-runbooks.md#external-product-outage
+
+      - alert: W360ProductHealthStale
+        expr: w360_product_health_age_seconds > 1800
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: Product health has not been checked for 30 minutes, so the heavy queue or Beat is stuck.
+          runbook: docs/phase-12/10-runbooks.md#queue-backlog
+
+      - alert: W360CustomDomainFailing
+        expr: w360_partner_domains_failing > 0
+        for: 1h
+        labels: {severity: ticket}
+        annotations:
+          summary: A partner custom domain is failing its ownership re-check.
+          runbook: docs/phase-12/10-runbooks.md#custom-domain-failure
+
+  - name: w360-infrastructure
+    rules:
+      # [exporter] node_exporter on each host (not needed on managed services).
+      - alert: W360DiskFillingUp
+        expr: |
+          (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) < 0.15
+        for: 15m
+        labels: {severity: page}
+        annotations:
+          summary: 'Less than 15% free on {{ $labels.mountpoint }}.'
+          runbook: docs/phase-12/10-runbooks.md#disk-capacity
+
+      # [exporter] blackbox_exporter probing https://<canonical>/ and each
+      # active partner domain. Caddy renews 30 days before expiry, so less
+      # than 14 days left means renewal is failing.
+      - alert: W360CertificateExpiring
+        expr: (probe_ssl_earliest_cert_expiry - time()) < 14 * 86400
+        for: 1h
+        labels: {severity: page}
+        annotations:
+          summary: 'The TLS certificate for {{ $labels.instance }} expires in under 14 days.'
+          runbook: docs/phase-12/10-runbooks.md#certificate-expiry

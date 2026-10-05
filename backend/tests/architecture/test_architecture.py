@@ -493,16 +493,72 @@ def test_unscoped_manager_use_is_allowlisted():
         # under any tenant context. Narrowed to one file so grep gives the
         # complete list of system writers.
         "commercial/subscriptions/system.py",
-        # --- Phase 4 addition ---
+        # --- Phase 5 additions ---
         #
-        # organizations_for_user(): the login/org-chooser bootstrap (Task 5).
-        # No tenant context can exist yet - resolving one is what the query
-        # is for - so it reads control-plane Organization rows unscoped and
-        # enters each candidate's own database scope before reading
-        # Membership, exactly the pattern platform/organizations/resolver.py
-        # already uses for the single-organization case (ADR-021,
-        # docs/phase-4/05-organization-selection.md).
-        "platform/organizations/selectors.py",
+        # create_organization_and_owner_membership()/replay_result(): no
+        # tenant context can exist before this call creates the tenant it
+        # would scope to (Task 5/6).
+        "platform/organizations/services.py",
+        # create_organization()'s orchestration - same reason, one layer up
+        # (platform/onboarding/services.py's own module docstring explains
+        # why the orchestration lives here rather than in organizations).
+        "platform/onboarding/services.py",
+        # rebuild_access_projection() / check_access_projection_drift():
+        # both are cross-tenant by nature (they visit every organization in
+        # turn to reconstruct or audit the chooser projection), entering
+        # each one's own database scope before reading Membership - the
+        # same pattern the retired Phase 4 organizations_for_user() scan
+        # used, now confined to operator tooling rather than every login
+        # (ADR-022).
+        "platform/organizations/projection.py",
+        # --- Phase 7 (ADR-027) ---
+        #
+        # ensure_platform_organization() creates the control-plane anchor
+        # organization (and its system user) before any tenant context can
+        # exist - the same "no tenant yet" reason as the organization
+        # creation modules above. It is the module's only use; the scope
+        # helpers beside it enter one organization's database scope, so RLS
+        # still confines every other write.
+        "platform/authz/control_plane.py",
+        # The operator's bootstrap of the platform Super Admin (Phase 9; it
+        # replaced Phase 7's w360_bootstrap_staff): a global identity and the
+        # control-plane system user are read before any tenant context exists.
+        # It refuses once a *different* administrator exists, so it is not a
+        # standing path.
+        "commercial/controlplane/management/commands/bootstrap_superadmin.py",
+        # Phase 7 final audit: the operator's designation (and removal) of a
+        # staff identity - the only other writer of User.is_staff. It reads
+        # and flips one global identity's flag, touches no tenant row, and is
+        # an operator terminal action, audited, never an HTTP path.
+        "commercial/controlplane/management/commands/w360_staff_identity.py",
+        # Phase 12 (D-037 residual): the operator's break-glass reset of a staff
+        # member's lost second factor - the same global-identity, no-tenant,
+        # terminal-only, audited shape as the designation command above.
+        "commercial/controlplane/management/commands/w360_staff_mfa_reset.py",
+        # Phase 11: registering the four external products' catalog rows and
+        # integrations. The command's actor is named by email on the command
+        # line, before any tenant context exists to look them up inside - the
+        # identical "no tenant yet" shape as the staff-identity command above.
+        # The lookup is read-only (an existing staff identity or a refusal);
+        # every write that follows goes through the ordinary staff-context
+        # services, which enter their own scope as always.
+        "commercial/controlplane/management/commands/register_products.py",
+        # --- Phase 8 extension ---
+        #
+        # An invitee redeems an invitation before any membership - and so any
+        # tenant context - exists: the same "no tenant yet" reason as
+        # activate_pending_owner in onboarding. The token names exactly one
+        # organization, whose database scope is entered before anything is
+        # read, so RLS confines the work to that tenant.
+        "platform/administration/invitations.py",
+        # Payments: a provider callback, the payments clock, a refund task and
+        # checkout creation all run with no request tenant context (a webhook
+        # arrives before anyone knows whose it is). Each enters exactly one
+        # organization's database scope - named by a *verified* signature or a
+        # durable timer - before reading or writing, so RLS confines it; and a
+        # suspended organization must still be invoiced and able to pay, which
+        # the R-10 block would otherwise refuse.
+        "commercial/payments/",
     )
 
     offenders = []
@@ -955,3 +1011,116 @@ def test_every_published_error_code_is_one_the_platform_can_emit():
         "published but never raised": sorted(published - emitted),
         "raised but not published": sorted(emitted - published),
     }
+
+
+# --- the launcher and the platform frontend (Phase 4) ---------------------
+#
+# Phase 4 added a browser-facing surface, and with it two rules that no
+# import graph can see: what the browser is allowed to be told, and what is
+# allowed to live in the frontend at all.
+
+
+def test_no_api_response_ever_carries_a_product_launch_url():
+    """Task 55 / ADR-021: the launch target is server-controlled.
+
+    ``AppAccessDecision`` carries ``launch_url`` because the launch endpoint
+    needs it in the same call that made the decision - but nothing in
+    ``interfaces/`` may put it in a response body. A browser that is handed
+    the URL is a browser that can be redirected somewhere else by anything
+    that can modify what it received; the whole point of the POST-and-302
+    shape is that the destination never travels through the page.
+
+    Structural rather than a response assertion: a new field on a new
+    endpoint would pass every existing response test while reintroducing
+    exactly this.
+    """
+    offenders = []
+    api_root = PACKAGE / "interfaces"
+    for path in api_root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        rel = path.relative_to(PACKAGE).as_posix()
+        for node in ast.walk(tree):
+            # `{"launch_url": ...}` anywhere in interfaces/, in any dict.
+            if isinstance(node, ast.Dict):
+                for key in node.keys:
+                    if isinstance(key, ast.Constant) and key.value == "launch_url":
+                        offenders.append(f"{rel}:{node.lineno}")
+    assert not offenders, (
+        "An HTTP adapter serialises launch_url into a response. The browser "
+        "must never receive a product's launch target; it POSTs to the "
+        "launch endpoint and follows the redirect the server builds "
+        "(interfaces/api/v1/launcher_views.py):\n" + "\n".join(offenders)
+    )
+
+
+def test_every_session_authenticated_write_is_csrf_protected():
+    """Task 43: CSRF exemption is allowed exactly where a credential, not a
+    cookie, authenticates the caller.
+
+    ``platform/ecosystem``'s token, userinfo and entitlement endpoints are
+    exempt and enumerate themselves in ``CREDENTIALED_VIEWS`` precisely so
+    this can be checked rather than trusted. Any *other* exempt view in the
+    API is a browser-reachable write with ambient authority and no
+    protection - which is the bug, not the pattern.
+    """
+    from workeasy360.interfaces.api.v1.ecosystem_views import CREDENTIALED_VIEWS
+    from workeasy360.interfaces.api.v1.payment_views import SIGNED_WEBHOOK_VIEWS
+
+    # Phase 8 extension: payment provider callbacks, authenticated by the
+    # provider's signature over the raw body - a credential, not a cookie.
+    allowed = {view.__name__ for view in (*CREDENTIALED_VIEWS, *SIGNED_WEBHOOK_VIEWS)}
+    offenders = []
+    api_root = PACKAGE / "interfaces"
+    for path in api_root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        rel = path.relative_to(PACKAGE).as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            decorators = {
+                d.id if isinstance(d, ast.Name) else getattr(d, "attr", "")
+                for d in node.decorator_list
+            }
+            if "csrf_exempt" in decorators and node.name not in allowed:
+                offenders.append(f"{rel}:{node.lineno} {node.name}")
+
+    assert not offenders, (
+        "CSRF-exempt views that are not credential-authenticated. If the "
+        "endpoint authenticates by client credential or bearer token, add it "
+        "to CREDENTIALED_VIEWS so "
+        "test_credentialed_endpoints_ignore_session_authentication proves "
+        "it ignores the session cookie:\n" + "\n".join(offenders)
+    )
+
+
+def test_the_frontend_contains_no_product_domain_code():
+    """ADR-017 has no frontend exception (Task 53).
+
+    A CRM tile is metadata; a CRM frontend is a product. The rule that keeps
+    ``products/`` empty on the backend has to hold for ``frontend/src`` too,
+    or the boundary is lost in the one place nobody thought to check.
+
+    Directory names and identifiers, not free text: the launcher legitimately
+    renders whatever product names the catalog returns, and a fixture or a
+    test may name a product code. What may not exist is a route, a feature
+    folder or a module *named after* a product.
+    """
+    frontend_src = REPO_ROOT / "frontend" / "src"
+    if not frontend_src.exists():  # pragma: no cover - frontend is optional
+        pytest.skip("No frontend in this checkout.")
+
+    offenders = []
+    for path in frontend_src.rglob("*"):
+        if not path.is_file():
+            continue
+        parts = [p.lower() for p in path.relative_to(frontend_src).parts]
+        stem = path.stem.lower()
+        for code in PRODUCT_CODES:
+            if code in parts or stem == code or stem.startswith(f"{code}-"):
+                offenders.append(path.relative_to(REPO_ROOT).as_posix())
+
+    assert not offenders, (
+        "Product-named files or folders in the platform frontend. Products "
+        "ship their own frontend from their own repository (ADR-017):\n"
+        + "\n".join(offenders)
+    )

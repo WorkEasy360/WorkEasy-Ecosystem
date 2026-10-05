@@ -28,7 +28,7 @@ Django backend sets land on this app's own origin.
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | Development server (Turbopack) |
+| `npm run dev` | Development server (Turbopack), restarted automatically if it stops serving pages that exist - see `scripts/dev.mjs` |
 | `npm run build` | Production build |
 | `npm run start` | Serve a production build |
 | `npm run lint` | ESLint |

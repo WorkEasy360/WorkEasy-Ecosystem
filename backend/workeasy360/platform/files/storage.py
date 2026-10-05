@@ -1,13 +1,16 @@
 """Storage backends behind the ``FileStore`` port.
 
-Phase 1 ships a local filesystem backend. S3 is the production target, and the
-port exists so that swapping is an adapter change rather than a change to
-every caller (10-performance-concurrency.md section 9 makes the same argument
-for search).
+Phase 1 shipped a local filesystem backend; Phase 12 adds the S3 adapter the
+production settings had always required (``storage_s3.py``) - before it, a
+production deployment could only start with ``W360_FILE_STORAGE_BACKEND=s3``
+and then failed every file operation, because this factory had no adapter to
+return.
 
-Signed URLs here are HMAC-signed application URLs rather than S3 presigned
-URLs. Same properties - short-lived, tenant-verified, single purpose - and the
-signing scheme is what an S3 adapter would replace.
+Signed URLs are HMAC-signed *application* URLs for every backend, not S3
+presigned URLs: content is always served through the platform, which applies
+the tenant-prefix and scanned-clean checks on every read and keeps a partner
+logo same-origin for the CSP. Both adapters share that scheme
+(:class:`SignedApplicationUrls`).
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from typing import BinaryIO, Final
 from workeasy360.contracts.errors import FileError
 from workeasy360.contracts.ports.files import (
     DEFAULT_URL_TTL,
+    FileStore,
     PresignedUpload,
     StoredObject,
 )
@@ -35,7 +39,49 @@ _SAFE_KEY_RE: Final = re.compile(
 )
 
 
-class LocalFileStore:
+def validate_key(key: str) -> None:
+    """Refuse any key that is not a server-generated, tenant-prefixed key."""
+    if not _SAFE_KEY_RE.match(key):
+        raise FileError(
+            f"Refusing unsafe storage key {key!r}. Keys are "
+            f"server-generated as org/<org>/<module>/<uuid>."
+        )
+
+
+class SignedApplicationUrls:
+    """Short-lived HMAC-signed application URLs, shared by every adapter."""
+
+    def presign_download(self, key: str, *, ttl: timedelta = DEFAULT_URL_TTL) -> str:
+        validate_key(key)
+        expires = int(time.time() + ttl.total_seconds())
+        return f"/api/v1/files/content?key={key}&expires={expires}&sig={sign_key(key, expires)}"
+
+    def presign_upload(
+        self,
+        key: str,
+        *,
+        content_type: str,
+        max_bytes: int,
+        ttl: timedelta = DEFAULT_URL_TTL,
+    ) -> PresignedUpload:
+        validate_key(key)
+        expires = int(time.time() + ttl.total_seconds())
+        return PresignedUpload(
+            url="/api/v1/files/upload",
+            method="PUT",
+            fields={
+                "key": key,
+                "expires": str(expires),
+                "sig": sign_key(key, expires),
+                "content_type": content_type,
+            },
+            key=key,
+            expires_at=datetime.fromtimestamp(expires, tz=timezone.utc),
+            max_bytes=max_bytes,
+        )
+
+
+class LocalFileStore(SignedApplicationUrls):
     """Filesystem-backed store for development and tests.
 
     Not durable across container restarts, which production settings refuse
@@ -48,11 +94,7 @@ class LocalFileStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
-        if not _SAFE_KEY_RE.match(key):
-            raise FileError(
-                f"Refusing unsafe storage key {key!r}. Keys are "
-                f"server-generated as org/<org>/<module>/<uuid>."
-            )
+        validate_key(key)
         # Resolve and confirm containment. Even with the regex above, this is
         # the check that actually stops traversal, because it operates on the
         # resolved path rather than on the string.
@@ -95,33 +137,6 @@ class LocalFileStore:
     def exists(self, key: str) -> bool:
         return self._path(key).exists()
 
-    def presign_download(self, key: str, *, ttl: timedelta = DEFAULT_URL_TTL) -> str:
-        expires = int(time.time() + ttl.total_seconds())
-        return f"/api/v1/files/content?key={key}&expires={expires}&sig={sign_key(key, expires)}"
-
-    def presign_upload(
-        self,
-        key: str,
-        *,
-        content_type: str,
-        max_bytes: int,
-        ttl: timedelta = DEFAULT_URL_TTL,
-    ) -> PresignedUpload:
-        expires = int(time.time() + ttl.total_seconds())
-        return PresignedUpload(
-            url="/api/v1/files/upload",
-            method="PUT",
-            fields={
-                "key": key,
-                "expires": str(expires),
-                "sig": sign_key(key, expires),
-                "content_type": content_type,
-            },
-            key=key,
-            expires_at=datetime.fromtimestamp(expires, tz=timezone.utc),
-            max_bytes=max_bytes,
-        )
-
 
 def _signing_key() -> bytes:
     from django.conf import settings
@@ -150,12 +165,16 @@ def verify_signature(key: str, expires: int, signature: str) -> bool:
     return hmac.compare_digest(sign_key(key, expires), signature)
 
 
-def get_store() -> LocalFileStore:
+def get_store() -> FileStore:
     from django.conf import settings
 
     backend = getattr(settings, "FILE_STORAGE_BACKEND", "local")
     if backend == "local":
         return LocalFileStore(settings.FILE_STORAGE_ROOT)
+    if backend == "s3":
+        from workeasy360.platform.files.storage_s3 import s3_store
+
+        return s3_store()
     raise FileError(
         f"Storage backend {backend!r} is configured but has no adapter. "
         f"Implement it against contracts.ports.files.FileStore."

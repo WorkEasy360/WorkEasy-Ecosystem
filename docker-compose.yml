@@ -11,7 +11,12 @@ name: workeasy360
 
 services:
   postgres:
-    image: postgres:16
+    # PostgreSQL 16 plus the pgvector extension (Phase 8, ADR-031). The
+    # pgvector image is the official postgres:16 Debian build with one extra
+    # package, so the server and its on-disk format are unchanged; the
+    # -trixie tag matches the Debian release (and glibc collations) the
+    # previous postgres:16 image used, so existing text indexes stay valid.
+    image: pgvector/pgvector:pg16-trixie
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

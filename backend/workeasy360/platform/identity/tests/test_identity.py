@@ -71,6 +71,24 @@ def test_is_plausible_email():
     assert not is_plausible_email("a@nodot")
 
 
+def test_is_plausible_email_agrees_with_what_the_model_will_accept():
+    """An address this says yes to must not then fail model validation - that
+    was a 500 in every flow that trusts it (invitations, sign-up, partner
+    provisioning)."""
+    for bad in (
+        "a b@example.com",
+        "<script>@example.com",
+        "a,b@example.com",
+        "a@b.com\r\nBcc: x@y.com",
+        "a@b .com",
+        "a@-b.com",
+        "a\x00@b.com",
+    ):
+        assert not is_plausible_email(bad), bad
+    for good in ("a@b.com", "first.last+tag@sub.example.co.uk", "o'brien@example.com"):
+        assert is_plausible_email(good), good
+
+
 # --- creation and uniqueness ---------------------------------------------
 
 
@@ -168,17 +186,28 @@ def test_inactive_user_cannot_authenticate(status):
 
 def test_locked_until_blocks_authentication_even_when_active():
     """Lockout is time-boxed rather than a status change, so it expires by
-    itself and an attacker cannot lock a victim out permanently."""
+    itself and an attacker cannot lock a victim out permanently.
+
+    Phase 12 (G-16): it blocks *authentication* - the sign-in service refuses
+    even the right password - but not the account's live sessions, which
+    ``is_active`` decides. Before, ten wrong passwords typed by anyone signed
+    the owner out of everything."""
     from datetime import timedelta
 
     from django.utils import timezone
 
-    user = User.objects.create_user(email="a@example.com")
+    from workeasy360.platform.identity import services
+
+    user = User.objects.create_user(
+        email="a@example.com", password="Correct-Horse-9-Battery"
+    )
     user.locked_until = timezone.now() + timedelta(minutes=15)
     user.save()
 
     assert user.is_locked_out
-    assert not user.is_active
+    assert user.is_active
+    outcome = services.authenticate("a@example.com", "Correct-Horse-9-Battery")
+    assert not outcome.success and outcome.reason == "account_locked"
 
     user.locked_until = timezone.now() - timedelta(minutes=1)
     user.save()

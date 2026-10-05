@@ -1,12 +1,24 @@
 # Phase 4 — Status
 
-**PHASE 4 STATUS: PASS**, with stated gaps carried forward explicitly (§12).
+**PHASE 4 STATUS: PASS**, after an adversarial audit that found and fixed
+one P0 and nine P1s — see [14-opus-audit.md](14-opus-audit.md). Remaining
+gaps are carried forward explicitly (§4).
 
-**Date:** 2026-09-22
+**Date:** 2026-09-22 (implementation), 2026-09-22 (audit)
 **Baseline:** Phase 3, 933 passing (re-confirmed before any Phase 4 change)
-**Result:** 973 backend tests passed · 0 failed · 0 skipped, from a database
-migrated fresh from zero. 11 frontend tests passed · 0 failed, from a clean
-install.
+**Result after audit:** 1,010 backend tests passed · 0 failed · 0 skipped,
+from a database migrated fresh from zero. 29 frontend tests passed ·
+0 failed, from a clean install.
+
+> **The audit's headline, recorded here rather than only in its own
+> document.** The production frontend could not execute any JavaScript on
+> `/`, `/login`, `/organizations/select` or `/_not-found`: a nonce-based
+> `script-src` with `'strict-dynamic'` over four statically prerendered
+> routes meant every script tag on those pages shipped without a nonce and
+> would have been blocked. Sign-in was impossible. Nothing in the suite
+> could see it — components run in jsdom where there is no CSP, no test
+> produced a production build, and CI had no frontend job at all. Fixed,
+> verified against a real build, and now held by a build-output gate in CI.
 
 ---
 
@@ -44,29 +56,30 @@ OIDC protocol path itself, not only in the launcher's UI.
 | Seat requirement represented correctly | ✅ | `NO_SEAT` state; licensing mode read explicitly, never guessed from seat count |
 | Seat assignment works | ✅ | `platform.launcher.services.assign_seat`/`release_seat`, audited |
 | Concurrent seat limit cannot overallocate | ✅ | Phase 2's `test_concurrent_seat_assignment_cannot_overallocate` et al., carried forward unchanged — [04](04-seat-enforcement.md) |
-| Launch requires seat where applicable | ✅ | `require_seat()` in the OIDC flow, re-checked at redemption |
+| Launch requires seat where applicable | ✅ **and now tested** | `require_seat()` in the OIDC flow, re-checked at redemption. The audit found this had **no test at either boundary** and added three |
 | Organization-wide licensing still works | ✅ | `test_organization_wide_product_needs_no_seat` |
 | OIDC launch re-checks access | ✅ | `authorize()` and `_revalidate_subject()` both call `require_entitlement`+`require_seat` |
 | No browser can forge launch target | ✅ | `launch_view` builds the redirect server-side from `platform/ecosystem`; the browser never supplies or sees `launch_url` |
-| Multi-org switching cannot leak app access | ✅ by construction | No client-side cache exists to leak from — [01](01-frontend-architecture.md); not independently fault-injection-tested |
+| Multi-org switching cannot leak app access | ✅ | No client-side cache exists to leak from, **and the organization is never in the session** — it comes from the URL and is re-resolved to a membership per request, which is also what makes multi-tab safe — [14](14-opus-audit.md) §3 |
 | Frontend cache cannot leak tenant state | ✅ by construction | `cache: "no-store"` on every call, no state-management library, org slug in every URL |
 | Product outage does not crash launcher | ✅ | `INTEGRATION_SUSPENDED`/`PRODUCT_UNAVAILABLE` are ordinary states; Phase 3's unconditional empty-registry readiness test still holds |
-| CSP/security headers exist | ✅ | Two layers (Django, Next.js), neither duplicating the other — [08](08-csp-and-browser-security.md) |
-| Rate-limit trusted-IP debt is reviewed | ✅ reviewed, not resolved | D-009 re-evaluated, correctly not changed without knowing deployment topology — [07](07-security.md) |
+| CSP/security headers exist | ✅ **after audit** | Shipped broken: the policy made the production app inert. Corrected and verified against a real production build — [08](08-csp-and-browser-security.md), [14](14-opus-audit.md) §1 |
+| Rate-limit trusted-IP debt is resolved | ✅ **after audit** | D-009 closed. Trusted-proxy client-IP resolution, and login/resume throttling that Phase 4 shipped without entirely — [07](07-security.md) |
 | Accessibility baseline passes | ⚠️ partial | Built to WCAG patterns by inspection; **no automated audit or screen-reader pass run** — [11](11-accessibility.md) |
-| Frontend performance measured | ⚠️ partial | Query budgets and bundle size measured; **no Lighthouse/Core Web Vitals** — [09](09-performance.md) |
+| Frontend performance measured | ✅ **after audit** | Lighthouse 100/100/100 on the production build; bundle measured in gzip; query slopes measured at 5/20/50 products — [09](09-performance.md) |
 | Lean-code cleanup completed | ✅ | [12-cleanup-review.md](12-cleanup-review.md) |
 | Products remain external | ✅ | `products/` unconditionally empty, unchanged |
-| No unresolved P0 | ✅ | None found |
+| No unresolved P0 | ✅ | One found by the audit (the CSP), fixed and verified |
 | No Phase-5-blocking P1 | ✅ | See §12 |
-| Full backend + frontend regression passes | ✅ | 973/0/0 backend, 11/0 frontend, both from clean state |
+| Full backend + frontend regression passes | ✅ | **1,010/0/0 backend, 29/0 frontend**, both from clean state (973/11 before the audit) |
 
 ---
 
 ## 3. Report
 
-**1. Backend tests** — 973 passed, 0 failed, 0 skipped, fresh database.
-**2. Frontend tests** — 11 passed, 0 failed, clean install.
+**1. Backend tests** — 1,010 passed, 0 failed, 0 skipped, fresh database
+(973 at the end of implementation; +37 from the audit).
+**2. Frontend tests** — 29 passed, 0 failed, clean install (11, +18).
 **3. Exact counts** — see [13-test-report.md](13-test-report.md) for the
 full breakdown and every quality-gate command run.
 
@@ -208,7 +221,7 @@ launcher/identity/seats), plus this documentation pass. Frontend: 32 source
 files, ~2,208 lines (TypeScript/TSX/CSS).
 
 **28. Fresh-environment result** — Backend: `pytest --create-db`, full
-suite, from zero → **973/0/0**. Frontend: `rm -rf node_modules .next && npm
+suite, from zero → **1,010/0/0**. Frontend: `rm -rf node_modules .next && npm
 ci`, then build/lint/typecheck/test → all clean. Both are Task 64's
 requirement, both genuinely re-run for this report, not carried over from
 an earlier pass.
@@ -245,14 +258,45 @@ an earlier pass.
    flow (only direct model construction in test fixtures). A prerequisite
    for the organization-settings work to matter to a real new customer -
    [05-organization-selection.md](05-organization-selection.md) §4.
-7. **D-009 (rate-limit trusted-IP) is still open**, now also covering the
-   new frontend-facing endpoints, pending known deployment topology.
+7. ~~**D-009 (rate-limit trusted-IP) is still open**~~ — **closed by the
+   audit.** The topology is not something the application can discover; it
+   is something a deployment must state, and `W360_TRUSTED_PROXY_COUNT` is
+   how it states it (`required=True` in production). The forwarded chain is
+   read from the right, so no entry a caller could have written is ever
+   used. `/auth/login`, which Phase 4 shipped entirely unthrottled, and the
+   resume endpoint are now both rate-limited.
 8. **No MFA/step-up UI exists.** Acceptable because nothing in Phase 4's UI
    is a `dangerous` permission; will need addressing before any
    `dangerous` action is ever exposed through this frontend.
-9. **Accessibility and performance are inspected, not tool-verified.** An
-   automated a11y audit and a Lighthouse/CWV pass are the two concrete,
-   named next steps before this ships to real users.
+9. ~~**Accessibility and performance are inspected, not tool-verified.**~~ —
+   **done by the audit.** axe-core: 0 violations. Lighthouse on the
+   production build: performance 100, accessibility 100, best practices 100.
+   A manual screen-reader pass and a measured contrast check remain the only
+   outstanding accessibility work.
+
+10. **Every frontend gate now runs in CI.** There was no frontend job before
+    the audit, which is the single reason the CSP defect reached a status
+    document claiming PASS. A build-output gate
+    (`scripts/assert-dynamic-rendering.mjs`) is part of it, because the
+    property that broke is only observable in the build's output, never in a
+    unit test.
+
+11. **The organization chooser's scan is measured, not described**
+    (D-013): 5 queries per organization *on the platform*, per request —
+    500 organizations costs 2,506 queries and 1.7 s, and past the 2,000 cap
+    a user silently disappears from their own chooser. Still a bounded scan
+    rather than a projection table, because the brief is explicit that a
+    projection is not to be built until the trigger is reached; the
+    measurement is what makes that trigger checkable.
+
+12. **A whole class of bug is invisible to this test suite**: every
+    tenant-to-tenant foreign key is `DEFERRABLE INITIALLY DEFERRED`, and
+    pytest rolls each test back rather than committing, so a
+    cross-organization write passes in tests and 500s at commit in
+    production. Found in seat assignment and fixed there with an
+    application-level check. Deciding the general answer — a commit-forcing
+    test mode, or a rule that any client-supplied id becoming a tenant
+    foreign key is checked in the service — is Phase 5 work.
 
 ---
 
@@ -266,5 +310,22 @@ global/cross-product search; iframe-based product embedding.
 `products/` contains ten `__init__.py` files and nothing else, asserted
 unconditionally by the pre-existing fitness test, unchanged.
 
-**Phase 4 is complete, with the gaps in §4 stated and carried forward
-explicitly rather than silently. Phase 5 has not been started.**
+**Phase 4 is complete, audited, and the gaps in §4 are stated and carried
+forward explicitly rather than silently. Phase 5 has not been started.**
+
+The audit's own summary, its findings and the evidence for each are in
+[14-opus-audit.md](14-opus-audit.md). Two of its conclusions belong here
+rather than only there:
+
+- **Phase 4's backend work held up.** The launch decision has no bypass, the
+  launcher cannot override OIDC, seat enforcement survives the races, seat
+  removal before redemption denies, `PendingAuthorization` is replay- and
+  tamper-safe, session revocation works, the launch target is
+  server-controlled, and no cross-organization state can leak through a
+  frontend that holds no cache and keeps the organization in the URL rather
+  than the session. Those were the hard parts and they were right.
+- **The frontend shipped a policy that made it unusable, and no gate could
+  see it.** That is the more useful lesson: the missing control was not a
+  test, it was a *gate that runs the thing being shipped*. A CI job that
+  builds the production bundle and inspects its output now exists, and it is
+  what would have caught this on the first push.

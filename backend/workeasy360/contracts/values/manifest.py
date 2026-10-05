@@ -34,21 +34,38 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Final
 from urllib.parse import urlsplit
 
+from workeasy360.contracts.events.namespaces import MAX_EVENT_VERSION, product_owns
 from workeasy360.contracts.values.identifiers import ProductCode
 
-#: The only manifest version this platform accepts. A product submitting a
-#: version it does not recognise is refused rather than best-effort parsed:
-#: guessing at a future shape is how a security-relevant field gets dropped.
-MANIFEST_VERSION: Final = "2026-09-01"
+#: The current manifest version. A product submitting a version it does not
+#: recognise is refused rather than best-effort parsed: guessing at a future
+#: shape is how a security-relevant field gets dropped.
+#:
+#: ``2026-10-01`` (Phase 6) adds one optional field, ``events``: the event
+#: types the product publishes into the ecosystem. It is the contract that
+#: makes a product's events routable at all - an event type not declared
+#: here is refused at ingestion.
+MANIFEST_VERSION: Final = "2026-10-01"
 
-#: Every manifest version this platform can parse. One today; the frozenset
-#: exists because accepting two during a migration window must not require
-#: changing the type of this constant.
-SUPPORTED_MANIFEST_VERSIONS: Final[frozenset[str]] = frozenset({MANIFEST_VERSION})
+#: The Phase 3 shape. Still accepted, unchanged: every product registered
+#: before Phase 6 keeps working without re-registering, and simply publishes
+#: no events until it moves to the current version.
+LEGACY_MANIFEST_VERSION: Final = "2026-09-01"
+
+#: Every manifest version this platform can parse. The frozenset exists so
+#: that accepting two during a migration window - which is now - did not
+#: require changing the type of this constant.
+SUPPORTED_MANIFEST_VERSIONS: Final[frozenset[str]] = frozenset(
+    {LEGACY_MANIFEST_VERSION, MANIFEST_VERSION}
+)
+
+#: Versions whose shape includes ``events``.
+_VERSIONS_WITH_EVENTS: Final[frozenset[str]] = frozenset({MANIFEST_VERSION})
 
 #: The scopes a product may request. Deliberately tiny.
 #:
@@ -93,6 +110,7 @@ _MANIFEST_FIELDS: Final[frozenset[str]] = frozenset(
         "token_endpoint_auth_method",
         "health_url",
         "contact_email",
+        "events",
     }
 )
 
@@ -110,6 +128,13 @@ MAX_REDIRECT_URIS: Final = 10
 MAX_URL_LENGTH: Final = 512
 MAX_DISPLAY_NAME_LENGTH: Final = 128
 MAX_CONTACT_EMAIL_LENGTH: Final = 254
+#: A product declares every event type it publishes; a hundred is far past
+#: any real product and keeps the manifest from being a bulk data channel.
+MAX_EVENT_DECLARATIONS: Final = 100
+MAX_EVENT_DESCRIPTION_LENGTH: Final = 200
+_EVENT_DECLARATION_FIELDS: Final[frozenset[str]] = frozenset(
+    {"type", "version", "description"}
+)
 
 _CONTACT_EMAIL_RE: Final = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
 
@@ -133,6 +158,33 @@ class ManifestError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class EventDeclaration:
+    """One event type a product publishes (manifest ``2026-10-01``).
+
+    Name and version only, plus a human description. Deliberately **no
+    schema**: the product owns what its events mean and contain, and a
+    schema declared here would make Workeasy360 the owner of a product's
+    domain model (A14). The platform bounds the payload's size and shape at
+    ingestion; it does not interpret it.
+    """
+
+    type: str
+    version: int
+    description: str = ""
+
+    @property
+    def ref(self) -> str:
+        return f"{self.type}.v{self.version}"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.type,
+            "version": self.version,
+            "description": self.description,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ProductManifest:
     """A validated product integration manifest.
 
@@ -152,10 +204,16 @@ class ProductManifest:
     token_endpoint_auth_method: str
     health_url: str
     contact_email: str
+    #: Event types this product publishes. Empty for a legacy manifest.
+    events: tuple[EventDeclaration, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
-        """The round-trip form. What the registration API echoes back."""
-        return {
+        """The round-trip form. What the registration API echoes back.
+
+        ``events`` is present only when declared, so a legacy (``2026-09-01``)
+        manifest round-trips to exactly the shape it was submitted in.
+        """
+        body: dict[str, Any] = {
             "manifest_version": self.manifest_version,
             "product_code": str(self.product_code),
             "display_name": self.display_name,
@@ -168,6 +226,13 @@ class ProductManifest:
             "health_url": self.health_url,
             "contact_email": self.contact_email,
         }
+        if self.events:
+            body["events"] = [e.as_dict() for e in self.events]
+        return body
+
+    def declares_event(self, event_type: str, version: int) -> bool:
+        """Whether this product registered ``event_type`` at ``version``."""
+        return any(e.type == event_type and e.version == version for e in self.events)
 
     def permits_redirect(self, candidate: str) -> bool:
         """Exact string match against the registered set. Nothing else.
@@ -214,6 +279,14 @@ def from_stored_manifest(payload: dict[str, Any]) -> ProductManifest:
         token_endpoint_auth_method=str(payload["token_endpoint_auth_method"]),
         health_url=str(payload.get("health_url", "")),
         contact_email=str(payload.get("contact_email", "")),
+        events=tuple(
+            EventDeclaration(
+                type=str(e["type"]),
+                version=int(e["version"]),
+                description=str(e.get("description", "")),
+            )
+            for e in payload.get("events", ())
+        ),
     )
 
 
@@ -316,6 +389,15 @@ def parse_manifest(payload: Any, *, allow_insecure_urls: bool = False) -> Produc
                 "contact_email is not an email address.", field="contact_email"
             )
 
+    raw_events = payload.get("events")
+    if raw_events is not None and version not in _VERSIONS_WITH_EVENTS:
+        raise ManifestError(
+            f"Manifest field 'events' requires manifest_version "
+            f"{MANIFEST_VERSION!r}; {version!r} predates it.",
+            field="events",
+        )
+    events = _validate_events(raw_events or (), product_code=str(product_code))
+
     return ProductManifest(
         manifest_version=version,
         product_code=product_code,
@@ -328,6 +410,7 @@ def parse_manifest(payload: Any, *, allow_insecure_urls: bool = False) -> Produc
         token_endpoint_auth_method=auth_method,
         health_url=health_url,
         contact_email=contact_email,
+        events=events,
     )
 
 
@@ -378,6 +461,66 @@ def _validate_enumerated(
     return tuple(value for value in allowed if value in seen)
 
 
+def _validate_events(raw: Any, *, product_code: str) -> tuple[EventDeclaration, ...]:
+    """Validate declared event types against the product's own namespace.
+
+    The namespace rule is applied here, at registration, as well as at
+    ingestion: a manifest declaring ``product.books.*`` for the ``crm``
+    product is refused at the door rather than accepted and then never
+    publishable.
+    """
+    if isinstance(raw, str) or not isinstance(raw, list | tuple):
+        raise ManifestError("Manifest field 'events' must be a list.", field="events")
+    if len(raw) > MAX_EVENT_DECLARATIONS:
+        raise ManifestError(
+            f"events may hold at most {MAX_EVENT_DECLARATIONS} entries.",
+            field="events",
+        )
+
+    declared: list[EventDeclaration] = []
+    seen: set[tuple[str, int]] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ManifestError("Each events entry must be an object.", field="events")
+        unknown = sorted(set(item) - _EVENT_DECLARATION_FIELDS)
+        if unknown:
+            raise ManifestError(
+                f"Unknown events entry field(s): {', '.join(unknown)}.", field="events"
+            )
+        event_type = _as_str(item.get("type", ""), "events")
+        if not product_owns(product_code, event_type):
+            raise ManifestError(
+                f"Event type {event_type!r} is outside this product's namespace. "
+                f"Every declared type must be 'product.{product_code}.<aggregate>."
+                f"<past_tense_verb>'.",
+                field="events",
+            )
+        version = item.get("version")
+        if isinstance(version, bool) or not isinstance(version, int):
+            raise ManifestError("events[].version must be an integer.", field="events")
+        if not 1 <= version <= MAX_EVENT_VERSION:
+            raise ManifestError(
+                f"events[].version must be between 1 and {MAX_EVENT_VERSION}.",
+                field="events",
+            )
+        description = _as_str(item.get("description") or "", "events")
+        if len(description) > MAX_EVENT_DESCRIPTION_LENGTH:
+            raise ManifestError(
+                f"events[].description exceeds {MAX_EVENT_DESCRIPTION_LENGTH} "
+                f"characters.",
+                field="events",
+            )
+        if (event_type, version) in seen:
+            raise ManifestError(
+                f"Duplicate event declaration {event_type}.v{version}.", field="events"
+            )
+        seen.add((event_type, version))
+        declared.append(
+            EventDeclaration(type=event_type, version=version, description=description)
+        )
+    return tuple(declared)
+
+
 def _validate_redirect_uris(
     raw: Any, *, field: str, allow_insecure: bool
 ) -> tuple[str, ...]:
@@ -425,10 +568,25 @@ def _validate_url(
             field=field,
         )
 
+    # A browser reads "\" as "/" in an http(s) URL, so the host a user agent
+    # opens is not the one this parser sees ("https://127.0.0.1\.evil.com/"
+    # opens 127.0.0.1). Refused anywhere (Phase 12, final audit).
+    if "\\" in value:
+        raise ManifestError(
+            f"{field}: a backslash is not accepted in a URL.", field=field
+        )
+
     try:
         parts = urlsplit(value)
     except ValueError as exc:
         raise ManifestError(f"{field}: unparseable URL ({exc}).", field=field) from None
+
+    # A browser percent-decodes the host before using it ("127.0.0.%31" opens
+    # 127.0.0.1); a registered host has no reason to be encoded.
+    if "%" in parts.netloc:
+        raise ManifestError(
+            f"{field}: a percent-encoded host is not accepted.", field=field
+        )
 
     # Allowlist. A denylist of javascript:/data:/file: is a list somebody can
     # eventually find an entry missing from.
@@ -469,6 +627,14 @@ def _validate_url(
                 field=field,
             )
 
+    # The loopback exemption exists for plaintext local development
+    # (``http://localhost:9100``, already validated above) - it must never
+    # extend to ``https``. A registered ``https://localhost/`` is exactly as
+    # wrong in development as in production, so it is refused unconditionally.
+    _refuse_internal_host(
+        hostname, field=field, allow_loopback=allow_insecure and parts.scheme == "http"
+    )
+
     if is_redirect:
         if parts.query:
             raise ManifestError(
@@ -485,6 +651,138 @@ def _validate_url(
             )
 
     return value
+
+
+#: Names that can only mean "this machine or this network". The list is a
+#: convenience for a clear message; the address test below is the control.
+_INTERNAL_NAMES: Final[frozenset[str]] = frozenset(
+    {"localhost", "metadata", "metadata.google.internal", "instance-data", "kubernetes"}
+)
+_INTERNAL_SUFFIXES: Final[tuple[str, ...]] = (
+    ".localhost",
+    ".local",
+    ".localdomain",
+    ".internal",
+    ".intranet",
+    ".lan",
+    ".home.arpa",
+    ".svc",
+    ".cluster.local",
+)
+
+
+def _refuse_internal_host(hostname: str, *, field: str, allow_loopback: bool) -> None:
+    """A registered address is where a *browser* is sent and where the health
+    probe looks. Neither may point at this machine, a private network or a
+    cloud metadata service (Phase 11): ``https://169.254.169.254/`` and
+    ``https://localhost/`` are syntactically fine and must not register.
+
+    A literal address must be globally routable; a name must not be an internal
+    one. Loopback is allowed only where plaintext loopback already is
+    (development and tests). A public *name* that merely resolves to a private
+    address cannot be caught here without a lookup - the probe's egress client
+    checks every resolved address at connection time, and a browser redirect to
+    it is the customer's own network's business.
+    """
+    # Judge the host a *browser* would use, not the string as typed (Phase
+    # 12, G-11): fullwidth letters fold to ASCII, and a host ending in a number
+    # is an IPv4 address in any of its legacy spellings - ``2130706433``,
+    # ``0177.0.0.1``, ``0x7f.0.0.1`` and ``127.1`` all open 127.0.0.1.
+    # The ideographic full stop (U+3002; NFKC also folds the halfwidth one to
+    # it) is a label separator to a browser's IDNA mapping (UTS #46), so
+    # "127。0。0。1" opens 127.0.0.1 (final audit).
+    host = (
+        unicodedata.normalize("NFKC", hostname)
+        .replace("。", ".")
+        .strip("[]")
+        .lower()
+        .rstrip(".")
+    )
+    if allow_loopback and _is_loopback(host):
+        return
+    try:
+        address: ipaddress.IPv4Address | ipaddress.IPv6Address | None = (
+            ipaddress.ip_address(host)
+        )
+    except ValueError:
+        try:
+            address = _whatwg_ipv4(host)
+        except ValueError:
+            raise ManifestError(
+                f"{field}: the host is not a valid address.", field=field
+            ) from None
+    if address is None:
+        if host in _INTERNAL_NAMES or host.endswith(_INTERNAL_SUFFIXES):
+            raise ManifestError(
+                f"{field}: internal and local host names are refused.", field=field
+            )
+        return
+    if not all(a.is_global for a in _with_embedded_ipv4(address)):
+        raise ManifestError(
+            f"{field}: the address must be publicly routable - loopback, private, "
+            f"link-local and metadata addresses are refused.",
+            field=field,
+        )
+
+
+def _whatwg_ipv4(host: str) -> ipaddress.IPv4Address | None:
+    """The WHATWG URL Standard's IPv4 parser, or ``None`` for a domain name.
+
+    A host whose last label is numeric is an IPv4 address to every browser;
+    one that fails to parse as such raises ``ValueError`` and is refused (a
+    browser would refuse the URL too), so an odd spelling can never slip
+    through as a name.
+    """
+    labels = host.split(".")
+    if labels and labels[-1] == "" and len(labels) > 1:
+        labels = labels[:-1]
+    last = labels[-1] if labels else ""
+    if not (last.isdigit() or re.fullmatch(r"0x[0-9a-f]*", last)):
+        return None
+    if len(labels) > 4:
+        raise ValueError("not a valid IPv4 host")
+    numbers: list[int] = []
+    for label in labels:
+        try:
+            if label.startswith("0x"):
+                numbers.append(int(label[2:] or "0", 16))
+            elif len(label) > 1 and label.startswith("0"):
+                numbers.append(int(label, 8))
+            else:
+                numbers.append(int(label, 10))
+        except ValueError:
+            raise ValueError("not a valid IPv4 host") from None
+    if any(n > 255 for n in numbers[:-1]) or numbers[-1] >= 256 ** (5 - len(numbers)):
+        raise ValueError("not a valid IPv4 host")
+    value = numbers[-1]
+    for index, n in enumerate(numbers[:-1]):
+        value += n * 256 ** (3 - index)
+    return ipaddress.IPv4Address(value)
+
+
+def _with_embedded_ipv4(
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """The address plus any IPv4 address carried inside an IPv6 one.
+
+    ``64:ff9b::7f00:1`` (NAT64) is "globally routable" by itself and reaches
+    127.0.0.1; IPv4-mapped, 6to4 and Teredo addresses carry theirs the same
+    way. The egress client unwraps the same set at connection time.
+    """
+    found: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = [address]
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.ipv4_mapped:
+            found.append(address.ipv4_mapped)
+        if address.sixtofour:
+            found.append(address.sixtofour)
+        if address.teredo:
+            found.extend(address.teredo)
+        if address in _NAT64:
+            found.append(ipaddress.IPv4Address(int(address) & 0xFFFFFFFF))
+    return found
+
+
+_NAT64: Final = ipaddress.ip_network("64:ff9b::/96")
 
 
 def _is_loopback(hostname: str) -> bool:

@@ -12,6 +12,7 @@ the DTO cannot be serialised into a response by accident.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -38,6 +39,13 @@ class IntegrationDTO:
     suspended_at: datetime | None
     suspension_reason: str
     created_at: datetime
+    #: Phase 11 - what the bounded probe last saw, and whether the product can
+    #: complete single sign-on at all (an unrevoked, unexpired credential
+    #: exists). Both are read-only facts about the registration.
+    health_status: str = "unknown"
+    health_checked_at: datetime | None = None
+    health_detail: str = ""
+    sso: str = "integration_required"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -49,6 +57,12 @@ class IntegrationDTO:
             "suspended_at": _iso(self.suspended_at),
             "suspension_reason": self.suspension_reason,
             "created_at": _iso(self.created_at),
+            "health": {
+                "status": self.health_status,
+                "checked_at": _iso(self.health_checked_at),
+                "detail": self.health_detail,
+            },
+            "sso": self.sso,
         }
 
 
@@ -89,9 +103,15 @@ def integrations(ctx: TenantContext, *, limit: int = 50) -> list[IntegrationDTO]
     from workeasy360.platform.ecosystem.models import ProductIntegration
 
     authz.require(ctx, "platform.integration.view")
-    authz.require_platform_staff(ctx, operation="ecosystem.integration.list")
+    authz.require_platform_staff(
+        ctx,
+        operation="ecosystem.integration.list",
+        permission="platform.integration.view",
+    )
 
-    rows = ProductIntegration.objects.all()[: max(1, min(limit, MAX_PAGE_SIZE))]
+    rows = _with_sso(ProductIntegration.objects.all())[
+        : max(1, min(limit, MAX_PAGE_SIZE))
+    ]
     return [_integration_dto(row) for row in rows]
 
 
@@ -99,9 +119,33 @@ def integration(ctx: TenantContext, *, client_id: str) -> IntegrationDTO | None:
     from workeasy360.platform.ecosystem.models import ProductIntegration
 
     authz.require(ctx, "platform.integration.view")
-    authz.require_platform_staff(ctx, operation="ecosystem.integration.get")
+    authz.require_platform_staff(
+        ctx,
+        operation="ecosystem.integration.get",
+        permission="platform.integration.view",
+    )
 
-    row = ProductIntegration.objects.filter(client_id=client_id).first()
+    row = _with_sso(ProductIntegration.objects.filter(client_id=client_id)).first()
+    return _integration_dto(row) if row is not None else None
+
+
+def integration_for_product(
+    ctx: TenantContext, *, product_code: str
+) -> IntegrationDTO | None:
+    """One registration by the product it belongs to (Phase 11: the Super
+    Admin console works in product codes, not client ids). Authorized like
+    every read here."""
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    authz.require(ctx, "platform.integration.view")
+    authz.require_platform_staff(
+        ctx,
+        operation="ecosystem.integration.get",
+        permission="platform.integration.view",
+    )
+    row = _with_sso(
+        ProductIntegration.objects.filter(product_code=str(product_code))
+    ).first()
     return _integration_dto(row) if row is not None else None
 
 
@@ -115,7 +159,11 @@ def credentials(ctx: TenantContext, *, client_id: str) -> list[CredentialDTO]:
     from workeasy360.platform.ecosystem.models import IntegrationCredential
 
     authz.require(ctx, "platform.integration.view")
-    authz.require_platform_staff(ctx, operation="ecosystem.credential.list")
+    authz.require_platform_staff(
+        ctx,
+        operation="ecosystem.credential.list",
+        permission="platform.integration.view",
+    )
 
     rows = IntegrationCredential.objects.filter(
         integration__client_id=client_id
@@ -206,6 +254,122 @@ def launch_target(product_code: str) -> LaunchTargetDTO | None:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class IntegrationPresenceDTO:
+    """What a member may be shown about a product's connection - nothing that
+    identifies the registration: no client id, no URL, no credential detail."""
+
+    product_code: str
+    sso: str
+    health_status: str
+    health_checked_at: datetime | None
+
+
+def presence_for(product_codes: Iterable[str]) -> dict[str, IntegrationPresenceDTO]:
+    """SSO and health for many products in **one** query (the app directory
+    renders a card per product and must not cost a query each). Not
+    staff-gated, for the reason ``launch_target`` is not: it is catalogue
+    metadata about a product, not about any organization."""
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    codes = sorted({str(c) for c in product_codes})
+    if not codes:
+        return {}
+    rows = _with_sso(ProductIntegration.objects.filter(product_code__in=codes)).values(
+        "product_code", "has_usable_credential", "health_status", "health_checked_at"
+    )
+    return {
+        row["product_code"]: IntegrationPresenceDTO(
+            product_code=row["product_code"],
+            sso=sso_label(bool(row["has_usable_credential"])),
+            health_status=row["health_status"],
+            health_checked_at=row["health_checked_at"],
+        )
+        for row in rows
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedEventDTO:
+    """One event type a product declared in its manifest (Phase 6).
+
+    Name, version and description only - the declaration is all the
+    platform holds about a product's event, by design (A14).
+    """
+
+    product_code: str
+    event_type: str
+    version: int
+    description: str
+
+    @property
+    def ref(self) -> str:
+        return f"{self.event_type}.v{self.version}"
+
+
+def published_events(product_codes: Iterable[str]) -> list[PublishedEventDTO]:
+    """Event types declared by the **active** integrations of these products.
+
+    Not authorization-gated, for the same reason as :func:`launch_target`:
+    the answer is catalogue metadata about products, not about any
+    organization. Callers pass the product codes an organization is
+    *entitled* to, which is where the tenant-specific decision is made
+    (``integration/events/catalog.py``). A suspended or retired
+    integration publishes nothing and so offers nothing to subscribe to.
+    """
+    from workeasy360.platform.ecosystem.models import (
+        IntegrationStatus,
+        ProductIntegration,
+    )
+
+    codes = sorted({str(c) for c in product_codes})
+    if not codes:
+        return []
+    rows = ProductIntegration.objects.filter(
+        product_code__in=codes, status=IntegrationStatus.ACTIVE.value
+    ).values_list("product_code", "manifest")
+    found: list[PublishedEventDTO] = []
+    for product_code, manifest in rows:
+        for declaration in from_stored_manifest(manifest).events:
+            found.append(
+                PublishedEventDTO(
+                    product_code=product_code,
+                    event_type=declaration.type,
+                    version=declaration.version,
+                    description=declaration.description,
+                )
+            )
+    return sorted(found, key=lambda e: (e.event_type, e.version))
+
+
+def _with_sso(queryset: Any) -> Any:
+    """Annotate each integration with whether it holds a *usable* credential:
+    active, not revoked, not expired - the same test as
+    ``IntegrationCredential.is_usable``, expressed once as a subquery so a
+    list of integrations costs one query, not one per row."""
+    from django.db.models import Exists, OuterRef, Q
+    from django.utils import timezone
+
+    from workeasy360.platform.ecosystem.models import (
+        CredentialStatus,
+        IntegrationCredential,
+    )
+
+    usable = IntegrationCredential.objects.filter(
+        integration=OuterRef("pk"),
+        status=CredentialStatus.ACTIVE.value,
+        revoked_at__isnull=True,
+    ).filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
+    return queryset.annotate(has_usable_credential=Exists(usable))
+
+
+def sso_label(has_usable_credential: bool) -> str:
+    """The two honest answers. ``connected`` means a credential exists that
+    the token endpoint would accept - not that the product's own client code
+    works (that is proven by a sign-in, not by a row)."""
+    return "connected" if has_usable_credential else "integration_required"
+
+
 def _integration_dto(row: Any) -> IntegrationDTO:
     return IntegrationDTO(
         client_id=row.client_id,
@@ -216,6 +380,10 @@ def _integration_dto(row: Any) -> IntegrationDTO:
         suspended_at=row.suspended_at,
         suspension_reason=row.suspension_reason,
         created_at=row.created_at,
+        health_status=row.health_status,
+        health_checked_at=row.health_checked_at,
+        health_detail=row.health_detail,
+        sso=sso_label(bool(getattr(row, "has_usable_credential", False))),
     )
 
 

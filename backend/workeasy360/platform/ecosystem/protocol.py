@@ -72,6 +72,13 @@ ORGANIZATION_REQUIRED: Final = "organization_required"
 #: (docs/phase-3/17-audit-findings.md, "Seat trigger"), so adding it is not a
 #: breaking change to an already-documented reason set.
 PRODUCT_NO_SEAT: Final = "product_no_seat"
+#: Phase 8 extension. The member belongs to the organization and it holds the
+#: product, but the organization's own access policy refuses this sign-in -
+#: an address outside its allowed networks, a session that has not verified
+#: the second factor the organization requires, one older than its session
+#: limit, or a password below its policy. ``error_description`` names which;
+#: the remedy is in Workeasy360, not in the product.
+ACCESS_POLICY_DENIED: Final = "access_policy_denied"
 
 #: Every code this platform can emit - and nothing else. Published in the
 #: discovery document, and asserted against the actual raise sites by
@@ -97,6 +104,7 @@ ERROR_CODES: Final[frozenset[str]] = frozenset(
         INTEGRATION_SUSPENDED,
         ORGANIZATION_REQUIRED,
         PRODUCT_NO_SEAT,
+        ACCESS_POLICY_DENIED,
     }
 )
 

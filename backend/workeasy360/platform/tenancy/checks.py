@@ -12,6 +12,7 @@ offending model or task and the rule it breaks, because a check that says
 
 from __future__ import annotations
 
+import weakref
 from typing import Any
 
 from django.apps import apps
@@ -60,7 +61,17 @@ MEMBERSHIP_FK_ALLOWED_PACKAGES = ("platform", "commercial")
 #: siblings stay forbidden (F-5 already bans even importing sideways there),
 #: products stay forbidden from everything, and no FK may leave ``commercial``
 #: except to the frozen allowlist above.
-INTRA_PACKAGE_FK_PACKAGES = frozenset({"commercial"})
+#:
+#: ``integration`` joins it in Phase 6, by ADR-024 and for ADR-016's own
+#: reason: its modules are one extraction unit (the integration service), and
+#: the keys between them - a delivery to its connection and its event, an
+#: execution to its event - are what make a cross-tenant reference
+#: unrepresentable (composite ``(id, organization_id)`` keys, B4). Soft
+#: references there would trade that guarantee for a boundary that does not
+#: exist at deployment time. Still integration -> integration only; the
+#: import layering inside it is enforced by import-linter
+#: (``integration-internal-layers``).
+INTRA_PACKAGE_FK_PACKAGES = frozenset({"commercial", "integration"})
 
 #: Models that legitimately carry a tenant column without being tenant-scoped,
 #: each for a documented reason. Exemptions are explicit rather than inferred:
@@ -98,6 +109,68 @@ TENANT_SCOPE_EXEMPT = frozenset(
         # it names (when it names one) is re-verified against a live
         # membership at resume, not trusted from this row.
         "ecosystem.PendingAuthorization",
+        # Phase 5 (ADR-022). Read-model projection for the organization
+        # chooser: "every organization for user X" is a cross-tenant read by
+        # definition, so RLS keyed on organization_id would force it right
+        # back into the one-organization-at-a-time scan it exists to remove
+        # (D-013). Protected instead by every legitimate read being filtered
+        # on the session's own verified user_id - never RLS, never a
+        # client-supplied user_id - and by never being the authorization
+        # authority: selection always re-resolves the real Membership row.
+        # See platform/organizations/models.py's UserOrganizationAccess
+        # docstring and ADR-022.
+        "organizations.UserOrganizationAccess",
+        # Phase 5. Organization-creation idempotency ledger. Scoped to the
+        # creator's user_id rather than organization_id for the same reason
+        # the command it guards cannot use integration.idempotency's
+        # tenant-scoped ledger: there is no organization until the command
+        # this claims succeeds. See OrganizationCreationRequest's docstring.
+        "organizations.OrganizationCreationRequest",
+        # Phase 6 (ADR-024, debt register D-017). The integration platform's
+        # due-work timer: one row per pending unit of work, holding only
+        # (kind, organization_id, target_id, due_at). It must be claimable
+        # across tenants - RLS would make a sweeper's claim match nothing, or
+        # force it to visit every organization on every tick - and it holds
+        # no tenant data: the work itself stays in RLS-protected tables, and
+        # the task that does it enters that one organization's scope. The
+        # same class as events.OutboxEvent above.
+        "scheduling.DueWork",
+        # Phase 7 (ADR-028/029, debt register D-019). The partner channel is
+        # PARTNER-SCOPED CONTROL PLANE, not tenant data. These five rows
+        # *refer to* a customer organization without being the customer's data:
+        # who administers a customer (the link), an offer to own it (the
+        # invitation), what it holds (the directory summary), how it came in
+        # (the referral) and what a partner earned on it (the ledger).
+        #
+        # Customer-tenant RLS would be wrong twice over. A partner's portfolio
+        # spans many organizations, so its reads could never run under one
+        # tenant variable; and the customer must not be able to read or edit
+        # who administers it or what is owed. They are protected instead by
+        # (a) being reached only through their module's selectors, every one of
+        # which takes a server-verified partner or user id, (b) no
+        # customer-facing endpoint reading them, and (c) the control-plane
+        # registry test that pins this exact list and demands an isolation test
+        # per table. The ledger's ``organization_id`` is additionally a plain
+        # UUID with no foreign key, so it outlives a purged customer.
+        "partners.PartnerOrganizationLink",
+        "partners.PartnerOwnerInvite",
+        "provisioning.CustomerSummary",
+        "commissions.Referral",
+        "commissions.CommissionAccrual",
+        # Phase 8 extension. The log of payment provider callbacks: a callback
+        # arrives before anyone knows whose it is, is de-duplicated across all
+        # tenants by (provider, event id), and records only identifiers and an
+        # amount - never a payload. organization_id is a routing label written
+        # after verification, read only by staff with a payment grant.
+        "payments.PaymentWebhookEvent",
+        # Phase 9 (debt register D-031). The staff order list's projection, the
+        # same class as provisioning.CustomerSummary: every order is a tenant
+        # row (RLS-protected, read by the customer), and the Super Admin's
+        # list across customers cannot enter one organization's scope per row.
+        # Derived, written by payments.orders in the order's own transaction,
+        # identifiers/codes/amounts only, read only behind
+        # platform.staff_payment.view.
+        "payments.OrderSummary",
     }
 )
 
@@ -426,9 +499,17 @@ def check_no_cross_module_signals(app_configs: Any, **kwargs: Any) -> list[Check
     )
 
     for signal_name, signal in watched:
-        for lookup_key, receiver_ref in signal.receivers:
+        # (lookup_key, receiver) - plus an ``is_async`` flag since Django 5.0.
+        for entry in signal.receivers:
+            lookup_key, receiver_ref = entry[0], entry[1]
             _, sender_id = lookup_key
-            receiver = receiver_ref() if callable(receiver_ref) else receiver_ref
+            # A weak reference is dereferenced; a receiver connected with
+            # ``weak=False`` is stored as itself and must not be *called*.
+            receiver = (
+                receiver_ref()
+                if isinstance(receiver_ref, weakref.ReferenceType)
+                else receiver_ref
+            )
             if receiver is None:
                 continue
 
@@ -509,6 +590,32 @@ def check_database_role_cannot_bypass_rls(
                 "(infra/postgres/init.sql)."
             ),
             id="W360.E002",
+        )
+        for problem in problems
+    ]
+
+
+@register("w360", deploy=True)
+def check_database_connection_timeouts(
+    app_configs: Any, **kwargs: Any
+) -> list[CheckMessage]:
+    """W360.E010 - the runtime connection carries its timeouts (Phase 12, G-02)."""
+    from workeasy360.platform.tenancy.db import connection_timeout_problems
+
+    try:
+        problems = connection_timeout_problems()
+    except Exception as exc:  # pragma: no cover - DB unreachable
+        return [
+            CheckWarning(
+                f"Could not verify the database connection timeouts: {exc}",
+                id="W360.W002",
+            )
+        ]
+    return [
+        Error(
+            problem,
+            hint="deploy/postgres/roles.sh sets them on the runtime role.",
+            id="W360.E010",
         )
         for problem in problems
     ]

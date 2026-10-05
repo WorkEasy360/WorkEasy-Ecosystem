@@ -38,6 +38,16 @@ def _terminate_test_db_sessions() -> None:
     The suite connects through PgBouncer, whose pooled server connections
     keep the test database "in use" even when idle, so Django cannot drop and
     recreate it.
+
+    Two steps, because neither alone reaches every session. The pooled
+    connections belong to ``w360_app``, and ``pg_terminate_backend`` from the
+    migrator is refused for another role's backend ("permission denied to
+    terminate process" - the migrator deliberately does not hold
+    ``pg_signal_backend``). So they are dropped by the process that owns
+    them: PgBouncer's admin console, where the migrator is an ``admin_user``
+    (infra/pgbouncer/pgbouncer.ini). ``KILL`` drops the pool's client and
+    server connections; ``RESUME`` lets the next run connect again.
+    Backends opened directly as the migrator are then terminated as before.
     """
     import os
 
@@ -47,6 +57,28 @@ def _terminate_test_db_sessions() -> None:
     port = os.environ.get("W360_DB_DIRECT_PORT", "5442")
     user = os.environ.get("W360_DB_MIGRATOR_USER", "w360_migrator")
     password = os.environ.get("W360_DB_MIGRATOR_PASSWORD", "w360_migrator_pw")
+    pooler_host = os.environ.get("W360_DB_HOST", "127.0.0.1")
+    pooler_port = os.environ.get("W360_DB_PORT", "6442")
+
+    try:
+        with psycopg.connect(
+            f"host={pooler_host} port={pooler_port} dbname=pgbouncer user={user} "
+            f"password={password} connect_timeout=5",
+            autocommit=True,
+        ) as admin:
+            cur = admin.cursor()
+            cur.execute("SHOW DATABASES")
+            pools = [row[0] for row in cur.fetchall()]
+            for pool in pools:
+                if pool.startswith("test_workeasy360"):
+                    # Names come from PgBouncer itself, not from input; the
+                    # admin console accepts no bound parameters.
+                    cur.execute(f"KILL {pool}")
+                    cur.execute(f"RESUME {pool}")
+    except Exception:  # noqa: S110
+        # Not running behind PgBouncer (W360_TEST_THROUGH_PGBOUNCER=0), or
+        # the stack is not up yet - the direct termination below still runs.
+        pass
 
     try:
         with (
@@ -77,6 +109,31 @@ def pytest_configure(config) -> None:
     any interrupted run.
     """
     _terminate_test_db_sessions()
+
+
+def pytest_sessionstart(session) -> None:
+    """Single-writer ownership, enforced for every write the suite executes
+    (``tests/write_ownership.py``)."""
+    from tests import write_ownership
+
+    session.config._w360_uninstall_write_guard = write_ownership.install()
+
+
+def pytest_sessionfinish(session, exitstatus) -> None:
+    """A write from the wrong module fails the run even if the code under test
+    swallowed the exception it raised."""
+    from tests import write_ownership
+
+    uninstall = getattr(session.config, "_w360_uninstall_write_guard", None)
+    if uninstall is not None:
+        uninstall()
+    if write_ownership.violations:
+        reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+        if reporter is not None:
+            reporter.section("single-writer violations", sep="=", red=True)
+            for line in sorted(set(write_ownership.violations)):
+                reporter.line(line)
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 @pytest.fixture(scope="session")
@@ -120,6 +177,17 @@ def django_db_setup(django_db_setup, django_db_blocker):
             # otherwise hand back the UPDATE/DELETE the audit migration
             # deliberately revoked. TRUNCATE stays granted for teardown only.
             cur.execute(f"REVOKE UPDATE, DELETE ON audit_event FROM {app_user}")
+            # Phase 7: the commission ledger is append-only in production too.
+            cur.execute(f"REVOKE UPDATE, DELETE ON commissions_accrual FROM {app_user}")
+            # ...and refuses TRUNCATE for every role (tenancy 0007), which the
+            # flush-based teardown above depends on. Disabled here, in the TEST
+            # DATABASE ONLY, for the same reason the TRUNCATE grant exists; the
+            # trigger itself is exercised by scripts/rehearse_phase7_upgrade.py
+            # against a real migrated database.
+            cur.execute(
+                "ALTER TABLE commissions_accrual "
+                "DISABLE TRIGGER commissions_accrual_reject_truncate"
+            )
 
     connection.close()
 
@@ -174,6 +242,77 @@ def _assert_app_role(db):
         "The test database role can bypass RLS, so isolation tests would "
         "pass without proving anything: " + "; ".join(problems)
     )
+
+
+@pytest.fixture(autouse=True)
+def _ensure_system_roles(db):
+    """Phase 5: restore the system role catalog if a prior test's teardown
+    flushed it away.
+
+    ``authz.migrations.0002_seed_system_roles`` (and the ``post_migrate``
+    receiver that mirrors it - ``authz.apps.AuthzConfig``) seed
+    ``authz_role``/``authz_role_permission`` once, as the migrator, before
+    any test runs. But ``pytest.mark.django_db(transaction=True)``'s
+    ``TransactionTestCase``-style teardown flushes **every** table via
+    TRUNCATE (granted to the app role for tests only - see the comment on
+    that grant above), which is not RLS-scoped and does not distinguish
+    migration-seeded reference data from a test's own rows. Nothing can
+    restore it from the connection the suite normally runs on afterwards -
+    that connection is deliberately ``w360_app``, which can never write a
+    NULL-organization role row (D-001's entire point, re-asserted by
+    ``ensure_system_role_catalog``'s own defensive check).
+
+    Cheap on every test (one indexed existence query). On the rare test that
+    runs immediately after such a flush, briefly swaps the connection to the
+    migrator - the same technique ``django_db_setup`` above uses - reseeds,
+    and swaps back before the test body runs, so the swap is invisible to
+    the test and to ``_assert_app_role`` below it.
+    """
+    from django.db import connection
+
+    from workeasy360.platform.authz.models import Role
+
+    if Role.objects.filter(
+        key="owner", organization__isnull=True, is_system=True
+    ).exists():
+        return
+
+    if connection.in_atomic_block:
+        # A rollback-based (`transaction=False`) test's wrapping transaction
+        # is already open. Swapping credentials means closing the
+        # connection, which would corrupt that transaction rather than
+        # restore anything - never safe here. Only reachable at all if a
+        # prior `transaction=True` test's flush wiped the roles and *this*
+        # test happens to be next and also rollback-based; it will then fail
+        # with a legible DoesNotExist/RuntimeError pointing at this comment,
+        # rather than at a mysteriously corrupted connection.
+        return
+
+    app_user = settings.DATABASES["default"]["USER"]
+    app_password = settings.DATABASES["default"]["PASSWORD"]
+    app_host = settings.DATABASES["default"]["HOST"]
+    app_port = settings.DATABASES["default"]["PORT"]
+
+    migrator_user = os.environ.get("W360_DB_MIGRATOR_USER", "w360_migrator")
+    migrator_password = os.environ.get("W360_DB_MIGRATOR_PASSWORD", "w360_migrator_pw")
+    migrator_host = os.environ.get("W360_DB_DIRECT_HOST", "127.0.0.1")
+    migrator_port = int(os.environ.get("W360_DB_DIRECT_PORT", "5442"))
+
+    def _rebind(user: str, password: str, host: str, port: int) -> None:
+        connection.close()
+        for target in (settings.DATABASES["default"], connection.settings_dict):
+            target["USER"] = user
+            target["PASSWORD"] = password
+            target["HOST"] = host
+            target["PORT"] = port
+
+    _rebind(migrator_user, migrator_password, migrator_host, migrator_port)
+    try:
+        from workeasy360.platform.authz.services import ensure_system_role_catalog
+
+        ensure_system_role_catalog()
+    finally:
+        _rebind(app_user, app_password, app_host, app_port)
 
 
 @pytest.fixture(autouse=True)
@@ -261,6 +400,20 @@ def organization_factory(db, user_factory):
                     member_type="internal",
                 )
                 membership.save()
+
+            # Phase 5: mirrors what platform.onboarding.services does for a
+            # real creation, so this fixture's memberships behave like
+            # production ones for the chooser (which now reads the
+            # projection, not a live scan - ADR-022). Without this, every
+            # test using this fixture would need to know to rebuild the
+            # projection itself, and any test asserting "this organization
+            # appears in the chooser" would be testing the fixture's gap,
+            # not the product.
+            from workeasy360.platform.organizations import projection
+
+            projection.sync_access_for_membership(
+                user_id=owner.id, membership=membership, organization=org
+            )
         return org, membership, owner
 
     return make
@@ -446,17 +599,33 @@ COMMERCIAL_PERMISSIONS = (
 )
 
 
+#: The control-plane grants behind ``platform_admin``'s commercial power. The
+#: organization role alone confers none of it (Phase 7 final audit): the
+#: internal-identity check reads live ``StaffGrant`` rows, never ``is_staff``.
+PLATFORM_ADMIN_GRANTS = (
+    "platform.staff_catalog.manage",
+    "platform.staff_pricing.manage",
+    "platform.staff_subscription.manage",
+    "platform.staff_integration.manage",
+)
+
+
 @pytest.fixture
-def platform_admin(db, organization_factory, grant_permissions, tenant_ctx_factory):
+def platform_admin(
+    db, organization_factory, grant_permissions, tenant_ctx_factory, user_factory
+):
     """An internal staff identity that may write the global catalog.
 
-    Two things make it privileged and both are required: the permissions, and
-    ``User.is_staff``. A customer administrator can be given the first by a
-    misconfigured role; only Workeasy360 can set the second.
+    Three things make it privileged and all are required: the permissions in
+    its organization role, ``User.is_staff``, and live control-plane grants
+    (``PLATFORM_ADMIN_GRANTS``) issued through the real ``authz.staff``
+    mechanism. A customer administrator can be given the first by a
+    misconfigured role; only Workeasy360 can provide the other two.
 
     ``aal=2`` because every ``manage`` permission is declared dangerous, and
     the decision function refuses those below AAL 2.
     """
+    from workeasy360.platform.authz import staff
     from workeasy360.platform.tenancy.unscoped import unscoped_access
 
     slug = "w360-internal-" + uuid.uuid4().hex[:6]
@@ -467,6 +636,14 @@ def platform_admin(db, organization_factory, grant_permissions, tenant_ctx_facto
     ):
         user.is_staff = True
         user.save(update_fields=["is_staff"])
+    root = user_factory(is_staff=True)
+    for permission in PLATFORM_ADMIN_GRANTS:
+        staff.create_grant(
+            user_id=user.id,
+            permission=permission,
+            granted_by_id=root.id,
+            reason="Test fixture: internal platform administrator",
+        )
 
     grant_permissions(org, membership, COMMERCIAL_PERMISSIONS)
     ctx = tenant_ctx_factory(org, membership, user, aal=2)
@@ -718,6 +895,38 @@ def _reset_rate_limits():
 
 
 @pytest.fixture
+def frozen_throttle_window():
+    """Pin the rate limiter's fixed window, so a test that sends N requests
+    cannot have them land either side of a window boundary.
+
+    Without this, any throttling assertion is a wall-clock race: the window
+    is ``int(time.time()) // window_seconds``, so a test whose requests
+    straddle a minute boundary sees the counter reset half way through and
+    the limit not fire. It is rare, and it is exactly the kind of rare that
+    fails once a fortnight in CI and gets rerun rather than fixed.
+
+    Patches the module's reference to ``time`` rather than
+    ``time.time`` itself: a global patch would reach Django, psycopg and
+    every other library running inside the test.
+    """
+    from workeasy360.platform.observability import throttle
+
+    class _FrozenClock:
+        @staticmethod
+        def time() -> float:
+            # An arbitrary instant that is comfortably inside a window
+            # rather than on its edge, so `retry_after` is also stable.
+            return 1_700_000_020.0
+
+    original = throttle.time
+    throttle.time = _FrozenClock  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        throttle.time = original
+
+
+@pytest.fixture
 def signing_key(db, settings):
     """An active RS256 signing key, with its private half in the environment.
 
@@ -876,10 +1085,25 @@ def signed_in(client, db):
     ``w360_aal`` is the claim that flow writes.
     """
 
-    def make(user, *, aal: int = 1):
+    def make(user, *, aal: int = 1, mfa_verified: bool | None = None):
+        """``mfa_verified`` (default: staff only) marks an AAL 1 session as
+        having verified a factor earlier - what a staff session must have
+        since D-037 (Phase 12)."""
+        from tests.factories.sessions import lapsed_step_up
+        from workeasy360.platform.tenancy.resolution import (
+            record_step_up,
+            reset_session_aal,
+        )
+
         client.force_login(user)
         session = client.session
-        session["w360_aal"] = aal
+        verified = user.is_staff if mfa_verified is None else mfa_verified
+        if aal >= 2:
+            record_step_up(session)
+        elif verified:
+            lapsed_step_up(session)
+        else:
+            reset_session_aal(session)
         session.save()
         return client
 
@@ -952,5 +1176,431 @@ def entitled_org(db, organization_factory, tenant_ctx_factory, entitled):
             "ctx": ctx,
             "organization_id": str(org.id),
         }
+
+    return make
+
+
+# --- integration platform (Phase 6) ----------------------------------------
+#
+# One product ("example") that declares events, one organization entitled to
+# it with an administrator holding the integration permissions at AAL 2, a
+# real loopback webhook receiver, and the one relaxation of the egress policy
+# a loopback receiver needs. Shared here for the same reason as the fixtures
+# above: "what a publishing product looks like" has one definition.
+
+EXAMPLE_EVENTS = (
+    {
+        "type": "product.example.record.created",
+        "version": 1,
+        "description": "A record was created.",
+    },
+    {
+        "type": "product.example.record.updated",
+        "version": 1,
+        "description": "A record changed.",
+    },
+)
+
+#: Every Phase 6 permission. The tests that assert *which* permission gates
+#: *which* operation grant them individually.
+INTEGRATION_PERMISSIONS = (
+    "platform.connection.view",
+    "platform.connection.manage",
+    "platform.webhook.replay",
+    "platform.automation.view",
+    "platform.automation.manage",
+)
+
+
+@pytest.fixture
+def example_product(db, catalog, platform_admin, in_tenant, register_product):
+    """The ``example`` product: sellable (a catalog SKU), registered, active,
+    and declaring two events in a ``2026-10-01`` manifest."""
+    from workeasy360.commercial.catalog import services as catalog_services
+    from workeasy360.contracts.enums import LicensingMode, ProductStatus
+
+    ctx = platform_admin["ctx"]
+    with in_tenant(ctx):
+        product = catalog_services.create_product(
+            ctx,
+            code="example",
+            name="Example",
+            licensing_mode=LicensingMode.PER_ORGANIZATION,
+        )
+        catalog_services.set_product_status(
+            ctx, product_id=product.id, status=ProductStatus.AVAILABLE
+        )
+    return register_product(
+        "example",
+        manifest=manifest_for(
+            "example", manifest_version="2026-10-01", events=list(EXAMPLE_EVENTS)
+        ),
+    )
+
+
+@pytest.fixture
+def integration_org(example_product, entitled_org, grant_permissions, tenant_ctx_factory):
+    """An organization entitled to ``example`` whose owner holds the Phase 6
+    permissions, with a context at AAL 2 (``manage`` is dangerous)."""
+
+    def make(*, permissions=INTEGRATION_PERMISSIONS, aal: int = 2):
+        org = entitled_org("example")
+        if permissions:
+            grant_permissions(org["org"], org["membership"], permissions)
+        org["ctx"] = tenant_ctx_factory(
+            org["org"], org["membership"], org["user"], aal=aal
+        )
+        return org
+
+    return make
+
+
+@pytest.fixture
+def local_egress(settings):
+    """Let the egress policy reach the loopback test receiver over plain
+    http. Only these two flags move: private, link-local and metadata ranges
+    stay refused, and production pins both flags off."""
+    settings.INTEGRATION_EGRESS_ALLOW_HTTP = True
+    settings.INTEGRATION_EGRESS_ALLOW_LOOPBACK = True
+    return settings
+
+
+@pytest.fixture
+def webhook_receiver():
+    from tests.factories.webhook_receiver import WebhookReceiver
+
+    receiver = WebhookReceiver()
+    receiver.url = receiver.start()
+    yield receiver
+    receiver.stop()
+
+
+@pytest.fixture
+def product_event():
+    """A well-formed ``product.example.record.created.v1`` event body."""
+
+    def make(**overrides):
+        body = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "product.example.record.created",
+            "event_version": 1,
+            "occurred_at": timezone.now().isoformat(),
+            "data": {"record_id": "rec_123", "amount": 250, "status": "open"},
+        }
+        body.update(overrides)
+        return body
+
+    return make
+
+
+# --- Phase 7: control plane and partner channel ---------------------------
+
+
+@pytest.fixture
+def staff_factory(db, user_factory):
+    """A staff identity holding exactly the control-plane permissions named.
+
+    Returns ``(user, ctx)``; ``ctx`` is a ``STAFF`` control-plane context at
+    AAL 2 unless told otherwise. Grants are created through the real
+    ``authz.staff`` mechanism by a separate root identity, because a grant to
+    oneself is refused by design.
+    """
+    from workeasy360.platform.authz import staff
+    from workeasy360.platform.authz.control_plane import platform_context
+
+    root = user_factory(is_staff=True)
+
+    def make(*permissions: str, aal: int = 2, active: bool = True):
+        user = user_factory(is_staff=True)
+        for permission in permissions:
+            staff.create_grant(
+                user_id=user.id,
+                permission=permission,
+                granted_by_id=root.id,
+                reason="Test fixture grants a control-plane permission",
+            )
+        ctx = platform_context(user_id=user.id, aal=aal)
+        return user, ctx
+
+    return make
+
+
+@pytest.fixture
+def partner_factory(db, user_factory, staff_factory):
+    """An ACTIVE partner with one admin member and the capabilities named.
+
+    Returns a dict with ``partner`` (row), ``user``, ``admin`` (partner-actor
+    ctx factory taking ``aal``), ``staff_ctx``.
+    """
+    import uuid
+
+    from workeasy360.commercial.partners import services
+    from workeasy360.commercial.partners.access import partner_actor
+    from workeasy360.contracts.enums import PartnerStatus
+
+    def make(
+        *capabilities: str,
+        role: str = "admin",
+        currency: str = "GBP",
+        code: str | None = None,
+    ):
+        _staff_user, sctx = staff_factory("platform.staff_partner.manage")
+        partner = services.create_partner(
+            sctx,
+            code=code or f"p-{uuid.uuid4().hex[:8]}",
+            display_name="Test Partner",
+            payout_currency=currency,
+            contact_email="ops@partner.example.com",
+        )
+        member_user = user_factory()
+        services.add_member(sctx, partner.id, email=member_user.email, role=role)
+        if role == "viewer":
+            services.add_member(
+                sctx, partner.id, email=user_factory().email, role="admin"
+            )
+        for capability in capabilities:
+            services.grant_capability(
+                sctx, partner.id, capability=capability, reason="Test fixture capability"
+            )
+        partner = services.set_partner_status(
+            sctx,
+            partner.id,
+            target=PartnerStatus.ACTIVE,
+            reason="Activated by test fixture",
+        )
+
+        def actor(aal: int = 2):
+            return partner_actor(user_id=member_user.id, partner_id=partner.id, aal=aal)
+
+        return {
+            "partner": partner,
+            "user": member_user,
+            "actor": actor,
+            "staff_ctx": sctx,
+        }
+
+    return make
+
+
+# --- Phase 8: the shared AI, retrieval and analytics platform --------------
+#
+# A loopback stand-in for the AI vendors (tests/factories/fake_ai_provider.py)
+# reached through the real adapters and the real egress client; a registry of
+# test models that is the *only* active one, so selection is deterministic;
+# and organizations entitled to a product *and* to AI through the ordinary
+# entitlement path (the ``<product>.ai.monthly_budget_micros`` feature).
+
+#: 5.00 in the accounting currency, in micro-units.
+AI_TEST_BUDGET = 5_000_000
+_AI_CREDENTIALS = {
+    "W360_AI_CREDENTIAL_TEST_ANTHROPIC": "sk-ant-test-" + "a" * 24,
+    "W360_AI_CREDENTIAL_TEST_OPENAI": "sk-test-" + "b" * 24,
+}
+
+
+@pytest.fixture
+def fake_ai(settings, local_egress):
+    """The fake vendor, its endpoints wired in, its API keys in the
+    environment (where the credential resolver reads them), and retry delays
+    shrunk so failure tests do not sleep for real."""
+    from tests.factories.fake_ai_provider import FakeAIProvider
+
+    provider = FakeAIProvider()
+    url = provider.start()
+    settings.AI_PROVIDER_ENDPOINTS = {"anthropic_messages": url, "openai": url}
+    settings.AI_RETRY_BASE_S = 0.01
+    settings.AI_RETRY_CAP_S = 0.05
+    os.environ.update(_AI_CREDENTIALS)
+    yield provider
+    provider.stop()
+    for name in _AI_CREDENTIALS:
+        os.environ.pop(name, None)
+
+
+@pytest.fixture
+def ai_registry(db):
+    """Test providers and models; every other model disabled, so which model
+    a request selects is exactly what the test arranged.
+
+    Returns a factory for extra models (``add(key, provider=..., ...)``) with
+    the two defaults already created: ``test.primary`` (generation) and
+    ``test.embed`` (embeddings, 16 dimensions - the fake vendor's size).
+    """
+    from django.utils import timezone
+
+    from workeasy360.intelligence.ai.models import AIModel, AIModelPrice, AIProvider
+
+    AIModel.objects.update(status="disabled")
+    providers = {
+        "anthropic": AIProvider.objects.update_or_create(
+            key="anthropic",
+            defaults={
+                "adapter": "anthropic_messages",
+                "display_name": "Anthropic",
+                "status": "active",
+                "credential_ref": "test-anthropic",
+            },
+        )[0],
+        "openai": AIProvider.objects.update_or_create(
+            key="openai",
+            defaults={
+                "adapter": "openai",
+                "display_name": "OpenAI",
+                "status": "active",
+                "credential_ref": "test-openai",
+            },
+        )[0],
+    }
+
+    def add(
+        key: str,
+        *,
+        provider: str = "anthropic",
+        capabilities=("text", "structured_output"),
+        priority: int = 50,
+        tier: str = "standard",
+        context_window: int = 200_000,
+        max_output: int = 4_096,
+        dimensions: int | None = None,
+        input_price: int = 3_000_000,
+        output_price: int = 15_000_000,
+        status: str = "active",
+    ):
+        model = AIModel.objects.create(
+            key=key,
+            provider=providers[provider],
+            model_id=key.split(".", 1)[-1],
+            display_name=key,
+            status=status,
+            tier=tier,
+            capabilities=sorted(capabilities),
+            context_window_tokens=context_window,
+            max_output_tokens=max_output,
+            embedding_dimensions=dimensions,
+            priority=priority,
+        )
+        AIModelPrice.objects.create(
+            model=model,
+            version=1,
+            currency="USD",
+            input_micros_per_mtok=input_price,
+            output_micros_per_mtok=output_price,
+            effective_from=timezone.now() - timezone.timedelta(days=1),
+        )
+        return model
+
+    add("test.primary", priority=1)
+    add(
+        "test.embed",
+        provider="openai",
+        capabilities=("embeddings",),
+        priority=1,
+        dimensions=16,
+        input_price=20_000,
+        output_price=0,
+    )
+    add.providers = providers  # type: ignore[attr-defined]
+    return add
+
+
+@pytest.fixture
+def ai_org(example_product, entitled_org):
+    """An organization entitled to ``example`` with an AI budget for it."""
+
+    def make(*, budget: int = AI_TEST_BUDGET, product: str = "example"):
+        return entitled_org(
+            product, features={f"{product}.ai.monthly_budget_micros": budget}
+        )
+
+    return make
+
+
+@pytest.fixture
+def ai_client(example_product, product_client):
+    """The reference client for ``example``, speaking only discovered endpoints."""
+    return product_client(example_product)
+
+
+@pytest.fixture
+def second_product(db, catalog, platform_admin, in_tenant, register_product):
+    """A second registered product (``second``), for cross-product isolation."""
+    from tests.factories.manifests import manifest_for
+    from workeasy360.commercial.catalog import services as catalog_services
+    from workeasy360.contracts.enums import LicensingMode, ProductStatus
+
+    ctx = platform_admin["ctx"]
+    with in_tenant(ctx):
+        product = catalog_services.create_product(
+            ctx,
+            code="second",
+            name="Second",
+            licensing_mode=LicensingMode.PER_ORGANIZATION,
+        )
+        catalog_services.set_product_status(
+            ctx, product_id=product.id, status=ProductStatus.AVAILABLE
+        )
+    return register_product(
+        "second",
+        manifest=manifest_for(
+            "second",
+            manifest_version="2026-10-01",
+            events=[
+                {
+                    "type": "product.second.item.created",
+                    "version": 1,
+                    "description": "An item was created.",
+                }
+            ],
+        ),
+    )
+
+
+@pytest.fixture
+def entitle_products(db):
+    """Grant an organization several products at once - one complete desired
+    state, which is how the sole entitlement writer works (``grant_product``
+    sets exactly one product and so replaces the rest).
+
+    ``products`` maps a product code to its features, e.g.
+    ``{"example": {"example.ai.monthly_budget_micros": 5_000_000}, "second": {}}``.
+    """
+    from django.utils import timezone
+
+    from workeasy360.contracts.enums import EntitlementSourceKind, EntitlementStatus
+    from workeasy360.platform.entitlements.services.write import (
+        ComputedEntitlements,
+        ComputedFeature,
+        ComputedProduct,
+        apply_entitlements,
+    )
+
+    def make(organization_id, products):
+        now = timezone.now()
+        return apply_entitlements(
+            ComputedEntitlements(
+                organization_id=organization_id,
+                products=tuple(
+                    ComputedProduct(
+                        product_code=code,
+                        status=EntitlementStatus.ACTIVE,
+                        source_kind=EntitlementSourceKind.SUBSCRIPTION,
+                        source_ref=f"test:{code}",
+                        effective_from=now,
+                    )
+                    for code in products
+                ),
+                features=tuple(
+                    ComputedFeature(
+                        feature_key=key,
+                        value=value,
+                        kind="quota" if isinstance(value, int) else "boolean",
+                        source_ref=f"test:{code}",
+                        effective_from=now,
+                    )
+                    for code, features in products.items()
+                    for key, value in features.items()
+                ),
+            )
+        )
 
     return make

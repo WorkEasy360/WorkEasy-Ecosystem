@@ -1,0 +1,197 @@
+/* Super Admin and partner-portal screens (Phase 7). CSS modules only - no
+   inline style attributes, and no value from the server is ever written into a
+   stylesheet or a style attribute except the validated brand colour tokens,
+   which are applied through the CSSOM (see useBranding). */
+
+.main {
+  padding-block: var(--w360-space-6);
+}
+
+/* A grid item's minimum width is its content's, so without minmax(0, 1fr) a wide
+   table or a long identifier stretches the whole page past a 320px viewport
+   instead of scrolling inside its own container (WCAG 1.4.10 reflow). */
+.stack {
+  display: grid;
+  gap: var(--w360-space-5);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.stack > * {
+  min-width: 0;
+}
+
+/* The area/partner name in the shared header must wrap rather than widen it.
+   Doubled selector: it has to outrank the launcher shell's own rule. */
+.frameBrand.frameBrand {
+  flex-shrink: 1;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.area {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.lead {
+  color: var(--w360-text-muted);
+  margin: 0 0 var(--w360-space-4);
+}
+
+.card {
+  padding: var(--w360-space-5);
+}
+
+.cardTitle {
+  font-size: 16px;
+  margin: 0 0 var(--w360-space-3);
+}
+
+.muted {
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.form {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 560px;
+}
+
+.form input,
+.form select,
+.field input,
+.field select {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.field {
+  display: grid;
+  gap: var(--w360-space-1);
+  min-width: 0;
+}
+
+.grid {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+/* Phase 11: a row of small facts (the products console's channel and
+   integration summaries) - the .grid layout, as a definition list. */
+.factsGrid {
+  display: grid;
+  gap: var(--w360-space-3) var(--w360-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  margin: 0;
+  font-size: 14px;
+}
+
+.factsGrid dt {
+  color: var(--w360-text-muted);
+  font-weight: 600;
+}
+
+.factsGrid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.stat {
+  padding: var(--w360-space-4);
+}
+
+.statValue {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.tableWrap {
+  /* The containing block for absolutely positioned descendants (visually
+     hidden labels in cells), so they scroll and clip with the table instead
+     of widening the page at 320px. */
+  position: relative;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.table caption {
+  text-align: left;
+  font-weight: 700;
+  padding: var(--w360-space-2) 0;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: var(--w360-space-2) var(--w360-space-3);
+  border-bottom: 1px solid var(--w360-border);
+  vertical-align: top;
+}
+
+.table th {
+  color: var(--w360-text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.chain {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--w360-space-2);
+}
+
+.chainItem {
+  display: flex;
+  gap: var(--w360-space-3);
+  align-items: baseline;
+}
+
+.preview {
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  padding: var(--w360-space-4);
+  background: var(--w360-surface);
+}
+
+.previewMark {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  margin-right: var(--w360-space-2);
+  background: var(--w360-brand);
+}
+
+.logo {
+  max-height: 48px;
+  max-width: 200px;
+}

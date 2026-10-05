@@ -49,24 +49,80 @@ URL. A denial redirects back to the launcher, not to any product-controlled
 location (see [06](06-sso-ui-integration.md) for the identical property on
 the OIDC side).
 
-## Rate limiting / trusted-IP review (Task 37, D-009)
+## Rate limiting and trusted client IP (D-009 — closed by the Phase 4 audit)
 
-**Re-evaluated, not changed.** D-009 (Phase 3: ecosystem rate-limit buckets
-keyed on `REMOTE_ADDR`, blind to a reverse proxy) is unaffected by anything
-Phase 4 adds: the OIDC endpoints are unchanged, and the new
-frontend-facing endpoints (`login`, `resume`, the launcher) are not
-rate-limited at all yet - a gap, not a regression, since they did not exist
-before. Implementing trusted-IP extraction (Task 37's own instruction:
-"before relying on rate limits") requires knowing the actual deployment
-topology (which proxy, how many hops, whether `X-Forwarded-For` is
-rewritten) - information this phase does not have, since no production
-topology has been specified. Blindly trusting `X-Forwarded-For` without that
-knowledge would be strictly worse than the current gap, per the same
-reasoning D-009 already recorded. **Carried forward as a Phase 5
-prerequisite, alongside D-009 itself**, rather than guessed at now.
+Phase 4 shipped this as "re-evaluated, not changed", on the reasoning that
+implementing trusted-IP extraction needs a known deployment topology. The
+audit reversed that, for a reason the original assessment did not weigh:
+Phase 4 is precisely the phase that made `/auth/login` a public,
+unauthenticated endpoint, and it shipped with **no rate limit at all**. The
+deployment topology is not something the application can discover - it is
+something a deployment must *state*, and a setting is how you state it.
 
-Login is protected only by the per-account lockout above, which is
-IP-independent and therefore unaffected by this gap either way.
+### What is implemented
+
+`platform/observability/client_ip.py`. A forwarded chain is trustworthy only
+from the right: the right-most entry was written by the hop that spoke to
+us, the one before it by the hop before that. With
+`W360_TRUSTED_PROXY_COUNT` hops of our own infrastructure, the address that
+infrastructure observed is `chain[-count]`, and everything to its left is
+attacker-supplied and never read. Reading the *left-most* entry - the common
+shortcut - lets a caller name their own rate-limit bucket, which deletes the
+limit rather than weakening it.
+
+| Deployment | `W360_TRUSTED_PROXY_COUNT` |
+|---|---|
+| Directly exposed (local, CI, a bare server) | 0 - the header is not read at all |
+| One reverse proxy / ALB / ingress | 1 |
+| CloudFront in front of an ALB | 2 |
+
+`required=True` in production: both wrong answers fail silently, and 0 is a
+legitimate answer that should be stated rather than defaulted into. A chain
+shorter than the configured depth means the request did not traverse the
+expected infrastructure, and falls back to `REMOTE_ADDR` - over-strict, and
+never forgeable. Unparseable entries are discarded rather than used, because
+these values become cache keys.
+
+`SECURE_PROXY_SSL_HEADER` is now derived from the same setting. It was
+unconditional, which meant that with nothing in front of the process any
+caller could send `X-Forwarded-Proto: https` and have Django believe the
+request arrived over TLS - defeating `SECURE_SSL_REDIRECT` and making
+`request.is_secure()` answer to the client rather than to the transport.
+
+### What is now throttled
+
+| Bucket | Key | Default |
+|---|---|---|
+| `login_ip` | caller address | 30 / min |
+| `login_account` | SHA-256 of the normalised email | 20 / min |
+| `resume` | caller address | 60 / min |
+
+`login_ip` is the one that matters most: it catches one address spraying a
+single password across thousands of accounts, which no per-account counter
+can see, and it is the CPU guard - Argon2id is tuned to ~250 ms of
+memory-hard work and Django hashes a dummy password even for an unknown
+email (its own timing-attack defence), so an unthrottled login endpoint is a
+workload anyone on the internet can schedule. `login_account` is what is
+left when the attacker has a botnet.
+
+The account key is a hash, never the address itself: cache keys reach Redis,
+and Redis reaches backups and dashboards.
+
+**What this does not fix, stated rather than implied.** `identity.services`
+locks an account for fifteen minutes after ten failures. Ten requests per
+fifteen minutes is under any throttle worth having, so an attacker who wants
+a chosen account locked can still manage it; the lockout is time-boxed
+precisely because it is a denial-of-service lever, and removing that lever
+means changing the lockout policy rather than tuning a limiter.
+`login_account` is therefore deliberately set **above** `MAX_FAILED_ATTEMPTS`
+- below it, the throttle would mask the lockout and a genuinely locked-out
+person would be told "too many requests" instead of being told to wait,
+which is worse for them and no harder for an attacker. Pinned by
+`test_the_account_throttle_does_not_mask_the_lockout`.
+
+The counter itself moved to `platform/observability/throttle.py` so the OIDC
+limiter and this one cannot drift on the Redis-outage behaviour
+([debt D-012](../architecture/debt-register.md)).
 
 ## Audit (Task 44)
 

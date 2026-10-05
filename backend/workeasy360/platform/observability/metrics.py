@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -38,12 +38,47 @@ FORBIDDEN_LABELS: Final[frozenset[str]] = frozenset(
         "path",  # the resolved path; use the templated `route` instead
         "id",
         "resource_id",
+        # Phase 7: partner-channel identifiers are as unbounded as tenants.
+        "partner_id",
+        "partner",
+        "hostname",
+        "domain",
+        "referral_code",
+        "payout_id",
+        # Phase 8: AI, retrieval and analytics identifiers are unbounded too.
+        # Per-request, per-document and per-prompt analysis belongs in logs
+        # and in the execution record, never in a label (Task 95).
+        "execution_id",
+        "document_id",
+        "source_key",
+        "skill",
+        "skill_key",
+        "prompt",
+        "metric",
+        "metric_key",
     }
 )
 
 #: Ceiling on distinct label combinations per metric. A metric that exceeds it
 #: is a design error; failing loudly in development beats degrading silently.
+#: In production the new series is dropped instead (``_strict``).
 MAX_SERIES_PER_METRIC: Final = 500
+
+
+def _strict() -> bool:
+    """Raise on a cardinality overflow (tests, development), or drop the new
+    series and log once (production, ``METRICS_STRICT_CARDINALITY = False``).
+
+    Phase 12: telemetry must never fail the request or task it describes. The
+    HTTP metrics' route x method x status legitimately passes the ceiling on a
+    long-lived process, and raising there turned requests into 500s.
+    """
+    try:
+        from django.conf import settings
+
+        return bool(getattr(settings, "METRICS_STRICT_CARDINALITY", True))
+    except Exception:  # settings not configured (a bare import in a script)
+        return True
 
 
 class CardinalityError(ValueError):
@@ -61,11 +96,31 @@ def _validate_labels(name: str, labels: Mapping[str, str]) -> tuple[tuple[str, s
     return tuple(sorted((k, str(v)) for k, v in labels.items()))
 
 
+#: How many recent observations each series keeps for percentiles. Totals
+#: (count, sum) are exact for the life of the process; the sample window is
+#: bounded. Before Phase 12 every observation was appended to a list forever -
+#: once per HTTP request and once per entitlement check - so every web and
+#: worker process grew without bound (G-34).
+OBSERVATION_WINDOW: Final = 1024
+
+
+@dataclass
+class _Observed:
+    count: int = 0
+    total: float = 0.0
+    recent: deque[float] = field(default_factory=lambda: deque(maxlen=OBSERVATION_WINDOW))
+
+    def add(self, value: float) -> None:
+        self.count += 1
+        self.total += value
+        self.recent.append(value)
+
+
 @dataclass
 class _Series:
     counts: dict[tuple[tuple[str, str], ...], float] = field(default_factory=dict)
-    observations: dict[tuple[tuple[str, str], ...], list[float]] = field(
-        default_factory=lambda: defaultdict(list)
+    observations: dict[tuple[tuple[str, str], ...], _Observed] = field(
+        default_factory=lambda: defaultdict(_Observed)
     )
 
 
@@ -79,41 +134,65 @@ class MetricRegistry:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._metrics: dict[str, _Series] = defaultdict(_Series)
+        self._dropped: set[str] = set()
 
     def increment(self, name: str, value: float = 1.0, **labels: str) -> None:
         key = _validate_labels(name, labels)
         with self._lock:
             series = self._metrics[name]
-            self._guard_series_count(name, series, key)
-            series.counts[key] = series.counts.get(key, 0.0) + value
+            admitted = self._admit(name, series, key)
+            if admitted:
+                series.counts[key] = series.counts.get(key, 0.0) + value
+        if not admitted:
+            self._note_drop(name)
 
     def observe(self, name: str, value: float, **labels: str) -> None:
         """Record a duration or size for later percentile computation."""
         key = _validate_labels(name, labels)
         with self._lock:
             series = self._metrics[name]
-            self._guard_series_count(name, series, key)
-            series.observations[key].append(value)
+            admitted = self._admit(name, series, key)
+            if admitted:
+                series.observations[key].add(value)
+        if not admitted:
+            self._note_drop(name)
 
     def gauge(self, name: str, value: float, **labels: str) -> None:
         key = _validate_labels(name, labels)
         with self._lock:
             series = self._metrics[name]
-            self._guard_series_count(name, series, key)
-            series.counts[key] = value
+            admitted = self._admit(name, series, key)
+            if admitted:
+                series.counts[key] = value
+        if not admitted:
+            self._note_drop(name)
 
     @staticmethod
-    def _guard_series_count(
-        name: str, series: _Series, key: tuple[tuple[str, str], ...]
-    ) -> None:
+    def _admit(name: str, series: _Series, key: tuple[tuple[str, str], ...]) -> bool:
+        """Whether ``key`` may be recorded: it exists, or there is room."""
         if key in series.counts or key in series.observations:
-            return
+            return True
         distinct = len(set(series.counts) | set(series.observations))
-        if distinct >= MAX_SERIES_PER_METRIC:
+        if distinct < MAX_SERIES_PER_METRIC:
+            return True
+        if _strict():
             raise CardinalityError(
                 f"Metric {name!r} exceeded {MAX_SERIES_PER_METRIC} label "
                 f"combinations. One of its labels is unbounded."
             )
+        return False
+
+    def _note_drop(self, name: str) -> None:
+        """Log the first dropped series of ``name`` in this process, once."""
+        with self._lock:
+            if name in self._dropped:
+                return
+            self._dropped.add(name)
+        from workeasy360.platform.observability.logging import get_logger
+
+        get_logger(__name__).warning(
+            "metrics.series_dropped", metric=name, ceiling=MAX_SERIES_PER_METRIC
+        )
 
     # --- reading ----------------------------------------------------------
 
@@ -123,9 +202,11 @@ class MetricRegistry:
             return self._metrics[name].counts.get(key, 0.0)
 
     def observations(self, name: str, **labels: str) -> list[float]:
+        """The most recent observations (at most ``OBSERVATION_WINDOW``)."""
         key = _validate_labels(name, labels)
         with self._lock:
-            return list(self._metrics[name].observations.get(key, []))
+            observed = self._metrics[name].observations.get(key)
+            return list(observed.recent) if observed else []
 
     def snapshot(self) -> dict[str, dict[str, float]]:
         """Flattened view, for the deep health endpoint and tests."""
@@ -135,10 +216,10 @@ class MetricRegistry:
                 bucket: dict[str, float] = {}
                 for key, count in series.counts.items():
                     bucket[_render(key)] = count
-                for key, values in series.observations.items():
-                    if values:
-                        bucket[f"{_render(key)}|count"] = float(len(values))
-                        bucket[f"{_render(key)}|sum"] = float(sum(values))
+                for key, observed in series.observations.items():
+                    if observed.count:
+                        bucket[f"{_render(key)}|count"] = float(observed.count)
+                        bucket[f"{_render(key)}|sum"] = float(observed.total)
                 out[name] = bucket
         return out
 
@@ -146,6 +227,7 @@ class MetricRegistry:
         """Test hook. Never called in production."""
         with self._lock:
             self._metrics.clear()
+            self._dropped.clear()
 
 
 def _render(key: tuple[tuple[str, str], ...]) -> str:

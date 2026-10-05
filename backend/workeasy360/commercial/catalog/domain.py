@@ -9,7 +9,13 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-from workeasy360.contracts.enums import CatalogStatus, FeatureKind, ProductStatus
+from workeasy360.contracts.enums import (
+    CatalogStatus,
+    FeatureKind,
+    ProductListing,
+    ProductStatus,
+    PublicAvailability,
+)
 from workeasy360.contracts.errors import (
     CatalogValidationError,
     InvalidStateTransition,
@@ -208,3 +214,225 @@ def _is_less_generous(candidate: Any, reference: Any) -> bool:
             return False
         return candidate < reference
     return False
+
+
+# --- Phase 9: public presentation --------------------------------------------
+
+#: A URL slug: lower-case words joined by single hyphens.
+_SLUG_ALPHABET: Final = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-")
+MAX_SLUG: Final = 64
+MAX_TAGLINE: Final = 160
+MAX_MARKETING_URL: Final = 500
+
+
+def public_availability(
+    status: ProductStatus, listing: ProductListing
+) -> PublicAvailability:
+    """The one mapping from lifecycle and listing to what a visitor sees.
+
+    ====================  ==========================================
+    listing ``hidden``    private (whatever the status)
+    deprecated/retired    disabled - existing holders keep it
+    ``coming_soon``       coming soon (draft or available)
+    available + listed    available
+    draft + listed        draft - not announced yet
+    ====================  ==========================================
+    """
+    if listing is ProductListing.HIDDEN:
+        return PublicAvailability.PRIVATE
+    if status in (ProductStatus.DEPRECATED, ProductStatus.RETIRED):
+        return PublicAvailability.DISABLED
+    if listing is ProductListing.COMING_SOON:
+        return PublicAvailability.COMING_SOON
+    if status is ProductStatus.AVAILABLE:
+        return PublicAvailability.AVAILABLE
+    return PublicAvailability.DRAFT
+
+
+def validate_slug(raw: Any) -> str:
+    slug = str(raw or "").strip()
+    if (
+        not slug
+        or len(slug) > MAX_SLUG
+        or not set(slug) <= _SLUG_ALPHABET
+        or slug.startswith("-")
+        or slug.endswith("-")
+        or "--" in slug
+    ):
+        raise CatalogValidationError(
+            "A slug is lower-case letters and digits in words joined by single "
+            f"hyphens, at most {MAX_SLUG} characters (for example "
+            "whatsapp-marketing).",
+            field="slug",
+        )
+    return slug
+
+
+def slug_for_code(code: str) -> str:
+    """The default slug for a product code (``whatsapp_marketing`` ->
+    ``whatsapp-marketing``)."""
+    return "-".join(part for part in code.lower().replace("_", "-").split("-") if part)
+
+
+def validate_tagline(raw: Any) -> str:
+    text = " ".join(str(raw or "").split())
+    if len(text) > MAX_TAGLINE:
+        raise CatalogValidationError(
+            f"The tagline is at most {MAX_TAGLINE} characters.", field="tagline"
+        )
+    return text
+
+
+#: Phase 11: the visual a product card draws. A **key**, never an image or a
+#: URL - the frontend maps each key to an inline SVG it owns, so a product can
+#: never make a page load a remote image (CSP ``img-src 'self' data:``) and a
+#: bad value can never become markup. Named for the picture, not the product,
+#: so nothing here (or in the frontend) branches on a product code (E-2).
+PRODUCT_ICON_KEYS: Final = frozenset(
+    {
+        "customers",
+        "book",
+        "board",
+        "headset",
+        "box",
+        "chart",
+        "megaphone",
+        "wallet",
+        "users",
+        "cart",
+        "cog",
+        "calendar",
+        "shield",
+        "generic",
+    }
+)
+MAX_CATEGORY: Final = 64
+#: A trial is at least a day and at most a year; the platform sets no default.
+MIN_TRIAL_DAYS: Final = 1
+MAX_TRIAL_DAYS: Final = 365
+MAX_TRIAL_SEATS: Final = 100_000
+MAX_ELIGIBLE_TRIAL_PLANS: Final = 50
+
+
+def validate_category(raw: Any) -> str:
+    """Free text such as ``Finance / Accounting``: single-spaced, no control
+    characters, at most ``MAX_CATEGORY``. It is only ever rendered as text."""
+    text = " ".join(str(raw or "").split())
+    if len(text) > MAX_CATEGORY or any(ord(ch) < 32 for ch in text):
+        raise CatalogValidationError(
+            f"The category is at most {MAX_CATEGORY} characters of plain text.",
+            field="category",
+        )
+    return text
+
+
+def validate_icon(raw: Any) -> str:
+    """Empty (the frontend then draws a monogram) or one allow-listed key."""
+    key = str(raw or "").strip().lower()
+    if key and key not in PRODUCT_ICON_KEYS:
+        raise CatalogValidationError(
+            "icon is one of: " + ", ".join(sorted(PRODUCT_ICON_KEYS)) + ".",
+            field="icon",
+        )
+    return key
+
+
+def validate_trial_terms(
+    *,
+    enabled: Any,
+    duration_days: Any,
+    seat_limit: Any,
+    payment_method_required: Any,
+    eligible_plan_codes: Any,
+) -> dict[str, Any]:
+    """The shape and bounds of one product's trial configuration.
+
+    Pure. Whether the named plans exist, belong to the product and are on sale
+    is decided by the service, which can read the catalog.
+    """
+    if not isinstance(enabled, bool):
+        raise CatalogValidationError("enabled is true or false.", field="enabled")
+    if (
+        isinstance(duration_days, bool)
+        or not isinstance(duration_days, int)
+        or not MIN_TRIAL_DAYS <= duration_days <= MAX_TRIAL_DAYS
+    ):
+        raise CatalogValidationError(
+            f"duration_days is a whole number from {MIN_TRIAL_DAYS} to {MAX_TRIAL_DAYS}.",
+            field="duration_days",
+        )
+    if seat_limit is not None and (
+        isinstance(seat_limit, bool)
+        or not isinstance(seat_limit, int)
+        or not 1 <= seat_limit <= MAX_TRIAL_SEATS
+    ):
+        raise CatalogValidationError(
+            f"seat_limit is empty (the plan's included seats) or a whole number "
+            f"from 1 to {MAX_TRIAL_SEATS}.",
+            field="seat_limit",
+        )
+    if not isinstance(payment_method_required, bool):
+        raise CatalogValidationError(
+            "payment_method_required is true or false.", field="payment_method_required"
+        )
+    if payment_method_required:
+        # Honest, not decorative: there is no stored payment method to require
+        # (D-028), so accepting the flag would promise a control that does not
+        # exist.
+        raise CatalogValidationError(
+            "A trial cannot require a payment method yet: the platform stores "
+            "none (every invoice is paid through hosted checkout).",
+            field="payment_method_required",
+        )
+    if (
+        not isinstance(eligible_plan_codes, list)
+        or len(eligible_plan_codes) > MAX_ELIGIBLE_TRIAL_PLANS
+        or not all(isinstance(c, str) and 0 < len(c) <= 64 for c in eligible_plan_codes)
+    ):
+        raise CatalogValidationError(
+            "eligible_plan_codes is a list of plan codes.", field="eligible_plan_codes"
+        )
+    codes = sorted(set(eligible_plan_codes))
+    if enabled and not codes:
+        raise CatalogValidationError(
+            "A trial that is switched on names at least one eligible plan.",
+            field="eligible_plan_codes",
+        )
+    return {
+        "enabled": enabled,
+        "duration_days": duration_days,
+        "seat_limit": seat_limit,
+        "payment_method_required": False,
+        "eligible_plan_codes": codes,
+    }
+
+
+def validate_marketing_url(raw: Any) -> str:
+    """Empty, or an absolute ``https`` address with a host and no credentials.
+
+    It is rendered as a link on the public site, so every other scheme -
+    ``javascript:``, ``data:``, ``http:`` - is refused here rather than trusted
+    to the frontend.
+    """
+    from urllib.parse import urlsplit
+
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        parts = None
+    if (
+        parts is None
+        or len(value) > MAX_MARKETING_URL
+        or parts.scheme != "https"
+        or not parts.hostname
+        or parts.username
+        or parts.password
+        or any(ch.isspace() or ord(ch) < 32 for ch in value)
+    ):
+        raise CatalogValidationError(
+            "The marketing page must be an https:// address.", field="marketing_url"
+        )
+    return value

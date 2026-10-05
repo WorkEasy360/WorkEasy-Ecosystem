@@ -18,7 +18,10 @@ import pytest
 
 from workeasy360.platform.ecosystem import ratelimit
 
-pytestmark = pytest.mark.django_db
+# The limiter's window is ``int(time.time()) // window``: without a pinned
+# clock, a test whose requests straddle a minute boundary sees its counter
+# reset and the limit not fire (failed once in the Phase 6 audit's full run).
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("frozen_throttle_window")]
 
 AUTHORIZE = "/api/v1/integrations/oauth/authorize"
 TOKEN = "/api/v1/integrations/oauth/token"

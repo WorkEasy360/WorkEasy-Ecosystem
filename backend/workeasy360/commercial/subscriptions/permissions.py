@@ -11,9 +11,9 @@ explaining because it commits the customer to money.
 it blocks the action under impersonation. Both are wrong here.
 
 - Demanding a second factor to *buy* blocks self-serve signup outright, for
-  a risk that the payment flow already authorises. Compare
-  ``platform.billing.manage``, which changes stored payment instruments -
-  that is an account-takeover target and is correctly gated.
+  a risk that the payment flow already authorises. (Phase 9 applied the same
+  reasoning to ``platform.billing.manage``: paying happens on the provider's
+  hosted page and no payment instrument is stored.)
 - Blocking it under impersonation would stop support completing a purchase
   a customer has asked for, which is a normal, audited, break-glass-tagged
   action.

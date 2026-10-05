@@ -13,12 +13,19 @@
 root_package = workeasy360
 include_external_packages = True
 
+; Phase 8 (ADR-030): intelligence/ - the shared AI, retrieval and analytics
+; platform - sits above integration (it sends through egress, runs on the
+; due-work timer and consumes routed events) and beside commercial as an
+; *independent* sibling: neither may import the other. That independence is
+; what keeps estimated AI cost from ever becoming billing truth by accident
+; (Task 9), and keeps AI governance from depending on how a plan was sold -
+; entitlement is read through platform/entitlements like everywhere else.
 [importlinter:contract:top-level-layers]
-name = Top-level layering: contracts < platform < integration < products|commercial < interfaces
+name = Top-level layering: contracts < platform < integration < products|commercial|intelligence < interfaces
 type = layers
 layers =
     workeasy360.interfaces
-    workeasy360.products | workeasy360.commercial
+    workeasy360.products | workeasy360.commercial | workeasy360.intelligence
     workeasy360.integration
     workeasy360.platform
     workeasy360.contracts
@@ -92,12 +99,31 @@ forbidden_modules =
 ; latter pattern exists to cross the platform/commercial boundary a product
 ; must never see across, and launcher and ecosystem are both platform code
 ; with nothing to hide from each other.
+;
+; platform/administration joins P4 beside launcher (Phase 8 extension). The
+; organization console's use cases compose notifications (P3) for the
+; invitation email as well as organizations, identity, authz, audit and
+; entitlements beneath it; siblings in one layer are independent, so a module
+; that composes a P3 module must sit above it. Like launcher, nothing inside
+; platform/ imports it.
+;
+; platform/onboarding joins P3, added in Phase 5 (ADR-023). Creating an
+; organization touches organizations (the tenant/membership, P1), identity
+; (the acting user - a P1 *sibling* organizations cannot import under F-5),
+; authz (the owner role assignment, P2) and audit (P2). None of those import
+; each other, so the use case that composes all four sits one layer up -
+; the identical shape ecosystem already uses to compose authz/entitlements/
+; audit/organizations/identity. Not placed beside ecosystem for the same
+; same-layer-import reason launcher is not: onboarding does not compose
+; ecosystem and ecosystem does not compose onboarding, so either order at P3
+; is layer-consistent, and this file lists it beside ecosystem rather than
+; inventing a P3.5.
 [importlinter:contract:platform-internal-layers]
 name = platform internal layering P0 < P1 < P2 < P3 < P4 (F-5)
 type = layers
 layers =
-    workeasy360.platform.launcher
-    workeasy360.platform.files | workeasy360.platform.notifications | workeasy360.platform.workflows | workeasy360.platform.ecosystem
+    workeasy360.platform.launcher | workeasy360.platform.administration
+    workeasy360.platform.files | workeasy360.platform.notifications | workeasy360.platform.workflows | workeasy360.platform.ecosystem | workeasy360.platform.onboarding
     workeasy360.platform.authz | workeasy360.platform.entitlements | workeasy360.platform.feature_flags | workeasy360.platform.audit
     workeasy360.platform.identity | workeasy360.platform.organizations
     workeasy360.platform.tenancy
@@ -138,6 +164,7 @@ source_modules =
     workeasy360.platform.files
     workeasy360.platform.notifications
     workeasy360.integration
+    workeasy360.intelligence
     workeasy360.interfaces
     workeasy360.commercial.catalog
     workeasy360.commercial.pricing
@@ -145,6 +172,8 @@ source_modules =
     workeasy360.commercial.billing
     workeasy360.commercial.partners
     workeasy360.commercial.commissions
+    workeasy360.commercial.controlplane
+    workeasy360.commercial.payments
 forbidden_modules =
     workeasy360.platform.entitlements.services.write
 
@@ -161,15 +190,25 @@ source_modules =
 forbidden_modules =
     workeasy360.platform.entitlements.services.seats
 
+; Phase 7 extends the chain upward: partners sell through the ordinary
+; commercial services and so sit above provisioning; the commission ledger
+; reads partners and sales and sits above both; the Super Admin services
+; compose everything and sit on top. Nothing below may import anything above:
+; a partner module reached from pricing would make "who decides the price"
+; depend on who sells it.
+;
 ; Ordering inside commercial/, so the module graph stays acyclic as it grows.
 ; provisioning reads subscriptions, subscriptions reads pricing and catalog,
 ; pricing reads catalog. Any edge back up that chain is a cycle, and a cycle
 ; here is what makes "who decides the price?" unanswerable.
 [importlinter:contract:commercial-internal-layers]
-name = commercial internal layering: catalog < pricing < billing < subscriptions < provisioning
+name = commercial internal layering: catalog < pricing < billing < subscriptions < provisioning|payments < partners < commissions < controlplane
 type = layers
 layers =
-    workeasy360.commercial.provisioning
+    workeasy360.commercial.controlplane
+    workeasy360.commercial.commissions
+    workeasy360.commercial.partners
+    workeasy360.commercial.provisioning | workeasy360.commercial.payments
     workeasy360.commercial.subscriptions
     workeasy360.commercial.billing
     workeasy360.commercial.pricing
@@ -177,22 +216,157 @@ layers =
 exhaustive = false
 
 [importlinter:contract:platform-never-imports-upward]
-name = F-4: platform must not import integration, commercial, products or interfaces
+name = F-4: platform must not import integration, intelligence, commercial, products or interfaces
 type = forbidden
 source_modules =
     workeasy360.platform
 forbidden_modules =
     workeasy360.integration
+    workeasy360.intelligence
     workeasy360.commercial
     workeasy360.products
     workeasy360.interfaces
 
 [importlinter:contract:integration-never-imports-upward]
-name = integration must not import commercial, products or interfaces
+name = integration must not import intelligence, commercial, products or interfaces
 type = forbidden
 source_modules =
     workeasy360.integration
 forbidden_modules =
+    workeasy360.intelligence
     workeasy360.commercial
     workeasy360.products
     workeasy360.interfaces
+
+; Phase 6 (ADR-024). Ordering inside integration/, so the module graph stays
+; acyclic as the integration platform grows. The bottom row is independent
+; mechanism - the outbox and event log, command idempotency, the due-work
+; timer, the outbound HTTP boundary - and none of the four may import
+; another. Above it: connectors (how to talk to a system) < webhooks (durable
+; delivery through a connector) < automation (rules whose actions create
+; deliveries) < routing (ingestion and fan-out, which composes all of them).
+; An edge back up this chain is a cycle, and a cycle here is what would make
+; "who sends this?" unanswerable.
+[importlinter:contract:integration-internal-layers]
+name = integration internal layering: mechanism < connectors < webhooks < automation < routing
+type = layers
+layers =
+    workeasy360.integration.routing
+    workeasy360.integration.automation
+    workeasy360.integration.webhooks
+    workeasy360.integration.connectors
+    workeasy360.integration.events | workeasy360.integration.idempotency | workeasy360.integration.scheduling | workeasy360.integration.egress
+exhaustive = false
+
+; Task 30: a connector implementation gets its own connection's validated
+; configuration, one invocation and its own connection's secrets - as
+; arguments - and nothing else. It may not import anything that could reach
+; the database, settings, the platform, another connection's credentials or
+; the pipelines that call it. Direct imports only: the connector contract it
+; implements imports the egress value types, which lazily read settings in
+; the *pipeline's* call, never the provider's.
+[importlinter:contract:connector-providers-are-sandboxed]
+name = connector implementations reach no database, settings, platform or other credentials (Task 30)
+type = forbidden
+source_modules =
+    workeasy360.integration.connectors.providers
+forbidden_modules =
+    django
+    workeasy360.platform
+    workeasy360.integration.connectors.models
+    workeasy360.integration.connectors.selectors
+    workeasy360.integration.connectors.services
+    workeasy360.integration.connectors.secrets
+    workeasy360.integration.events
+    workeasy360.integration.webhooks
+    workeasy360.integration.automation
+    workeasy360.integration.routing
+    workeasy360.integration.scheduling
+allow_indirect_imports = True
+
+; Phase 8 (ADR-030/031/032). Ordering inside intelligence/: the model gateway
+; mechanism (ai) and the analytics store are independent of each other;
+; retrieval (rag) embeds through ai; skill invocation (gateway) composes both.
+; An edge back up is a cycle, and a cycle here would make "who decided this
+; model may see this passage?" unanswerable.
+[importlinter:contract:intelligence-internal-layers]
+name = intelligence internal layering: ai|analytics < rag < gateway
+type = layers
+layers =
+    workeasy360.intelligence.gateway
+    workeasy360.intelligence.rag
+    workeasy360.intelligence.ai | workeasy360.intelligence.analytics
+exhaustive = false
+
+; Task 3/6/16: a provider adapter builds one vendor request from what it is
+; handed - a platform request and, for one call, an API key - and parses the
+; response. It reaches no database, no settings, no credential store, no
+; network and nothing that could widen what a model is given. The same
+; sandbox Phase 6 draws around connector providers.
+[importlinter:contract:ai-providers-are-sandboxed]
+name = AI provider adapters reach no database, settings, network or credentials (Tasks 3, 6)
+type = forbidden
+source_modules =
+    workeasy360.intelligence.ai.providers
+forbidden_modules =
+    django
+    workeasy360.platform
+    workeasy360.integration
+    workeasy360.intelligence.ai.models
+    workeasy360.intelligence.ai.budget
+    workeasy360.intelligence.ai.credentials
+    workeasy360.intelligence.ai.policy
+    workeasy360.intelligence.ai.registry
+    workeasy360.intelligence.ai.skills
+    workeasy360.intelligence.ai.transport
+    workeasy360.intelligence.rag
+    workeasy360.intelligence.gateway
+    workeasy360.intelligence.analytics
+allow_indirect_imports = True
+
+; Task 20, made structural: AI is never the source of truth for permissions,
+; entitlements, seats, subscriptions, billing, identity or organization
+; state. Nothing in intelligence/ may import a module that writes any of
+; them, so no code path exists by which model output could.
+[importlinter:contract:ai-is-never-an-authority]
+name = intelligence/ imports nothing that writes permissions, entitlements, seats, identity or organization state (Task 20)
+type = forbidden
+source_modules =
+    workeasy360.intelligence
+forbidden_modules =
+    workeasy360.platform.entitlements.services.write
+    workeasy360.platform.entitlements.services.seats
+    workeasy360.platform.authz.staff
+    workeasy360.platform.identity.services
+    workeasy360.platform.organizations.services
+    workeasy360.platform.onboarding
+    workeasy360.commercial
+; Direct imports: the one permission check (authz.services) itself reads staff
+; grants, and that is the check doing its job, not intelligence writing them.
+allow_indirect_imports = True
+
+; Phase 8 extension. A payment provider adapter builds one vendor request from
+; what it is handed - an invoice's amount and one call's credential - parses the
+; response and verifies a webhook signature. It reaches no database, settings,
+; network or credential store, and nothing that could mark an invoice paid:
+; the same sandbox the AI and connector providers live in. Card data never
+; passes through here at all (hosted checkout).
+[importlinter:contract:payment-providers-are-sandboxed]
+name = payment provider adapters reach no database, settings, network or credentials
+type = forbidden
+source_modules =
+    workeasy360.commercial.payments.providers
+forbidden_modules =
+    django
+    workeasy360.platform
+    workeasy360.integration
+    workeasy360.commercial.payments.models
+    workeasy360.commercial.payments.credentials
+    workeasy360.commercial.payments.transport
+    workeasy360.commercial.payments.settlement
+    workeasy360.commercial.payments.webhooks
+    workeasy360.commercial.payments.checkout
+    workeasy360.commercial.payments.refunds
+    workeasy360.commercial.subscriptions
+    workeasy360.commercial.billing
+allow_indirect_imports = True

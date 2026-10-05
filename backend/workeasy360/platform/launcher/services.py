@@ -36,12 +36,29 @@ def assign_seat(
     bypassed by any other internal caller).
     """
     from workeasy360.contracts.enums import AuditOutcome
-    from workeasy360.contracts.errors import SeatLimitReached
+    from workeasy360.contracts.errors import MembershipRequired, SeatLimitReached
     from workeasy360.platform.audit import services as audit
     from workeasy360.platform.authz import services as authz
     from workeasy360.platform.entitlements.services import seats as seat_services
+    from workeasy360.platform.organizations import selectors as org_selectors
 
     authz.require(ctx, "platform.seat.assign")
+
+    if not org_selectors.active_membership_exists(ctx, membership_id, lock=True):
+        # ``membership_id`` comes straight off the URL, so it can name any
+        # UUID at all - another organization's member, or nothing. The
+        # composite, deferred foreign key would refuse the row either way,
+        # but only at COMMIT: the view would have already answered 201 and
+        # the request would then die as a 500 on its way out (see
+        # ``active_membership_exists`` for why no test would ever see that).
+        # Refused here instead, uniformly - "not a member of this
+        # organization" and "no such membership" are deliberately the same
+        # answer, so this endpoint cannot be used to probe for membership
+        # ids.
+        raise MembershipRequired(
+            "That member does not belong to this organization.",
+            product_code=str(product_code),
+        )
 
     try:
         assignment = seat_services.assign_seat(

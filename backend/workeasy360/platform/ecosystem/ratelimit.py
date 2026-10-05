@@ -7,47 +7,30 @@ loop degrading an unrelated customer's invoice screen, which is precisely the
 cascading failure the whole ecosystem boundary exists to prevent
 (16-ecosystem-product-boundary.md section 10).
 
-**Algorithm: fixed window, not token bucket.** 09-failure-resilience.md
-section 4.6 specifies a token bucket for the general API surface because real
-user traffic is bursty and a bucket absorbs that. These four endpoints are
-not that traffic: they are machine-driven, evenly paced, and the burst
-tolerance a bucket provides is exactly the burst an attacker wants. A fixed
-window is also two cache operations instead of a read-modify-write, which
-matters because it runs *before* authentication on every request. The general
-token bucket remains the right answer for the user-facing API when that is
-built; this is the right answer here.
-
-**Redis down: approximate, biased toward allowing.** The counter degrades to
-a per-process in-memory window, so a deployment with N workers allows up to
-N times the limit. That is stated rather than hidden. The alternative -
-failing closed - means a Redis blip takes down every product's ability to
-authenticate, converting a cache outage into an ecosystem outage. Redis is
-Tier 1 with a documented "degrades latency, never correctness" contract, and
-rate limiting is the one place where degrading *capacity* to preserve
-*availability* is the correct trade (docs/phase-3/14-failure-mode-review.md).
+**What is here and what is not.** The counting itself lives in
+``platform.observability.throttle`` - a fixed window, degrading to a
+per-process approximation when Redis is unreachable, both explained there.
+This module is the OAuth-shaped *facade* over it: the bucket names, their
+configured limits, and the protocol error a product's client library can
+parse. Phase 4 gave the platform its own public endpoints, which need the
+same counter with a different denial shape; one counter, two facades, is
+what stops the Redis-outage behaviour being got subtly differently in each.
 """
 
 from __future__ import annotations
 
-import threading
-import time
 from typing import Final
 
 from django.conf import settings
-from django.core.cache import cache
 
 from workeasy360.platform.ecosystem import protocol
+from workeasy360.platform.observability import throttle
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import metrics
 
 logger = get_logger(__name__)
 
 _KEY_PREFIX: Final = "w360:eco:rl:"
-
-#: Per-process fallback counters, used only when the shared cache is
-#: unreachable. Guarded by a lock because the web tier is threaded.
-_local_lock = threading.Lock()
-_local_windows: dict[str, tuple[int, int]] = {}
 
 
 class RateLimited(protocol.OAuthError):
@@ -82,14 +65,11 @@ def consume(bucket: str, identity: str, *, endpoint: str = "") -> None:
     if limit <= 0:
         return
 
-    slot = int(time.time()) // window
-    key = f"{_KEY_PREFIX}{bucket}:{identity}:{slot}"
+    key = f"{_KEY_PREFIX}{bucket}:{identity}:{throttle.window_slot(window)}"
 
-    count = _increment(key, window)
-    if count <= limit:
+    if throttle.hit(key, window) <= limit:
         return
 
-    retry_after = window - (int(time.time()) % window)
     metrics.increment("ecosystem_rate_limited_total", bucket=bucket)
     logger.warning(
         "ecosystem.rate_limited",
@@ -98,7 +78,7 @@ def consume(bucket: str, identity: str, *, endpoint: str = "") -> None:
         limit=limit,
         window_s=window,
     )
-    raise RateLimited(retry_after=max(1, retry_after))
+    raise RateLimited(retry_after=throttle.retry_after(window))
 
 
 def _limits(bucket: str) -> tuple[int, int]:
@@ -107,49 +87,6 @@ def _limits(bucket: str) -> tuple[int, int]:
     return int(limit), max(1, int(window))
 
 
-def _increment(key: str, window: int) -> int:
-    """Increment a window counter, falling back in-process on a cache failure.
-
-    ``cache.add`` then ``cache.incr`` rather than a get/set pair: ``incr`` is
-    atomic on Redis, so two concurrent requests cannot both read 4 and both
-    write 5. The ``add`` seeds the key with its expiry; ``incr`` on a missing
-    key raises, which is the race between the two and is handled by seeding
-    again.
-    """
-    try:
-        if cache.add(key, 1, window):
-            return 1
-        return int(cache.incr(key))
-    except ValueError:
-        # The key expired between add() and incr(). Re-seed; losing a single
-        # count at a window boundary is immaterial.
-        try:
-            cache.add(key, 1, window)
-            return 1
-        except Exception:  # pragma: no cover - cache backend down
-            return _increment_locally(key, window)
-    except Exception:  # pragma: no cover - cache backend down
-        return _increment_locally(key, window)
-
-
-def _increment_locally(key: str, window: int) -> int:
-    """Per-process fallback. Approximate by design - see the module docstring."""
-    now = int(time.time())
-    with _local_lock:
-        # Opportunistic sweep, so a long-lived process does not accumulate a
-        # dictionary entry per window per identity forever. Cheap because the
-        # map only ever holds entries from the current outage.
-        if len(_local_windows) > 10_000:
-            _local_windows.clear()
-        expires, count = _local_windows.get(key, (0, 0))
-        if expires <= now:
-            _local_windows[key] = (now + window, 1)
-            return 1
-        _local_windows[key] = (expires, count + 1)
-        return count + 1
-
-
 def reset() -> None:
     """Test hook. Clears only the in-process fallback state."""
-    with _local_lock:
-        _local_windows.clear()
+    throttle.reset()

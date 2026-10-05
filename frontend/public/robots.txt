@@ -1,0 +1,5 @@
+# Every page of this application is behind authentication and every URL
+# under /o/ names a specific customer's organization. There is nothing here
+# to index, and a crawler following links only produces login redirects.
+User-agent: *
+Disallow: /

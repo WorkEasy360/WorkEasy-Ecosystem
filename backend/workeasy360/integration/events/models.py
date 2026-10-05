@@ -25,7 +25,8 @@ import uuid
 from django.db import models
 from django.utils import timezone
 
-from workeasy360.contracts.enums import OutboxStatus
+from workeasy360.contracts.enums import OutboxStatus, StrEnum
+from workeasy360.platform.tenancy.models import TenantScopedModel
 
 
 class OutboxEventQuerySet(models.QuerySet):
@@ -166,3 +167,96 @@ class DeadLetterEvent(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.event_type} #{self.event_id} (dead-lettered)"
+
+
+# --- routable events (Phase 6) ----------------------------------------------
+
+
+class RoutingStatus(StrEnum):
+    #: Accepted; subscriptions and automation rules not yet matched.
+    PENDING = "pending"
+    #: Matched and fanned out. Terminal.
+    ROUTED = "routed"
+    #: Created for exactly one consumer - a connection's test ping, a
+    #: schedule firing - and never fanned out to subscribers. Terminal.
+    DIRECT = "direct"
+
+
+class RoutedEvent(TenantScopedModel):
+    """One event accepted into the integration platform for routing.
+
+    The shared record every webhook delivery and automation execution points
+    at, so a fan-out to 500 subscriptions stores the payload once, not 500
+    times. Also the inbound **idempotency ledger** (Task 10): (organization,
+    source, event_id) is unique, so a product retrying the same event gets
+    the original answer and no second processing chain - decided by the
+    database, not by a read-then-write.
+
+    Tenant-scoped, unlike OutboxEvent: this row holds a tenant's business
+    payload and customers read about it, so it gets RLS like every other
+    tenant table. Cross-tenant work reaches it only through the scheduling
+    timer, which carries its id and nothing else.
+
+    **The payload** is the product's own opaque, bounded JSON (at most
+    INTEGRATION_EVENT_MAX_BYTES), validated for shape and size but never
+    interpreted. It is not field-level encrypted - see
+    docs/phase-6/06-security.md section 9 for that decision - and it is
+    pruned on a fixed retention schedule.
+    """
+
+    #: The producer's id for the event. Its idempotency key.
+    event_id = models.UUIDField()
+    #: Who published it: product.<code> for a product, platform for
+    #: the platform's own integration events. Part of the idempotency key, so
+    #: two products that happen to pick the same UUID cannot collide.
+    source = models.CharField(max_length=64)
+    event_type = models.CharField(max_length=128)
+    event_version = models.PositiveSmallIntegerField()
+    occurred_at = models.DateTimeField()
+    correlation_id = models.UUIDField()
+    #: The event that caused this one, when the producer said so and the
+    #: platform could confirm it (same organization).
+    causation_id = models.UUIDField(null=True, blank=True)
+    #: How many automation-driven hops led here. Derived from the platform's
+    #: own record of the causing event - never taken from the producer - and
+    #: the input to automation loop protection (Task 46).
+    chain_depth = models.PositiveSmallIntegerField(default=0)
+    payload = models.JSONField(default=dict)
+    payload_bytes = models.PositiveIntegerField(default=0)
+    #: SHA-256 over the canonical event. A replayed event id with a different
+    #: fingerprint is a conflict, not a duplicate.
+    fingerprint = models.CharField(max_length=64)
+    routing_status = models.CharField(
+        max_length=16,
+        choices=[(s.value, s.name.title()) for s in RoutingStatus],
+        default=RoutingStatus.PENDING.value,
+    )
+    routed_at = models.DateTimeField(null=True, blank=True)
+    matched_deliveries = models.PositiveIntegerField(default=0)
+    matched_rules = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "events_routed"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "source", "event_id"],
+                name="uq_routed_event_source_id",
+            ),
+            # The target of the composite foreign keys from deliveries and
+            # executions.
+            models.UniqueConstraint(
+                fields=["id", "organization"], name="uq_routed_event_id_org"
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "created_at"], name="ix_routed_event_age"
+            ),
+            # Causation lookup: "which event is this one a consequence of?"
+            models.Index(
+                fields=["organization", "event_id"], name="ix_routed_event_event_id"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.event_type}.v{self.event_version} {self.event_id} [{self.routing_status}]"

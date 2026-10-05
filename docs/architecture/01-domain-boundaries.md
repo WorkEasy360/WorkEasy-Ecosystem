@@ -321,7 +321,7 @@ The only layer permitted to import from everywhere. It contains **no business lo
 - `interfaces/api/v1/urls.py` — includes each module's router
 - API version negotiation and deprecation headers
 - Throttle classes, API key auth, schema generation
-- `interfaces/admin/` — internal staff console, including break-glass flows
+- `interfaces/api/v1/admin_*_views.py` — the internal staff console's API, including break-glass flows (the empty `interfaces/admin/` placeholder was removed in Phase 9)
 - `asgi.py`, `wsgi.py`, `celery.py`, settings composition
 
 A code reviewer who sees a domain rule in `interfaces/` rejects the PR.

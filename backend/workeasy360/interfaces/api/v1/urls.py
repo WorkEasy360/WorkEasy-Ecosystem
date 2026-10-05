@@ -17,11 +17,26 @@ from __future__ import annotations
 from django.urls import path
 
 from workeasy360.interfaces.api.v1 import (
+    account_views,
+    admin_catalog_views,
+    admin_console_views,
+    admin_product_views,
+    admin_views,
     auth_views,
     commercial_views,
+    console_views,
     ecosystem_views,
     integration_admin_views,
+    integration_views,
+    intelligence_product_views,
+    intelligence_views,
     launcher_views,
+    mfa_views,
+    partner_views,
+    payment_views,
+    public_site_views,
+    public_views,
+    trial_views,
     views,
 )
 
@@ -34,6 +49,101 @@ urlpatterns = [
     path("auth/logout", auth_views.logout_view, name="auth-logout"),
     path("auth/session", auth_views.session_view, name="auth-session"),
     path("organizations", auth_views.organizations_view, name="organizations"),
+    # --- MFA: enrollment, challenge, step-up (Task 37-39) ---
+    path("auth/mfa/totp/enroll", mfa_views.totp_enroll_view, name="mfa-totp-enroll"),
+    path("auth/mfa/totp/confirm", mfa_views.totp_confirm_view, name="mfa-totp-confirm"),
+    path("auth/mfa/factors", mfa_views.factors_view, name="mfa-factors"),
+    path(
+        "auth/mfa/factors/<str:factor_id>",
+        mfa_views.factor_detail_view,
+        name="mfa-factor-detail",
+    ),
+    path("auth/mfa/step-up", mfa_views.step_up_view, name="mfa-step-up"),
+    # --- Phase 8 extension: the account itself ---
+    path("auth/password", account_views.password_view, name="auth-password"),
+    path("auth/sessions", account_views.sessions_view, name="auth-sessions"),
+    path(
+        "auth/sessions/revoke-others",
+        account_views.sessions_revoke_others_view,
+        name="auth-sessions-revoke-others",
+    ),
+    path(
+        "auth/sessions/<str:session_id>/revoke",
+        account_views.session_revoke_view,
+        name="auth-session-revoke",
+    ),
+    path("auth/activity", account_views.activity_view, name="auth-activity"),
+    # The invitee's side of an invitation: reached before any membership
+    # exists, so not under the tenant path. POST for both, so the token never
+    # travels in a URL.
+    path(
+        "public/invitations/preview",
+        account_views.invitation_preview_view,
+        name="invitation-preview",
+    ),
+    path(
+        "public/invitations/accept",
+        account_views.invitation_accept_view,
+        name="invitation-accept",
+    ),
+    # --- Phase 10e: a provisioned customer's owner claims the account ---
+    #
+    # Reached with only an emailed link, before any password or membership
+    # exists, so not under a tenant path. POST for both: the token is in the body.
+    path(
+        "public/owner-invitations/preview",
+        public_views.owner_invitation_preview_view,
+        name="owner-invitation-preview",
+    ),
+    path(
+        "public/owner-invitations/accept",
+        public_views.owner_invitation_accept_view,
+        name="owner-invitation-accept",
+    ),
+    # --- Phase 9: self-service accounts and the public site ---
+    #
+    # Anonymous, rate-limited, never CSRF-exempt; tokens travel in the body.
+    path("public/site", public_site_views.site_view, name="public-site"),
+    path("public/catalog", public_site_views.catalog_view, name="public-catalog"),
+    path(
+        "public/catalog/products/<slug:slug>",
+        public_site_views.catalog_product_view,
+        name="public-catalog-product",
+    ),
+    path("public/signup", public_site_views.signup_view, name="public-signup"),
+    path(
+        "public/signup/verify",
+        public_site_views.verify_email_view,
+        name="public-signup-verify",
+    ),
+    path(
+        "public/signup/resend",
+        public_site_views.resend_verification_view,
+        name="public-signup-resend",
+    ),
+    path(
+        "public/password/forgot",
+        public_site_views.forgot_password_view,
+        name="public-password-forgot",
+    ),
+    path(
+        "public/password/reset",
+        public_site_views.reset_password_view,
+        name="public-password-reset",
+    ),
+    # Payment providers' signed callbacks: no session, the signature is the
+    # credential (payment_views.SIGNED_WEBHOOK_VIEWS).
+    path(
+        "public/payments/webhooks/<slug:provider_key>",
+        payment_views.webhook_view,
+        name="payment-webhook",
+    ),
+    # Development only (404 unless PAYMENTS_FAKE_PROVIDER_ENABLED).
+    path(
+        "public/payments/test-checkout/complete",
+        payment_views.test_checkout_complete_view,
+        name="payment-test-checkout",
+    ),
     # A minimal tenant-scoped surface, present so the tenancy middleware,
     # the suspension block and the isolation tests have a real HTTP path to
     # exercise rather than a synthetic one.
@@ -48,6 +158,11 @@ urlpatterns = [
         name="memberships",
     ),
     path(
+        "orgs/<slug:org_slug>/memberships/<uuid:membership_id>",
+        views.membership_detail_view,
+        name="membership-detail",
+    ),
+    path(
         "orgs/<slug:org_slug>/organization",
         views.organization_view,
         name="organization",
@@ -56,6 +171,67 @@ urlpatterns = [
         "orgs/<slug:org_slug>/entitlements",
         views.entitlements_view,
         name="entitlements",
+    ),
+    # --- Phase 8 extension: the organization console ---
+    path("orgs/<slug:org_slug>/access", console_views.access_view, name="console-access"),
+    path(
+        "orgs/<slug:org_slug>/dashboard",
+        console_views.dashboard_view,
+        name="console-dashboard",
+    ),
+    path(
+        "orgs/<slug:org_slug>/members", console_views.members_view, name="console-members"
+    ),
+    path(
+        "orgs/<slug:org_slug>/members/<uuid:membership_id>/role",
+        console_views.member_role_view,
+        name="console-member-role",
+    ),
+    path(
+        "orgs/<slug:org_slug>/members/<uuid:membership_id>/suspend",
+        console_views.member_suspend_view,
+        name="console-member-suspend",
+    ),
+    path(
+        "orgs/<slug:org_slug>/members/<uuid:membership_id>/reactivate",
+        console_views.member_reactivate_view,
+        name="console-member-reactivate",
+    ),
+    path(
+        "orgs/<slug:org_slug>/members/<uuid:membership_id>/sign-out",
+        console_views.member_sign_out_view,
+        name="console-member-sign-out",
+    ),
+    path(
+        "orgs/<slug:org_slug>/invitations",
+        console_views.invitations_view,
+        name="console-invitations",
+    ),
+    path(
+        "orgs/<slug:org_slug>/invitations/<uuid:invitation_id>/resend",
+        console_views.invitation_resend_view,
+        name="console-invitation-resend",
+    ),
+    path(
+        "orgs/<slug:org_slug>/invitations/<uuid:invitation_id>/revoke",
+        console_views.invitation_revoke_view,
+        name="console-invitation-revoke",
+    ),
+    path("orgs/<slug:org_slug>/audit", console_views.audit_view, name="console-audit"),
+    path(
+        "orgs/<slug:org_slug>/sign-ins",
+        console_views.sign_ins_view,
+        name="console-sign-ins",
+    ),
+    path(
+        "orgs/<slug:org_slug>/security/policy",
+        console_views.security_policy_view,
+        name="console-security-policy",
+    ),
+    path(
+        "orgs/<slug:org_slug>/security/network",
+        console_views.network_policy_view,
+        name="console-security-network",
     ),
     # --- app launcher: directory, launch, seat administration ---
     #
@@ -143,25 +319,74 @@ urlpatterns = [
         commercial_views.billing_account_view,
         name="billing-account",
     ),
+    # Phase 9: pay-first orders replace the direct purchase and activation
+    # routes. The order's invoice is paid through billing/invoices/<id>/pay.
+    path("orgs/<slug:org_slug>/orders", payment_views.orders_view, name="orders"),
+    # Phase 11: a per-product free trial (not a subscription; see
+    # commercial/subscriptions/models.py ProductTrial).
+    path("orgs/<slug:org_slug>/trials", trial_views.trials_view, name="trials"),
+    path("orgs/<slug:org_slug>/explore", trial_views.explore_view, name="explore"),
+    path("orgs/<slug:org_slug>/brand", trial_views.brand_view, name="org-brand"),
+    path(
+        "orgs/<slug:org_slug>/brand/logo",
+        trial_views.brand_logo_view,
+        name="org-brand-logo",
+    ),
+    path(
+        "orgs/<slug:org_slug>/trials/<uuid:trial_id>/cancel",
+        trial_views.trial_cancel_view,
+        name="trial-cancel",
+    ),
+    path(
+        "orgs/<slug:org_slug>/orders/quote",
+        payment_views.order_quote_view,
+        name="order-quote",
+    ),
+    path(
+        "orgs/<slug:org_slug>/orders/<uuid:order_id>",
+        payment_views.order_detail_view,
+        name="order-detail",
+    ),
+    path(
+        "orgs/<slug:org_slug>/orders/<uuid:order_id>/cancel",
+        payment_views.order_cancel_view,
+        name="order-cancel",
+    ),
+    path(
+        "orgs/<slug:org_slug>/marketplace",
+        commercial_views.marketplace_view,
+        name="marketplace",
+    ),
+    # --- Phase 8 extension: the organization's invoices and payments ---
+    path(
+        "orgs/<slug:org_slug>/billing/invoices",
+        payment_views.invoices_view,
+        name="billing-invoices",
+    ),
+    path(
+        "orgs/<slug:org_slug>/billing/invoices/<uuid:invoice_id>",
+        payment_views.invoice_view,
+        name="billing-invoice",
+    ),
+    path(
+        "orgs/<slug:org_slug>/billing/invoices/<uuid:invoice_id>/pay",
+        payment_views.invoice_pay_view,
+        name="billing-invoice-pay",
+    ),
+    path(
+        "orgs/<slug:org_slug>/billing/payments/<uuid:attempt_id>",
+        payment_views.payment_status_view,
+        name="billing-payment",
+    ),
     path(
         "orgs/<slug:org_slug>/subscriptions",
         commercial_views.subscriptions_view,
         name="subscriptions",
     ),
     path(
-        "orgs/<slug:org_slug>/subscriptions/purchase",
-        commercial_views.purchase_view,
-        name="subscription-purchase",
-    ),
-    path(
         "orgs/<slug:org_slug>/subscriptions/<uuid:subscription_id>",
         commercial_views.subscription_detail_view,
         name="subscription-detail",
-    ),
-    path(
-        "orgs/<slug:org_slug>/subscriptions/<uuid:subscription_id>/activate",
-        commercial_views.activate_view,
-        name="subscription-activate",
     ),
     path(
         "orgs/<slug:org_slug>/subscriptions/<uuid:subscription_id>/cancel",
@@ -217,6 +442,74 @@ urlpatterns = [
         ecosystem_views.verify_entitlement,
         name="integration-entitlement-verify",
     ),
+    # Phase 6: a registered product publishes an event. Same trust boundary
+    # as the three above - client credential, no session, no tenant path;
+    # the organization is bound by the live entitlement decision, never
+    # taken on the request's word (integration/routing/ingestion.py).
+    path(
+        "integrations/events",
+        ecosystem_views.publish_event,
+        name="integration-event-publish",
+    ),
+    # Phase 8: the shared AI, retrieval and analytics platform, product side.
+    # The same trust boundary as event ingestion - a product's client
+    # credential, no session, no tenant path; the organization is bound by
+    # the live entitlement decision inside each service.
+    path(
+        "integrations/ai/skills",
+        intelligence_product_views.ai_skills,
+        name="ai-skills",
+    ),
+    path(
+        "integrations/ai/skills/retire",
+        intelligence_product_views.ai_skill_retire,
+        name="ai-skill-retire",
+    ),
+    path(
+        "integrations/ai/invoke",
+        intelligence_product_views.ai_invoke,
+        name="ai-invoke",
+    ),
+    path(
+        "integrations/ai/requests/status",
+        intelligence_product_views.ai_request_status,
+        name="ai-request-status",
+    ),
+    path(
+        "integrations/rag/documents",
+        intelligence_product_views.rag_documents,
+        name="rag-documents",
+    ),
+    path(
+        "integrations/rag/documents/delete",
+        intelligence_product_views.rag_document_delete,
+        name="rag-document-delete",
+    ),
+    path(
+        "integrations/rag/documents/status",
+        intelligence_product_views.rag_document_status,
+        name="rag-document-status",
+    ),
+    path(
+        "integrations/rag/sources/revoke",
+        intelligence_product_views.rag_source_revoke,
+        name="rag-source-revoke",
+    ),
+    path(
+        "integrations/rag/retrieve",
+        intelligence_product_views.rag_retrieve,
+        name="rag-retrieve",
+    ),
+    path(
+        "integrations/analytics/metrics",
+        intelligence_product_views.analytics_metrics,
+        name="analytics-metrics",
+    ),
+    path(
+        "integrations/analytics/query",
+        intelligence_product_views.analytics_query,
+        name="analytics-query",
+    ),
     # --- product integration administration (staff control plane) ---
     #
     # Under the tenant path, unlike the four above, because these are
@@ -248,7 +541,826 @@ urlpatterns = [
         integration_admin_views.credential_detail_view,
         name="integration-credential-detail",
     ),
+    # --- an organization's own integrations and automation (Phase 6) ---
+    #
+    # "connections", not "integrations": that word already names the staff
+    # product-registration surface above, and the two have different trust
+    # models (integration/connectors/__init__.py).
+    path(
+        "orgs/<slug:org_slug>/connectors",
+        integration_views.connectors_view,
+        name="connectors",
+    ),
+    # --- an organization's AI settings and analytics shell (Phase 8) ---
+    path(
+        "orgs/<slug:org_slug>/ai/settings",
+        intelligence_views.ai_settings_view,
+        name="ai-settings",
+    ),
+    path(
+        "orgs/<slug:org_slug>/ai/usage", intelligence_views.ai_usage_view, name="ai-usage"
+    ),
+    path(
+        "orgs/<slug:org_slug>/ai/requests",
+        intelligence_views.ai_requests_view,
+        name="ai-requests",
+    ),
+    path(
+        "orgs/<slug:org_slug>/analytics/metrics",
+        intelligence_views.analytics_metrics_view,
+        name="org-analytics-metrics",
+    ),
+    path(
+        "orgs/<slug:org_slug>/analytics/query",
+        intelligence_views.analytics_query_view,
+        name="org-analytics-query",
+    ),
+    path(
+        "orgs/<slug:org_slug>/event-catalog",
+        integration_views.event_catalog_view,
+        name="event-catalog",
+    ),
+    path(
+        "orgs/<slug:org_slug>/connections",
+        integration_views.connections_view,
+        name="connections",
+    ),
+    path(
+        "orgs/<slug:org_slug>/connections/<uuid:connection_id>",
+        integration_views.connection_detail_view,
+        name="connection-detail",
+    ),
+    path(
+        "orgs/<slug:org_slug>/connections/<uuid:connection_id>/status",
+        integration_views.connection_status_view,
+        name="connection-status",
+    ),
+    path(
+        "orgs/<slug:org_slug>/connections/<uuid:connection_id>/secret",
+        integration_views.connection_secret_view,
+        name="connection-secret",
+    ),
+    path(
+        "orgs/<slug:org_slug>/connections/<uuid:connection_id>/subscriptions",
+        integration_views.connection_subscriptions_view,
+        name="connection-subscriptions",
+    ),
+    path(
+        "orgs/<slug:org_slug>/connections/<uuid:connection_id>/ping",
+        integration_views.connection_ping_view,
+        name="connection-ping",
+    ),
+    path(
+        "orgs/<slug:org_slug>/deliveries",
+        integration_views.deliveries_view,
+        name="deliveries",
+    ),
+    path(
+        "orgs/<slug:org_slug>/deliveries/<uuid:delivery_id>",
+        integration_views.delivery_detail_view,
+        name="delivery-detail",
+    ),
+    path(
+        "orgs/<slug:org_slug>/deliveries/<uuid:delivery_id>/replay",
+        integration_views.delivery_replay_view,
+        name="delivery-replay",
+    ),
+    path(
+        "orgs/<slug:org_slug>/automation-actions",
+        integration_views.automation_actions_view,
+        name="automation-actions",
+    ),
+    path(
+        "orgs/<slug:org_slug>/automations",
+        integration_views.automations_view,
+        name="automations",
+    ),
+    path(
+        "orgs/<slug:org_slug>/automations/<uuid:rule_id>",
+        integration_views.automation_detail_view,
+        name="automation-detail",
+    ),
+    path(
+        "orgs/<slug:org_slug>/automations/<uuid:rule_id>/status",
+        integration_views.automation_status_view,
+        name="automation-status",
+    ),
+    path(
+        "orgs/<slug:org_slug>/automations/<uuid:rule_id>/executions",
+        integration_views.automation_executions_view,
+        name="automation-executions",
+    ),
     # No product-domain routes. Products are separate applications and expose
     # their own domain APIs (ADR-017, 16-ecosystem-product-boundary.md s5).
     # Asserted by test_api_exposes_no_product_domain_routes.
 ]
+
+
+# --- Phase 7: the control plane, the partner portal and the public channel ---
+#
+# Deliberately **not** under ``orgs/<slug>/``: these are not tenant requests, so
+# the tenancy middleware resolves no organization and opens no transaction for
+# them. Each handler establishes its own actor and each service its own
+# transaction and scope. ``admin/`` is the Workeasy360 control plane
+# (staff-only, explicit ``platform.staff_*`` permissions, AAL 2 for anything
+# dangerous); ``partner/<partner_id>/`` is the partner portal (membership
+# verified from the URL id, capabilities from grants); ``public/`` is the small
+# unauthenticated surface, rate-limited and identity-free.
+_admin = [
+    path("admin/session", admin_views.session_view, name="admin-session"),
+    path("admin/dashboard", admin_views.dashboard_view, name="admin-dashboard"),
+    path("admin/audit", admin_views.audit_view, name="admin-audit"),
+    path("admin/customers", admin_views.customers_view, name="admin-customers"),
+    # Phase 8: the AI registry, provider status and organization AI policy.
+    path(
+        "admin/ai/registry",
+        intelligence_views.admin_ai_registry_view,
+        name="admin-ai-registry",
+    ),
+    path(
+        "admin/ai/providers/<str:provider_key>/status",
+        intelligence_views.admin_ai_provider_status_view,
+        name="admin-ai-provider-status",
+    ),
+    path(
+        "admin/ai/models", intelligence_views.admin_ai_models_view, name="admin-ai-models"
+    ),
+    path(
+        "admin/ai/models/<str:model_key>",
+        intelligence_views.admin_ai_model_view,
+        name="admin-ai-model",
+    ),
+    path(
+        "admin/ai/models/<str:model_key>/prices",
+        intelligence_views.admin_ai_model_prices_view,
+        name="admin-ai-model-prices",
+    ),
+    path(
+        "admin/ai/organizations/<uuid:organization_id>",
+        intelligence_views.admin_ai_organization_view,
+        name="admin-ai-organization",
+    ),
+    path(
+        "admin/ai/organizations/<uuid:organization_id>/policy",
+        intelligence_views.admin_ai_organization_policy_view,
+        name="admin-ai-organization-policy",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>",
+        admin_views.customer_detail_view,
+        name="admin-customer-detail",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/suspend",
+        admin_views.customer_suspend_view,
+        name="admin-customer-suspend",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/reactivate",
+        admin_views.customer_reactivate_view,
+        name="admin-customer-reactivate",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/diagnose",
+        admin_views.customer_diagnose_view,
+        name="admin-customer-diagnose",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/subscriptions/<uuid:subscription_id>/suspend",
+        admin_views.subscription_suspend_view,
+        name="admin-subscription-suspend",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/subscriptions/<uuid:subscription_id>/resume",
+        admin_views.subscription_resume_view,
+        name="admin-subscription-resume",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/subscriptions/<uuid:subscription_id>/activate",
+        admin_views.subscription_activate_view,
+        name="admin-subscription-activate",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/subscriptions/<uuid:subscription_id>/cancel",
+        admin_views.subscription_cancel_view,
+        name="admin-subscription-cancel",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/items/<uuid:item_id>/change-plan",
+        admin_views.item_change_plan_view,
+        name="admin-item-change-plan",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/items/<uuid:item_id>/change-quantity",
+        admin_views.item_change_quantity_view,
+        name="admin-item-change-quantity",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/entitlement-overrides",
+        admin_views.entitlement_override_view,
+        name="admin-entitlement-override",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/entitlement-overrides/<uuid:grant_id>/revoke",
+        admin_views.entitlement_override_revoke_view,
+        name="admin-entitlement-override-revoke",
+    ),
+    # Catalog and pricing: the one existing implementation, mounted here.
+    path(
+        "admin/catalog/products",
+        admin_views.catalog_products_view,
+        name="admin-catalog-products",
+    ),
+    path(
+        "admin/catalog/products/<uuid:product_id>/status",
+        admin_views.catalog_product_status_view,
+        name="admin-catalog-product-status",
+    ),
+    path(
+        "admin/catalog/products/<uuid:product_id>",
+        admin_catalog_views.product_detail_view,
+        name="admin-catalog-product-detail",
+    ),
+    # Phase 11: the products console - each product whole, and its integration.
+    path(
+        "admin/products/console", admin_product_views.console_view, name="admin-products"
+    ),
+    path(
+        "admin/products/<str:product_code>/integration",
+        admin_product_views.integration_view,
+        name="admin-product-integration",
+    ),
+    path(
+        "admin/products/<str:product_code>/integration/status",
+        admin_product_views.integration_status_view,
+        name="admin-product-integration-status",
+    ),
+    path(
+        "admin/products/<str:product_code>/integration/health-check",
+        admin_product_views.integration_health_check_view,
+        name="admin-product-integration-health",
+    ),
+    path(
+        "admin/catalog/products/<uuid:product_id>/trial",
+        admin_catalog_views.product_trial_view,
+        name="admin-catalog-product-trial",
+    ),
+    path(
+        "admin/catalog/features",
+        admin_views.catalog_features_view,
+        name="admin-catalog-features",
+    ),
+    path(
+        "admin/catalog/plans", admin_views.catalog_plans_view, name="admin-catalog-plans"
+    ),
+    # Phase 8 extension: payments, users, communication, network break-glass.
+    path(
+        "admin/payments/providers",
+        payment_views.providers_view,
+        name="admin-payment-providers",
+    ),
+    path(
+        "admin/payments/providers/<slug:key>",
+        payment_views.provider_detail_view,
+        name="admin-payment-provider",
+    ),
+    path("admin/orders", payment_views.staff_orders_view, name="admin-orders"),
+    path(
+        "admin/customers/<uuid:organization_id>/billing-terms",
+        payment_views.billing_terms_view,
+        name="admin-customer-billing-terms",
+    ),
+    path("admin/payments/events", payment_views.events_view, name="admin-payment-events"),
+    path(
+        "admin/customers/<uuid:organization_id>/billing",
+        payment_views.customer_billing_view,
+        name="admin-customer-billing",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/invoices/<uuid:invoice_id>/mark-paid",
+        payment_views.invoice_mark_paid_view,
+        name="admin-invoice-mark-paid",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/invoices/<uuid:invoice_id>/void",
+        payment_views.invoice_void_view,
+        name="admin-invoice-void",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/payments/<uuid:attempt_id>/refund",
+        payment_views.refund_view,
+        name="admin-payment-refund",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/network-policy/reset",
+        admin_console_views.network_reset_view,
+        name="admin-customer-network-reset",
+    ),
+    path("admin/users", admin_console_views.users_view, name="admin-users"),
+    path(
+        "admin/users/<uuid:user_id>",
+        admin_console_views.user_detail_view,
+        name="admin-user-detail",
+    ),
+    path(
+        "admin/users/<uuid:user_id>/<slug:action>",
+        admin_console_views.user_action_view,
+        name="admin-user-action",
+    ),
+    path(
+        "admin/communication/templates",
+        admin_console_views.templates_view,
+        name="admin-communication-templates",
+    ),
+    path(
+        "admin/communication/templates/<str:key>",
+        admin_console_views.template_detail_view,
+        name="admin-communication-template",
+    ),
+    path(
+        "admin/communication/templates/<str:key>/preview",
+        admin_console_views.template_preview_view,
+        name="admin-communication-template-preview",
+    ),
+    path(
+        "admin/communication/templates/<str:key>/test",
+        admin_console_views.template_test_view,
+        name="admin-communication-template-test",
+    ),
+    path(
+        "admin/communication/sender",
+        admin_console_views.sender_view,
+        name="admin-communication-sender",
+    ),
+    path(
+        "admin/settings",
+        admin_console_views.platform_settings_view,
+        name="admin-platform-settings",
+    ),
+    # Phase 8 extension: the plan builder.
+    path(
+        "admin/catalog/overview",
+        admin_catalog_views.overview_view,
+        name="admin-catalog-overview",
+    ),
+    path(
+        "admin/catalog/products/<uuid:product_id>/features",
+        admin_catalog_views.product_features_view,
+        name="admin-catalog-product-features",
+    ),
+    path(
+        "admin/catalog/plans/<uuid:plan_id>",
+        admin_catalog_views.plan_detail_view,
+        name="admin-catalog-plan-detail",
+    ),
+    path(
+        "admin/catalog/bundles/<uuid:bundle_id>",
+        admin_catalog_views.bundle_detail_view,
+        name="admin-catalog-bundle-detail",
+    ),
+    path(
+        "admin/catalog/bundles/<uuid:bundle_id>/status",
+        admin_catalog_views.bundle_status_view,
+        name="admin-catalog-bundle-status",
+    ),
+    path(
+        "admin/catalog/plan-versions/<uuid:plan_version_id>/publish",
+        admin_catalog_views.plan_version_publish_view,
+        name="admin-catalog-plan-version-publish",
+    ),
+    path(
+        "admin/catalog/bundle-versions/<uuid:bundle_version_id>/publish",
+        admin_catalog_views.bundle_version_publish_view,
+        name="admin-catalog-bundle-version-publish",
+    ),
+    path(
+        "admin/catalog/plans/<uuid:plan_id>/status",
+        admin_views.catalog_plan_status_view,
+        name="admin-catalog-plan-status",
+    ),
+    path(
+        "admin/catalog/plan-versions",
+        admin_views.catalog_plan_versions_view,
+        name="admin-catalog-plan-versions",
+    ),
+    path(
+        "admin/catalog/bundles",
+        admin_views.catalog_bundles_view,
+        name="admin-catalog-bundles",
+    ),
+    path(
+        "admin/catalog/bundle-versions",
+        admin_views.catalog_bundle_versions_view,
+        name="admin-catalog-bundle-versions",
+    ),
+    path(
+        "admin/catalog/price-books",
+        admin_views.catalog_price_books_view,
+        name="admin-catalog-price-books",
+    ),
+    path(
+        "admin/catalog/prices",
+        admin_views.catalog_prices_view,
+        name="admin-catalog-prices",
+    ),
+    # Partners.
+    path("admin/partners", admin_views.partners_view, name="admin-partners"),
+    path(
+        "admin/partners/overview",
+        admin_views.partners_overview_view,
+        name="admin-partners-overview",
+    ),
+    path(
+        "admin/partners/resellers",
+        admin_views.partner_resellers_view,
+        name="admin-partner-resellers",
+    ),
+    path(
+        "admin/partners/products",
+        admin_views.partner_console_products_view,
+        name="admin-partner-console-products",
+    ),
+    path(
+        "admin/partners/customers",
+        admin_views.partner_customers_view,
+        name="admin-partners-customers",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/customers",
+        admin_views.partner_customers_view,
+        name="admin-partner-customers",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/customers/<uuid:organization_id>/owner-invitation/resend",
+        admin_views.owner_invitation_resend_view,
+        name="admin-owner-invitation-resend",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/customers/<uuid:organization_id>/owner-invitation/revoke",
+        admin_views.owner_invitation_revoke_view,
+        name="admin-owner-invitation-revoke",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/summary",
+        admin_views.partner_summary_view,
+        name="admin-partner-summary",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/pricing",
+        admin_views.partner_pricing_view,
+        name="admin-partner-pricing",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/activity",
+        admin_views.partner_activity_view,
+        name="admin-partner-activity",
+    ),
+    path(
+        "admin/partners/white-label",
+        admin_views.partner_white_label_view,
+        name="admin-partners-white-label",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/brand",
+        admin_views.partner_brand_view,
+        name="admin-partner-brand",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/brand/logo",
+        admin_views.partner_logo_upload_view,
+        name="admin-partner-brand-logo-upload",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/brand/logo/view",
+        admin_views.partner_logo_view,
+        name="admin-partner-brand-logo",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/domains/request",
+        admin_views.partner_domain_request_view,
+        name="admin-partner-domain-request",
+    ),
+    path(
+        "admin/domains/<uuid:domain_id>/verify",
+        admin_views.domain_verify_view,
+        name="admin-domain-verify",
+    ),
+    path(
+        "admin/domains/<uuid:domain_id>/activate",
+        admin_views.domain_activate_view,
+        name="admin-domain-activate",
+    ),
+    path(
+        "admin/partners/reseller-review",
+        admin_views.reseller_review_view,
+        name="admin-reseller-review",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/administrators",
+        admin_views.partner_administrator_invite_view,
+        name="admin-partner-administrator-invite",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/members/<uuid:member_id>/resend-setup",
+        admin_views.partner_member_resend_setup_view,
+        name="admin-partner-member-resend-setup",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/prices",
+        admin_views.partner_price_view,
+        name="admin-partner-price",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/commission",
+        admin_views.partner_commission_view,
+        name="admin-partner-commission",
+    ),
+    path(
+        "admin/partners/capabilities",
+        admin_views.partner_capabilities_view,
+        name="admin-partner-capabilities",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>",
+        admin_views.partner_detail_view,
+        name="admin-partner-detail",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/status",
+        admin_views.partner_status_view,
+        name="admin-partner-status",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/capabilities",
+        admin_views.partner_capability_grant_view,
+        name="admin-partner-capability-grant",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/capabilities/revoke",
+        admin_views.partner_capability_revoke_view,
+        name="admin-partner-capability-revoke",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/members",
+        admin_views.partner_member_add_view,
+        name="admin-partner-member-add",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/members/<uuid:member_id>/remove",
+        admin_views.partner_member_remove_view,
+        name="admin-partner-member-remove",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/product-grants",
+        admin_views.partner_product_grant_view,
+        name="admin-partner-product-grant",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/product-grants/<uuid:grant_id>/revoke",
+        admin_views.partner_product_grant_revoke_view,
+        name="admin-partner-product-grant-revoke",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/price-books",
+        admin_views.partner_price_book_view,
+        name="admin-partner-price-book",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/links",
+        admin_views.partner_link_view,
+        name="admin-partner-link",
+    ),
+    path(
+        "admin/partner-links/<uuid:link_id>/status",
+        admin_views.partner_link_status_view,
+        name="admin-partner-link-status",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/domains",
+        admin_views.partner_domains_view,
+        name="admin-partner-domains",
+    ),
+    path(
+        "admin/domains/<uuid:domain_id>/disable",
+        admin_views.domain_disable_view,
+        name="admin-domain-disable",
+    ),
+    # Commissions and payouts.
+    path(
+        "admin/commission/rules",
+        admin_views.commission_rules_view,
+        name="admin-commission-rules",
+    ),
+    path(
+        "admin/commission/accruals",
+        admin_views.commission_accruals_view,
+        name="admin-commission-accruals",
+    ),
+    path(
+        "admin/commission/accruals/<uuid:accrual_id>/reverse",
+        admin_views.commission_reverse_view,
+        name="admin-commission-reverse",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/adjustments",
+        admin_views.commission_adjust_view,
+        name="admin-commission-adjust",
+    ),
+    path(
+        "admin/commission/reconcile",
+        admin_views.commission_reconcile_view,
+        name="admin-commission-reconcile",
+    ),
+    path("admin/payouts", admin_views.payouts_view, name="admin-payouts"),
+    path(
+        "admin/payouts/<uuid:payout_id>/ready",
+        admin_views.payout_ready_view,
+        name="admin-payout-ready",
+    ),
+    path(
+        "admin/payouts/<uuid:payout_id>/approve",
+        admin_views.payout_approve_view,
+        name="admin-payout-approve",
+    ),
+    path(
+        "admin/payouts/<uuid:payout_id>/paid",
+        admin_views.payout_paid_view,
+        name="admin-payout-paid",
+    ),
+    path(
+        "admin/payouts/<uuid:payout_id>/cancel",
+        admin_views.payout_cancel_view,
+        name="admin-payout-cancel",
+    ),
+    path(
+        "admin/payouts/<uuid:payout_id>/reconcile",
+        admin_views.payout_reconcile_view,
+        name="admin-payout-reconcile",
+    ),
+    # Who holds control-plane permissions.
+    path(
+        "admin/security/grants",
+        admin_views.security_grants_view,
+        name="admin-security-grants",
+    ),
+    path(
+        "admin/security/grants/<uuid:grant_id>/revoke",
+        admin_views.security_grant_revoke_view,
+        name="admin-security-grant-revoke",
+    ),
+    path(
+        "admin/security/roles",
+        admin_views.security_roles_view,
+        name="admin-security-roles",
+    ),
+    path(
+        "admin/security/roles/revoke",
+        admin_views.security_role_revoke_view,
+        name="admin-security-role-revoke",
+    ),
+]
+
+_partner = [
+    path("partner/portal", partner_views.portal_view, name="partner-portal"),
+    path(
+        "partner/<uuid:partner_id>/customers",
+        partner_views.customers_view,
+        name="partner-customers",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/subscription",
+        partner_views.customer_subscription_view,
+        name="partner-customer-subscription",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/billing",
+        partner_views.customer_billing_view,
+        name="partner-customer-billing",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/sell",
+        partner_views.sell_view,
+        name="partner-customer-sell",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/items/<uuid:item_id>/change-plan",
+        partner_views.change_plan_view,
+        name="partner-change-plan",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/items/<uuid:item_id>/change-quantity",
+        partner_views.change_quantity_view,
+        name="partner-change-quantity",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/subscriptions/<uuid:subscription_id>/cancel",
+        partner_views.cancel_view,
+        name="partner-cancel",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/subscriptions/<uuid:subscription_id>/activate",
+        partner_views.activate_view,
+        name="partner-activate",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/diagnose",
+        partner_views.diagnose_view,
+        name="partner-diagnose",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/owner-invitation/resend",
+        partner_views.owner_invitation_resend_view,
+        name="partner-owner-invitation-resend",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/owner-invitation/revoke",
+        partner_views.owner_invitation_revoke_view,
+        name="partner-owner-invitation-revoke",
+    ),
+    path(
+        "partner/<uuid:partner_id>/catalog",
+        partner_views.catalog_view,
+        name="partner-catalog",
+    ),
+    path(
+        "partner/<uuid:partner_id>/commissions",
+        partner_views.commissions_view,
+        name="partner-commissions",
+    ),
+    path(
+        "partner/<uuid:partner_id>/payouts",
+        partner_views.payouts_view,
+        name="partner-payouts",
+    ),
+    path(
+        "partner/<uuid:partner_id>/referrals",
+        partner_views.referrals_view,
+        name="partner-referrals",
+    ),
+    path(
+        "partner/<uuid:partner_id>/referral-codes/<uuid:code_id>/disable",
+        partner_views.referral_code_disable_view,
+        name="partner-referral-code-disable",
+    ),
+    path(
+        "partner/<uuid:partner_id>/branding",
+        partner_views.branding_view,
+        name="partner-branding",
+    ),
+    path(
+        "partner/<uuid:partner_id>/branding/logo",
+        partner_views.logo_upload_view,
+        name="partner-branding-logo",
+    ),
+    path(
+        "partner/<uuid:partner_id>/domains",
+        partner_views.domains_view,
+        name="partner-domains",
+    ),
+    path(
+        "partner/<uuid:partner_id>/domains/<uuid:domain_id>/verify",
+        partner_views.domain_verify_view,
+        name="partner-domain-verify",
+    ),
+    path(
+        "partner/<uuid:partner_id>/domains/<uuid:domain_id>/activate",
+        partner_views.domain_activate_view,
+        name="partner-domain-activate",
+    ),
+    path(
+        "partner/<uuid:partner_id>/domains/<uuid:domain_id>/disable",
+        partner_views.domain_disable_view,
+        name="partner-domain-disable",
+    ),
+]
+
+_public = [
+    path("public/branding", public_views.branding_view, name="public-branding"),
+    # Phase 12 (D-035 decision B, ADR-039): the edge's on-demand TLS gate.
+    path(
+        "public/edge/tls-allowed",
+        public_views.edge_tls_allowed_view,
+        name="public-edge-tls-allowed",
+    ),
+    path(
+        "public/branding/logo",
+        public_views.branding_logo_view,
+        name="public-branding-logo",
+    ),
+    path(
+        "public/referrals",
+        public_views.referral_capture_view,
+        name="public-referral-capture",
+    ),
+    path(
+        "referrals/convert", public_views.referral_convert_view, name="referral-convert"
+    ),
+    path("invitations", public_views.invitations_view, name="invitations"),
+    path(
+        "invitations/<uuid:organization_id>/accept",
+        public_views.invitation_accept_view,
+        name="invitation-accept",
+    ),
+]
+
+urlpatterns += _admin + _partner + _public

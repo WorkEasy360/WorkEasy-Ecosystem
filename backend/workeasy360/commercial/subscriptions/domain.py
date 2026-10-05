@@ -91,14 +91,23 @@ def advance_period(
         return start, end
 
     period_start, period_end = start, end
+    steps = 1
     # Bounded so a corrupt row cannot spin: 400 monthly rolls is over thirty
     # years, far beyond any legitimate gap, and reaching it is a data defect
     # rather than a long outage.
+    #
+    # Each step is measured from ``start``, not chained from the previous
+    # ``period_end``: chaining re-clamps an already-clamped date (a period
+    # anchored on the 29th/30th/31st that has passed through a shorter
+    # February comes out on the 28th), so a multi-month catch-up would drift
+    # to an earlier day-of-month than a renewal that ran on time ever would -
+    # exactly the anniversary drift ``add_months`` exists to prevent.
     for _ in range(400):
         if period_end > at:
             break
         period_start = period_end
-        period_end = add_months(period_end, months)
+        steps += 1
+        period_end = add_months(start, months * steps)
     return period_start, period_end
 
 
@@ -157,3 +166,23 @@ def effective_moment(
     if timing is ChangeTiming.IMMEDIATE:
         return now
     return max(period_end, now)
+
+
+def prorate(
+    amount_minor: int, *, period_start: datetime, period_end: datetime, at: datetime
+) -> int:
+    """The share of one period's price for the rest of that period (Phase 9).
+
+    A line added to a running subscription is paid for from ``at`` to the
+    period's end, then invoiced in full with the subscription from the next
+    period. Rounded half up to the minor unit, in integer arithmetic - never a
+    float (F1). Zero once the period has ended; the whole amount if ``at`` is
+    at or before its start.
+    """
+    total = int((period_end - period_start).total_seconds())
+    remaining = int((period_end - max(at, period_start)).total_seconds())
+    if amount_minor <= 0 or total <= 0 or remaining <= 0:
+        return 0
+    remaining = min(remaining, total)
+    # Half up: (2 * a * r + t) // (2 * t).
+    return (2 * amount_minor * remaining + total) // (2 * total)

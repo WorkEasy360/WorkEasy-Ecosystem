@@ -1,0 +1,305 @@
+/* The consoles' layout (Phase 8 extension). A two-column grid: the sidebar and
+   the page. Every grid/flex child that can hold wide content gets min-width: 0,
+   so a wide table scrolls inside its own wrapper instead of widening the page
+   past a 320px viewport (WCAG 1.4.10 reflow). */
+
+.frame {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-rows: 56px minmax(0, 1fr);
+  grid-template-areas:
+    "top top"
+    "side main";
+}
+
+.topbar {
+  grid-area: top;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+  padding: 0 var(--w360-space-4);
+  background: var(--w360-surface);
+  border-bottom: 1px solid var(--w360-border);
+  min-width: 0;
+}
+
+.brand {
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+/* Phase 11, Step 30: a white-label customer's own brand, in place of the
+   Workeasy360 wordmark - the organization console only, never Super Admin or
+   the partner portal. */
+.brandRow {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.brandLogo {
+  height: 24px;
+  max-width: 120px;
+  object-fit: contain;
+  flex: none;
+}
+
+.brandName {
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.context {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.menuButton {
+  display: none;
+  align-items: center;
+  gap: var(--w360-space-1);
+  background: none;
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  padding: 6px 10px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.menuGlyph {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.sidebar {
+  grid-area: side;
+  position: sticky;
+  top: 56px;
+  height: calc(100dvh - 56px);
+  overflow-y: auto;
+  background: var(--w360-surface);
+  border-right: 1px solid var(--w360-border);
+  padding: var(--w360-space-3) var(--w360-space-2) var(--w360-space-6);
+}
+
+.group + .group {
+  margin-top: var(--w360-space-3);
+}
+
+.groupTitle {
+  margin: var(--w360-space-2) var(--w360-space-3) var(--w360-space-1);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  /* muted, not faint: small uppercase text needs the full 4.5:1 */
+  color: var(--w360-text-muted);
+}
+
+.list,
+.subList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.subList {
+  padding-left: var(--w360-space-5);
+  margin-top: 2px;
+}
+
+.link {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-left: 3px solid transparent;
+  border-radius: var(--w360-radius-sm);
+  background: none;
+  color: var(--w360-text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: none;
+}
+
+.link:hover {
+  background: var(--w360-neutral-bg);
+  color: var(--w360-text);
+}
+
+/* Not colour alone (WCAG 1.4.1): the current page also has a left bar and
+   bold text; assistive technology gets aria-current="page". */
+.link[data-active] {
+  background: var(--w360-neutral-bg);
+  color: var(--w360-text);
+  border-left-color: var(--w360-brand);
+}
+
+.link[data-contains-current] {
+  color: var(--w360-text);
+}
+
+.linkText {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chevron {
+  transition: transform 0.15s ease;
+  font-size: 16px;
+}
+
+.chevron[data-expanded] {
+  transform: rotate(90deg);
+}
+
+.main {
+  grid-area: main;
+  min-width: 0;
+  width: 100%;
+  max-width: 1200px;
+  padding: var(--w360-space-6) var(--w360-space-6) var(--w360-space-7);
+}
+
+.backdrop {
+  display: none;
+}
+
+.accountWrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--w360-brand);
+  color: var(--w360-brand-contrast);
+  border: none;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  background: var(--w360-surface-raised);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  box-shadow: var(--w360-shadow-md);
+  min-width: 220px;
+  padding: var(--w360-space-2);
+  display: flex;
+  flex-direction: column;
+  z-index: 30;
+}
+
+.menuItem {
+  display: block;
+  text-align: left;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--w360-radius-sm);
+  font-size: 14px;
+  background: none;
+  border: none;
+  color: var(--w360-text);
+  text-decoration: none;
+}
+
+.menuItem:hover {
+  background: var(--w360-neutral-bg);
+}
+
+
+@media (max-width: 900px) {
+  .frame {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "top"
+      "main";
+  }
+
+  .menuButton {
+    display: inline-flex;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 56px;
+    bottom: 0;
+    left: 0;
+    height: auto;
+    width: min(288px, 86vw);
+    z-index: 25;
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform 0.18s ease, visibility 0.18s;
+    box-shadow: var(--w360-shadow-md);
+  }
+
+  .sidebar[data-open] {
+    transform: none;
+    visibility: visible;
+    /* Visible at once when opening - a visibility transition would keep it
+       hidden for the first frame and the focus move into it would fail;
+       closing keeps the delay so it stays visible while sliding out. */
+    transition: transform 0.18s ease, visibility 0s;
+  }
+
+  .backdrop {
+    display: block;
+    position: fixed;
+    inset: 56px 0 0 0;
+    z-index: 24;
+    border: none;
+    background: rgba(15, 17, 21, 0.45);
+  }
+
+  .main {
+    padding: var(--w360-space-5) var(--w360-space-4) var(--w360-space-6);
+  }
+}
+
+@media (max-width: 480px) {
+  .menuLabel {
+    display: none;
+  }
+
+  .brand {
+    font-size: 15px;
+  }
+}
+
+/* Last, so it wins over the drawer's transitions above. */
+@media (prefers-reduced-motion: reduce) {
+  .chevron,
+  .sidebar,
+  .sidebar[data-open] {
+    transition: none;
+  }
+}

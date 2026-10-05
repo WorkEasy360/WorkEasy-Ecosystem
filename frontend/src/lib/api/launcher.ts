@@ -5,17 +5,39 @@ export function getAppDirectory(orgSlug: string): Promise<{ apps: AppDirectoryEn
   return apiFetch(`/api/v1/orgs/${orgSlug}/apps`);
 }
 
-/**
- * Requests a launch. The backend re-checks access and, if allowed, answers
- * with a redirect it expects the *browser* to follow as a full navigation
- * (Task 54: never an iframe) - so this throws on denial (409) and otherwise
- * returns nothing for the caller to do except navigate the browser itself,
- * via a real `<form>` submission or `window.location`, never a `fetch`
- * that would swallow the redirect (Task 17: no raw token handling here -
- * the launcher never sees a code, a token or the product's launch_url).
- */
 export const LAUNCH_PATH = (orgSlug: string, productCode: string): string =>
   `/api/v1/orgs/${orgSlug}/apps/${productCode}/launch`;
+
+export interface LaunchResult {
+  redirect_url: string;
+  state: string;
+}
+
+/**
+ * Requests a launch. The backend re-checks access and, on success, answers
+ * with the **one, server-computed destination** to send the browser to next
+ * - never a value this app chose or a client-supplied URL (Task 55: launch
+ * URLs are admin-configured; the browser never submits one).
+ *
+ * Not a real `<form>` POST to a 302, on purpose: every real product's launch
+ * URL is a different origin, and this app's own CSP (`form-action 'self'`)
+ * refuses a form submission that answers with a cross-origin redirect -
+ * verified in Chrome, not assumed. `apiFetch` already sends
+ * `Accept: application/json`, which is what makes the backend answer with
+ * this JSON body instead of a 302 (`launcher_views._wants_json`). A denial
+ * (409) throws `ApiError`, whose `body.state` is one of
+ * `AppDirectoryEntry["state"]` - the caller renders it with
+ * `launchCopy.launchDenialMessage`, never the raw code.
+ *
+ * The caller is responsible for the actual navigation
+ * (`window.location.assign(redirect_url)`), which is what makes it a real
+ * top-level browser navigation and not a background fetch of the product's
+ * page (Task 17/54 preserved: this function never reads the response body
+ * as anything but a URL to hand the browser, and never handles a token).
+ */
+export function launchProduct(orgSlug: string, productCode: string): Promise<LaunchResult> {
+  return apiFetch(LAUNCH_PATH(orgSlug, productCode), { method: "POST" });
+}
 
 export function getSeatOverview(
   orgSlug: string,

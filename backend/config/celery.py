@@ -23,7 +23,13 @@ backend_dir = Path(__file__).resolve().parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.development")
+# Production, like wsgi.py and asgi.py (Phase 12, G-07). A worker or Beat
+# started without the variable used to run *development* settings - DEBUG,
+# the console email backend (sealed links printed to the log) and the fake
+# payment provider. Now it runs production's, which refuse to start without
+# their configuration: a missing variable is a loud failure, not a quiet one.
+# Development and tests always name their settings module explicitly.
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
 
 app = Celery("workeasy360")
 app.config_from_object("django.conf:settings", namespace="CELERY")

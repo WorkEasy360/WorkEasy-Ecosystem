@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import unicodedata
 
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+
 
 def normalize_email(email: str) -> str:
     """Return the canonical stored form of an address.
@@ -54,4 +57,13 @@ def is_plausible_email(email: str) -> bool:
     if not email or email.count("@") != 1:
         return False
     local, _, domain = email.partition("@")
-    return bool(local) and "." in domain and not domain.startswith(".")
+    if not (bool(local) and "." in domain and not domain.startswith(".")):
+        return False
+    # The same validator the model applies. Without it an address such as
+    # "a b@example.com" or "<x>@example.com" passes this check, is refused
+    # later by the model as a ValidationError, and reaches the caller as a 500.
+    try:
+        validate_email(email)
+    except ValidationError:
+        return False
+    return True

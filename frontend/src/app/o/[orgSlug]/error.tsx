@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import local from "@/features/console/ConsoleScreens.module.css";
 
 /**
  * Task 25/26: a failed section inside the shell (a launcher fetch that
@@ -21,7 +22,7 @@ export default function OrgSectionError({
   }, [error]);
 
   return (
-    <div role="alert" className="w360-card" style={{ padding: "var(--w360-space-5)" }}>
+    <div role="alert" className={local.problem}>
       <p>This section couldn&apos;t be loaded.</p>
       <button className="w360-btn w360-btn-secondary" onClick={() => reset()}>
         Try again

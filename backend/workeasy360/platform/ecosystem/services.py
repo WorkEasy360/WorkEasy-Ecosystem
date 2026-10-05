@@ -9,7 +9,8 @@ administration is, and for the same reason:
 
     authz.require(ctx, "platform.integration.<x>")   # role, and dangerous ->
                                                      # AAL 2, no impersonation
-    authz.require_platform_staff(ctx, operation=...) # internal identity
+    authz.require_platform_staff(ctx, operation=..., permission=...)
+                                                     # held via a StaffGrant
 
 Either alone is one misconfiguration away from a customer administrator being
 able to register an application against the platform, mint credentials for it
@@ -110,7 +111,7 @@ class IssuedCredential:
 
 def _authorise(ctx: TenantContext, permission: str, operation: str) -> None:
     authz.require(ctx, permission)
-    authz.require_platform_staff(ctx, operation=operation)
+    authz.require_platform_staff(ctx, operation=operation, permission=permission)
 
 
 # --- registration --------------------------------------------------------

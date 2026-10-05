@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from celery.exceptions import SoftTimeLimitExceeded
+
 from workeasy360.contracts.enums import NotificationChannel
 from workeasy360.contracts.ports.notifications import (
     DeliveryResult,
@@ -36,10 +38,6 @@ def register_channel(adapter: object) -> None:
 
 def get_channel(channel: NotificationChannel | str) -> object | None:
     return _channels.get(str(channel))
-
-
-def available_channels() -> list[str]:
-    return sorted(_channels)
 
 
 class EmailChannel:
@@ -69,20 +67,32 @@ class EmailChannel:
             )
 
         try:
+            from email.utils import formataddr
+
             connection = get_connection(
                 timeout=getattr(settings, "EMAIL_READ_TIMEOUT_S", 10.0)
             )
+            # The address is always the deployment's own; only the display
+            # name comes from the communication settings (Phase 8 extension).
+            from_email = getattr(settings, "DEFAULT_FROM_EMAIL", None)
+            if from_email and rendered.sender_name:
+                from_email = formataddr((rendered.sender_name, from_email))
             message = EmailMultiAlternatives(
                 subject=rendered.subject,
                 body=rendered.body_text,
-                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
+                from_email=from_email,
                 to=[recipient],
+                reply_to=[rendered.reply_to] if rendered.reply_to else None,
                 connection=connection,
             )
             if rendered.body_html:
                 message.attach_alternative(rendered.body_html, "text/html")
             sent = message.send(fail_silently=False)
             return DeliveryResult(success=bool(sent))
+        except SoftTimeLimitExceeded:
+            # The task's budget, not a provider failure: it must end the task
+            # (the claimed row's lease then expires and the sweeper retries).
+            raise
         except Exception as exc:
             return DeliveryResult(
                 success=False,
@@ -121,13 +131,14 @@ def _is_transient(exc: Exception) -> bool:
     silently changes behaviour when a vendor rewords an error.
     """
     import smtplib
-    import socket
 
+    # ``socket.timeout`` is an alias of ``TimeoutError`` since Python 3.10
+    # (this project's floor), so it is covered below without importing a
+    # socket module outside integration/egress.
     transient_types = (
         smtplib.SMTPConnectError,
         smtplib.SMTPServerDisconnected,
         smtplib.SMTPHeloError,
-        socket.timeout,
         ConnectionError,
         TimeoutError,
         OSError,

@@ -34,6 +34,7 @@ def tenant_context_view(request: HttpRequest, org_slug: str) -> JsonResponse:
             "membership_id": str(ctx.membership_id),
             "organization_status": ctx.organization_status.value,
             "write_allowed": ctx.is_write_allowed,
+            "aal": ctx.aal,
             "method": request.method,
         }
     )
@@ -52,7 +53,11 @@ def memberships_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     ctx = request.tenant_context  # type: ignore[attr-defined]
     authz.require(ctx, "platform.member.view")
 
-    limit = min(int(request.GET.get("limit", 25)), 100)
+    # Clamped by the selector; a non-numeric value is the default page, not a 500.
+    try:
+        limit = int(request.GET.get("limit") or 25)
+    except ValueError:
+        limit = 25
     cursor = request.GET.get("cursor") or None
 
     page = membership_summaries(ctx, limit=limit, cursor=cursor)
@@ -65,7 +70,22 @@ def memberships_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     )
 
 
-@require_http_methods(["GET"])
+@require_http_methods(["DELETE"])
+def membership_detail_view(
+    request: HttpRequest, org_slug: str, membership_id: str
+) -> JsonResponse:
+    """Remove a member (Phase 5, Task 20/32/67 - the minimal membership-
+    lifecycle mutation this phase adds; see platform.onboarding.services.
+    remove_member for why a full invitation system is not built here).
+    """
+    from workeasy360.platform.onboarding.services import remove_member
+
+    ctx = request.tenant_context  # type: ignore[attr-defined]
+    remove_member(ctx, membership_id)
+    return JsonResponse({"ok": True})
+
+
+@require_http_methods(["GET", "PATCH"])
 def organization_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     """The current organization's own display data (Task 39: organization
     settings). ``platform.organization.view`` is a baseline permission every
@@ -75,6 +95,19 @@ def organization_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     from workeasy360.platform.organizations.selectors import organization_summary
 
     ctx = request.tenant_context  # type: ignore[attr-defined]
+    if request.method == "PATCH":
+        # Phase 8 extension: rename (``platform.organization.update``). Only
+        # the display name - the slug is URL identity and never changes.
+        import json
+
+        from workeasy360.platform.administration.security import rename
+
+        try:
+            body = json.loads(request.body or b"{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            body = {}
+        name = body.get("display_name") if isinstance(body, dict) else None
+        return JsonResponse(rename(ctx, display_name=name))
     authz.require(ctx, "platform.organization.view")
 
     summary = organization_summary(ctx)

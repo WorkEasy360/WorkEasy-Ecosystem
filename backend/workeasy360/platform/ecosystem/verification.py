@@ -115,6 +115,7 @@ def verify(
     what "suspended" means or that the concept exists.
     """
     from workeasy360.platform.entitlements.selectors import decision_for_organization
+    from workeasy360.platform.organizations.selectors import organization_status
 
     now = timezone.now()
     revalidate_after = int(settings.OIDC_ENTITLEMENT_REVALIDATE_AFTER_S)
@@ -139,6 +140,12 @@ def verify(
             decision = decision_for_organization(
                 organization_id, product_code, write=write
             )
+            # Phase 12 (G-24): the organization's own lifecycle, not only its
+            # entitlement. A staff-suspended organization is read-only on the
+            # platform (the R-10 write block reads this same status) but was
+            # reported ``write_allowed: true`` here, because the entitlement
+            # decision only knows about *subscription* suspension.
+            status = organization_status(organization_id)
     except Exception as exc:
         # Everything else - the database is down, the snapshot table is
         # unreadable, the gate is unregistered. None of these is a statement
@@ -153,6 +160,36 @@ def verify(
         raise VerificationUnavailable(
             "The entitlement decision could not be determined."
         ) from exc
+
+    if status is None or not status.allows_read:
+        metrics.increment(
+            "ecosystem_entitlement_verifications_total",
+            decision=DENY,
+            reason=UNKNOWN_ORGANIZATION_REASON,
+        )
+        return VerificationResult(
+            decision=DENY,
+            reason=UNKNOWN_ORGANIZATION_REASON,
+            product_code=product_code,
+            organization_id=str(organization_id),
+            write_allowed=False,
+            checked_at=now.isoformat(),
+            revalidate_after=revalidate_after,
+        )
+    organization_writable = status.allows_write
+    if decision.allowed and write and not organization_writable:
+        metrics.increment(
+            "ecosystem_entitlement_verifications_total", decision=DENY, reason="suspended"
+        )
+        return VerificationResult(
+            decision=DENY,
+            reason="suspended",
+            product_code=product_code,
+            organization_id=str(organization_id),
+            write_allowed=False,
+            checked_at=now.isoformat(),
+            revalidate_after=revalidate_after,
+        )
 
     if not decision.allowed:
         reason = _REASON_MAP.get(decision.reason_code.value, UNKNOWN_ORGANIZATION_REASON)
@@ -189,7 +226,7 @@ def verify(
         # One read answers both, because ``EntitlementDecision`` already
         # carries ``write_allowed`` alongside ``allowed`` - which is why the
         # decision is returned rather than raised on this path.
-        write_allowed=decision.write_allowed,
+        write_allowed=decision.write_allowed and organization_writable,
         checked_at=now.isoformat(),
         revalidate_after=revalidate_after,
     )

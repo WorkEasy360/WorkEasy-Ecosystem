@@ -105,12 +105,15 @@ def test_startup_verifies_the_rls_role(client):
     assert rls["ok"]
 
 
-def test_deep_health_requires_staff(client, user_factory):
+def test_deep_health_requires_staff(client, user_factory, signed_in):
     """An unauthenticated deep probe would disclose infrastructure topology."""
     assert client.get("/healthz/deep").status_code == 404
 
     staff = user_factory(is_staff=True)
-    client.force_login(staff)
+    # Phase 12 (D-037): staff need a verified second factor here too.
+    signed_in(staff, aal=1, mfa_verified=False)
+    assert client.get("/healthz/deep").status_code == 404
+    signed_in(staff, aal=2)
     assert client.get("/healthz/deep").status_code == 200
 
 
@@ -282,11 +285,13 @@ def test_unbounded_label_values_are_caught():
             metrics.increment("leaky_total", route=f"/thing/{i}")
 
 
+@pytest.mark.django_db
 def test_route_label_uses_the_url_pattern(client):
-    """Never the resolved path, or every object id becomes a series."""
+    """Never the resolved path, or every object id becomes a series. (Not a
+    health probe: probes are answered before the request metrics, Phase 12.)"""
     from workeasy360.platform.observability.metrics import HTTP_REQUESTS, metrics
 
-    client.get("/healthz/live")
+    client.get("/api/v1/admin/customers/018f7d4e-0000-7000-8000-000000000000")
     snapshot = metrics.snapshot().get(HTTP_REQUESTS, {})
     assert snapshot
     for key in snapshot:

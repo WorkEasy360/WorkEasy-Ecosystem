@@ -1,0 +1,11 @@
+# Staging only: authoritative for the test partner domain so the platform's
+# own verification code (a real DNS TXT query) can be exercised end to end.
+# The rehearsal "publishes" the ownership record by editing the zone file.
+wl-brand.com:53 {
+    file /etc/coredns/wl-brand.com.zone
+    reload 2s
+    log
+}
+.:53 {
+    forward . 1.1.1.1 8.8.8.8
+}

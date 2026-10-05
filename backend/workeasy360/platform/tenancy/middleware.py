@@ -18,6 +18,7 @@ results in a wider query.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 
 from django.http import HttpRequest, HttpResponse, JsonResponse
@@ -88,6 +89,14 @@ class TenancyMiddleware:
             # locked organization is not distinguishable from a missing one.
             return self._deny_uniform(request, resolution)
 
+        # Phase 8 extension: the organization's own access policy - network
+        # allow-list, required MFA, session age, "signed out of this
+        # organization", password policy. Evaluated only once membership and
+        # status have admitted the request, so it can deny and never widen.
+        denial = self._check_access_policy(request, resolution)
+        if denial is not None:
+            return denial
+
         # R-10 chokepoint 1. Blocking at the HTTP boundary means the caller
         # gets a fast, well-shaped 402 instead of a 500 from deep inside a
         # service - but it is not the only block, because middleware never
@@ -113,6 +122,32 @@ class TenancyMiddleware:
 
         return None
 
+    @staticmethod
+    def _check_access_policy(
+        request: HttpRequest, resolution: TenantResolution
+    ) -> HttpResponse | None:
+        from workeasy360.contracts.values import access_policy
+        from workeasy360.platform.observability.metrics import metrics
+        from workeasy360.platform.tenancy.resolution import session_facts
+
+        facts = session_facts(request, resolution.organization_id)
+        reason = access_policy.evaluate(resolution.access_policy, facts, now=time.time())
+        if reason is None:
+            return None
+        logger.info(
+            "tenancy.access_policy.denied",
+            extra={
+                "event": "tenancy.access_policy.denied",
+                "organization_id": str(resolution.organization_id),
+                "reason": reason,
+            },
+        )
+        metrics.increment("tenancy_access_policy_denials_total", reason=reason)
+        return JsonResponse(
+            {"code": reason, "detail": access_policy.DENIAL_MESSAGES[reason]},
+            status=access_policy.DENIAL_STATUS[reason],
+        )
+
     def _run_in_tenant_scope(
         self, request: HttpRequest, resolution: TenantResolution
     ) -> HttpResponse:
@@ -129,10 +164,14 @@ class TenancyMiddleware:
             with tenant_db_scope(ctx):
                 response = self.get_response(request)
 
-                # A 4xx/5xx from a view must not commit partial work. Django
-                # only rolls back on an exception, so an error *response*
-                # would otherwise commit whatever the view wrote before
-                # deciding to fail.
+                # A 5xx must not commit partial work. Every view exception
+                # reaches here already converted to a response - Django's
+                # handler and DomainErrorMiddleware.process_exception both
+                # run inside this block - so this is the only rollback
+                # trigger. A 4xx deliberately still commits: the launcher's
+                # DENIED seat audit relies on it. The consequence, for
+                # writers: validate before the first write, or keep it in an
+                # inner atomic() the domain error propagates out of (D-016).
                 if response.status_code >= 500:
                     from django.db import transaction
 

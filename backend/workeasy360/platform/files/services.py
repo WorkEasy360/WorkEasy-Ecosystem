@@ -155,7 +155,9 @@ def register_upload(
         declared_content_type=content_type,
         size_bytes=size_bytes,
         module=module,
-        uploaded_by_id=ctx.membership_id,
+        # A control-plane principal holds no membership, and the nil id
+        # would violate the foreign key at commit.
+        uploaded_by_id=None if ctx.is_control_plane else ctx.membership_id,
         status=FileStatus.PENDING_UPLOAD.value,
     )
 
@@ -323,3 +325,20 @@ def download_url(ctx: TenantContext, file_id: UUID) -> str:
         record.storage_key,
         ttl=timedelta(seconds=getattr(settings, "FILE_URL_TTL_SECONDS", 900)),
     )
+
+
+def scan_now(file_id: UUID) -> None:
+    """Scan a quarantined file with the configured scanner and record the result.
+
+    For small, synchronously-uploaded files (a partner's logo). The scanner is
+    the same ``MalwareScanner`` the port defines, so registering a real one
+    changes this call's behaviour without changing any caller. A file that is
+    not in quarantine is left alone: promoting an arbitrary file to ``clean``
+    from here would bypass the upload flow.
+    """
+    from workeasy360.platform.files.models import File
+
+    record = File.objects.get(id=file_id)
+    if record.status != FileStatus.QUARANTINED.value:
+        return
+    mark_scanned(file_id, NullScanner().scan(record.storage_key))

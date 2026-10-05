@@ -12,12 +12,12 @@ dead-letters**. It does not guess, and it does not run unscoped.
 from __future__ import annotations
 
 import logging
-import random
 from typing import Any
 
 from celery import Task
 
 from workeasy360.contracts.errors import MissingTenantContext
+from workeasy360.contracts.values import backoff
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.observability.correlation import (
     current_correlation_id,
@@ -60,8 +60,12 @@ class TenantTask(Task):
     retry_backoff: bool = True
     retry_jitter: bool = True
 
-    _tenant_token: Any = None
-    _correlation_token: Any = None
+    # The context tokens of a run live on ``self.request``, never on ``self``:
+    # a task object is one per process and shared by every thread in it, while
+    # the request is per execution and thread-local. On ``self``, two
+    # concurrent runs (a thread pool, or eager tasks from threads) would each
+    # reset the other's context - a cross-tenant defect, and a ValueError from
+    # ``ContextVar.reset``.
 
     # --- publish side -----------------------------------------------------
 
@@ -93,7 +97,7 @@ class TenantTask(Task):
         raw_headers = getattr(self.request, "headers", None) or {}
 
         correlation = raw_headers.get(CORRELATION_HEADER) or None
-        self._correlation_token = set_correlation_id(correlation)
+        self.request.w360_correlation_token = set_correlation_id(correlation)
 
         raw_tenant = raw_headers.get(TENANT_HEADER)
         if raw_tenant is None:
@@ -109,10 +113,10 @@ class TenantTask(Task):
                 raise MissingTenantContext(
                     f"{self.name} dispatched without tenant context; refusing to start."
                 )
-            self._tenant_token = set_tenant(None)
+            self.request.w360_tenant_token = set_tenant(None)
         else:
             ctx = TenantContext.from_headers(raw_tenant)
-            self._tenant_token = set_tenant(ctx)
+            self.request.w360_tenant_token = set_tenant(ctx)
 
         logger.info(
             "task.started",
@@ -131,12 +135,13 @@ class TenantTask(Task):
         # Reset in after_return rather than in the task body so context is
         # cleared even when the task raises. A worker process is reused for
         # thousands of tasks; a leaked context is a cross-tenant defect.
-        if self._tenant_token is not None:
-            reset_tenant(self._tenant_token)
-            self._tenant_token = None
-        if self._correlation_token is not None:
+        tenant_token = getattr(self.request, "w360_tenant_token", None)
+        if tenant_token is not None:
+            reset_tenant(tenant_token)
+            self.request.w360_tenant_token = None
+        if getattr(self.request, "w360_correlation_token", None) is not None:
             set_correlation_id(None)
-            self._correlation_token = None
+            self.request.w360_correlation_token = None
 
         logger.info(
             "task.finished",
@@ -181,11 +186,12 @@ class TenantTask(Task):
         """
         from django.conf import settings
 
-        base = float(getattr(settings, "TASK_RETRY_BACKOFF_BASE_S", 2.0))
-        cap = float(getattr(settings, "TASK_RETRY_BACKOFF_CAP_S", 3600.0))
-        ceiling = min(cap, base * (2**attempt))
         metrics.increment(TASK_RETRIES, task=self.name)
-        return random.uniform(0, ceiling)  # noqa: S311 - retry jitter, not cryptography
+        return backoff.full_jitter(
+            attempt,
+            base=float(getattr(settings, "TASK_RETRY_BACKOFF_BASE_S", 2.0)),
+            cap=float(getattr(settings, "TASK_RETRY_BACKOFF_CAP_S", 3600.0)),
+        )
 
 
 class CrossTenantTask(TenantTask):

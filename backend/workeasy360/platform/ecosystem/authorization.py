@@ -55,6 +55,7 @@ import hashlib
 import hmac
 import re
 import secrets
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -66,6 +67,8 @@ from django.utils import timezone
 
 from workeasy360.contracts.enums import LicensingMode, OrganizationStatus
 from workeasy360.contracts.ports.entitlements import get_gate
+from workeasy360.contracts.values import access_policy
+from workeasy360.contracts.values.access_policy import SessionFacts
 from workeasy360.contracts.values.manifest import REQUIRED_SCOPE
 from workeasy360.platform.ecosystem import protocol
 from workeasy360.platform.observability.logging import get_logger
@@ -315,6 +318,11 @@ class ResolvedSubject:
     membership_id: UUID
     organization_status: OrganizationStatus
     aal: int
+    #: What the authorizing browser session vouched for when the access policy
+    #: allowed it. Recorded on the code (``issue_code``) so the token endpoint
+    #: re-judges the *live* policy against the session that actually signed in,
+    #: not against an imaginary least-trusted one (Phase 12).
+    facts: SessionFacts | None = None
 
     def to_context(self) -> Any:
         """The verified tenant context this authorization acts in.
@@ -336,7 +344,11 @@ class ResolvedSubject:
 
 
 def resolve_subject(
-    *, user_id: UUID, organization_id: UUID | None, aal: int
+    *,
+    user_id: UUID,
+    organization_id: UUID | None,
+    aal: int,
+    facts: SessionFacts | None = None,
 ) -> ResolvedSubject:
     """Verify membership and organization status. Raises on any failure.
 
@@ -392,12 +404,30 @@ def resolve_subject(
             "This organization cannot be signed in to at present.",
         )
 
+    # Phase 8 extension: the organization's access policy, applied exactly as
+    # the tenancy middleware applies it to every console request - the same
+    # pure function over the same resolution, so a product sign-in can never
+    # be the way around an allow-list or a required second factor. Callers
+    # that cannot describe a browser session (none today) pass no facts and
+    # are judged as the least trusted session.
+    reason = access_policy.evaluate(
+        resolution.access_policy,
+        facts or SessionFacts(client_ip="", authenticated_at=None, mfa_verified=False),
+        now=time.time(),
+    )
+    if reason is not None:
+        metrics.increment(
+            "ecosystem_authorization_denied_total", reason=protocol.ACCESS_POLICY_DENIED
+        )
+        raise protocol.OAuthError(protocol.ACCESS_POLICY_DENIED, reason)
+
     return ResolvedSubject(
         user_id=user_id,
         organization_id=resolution.organization_id,
         membership_id=resolution.membership_id,
         organization_status=status,
         aal=aal,
+        facts=facts,
     )
 
 
@@ -624,6 +654,41 @@ def prune_expired_pending(*, older_than_seconds: int = 3600) -> int:
 # --- step 10: mint --------------------------------------------------------
 
 
+def facts_record(facts: SessionFacts | None) -> dict[str, Any] | None:
+    """The session facts as stored on an authorization code (JSON)."""
+    if facts is None:
+        return None
+    return {
+        "client_ip": facts.client_ip,
+        "authenticated_at": facts.authenticated_at,
+        "mfa_verified": facts.mfa_verified,
+        "password_noncompliant": facts.password_noncompliant,
+    }
+
+
+def facts_from_record(raw: Any) -> SessionFacts | None:
+    """Stored facts back to ``SessionFacts``; anything malformed is ``None``,
+    which ``resolve_subject`` judges as the least-trusted session."""
+    if not isinstance(raw, dict):
+        return None
+    authenticated_at = raw.get("authenticated_at")
+    client_ip = raw.get("client_ip")
+    valid_time = authenticated_at is None or (
+        isinstance(authenticated_at, int | float)
+        and not isinstance(authenticated_at, bool)
+    )
+    if not isinstance(client_ip, str) or not valid_time:
+        return None
+    return SessionFacts(
+        client_ip=client_ip,
+        authenticated_at=float(authenticated_at)
+        if authenticated_at is not None
+        else None,
+        mfa_verified=raw.get("mfa_verified") is True,
+        password_noncompliant=raw.get("password_noncompliant") is True,
+    )
+
+
 def issue_code(request: AuthorizationRequest, subject: ResolvedSubject) -> GrantedCode:
     """Mint a single-use code bound to everything verified above.
 
@@ -648,6 +713,7 @@ def issue_code(request: AuthorizationRequest, subject: ResolvedSubject) -> Grant
         code_challenge=request.code_challenge,
         code_challenge_method=request.code_challenge_method,
         nonce=request.nonce,
+        session_facts=facts_record(subject.facts),
         expires_at=timezone.now() + timezone.timedelta(seconds=ttl),
     )
 
@@ -829,6 +895,14 @@ def _revalidate_subject(row: Any) -> None:
             # reached AAL 2 is not present at the token endpoint, and
             # defaulting it down here would silently demote every step-up.
             aal=row.aal,
+            # The same reasoning for the access policy's session facts (sign-in
+            # time, second factor, the browser's address). Before Phase 12 none
+            # were passed here, so the live policy judged a least-trusted
+            # session and every organization that required MFA, an IP
+            # allow-list or a session age failed every product sign-in at this
+            # step with invalid_grant. The policy itself is still re-read live:
+            # tightened inside the code's lifetime, it still refuses.
+            facts=facts_from_record(row.session_facts),
         )
         require_entitlement(subject, row.integration.product_code)
         require_seat(subject, row.integration.product_code)

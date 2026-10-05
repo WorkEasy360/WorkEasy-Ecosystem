@@ -341,6 +341,38 @@ def test_revocation_takes_effect_after_version_bump(two_tenants, in_tenant, gran
         assert not authz.check(a["ctx"], "platform.member.view").allowed
 
 
+def test_a_deploy_that_changes_system_role_grants_ignores_sets_cached_before_it(
+    two_tenants, in_tenant, grant_role, monkeypatch
+):
+    """Phase 6 granted owner/admin new permissions by migration, for every
+    organization at once, with no per-organization version bump. A set
+    cached before the deploy - under the old key format, or under another
+    catalog generation - must never be read, or every owner sees the new
+    pages as 403 for up to the cache TTL (found by the upgrade rehearsal)."""
+    from django.core.cache import cache
+
+    a = two_tenants["a"]
+    grant_role(a["org"], a["membership"], ["platform.member.view"])
+    prefix = f"w360:{a['org'].id}:perms:{a['membership'].id}"
+
+    with in_tenant(a["ctx"]):
+        version = authz._permission_set_version(a["ctx"])
+        cache.set(f"{prefix}:v{version}", [], 300)  # before the fingerprint existed
+        cache.set(f"{prefix}:v{version}:{'0' * 12}", [], 300)  # another generation
+        assert authz.check(a["ctx"], "platform.member.view").allowed
+
+    generation = authz._catalog_generation()
+    changed = {**authz.SYSTEM_ROLES["admin"], "permissions": ["platform.member.view"]}
+    monkeypatch.setitem(authz.SYSTEM_ROLES, "admin", changed)
+    authz._catalog_generation.cache_clear()
+    try:
+        assert authz._catalog_generation() != generation
+    finally:
+        monkeypatch.undo()
+        authz._catalog_generation.cache_clear()
+    assert authz._catalog_generation() == generation
+
+
 def test_authorization_never_fails_open_when_cache_is_down(
     two_tenants, in_tenant, grant_role, monkeypatch
 ):

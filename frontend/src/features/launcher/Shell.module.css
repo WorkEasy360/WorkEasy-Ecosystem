@@ -4,6 +4,16 @@
   flex-direction: column;
 }
 
+/* The container centres itself with auto margins, and in a flex column auto
+   margins switch stretching off: main would then size to its content's minimum
+   width, so a wide table stretched the page past a 320px viewport instead of
+   scrolling inside its own wrapper (WCAG 1.4.10 reflow). */
+.main {
+  width: 100%;
+  min-width: 0;
+  padding-block: var(--w360-space-6);
+}
+
 .header {
   border-bottom: 1px solid var(--w360-border);
   background: var(--w360-surface);
@@ -71,9 +81,15 @@
   color: var(--w360-text);
 }
 
+/* Not colour alone (WCAG 1.4.1): the current page also gets an underline,
+ * so it stays distinguishable in forced-colours / low-contrast views.
+ * Assistive technology gets aria-current="page" from Shell.tsx. */
 .navLink[data-active] {
   background: var(--w360-neutral-bg);
   color: var(--w360-text);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 6px;
 }
 
 .userMenuWrap {

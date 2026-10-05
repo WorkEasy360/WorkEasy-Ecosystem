@@ -1,10 +1,11 @@
 import { apiFetch } from "./client";
-import type { OrganizationSummary, SessionState } from "./types";
+import type { OrganizationsPage, SessionState } from "./types";
 
 export type LoginErrorCode =
   | "invalid_credentials"
   | "account_locked"
-  | "account_disabled";
+  | "account_disabled"
+  | "email_not_verified";
 
 export interface LoginResult {
   user_id: string;
@@ -29,6 +30,12 @@ export function logout(): Promise<void> {
   return apiFetch<void>("/api/v1/auth/logout", { method: "POST" });
 }
 
-export function getOrganizations(): Promise<{ organizations: OrganizationSummary[] }> {
-  return apiFetch("/api/v1/organizations");
+/** Task 25-27: bounded and paginated - a user with hundreds of memberships
+ * (Task 67) gets a page, never every row in one response. */
+export function getOrganizations(
+  options: { limit?: number; cursor?: string; search?: string } = {},
+): Promise<OrganizationsPage> {
+  return apiFetch("/api/v1/organizations", {
+    query: { limit: options.limit, cursor: options.cursor, q: options.search },
+  });
 }

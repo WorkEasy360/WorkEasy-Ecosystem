@@ -26,9 +26,31 @@
   flex-shrink: 0;
 }
 
+.titleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w360-space-1);
+  min-width: 0;
+}
+
 .name {
   font-size: 16px;
   font-weight: 700;
+  margin: 0;
+}
+
+.category {
+  color: var(--w360-text-muted);
+  font-size: 12px;
+  margin: 0;
+}
+
+.badgeRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1);
+  list-style: none;
+  padding: 0;
   margin: 0;
 }
 
@@ -39,9 +61,42 @@
   flex: 1;
 }
 
+/* The "what do I do about this" line. Distinct from .description, which is
+   the product's own marketing copy: a person looking at a card they cannot
+   open needs the next step, not the sales pitch. */
+.hint {
+  color: var(--w360-text-muted);
+  font-size: 13px;
+  margin: 0;
+}
+
 .footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--w360-space-2);
+}
+
+/* Phase 9: the plan and entitlement status the organization holds. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2) var(--w360-space-4);
+  margin: 0;
+  font-size: 13px;
+}
+
+.facts dt {
+  color: var(--w360-text-muted);
+}
+
+.facts dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.launchError {
+  color: var(--w360-danger);
+  font-size: 13px;
+  margin: 0;
 }

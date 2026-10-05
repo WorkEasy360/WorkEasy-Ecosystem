@@ -1,0 +1,58 @@
+# gitleaks configuration (Phase 12, Step 59).
+#
+# The default rules, plus an allowlist whose every entry was triaged by hand on
+# 2026-09-30 (docs/phase-12/11-security-scans.md): each is a local development
+# default that production refuses to boot with, the NAME of a variable, a
+# placeholder, or a deliberately synthetic fixture in a test. Nothing here
+# allowlists a real credential. A new finding outside these fails CI.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Triaged false positives (docs/phase-12/11-security-scans.md)"
+regexTarget = "match"
+regexes = [
+  # The local/CI database role passwords (infra/postgres/init.sql). Production
+  # refuses both values (config/settings/production.py, migration.py).
+  '''w360_(app|migrator)_pw''',
+  # Placeholders in deploy/env/production.env.example.
+  '''<secret>''',
+  # Environment-variable NAME prefixes, e.g. W360_OIDC_SIGNING_KEY_.
+  '''W360_[A-Z0-9_]+_["']''',
+]
+paths = [
+  # Vendored and generated trees (never shipped; excluded from images).
+  '''(^|/)\.venv/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)\.next/''',
+  '''(^|/)__pycache__/''',
+  '''(^|/)\.(ruff|mypy|pytest)_cache/''',
+  # Synthetic secrets, file by file - each triaged (final audit, 2026-09-30:
+  # the earlier whole-directory entries for tests/ and scripts/ also silenced
+  # deploy/scripts/ and every test, so a real key there would have passed).
+  # A new synthetic value elsewhere fails CI until it is triaged and listed.
+  #   fixed test passwords
+  '''(^|/)backend/tests/phase12/test_12_identity\.py$''',
+  '''(^|/)backend/config/settings/test\.py$''',
+  #   the platform's own secret filter and redaction, fed fake keys on purpose
+  #   (the jwt.io sample token, a fake sk_live_ string, api_key= text)
+  '''(^|/)backend/tests/phase8/test_(units|gateway|rag)\.py$''',
+  '''(^|/)backend/workeasy360/platform/audit/tests/test_audit\.py$''',
+  #   a truncated fake PEM for the signing-key loader's refusal path
+  '''(^|/)backend/workeasy360/platform/ecosystem/tests/test_keys\.py$''',
+  #   frontend tests: a fake invitation token, a model key, a reset-link
+  #   token in a URL fragment (the screen must read it from the fragment)
+  '''(^|/)frontend/src/features/(console/console|intelligence/intelligence|site/site)\.test\.tsx$''',
+  #   a per-run random password prefix; a model key; a migration name
+  '''(^|/)scripts/phase12_staging/resilience\.py$''',
+  '''(^|/)scripts/phase8_browser_check/seed\.py$''',
+  '''(^|/)scripts/rehearse_phase8_upgrade\.py$''',
+  # Environment templates: variable names and <secret> placeholders only.
+  '''(^|/)deploy/env/[^/]+\.env\.example$''',
+  # Migration dependency tuples read as high-entropy strings.
+  '''(^|/)backend/workeasy360/.+/migrations/''',
+  # Prose describing where keys live, not keys.
+  '''(^|/)docs/phase-3/08-key-management\.md$''',
+  '''(^|/)backend/workeasy360/commercial/pricing/models\.py$''',
+]

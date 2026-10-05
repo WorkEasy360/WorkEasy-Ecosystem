@@ -36,6 +36,13 @@ class NotificationRequest:
     #: regenerated on retry is not a retry, it is a second notification.
     idempotency_key: str | None = None
 
+    #: Phase 8 extension. Template variables that are *credentials* - an
+    #: invitation link carries a one-time token. They are stored encrypted,
+    #: bound to the notification, opened only to render the message and wiped
+    #: once delivery is final, so a database dump yields no working link.
+    #: Never logged, never shown in any listing.
+    sealed_context: dict[str, str] = field(default_factory=dict)
+
     def __post_init__(self) -> None:
         if not self.recipient_membership_id and not self.recipient_email:
             raise ValueError(
@@ -93,6 +100,12 @@ class RenderedMessage:
     subject: str
     body_text: str
     body_html: str | None = None
+    #: Phase 8 extension: the display name and reply-to address from the
+    #: platform's communication settings. The sending *address* is always the
+    #: deployment's own (``DEFAULT_FROM_EMAIL``) - an editable from-address
+    #: would be a spoofing primitive.
+    sender_name: str = ""
+    reply_to: str = ""
 
 
 @runtime_checkable

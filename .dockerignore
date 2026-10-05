@@ -1,0 +1,33 @@
+# Build context for deploy/docker/*.Dockerfile (context = repository root).
+#
+# Allow-list, not deny-list: everything is excluded, then only what an image
+# needs is let back in. A deny-list fails open - a new secret file or a local
+# artefact nobody thought of would be copied into an image and shipped
+# (Phase 12, Step 14: no secret may live in an image).
+*
+**/.*
+
+# Backend image
+!requirements.txt
+!backend/
+!infra/ecosystem/products.json
+!deploy/gunicorn.conf.py
+
+# Frontend image
+!frontend/
+
+# Re-exclude what must never ship even inside an allowed tree.
+**/__pycache__
+**/*.py[cod]
+**/.env
+**/.env.*
+!frontend/.env.local.example
+backend/tests/
+backend/**/tests/
+frontend/node_modules/
+frontend/.next/
+frontend/tsconfig.tsbuildinfo
+frontend/**/*.test.ts
+frontend/**/*.test.tsx
+frontend/**/*.test.mjs
+backend/conftest.py

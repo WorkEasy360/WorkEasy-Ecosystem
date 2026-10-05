@@ -1,0 +1,137 @@
+/* The organization console's page vocabulary (Phase 8 extension). Tables,
+   forms, stats and cards come from ControlPlane.module.css (the shared kit);
+   this file adds page headers, the dashboard grid and the policy gate. CSS
+   modules only - no inline styles. */
+
+.page {
+  display: grid;
+  gap: var(--w360-space-5);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.page > * {
+  min-width: 0;
+}
+
+.pageHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--w360-space-3);
+}
+
+.pageTitle {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: -0.01em;
+}
+
+.lead {
+  margin: var(--w360-space-1) 0 0;
+  color: var(--w360-text-muted);
+}
+
+.tiles {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.split {
+  display: grid;
+  gap: var(--w360-space-5);
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+}
+
+.panel {
+  padding: var(--w360-space-5);
+  min-width: 0;
+}
+
+.panelTitle {
+  margin: 0 0 var(--w360-space-3);
+  font-size: 16px;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  overflow: hidden;
+}
+
+.segmented button {
+  background: none;
+  border: none;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--w360-text-muted);
+}
+
+.segmented button[aria-pressed="true"] {
+  background: var(--w360-neutral-bg);
+  color: var(--w360-text);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.gate {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--w360-space-5) var(--w360-space-4);
+}
+
+.gateCard {
+  width: min(560px, 100%);
+  padding: var(--w360-space-6);
+  display: grid;
+  gap: var(--w360-space-3);
+}
+
+.gateTitle {
+  margin: 0;
+  font-size: 22px;
+}
+
+.contextButton {
+  background: var(--w360-neutral-bg);
+  border: 1px solid transparent;
+  border-radius: var(--w360-radius-sm);
+  padding: 6px 12px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--w360-text-muted);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contextButton:hover {
+  border-color: var(--w360-border-strong);
+  color: var(--w360-text);
+}
+
+.contextPill {
+  composes: contextButton;
+  cursor: default;
+}
+
+.banner {
+  margin: 0 0 var(--w360-space-4);
+}
+
+@media (max-width: 900px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .contextButton {
+    max-width: 140px;
+  }
+}

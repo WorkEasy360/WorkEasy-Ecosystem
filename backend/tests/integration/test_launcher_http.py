@@ -44,6 +44,10 @@ def test_login_with_correct_credentials_establishes_a_session(client, user_facto
         "user_id": str(user.id),
         "email": user.email,
         "name": user.full_name,
+        # Phase 8 extension: whether an organization's "require MFA" can be
+        # met, and which consoles the shell may offer.
+        "mfa_enrolled": False,
+        "consoles": {"staff": False, "partner": False},
     }
 
 
@@ -367,3 +371,99 @@ def test_an_admin_can_assign_and_release_a_seat(
 
     overview_final = client.get(_org_path(org_dict, "apps/crm/seats")).json()
     assert overview_final["seats_assigned"] == 0
+
+
+# --- IDOR: the membership id comes off the URL ------------------------------
+#
+# Every other input to seat administration is server-derived: the
+# organization from the path (resolved and membership-checked by
+# TenancyMiddleware), the product from the catalog, the assigning member
+# from the session. ``membership_id`` is the one field a client names
+# freely, so it is the one that needs checking.
+
+
+@pytest.fixture
+def seat_admin(
+    catalog,
+    register_product,
+    organization_factory,
+    tenant_ctx_factory,
+    grant_permissions,
+    entitled,
+    in_tenant,
+):
+    """An organization holding CRM seats, with an administrator who may
+    assign them."""
+
+    def make():
+        register_product("crm")
+        org, membership, user = organization_factory()
+        ctx = tenant_ctx_factory(org, membership, user)
+        with in_tenant(ctx):
+            entitled(org.id, "crm", seats=5)
+            grant_permissions(org, membership, ["platform.seat.assign"])
+        return {"org": org, "membership": membership, "user": user, "ctx": ctx}
+
+    return make
+
+
+def test_a_seat_cannot_be_assigned_to_another_organizations_member(
+    client, seat_admin, organization_factory, in_tenant
+):
+    """Task 46/47. The composite, DEFERRABLE foreign key would refuse the row
+    - but only at COMMIT, after the view had already answered 201, turning a
+    request that should be a clean refusal into a 500 (and, because pytest
+    never commits, into a *passing* test). Refused in the service instead.
+
+    Nothing about the foreign organization is disclosed: the same answer a
+    membership id that never existed gets.
+    """
+    admin = seat_admin()
+    _other_org, other_membership, _other_user = organization_factory()
+
+    client.force_login(admin["user"])
+    response = client.post(
+        f"/api/v1/orgs/{admin['org'].slug}/apps/crm/seats/{other_membership.id}"
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "membership_required"
+
+    # And no seat was consumed by the attempt.
+    overview = client.get(f"/api/v1/orgs/{admin['org'].slug}/apps/crm/seats").json()
+    assert overview["seats_assigned"] == 0
+
+
+def test_an_unknown_membership_id_is_refused_identically(client, seat_admin):
+    """The uniformity half: "not in this organization" and "does not exist"
+    must be indistinguishable, or this endpoint enumerates membership ids."""
+    import uuid
+
+    admin = seat_admin()
+    client.force_login(admin["user"])
+
+    response = client.post(
+        f"/api/v1/orgs/{admin['org'].slug}/apps/crm/seats/{uuid.uuid4()}"
+    )
+    assert response.status_code == 403
+    assert response.json()["code"] == "membership_required"
+
+
+def test_releasing_an_unknown_membership_is_a_harmless_no_op(client, seat_admin):
+    """Deliberately *not* symmetrical with assignment.
+
+    Release must keep working for a membership that is no longer active -
+    freeing a departed colleague's seat is the single most common reason an
+    administrator touches this page - so it validates nothing and simply
+    reports how many assignments it released.
+    """
+    import uuid
+
+    admin = seat_admin()
+    client.force_login(admin["user"])
+
+    response = client.delete(
+        f"/api/v1/orgs/{admin['org'].slug}/apps/crm/seats/{uuid.uuid4()}"
+    )
+    assert response.status_code == 200
+    assert response.json()["released"] is False

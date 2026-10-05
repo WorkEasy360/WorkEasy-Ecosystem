@@ -29,6 +29,30 @@ Celery/RabbitMQ is not on any path this phase's new endpoints touch at all -
 `grep` for `apply_async`/`delay` across `platform/launcher` and
 `platform/identity` returns nothing.
 
+### What that run does *not* prove (Phase 4 audit)
+
+Stopping the container is weaker evidence than it looks: the test settings
+use a `LocMemCache`, so nothing those 231 tests touch was ever talking to
+Redis. They prove the suite does not *depend* on Redis being up; they do not
+exercise a single cache call failing.
+
+`backend/tests/integration/test_cache_degradation.py` closes that, by
+pointing `CACHES` at a Redis port nothing listens on - so every
+`cache.get`/`add`/`incr` raises a real connection error, on the request
+path, before authentication. Four properties, and the line between them is
+the Tier 1 contract ("degrades latency, never correctness"):
+
+| | With the cache unreachable |
+|---|---|
+| Sign in | **works** - sessions are in PostgreSQL, and the login throttle touches the cache before any credential is examined |
+| Login throttle | **still bounds the endpoint**, from a per-process counter. With N workers the effective limit is N x the configured one - capacity degradation, stated as debt D-012, never a hole |
+| Entitlement resolution | **`active`, from PostgreSQL** - the failure this test exists for is a cache miss-by-exception resolving to an empty snapshot, which would report every organization unentitled for the duration of the outage and show a paying customer an empty app directory |
+| OIDC authorize → code | **completes** - the limiter in front of it does not fail closed either |
+
+Deliberately not a mock. The code catches broad exceptions from the cache
+client, and a mock would let the test pass while a real client raised
+something the `except` clause did not cover.
+
 ## A single product's outage cannot break the platform (Task 25)
 
 Not independently re-tested this phase - Phase 3 already asserts readiness

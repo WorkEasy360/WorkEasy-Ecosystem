@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from django.apps import AppConfig
 
 
@@ -29,3 +31,21 @@ class AuthzConfig(AppConfig):
             return f"{count} permissions"
 
         register_probe("registries", "permissions", permission_registry_probe)
+        self._register_system_role_reseed()
+
+    def _register_system_role_reseed(self) -> None:
+        """Phase 5. See ``authz.services.ensure_system_role_catalog``'s own
+        docstring for why this fires on every ``migrate`` and every
+        ``flush`` (the latter is what makes a ``transaction=True`` test's
+        teardown, which genuinely truncates ``authz_role``, self-healing
+        rather than a trap for the next test in the same session)."""
+        from django.db.models.signals import post_migrate
+
+        def _reseed(sender: Any, **kwargs: Any) -> None:
+            from workeasy360.platform.authz.services import ensure_system_role_catalog
+
+            ensure_system_role_catalog()
+
+        post_migrate.connect(
+            _reseed, sender=self, dispatch_uid="authz_reseed_system_roles"
+        )

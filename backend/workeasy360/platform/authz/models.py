@@ -220,3 +220,70 @@ class PermissionSetVersion(TenantScopedModel):
                 fields=["organization"], name="uq_permission_version_org"
             )
         ]
+
+
+class StaffGrant(models.Model):
+    """One control-plane permission held by one Workeasy360 staff member.
+
+    **Global control-plane data**: no ``organization_id``, no RLS, and not
+    reachable through any tenant path. It is written only by
+    ``authz.staff`` (never by a customer administrator, who has no route to
+    it) and read by the decision function when a ``STAFF`` principal asks
+    what it may do (ADR-027).
+
+    Rows are never deleted. A revocation stamps ``revoked_at`` and who did it
+    and why, so "who could approve payouts on 3 March?" is answerable from
+    this table alone. The partial unique index below makes a duplicate
+    *active* grant unrepresentable, so a grant/grant race resolves in the
+    database rather than in a check-then-insert.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey("identity.User", on_delete=models.PROTECT, related_name="+")
+    #: A registered ``platform.staff_*`` key. A string rather than a foreign
+    #: key to ``Permission``: the registry is the source of truth and the
+    #: table is its deploy-time mirror, so a grant must not depend on the
+    #: mirror having been synced. The service validates against the registry.
+    permission = models.CharField(max_length=128)
+    granted_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    granted_at = models.DateTimeField()
+    reason = models.TextField()
+    #: Optional time box. A grant confers nothing at or after this instant -
+    #: read on every check, like revocation, so no job has to run for it to
+    #: end. Frozen with the grant's other terms: to extend one, grant anew.
+    expires_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        "identity.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    revoke_reason = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "authz_staff_grant"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "permission"],
+                condition=models.Q(revoked_at__isnull=True),
+                name="uq_staff_grant_active",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(revoked_at__isnull=True, revoked_by__isnull=True)
+                | models.Q(revoked_at__isnull=False, revoked_by__isnull=False),
+                name="ck_staff_grant_revocation_complete",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "revoked_at"], name="ix_staff_grant_user_live"),
+            models.Index(
+                fields=["permission", "revoked_at"], name="ix_staff_grant_perm_live"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.user_id} holds {self.permission}"

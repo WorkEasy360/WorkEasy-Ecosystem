@@ -127,11 +127,11 @@ See [06](06-entitlement-api.md).
 
 ## 7. Error codes
 
-Standard RFC 6749 / OIDC Core codes, plus five Workeasy360 codes. The extra
-codes exist because `access_denied` alone would collapse five genuinely
-different remedies — pay, be invited, ask an admin, wait, contact support —
-into one message, and a product cannot render the right call to action from
-that.
+Standard RFC 6749 / OIDC Core codes, plus six Workeasy360 codes. The extra
+codes exist because `access_denied` alone would collapse six genuinely
+different remedies — pay, be invited, ask an admin, wait, contact support,
+satisfy the organization's sign-in policy — into one message, and a product
+cannot render the right call to action from that.
 
 | Code | HTTP | Delivery | What it means for your product |
 |---|---|---|---|
@@ -146,6 +146,7 @@ that.
 | `organization_inactive` | 302 | Redirected | The organization cannot be signed in to (locked, deleted) |
 | `product_not_entitled` | 302 | Redirected | Show a purchase or upgrade path. This is a sales conversation, not an error |
 | `integration_suspended` | 302 / 403 | Redirected / response | Your integration is not active. Contact Workeasy360 |
+| `access_policy_denied` | 302 | Redirected | The user is a member, but this organization's sign-in policy refuses this session (added in the Phase 8 extension). `error_description` is one of a closed set: `network_not_allowed` (outside the organization's IP allow-list), `mfa_required` (two-step verification required and not verified in this session), `reauthentication_required` (the session is older than the organization allows, or an administrator signed the member out), `password_change_required`. Send the user back to the Workeasy360 console, which explains the remedy; retrying the flow unchanged will be refused again |
 | `invalid_token` | 401 | Response | The access token is invalid or expired |
 | `temporarily_unavailable` | 429 / 503 | Response | Rate-limited (honour `Retry-After`) or the platform cannot answer. **Retry — do not treat as a denial** |
 | `server_error` | 503 | Response | Something failed on our side. You did nothing wrong |

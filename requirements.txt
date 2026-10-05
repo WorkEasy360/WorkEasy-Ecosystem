@@ -33,3 +33,24 @@ argon2-cffi==23.1.0
 # direct dependency, not an accident of the extra, so it is pinned here.
 PyJWT==2.14.0
 cryptography==50.0.1
+
+# --- Partner channel (Phase 7) ---------------------------------------------
+#
+# DNS TXT lookups for custom-domain ownership proof
+# (commercial/partners/domains.py). Behind a swappable `TxtResolver`, with a
+# timeout and a lifetime, so a slow or hostile resolver cannot hold a request.
+# Pure Python; no other dependency.
+dnspython==2.7.0
+
+# --- Production runtime (Phase 12) -------------------------------------------
+#
+# The WSGI server the API image runs (deploy/gunicorn.conf.py). Before Phase 12
+# no application server was pinned at all, so what served production would
+# have been whatever someone installed by hand.
+gunicorn==26.2.0
+# The S3 adapter behind the FileStore port (platform/files/storage_s3.py).
+# Production settings have always required W360_FILE_STORAGE_BACKEND=s3 and no
+# adapter existed, so every file operation failed in production. The official
+# SDK rather than a hand-written SigV4 signer: request signing is not code to
+# own for four S3 calls.
+boto3==1.43.105

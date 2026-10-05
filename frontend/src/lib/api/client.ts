@@ -35,12 +35,10 @@ export class ApiError extends Error {
   }
 }
 
-/** Exported for the one caller that cannot use {@link apiFetch}: a real
- * `<form>` POST to the launch endpoint, which must be a top-level browser
- * navigation (Task 54) rather than a `fetch` that would silently follow the
- * product's redirect in the background instead of moving the address bar.
- * Django accepts the token as a `csrfmiddlewaretoken` form field on a plain
- * POST, exactly as it accepts the header on a fetch. */
+/** The double-submit cookie's value, for the rare caller that cannot go
+ * through {@link apiFetch} (which already attaches it as `X-CSRFToken` on
+ * every unsafe method). Django accepts the same token as a
+ * `csrfmiddlewaretoken` form field on a plain POST. */
 export function getCsrfToken(): string | undefined {
   return readCookie(CSRF_COOKIE);
 }

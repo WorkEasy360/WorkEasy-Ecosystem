@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import secrets
 import time
 import uuid
@@ -281,6 +282,102 @@ class ReferenceProductClient:
                 status=response.status_code,
             )
         return payload
+
+    # --- publishing events (Phase 6) ----------------------------------------
+
+    def publish_event(
+        self, *, organization_id: str, event: dict[str, Any]
+    ) -> tuple[int, dict[str, Any]]:
+        """Publish one of this product's events into the ecosystem.
+
+        Form-encoded with the same client authentication as every other
+        back-channel call; the event itself is one JSON field. The endpoint
+        is discovered, never constructed. Returns ``(status, body)`` rather
+        than raising, because a product's publisher needs to tell "accepted"
+        (202), "already had it" (200) and "retry later" (429/503) apart.
+        """
+        body = {"organization_id": organization_id, "event": json.dumps(event)}
+        body.update(self._client_authentication())
+        response = self.http.post(
+            _path(self.discover()["workeasy360_event_endpoint"]), data=body
+        )
+        return response.status_code, response.json()
+
+    # --- the shared AI, retrieval and analytics platform (Phase 8) ---------
+
+    def intelligence(self, name: str, **fields: Any) -> tuple[int, dict[str, Any]]:
+        """POST to one discovered Phase 8 endpoint. Dict and list values are
+        sent as JSON fields, exactly as the integration guide describes; the
+        rest as plain form fields. Returns ``(status, body)`` so a caller can
+        tell accepted, duplicate, refused and retry-later apart."""
+        body: dict[str, Any] = {}
+        for key, value in fields.items():
+            body[key] = json.dumps(value) if isinstance(value, dict | list) else value
+        body.update(self._client_authentication())
+        endpoints = self.discover()["workeasy360_intelligence_endpoints"]
+        response = self.http.post(_path(endpoints[name]), data=body)
+        return response.status_code, response.json()
+
+    def register_skill(self, skill: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        return self.intelligence("ai_skills", skill=skill)
+
+    def invoke(
+        self, *, organization_id: str, request: dict[str, Any]
+    ) -> tuple[int, dict[str, Any]]:
+        return self.intelligence(
+            "ai_invoke", organization_id=organization_id, request=request
+        )
+
+    def request_status(
+        self, *, organization_id: str, request_id: str
+    ) -> tuple[int, dict[str, Any]]:
+        return self.intelligence(
+            "ai_request_status", organization_id=organization_id, request_id=request_id
+        )
+
+    def index_document(
+        self, *, organization_id: str, document: dict[str, Any]
+    ) -> tuple[int, dict[str, Any]]:
+        return self.intelligence(
+            "rag_documents", organization_id=organization_id, document=document
+        )
+
+    def document_status(
+        self, *, organization_id: str, source: str, document_id: str
+    ) -> tuple[int, dict[str, Any]]:
+        return self.intelligence(
+            "rag_document_status",
+            organization_id=organization_id,
+            source=source,
+            document_id=document_id,
+        )
+
+    def delete_document(
+        self, *, organization_id: str, source: str, document_id: str
+    ) -> tuple[int, dict[str, Any]]:
+        return self.intelligence(
+            "rag_document_delete",
+            organization_id=organization_id,
+            source=source,
+            document_id=document_id,
+        )
+
+    def retrieve(
+        self, *, organization_id: str, query: dict[str, Any]
+    ) -> tuple[int, dict[str, Any]]:
+        return self.intelligence(
+            "rag_retrieve", organization_id=organization_id, query=query
+        )
+
+    def register_metric(self, metric: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        return self.intelligence("analytics_metrics", metric=metric)
+
+    def query_metric(
+        self, *, organization_id: str, query: dict[str, Any]
+    ) -> tuple[int, dict[str, Any]]:
+        return self.intelligence(
+            "analytics_query", organization_id=organization_id, query=query
+        )
 
     def fetch_userinfo(self, access_token: str) -> dict[str, Any]:
         response = self.http.get(

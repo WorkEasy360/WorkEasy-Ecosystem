@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import random
 from typing import Any
 from uuid import UUID
 
@@ -10,9 +9,10 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from workeasy360.contracts.enums import ActorKind, OutboxStatus
+from workeasy360.contracts.enums import ActorKind, OutboxStatus, PrincipalKind
 from workeasy360.contracts.events.envelope import Actor, DomainEvent
 from workeasy360.contracts.events.registry import registry
+from workeasy360.contracts.values import backoff
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.observability.correlation import current_correlation_id
 from workeasy360.platform.observability.logging import get_logger
@@ -73,6 +73,16 @@ def publish(event: DomainEvent) -> Any:
     return row
 
 
+def _actor_kind(ctx: TenantContext) -> ActorKind:
+    if ctx.is_break_glass:
+        return ActorKind.STAFF_BREAK_GLASS
+    if ctx.principal is PrincipalKind.STAFF:
+        return ActorKind.STAFF
+    if ctx.principal is PrincipalKind.PARTNER:
+        return ActorKind.PARTNER
+    return ActorKind.USER
+
+
 def build_event(
     ctx: TenantContext,
     event_type: str,
@@ -89,9 +99,11 @@ def build_event(
     the chain cannot be broken by a caller forgetting to thread it through.
     """
     actor = Actor(
-        kind=ActorKind.STAFF_BREAK_GLASS if ctx.is_break_glass else ActorKind.USER,
+        kind=_actor_kind(ctx),
         user_id=ctx.user_id,
-        membership_id=ctx.membership_id,
+        # A control-plane principal holds no membership; the nil id would be a
+        # fabricated reference in every consumer's copy of the event.
+        membership_id=None if ctx.is_control_plane else ctx.membership_id,
     )
     if causation is not None:
         return causation.caused(
@@ -214,9 +226,11 @@ def _backoff_seconds(attempt: int) -> float:
     retries at the same instant, producing a synchronised herd against a
     dependency that is trying to recover.
     """
-    base = float(getattr(settings, "TASK_RETRY_BACKOFF_BASE_S", 2.0))
-    cap = float(getattr(settings, "TASK_RETRY_BACKOFF_CAP_S", 3600.0))
-    return random.uniform(0, min(cap, base * (2**attempt)))  # noqa: S311 - retry jitter, not cryptography
+    return backoff.full_jitter(
+        attempt,
+        base=float(getattr(settings, "TASK_RETRY_BACKOFF_BASE_S", 2.0)),
+        cap=float(getattr(settings, "TASK_RETRY_BACKOFF_CAP_S", 3600.0)),
+    )
 
 
 def release_stale_claims(older_than_seconds: int = 300) -> int:
@@ -279,3 +293,189 @@ def pending_age_seconds() -> float:
         .first()
     )
     return (timezone.now() - oldest).total_seconds() if oldest else 0.0
+
+
+# --- routable events (Phase 6) ----------------------------------------------
+#
+# The integration platform's event log. Writers are ingestion (product events)
+# and the platform itself (test pings, schedule firings); readers are routing,
+# the delivery pipeline and the automation engine, all through
+# ``integration.events.selectors``.
+
+
+class RoutableEventConflict(Exception):
+    """The event id was already used for a *different* event.
+
+    A retry replays the same event and gets the original answer. The same id
+    with a different body is either a producer bug or an attempt to have one
+    idempotency key stand for two facts, and is refused (Task 10).
+    """
+
+
+def record_routable_event(
+    *,
+    event_id: UUID,
+    source: str,
+    event_type: str,
+    event_version: int,
+    occurred_at: Any,
+    payload: dict[str, Any],
+    payload_bytes: int,
+    correlation_id: UUID | None = None,
+    causation_id: UUID | None = None,
+    routing_status: str | None = None,
+) -> tuple[Any, bool]:
+    """Insert the event, or return the existing one for a duplicate.
+
+    Returns ``(dto, created)``. Must run inside the organization's tenant
+    context, database scope and a transaction - the caller's, so that the
+    event and whatever the caller schedules for it commit together.
+
+    Deduplication is the unique constraint, inside a savepoint: two
+    concurrent submissions of one event genuinely race, and only the
+    database can pick the winner (Task 10).
+    """
+    import hashlib
+    import json
+    import uuid
+
+    from django.db import IntegrityError, connection
+
+    from workeasy360.integration.events.models import RoutedEvent, RoutingStatus
+    from workeasy360.integration.events.selectors import to_routed_dto
+
+    if not connection.in_atomic_block:
+        raise RuntimeError("record_routable_event must run inside a transaction.")
+
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            [event_type, int(event_version), occurred_at.isoformat(), payload],
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    depth = 0
+    correlation = correlation_id
+    if causation_id is not None:
+        parent = (
+            RoutedEvent.objects.filter(event_id=causation_id)
+            .order_by("-created_at")
+            .values("chain_depth", "correlation_id")
+            .first()
+        )
+        if parent is not None:
+            # Derived from the platform's own record of the causing event,
+            # never from a producer-supplied depth: a product cannot reset a
+            # loop's count by omitting it or lie it upward to evade nothing.
+            depth = int(parent["chain_depth"]) + 1
+            correlation = correlation or parent["correlation_id"]
+
+    row = RoutedEvent(
+        event_id=event_id,
+        source=source,
+        event_type=event_type,
+        event_version=int(event_version),
+        occurred_at=occurred_at,
+        correlation_id=correlation or uuid.uuid4(),
+        causation_id=causation_id,
+        chain_depth=min(depth, 32767),
+        payload=payload,
+        payload_bytes=int(payload_bytes),
+        fingerprint=fingerprint,
+        routing_status=routing_status or RoutingStatus.PENDING.value,
+    )
+    try:
+        with transaction.atomic():
+            row.save()
+        return to_routed_dto(row), True
+    except IntegrityError:
+        pass
+
+    existing = RoutedEvent.objects.filter(source=source, event_id=event_id).first()
+    if existing is None:  # pragma: no cover - lost between insert and read
+        raise RuntimeError(f"Event {event_id} could not be recorded or read.")
+    if existing.fingerprint != fingerprint:
+        raise RoutableEventConflict(
+            f"Event id {event_id} was already used for a different event."
+        )
+    return to_routed_dto(existing), False
+
+
+def record_platform_event(
+    event_type: str,
+    version: int,
+    payload: dict[str, Any],
+    *,
+    event_id: UUID | None = None,
+    correlation_id: UUID | None = None,
+    direct: bool = False,
+) -> tuple[Any, bool]:
+    """Record a Workeasy360-owned integration event (``integration.*``).
+
+    Validated against the contracts registry exactly as an outbox event is
+    (R-13): a malformed platform event fails in the code that built it.
+    ``direct`` marks an event created for exactly one consumer (a test ping,
+    a schedule firing) that routing must never fan out.
+    """
+    import json
+    import uuid
+
+    from workeasy360.contracts.events.namespaces import is_platform_owned
+    from workeasy360.integration.events.models import RoutingStatus
+
+    if not is_platform_owned(event_type):
+        raise ValueError(f"{event_type} is not a Workeasy360-owned event type.")
+    registry.validate(event_type, version, payload)
+    return record_routable_event(
+        event_id=event_id or uuid.uuid4(),
+        source="platform",
+        event_type=event_type,
+        event_version=version,
+        occurred_at=timezone.now(),
+        payload=payload,
+        payload_bytes=len(json.dumps(payload, separators=(",", ":")).encode("utf-8")),
+        correlation_id=correlation_id or current_correlation_id(),
+        routing_status=RoutingStatus.DIRECT.value if direct else None,
+    )
+
+
+def mark_routed(event_pk: UUID, *, deliveries: int, rules: int) -> bool:
+    """Close a pending event's routing. Conditional, so exactly one router
+    wins even if two are dispatched for the same event."""
+    from workeasy360.integration.events.models import RoutedEvent, RoutingStatus
+
+    return bool(
+        RoutedEvent.objects.filter(
+            id=event_pk, routing_status=RoutingStatus.PENDING.value
+        ).update(
+            routing_status=RoutingStatus.ROUTED.value,
+            routed_at=timezone.now(),
+            matched_deliveries=deliveries,
+            matched_rules=rules,
+        )
+    )
+
+
+def prune_routed_events(*, older_than: Any, keep: set[UUID], limit: int = 500) -> int:
+    """Delete terminal events older than ``older_than``, except ``keep``.
+
+    ``keep`` is the set the caller (``integration/routing``, which can see
+    deliveries and executions) found still referenced. A foreign key with
+    ``ON DELETE NO ACTION`` backs that up at commit, so a reference missed
+    here fails the prune rather than deleting history out from under it.
+    """
+    from workeasy360.integration.events.models import RoutedEvent, RoutingStatus
+
+    ids = list(
+        RoutedEvent.objects.filter(created_at__lt=older_than)
+        .exclude(routing_status=RoutingStatus.PENDING.value)
+        .exclude(id__in=keep)
+        .order_by("created_at")
+        .values_list("id", flat=True)[:limit]
+    )
+    if not ids:
+        return 0
+    deleted, _ = RoutedEvent.objects.filter(id__in=ids).delete()
+    return deleted

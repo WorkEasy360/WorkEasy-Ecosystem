@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from celery import shared_task
 
+# Phase 12 (G-32): SoftTimeLimitExceeded subclasses Exception. Swallowed
+# here, a pass that outran its budget kept going until the hard kill, with
+# no summary, and the organizations enumerated last were never reached.
+from celery.exceptions import SoftTimeLimitExceeded
+
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.tenancy.tasks import CrossTenantTask
 
@@ -76,6 +81,8 @@ def reconcile_all(limit: int | None = None) -> dict[str, int]:
             report = reconcile_and_report_drift(organization_id)
             visited += 1
             drifted += 1 if report.has_drift else 0
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as exc:
             failed += 1
             metrics.increment(RECONCILE_FAILURES)

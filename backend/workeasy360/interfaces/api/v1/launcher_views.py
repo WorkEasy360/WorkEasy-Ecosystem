@@ -15,8 +15,10 @@ query parameter.
 
 from __future__ import annotations
 
+import math
+from datetime import datetime
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
@@ -34,7 +36,10 @@ def app_directory_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     catalog, not from anything hardcoded here (Task 21/22)."""
     ctx = request.tenant_context  # type: ignore[attr-defined]
     decisions = selectors.app_directory(ctx)
-    return JsonResponse({"apps": [_public_dict(d) for d in decisions]})
+    extras = _card_extras(ctx, [d.product_code for d in decisions])
+    return JsonResponse(
+        {"apps": [_public_dict(d, extras.get(d.product_code)) for d in decisions]}
+    )
 
 
 @require_http_methods(["POST"])
@@ -66,9 +71,19 @@ def launch_view(request: HttpRequest, org_slug: str, product_code: str) -> HttpR
     """
     ctx = request.tenant_context  # type: ignore[attr-defined]
     decision = services.launch(ctx, product_code)
+    wants_json = _wants_json(request)
 
     if not decision.state.can_launch:
         metrics.increment("launcher_launch_denied_total", state=decision.state.value)
+        if wants_json:
+            return JsonResponse(
+                {
+                    "code": "launch_denied",
+                    "state": decision.state.value,
+                    "product_code": product_code,
+                },
+                status=409,
+            )
         query = urlencode({"launch_error": decision.state.value, "product": product_code})
         return HttpResponseRedirect(
             f"{settings.W360_FRONTEND_URL}/o/{org_slug}/apps?{query}"
@@ -80,8 +95,17 @@ def launch_view(request: HttpRequest, org_slug: str, product_code: str) -> HttpR
     # launch_url?organization=<uuid>, and the product itself starts the OIDC
     # authorization request from there, generating its own PKCE pair - the
     # launcher never touches a code, a token or a client credential (Task 17).
-    query = urlencode({"organization": str(ctx.organization_id)})
-    return HttpResponseRedirect(f"{decision.launch_url}?{query}")
+    target = _launch_target(decision.launch_url, ctx.organization_id)
+    if wants_json:
+        # The same server-owned destination, handed to the page's own script
+        # instead of a 302. The page cannot choose it: it is what this
+        # function computed from the registered integration. A 302 answering
+        # a form POST is refused by Chromium under the app's CSP
+        # (``form-action 'self'``) the moment it leaves the origin - which is
+        # every real product - so the shell submits with ``fetch`` and then
+        # navigates itself.
+        return JsonResponse({"redirect_url": target, "state": decision.state.value})
+    return HttpResponseRedirect(target)
 
 
 @require_http_methods(["GET"])
@@ -117,7 +141,110 @@ def seat_member_view(
     return JsonResponse(result)
 
 
-def _public_dict(decision: AppAccessDecision) -> dict[str, Any]:
+def _wants_json(request: HttpRequest) -> bool:
+    """The shell asks for JSON explicitly; a plain form POST (no script, or
+    the compatibility path) still gets the redirect."""
+    return "application/json" in request.headers.get("Accept", "")
+
+
+def _launch_target(launch_url: str, organization_id: Any) -> str:
+    """``launch_url`` with ``organization=<id>`` added to whatever query it
+    already has (a registered launch URL may carry one), never a second ``?``.
+    The organization id is not a secret and never a token: the product starts
+    its own authorization request from here."""
+    parts = urlsplit(launch_url)
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key != "organization"
+    ]
+    query.append(("organization", str(organization_id)))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
+
+
+def _days_left(ends_at: datetime, now: datetime) -> int:
+    """Whole days left, rounded up, never negative: "1 day left" until the
+    last moment, not "0 days left" for a trial that still works."""
+    return max(0, math.ceil((ends_at - now).total_seconds() / 86400))
+
+
+def _card_extras(ctx: Any, product_codes: list[str]) -> dict[str, dict[str, Any]]:
+    """What a product card shows beyond its access state, in a fixed number of
+    queries however many products there are: presentation, connection facts,
+    the plan / trial / renewal the organization holds, and seat usage.
+
+    Money and renewal are shown only to a member who may see the organization's
+    subscriptions; seat usage only to one who may administer seats. Everyone
+    sees what a product is, whether they hold it and - for a trial - when it
+    ends, because that decides whether *they* can use it next week."""
+    from django.utils import timezone
+
+    from workeasy360.commercial.catalog import selectors as catalog
+    from workeasy360.commercial.subscriptions import my_products
+    from workeasy360.platform.authz import services as authz
+    from workeasy360.platform.ecosystem import selectors as ecosystem
+    from workeasy360.platform.entitlements.services import seats as seat_services
+
+    now = timezone.now()
+    permissions = authz.effective_permissions(ctx)
+    may_see_billing = "commercial.subscription.view" in permissions
+    may_see_seats = "platform.seat.assign" in permissions or may_see_billing
+
+    presentation = catalog.product_presentations(product_codes)
+    presence = ecosystem.presence_for(product_codes)
+    held = my_products.holdings(at=now)
+    usage = seat_services.usage_by_pool(ctx.organization_id) if may_see_seats else {}
+
+    extras: dict[str, dict[str, Any]] = {}
+    for code in product_codes:
+        shown = presentation.get(code, {})
+        link = presence.get(code)
+        holding = held.get(code)
+        card: dict[str, Any] = {
+            "slug": shown.get("slug", ""),
+            "tagline": shown.get("tagline", ""),
+            "category": shown.get("category", ""),
+            "icon": shown.get("icon", ""),
+            "sso": link.sso if link else "integration_required",
+            "health": {
+                "status": link.health_status if link else "unknown",
+                "checked_at": (
+                    link.health_checked_at.isoformat()
+                    if link and link.health_checked_at
+                    else None
+                ),
+            },
+            "trial": None,
+            "plan": None,
+            "seats": None,
+            "renews_at": None,
+            "cancel_at": None,
+        }
+        if holding is not None:
+            if holding.trial_ends_at is not None:
+                card["trial"] = {
+                    "id": holding.trial_id,
+                    "ends_at": holding.trial_ends_at.isoformat(),
+                    "days_left": _days_left(holding.trial_ends_at, now),
+                }
+            if may_see_billing:
+                card["plan"] = {"code": holding.plan_code, "name": holding.plan_name}
+                card["renews_at"] = (
+                    holding.renews_at.isoformat() if holding.renews_at else None
+                )
+                card["cancel_at"] = (
+                    holding.cancel_at.isoformat() if holding.cancel_at else None
+                )
+            if may_see_seats and code in usage:
+                total, assigned = usage[code]
+                card["seats"] = {"total": total, "used": assigned}
+        extras[code] = card
+    return extras
+
+
+def _public_dict(
+    decision: AppAccessDecision, extra: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """The app-directory wire shape. Deliberately excludes ``launch_url`` -
     the launcher never hands the browser a URL to navigate to directly; it
     hands it a state and the browser POSTs to ``launch_view`` when the state
@@ -129,4 +256,6 @@ def _public_dict(decision: AppAccessDecision) -> dict[str, Any]:
         "licensing_mode": decision.licensing_mode.value,
         "state": decision.state.value,
         "can_launch": decision.state.can_launch,
+        "entitlement_status": decision.entitlement_status or None,
+        **(extra or {}),
     }

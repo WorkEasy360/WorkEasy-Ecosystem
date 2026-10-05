@@ -1,9 +1,13 @@
 -r requirements.txt
 
 # Test
-pytest==8.3.4
-pytest-django==4.9.0
-pytest-cov==6.0.0
+#
+# pytest 9.0.3 is a floor, not a preference: PYSEC-2026-1845 affects every
+# earlier release, and `pip-audit --strict` over this file is a CI gate. The
+# suite runs unchanged on 9.x - nothing here used an API 9 removed.
+pytest==9.1.1
+pytest-django==4.14.0
+pytest-cov==7.1.0
 
 # Quality gates. Each one is a CI job, so "it passed locally" means the same
 # thing as "it will pass in CI".

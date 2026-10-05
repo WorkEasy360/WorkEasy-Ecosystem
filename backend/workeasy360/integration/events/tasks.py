@@ -7,6 +7,7 @@ stops for every tenant, and it must not queue behind a bulk import.
 from __future__ import annotations
 
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.tenancy.tasks import CrossTenantTask
@@ -60,6 +61,10 @@ def relay_outbox(self, batch_size: int | None = None) -> dict[str, int]:
             publish_to_broker(row)
             mark_published(row)
             published += 1
+        except SoftTimeLimitExceeded:
+            # The budget ends the batch (Phase 12, G-32); rows still claimed
+            # are released by ``release_stale_claims``.
+            raise
         except Exception as exc:
             # Per-event isolation: one poison event must not abandon the rest
             # of the batch.

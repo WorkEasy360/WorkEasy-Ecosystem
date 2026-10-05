@@ -97,6 +97,13 @@ class AuthenticatedClient:
     def product_code(self) -> str:
         return str(self.integration.product_code)
 
+    def declares_event(self, event_type: str, version: int) -> bool:
+        """Whether this product registered ``event_type`` at ``version`` in
+        its manifest (Phase 6). Read from the authenticated integration's own
+        registration - the declaration, like the product code, comes from
+        the credential and never from the request."""
+        return self.integration.manifest_obj.declares_event(event_type, version)
+
 
 def authenticate(request: HttpRequest, *, endpoint: str) -> AuthenticatedClient:
     """Authenticate the calling product, or raise ``invalid_client``.
@@ -186,7 +193,12 @@ def _authenticate_private_key_jwt(assertion: str) -> AuthenticatedClient:
 
     try:
         header = jwt.get_unverified_header(assertion)
-        unverified = jwt.decode(assertion, options={"verify_signature": False})
+        # A peek to find the credential by iss/kid; the assertion is then
+        # verified with that credential's key and algorithm (below).
+        unverified = jwt.decode(
+            assertion,
+            options={"verify_signature": False},  # nosemgrep
+        )
     except jwt.PyJWTError:
         raise protocol.invalid_client() from None
 
@@ -390,7 +402,19 @@ def _basic_credentials(request: HttpRequest) -> tuple[str, str] | None:
 
 
 def _client_ip(request: HttpRequest) -> str:
-    return str(request.META.get("REMOTE_ADDR", "")) or "unknown"
+    """The caller's address, as far as the deployment can vouch for it.
+
+    Resolved through ``platform.observability.client_ip`` rather than read
+    straight off ``REMOTE_ADDR``: behind a proxy that is the proxy's address,
+    and every caller on earth would share one bucket (D-009).
+    """
+    from workeasy360.platform.observability.client_ip import (
+        client_ip,
+        rate_limit_identity,
+    )
+
+    # Used only as a rate-limit key; IPv6 bucketed by /64 (Phase 12, G-12).
+    return rate_limit_identity(client_ip(request))
 
 
 def _touch(credential: Any) -> None:

@@ -1,8 +1,15 @@
 """Billing application services.
 
-Deliberately small. There is no payment provider, so there is nothing here
-that charges, refunds, or records money. What exists is the establishment of
-an organization's billing identity, which subscription creation depends on.
+Deliberately small: the establishment of an organization's billing identity,
+which subscription creation depends on. Charging, refunds and settlement live
+in ``commercial/payments``.
+
+**Billing terms are the platform's, not the customer's** (Phase 9). How an
+account is collected (``collection_mode``) and which regional price book it
+buys from (``billing_region``) decide what a customer pays and whether they
+are invoiced at all - so a customer opening their own account gets automatic
+collection and the default region, and only Workeasy360 staff
+(``set_billing_terms``) or a partner's own provisioning set anything else.
 """
 
 from __future__ import annotations
@@ -12,7 +19,7 @@ from uuid import UUID
 
 from django.db import transaction
 
-from workeasy360.contracts.enums import CollectionMode
+from workeasy360.contracts.enums import CollectionMode, PrincipalKind
 from workeasy360.contracts.errors import CatalogValidationError
 from workeasy360.contracts.values.money import CurrencyCode
 from workeasy360.contracts.values.tenant import TenantContext
@@ -41,6 +48,14 @@ def open_billing_account(
     from workeasy360.commercial.billing.models import BillingAccount
 
     authz.require(ctx, MANAGE)
+    if ctx.principal is PrincipalKind.MEMBER and (
+        collection_mode is not CollectionMode.AUTOMATIC or billing_region
+    ):
+        raise CatalogValidationError(
+            "Collection mode and billing region are set by Workeasy360, not by "
+            "the customer.",
+            field="collection_mode",
+        )
 
     with transaction.atomic():
         existing = BillingAccount.objects.filter(
@@ -89,5 +104,85 @@ def billing_account_for(organization_id: UUID) -> Any:
             "This organization has no billing account. Open one - which fixes "
             "its billing currency - before creating a subscription.",
             field="billing_account",
+        )
+    return account
+
+
+def billing_account_or_none(organization_id: UUID) -> Any:
+    """The organization's billing account, or ``None`` - for pages that show
+    "open a billing account first" rather than fail (Phase 8 extension)."""
+    from workeasy360.commercial.billing.models import BillingAccount
+
+    return BillingAccount.objects.filter(organization_id=organization_id).first()
+
+
+STAFF_TERMS = "platform.staff_payment.manage"
+
+
+def set_billing_terms(
+    actor: TenantContext,
+    organization_id: UUID,
+    *,
+    collection_mode: CollectionMode,
+    billing_region: str,
+    reason: str,
+) -> Any:
+    """A Super Admin sets how an account is collected and which regional price
+    book it buys from - a sales-led customer paying by invoice, a regional
+    agreement (Phase 9). Dangerous (``platform.staff_payment.manage``, AAL 2),
+    with a reason, audited in the platform log and the customer's own. Future
+    invoices and prices follow; nothing already issued changes."""
+    from workeasy360.commercial.billing.models import BillingAccount
+    from workeasy360.platform.authz.control_plane import (
+        context_for_organization,
+        organization_scope,
+    )
+
+    authz.require(actor, STAFF_TERMS)
+    why = (reason or "").strip()
+    if len(why) < 10:
+        raise CatalogValidationError(
+            "Give a reason of at least 10 characters.", field="reason"
+        )
+    region = (billing_region or "").strip().upper()
+    if len(region) > 8 or (not region.replace("-", "").isalnum() and region):
+        raise CatalogValidationError("Enter a short region code.", field="billing_region")
+    customer = context_for_organization(actor, organization_id)
+    with organization_scope(actor, organization_id), transaction.atomic():
+        account = (
+            BillingAccount.objects.select_for_update()
+            .filter(organization_id=organization_id)
+            .first()
+        )
+        if account is None:
+            raise CatalogValidationError(
+                "This customer has no billing account yet.", field="billing_account"
+            )
+        before = {
+            "collection_mode": account.collection_mode,
+            "billing_region": account.billing_region,
+        }
+        account.collection_mode = collection_mode.value
+        account.billing_region = region
+        account.save(update_fields=["collection_mode", "billing_region", "updated_at"])
+        after = {"collection_mode": account.collection_mode, "billing_region": region}
+        audit.record(
+            customer,
+            "commercial.billing_account.terms_changed",
+            resource_type="billing.account",
+            resource_id=account.id,
+            changes={"before": before, "after": after},
+            reason=why,
+        )
+    from workeasy360.platform.authz.control_plane import ensure_scope
+
+    with ensure_scope(actor):
+        audit.record(
+            actor,
+            "staff.billing_terms_changed",
+            resource_type="organizations.organization",
+            resource_id=organization_id,
+            changes={"before": before, "after": after},
+            reason=why,
         )
     return account

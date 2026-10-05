@@ -14,7 +14,13 @@ from dataclasses import dataclass, replace
 from typing import Any
 from uuid import UUID
 
-from workeasy360.contracts.enums import OrganizationStatus
+from workeasy360.contracts.enums import OrganizationStatus, PrincipalKind
+
+#: The membership id carried by a control-plane principal. Staff and partner
+#: users hold no ``Membership`` in the organization they act on, and a
+#: fabricated one would put a real-looking id in the audit log. The nil UUID
+#: matches no row anywhere, so any membership-keyed lookup denies by default.
+NO_MEMBERSHIP = UUID(int=0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +52,17 @@ class TenantContext:
     #: Required when is_break_glass is True; recorded on every audit entry.
     reason: str | None = None
 
+    #: Whose permissions this context carries (ADR-027). ``MEMBER`` is every
+    #: pre-Phase-7 caller. ``STAFF`` and ``PARTNER`` are established only by
+    #: the control-plane entry points, from a verified identity, and hold
+    #: ``NO_MEMBERSHIP``.
+    principal: PrincipalKind = PrincipalKind.MEMBER
+
+    #: The partner a ``PARTNER`` principal acts for. Present exactly when the
+    #: principal is a partner: a stray partner id on a member context would be
+    #: a scope claim nothing verified.
+    partner_id: UUID | None = None
+
     def __post_init__(self) -> None:
         for field_name in ("organization_id", "membership_id", "user_id"):
             value = getattr(self, field_name)
@@ -63,6 +80,17 @@ class TenantContext:
             )
         if self.aal < 1:
             raise ValueError("TenantContext.aal must be >= 1.")
+        if (self.principal is PrincipalKind.PARTNER) != (self.partner_id is not None):
+            raise ValueError(
+                "A partner_id is required for, and only valid on, a PARTNER principal."
+            )
+        if self.principal is not PrincipalKind.MEMBER and (
+            self.membership_id != NO_MEMBERSHIP
+        ):
+            raise ValueError(
+                "A control-plane principal holds no membership; use "
+                "NO_MEMBERSHIP rather than inventing one."
+            )
 
     # --- policy predicates -------------------------------------------------
 
@@ -75,6 +103,11 @@ class TenantContext:
         substitutes for another.
         """
         return self.organization_status.allows_write
+
+    @property
+    def is_control_plane(self) -> bool:
+        """Whether this context speaks for staff or a partner, not a member."""
+        return self.principal is not PrincipalKind.MEMBER
 
     @property
     def is_read_allowed(self) -> bool:
@@ -106,6 +139,8 @@ class TenantContext:
             "aal": self.aal,
             "is_break_glass": self.is_break_glass,
             "reason": self.reason,
+            "principal": self.principal.value,
+            "partner_id": str(self.partner_id) if self.partner_id else None,
         }
 
     @classmethod
@@ -127,6 +162,8 @@ class TenantContext:
                 aal=int(raw.get("aal", 1)),
                 is_break_glass=bool(raw.get("is_break_glass", False)),
                 reason=raw.get("reason"),
+                principal=PrincipalKind(raw.get("principal", PrincipalKind.MEMBER.value)),
+                partner_id=UUID(raw["partner_id"]) if raw.get("partner_id") else None,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"Malformed tenant context headers: {exc}") from exc
@@ -144,4 +181,5 @@ class TenantContext:
             "user_id": str(self.user_id),
             "membership_id": str(self.membership_id),
             "is_break_glass": self.is_break_glass,
+            "principal": self.principal.value,
         }

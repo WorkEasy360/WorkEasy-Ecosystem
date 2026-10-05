@@ -3,7 +3,8 @@
 One task. Authorization codes are issued on every product sign-in, live for
 sixty seconds, and are then worthless - but nothing deletes them, so the
 table grows for the lifetime of the deployment and the redemption lookup gets
-slower with every login that ever happened.
+slower with every login that ever happened. The same run prunes parked
+(pending) authorization requests (Phase 12).
 
 ``CrossTenantTask`` because these rows are control plane: they carry an
 organization id as a plain column and are deliberately not tenant-scoped (see
@@ -40,11 +41,20 @@ def prune_authorization_codes(older_than_seconds: int | None = None) -> int:
     rather than as an unknown code. An hour is long enough for that signal to
     be useful and short enough that the table stays small.
     """
-    from workeasy360.platform.ecosystem.authorization import prune_expired
-
-    deleted = prune_expired(
-        older_than_seconds=older_than_seconds if older_than_seconds is not None else 3600
+    from workeasy360.platform.ecosystem.authorization import (
+        prune_expired,
+        prune_expired_pending,
     )
+
+    retention = older_than_seconds if older_than_seconds is not None else 3600
+    deleted = prune_expired(older_than_seconds=retention)
     if deleted:
         logger.info("ecosystem.authorization_codes.pruned", count=deleted)
-    return deleted
+    # Phase 12 (G-33). Parked authorization requests - one per anonymous
+    # `/authorize` hit, since a signed-out browser is parked for the login
+    # page - had a prune function and no caller, so the table grew with every
+    # unauthenticated request for the life of the deployment.
+    pending = prune_expired_pending(older_than_seconds=retention)
+    if pending:
+        logger.info("ecosystem.pending_authorizations.pruned", count=pending)
+    return deleted + pending

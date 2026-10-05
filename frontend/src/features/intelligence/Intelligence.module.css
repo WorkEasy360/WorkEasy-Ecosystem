@@ -1,0 +1,106 @@
+/* Phase 8 settings screens: AI and analytics. A CSS module rather than
+   inline style attributes (D-010). */
+
+/* minmax(0, 1fr): a grid item's minimum width is its content's, so a wide
+   usage table would otherwise stretch the page past a 320px viewport instead
+   of scrolling inside its wrapper (WCAG 1.4.10), as in ControlPlane.module.css. */
+.stack {
+  display: grid;
+  gap: var(--w360-space-5);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.stack > * {
+  min-width: 0;
+}
+
+.lead {
+  color: var(--w360-text-muted);
+  margin: 0 0 var(--w360-space-5);
+}
+
+.card {
+  padding: var(--w360-space-5);
+}
+
+.cardTitle {
+  font-size: 16px;
+  margin: 0 0 var(--w360-space-2);
+}
+
+.sectionTitle {
+  font-size: 16px;
+  margin: 0 0 var(--w360-space-3);
+}
+
+.muted {
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+.note {
+  color: var(--w360-text-muted);
+  font-size: 13px;
+  margin: var(--w360-space-2) 0 0;
+}
+
+.mono {
+  font-family: var(--w360-font-mono, ui-monospace, monospace);
+  font-size: 13px;
+}
+
+.form {
+  display: grid;
+  gap: var(--w360-space-3);
+  max-width: 640px;
+}
+
+.field {
+  display: grid;
+  gap: var(--w360-space-1);
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--w360-space-2);
+}
+
+.fieldset {
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  padding: var(--w360-space-3);
+  margin: 0;
+  display: grid;
+  gap: var(--w360-space-2);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+
+.table th,
+.table td {
+  border-bottom: 1px solid var(--w360-border);
+  padding: var(--w360-space-2);
+  text-align: left;
+  vertical-align: top;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

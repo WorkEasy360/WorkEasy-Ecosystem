@@ -129,6 +129,13 @@ class UnknownPermission(AuthorizationError):
     http_status = 500
 
 
+class AuthenticationRequired(AuthorizationError):
+    """No valid session. 401, and the same shape wherever it is raised."""
+
+    code = "login_required"
+    http_status = 401
+
+
 class MembershipRequired(AuthorizationError):
     code = "membership_required"
 
@@ -138,6 +145,19 @@ class StepUpRequired(AuthorizationError):
 
     code = "step_up_required"
     http_status = 401
+
+
+class ControlPlaneInvariantViolation(AuthorizationError):
+    """A control-plane rule that holds regardless of who asks.
+
+    409: the request was well formed and the caller may have been permitted,
+    but carrying it out would break an invariant of the control plane itself
+    (granting a non-control-plane key, removing the last security
+    administrator).
+    """
+
+    code = "control_plane_invariant"
+    http_status = 409
 
 
 # --- Entitlement ---------------------------------------------------------
@@ -222,6 +242,66 @@ class CausationDepthExceeded(IntegrationError):
 
     code = "causation_depth_exceeded"
     http_status = 500
+
+
+# --- Integration platform (Phase 6): connections, webhooks, automation ----
+#
+# Customer-facing control-plane errors for the org-configured integration
+# surface. Three codes, not one per resource: the remedy is the same shape
+# whichever resource it is ("fix the field", "reload and retry", "it is not
+# there"), and ``resource``/``field`` in the context say which.
+
+
+class IntegrationValidationError(IntegrationError):
+    """Client-supplied integration configuration failed validation.
+
+    Raised **before the first write** of the service that raises it - a 4xx
+    does not roll back the request transaction (D-016), so anything written
+    ahead of this would commit. ``field`` names the offending input, which
+    is safe: it is data the caller just sent.
+    """
+
+    code = "integration_validation_error"
+    http_status = 400
+
+    def __init__(
+        self, message: str = "", *, field: str | None = None, **context: Any
+    ) -> None:
+        super().__init__(
+            message or "Invalid integration configuration.", field=field, **context
+        )
+
+
+class IntegrationNotFound(IntegrationError):
+    """No such connection, subscription, delivery or rule - or not in this
+    organization. The two are indistinguishable by design: a cross-tenant
+    guess must not learn that the id exists (Task 59)."""
+
+    code = "integration_not_found"
+    http_status = 404
+
+    def __init__(self, message: str = "", *, resource: str = "", **context: Any) -> None:
+        super().__init__(message or "Not found.", resource=resource, **context)
+
+
+class IntegrationConflict(IntegrationError):
+    """The request conflicts with durable state: a stale ``version``, an
+    illegal lifecycle transition, a replay of a delivery that is not dead, a
+    limit that would be exceeded. Reload and retry, or change the request."""
+
+    code = "integration_conflict"
+    http_status = 409
+
+
+class IntegrationRateLimited(IntegrationError):
+    """A user-triggerable outbound action (a test ping) hit its limit.
+
+    Shares the ``rate_limited`` code every other limiter answers with, so a
+    client needs one branch for "wait and try again".
+    """
+
+    code = "rate_limited"
+    http_status = 429
 
 
 # --- Commercial ----------------------------------------------------------
@@ -336,6 +416,62 @@ class SeatRemediationRequired(CommercialError):
     code = "seat_remediation_required"
 
 
+# --- Partner channel (Phase 7) -------------------------------------------
+
+
+class PartnerError(CommercialError):
+    """Base for partner, capability, commission and payout failures."""
+
+    code = "partner_error"
+
+
+class PartnerRecordNotFound(PartnerError):
+    """A partner-scoped record does not exist **or is not the caller's**.
+
+    404 for both, identically: a partner that can tell "no such customer"
+    from "another partner's customer" can enumerate the whole book.
+    """
+
+    code = "partner_record_not_found"
+    http_status = 404
+
+
+class PartnerValidationError(PartnerError):
+    """Bad input to a partner-channel command. 400, unlike its 409 family."""
+
+    code = "partner_validation_error"
+    http_status = 400
+
+    def __init__(
+        self, message: str = "", *, field: str | None = None, **context: Any
+    ) -> None:
+        super().__init__(message, field=field, **context)
+
+
+class PartnerNotActive(PartnerError):
+    """A new commercial action was attempted for a partner that may not transact.
+
+    Suspended and terminated partners keep their history and lose the ability
+    to do anything new (Phase 7 Task 19, 62).
+    """
+
+    code = "partner_not_active"
+    http_status = 403
+
+
+class SeparationOfDutiesViolation(PartnerError):
+    """The same identity tried to both prepare and approve a payout."""
+
+    code = "separation_of_duties"
+    http_status = 403
+
+
+class DomainOwnershipUnproven(PartnerError):
+    """A custom domain was asked to advance before control was proven."""
+
+    code = "domain_ownership_unproven"
+
+
 # --- Product integration (the remote ecosystem boundary) -----------------
 #
 # These are the *control-plane* errors of product integration: registering an
@@ -431,3 +567,503 @@ class ConfigurationError(Workeasy360Error):
     """Invalid or missing configuration. Raised at startup, never per-request."""
 
     code = "configuration_error"
+
+
+# --- Organizations (Phase 5) -----------------------------------------------
+
+
+class OrganizationValidationError(Workeasy360Error):
+    """Client-supplied organization data failed validation.
+
+    Deliberately generic (unlike the commercial catalog's typed variants):
+    organization creation takes exactly one meaningful field, and a single
+    code with a field-specific message is simpler than a hierarchy for one
+    caller (Task 3 - "input should remain minimal").
+    """
+
+    code = "organization_validation_error"
+    http_status = 400
+
+    def __init__(
+        self, message: str = "", *, field: str | None = None, **context: Any
+    ) -> None:
+        super().__init__(message or "Invalid organization data.", field=field, **context)
+
+
+# --- MFA (Phase 5) -----------------------------------------------------
+
+
+class MfaError(Workeasy360Error):
+    code = "mfa_error"
+    http_status = 400
+
+
+class MfaEnrollmentNotFound(MfaError):
+    """The enrollment referenced by a confirm/cancel call does not exist, is
+    already confirmed, or belongs to another user."""
+
+    code = "mfa_enrollment_not_found"
+    http_status = 404
+
+
+class MfaCodeInvalid(MfaError):
+    """A TOTP or recovery code did not verify.
+
+    Deliberately does not distinguish "wrong code" from "no such factor" in
+    its message - the same uniform-denial property login already applies
+    (12-security.md), since either is exploitable as an enumeration oracle
+    for whether a given account has MFA enrolled.
+    """
+
+    code = "mfa_code_invalid"
+    http_status = 400
+
+
+class MfaThrottled(MfaError):
+    """Too many consecutive failed MFA codes: this account's step-up is
+    locked until ``retry_after`` seconds have passed.
+
+    Shares the ``rate_limited`` code the per-minute buckets already answer
+    with, so a client needs one branch for "wait and try again".
+    """
+
+    code = "rate_limited"
+    http_status = 429
+
+    def __init__(self, message: str = "", *, retry_after: int, **context: Any) -> None:
+        super().__init__(message or "Too many attempts. Try again later.", **context)
+        self.retry_after = max(1, int(retry_after))
+
+
+# --- Intelligence platform (Phase 8): AI, retrieval, analytics -------------
+#
+# The error model a product's AI, retrieval and analytics calls switch on
+# (Tasks 107, 108). Each code names a remedy, never an internal: "not
+# entitled" is a sales conversation, "quota exceeded" waits for the period or
+# an administrator, "provider unavailable" retries later, "invalid skill"
+# fixes the caller. No provider message, credential, prompt or stack ever
+# reaches ``context`` - only identifiers and bounded reason codes.
+
+
+class IntelligenceError(Workeasy360Error):
+    code = "intelligence_error"
+    http_status = 500
+
+
+class AINotEntitled(IntelligenceError):
+    """The organization's plan grants this product no AI, or the product is
+    not entitled at all. One answer for both, so an unentitled caller learns
+    nothing about which (the same property the entitlement API keeps)."""
+
+    code = "ai_not_entitled"
+    http_status = 403
+
+
+class AIDisabled(IntelligenceError):
+    """AI is switched off for this organization - by its administrator, or by
+    the platform - or the organization is not accepting new work."""
+
+    code = "ai_disabled"
+    http_status = 403
+
+
+class AIQuotaExceeded(IntelligenceError):
+    """A spend limit would be exceeded by this request. ``scope`` says which
+    (``organization`` or ``product``); it resets at ``resets_at``."""
+
+    code = "ai_quota_exceeded"
+    http_status = 429
+
+
+class AIConcurrencyLimited(IntelligenceError):
+    """The organization already has the maximum number of AI requests in
+    flight. Retry shortly."""
+
+    code = "ai_concurrency_limited"
+    http_status = 429
+
+
+class AISkillNotFound(IntelligenceError):
+    """No such skill version, or not one this caller may invoke. The two are
+    indistinguishable by design: a product guessing another product's
+    private skill must not learn that it exists (Task 18)."""
+
+    code = "ai_skill_not_found"
+    http_status = 404
+
+
+class AIInvalidRequest(IntelligenceError):
+    """The request is malformed or out of bounds. ``field`` names the input,
+    which is safe: it is data the caller just sent. Raised before any write
+    or reservation."""
+
+    code = "ai_invalid_request"
+    http_status = 400
+
+    def __init__(
+        self, message: str = "", *, field: str | None = None, **context: Any
+    ) -> None:
+        super().__init__(message or "Invalid request.", field=field, **context)
+
+
+class AIContextTooLarge(IntelligenceError):
+    """The trusted instructions and the input alone exceed what the selected
+    model accepts. Never resolved by truncating instructions (Task 54)."""
+
+    code = "ai_context_too_large"
+    http_status = 422
+
+
+class AIProviderUnavailable(IntelligenceError):
+    """No approved model could answer within the deadline - provider down,
+    rate limited, circuit open, or not configured. Retry later; nothing else
+    on the platform is affected (Task 53)."""
+
+    code = "ai_provider_unavailable"
+    http_status = 503
+    retry_after = 30
+
+
+class AIInvalidOutput(IntelligenceError):
+    """The model's output failed the skill's output contract after the
+    bounded retries. Nothing was persisted as if it were valid (Task 19)."""
+
+    code = "ai_invalid_output"
+    http_status = 502
+
+
+class AIRequestConflict(IntelligenceError):
+    """An idempotency key was reused for a different request, or the first
+    request under it is still running."""
+
+    code = "ai_request_conflict"
+    http_status = 409
+
+
+class AIRequestNotFound(IntelligenceError):
+    """No such AI request for this product and organization."""
+
+    code = "ai_request_not_found"
+    http_status = 404
+
+
+class AIRegistryConflict(IntelligenceError):
+    """A skill or metric version already exists with a different definition.
+    Registered versions are immutable; register a new version instead."""
+
+    code = "ai_registry_conflict"
+    http_status = 409
+
+
+class IndexNotReady(IntelligenceError):
+    """Retrieval was required but none of the requested sources has an
+    indexed document yet - indexing is pending or failed."""
+
+    code = "index_not_ready"
+    http_status = 409
+
+
+class KnowledgeConflict(IntelligenceError):
+    """A document version was resubmitted with different content, or the
+    organization's document limit would be exceeded."""
+
+    code = "knowledge_conflict"
+    http_status = 409
+
+
+class KnowledgeNotFound(IntelligenceError):
+    """No such knowledge source or document for this product and
+    organization - including one owned by another product (Task 32)."""
+
+    code = "knowledge_not_found"
+    http_status = 404
+
+
+class MetricNotFound(IntelligenceError):
+    """No such metric, or not one this caller may query. Indistinguishable by
+    design: a metric key in another product's namespace is not an existence
+    oracle (Task 108)."""
+
+    code = "metric_not_found"
+    http_status = 404
+
+
+class AnalyticsQueryInvalid(IntelligenceError):
+    """The query is malformed or exceeds a bound (range, buckets, groups).
+    ``field`` names the input."""
+
+    code = "analytics_query_invalid"
+    http_status = 400
+
+    def __init__(
+        self, message: str = "", *, field: str | None = None, **context: Any
+    ) -> None:
+        super().__init__(message or "Invalid analytics query.", field=field, **context)
+
+
+# --- Phase 8 extension: account security, membership, access policy ----------
+#
+# Codes the organization console, the account pages and the sign-in flow
+# branch on. As everywhere above, ``context`` carries identifiers and bounded
+# reason codes only - never a password, token, address or session key.
+
+
+class AccountSecurityError(Workeasy360Error):
+    code = "account_security_error"
+    http_status = 400
+
+
+class PasswordPolicyViolation(AccountSecurityError):
+    """A new password failed the platform validators or the strictest
+    password policy of the organizations the account belongs to. ``problems``
+    are the validators' human-readable messages; none repeats the password."""
+
+    code = "password_policy_violation"
+
+    def __init__(self, message: str = "", *, problems: list[str], **context: Any) -> None:
+        super().__init__(
+            message or "The new password does not meet the password policy.",
+            problems=list(problems),
+            **context,
+        )
+
+
+class CurrentPasswordIncorrect(AccountSecurityError):
+    code = "current_password_incorrect"
+
+
+class SessionNotFound(AccountSecurityError):
+    """No such live session for this account - including another user's."""
+
+    code = "session_not_found"
+    http_status = 404
+
+
+class SignupClosed(AccountSecurityError):
+    """Self-service signup is switched off in the platform settings."""
+
+    code = "signup_closed"
+    http_status = 403
+
+
+class SignupValidationError(AccountSecurityError):
+    """A signup field is missing or malformed. Never says whether the address
+    already has an account - that answer is the same for everyone."""
+
+    code = "signup_invalid"
+
+    def __init__(
+        self, message: str = "", *, field: str | None = None, **context: Any
+    ) -> None:
+        super().__init__(message or "Invalid signup.", field=field, **context)
+
+
+class AccountLinkInvalid(AccountSecurityError):
+    """No redeemable verification or reset link for this token. One answer for
+    unknown, expired and already used, like ``InvitationInvalid``: the token
+    is the only credential, and a finer answer is an oracle for guessing one."""
+
+    code = "link_invalid"
+    http_status = 404
+
+
+class CredentialsInvalid(AccountSecurityError):
+    """The password given to finish a verification was not the account's."""
+
+    code = "invalid_credentials"
+    http_status = 401
+
+
+class AccessPolicyDenied(AuthorizationError):
+    """An organization's access policy refused this request after membership
+    was verified: ``network_not_allowed``, ``mfa_required``,
+    ``reauthentication_required`` or ``password_change_required``."""
+
+    code = "access_policy_denied"
+
+    def __init__(self, reason: str, message: str = "", *, http_status: int = 403) -> None:
+        super().__init__(message or "Access denied by the organization's policy.")
+        self.code = reason
+        self.http_status = http_status
+
+
+class SecurityPolicyValidationError(Workeasy360Error):
+    code = "security_policy_invalid"
+    http_status = 400
+
+    def __init__(
+        self, message: str = "", *, field: str | None = None, **context: Any
+    ) -> None:
+        super().__init__(message or "Invalid security policy.", field=field, **context)
+
+
+class SecurityPolicyConflict(SecurityPolicyValidationError):
+    """Someone else changed the organization's access policy since this edit
+    was loaded (the policy carries an optimistic version)."""
+
+    code = "concurrent_modification"
+    http_status = 409
+
+
+class NetworkLockout(Workeasy360Error):
+    """The allow-list being saved would exclude the address it is being saved
+    from - refused rather than locking the administrator out."""
+
+    code = "network_lockout"
+    http_status = 409
+
+
+class MembershipError(Workeasy360Error):
+    code = "membership_error"
+    http_status = 400
+
+
+class MemberNotFound(MembershipError):
+    code = "member_not_found"
+    http_status = 404
+
+
+class MembershipValidationError(MembershipError):
+    code = "membership_invalid"
+
+    def __init__(
+        self, message: str = "", *, field: str | None = None, **context: Any
+    ) -> None:
+        super().__init__(message or "Invalid membership change.", field=field, **context)
+
+
+class MembershipConflict(MembershipError):
+    """The change contradicts the membership's current state (the owner
+    cannot be suspended, an active member cannot be invited again...)."""
+
+    code = "membership_conflict"
+    http_status = 409
+
+
+class InvitationInvalid(MembershipError):
+    """No redeemable invitation for this token. Deliberately one answer for
+    unknown, expired, revoked and already used: the token is the only
+    credential, and a finer answer is an oracle for guessing one."""
+
+    code = "invitation_invalid"
+    http_status = 404
+
+
+class InvitationSignInRequired(MembershipError):
+    """The invitation is for an existing account: sign in as it, then accept."""
+
+    code = "sign_in_required"
+    http_status = 409
+
+
+class InvitationEmailMismatch(MembershipError):
+    """Signed in as a different account from the one invited."""
+
+    code = "invitation_email_mismatch"
+    http_status = 403
+
+
+class CommunicationValidationError(Workeasy360Error):
+    code = "template_invalid"
+    http_status = 400
+
+    def __init__(
+        self, message: str = "", *, field: str | None = None, **context: Any
+    ) -> None:
+        super().__init__(message or "Invalid template.", field=field, **context)
+
+
+# --- Phase 8 extension: payments -----------------------------------------------
+#
+# The payment surface's codes. No provider message, credential, card detail or
+# signature ever reaches ``context``: identifiers and bounded reasons only.
+
+
+class PaymentError(CommercialError):
+    code = "payment_error"
+    http_status = 409
+
+
+class PaymentRecordNotFound(PaymentError):
+    """No such invoice, payment or provider - including another tenant's."""
+
+    code = "payment_record_not_found"
+    http_status = 404
+
+
+class PaymentNotAllowed(PaymentError):
+    """The invoice or payment is not in a state that allows this (already
+    paid, void, nothing due, a refund above what was captured...)."""
+
+    code = "payment_not_allowed"
+
+
+class PaymentProviderUnavailable(PaymentError):
+    """No enabled provider can take this payment (none configured for the
+    currency, or its credential is missing). Retrying later may succeed."""
+
+    code = "payment_provider_unavailable"
+    http_status = 503
+
+
+class PaymentValidationError(PaymentError):
+    code = "payment_invalid"
+    http_status = 400
+
+    def __init__(
+        self, message: str = "", *, field: str | None = None, **context: Any
+    ) -> None:
+        super().__init__(message or "Invalid payment request.", field=field, **context)
+
+
+class WebhookRejected(PaymentError):
+    """A provider callback failed verification (signature, freshness, size or
+    shape). Deliberately says nothing about which check failed."""
+
+    code = "webhook_rejected"
+    http_status = 400
+
+
+# --- Phase 9: orders ------------------------------------------------------------
+
+
+class OrderError(CommercialError):
+    code = "order_error"
+    http_status = 409
+
+
+class OrderNotFound(OrderError):
+    """No such order in this organization - including another tenant's."""
+
+    code = "order_not_found"
+    http_status = 404
+
+
+class TrialNotAllowed(CommercialError):
+    """A product trial cannot be started or changed now (Phase 11). ``reason``
+    is one of a closed set the frontend maps to copy: ``not_offered`` (no trial
+    is configured, or it is switched off), ``plan_not_eligible``,
+    ``product_unavailable``, ``already_used`` (this organization has trialled
+    the product), ``already_owned`` (a paid line holds it), ``not_active``."""
+
+    code = "trial_not_allowed"
+
+    def __init__(self, message: str = "", *, reason: str, **context: Any) -> None:
+        super().__init__(
+            message or "This trial cannot be started.", reason=reason, **context
+        )
+
+
+class OrderNotAllowed(OrderError):
+    """The order cannot be placed or changed now. ``reason`` is one of a closed
+    set the frontend maps to copy: ``billing_account_required``,
+    ``order_pending`` (another order awaits payment - its id is given),
+    ``outstanding_balance``, ``subscription_not_open``, ``already_owned``,
+    ``not_for_sale``, ``interval_mismatch``, ``not_pending``."""
+
+    code = "order_not_allowed"
+
+    def __init__(self, message: str = "", *, reason: str, **context: Any) -> None:
+        super().__init__(
+            message or "This order cannot be placed.", reason=reason, **context
+        )

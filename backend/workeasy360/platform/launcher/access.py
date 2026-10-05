@@ -29,7 +29,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from workeasy360.contracts.enums import LicensingMode, StrEnum
-from workeasy360.contracts.ports.catalog import get_product_directory
+from workeasy360.contracts.ports.catalog import (
+    ProductDescriptor,
+    get_product_directory,
+)
 from workeasy360.contracts.ports.entitlements import get_gate
 from workeasy360.contracts.values.identifiers import ProductCode
 from workeasy360.contracts.values.tenant import TenantContext
@@ -85,12 +88,37 @@ class AppAccessDecision:
     licensing_mode: LicensingMode
     state: AppAccessState
     launch_url: str = ""
+    #: Phase 9: the organization's entitlement status when it holds the
+    #: product (``trial``, ``active``, ``past_due``...), so My Products can say
+    #: "Trial" - read from the same gate answer, never a second lookup.
+    entitlement_status: str = ""
 
 
-def can_launch_product(ctx: TenantContext, product_code: str) -> AppAccessDecision:
+def can_launch_product(
+    ctx: TenantContext,
+    product_code: str,
+    *,
+    descriptor: ProductDescriptor | None = None,
+) -> AppAccessDecision:
     """The decision. Task 9's "one authoritative application service" -
     every other caller in this module and in ``interfaces/`` reaches launch
-    eligibility through this function and no other."""
+    eligibility through this function and no other.
+
+    ``descriptor`` is an optimisation and nothing more: a caller that has
+    *just* read this product's catalog descriptor through the same port -
+    ``selectors.app_directory``, which gets the whole marketable list in one
+    query - passes it back rather than making this function re-read the
+    identical row per product. Measured: that duplicate read was one of the
+    two queries every product in the directory cost
+    (docs/phase-4/09-performance.md).
+
+    It carries no security weight. ``licensing_mode`` is the only field the
+    decision branches on, it is intrinsic to the product rather than to
+    anything a caller controls, and every field that *can* change underneath
+    a stale answer - entitlement, seat, integration status - is still read
+    live below, every call. A caller that has no descriptor to hand omits it
+    and gets the identical answer.
+    """
     from workeasy360.platform.ecosystem import selectors as ecosystem_selectors
 
     try:
@@ -107,12 +135,15 @@ def can_launch_product(ctx: TenantContext, product_code: str) -> AppAccessDecisi
             licensing_mode=LicensingMode.PER_SEAT,
             state=AppAccessState.PRODUCT_UNAVAILABLE,
         )
-    descriptor = get_product_directory().get(code)
+    if descriptor is None:
+        descriptor = get_product_directory().get(code)
     display_name = descriptor.display_name if descriptor else str(product_code)
     description = descriptor.description if descriptor else ""
     licensing_mode = descriptor.licensing_mode if descriptor else LicensingMode.PER_SEAT
 
-    def decision(state: AppAccessState, *, launch_url: str = "") -> AppAccessDecision:
+    def decision(
+        state: AppAccessState, *, launch_url: str = "", status: str = ""
+    ) -> AppAccessDecision:
         return AppAccessDecision(
             product_code=str(product_code),
             display_name=display_name,
@@ -120,6 +151,7 @@ def can_launch_product(ctx: TenantContext, product_code: str) -> AppAccessDecisi
             licensing_mode=licensing_mode,
             state=state,
             launch_url=launch_url,
+            entitlement_status=status,
         )
 
     target = ecosystem_selectors.launch_target(str(product_code))
@@ -139,12 +171,13 @@ def can_launch_product(ctx: TenantContext, product_code: str) -> AppAccessDecisi
         # needed to render "Activate").
         return decision(AppAccessState.NO_ENTITLEMENT)
 
+    status = entitlement.status.value if entitlement.status is not None else ""
     if target.is_suspended:
-        return decision(AppAccessState.INTEGRATION_SUSPENDED)
+        return decision(AppAccessState.INTEGRATION_SUSPENDED, status=status)
 
     if licensing_mode == LicensingMode.PER_SEAT:
         held = get_gate().has_seat(ctx.organization_id, ctx.membership_id, code)
         if not held:
-            return decision(AppAccessState.NO_SEAT)
+            return decision(AppAccessState.NO_SEAT, status=status)
 
-    return decision(AppAccessState.ACTIVE, launch_url=target.launch_url)
+    return decision(AppAccessState.ACTIVE, launch_url=target.launch_url, status=status)

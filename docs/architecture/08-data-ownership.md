@@ -36,14 +36,14 @@ Legend — **Read:** who may read, and how. **Write:** who may write. `S` = via 
 
 | Entity | Owner | Read | Write | Publishes | Consumes |
 |---|---|---|---|---|---|
-| `User` | `platform/identity` | identity `D`; others `S` (never raw) | identity only | `identity.user.registered.v1`, `.email_verified.v1`, `.disabled.v1`, `.password_changed.v1` | `organizations.membership.removed.v1` (cleanup) |
+| `User` | `platform/identity` | identity `D`; others `S` (never raw) | identity only - other flows call `identity.lifecycle` (enforced since Phase 9) | `identity.user.registered.v1`, `.email_verified.v1`, `.disabled.v1`, `.password_changed.v1` | `organizations.membership.removed.v1` (cleanup) |
 | `Session` | `platform/identity` | identity `D` | identity only | `identity.session.started.v1`, `.revoked.v1` | `organizations.organization.suspended.v1` |
 | `AuthFactor` | `platform/identity` | identity `D`; admin UI via `S` | identity only | `identity.mfa.enrolled.v1`, `.removed.v1` | — |
 | `IdentityProvider` | `platform/identity` | identity `D`; org admins `S` | identity only | `identity.sso.configured.v1` | — |
 | `ImpersonationGrant` | `platform/identity` | identity `D`; audit `S`; **customer-visible** | identity only | `identity.impersonation.started.v1`, `.ended.v1` | — |
-| `Organization` | `platform/organizations` | all modules `S` | organizations only | `organizations.organization.created.v1`, `.suspended.v1`, `.reactivated.v1`, `.purged.v1` | `entitlements.status.changed.v1` |
-| `Membership` | `platform/organizations` | authz `S`, entitlements `S`, products `S` | organizations only | `organizations.membership.added.v1`, `.removed.v1`, `.suspended.v1` | `identity.user.disabled.v1` |
-| `Invitation` | `platform/organizations` | organizations `D` | organizations only | `organizations.invitation.sent.v1`, `.accepted.v1` | — |
+| `Organization` | `platform/organizations` | all modules `S` | organizations only - `organizations.services` (enforced since the Phase 9 closure; D-032 closed) | `organizations.organization.created.v1`, `.suspended.v1`, `.reactivated.v1`, `.purged.v1` | `entitlements.status.changed.v1` |
+| `Membership` | `platform/organizations` | authz `S`, entitlements `S`, products `S` | organizations only - `organizations.services`, which also keeps the chooser projection in step (enforced; D-032 closed) | `organizations.membership.added.v1`, `.removed.v1`, `.suspended.v1` | `identity.user.disabled.v1` |
+| `Invitation` | `platform/organizations` (table) | organizations `D`; administration `D` | `platform/administration/invitations` only - the invitation system (Phase 8 extension); accepting one joins through `organizations.services.join_member` (enforced) | `organizations.invitation.sent.v1`, `.accepted.v1` | — |
 | `Permission` | `platform/authz` | all `S` (registry) | code-declared; synced at deploy | — | — |
 | `Role` | `platform/authz` | all `S` | authz only | `authz.role.created.v1`, `.permissions_changed.v1` | — |
 | `RoleAssignment` | `platform/authz` | authz `D`; audit `S` | authz only | `authz.assignment.granted.v1`, `.revoked.v1`, `.expired.v1` | `organizations.membership.removed.v1` |

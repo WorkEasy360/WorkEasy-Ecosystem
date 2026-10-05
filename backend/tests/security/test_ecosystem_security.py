@@ -964,3 +964,104 @@ def test_the_redaction_backstop_covers_oauth_bearer_material(caplog):
     assert text.count(REDACTED) >= 4
     assert "crm" in text
     assert "not_entitled" in text
+
+
+# --- the seat, re-asked at both moments -----------------------------------
+#
+# Phase 4's headline security property (ADR-021 §1): a per-seat product's
+# seat is checked at `/authorize` *and* re-checked at redemption, exactly as
+# entitlement already was. Both were implemented in Phase 4 and neither was
+# covered by a test until this audit - so the three tests below are the
+# difference between "the code calls require_seat" and "a token cannot be
+# issued to an unseated member".
+
+
+def test_a_member_with_no_seat_is_refused_at_the_authorization_endpoint(
+    client, signing_key, register_product, entitled_org, signed_in
+):
+    """The organization holds CRM; this member holds no seat in it.
+
+    Delivered to the product's registered redirect URI as
+    ``product_no_seat`` - redirectably, so the product's client library can
+    render "ask your administrator for a seat" rather than a blank failure.
+    """
+    from urllib.parse import parse_qs, urlsplit
+
+    registration = register_product("crm")
+    org = entitled_org("crm", seat=False)
+    signed_in(org["user"])
+
+    response = client.get(
+        AUTHORIZE,
+        {
+            "response_type": "code",
+            "client_id": registration["client_id"],
+            "redirect_uri": registration["redirect_uri"],
+            "scope": "openid",
+            "state": "s",
+            "nonce": "n",
+            "code_challenge": "a" * 43,
+            "code_challenge_method": "S256",
+            "organization": org["organization_id"],
+        },
+    )
+    assert response.status_code == 302
+    assert response["Location"].startswith(registration["redirect_uri"])
+    query = parse_qs(urlsplit(response["Location"]).query)
+    assert query["error"] == ["product_no_seat"]
+    assert "code" not in query
+
+
+def test_a_seat_released_after_authorization_stops_the_exchange(
+    client, signing_key, register_product, entitled_org, signed_in
+):
+    """Task 48, the mandatory case: the launcher rendered Open, the browser
+    started the flow, and an administrator unassigned the seat in the sixty
+    seconds before the product exchanged the code.
+
+    The code records a decision; it is not a licence to skip making it
+    again (``authorization._revalidate_subject``).
+    """
+    from workeasy360.platform.entitlements.services.seats import release_seat
+    from workeasy360.platform.tenancy.context import tenant_context
+    from workeasy360.platform.tenancy.db import tenant_db_scope
+
+    registration = register_product("crm")
+    org = entitled_org("crm")  # seated
+    signed_in(org["user"])
+    code, verifier = _mint_code(client, registration, org)
+
+    with tenant_context(org["ctx"]), tenant_db_scope(org["ctx"]):
+        released = release_seat(
+            org["org"].id, pool_key="crm", membership_id=org["membership"].id
+        )
+    assert released == 1, "the fixture's seat must have existed to be released"
+
+    response = _exchange(client, registration, code, verifier)
+    assert response.status_code == 400
+    # `invalid_grant`, uniform with every other redemption failure - the
+    # specific reason is disclosed redirectably at `/authorize` when the
+    # product restarts the flow.
+    assert response.json()["error"] == "invalid_grant"
+
+
+def test_an_organization_wide_product_never_requires_a_seat(
+    client, signing_key, register_product, entitled_org, signed_in
+):
+    """The false-positive half, and the reason licensing mode is *read*
+    rather than inferred from seat count (Task 11 / ADR-021 §1).
+
+    ``books`` is ``PER_ORGANIZATION`` in the shared catalog fixture, so no
+    seat pool exists for it at all. A seat check applied indiscriminately
+    would lock every user out of every organization-wide product - which is
+    why the two tests above cannot stand on their own.
+    """
+    registration = register_product("books")
+    org = entitled_org("books")
+    signed_in(org["user"])
+
+    code, verifier = _mint_code(client, registration, org)
+    response = _exchange(client, registration, code, verifier)
+
+    assert response.status_code == 200
+    assert response.json()["id_token"]

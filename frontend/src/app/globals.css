@@ -101,8 +101,23 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Link text. A partner's accent (useBranding.applyAccent) supplies a variant of
+   itself that reads on each theme; unset, the platform's own brand colour is used.
+   Resolved here, at the element, so an override scoped to a container (the live
+   preview) applies to the links inside it. `:where` keeps the theme selectors at
+   the specificity of a bare `a`, so `.w360-btn` link-buttons keep their own label. */
 a {
-  color: var(--w360-brand);
+  color: var(--w360-brand-text-on-light, var(--w360-brand));
+}
+
+@media (prefers-color-scheme: dark) {
+  :where(:root:not([data-theme="light"])) a {
+    color: var(--w360-brand-text-on-dark, var(--w360-brand));
+  }
+}
+
+:where(:root[data-theme="dark"]) a {
+  color: var(--w360-brand-text-on-dark, var(--w360-brand));
 }
 
 /* One visible, consistent focus treatment everywhere (Task 28) - never
@@ -260,4 +275,30 @@ button:disabled {
 .w360-badge-danger {
   background: var(--w360-danger-bg);
   color: var(--w360-danger);
+}
+
+/* Phase 8 extension: a vertical form (one field per row) and a field hint. */
+.w360-stack-form {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 480px;
+}
+
+.w360-stack-form input,
+.w360-stack-form select,
+.w360-stack-form textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+.w360-hint {
+  margin: var(--w360-space-1) 0 0;
+  font-size: 13px;
+  color: var(--w360-text-muted);
+}
+
+.w360-error-text ul {
+  margin: 0;
+  padding-left: var(--w360-space-5);
 }

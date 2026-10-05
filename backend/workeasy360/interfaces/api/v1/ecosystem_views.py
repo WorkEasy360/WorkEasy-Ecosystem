@@ -49,6 +49,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
+from workeasy360.interfaces.api.v1 import intelligence_product_views
 from workeasy360.platform.ecosystem import (
     authorization,
     clientauth,
@@ -154,6 +155,7 @@ def authorize(request: HttpRequest) -> HttpResponse:
             user_id=user.pk,
             organization_id=parsed.organization_id,
             aal=_session_aal(request),
+            facts=_session_facts(request, parsed.organization_id),
         )
         authorization.require_entitlement(subject, parsed.integration.product_code)
         authorization.require_seat(subject, parsed.integration.product_code)
@@ -185,6 +187,15 @@ def resume(request: HttpRequest) -> HttpResponse:
     UPDATE ``redeem_code`` uses, so a token clicked twice - a doubled tab, a
     replayed URL - resumes at most once (Task 32).
     """
+    try:
+        # Keyed on the caller, not on a client: `resume` is reached before
+        # any client is known (the token is what names one). Unthrottled it
+        # is an online guessing budget against the resume token and, more
+        # practically, free database and log load for anyone who wants it.
+        ratelimit.consume("resume", _client_ip(request), endpoint="resume")
+    except protocol.OAuthError as exc:
+        return _error_response(exc)
+
     token = request.GET.get("resume") or ""
     try:
         pending_request = authorization.resume_pending(token=token)
@@ -222,7 +233,10 @@ def resume(request: HttpRequest) -> HttpResponse:
 
     try:
         subject = authorization.resolve_subject(
-            user_id=user.pk, organization_id=organization_id, aal=_session_aal(request)
+            user_id=user.pk,
+            organization_id=organization_id,
+            aal=_session_aal(request),
+            facts=_session_facts(request, organization_id),
         )
         authorization.require_entitlement(
             subject, pending_request.integration.product_code
@@ -364,7 +378,13 @@ def userinfo(request: HttpRequest) -> JsonResponse:
         # it through without re-verification would defeat the check, so
         # tokens.verify is given it as the expected value and PyJWT rejects
         # any mismatch.
-        unverified = pyjwt.decode(raw, options={"verify_signature": False})
+        # A peek to choose the expected audience; tokens.verify below checks
+        # the signature, issuer, expiry, type and that audience (semgrep
+        # triage, Phase 12: docs/phase-12/11-security-scans.md).
+        unverified = pyjwt.decode(
+            raw,
+            options={"verify_signature": False},  # nosemgrep
+        )
         claims = tokens.verify(
             raw,
             audience=str(unverified.get("aud") or ""),
@@ -456,6 +476,66 @@ def verify_entitlement(request: HttpRequest) -> JsonResponse:
     return response
 
 
+# --- event ingestion (Phase 6) --------------------------------------------
+
+#: Headroom over the event itself for the client-authentication fields that
+#: share the form body (a signed ``client_assertion`` is ~1 KB).
+_INGEST_AUTH_OVERHEAD_BYTES = 16_384
+
+
+@csrf_exempt
+@require_POST
+@never_cache
+def publish_event(request: HttpRequest) -> JsonResponse:
+    """A registered product publishes one event into the ecosystem.
+
+    **Form-encoded, like the token and entitlement endpoints, and for the
+    same reason** (see ``verify_entitlement``): client authentication travels
+    as form fields (``client_assertion`` per RFC 7523, or HTTP Basic), so the
+    event travels as one more - ``event``, a JSON string - rather than
+    inventing a second way to authenticate a JSON body. Fields:
+    ``organization_id`` and ``event``.
+
+    The oversized-body check runs before anything is parsed: an attacker's
+    megabyte costs a header read, not a JSON parse (Task 11).
+
+    ``202 accepted`` for a new event, ``200 duplicate`` for one already
+    recorded - a retry learns its first attempt landed, and nothing is
+    processed twice (Task 10). Every refusal is an OAuth-shaped error a
+    product's client library already parses.
+    """
+    from workeasy360.integration.routing import ingestion
+
+    limit = int(settings.INTEGRATION_EVENT_MAX_BYTES) + _INGEST_AUTH_OVERHEAD_BYTES
+    try:
+        declared = int(request.META.get("CONTENT_LENGTH") or 0)
+    except ValueError:
+        declared = 0
+    if declared > limit:
+        return _error_response(
+            protocol.OAuthError(
+                protocol.INVALID_REQUEST, "The request is too large.", http_status=413
+            )
+        )
+
+    try:
+        client = clientauth.authenticate(request, endpoint="event_ingest")
+        result = ingestion.ingest_product_event(
+            client,
+            organization_id=request.POST.get("organization_id"),
+            raw_event=request.POST.get("event"),
+        )
+    except protocol.OAuthError as exc:
+        return _error_response(exc)
+
+    response = JsonResponse(
+        {"status": result.status, "event_id": result.event_id},
+        status=202 if result.status == "accepted" else 200,
+    )
+    response["Cache-Control"] = "no-store"
+    return response
+
+
 # --- shared response shaping ---------------------------------------------
 
 
@@ -532,7 +612,25 @@ def _with_query(url: str, params: dict[str, str]) -> str:
 
 
 def _client_ip(request: HttpRequest) -> str:
-    return str(request.META.get("REMOTE_ADDR", "")) or "unknown"
+    """See ``platform.observability.client_ip`` - D-009, and why the obvious
+    ``X-Forwarded-For`` read is worse than the bug it fixes."""
+    from workeasy360.platform.observability.client_ip import (
+        client_ip,
+        rate_limit_identity,
+    )
+
+    # Rate-limit keys only; IPv6 bucketed by /64 (Phase 12, G-12).
+    return rate_limit_identity(client_ip(request))
+
+
+def _session_facts(request: HttpRequest, organization_id: UUID | None) -> Any:
+    """The session's standing for the organization's access policy - read by
+    the same function the tenancy middleware uses."""
+    from workeasy360.platform.tenancy.resolution import session_facts
+
+    if organization_id is None:
+        return None
+    return session_facts(request, organization_id)
 
 
 def _session_aal(request: HttpRequest) -> int:
@@ -541,15 +639,23 @@ def _session_aal(request: HttpRequest) -> int:
     Read from the session, which the platform's own login flow writes.
     Defaults to 1 rather than raising: a session with no recorded level is a
     single-factor session, and defaulting *down* is the fail-closed direction.
+    A step-up older than ``STEP_UP_MAX_AGE_SECONDS`` also reads as 1.
     """
-    try:
-        return max(1, int(request.session.get("w360_aal", 1)))
-    except (AttributeError, TypeError, ValueError):
-        return 1
+    from workeasy360.platform.tenancy.resolution import session_aal
+
+    return session_aal(getattr(request, "session", None))
 
 
 #: Views that authenticate by credential rather than by session cookie, and
 #: are therefore CSRF-exempt. Enumerated so the security test can assert that
 #: each one genuinely ignores session authentication, rather than trusting the
 #: decorator to have been applied thoughtfully.
-CREDENTIALED_VIEWS: tuple[Callable[..., Any], ...] = (token, userinfo, verify_entitlement)
+CREDENTIALED_VIEWS: tuple[Callable[..., Any], ...] = (
+    token,
+    userinfo,
+    verify_entitlement,
+    publish_event,
+    # Phase 8: the product-facing AI, retrieval and analytics endpoints share
+    # this trust boundary exactly (intelligence_product_views).
+    *intelligence_product_views.CREDENTIALED_VIEWS,
+)

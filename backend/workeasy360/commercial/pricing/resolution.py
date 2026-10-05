@@ -8,8 +8,11 @@ pinned onto the subscription item.
 Resolution order, first match wins (05-commercial-model.md section 4.3):
 
 1. ``ContractPrice`` for this organization, valid at ``at``
-2. Partner price book - *not implemented*; ``commercial/partners`` is a later
-   phase, and the slot is documented rather than stubbed
+2. Partner price book for the **acting partner** (``partner_id``), when a
+   partner is conducting the sale. Never selected by region, currency or the
+   customer alone: a partner book applies only because a partner with a live
+   relationship to this customer is the one buying or changing the plan, so
+   it cannot leak reseller pricing to a direct customer
 3. Regional price book for ``channel=direct`` matching region + currency
 4. Default price book for ``channel=direct`` + currency
 5. **Raise.** Never a fallback currency, never a fallback region, never zero.
@@ -94,8 +97,12 @@ def resolve_price(
     quantity: int = 1,
     region: str = "",
     at: datetime,
+    partner_id: UUID | None = None,
 ) -> PriceQuote:
     """Resolve the price of one plan version or bundle version.
+
+    ``partner_id`` is supplied by the caller from a *verified* partner
+    context (``TenantContext.partner_id``), never from request input.
 
     ``currency`` is required and is never inferred. Inferring it from the
     organization's region, or falling back to a "close enough" book, is how a
@@ -120,11 +127,22 @@ def resolve_price(
     if contract is not None:
         return contract
 
-    # Step 2 - partner price books - is deliberately absent rather than
-    # stubbed. A partner book must only apply to a customer with an active
-    # partner relationship, and no relationship model exists yet; selecting
-    # one by region alone would hand reseller pricing to direct customers,
-    # which is a revenue leak rather than a missing feature.
+    if partner_id is not None:
+        partner_quote = _book_price(
+            plan_version_id=plan_version_id,
+            bundle_version_id=bundle_version_id,
+            region="",
+            currency=currency,
+            interval=interval,
+            quantity=quantity,
+            at=at,
+            source=PriceSource.PARTNER_BOOK,
+            reason="partner price book",
+            channel=PriceBookChannel.PARTNER,
+            partner_id=partner_id,
+        )
+        if partner_quote is not None:
+            return partner_quote
 
     if region:
         quote = _book_price(
@@ -245,18 +263,20 @@ def _book_price(
     at: datetime,
     source: PriceSource,
     reason: str,
+    channel: PriceBookChannel = PriceBookChannel.DIRECT,
+    partner_id: UUID | None = None,
 ) -> PriceQuote | None:
-    """Steps 3-4. One query for the price, one for its tiers.
+    """Steps 2-4. One query for the price, one for its tiers.
 
-    Only ``channel=direct`` books are eligible. Partner and internal books
-    exist as a segmentation axis but are not selectable without the
-    relationship that entitles a customer to them.
+    A direct book carries no partner (``partner_id IS NULL``); a partner book
+    carries exactly the acting partner. Internal books are never selectable.
     """
     from workeasy360.commercial.pricing.models import PlanPrice, PriceBook, PriceTier
 
     books = _effective(
         PriceBook.objects.filter(
-            channel=PriceBookChannel.DIRECT.value,
+            channel=channel.value,
+            partner_id=partner_id,
             currency=currency.value,
             region=region,
             is_active=True,

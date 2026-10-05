@@ -141,6 +141,8 @@ Cross-Origin-Resource-Policy: same-origin
 
 ### CORS
 
+**As built (Phase 9 cleanup):** there is no cross-origin API. The frontend reaches the API same-origin through its own rewrite, so the API sends no CORS headers except on the two public, credential-free OIDC documents (discovery and the key set). The unused `W360_CORS_ALLOWED_ORIGINS` setting - no installed middleware read it - was removed. The rules below apply if a cross-origin client is ever introduced:
+
 - **Explicit origin allowlist**, computed from verified partner custom domains plus our own. Never `*`, never reflected-origin.
 - `Access-Control-Allow-Credentials: true` only for first-party and verified partner origins.
 - Preflight cached 1 h.

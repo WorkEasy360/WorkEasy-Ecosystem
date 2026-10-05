@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID
 
 from workeasy360.contracts.enums import MembershipStatus, OrganizationStatus
+from workeasy360.contracts.values.access_policy import AccessPolicy
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.tenancy.resolution import TenantResolution
 
@@ -48,7 +49,7 @@ def _resolve(user_id: UUID, **organization_lookup: Any) -> TenantResolution | No
         # a tenant scope, and the tenant is what we are resolving.
         organization = (
             Organization.objects.filter(deleted_at__isnull=True, **organization_lookup)
-            .only("id", "slug", "status")
+            .only("id", "slug", "status", *_POLICY_FIELDS)
             .first()
         )
         if organization is None:
@@ -68,7 +69,13 @@ def _resolve(user_id: UUID, **organization_lookup: Any) -> TenantResolution | No
                 Membership.unscoped.filter(
                     organization_id=organization.id, user_id=user_id
                 )
-                .only("id", "status", "user_id", "organization_id")
+                .only(
+                    "id",
+                    "status",
+                    "user_id",
+                    "organization_id",
+                    "sessions_valid_after",
+                )
                 .first()
             )
         if membership is None:
@@ -81,6 +88,29 @@ def _resolve(user_id: UUID, **organization_lookup: Any) -> TenantResolution | No
         membership_id=membership.id,
         membership_status=MembershipStatus(membership.status),
         user_id=user_id,
+        access_policy=access_policy_for(organization, membership),
+    )
+
+
+#: The organization columns the access policy is built from, loaded with the
+#: organization in the bootstrap query - so enforcing it costs no query.
+_POLICY_FIELDS = (
+    "require_mfa",
+    "session_max_age_minutes",
+    "ip_allowlist_enabled",
+    "ip_allowlist",
+)
+
+
+def access_policy_for(organization: Any, membership: Any) -> AccessPolicy:
+    valid_after = getattr(membership, "sessions_valid_after", None)
+    minutes = organization.session_max_age_minutes
+    return AccessPolicy(
+        require_mfa=bool(organization.require_mfa),
+        session_max_age_s=int(minutes) * 60 if minutes else None,
+        ip_allowlist_enabled=bool(organization.ip_allowlist_enabled),
+        ip_allowlist=tuple(str(e) for e in (organization.ip_allowlist or [])),
+        sessions_valid_after=valid_after.timestamp() if valid_after else None,
     )
 
 
@@ -117,3 +147,31 @@ def register() -> None:
     from workeasy360.platform.tenancy.resolution import register_resolver
 
     register_resolver(DatabaseTenantResolver())
+
+
+def is_active_owner(*, user_id: UUID, organization_id: UUID) -> bool:
+    """Whether this user is the **active owner** of this organization.
+
+    The verification a flow needs before treating someone as *the customer*
+    (a referral conversion attributes commission to whoever presents a token;
+    only the organization's own owner may). Read from ``Membership`` - the
+    authority - never from the chooser projection. False for every other
+    case, indistinguishably.
+    """
+    from workeasy360.platform.organizations.models import Membership
+    from workeasy360.platform.tenancy.db import organization_db_scope
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    with (
+        unscoped_access(
+            reason="Owner verification before a tenant context exists",
+            module="platform.organizations.resolver",
+        ),
+        organization_db_scope(organization_id),
+    ):
+        return Membership.unscoped.filter(
+            organization_id=organization_id,
+            user_id=user_id,
+            is_owner=True,
+            status=MembershipStatus.ACTIVE.value,
+        ).exists()

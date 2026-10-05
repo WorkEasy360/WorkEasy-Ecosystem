@@ -1,0 +1,27 @@
+const puppeteer = require("puppeteer-core");
+const BASE = "http://127.0.0.1:3999";
+(async () => {
+  const browser = await puppeteer.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: "new", args: ["--no-sandbox"] });
+  const ctx = await browser.createBrowserContext();
+  const page = await ctx.newPage();
+  await page.evaluateOnNewDocument(() => { window.__csp = []; document.addEventListener("securitypolicyviolation", (e) => window.__csp.push(e.violatedDirective)); });
+  await page.goto(`${BASE}/login`, { waitUntil: "networkidle0" });
+  await page.type('input[type="email"]', "partner@browser.test");
+  await page.type('input[type="password"]', "Browser-Test-Password-1!");
+  await Promise.all([page.click('button[type="submit"]'), page.waitForNetworkIdle({ idleTime: 800 }).catch(() => {})]);
+  await page.goto(`${BASE}/partner`, { waitUntil: "networkidle0" });
+  const href = await page.$eval("a[href^='/partner/']", (a) => a.getAttribute("href"));
+  await page.goto(`${BASE}${href}/branding`, { waitUntil: "networkidle0" });
+  const colour = await page.$('input[id][aria-invalid]');
+  await colour.click({ clickCount: 3 });
+  await colour.type("#ff0000");
+  const good = await page.$eval("section[aria-labelledby=preview-h]", (el) => el.style.getPropertyValue("--w360-brand"));
+  const markColour = await page.$eval("section[aria-labelledby=preview-h] span[aria-hidden]", (el) => getComputedStyle(el).backgroundColor);
+  await colour.click({ clickCount: 3 });
+  await colour.type("red;background:url(//evil.example/x)");
+  const bad = await page.$eval("section[aria-labelledby=preview-h]", (el) => el.style.getPropertyValue("--w360-brand"));
+  const saveDisabled = await page.$eval("button[type=submit]", (b) => b.disabled);
+  const csp = await page.evaluate(() => window.__csp);
+  console.log(JSON.stringify({ validAccentApplied: good, previewMarkColour: markColour, hostileAccentApplied: bad, saveDisabledOnBadColour: saveDisabled, cspViolations: csp.length }));
+  await browser.close();
+})().catch((e) => { console.error("FAILED", e.message); process.exit(1); });

@@ -40,10 +40,6 @@ def set_correlation_id(value: str | UUID | None) -> Token:
     return _correlation_id.set(_coerce(value))
 
 
-def set_request_id(value: str | UUID | None) -> Token:
-    return _request_id.set(_coerce(value))
-
-
 def new_correlation_id() -> UUID:
     return uuid.uuid4()
 

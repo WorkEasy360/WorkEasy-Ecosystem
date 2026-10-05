@@ -1,0 +1,317 @@
+/* The organization console's screens (Phase 8 extension). Page frame, panels
+   and tiles come from Console.module.css; tables, forms and rows from the
+   shared kit (ControlPlane.module.css). This file only adds what those two do
+   not have. CSS modules only - no inline styles (CSP). Every grid uses
+   minmax(0, 1fr) so long server text wraps instead of widening the page past a
+   320px viewport (WCAG 1.4.10). */
+
+/* --- definition lists (organization details, billing account) ----------- */
+
+.details {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0;
+}
+
+.details > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) minmax(0, 1fr);
+  gap: var(--w360-space-3);
+}
+
+.details dt {
+  color: var(--w360-text-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* --- small layout helpers --------------------------------------------------- */
+
+.section {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.section > * {
+  min-width: 0;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 18px;
+}
+
+.subTitle {
+  margin: 0;
+  font-size: 15px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3);
+  align-items: flex-end;
+}
+
+.toolbar > * {
+  min-width: 0;
+}
+
+.inlineForm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.inlineForm select,
+.toolbar select {
+  width: auto;
+  max-width: 100%;
+}
+
+.toolbar input {
+  width: min(280px, 100%);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.marker {
+  margin-left: var(--w360-space-2);
+}
+
+.textBlock {
+  margin: 0;
+}
+
+/* --- confirmation and notices ------------------------------------------------ */
+
+.confirm {
+  display: grid;
+  gap: var(--w360-space-2);
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-surface);
+  max-width: 420px;
+}
+
+.confirm p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Text first; the thicker left rule only reinforces it (WCAG 1.4.1). */
+.notice {
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border: 1px solid var(--w360-border-strong);
+  border-left-width: 4px;
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-surface);
+}
+
+.notice p {
+  margin: 0 0 var(--w360-space-2);
+}
+
+.notice p:last-child {
+  margin-bottom: 0;
+}
+
+/* --- forms ------------------------------------------------------------------ */
+
+.check {
+  display: flex;
+  gap: var(--w360-space-2);
+  align-items: flex-start;
+}
+
+.check input {
+  margin-top: 3px;
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.check label {
+  font-weight: 600;
+}
+
+.numberInput {
+  max-width: 160px;
+}
+
+.networkList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--w360-space-2);
+}
+
+.networkRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.networkRow input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+/* --- invoices ----------------------------------------------------------------- */
+
+.detailCell {
+  background: var(--w360-bg);
+}
+
+/* --- marketplace ------------------------------------------------------------- */
+
+.offers {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+}
+
+.offer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-5);
+  min-width: 0;
+}
+
+.offerTitle {
+  margin: 0;
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+
+/* Phase 11: the icon row on a product's own Explore card (distinct from a
+   plan/bundle offer card, which has no icon). */
+.offerHead {
+  display: flex;
+  gap: var(--w360-space-3);
+  align-items: center;
+}
+
+.offerIcon {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-brand);
+  color: var(--w360-brand-contrast);
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.caption {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.price {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.priceNote {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.includes {
+  margin: 0;
+  padding-left: 1.25em;
+  font-size: 14px;
+}
+
+.offerAction {
+  margin-top: auto;
+}
+
+.markdown {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.markdown p,
+.markdown ul {
+  margin: 0 0 var(--w360-space-2);
+}
+
+.markdown ul {
+  padding-left: 1.25em;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+@media (max-width: 480px) {
+  .details > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+}
+
+/* --- my apps, product access, section errors -------------------------------- */
+
+.appGrid {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+}
+
+/* A problem the person must read: text first, the colours only reinforce it. */
+.problem {
+  padding: var(--w360-space-4);
+  border: 1px solid var(--w360-danger);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-danger-bg);
+  color: var(--w360-danger);
+}
+
+.problem p {
+  margin: 0 0 var(--w360-space-3);
+}
+
+.problem p:last-child {
+  margin-bottom: 0;
+}

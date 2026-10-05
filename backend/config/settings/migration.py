@@ -33,6 +33,9 @@ _ENVIRONMENT = os.environ.get("W360_ENVIRONMENT", "development")
 if _ENVIRONMENT == "production":
     from config.settings.production import *
     from config.settings.production import DATABASES, env
+elif _ENVIRONMENT == "staging":
+    from config.settings.staging import *
+    from config.settings.staging import DATABASES, env
 elif _ENVIRONMENT == "test":
     from config.settings.test import *
     from config.settings.test import DATABASES, env
@@ -41,8 +44,17 @@ else:
     from config.settings.development import DATABASES, env
 
 DATABASES["default"]["USER"] = env.str("W360_DB_MIGRATOR_USER", "w360_migrator")
+# Required in production, and never the development default (Phase 12, G-06):
+# it used to fall back to the local password silently.
 DATABASES["default"]["PASSWORD"] = env.secret(
-    "W360_DB_MIGRATOR_PASSWORD", "w360_migrator_pw"
+    "W360_DB_MIGRATOR_PASSWORD",
+    None if _ENVIRONMENT in ("production", "staging") else "w360_migrator_pw",
+    required=_ENVIRONMENT in ("production", "staging"),
+)
+env.check(
+    _ENVIRONMENT not in ("production", "staging")
+    or DATABASES["default"]["PASSWORD"] != "w360_migrator_pw",  # noqa: S105 - comparison
+    "W360_DB_MIGRATOR_PASSWORD is still the local development default.",
 )
 DATABASES["default"]["HOST"] = env.str("W360_DB_DIRECT_HOST", "127.0.0.1")
 DATABASES["default"]["PORT"] = env.int("W360_DB_DIRECT_PORT", 5442)

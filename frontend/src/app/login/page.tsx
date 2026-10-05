@@ -1,63 +1,28 @@
-"use client";
+import { headers } from "next/headers";
+import { BrandedLanding } from "@/features/auth/BrandedLanding";
+import { signInHandoffUrl } from "@/features/auth/handoff";
+import { LoginScreen } from "@/features/auth/LoginScreen";
 
-import { Suspense, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useSession } from "@/lib/auth/useSession";
-import { LoginForm } from "@/features/auth/LoginForm";
-
-function AlreadySignedInRedirect() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const session = useSession();
-
-  useEffect(() => {
-    if (session.status !== "ready" || !session.session.authenticated) return;
-    // Already signed in. A resume link still needs completing (a second tab
-    // may have logged in first); otherwise go to the ordinary landing logic.
-    const resume = searchParams.get("resume");
-    if (resume) {
-      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-      window.location.href = `/api/v1/integrations/oauth/resume?resume=${encodeURIComponent(resume)}`;
-    } else {
-      router.replace("/");
-    }
-  }, [session, router, searchParams]);
-
-  return null;
-}
-
-export default function LoginPage() {
-  return (
-    <main
-      id="w360-main"
-      className="w360-container"
-      style={{
-        minHeight: "100dvh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <Suspense fallback={null}>
-        <AlreadySignedInRedirect />
-      </Suspense>
-      <div style={{ width: "100%", maxWidth: 380 }}>
-        <div style={{ textAlign: "center", marginBottom: "var(--w360-space-6)" }}>
-          <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Workeasy360</h1>
-          <p style={{ color: "var(--w360-text-muted)", marginTop: "var(--w360-space-2)" }}>
-            One ecosystem to run your entire business.
-          </p>
-        </div>
-        <div className="w360-card" style={{ padding: "var(--w360-space-6)" }}>
-          <h2 style={{ fontSize: 17, marginTop: 0, marginBottom: "var(--w360-space-5)" }}>
-            Sign in
-          </h2>
-          <Suspense fallback={<p>Loading…</p>}>
-            <LoginForm />
-          </Suspense>
-        </div>
-      </div>
-    </main>
-  );
+/**
+ * Where a person signs in - and, on a partner's custom domain, where they are
+ * handed over to the canonical sign-in page instead (Phase 12, D-035 decision
+ * B, ADR-039).
+ *
+ * `W360_CANONICAL_HOST` is the platform's own host name (runtime, server-side
+ * only). When it is set and this request arrived on any other host, that host
+ * is a partner's white-label domain (the edge serves no other name to this
+ * app): the page renders the branded landing, never a sign-in form, because
+ * no credential may be entered on - or any session cookie set for - a host a
+ * partner controls. Unset (development, tests), every host is canonical.
+ *
+ * The `Host` header only chooses which of two *public* pages to render, so a
+ * spoofed one gains nothing: neither page trusts it for anything else.
+ */
+export default async function LoginPage() {
+  const canonical = (process.env.W360_CANONICAL_HOST ?? "").trim().toLowerCase();
+  const host = ((await headers()).get("host") ?? "").split(":")[0].toLowerCase();
+  if (canonical && host && host !== canonical) {
+    return <BrandedLanding handoffUrl={signInHandoffUrl(`https://${canonical}`, host)} />;
+  }
+  return <LoginScreen />;
 }

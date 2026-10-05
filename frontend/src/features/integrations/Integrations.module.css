@@ -1,0 +1,109 @@
+/* Phase 6 settings screens. A CSS module rather than inline style
+   attributes - the direction D-010 (style-src 'unsafe-inline') needs the
+   whole app to move in. */
+
+.stack {
+  display: grid;
+  gap: var(--w360-space-5);
+}
+
+.lead {
+  color: var(--w360-text-muted);
+  margin: 0 0 var(--w360-space-5);
+}
+
+.card {
+  padding: var(--w360-space-5);
+}
+
+.cardHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--w360-space-3);
+}
+
+.cardTitle {
+  font-size: 16px;
+  margin: 0;
+}
+
+.muted {
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  margin-top: var(--w360-space-3);
+}
+
+.form {
+  display: grid;
+  gap: var(--w360-space-3);
+  max-width: 560px;
+}
+
+.field {
+  display: grid;
+  gap: var(--w360-space-1);
+}
+
+.fieldset {
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  padding: var(--w360-space-3);
+  margin: 0;
+}
+
+.checkbox {
+  display: flex;
+  gap: var(--w360-space-2);
+  align-items: flex-start;
+  padding: var(--w360-space-1) 0;
+}
+
+.secret {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.secretBox {
+  border: 1px solid var(--w360-warning);
+  background: var(--w360-warning-bg);
+  border-radius: var(--w360-radius-md);
+  padding: var(--w360-space-4);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border-top: 1px solid var(--w360-border);
+  vertical-align: top;
+}
+
+.conditionRow {
+  display: grid;
+  grid-template-columns: 2fr 1.4fr 1.6fr auto;
+  gap: var(--w360-space-2);
+  align-items: end;
+}
+
+@media (max-width: 640px) {
+  .conditionRow {
+    grid-template-columns: 1fr;
+  }
+}

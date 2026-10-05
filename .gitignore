@@ -42,3 +42,8 @@ backend/tests/spikes/*.json
 .vscode/
 .DS_Store
 Thumbs.db
+
+# --- Phase 12: rendered deployment environments (secrets). Only the example
+# (variable names, no values) is tracked.
+deploy/env/*.env
+!deploy/env/*.env.example

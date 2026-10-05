@@ -40,9 +40,33 @@ platform degrades - and emits a metric,
 ## §3 Known limitation, honestly stated
 
 This is O(organizations on the platform) per login, run synchronously in the
-request. Acceptable at this project's current scale (a development/early-
-stage environment - see [09-performance.md](09-performance.md) for the
-stated test environment) and not acceptable indefinitely.
+request. The Phase 4 audit measured it rather than leaving it adjectival,
+against real PostgreSQL through PgBouncer:
+
+| Organizations on the platform | Queries | Wall time |
+|---|---|---|
+| 10 | 56 | 43 ms |
+| 100 | 506 | 355 ms |
+| 500 | 2,506 | 1,743 ms |
+| 2,000 (the scan cap) | ~10,000 | ~7 s, then silent truncation |
+
+Five queries per organization, not one - each candidate costs entering and
+leaving its database scope as well as the membership seek. **The cost is
+driven by how many customers the platform has, not by how many
+organizations the person belongs to**, and it is paid on every sign-in
+landing (`app/page.tsx` calls `getOrganizations()` immediately) as well as
+on every visit to the chooser.
+
+At the cap the answer becomes *wrong*, not merely slow: a user whose
+organization sorts past the 2,000th disappears from their own chooser, and
+only a metric says so.
+
+So: acceptable today at a development/early-stage scale, and the number that
+makes it unacceptable is a few hundred customers - which is a number a
+successful B2B platform reaches early. Recorded as
+[debt D-013](../architecture/debt-register.md) with those measurements, and
+classified as a **go-live prerequisite rather than a development blocker**,
+because correctness below the cap is not in question.
 
 **Proposed for Phase 5, not built now:** a denormalised, RLS-exempt
 projection table (`(user_id, organization_id, status)`, control-plane like

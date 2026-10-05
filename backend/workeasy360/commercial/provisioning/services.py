@@ -56,6 +56,7 @@ logger = get_logger(__name__)
 #: notice (06-entitlements.md section 5.3).
 ENTITLEMENT_DRIFT = "entitlement_drift_total"
 RECONCILE_FAILURES = "entitlement_reconcile_failures_total"
+SUMMARY_FAILURES = "provisioning_summary_failures_total"
 
 
 def compute_entitlements(
@@ -63,9 +64,21 @@ def compute_entitlements(
 ) -> ComputedEntitlements:
     """Derive the desired entitlement state for one organization.
 
-    Inputs, both read through the owning module's **selectors** rather than
-    its models: subscriptions (``commercial/subscriptions``) and support
-    grants (``platform/entitlements``). Even though provisioning is the sole
+    The public, pure entry point; ``_compute`` is the same computation that
+    also hands back the commercial state it read, so a caller that needs the
+    subscription's headline (the customer summary) does not read it twice.
+    """
+    return _compute(organization_id, at)[0]
+
+
+def _compute(
+    organization_id: UUID, at: datetime | None = None
+) -> tuple[ComputedEntitlements, Any]:
+    """Derive the desired entitlement state for one organization.
+
+    Inputs, all read through the owning module's **selectors** rather than
+    its models: subscriptions and product trials (``commercial/subscriptions``)
+    and support grants (``platform/entitlements``). Even though provisioning is the sole
     entitlement *writer*, reading another module's tables directly is still
     forbidden (F-6) - a queryset over another module's model welds this code
     to a schema it does not own and is not tested against.
@@ -80,6 +93,19 @@ def compute_entitlements(
     seats: list[ComputedSeatPool] = []
 
     state = subscriptions.commercial_state(organization_id)
+    trials = subscriptions.commercial_trials(organization_id)
+
+    # A product trial grants only while it is in its window **and** no paid
+    # line already holds the product: the moment the customer buys, the paid
+    # line is the source and the trial has nothing left to add. Deciding it
+    # here, from durable state, is what makes "buy during a trial" and "buy
+    # twice" both converge on one entitlement.
+    owned = subscriptions.paid_product_codes(state, moment)
+    live_trials = [
+        trial
+        for trial in trials
+        if trial.is_effective_at(moment) and trial.product_code not in owned
+    ]
 
     # One batched catalog read for every plan version in play. Per-item
     # lookups here would be an N+1 inside the reconciliation loop, which is
@@ -89,7 +115,7 @@ def compute_entitlements(
         for subscription in state
         for item in subscription.effective_items(moment)
         if item.plan_version_id is not None
-    ]
+    ] + [trial.plan_version_id for trial in live_trials]
     plans = catalog.plan_versions(wanted_plan_versions)
 
     for subscription in state:
@@ -149,6 +175,46 @@ def compute_entitlements(
                 )
             )
 
+    for trial in live_trials:
+        plan = plans.get(trial.plan_version_id)
+        if plan is None:
+            logger.error(
+                "provisioning.plan_version.missing",
+                organization_id=str(organization_id),
+                plan_version_id=str(trial.plan_version_id),
+            )
+            continue
+        source_ref = trial.source_ref
+        products.append(
+            ComputedProduct(
+                product_code=str(ProductCode(trial.product_code)),
+                status=EntitlementStatus.TRIAL,
+                source_kind=EntitlementSourceKind.TRIAL,
+                source_ref=source_ref,
+                seats_total=trial.seats,
+                effective_from=trial.started_at,
+                effective_to=trial.ends_at,
+            )
+        )
+        for grant in plan.features:
+            features.append(
+                ComputedFeature(
+                    feature_key=str(FeatureKey(grant.key)),
+                    value=grant.value,
+                    kind=grant.kind.value,
+                    source_ref=source_ref,
+                    effective_from=trial.started_at,
+                    effective_to=trial.ends_at,
+                )
+            )
+        seats.append(
+            ComputedSeatPool(
+                pool_key=plan.product_code,
+                seats_total=trial.seats,
+                source_ref=source_ref,
+            )
+        )
+
     # Support grants are an **input** to the computation, not an override
     # applied afterwards. That is what makes "support fixes it manually, the
     # nightly job undoes it" structurally impossible.
@@ -178,12 +244,15 @@ def compute_entitlements(
                 )
             )
 
-    return ComputedEntitlements(
-        organization_id=organization_id,
-        products=tuple(products),
-        features=tuple(features),
-        seats=tuple(seats),
-        computation_id=uuid.uuid4(),
+    return (
+        ComputedEntitlements(
+            organization_id=organization_id,
+            products=tuple(products),
+            features=tuple(features),
+            seats=tuple(seats),
+            computation_id=uuid.uuid4(),
+        ),
+        state,
     )
 
 
@@ -220,8 +289,9 @@ def reconcile(organization_id: UUID, *, at: datetime | None = None) -> int:
     identical rows. The snapshot version still advances, which is deliberate -
     it invalidates caches without requiring a diff to decide whether to.
     """
-    computed = compute_entitlements(organization_id, at)
+    computed, state = _compute(organization_id, at)
     version = apply_entitlements(computed)
+    _write_summary(organization_id, computed, state, version)
     logger.info(
         "provisioning.reconciled",
         organization_id=str(organization_id),
@@ -243,7 +313,7 @@ def reconcile_and_report_drift(
     customer does.
     """
     before = _stored_snapshot(organization_id)
-    computed = compute_entitlements(organization_id, at)
+    computed, state = _compute(organization_id, at)
     expected = _expected_snapshot(computed)
 
     products_changed = tuple(
@@ -254,6 +324,7 @@ def reconcile_and_report_drift(
     )
 
     version = apply_entitlements(computed)
+    _write_summary(organization_id, computed, state, version)
     report = DriftReport(
         organization_id=organization_id,
         version=version,
@@ -271,6 +342,75 @@ def reconcile_and_report_drift(
         )
         _publish_drift(report)
     return report
+
+
+def _write_summary(
+    organization_id: UUID, computed: ComputedEntitlements, state: Any, version: int
+) -> None:
+    """Refresh the customer-summary projection from what was just computed.
+
+    **Never fails the reconciliation.** The projection is derived and
+    rebuildable, and it serves a staff directory; an entitlement that was
+    correctly applied must not be rolled back, or reported as failed, because
+    the directory's row could not be written. Its own savepoint keeps a
+    database error from poisoning the caller's transaction.
+    """
+    from django.db import transaction
+
+    from workeasy360.commercial.provisioning.models import CustomerSummary
+    from workeasy360.contracts.enums import SubscriptionStatus
+
+    try:
+        open_subscriptions = [
+            s for s in state if s.status is not SubscriptionStatus.EXPIRED
+        ]
+        status = open_subscriptions[-1].status.value if open_subscriptions else ""
+        capacity = sum(pool.seats_total or 0 for pool in computed.seats) or None
+        access = access_class({p.status for p in computed.products})
+        with transaction.atomic():
+            CustomerSummary.objects.update_or_create(
+                organization_id=organization_id,
+                defaults={
+                    "subscription_status": status,
+                    "product_codes": sorted({p.product_code for p in computed.products}),
+                    "access_class": access,
+                    "seat_capacity": capacity,
+                    "entitlement_version": version,
+                    "computed_at": timezone.now(),
+                },
+            )
+    except Exception as exc:
+        metrics.increment(SUMMARY_FAILURES)
+        logger.error(
+            "provisioning.summary.failed",
+            organization_id=str(organization_id),
+            error_type=type(exc).__name__,
+        )
+
+
+#: Entitlement statuses that make an organization a customer: something is
+#: live and paid for (or granted), including a cancellation still running to
+#: its period end and a past-due or grace period that restricts nothing.
+_CUSTOMER_STATUSES = frozenset(
+    {
+        EntitlementStatus.ACTIVE,
+        EntitlementStatus.PAST_DUE,
+        EntitlementStatus.GRACE,
+        EntitlementStatus.CANCELLED,
+    }
+)
+
+
+def access_class(statuses: Any) -> str:
+    """``customer``, ``trial`` or ``""`` - one pure rule (Phase 9). A
+    suspended or expired entitlement qualifies for neither: the brief's
+    Explorer is "zero qualifying active or trial product entitlements"."""
+    present = {EntitlementStatus(s) for s in statuses}
+    if present & _CUSTOMER_STATUSES:
+        return "customer"
+    if EntitlementStatus.TRIAL in present:
+        return "trial"
+    return ""
 
 
 def _stored_snapshot(organization_id: UUID) -> dict[str, Any]:

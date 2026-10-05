@@ -33,7 +33,7 @@ from workeasy360.platform.observability.correlation import (
 #: `authorization`, `db_password`, `api_key_secret` and similar.
 _SENSITIVE_KEY_PATTERNS: Final = re.compile(
     r"(password|passwd|secret|token|api_?key|authorization|auth|credential"
-    r"|private_?key|session_?id|csrf|cookie|signature|otp|mfa_?code"
+    r"|private_?key|session_?(id|key)|csrf|cookie|signature|otp|mfa_?code"
     r"|card_?number|cvv|iban|sort_?code|account_?number|ssn|nino"
     # OAuth/OIDC bearer material. Named explicitly because none of the
     # patterns above catches them: `client_assertion` is a signed credential
@@ -148,8 +148,36 @@ _SHARED_PROCESSORS: Final = [
 ]
 
 
+#: The same enrichment and redaction for records that did not come through
+#: structlog - Django, Celery, psycopg, and this codebase's own stdlib loggers
+#: that pass ``extra=`` (tenancy's RLS-bypass audit lines, ``task.failed``).
+#: ``ExtraAdder`` lifts those ``extra`` fields into the event; ``_redact`` stays
+#: last so it sees them too (Phase 12, G-14: before this, stdlib records were
+#: printed as bare ``%(message)s`` - no JSON, no fields, **no redaction**).
+_FOREIGN_PRE_CHAIN: Final = [
+    structlog.contextvars.merge_contextvars,
+    structlog.stdlib.add_log_level,
+    structlog.stdlib.add_logger_name,
+    structlog.stdlib.ExtraAdder(),
+    _add_correlation,
+    _add_ambient_context,
+    _add_deployment,
+    structlog.processors.TimeStamper(fmt="iso", utc=True),
+    structlog.processors.StackInfoRenderer(),
+    structlog.processors.format_exc_info,
+    _redact,
+]
+
+
 def configure_logging() -> None:
-    """Install the processor chain. Idempotent."""
+    """Install the processor chain for structlog *and* stdlib. Idempotent.
+
+    One handler on the root logger, whose ``ProcessorFormatter`` renders every
+    record - a structlog event (already enriched and redacted by
+    ``_SHARED_PROCESSORS``) or a stdlib record (enriched and redacted by
+    ``_FOREIGN_PRE_CHAIN``) - with the same renderer. One stream, one format,
+    one redaction policy.
+    """
     from django.conf import settings
 
     log_format = getattr(settings, "LOG_FORMAT", "json")
@@ -161,8 +189,18 @@ def configure_logging() -> None:
         else structlog.dev.ConsoleRenderer(colors=False)
     )
 
+    # The console renderer formats exceptions itself (and warns when
+    # ``format_exc_info`` already has); JSON needs them pre-rendered.
+    def chain(processors: list[Any]) -> list[Any]:
+        if log_format == "json":
+            return list(processors)
+        return [p for p in processors if p is not structlog.processors.format_exc_info]
+
     structlog.configure(
-        processors=[*_SHARED_PROCESSORS, renderer],
+        processors=[
+            *chain(_SHARED_PROCESSORS),
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
         wrapper_class=structlog.make_filtering_bound_logger(
             logging.getLevelName(log_level)
         ),
@@ -175,14 +213,19 @@ def configure_logging() -> None:
         cache_logger_on_first_use=True,
     )
 
-    # Route stdlib logging (Django, Celery, third-party) through the same
-    # chain, so there is one log format rather than two.
-    logging.basicConfig(
-        format="%(message)s",
-        stream=sys.stdout,
-        level=logging.getLevelName(log_level),
-        force=True,
+    formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=chain(_FOREIGN_PRE_CHAIN),
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            renderer,
+        ],
     )
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+    root = logging.getLogger()
+    root.handlers = [handler]
+    root.setLevel(logging.getLevelName(log_level))
+
     # Third-party libraries are capped independently of our level. Running our
     # own code at DEBUG should not drown the output in Celery's generated task
     # signatures or every psycopg statement.
@@ -194,40 +237,16 @@ def configure_logging() -> None:
         "kombu",
         "celery",
         "asyncio",
+        "botocore",
+        "boto3",
     ):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+    # Django logs every 4xx at WARNING by default, which makes warning rate
+    # useless as a signal: an expected 404 is not a degradation
+    # (11-observability.md section 4 rule 6).
+    logging.getLogger("django.request").setLevel(logging.ERROR)
 
 
 def get_logger(name: str) -> Any:
     """Module-level logger. Use the module's ``__name__``."""
     return structlog.get_logger(name)
-
-
-def logging_config(level: str) -> dict[str, Any]:
-    """LOGGING dict for Django, wiring stdlib records into structlog."""
-    return {
-        "version": 1,
-        "disable_existing_loggers": False,
-        "formatters": {
-            "structured": {
-                "()": structlog.stdlib.ProcessorFormatter,
-                "processor": structlog.processors.JSONRenderer(),
-                "foreign_pre_chain": _SHARED_PROCESSORS,
-            }
-        },
-        "handlers": {
-            "console": {
-                "class": "logging.StreamHandler",
-                "formatter": "structured",
-                "stream": sys.stdout,
-            }
-        },
-        "root": {"handlers": ["console"], "level": level},
-        "loggers": {
-            "django.db.backends": {"level": "WARNING", "propagate": True},
-            # Django logs every 4xx at WARNING by default, which makes
-            # warning rate useless as a signal: an expected 404 is not a
-            # degradation (11-observability.md section 4 rule 6).
-            "django.request": {"level": "ERROR", "propagate": True},
-        },
-    }

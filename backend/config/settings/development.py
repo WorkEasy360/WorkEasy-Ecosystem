@@ -14,8 +14,18 @@ ENVIRONMENT = "development"
 DEBUG = True
 
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]", "testserver"]
-CSRF_TRUSTED_ORIGINS = ["http://localhost:8000", "http://127.0.0.1:8000"]
-CORS_ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+# The platform shell (localhost:3000) proxies /api to this server, so a
+# browser POST arrives with the shell's Origin; without it every sign-in and
+# form submission from the local frontend is refused by the origin check.
+# `next dev` moves to 3001 when another project already holds 3000.
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+]
 
 # Plain HTTP locally, so secure-only cookies would never be sent back.
 SESSION_COOKIE_SECURE = False

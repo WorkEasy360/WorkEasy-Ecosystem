@@ -181,6 +181,76 @@ def test_concurrent_assignment_of_the_same_member_takes_one_seat(
         assert seats.assigned_count(ctx.organization_id, pool_key="crm") == 1
 
 
+def test_concurrent_assignment_and_release_never_overallocate_or_lose_a_release(
+    catalog, customer, billing_account, in_tenant
+):
+    """Half the threads free a seat while the other half claim one.
+
+    The lost-update shape: `release_seat` is a conditional UPDATE outside the
+    grant lock `assign_seat` takes, so a release that lands between an
+    assignment's occupancy count and its INSERT is exactly the interleaving
+    that would let the pool end up over its limit, or leave a released seat
+    still counted. Neither may happen, whichever order the threads run in.
+
+    Deliberately started from a *full* pool, because that is the only state
+    where the race is decidable: every assignment either finds the seat a
+    release just freed or is refused, and any other outcome is a bug.
+    """
+    ctx = customer["ctx"]
+    billing_account(ctx)
+    with in_tenant(ctx):
+        services.purchase_plan(
+            ctx,
+            plan_version_id=catalog["versions"]["crm_professional"].id,
+            idempotency_key=key(),
+        )
+        total = seats.capacity(ctx.organization_id, pool_key="crm")
+        holders = _members(ctx, total)
+        for member in holders:
+            seats.assign_seat(ctx.organization_id, pool_key="crm", membership_id=member)
+        newcomers = _members(ctx, WORKERS)
+
+    def worker(index: int) -> str:
+        from workeasy360.platform.tenancy.context import tenant_context
+        from workeasy360.platform.tenancy.db import tenant_db_scope
+
+        with tenant_context(ctx), tenant_db_scope(ctx):
+            if index % 2 == 0:
+                released = seats.release_seat(
+                    ctx.organization_id,
+                    pool_key="crm",
+                    membership_id=holders[index // 2],
+                )
+                return f"released:{released}"
+            try:
+                seats.assign_seat(
+                    ctx.organization_id,
+                    pool_key="crm",
+                    membership_id=newcomers[index],
+                )
+                return "assigned"
+            except SeatLimitReached:
+                return "refused"
+
+    results, errors = _run(worker)
+    assert not errors, errors
+
+    counts = Counter(results)
+    releases = WORKERS // 2
+    assert counts["released:1"] == releases, (
+        "every release targeted a distinct, held seat, so every one must have "
+        f"freed exactly one: {counts}"
+    )
+
+    with in_tenant(ctx):
+        held = seats.assigned_count(ctx.organization_id, pool_key="crm")
+    # Never over the limit, whatever order the threads ran in.
+    assert held <= total, f"{held} seats held in a pool of {total}"
+    # And the releases genuinely took effect rather than being overwritten:
+    # the pool cannot hold more than (total - releases) + assignments won.
+    assert held == total - releases + counts["assigned"], counts
+
+
 # --- duplicate commands ---------------------------------------------------
 
 

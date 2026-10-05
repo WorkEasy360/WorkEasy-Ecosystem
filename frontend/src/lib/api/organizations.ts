@@ -1,15 +1,15 @@
 import { apiFetch } from "./client";
-import type { MembershipSummary, OrganizationDetail } from "./types";
+import type { CreateOrganizationResult } from "./types";
 
-export function getOrganizationDetail(orgSlug: string): Promise<OrganizationDetail> {
-  return apiFetch(`/api/v1/orgs/${orgSlug}/organization`);
-}
-
-export function getMembers(
-  orgSlug: string,
-  options: { limit?: number; cursor?: string } = {},
-): Promise<{ results: MembershipSummary[]; next_cursor: string | null; has_more: boolean }> {
-  return apiFetch(`/api/v1/orgs/${orgSlug}/memberships`, {
-    query: { limit: options.limit, cursor: options.cursor },
+/** Task 6: an idempotency key survives across a retry only if the caller
+ * keeps it - generated once per mount/attempt series, not per request, so a
+ * network-failure retry of the *same* submission reuses it deliberately. */
+export function createOrganization(
+  name: string,
+  idempotencyKey: string,
+): Promise<CreateOrganizationResult> {
+  return apiFetch("/api/v1/organizations", {
+    method: "POST",
+    body: JSON.stringify({ name, idempotency_key: idempotencyKey }),
   });
 }

@@ -68,6 +68,17 @@ Start with [ARCHITECTURE.md](../../ARCHITECTURE.md) at the repository root — i
 | [019](adrs/ADR-019-product-service-authentication.md) | How a product authenticates itself to the platform |
 | [020](adrs/ADR-020-signing-keys-and-the-control-plane-code.md) | Signing keys live outside the database; the authorization code is control plane |
 | [021](adrs/ADR-021-launcher-access-decision-and-seat-projection.md) | **The launcher's access decision, the seat read projection, and platform layer P4** |
+| [022](adrs/ADR-022-access-directory-projection.md) | The organization access-directory projection |
+| [023](adrs/ADR-023-onboarding-orchestration-layer.md) | `platform/onboarding`: a new P3 layer for organization creation |
+| [024](adrs/ADR-024-integration-platform-data-model-and-due-work.md) | The integration platform's data model, and a cross-tenant due-work timer |
+| [025](adrs/ADR-025-outbound-http-and-ssrf-boundary.md) | One outbound HTTP boundary, pinned to validated addresses |
+| [026](adrs/ADR-026-automation-execution-semantics.md) | Automation executes by creating durable records, never side effects |
+| [027](adrs/ADR-027-control-plane-principals.md) | Staff and partner principals act through one authorization check, in an explicit scope |
+| [028](adrs/ADR-028-partner-capability-model.md) | A partner is what it has been granted, not what it is called |
+| [029](adrs/ADR-029-commission-ledger-and-payout-model.md) | Commission is an append-only ledger derived from sales; payouts move no money |
+| [030](adrs/ADR-030-ai-gateway-and-provider-ownership.md) | **One AI gateway owns providers, credentials, spend and safety**; products own their skills' meaning |
+| [031](adrs/ADR-031-rag-storage-and-vector-isolation.md) | Retrieval in PostgreSQL with pgvector, authorized inside the ranking statement |
+| [032](adrs/ADR-032-analytics-semantic-and-event-model.md) | Product-defined metrics over routed events; immutable facts, rebuildable aggregates |
 
 ## The five ideas that matter most
 

@@ -15,7 +15,7 @@ from typing import Any, Final
 from django.db import transaction
 from django.utils import timezone
 
-from workeasy360.contracts.enums import ActorKind, AuditOutcome
+from workeasy360.contracts.enums import ActorKind, AuditOutcome, PrincipalKind
 from workeasy360.contracts.errors import AuditWriteFailed
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.observability.correlation import current_correlation_id
@@ -56,7 +56,15 @@ def record(
     from workeasy360.platform.audit.models import AuditEvent
 
     if actor_kind is None:
-        actor_kind = ActorKind.STAFF_BREAK_GLASS if ctx.is_break_glass else ActorKind.USER
+        actor_kind = _actor_kind_for(ctx)
+
+    # A control-plane principal holds no membership. Recording the nil id
+    # would present a fabricated row reference in the trail; null is honest.
+    membership_id = None if ctx.is_control_plane else ctx.membership_id
+    if ctx.principal is PrincipalKind.PARTNER:
+        # The acting partner is part of the fact being recorded: which
+        # partner did this is the question an auditor asks first.
+        changes = {**(changes or {}), "actor_partner_id": str(ctx.partner_id)}
 
     if ctx.is_break_glass and not (reason or ctx.reason):
         raise AuditWriteFailed(
@@ -71,7 +79,7 @@ def record(
                 occurred_at=timezone.now(),
                 actor_kind=actor_kind.value,
                 actor_user_id=ctx.user_id,
-                actor_membership_id=ctx.membership_id,
+                actor_membership_id=membership_id,
                 on_behalf_of=None,
                 action=action,
                 resource_type=resource_type,
@@ -95,6 +103,16 @@ def record(
             f"Could not record audit entry for {action}: {type(exc).__name__}. "
             f"The operation is failed rather than completed unaudited."
         ) from exc
+
+
+def _actor_kind_for(ctx: TenantContext) -> ActorKind:
+    if ctx.is_break_glass:
+        return ActorKind.STAFF_BREAK_GLASS
+    if ctx.principal is PrincipalKind.STAFF:
+        return ActorKind.STAFF
+    if ctx.principal is PrincipalKind.PARTNER:
+        return ActorKind.PARTNER
+    return ActorKind.USER
 
 
 def record_system(

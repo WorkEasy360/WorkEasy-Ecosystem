@@ -159,6 +159,58 @@ def decision_for_organization(
     return decide(products.get(str(product_code)), product_code, write=write)
 
 
+def feature_for_organization(organization_id: UUID, key: str) -> Any:
+    """A resolved feature value for an organization, with **no tenant context**.
+
+    The feature counterpart of :func:`decision_for_organization`, for the same
+    caller: a product calling the platform server to server (Phase 8's AI
+    gateway asks for ``<product>.ai.monthly_budget_micros``), with no user and
+    no membership to build a context from. Same route, for the same reasons:
+    Layer 2 relaxed audibly, the organization's database scope entered so RLS
+    confines the read to one tenant, the stored snapshot read first and the
+    durable ``FeatureEntitlement`` rows used - never written back - when it is
+    missing. Most-generous-wins is the writer's own merge.
+    """
+    from django.utils import timezone
+
+    from workeasy360.platform.entitlements.models import (
+        EntitlementSnapshot,
+        FeatureEntitlement,
+    )
+    from workeasy360.platform.entitlements.services.read import _more_generous_feature
+    from workeasy360.platform.tenancy.db import assert_tenant_scope, organization_db_scope
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    with (
+        unscoped_access(
+            reason="Remote AI entitlement check answers for an organization "
+            "with no signed-in user",
+            module="platform.entitlements.selectors",
+        ),
+        organization_db_scope(organization_id),
+    ):
+        assert_tenant_scope(organization_id, what="feature_for_organization")
+        row = (
+            EntitlementSnapshot.unscoped.filter(organization_id=organization_id)
+            .values("features")
+            .first()
+        )
+        if row is not None:
+            return (row["features"] or {}).get(str(key))
+
+        now = timezone.now()
+        value: Any = None
+        for feature in FeatureEntitlement.unscoped.filter(
+            organization_id=organization_id, feature_key=str(key)
+        ):
+            if feature.effective_from > now:
+                continue
+            if feature.effective_to is not None and feature.effective_to <= now:
+                continue
+            value = _more_generous_feature(value, feature.value)
+        return value
+
+
 def _live_products(model: Any, organization_id: UUID, merge: Any) -> dict[str, Any]:
     """Resolve products straight from ``Entitlement`` rows, unscoped.
 

@@ -33,7 +33,11 @@ from workeasy360.contracts.enums import (
     CatalogStatus,
     FeatureKind,
     LicensingMode,
+    PlanBillingType,
+    PlanKind,
+    ProductListing,
     ProductStatus,
+    PublicAvailability,
 )
 
 
@@ -71,6 +75,25 @@ class Product(models.Model):
     )
     sort_order = models.IntegerField(default=100)
 
+    # --- Phase 9: public presentation. What a visitor sees; never read by an
+    # access decision (the launcher and entitlements ignore all of it).
+    #: The product's address on the public site (``/products/<slug>``).
+    slug = models.SlugField(max_length=64, unique=True)
+    tagline = models.CharField(max_length=160, blank=True, default="")
+    #: An external marketing page, ``https`` only (validated in the service).
+    marketing_url = models.URLField(max_length=500, blank=True, default="")
+    listing = models.CharField(
+        max_length=16,
+        choices=_choices(ProductListing),
+        default=ProductListing.LISTED.value,
+    )
+    # --- Phase 11: how a card draws. Presentation only, like the fields above.
+    #: Free text such as "Finance / Accounting"; only ever rendered as text.
+    category = models.CharField(max_length=64, blank=True, default="")
+    #: One key of ``domain.PRODUCT_ICON_KEYS`` (empty = a monogram). Never a
+    #: URL: the frontend owns the drawing for each key.
+    icon = models.CharField(max_length=32, blank=True, default="")
+
     #: Lifecycle metadata as timestamps rather than inferred from ``status``,
     #: so "when did this become sellable?" survives a later status change and
     #: is answerable without reading the audit log.
@@ -91,9 +114,67 @@ class Product(models.Model):
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.code} ({self.status})"
 
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        # A product created without a slug (a fixture, a script) gets the one
+        # its code implies, so the unique column never collides on "".
+        if not self.slug and self.code:
+            from workeasy360.commercial.catalog.domain import slug_for_code
+
+            self.slug = slug_for_code(self.code)
+        super().save(*args, **kwargs)
+
     @property
     def status_enum(self) -> ProductStatus:
         return ProductStatus(self.status)
+
+    @property
+    def availability(self) -> PublicAvailability:
+        from workeasy360.commercial.catalog.domain import public_availability
+
+        return public_availability(self.status_enum, ProductListing(self.listing))
+
+
+class ProductTrialConfig(models.Model):
+    """How one product may be trialled (Phase 11) - per product, not global.
+
+    Absent row, or ``enabled=False``: the product has no trial, whatever a
+    plan's own ``trial_days`` says. The platform ships **no default**: every
+    number here was entered by staff, and a trial that has already started
+    keeps the terms it started with (they are copied onto the trial row).
+
+    ``payment_method_required`` exists so the screen can state the rule
+    honestly; the service refuses ``True`` because the platform stores no
+    payment method (D-028).
+    """
+
+    product = models.OneToOneField(
+        Product, on_delete=models.CASCADE, related_name="trial_config"
+    )
+    enabled = models.BooleanField(default=False)
+    duration_days = models.PositiveSmallIntegerField()
+    #: Empty = the plan's own included seats.
+    seat_limit = models.PositiveIntegerField(null=True, blank=True)
+    payment_method_required = models.BooleanField(default=False)
+    #: Plan codes of *this* product a trial may be started on (validated in
+    #: the service, re-checked against the live catalog when a trial starts).
+    eligible_plan_codes = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "catalog_product_trial_config"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(duration_days__gte=1, duration_days__lte=365),
+                name="ck_trial_config_days",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(seat_limit__isnull=True) | models.Q(seat_limit__gte=1),
+                name="ck_trial_config_seats",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"trial config of {self.product_id} (enabled={self.enabled})"
 
 
 class Feature(models.Model):
@@ -154,7 +235,27 @@ class Plan(models.Model):
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="plans")
     code = models.CharField(max_length=64, unique=True)
     name = models.CharField(max_length=128)
+    #: Plain text with light markdown (``**bold**``, ``*italic*``, lists,
+    #: links), rendered by the frontend as text - never as HTML.
     description = models.TextField(blank=True, default="")
+    #: Phase 8 extension (the plan builder). A one-line pitch.
+    caption = models.CharField(max_length=160, blank=True, default="")
+    billing_type = models.CharField(
+        max_length=16,
+        choices=_choices(PlanBillingType),
+        default=PlanBillingType.PAID.value,
+    )
+    kind = models.CharField(
+        max_length=16, choices=_choices(PlanKind), default=PlanKind.STANDARD.value
+    )
+    #: For an add-on: the product the subscription must already hold.
+    addon_for = models.ForeignKey(
+        Product,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="add_on_plans",
+    )
 
     status = models.CharField(
         max_length=16,
@@ -174,6 +275,19 @@ class Plan(models.Model):
         db_table = "catalog_plan"
         ordering = ["product", "sort_order", "code"]
         indexes = [models.Index(fields=["product", "status"], name="ix_plan_prod_status")]
+        constraints = [
+            # An add-on names what it extends, and only an add-on does.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(kind=PlanKind.ADD_ON.value, addon_for__isnull=False)
+                    | (
+                        ~models.Q(kind=PlanKind.ADD_ON.value)
+                        & models.Q(addon_for__isnull=True)
+                    )
+                ),
+                name="ck_plan_addon_names_its_product",
+            ),
+        ]
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.code} ({self.status})"
@@ -292,6 +406,13 @@ class Bundle(models.Model):
     code = models.CharField(max_length=64, unique=True)
     name = models.CharField(max_length=128)
     description = models.TextField(blank=True, default="")
+    #: Phase 8 extension (the plan builder, where a bundle is a "plan").
+    caption = models.CharField(max_length=160, blank=True, default="")
+    billing_type = models.CharField(
+        max_length=16,
+        choices=_choices(PlanBillingType),
+        default=PlanBillingType.PAID.value,
+    )
 
     kind = models.CharField(
         max_length=16, choices=_choices(BundleKind), default=BundleKind.PREDEFINED.value
@@ -341,6 +462,10 @@ class BundleVersion(models.Model):
     published_at = models.DateTimeField(null=True, blank=True)
     effective_from = models.DateTimeField()
     effective_to = models.DateTimeField(null=True, blank=True)
+    #: Phase 8 extension: trial length for a ``free_trial`` bundle (the
+    #: bundle-level equivalent of ``PlanVersion.trial_days``). Part of the
+    #: version's terms, so frozen at publication.
+    trial_days = models.IntegerField(default=0)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
