@@ -21,8 +21,18 @@ import crypto from "k6/crypto";
 
 const HOST = __ENV.HOST || "app.staging.workeasy360.com";
 const BASE = `https://${HOST}`;
-const LEVEL = parseInt(__ENV.LEVEL || "50", 10);
-const DURATION = __ENV.DURATION || "90s";
+// LEVEL=spike (2026-10 audit): 90 s like the constant levels - warm at 50 VUs,
+// jump to 400 in 10 s, hold, drop back to 50 and watch it recover.
+const SPIKE = __ENV.LEVEL === "spike";
+const LEVEL = SPIKE ? "spike" : parseInt(__ENV.LEVEL || "50", 10);
+const DURATION = SPIKE ? "90s" : __ENV.DURATION || "90s";
+const SPIKE_STAGES = [
+  { duration: "20s", target: 50 },
+  { duration: "10s", target: 400 },
+  { duration: "30s", target: 400 },
+  { duration: "10s", target: 50 },
+  { duration: "20s", target: 50 },
+];
 const PASSWORD = __ENV.LOAD_PASSWORD;
 
 const users = new SharedArray("users", () => JSON.parse(open("/data/load-users.json")));
@@ -35,9 +45,15 @@ export const options = {
   // "failures" that were only the harness signing itself out.
   noCookiesReset: true,
   scenarios: {
-    customers: { executor: "constant-vus", exec: "customer", vus: LEVEL, duration: DURATION },
+    customers: SPIKE
+      ? { executor: "ramping-vus", exec: "customer", startVUs: 0, stages: SPIKE_STAGES }
+      : { executor: "constant-vus", exec: "customer", vus: LEVEL, duration: DURATION },
     partner: { executor: "constant-vus", exec: "partnerList", vus: 2, duration: DURATION },
-    staff: { executor: "constant-vus", exec: "adminList", vus: 1, duration: DURATION },
+    // Only when staff credentials are supplied: the run is otherwise the
+    // customer and partner mix alone.
+    ...(__ENV.STAFF_PASSWORD
+      ? { staff: { executor: "constant-vus", exec: "adminList", vus: 1, duration: DURATION } }
+      : {}),
   },
   summaryTrendStats: ["avg", "min", "med", "p(90)", "p(95)", "p(99)", "max", "count"],
   // Informational only: a threshold per endpoint tag is what makes k6 report
@@ -108,6 +124,14 @@ function totp(secret, at) {
   return String(code % 1000000).padStart(6, "0");
 }
 
+function uuid4() {
+  const b = new Uint8Array(crypto.randomBytes(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 let signedIn = false;
 let me = null;
 
@@ -127,7 +151,12 @@ export function customer() {
     http.get(`${BASE}/api/v1/orgs/${s}/apps`, t("my_products")),
     http.get(`${BASE}/api/v1/public/catalog?currency=GBP`, t("catalog")),
     http.get(`${BASE}/api/v1/orgs/${s}/subscriptions`, t("subscription_read")),
-    http.post(`${BASE}/api/v1/orgs/${s}/apps/easy_crm/launch`, null, t("launch_entitlement")),
+    // As the browser sends it since the 2026-10 audit (lib/api/launcher.ts):
+    // marked replayable, so the edge retries it across a worker recycle.
+    http.post(`${BASE}/api/v1/orgs/${s}/apps/easy_crm/launch`, null, {
+      tags: { name: "launch_entitlement" },
+      headers: headers({ "Idempotency-Key": uuid4() }),
+    }),
   ];
   check(results[1], { "apps 200": (x) => x.status === 200 });
   check(results[4], { "launch 200": (x) => x.status === 200 });

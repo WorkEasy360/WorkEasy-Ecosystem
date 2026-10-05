@@ -9,11 +9,11 @@ administrator may read metrics of products the organization holds.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 from uuid import UUID
 
 from workeasy360.contracts.errors import AIInvalidRequest, MetricNotFound
+from workeasy360.contracts.values import json_input
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.intelligence.analytics import query, registry
 from workeasy360.intelligence.analytics.permissions import VIEW
@@ -126,7 +126,7 @@ def _json(raw: Any, field: str) -> dict[str, Any]:
             f"A '{field}' field holding a JSON object is required.", field=field
         )
     try:
-        parsed = json.loads(raw)
+        parsed = json_input.loads(raw)
     except ValueError:
         raise AIInvalidRequest(f"The {field} is not valid JSON.", field=field) from None
     if not isinstance(parsed, dict):

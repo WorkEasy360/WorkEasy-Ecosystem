@@ -295,10 +295,12 @@ def _uuid_or_none(raw: Any) -> uuid.UUID | None:
 def _body(request: HttpRequest) -> dict[str, Any]:
     import json
 
+    from workeasy360.contracts.values import json_input
+
     if not request.body:
         return {}
     try:
-        payload = json.loads(request.body)
+        payload = json_input.loads(request.body)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}

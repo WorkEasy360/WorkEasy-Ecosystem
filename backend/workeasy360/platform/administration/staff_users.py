@@ -33,6 +33,7 @@ from workeasy360.contracts.errors import (
     MembershipConflict,
     MembershipValidationError,
 )
+from workeasy360.contracts.values import json_input
 from workeasy360.contracts.values.control_plane import PLATFORM_SYSTEM_USER_EMAIL
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.audit import services as audit
@@ -49,7 +50,7 @@ def _cursor(raw: str | None) -> tuple[str, str] | None:
     if not raw:
         return None
     try:
-        data = json.loads(base64.urlsafe_b64decode(raw.encode("ascii")))
+        data = json_input.loads(base64.urlsafe_b64decode(raw.encode("ascii")))
         return str(data["t"]), str(data["i"])
     except (ValueError, KeyError, TypeError):
         return None

@@ -53,6 +53,7 @@ from workeasy360.contracts.enums import (
     ProductStatus,
 )
 from workeasy360.contracts.errors import CatalogValidationError
+from workeasy360.contracts.values import json_input
 from workeasy360.contracts.values.money import CurrencyCode
 from workeasy360.platform.authz import services as authz
 
@@ -67,7 +68,7 @@ def _body(request: HttpRequest) -> dict[str, Any]:
     if not request.body:
         return {}
     try:
-        payload = json.loads(request.body)
+        payload = json_input.loads(request.body)
     except json.JSONDecodeError as exc:
         raise CatalogValidationError(f"Malformed JSON body: {exc}", field="body") from exc
     if not isinstance(payload, dict):

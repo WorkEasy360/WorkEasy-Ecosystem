@@ -344,7 +344,7 @@ def test_diagnostics_give_a_reason_chain_and_change_nothing(
         for q in queries.captured_queries
         if q["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
         # The framework's own sliding-window session touch
-        # (SESSION_SAVE_EVERY_REQUEST), in the platform session registry
+        # (SlidingSessionMiddleware), in the platform session registry
         # since the Phase 8 extension.
         and '"identity_session"' not in q["sql"]
     ]

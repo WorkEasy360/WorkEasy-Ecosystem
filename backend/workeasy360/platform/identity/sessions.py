@@ -6,9 +6,11 @@ Django's ``db`` backend does is kept - the same key generation, the same
 are added:
 
 1. **Ownership columns maintained from the session's own data** (the signed-in
-   user, the epoch it was issued under, coarse network and device) on the save
-   Django already makes every request (``SESSION_SAVE_EVERY_REQUEST``). No extra
-   query: the columns ride on the existing ``UPDATE``.
+   user, the epoch it was issued under, coarse network and device) on every
+   save. No extra query: the columns ride on the existing ``UPDATE``. A save
+   happens when the session changes, and otherwise at most once per
+   ``SESSION_REFRESH_INTERVAL_S`` to slide the idle window
+   (``platform.identity.middleware.SlidingSessionMiddleware``).
 2. **Per-session revocation.** Deleting a row ends that session: the next
    request carrying its cookie loads nothing and is anonymous. Before this, the
    only revocation was ``User.session_epoch``, which ends *every* session.
@@ -68,6 +70,22 @@ class SessionStore(DatabaseSessionStore):
     #: not touched the database yet.
     w360_public_id: uuid.UUID | None = None
     w360_created_at: Any = None
+    #: When the loaded row was last saved: the start of its idle window.
+    w360_last_activity_at: Any = None
+
+    def refresh_due(self) -> bool:
+        """Whether the sliding idle window should move forward on this request.
+
+        Only for a row that was actually loaded, and only once
+        ``SESSION_REFRESH_INTERVAL_S`` has passed since it was last saved. The
+        expiry moves in steps of at most that interval, so an idle session can
+        end up to one interval *early*, never late (2026-10 audit; it used to
+        be saved on every request).
+        """
+        if self.w360_last_activity_at is None:
+            return False
+        interval = int(getattr(settings, "SESSION_REFRESH_INTERVAL_S", 0) or 0)
+        return timezone.now() - self.w360_last_activity_at >= timedelta(seconds=interval)
 
     @classmethod
     def get_model_class(cls):  # type: ignore[no-untyped-def]
@@ -88,6 +106,7 @@ class SessionStore(DatabaseSessionStore):
             return None
         self.w360_public_id = row.public_id
         self.w360_created_at = row.created_at
+        self.w360_last_activity_at = row.last_activity_at
         return row
 
     async def _aget_session_from_db(self):  # type: ignore[no-untyped-def]

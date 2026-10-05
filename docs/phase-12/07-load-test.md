@@ -100,3 +100,5 @@ A single api instance with 3 workers serves about 110 requests/s of this mix, wi
 W360_STG_COMPOSE=<compose.sh> W360_ENV_FILE=<staging.env> OUT=<dir> LOAD_PASSWORD=... \
   STAFF_PASSWORD=... STAFF_TOTP=... bash scripts/phase12_staging/run_load.sh
 ```
+
+**Re-measured 2026-10-05:** the architecture and performance audit removed per-request connection setup and the per-request session write, and roughly doubled this mix's throughput on the same host (82-87 -> 148-169 requests/s). PgBouncer is no longer the next ceiling. See [docs/audit-2026-10/](../audit-2026-10/architecture-performance-audit.md) and ADR-040.

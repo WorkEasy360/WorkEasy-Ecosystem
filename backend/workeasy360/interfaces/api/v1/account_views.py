@@ -29,6 +29,7 @@ from workeasy360.contracts.errors import (
     MembershipValidationError,
     SessionNotFound,
 )
+from workeasy360.contracts.values import json_input
 from workeasy360.interfaces.api.v1.auth_views import connection_facts, establish_session
 from workeasy360.interfaces.api.v1.control_plane_http import limited
 from workeasy360.platform.identity import account
@@ -55,7 +56,7 @@ def _body(request: HttpRequest) -> dict[str, Any]:
     if not request.body:
         return {}
     try:
-        payload = json.loads(request.body)
+        payload = json_input.loads(request.body)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise MembershipValidationError("Malformed JSON body.", field="body") from exc
     if not isinstance(payload, dict):

@@ -82,7 +82,9 @@ function access(permissions: string[], consoleKind: "admin" | "member" = "member
 
 function renderOrg(ui: React.ReactNode, permissions: string[], consoleKind: "admin" | "member" = "member") {
   return render(
-    <OrgAccessContext.Provider value={{ slug: "acme", access: access(permissions, consoleKind), reload: vi.fn() }}>
+    <OrgAccessContext.Provider
+      value={{ slug: "acme", access: access(permissions, consoleKind), reload: vi.fn(), memberName: "Ada Lovelace" }}
+    >
       <main>{ui}</main>
     </OrgAccessContext.Provider>,
   );
@@ -176,8 +178,9 @@ describe("the order request from the address", () => {
 
 describe("the dashboard", () => {
   it("shows what the organization holds first, with plan and trial status, and passes axe", async () => {
-    mockApi({
-      "GET /api/v1/auth/session": [{ status: 200, body: { authenticated: true, name: "Ada Lovelace" } }],
+    // No session route: the greeting comes from the shell's session, and an
+    // unrouted request would throw (2026-10 audit removed the second fetch).
+    const calls = mockApi({
       [`GET ${ORG}/apps`]: [
         {
           status: 200,
@@ -215,6 +218,7 @@ describe("the dashboard", () => {
     });
     const { container } = renderOrg(<HomeScreen />, OWNER);
     expect(await screen.findByRole("heading", { level: 1, name: "Welcome, Ada" })).toBeInTheDocument();
+    expect(calls.map((c) => c.key)).not.toContain("GET /api/v1/auth/session");
     const card = await screen.findByRole("article", { name: "CRM" });
     expect(within(card).getByText("CRM Pro")).toBeInTheDocument();
     expect(within(card).getByText("Trial", { selector: "li" })).toBeInTheDocument(); // the status badge

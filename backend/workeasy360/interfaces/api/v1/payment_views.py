@@ -32,6 +32,7 @@ from django.views.decorators.http import require_http_methods
 from workeasy360.commercial.payments import checkout, orders, refunds, staff, webhooks
 from workeasy360.commercial.payments import selectors as payment_selectors
 from workeasy360.contracts.errors import AuthenticationRequired, PaymentValidationError
+from workeasy360.contracts.values import json_input
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.interfaces.api.v1.control_plane_http import limited, staff_view
 
@@ -40,7 +41,7 @@ def _body(request: HttpRequest) -> dict[str, Any]:
     if not request.body:
         return {}
     try:
-        payload = json.loads(request.body)
+        payload = json_input.loads(request.body)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise PaymentValidationError("Malformed JSON body.", field="body") from exc
     if not isinstance(payload, dict):

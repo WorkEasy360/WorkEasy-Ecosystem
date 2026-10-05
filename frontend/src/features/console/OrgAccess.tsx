@@ -13,6 +13,9 @@ export const OrgAccessContext = createContext<{
   slug: string;
   access: ConsoleAccess | null;
   reload: () => void;
+  /** The signed-in person's name, from the session the shell already loaded,
+   * so a page that only greets them need not fetch the session again. */
+  memberName?: string;
 }>({ slug: "", access: null, reload: () => undefined });
 
 export function useOrgAccess() {

@@ -142,9 +142,13 @@ def test_the_logo_endpoint_is_rate_limited(client):
     from django.conf import settings
 
     limit = settings.CONTROL_PLANE_RATE_LIMITS["public_branding_ip"][0]
+    # Twice the limit: the counter is per fixed window, and a run that crossed
+    # a window boundary split ``limit + 5`` requests into two windows that
+    # each stayed under it (2026-10 audit). However the requests fall across
+    # at most two windows, one of them now goes over.
     codes = {
         client.get("/api/v1/public/branding/logo", {"host": "x.example.com"}).status_code
-        for _ in range(limit + 5)
+        for _ in range(2 * limit + 5)
     }
     assert 429 in codes
 

@@ -31,7 +31,11 @@ argon2-cffi==23.1.0
 # `cryptography` is PyJWT's asymmetric backend and is also used directly by
 # platform/ecosystem/keys.py to generate and serialise key pairs. It is a
 # direct dependency, not an accident of the extra, so it is pinned here.
-PyJWT==2.14.0
+#
+# 2.15.1 (2026-10 audit): 2.14.0 let a deeply nested payload escape the
+# unverified-decode peek as RecursionError instead of DecodeError
+# (CVE-2026-101918 / GHSA-42vr-xj54-vc7v) - an unauthenticated 500 on /token.
+PyJWT==2.15.1
 cryptography==50.0.1
 
 # --- Partner channel (Phase 7) ---------------------------------------------

@@ -276,6 +276,14 @@ def test_production_refuses_to_start_without_a_critical_setting(missing, monkeyp
         ),
         # Phase 12 final audit: a guessable scrape token.
         ({"W360_METRICS_TOKEN": "short-token"}, "W360_METRICS_TOKEN must be at least 32"),
+        # 2026-10 audit: persistent connections stay bounded, and the session
+        # idle window may slide in small steps only.
+        ({"W360_DB_CONN_MAX_AGE": "86400"}, "CONN_MAX_AGE must be a bounded"),
+        ({"W360_DB_CONN_MAX_AGE": "-1"}, "CONN_MAX_AGE must be a bounded"),
+        (
+            {"W360_SESSION_REFRESH_INTERVAL_S": "3600"},
+            "W360_SESSION_REFRESH_INTERVAL_S must",
+        ),
     ],
 )
 def test_production_refuses_insecure_configuration(override, expected, monkeypatch):

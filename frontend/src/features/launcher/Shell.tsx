@@ -147,12 +147,17 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [signOutFailed, setSignOutFailed] = useState(false);
   const reload = useCallback(() => setTick((n) => n + 1), []);
 
+  // A signed-out visitor goes to sign-in, whatever the access call answered.
+  const signedOut = session.status === "ready" && !session.session.authenticated;
   useEffect(() => {
-    if (session.status !== "ready") return;
-    if (!session.session.authenticated) {
-      router.replace("/login");
-      return;
-    }
+    if (signedOut) router.replace("/login");
+  }, [signedOut, router]);
+
+  // Access is requested alongside the session rather than after it (2026-10
+  // audit): waiting cost a whole round trip before any page could start
+  // loading. Asking early reveals nothing - the backend authorizes the call on
+  // its own, and a signed-out caller gets the same uniform 404 as a stranger.
+  useEffect(() => {
     let cancelled = false;
     consoleApi
       .access(orgSlug)
@@ -172,9 +177,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [session, router, orgSlug, tick]);
+  }, [orgSlug, tick]);
 
-  if (session.status === "loading" || org.status === "loading") {
+  // Nothing renders until the session is known to be signed in: a signed-out
+  // visitor sees this screen while the redirect above runs, never the
+  // access call's "not a member" answer.
+  if (session.status !== "ready" || signedOut || org.status === "loading") {
     return <StatusScreen>Loading Workeasy360…</StatusScreen>;
   }
   if (org.status === "policy") {
@@ -234,7 +242,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   ];
 
   return (
-    <OrgAccessContext.Provider value={{ slug: orgSlug, access, reload }}>
+    <OrgAccessContext.Provider value={{ slug: orgSlug, access, reload, memberName: who?.name || undefined }}>
       <SidebarShell
         area="Organization"
         brandName={brand?.brand_name}

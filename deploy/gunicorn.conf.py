@@ -7,10 +7,13 @@ the host's size is an environment variable with a conservative default - the
 right worker count is a measurement (docs/phase-12/07-load-test.md), not a
 guess baked into the image.
 
-Database connections: ``CONN_MAX_AGE=0`` behind PgBouncer, so a request holds a
-server connection only for its transaction. Concurrent requests per container
-= workers x threads, and that product - not the worker count - is what must fit
-inside PgBouncer's ``max_client_conn``.
+Database connections: each thread keeps one persistent client connection to
+PgBouncer (``CONN_MAX_AGE``, 300 s by default), and PgBouncer's transaction
+pooling lends it a server connection only for the length of each transaction.
+Client connections per container = workers x threads, and that product - not
+the worker count - summed over every api and worker container is what must fit
+inside PgBouncer's ``max_client_conn`` (500): 3 x 4 = 12 per api container
+today (docs/architecture/10-performance-concurrency.md section 4).
 """
 
 from __future__ import annotations

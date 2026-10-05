@@ -320,6 +320,7 @@ That last question is the cheapest architectural test available. "Nothing — it
 | [ADR-033 … ADR-034](docs/architecture/adrs/) | Phase 8 extension: the session registry and per-organization access policy; payments as hosted checkout behind sandboxed provider adapters |
 | [ADR-035 … ADR-036](docs/architecture/adrs/) | Phase 9: pay-first orders; self-service accounts verified with link and password, staff roles as grant bundles |
 | [ADR-037 … ADR-039](docs/architecture/adrs/) | Phases 10–12: partner consoles and owner activation; four-product integration and independent product trials; white-label domains keep authentication on the canonical host (D-035) |
+| [ADR-040](docs/architecture/adrs/ADR-040-per-request-overhead-connections-sessions-hashing.md) | 2026-10 audit: persistent pooled connections, a throttled session idle window, bounded password hashing |
 | [Phase 3 — Remote Integration](docs/phase-3/00-overview.md) | How an external product connects: registry, SSO, entitlement API, key management |
 | [Phase 5 — Onboarding, access directory, MFA](docs/phase-5/00-overview.md) | Organization creation, the chooser projection, TOTP and step-up |
 | [Phase 6 — Integration, webhooks, automation](docs/phase-6/00-overview.md) | Product event ingestion, signed webhooks, connectors, SSRF boundary, generic automation |
@@ -328,4 +329,5 @@ That last question is the cheapest architectural test available. "Nothing — it
 | [Phase 8 extension — consoles, access policy, communication, payments](docs/phase-8/extension/00-design.md) | Organization console and dashboard, Super Admin panel and plan builder, sessions, sign-in policy, email templates, invoices and hosted checkout |
 | [Phase 9 — The customer journey](docs/phase-9/00-plan.md) | Public site and catalog, signup and verification, dashboard, pay-first orders, Super Admin roles and bootstrap ([operations](docs/phase-9/01-operations.md), [status](docs/phase-9/phase-9-status.md)) |
 | [Phase 12 — Production hardening and go-live readiness](docs/phase-12/phase-12-status.md) | The go-live verdict and its blockers. Deployment topology and checklist, backup/restore/PITR, secrets and key rotation, async safety, load test, observability and alerts, runbooks, security scans ([gap list](docs/phase-12/01-audit-gap-list.md)) |
+| [2026-10 architecture and performance audit](docs/audit-2026-10/architecture-performance-audit.md) | Measured per-request overhead and its fixes, before/after load tests, remaining risks |
 | [Product Integration Guide](docs/phase-3/09-product-integration-guide.md) | **Start here if you are building a product** (AI, RAG and analytics: [Phase 8 guide](docs/phase-8/10-product-integration-guide.md)) |

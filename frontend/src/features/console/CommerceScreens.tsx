@@ -4,7 +4,6 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getAppDirectory } from "@/lib/api/launcher";
-import { useSession } from "@/lib/auth/useSession";
 import { accountApi, consoleApi, type Order, type OrderRequest } from "@/lib/api/console";
 import { newKey } from "@/lib/api/controlPlane";
 import type { AppDirectoryEntry } from "@/lib/api/types";
@@ -103,7 +102,7 @@ export function MyProductsScreen({ banner }: { banner?: React.ReactNode }) {
  * could be added, the person's own recent account activity - and, for
  * owners and administrators, the organization's insights below. */
 export function HomeScreen() {
-  const { slug, access, can } = useOrgAccess();
+  const { slug, access, can, memberName } = useOrgAccess();
   const canSeePlans = can("commercial.subscription.view");
   const [products] = useProducts(slug);
   const [activity] = useLoad(() => accountApi.activity(), []);
@@ -111,8 +110,9 @@ export function HomeScreen() {
     () => (canSeePlans ? consoleApi.subscriptions(slug).then((r) => r.results) : Promise.resolve(null)),
     [slug, canSeePlans],
   );
-  const session = useSession();
-  const name = session.status === "ready" ? session.session.name?.split(" ")[0] : undefined;
+  // From the shell's session (2026-10 audit): a second GET /auth/session here
+  // only fetched the greeting's first name.
+  const name = memberName?.split(" ")[0];
 
   return (
     <div className={styles.page}>

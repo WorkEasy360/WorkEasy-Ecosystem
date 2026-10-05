@@ -4,10 +4,12 @@
 #   container CPU/memory (docker stats), PostgreSQL connections and commit rate
 #   (pg_stat_activity / pg_stat_database), broker queue depth (/healthz/metrics).
 #
-#   W360_STG_COMPOSE=<compose.sh> OUT=<dir> LEVELS="50 100 250 500" DURATION=90s \
+#   W360_STG_COMPOSE=<compose.sh> OUT=<dir> LEVELS="50 100 250 500 spike" DURATION=90s \
 #     LOAD_PASSWORD=... STAFF_PASSWORD=... STAFF_TOTP=... bash scripts/phase12_staging/run_load.sh
 set -euo pipefail
-: "${W360_STG_COMPOSE:?}" "${OUT:?}" "${LOAD_PASSWORD:?}" "${STAFF_PASSWORD:?}" "${STAFF_TOTP:?}"
+: "${W360_STG_COMPOSE:?}" "${OUT:?}" "${LOAD_PASSWORD:?}"
+# Staff credentials are optional: without them load.js leaves the staff VU out.
+STAFF_PASSWORD="${STAFF_PASSWORD:-}" STAFF_TOTP="${STAFF_TOTP:-}"
 LEVELS="${LEVELS:-50 100 250 500}"
 DURATION="${DURATION:-90s}"
 HERE="$(cd "$(dirname "$0")" && (pwd -W 2>/dev/null || pwd))"

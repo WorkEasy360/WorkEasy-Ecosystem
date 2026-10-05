@@ -34,9 +34,19 @@ export interface LaunchResult {
  * top-level browser navigation and not a background fetch of the product's
  * page (Task 17/54 preserved: this function never reads the response body
  * as anything but a URL to hand the browser, and never handles a token).
+ *
+ * The `Idempotency-Key` marks the request as safe to replay (2026-10 audit).
+ * A launch writes nothing - it re-runs the access decision - so a replay is
+ * harmless, and the header is what lets the edge's HTTP transport retry it
+ * when the POST went down a keep-alive connection that a recycling gunicorn
+ * worker had just closed. Without it that race surfaced as a 502 on about
+ * 1 launch in 1,300 under sustained load (docs/phase-12/07-load-test.md).
  */
 export function launchProduct(orgSlug: string, productCode: string): Promise<LaunchResult> {
-  return apiFetch(LAUNCH_PATH(orgSlug, productCode), { method: "POST" });
+  return apiFetch(LAUNCH_PATH(orgSlug, productCode), {
+    method: "POST",
+    headers: { "Idempotency-Key": crypto.randomUUID() },
+  });
 }
 
 export function getSeatOverview(

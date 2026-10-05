@@ -18,6 +18,7 @@ from django.views.decorators.http import require_http_methods
 from workeasy360.commercial.subscriptions import selectors as subscription_selectors
 from workeasy360.commercial.subscriptions import trials
 from workeasy360.contracts.errors import CatalogValidationError
+from workeasy360.contracts.values import json_input
 from workeasy360.interfaces.api.v1.control_plane_http import limited
 
 _FIELDS = ("product_code", "plan_code")
@@ -27,7 +28,7 @@ def _body(request: HttpRequest) -> dict[str, Any]:
     if not request.body:
         return {}
     try:
-        payload = json.loads(request.body)
+        payload = json_input.loads(request.body)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise CatalogValidationError("Malformed JSON body.", field="body") from exc
     if not isinstance(payload, dict):

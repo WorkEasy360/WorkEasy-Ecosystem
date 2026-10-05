@@ -112,7 +112,7 @@ def branding_logo_view(request: HttpRequest) -> HttpResponse:
     data, content_type = logo
     response = HttpResponse(data, content_type=content_type)
     # ``private``: a signed-in browser's request also refreshes its session
-    # cookie (SESSION_SAVE_EVERY_REQUEST), so this response can carry a
+    # cookie (the sliding idle window), so this response can carry a
     # Set-Cookie - never something a shared cache may store and replay. The
     # browser still caches the image for five minutes.
     response["Cache-Control"] = "private, max-age=300"

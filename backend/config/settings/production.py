@@ -22,6 +22,7 @@ from config.settings.base import (
     REDIS_URL,
     S3_BUCKET,
     S3_ENDPOINT_URL,
+    SESSION_REFRESH_INTERVAL_S,
     env,
 )
 
@@ -235,10 +236,22 @@ env.check(
     "endpoint and anyone who can reach an api instance.",
 )
 env.check(
-    DATABASES["default"]["CONN_MAX_AGE"] == 0,
-    "CONN_MAX_AGE must be 0 behind PgBouncer: persistent Django connections "
-    "pin server connections and defeat the pooler "
-    "(10-performance-concurrency.md section 4).",
+    DATABASES["default"]["CONN_MAX_AGE"] is not None
+    and 0 <= DATABASES["default"]["CONN_MAX_AGE"] <= 3600,
+    "CONN_MAX_AGE must be a bounded number of seconds (0-3600), never None: a "
+    "connection that is never re-established would never notice a PgBouncer "
+    "or DNS change (10-performance-concurrency.md section 4).",
+)
+env.check(
+    DATABASES["default"]["CONN_MAX_AGE"] == 0
+    or DATABASES["default"]["CONN_HEALTH_CHECKS"],
+    "Persistent connections need CONN_HEALTH_CHECKS: without it the first "
+    "request after a PgBouncer restart fails on the dead connection.",
+)
+env.check(
+    0 <= SESSION_REFRESH_INTERVAL_S <= 300,
+    "W360_SESSION_REFRESH_INTERVAL_S must be 0-300 s: the idle window may end "
+    "up to this much early, and it must stay small against SESSION_COOKIE_AGE.",
 )
 env.check(
     DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"],
@@ -250,8 +263,18 @@ env.check(
     "transaction that carries the RLS variable (ADR-009).",
 )
 env.check(
-    "django.contrib.auth.hashers.Argon2PasswordHasher" == PASSWORD_HASHERS[0],
+    PASSWORD_HASHERS[0]
+    in {
+        "django.contrib.auth.hashers.Argon2PasswordHasher",
+        # The same hasher with a concurrency bulkhead (2026-10 audit).
+        "workeasy360.platform.identity.hashers.BoundedArgon2PasswordHasher",
+    },
     "Argon2id must be the first password hasher (12-security.md section 3).",
+)
+env.check(
+    1 <= PASSWORD_HASH_CONCURRENCY <= 16,
+    "W360_PASSWORD_HASH_CONCURRENCY must be 1-16 hashes per process: each "
+    "holds 100 MiB while it runs.",
 )
 env.check(
     not REDIS_URL.startswith("redis://") or env.bool("W360_ALLOW_PLAINTEXT_REDIS"),

@@ -33,6 +33,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
 
+from workeasy360.contracts.values import json_input
+
 RETRYABLE: Final[frozenset[str]] = frozenset(
     {"rate_limited", "overloaded", "server_error", "connect_failed"}
 )
@@ -152,7 +154,7 @@ def json_body(payload: dict[str, Any]) -> bytes:
 
 def parse_json(body: bytes) -> dict[str, Any]:
     try:
-        parsed = json.loads(body.decode("utf-8"))
+        parsed = json_input.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
         raise ProviderFailure("invalid_response") from exc
     if not isinstance(parsed, dict):

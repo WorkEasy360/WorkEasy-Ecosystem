@@ -41,7 +41,7 @@ Covered in [04-identity-authz.md](04-identity-authz.md); the security-specific r
 
 | Control | Requirement |
 |---|---|
-| Password hashing | Argon2id (Django's `Argon2PasswordHasher`), tuned to ≥ 250 ms on production hardware |
+| Password hashing | Argon2id (Django's `Argon2PasswordHasher`), tuned to ≥ 250 ms on production hardware. Since the 2026-10 audit, wrapped by `BoundedArgon2PasswordHasher` (same algorithm and costs) so at most `PASSWORD_HASH_CONCURRENCY` hashes run at once per process (ADR-040) |
 | Password policy | Minimum 12 characters; **breach-corpus check**; no composition rules, no forced rotation (both are counterproductive per current NIST guidance) |
 | Login throttling | Per account and per IP, exponential lockout with jitter; never reveal which factor failed |
 | Enumeration | Uniform responses and uniform timing on login, reset and invitation |

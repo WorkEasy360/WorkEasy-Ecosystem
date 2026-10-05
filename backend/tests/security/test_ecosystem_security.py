@@ -1065,3 +1065,38 @@ def test_an_organization_wide_product_never_requires_a_seat(
 
     assert response.status_code == 200
     assert response.json()["id_token"]
+
+
+def _deeply_nested_token(depth: int = 20_000) -> str:
+    """A JWS whose payload is valid JSON nested ``depth`` deep. No valid
+    signature is needed: the crash, when there is one, is in parsing."""
+
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    header = b64(json.dumps({"alg": "RS256", "typ": "JWT", "kid": "k"}).encode())
+    payload = b64(("[" * depth + "]" * depth).encode())
+    return f"{header}.{payload}.c2ln"
+
+
+def test_a_deeply_nested_client_assertion_is_invalid_client_not_a_server_error(client):
+    """CVE-2026-101918 (2026-10 audit). PyJWT 2.14.0's unverified decode let a
+    nested payload escape as RecursionError rather than DecodeError, and the
+    token endpoint's peek at the assertion caught only PyJWTError: one
+    unauthenticated ~50 KB request was a 500 (and a page from the 5xx alert).
+    """
+    response = client.post(
+        TOKEN,
+        {
+            "grant_type": "authorization_code",
+            "client_assertion_type": ASSERTION_TYPE,
+            "client_assertion": _deeply_nested_token(),
+        },
+    )
+    assert response.status_code == 401
+    assert response.json()["error"] == "invalid_client"
+
+
+def test_a_deeply_nested_bearer_token_is_invalid_token_not_a_server_error(client):
+    response = client.get(USERINFO, HTTP_AUTHORIZATION=f"Bearer {_deeply_nested_token()}")
+    assert response.status_code == 401

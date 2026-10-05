@@ -12,6 +12,7 @@ from uuid import UUID
 from django.http import HttpRequest, JsonResponse
 
 from workeasy360.contracts.errors import CommunicationValidationError
+from workeasy360.contracts.values import json_input
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.interfaces.api.v1.control_plane_http import (
     limited,
@@ -26,7 +27,7 @@ def _body(request: HttpRequest) -> dict[str, Any]:
     if not request.body:
         return {}
     try:
-        payload = json.loads(request.body)
+        payload = json_input.loads(request.body)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise CommunicationValidationError("Malformed JSON body.", field="body") from exc
     if not isinstance(payload, dict):

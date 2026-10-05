@@ -71,7 +71,7 @@ describe("AppCard", () => {
   });
 
   it("opens exactly the destination the server answers with, as a real navigation", async () => {
-    mockApi({
+    const calls = mockApi({
       "POST /api/v1/orgs/acme/apps/crm/launch": [
         { status: 200, body: { redirect_url: "https://crm.example.com/launch?organization=org-1", state: "active" } },
       ],
@@ -85,6 +85,9 @@ describe("AppCard", () => {
     await waitFor(() =>
       expect(assign).toHaveBeenCalledWith("https://crm.example.com/launch?organization=org-1"),
     );
+    // Marked replayable, so the edge can retry it across a worker recycle
+    // (2026-10 audit); a launch writes nothing.
+    expect(calls[0].headers["idempotency-key"]).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("shows the denial in words, never the raw code, and does not navigate", async () => {

@@ -35,6 +35,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 
 from workeasy360.contracts.errors import OrganizationValidationError
+from workeasy360.contracts.values import json_input
 from workeasy360.platform.identity.middleware import SESSION_EPOCH_KEY
 from workeasy360.platform.identity.services import LoginOutcome, authenticate
 from workeasy360.platform.observability import throttle
@@ -403,7 +404,7 @@ def _body(request: HttpRequest) -> dict[str, Any]:
     if not request.body:
         return {}
     try:
-        payload = json.loads(request.body)
+        payload = json_input.loads(request.body)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}

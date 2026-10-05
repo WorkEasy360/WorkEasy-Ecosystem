@@ -685,7 +685,7 @@ def test_unknown_catalog_references_are_a_client_error(staff_client):
 
 def test_the_public_logo_is_not_publicly_cacheable(client, monkeypatch):
     """A signed-in browser's logo response also carries its refreshed session
-    cookie (``SESSION_SAVE_EVERY_REQUEST``); ``public`` would invite a shared
+    cookie (the sliding idle window); ``public`` would invite a shared
     cache to store both."""
     from workeasy360.interfaces.api.v1 import public_views
 

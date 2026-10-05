@@ -190,7 +190,9 @@ MIDDLEWARE = [
     # Probes therefore skip the request log and HTTP metrics as well.
     "workeasy360.platform.observability.middleware.HealthProbeMiddleware",
     "django.middleware.security.SecurityMiddleware",
-    "django.contrib.sessions.middleware.SessionMiddleware",
+    # Django's SessionMiddleware, refreshing the idle window at most once per
+    # SESSION_REFRESH_INTERVAL_S rather than on every request (2026-10 audit).
+    "workeasy360.platform.identity.middleware.SlidingSessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -248,11 +250,18 @@ DB_IDLE_IN_TRANSACTION_TIMEOUT_MS = env.int(
 DB_CONNECT_TIMEOUT_S = env.int("W360_DB_CONNECT_TIMEOUT_S", 2)
 
 
-# CONN_MAX_AGE = 0 with an external pooler is deliberate: persistent Django
-# connections plus PgBouncer means two pools fighting, and idle Django
-# connections pin PgBouncer server connections, defeating the pooler
-# (10-performance-concurrency.md section 4).
-DB_CONN_MAX_AGE = env.int("W360_DB_CONN_MAX_AGE", 0)
+# Persistent connections, with a bounded lifetime (2026-10 audit). PgBouncer
+# runs in *transaction* pooling (deploy/pgbouncer/pgbouncer.ini): it lends a
+# client a server connection only for the length of one transaction, so an
+# idle Django connection pins nothing. What CONN_MAX_AGE = 0 did cost was a new
+# TCP connection, a DNS lookup and a SCRAM login on every request: measured on
+# the staging stack at ~6 ms and ~2.8 ms of API CPU per request, a quarter of
+# the in-process request time (10-performance-concurrency.md section 4).
+# Reuse is safe because nothing sets session-level state: the RLS variable is
+# set_config(..., true) only (B6); prepared statements and server-side cursors
+# are off. CONN_HEALTH_CHECKS re-checks a reused connection once per request,
+# so a PgBouncer restart costs a reconnect, not an error.
+DB_CONN_MAX_AGE = env.int("W360_DB_CONN_MAX_AGE", 300)
 
 
 def _db_options() -> dict[str, object]:
@@ -347,7 +356,15 @@ SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = True
 SESSION_COOKIE_AGE = 60 * 60 * 8  # 8h idle
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
-SESSION_SAVE_EVERY_REQUEST = True  # sliding idle window
+# The sliding idle window is refreshed at most once per
+# SESSION_REFRESH_INTERVAL_S (platform.identity.middleware.SlidingSessionMiddleware),
+# not on every request (2026-10 audit). Saving every request was an UPDATE and
+# a commit on every read - the public catalog included - ~3 ms and one pooler
+# transaction each. The interval can only make an idle session end earlier
+# (by at most the interval), never later; a modified session still saves at
+# once, and revocation is enforced when the row is loaded.
+SESSION_SAVE_EVERY_REQUEST = False
+SESSION_REFRESH_INTERVAL_S = env.int("W360_SESSION_REFRESH_INTERVAL_S", 60)
 SESSION_ABSOLUTE_TIMEOUT = 60 * 60 * 24 * 30  # 30d hard cap
 
 # --- CSRF / security -----------------------------------------------------
@@ -433,11 +450,17 @@ PERMISSIONS_POLICY = {
 
 # Argon2id first (12-security.md section 3). The remaining hashers exist only
 # so that an older stored hash can be verified and transparently upgraded.
+#
+# The first is Django's Argon2 hasher, unchanged, with a per-process bulkhead:
+# at most PASSWORD_HASH_CONCURRENCY hashes at once (100 MiB and eight lanes
+# each), so a burst of sign-ins cannot take every thread's worth of memory and
+# CPU (2026-10 audit, platform/identity/hashers.py).
 PASSWORD_HASHERS = [
-    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "workeasy360.platform.identity.hashers.BoundedArgon2PasswordHasher",
     "django.contrib.auth.hashers.PBKDF2PasswordHasher",
     "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
 ]
+PASSWORD_HASH_CONCURRENCY = env.int("W360_PASSWORD_HASH_CONCURRENCY", 2)
 
 # Minimum 12 characters, no composition rules and no forced rotation: both are
 # counterproductive per current NIST guidance and push users toward

@@ -20,6 +20,7 @@ from typing import Any
 from uuid import UUID
 
 from workeasy360.contracts.enums import MembershipStatus, OrganizationStatus
+from workeasy360.contracts.values import json_input
 from workeasy360.contracts.values.tenant import TenantContext
 
 #: Bounded, with no unbounded variant available to callers.
@@ -168,7 +169,7 @@ def _decode_cursor(cursor: str | None) -> tuple[Any, UUID] | None:
         from datetime import datetime
 
         raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
-        payload = json.loads(raw)
+        payload = json_input.loads(raw)
         timestamp, last_id = payload["t"], payload["i"]
         # Both must be strings: UUID() of a JSON number, list or object
         # raises AttributeError, which was a 500 on the chooser.

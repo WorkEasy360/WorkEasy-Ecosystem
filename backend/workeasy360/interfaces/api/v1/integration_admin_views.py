@@ -25,12 +25,12 @@ bypassed by any internal caller (F-7, C7).
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_http_methods
 
+from workeasy360.contracts.values import json_input
 from workeasy360.interfaces.api.v1.control_plane_http import (
     require_staff_second_factor,
 )
@@ -182,7 +182,7 @@ def _body(request: HttpRequest) -> dict[str, Any]:
     from workeasy360.contracts.errors import ManifestRejected
 
     try:
-        payload = json.loads(request.body or b"{}")
+        payload = json_input.loads(request.body or b"{}")
     except (ValueError, UnicodeDecodeError):
         raise ManifestRejected("The request body must be valid JSON.") from None
     if not isinstance(payload, dict):

@@ -100,10 +100,11 @@ def organization_view(request: HttpRequest, org_slug: str) -> JsonResponse:
         # the display name - the slug is URL identity and never changes.
         import json
 
+        from workeasy360.contracts.values import json_input
         from workeasy360.platform.administration.security import rename
 
         try:
-            body = json.loads(request.body or b"{}")
+            body = json_input.loads(request.body or b"{}")
         except (json.JSONDecodeError, UnicodeDecodeError):
             body = {}
         name = body.get("display_name") if isinstance(body, dict) else None

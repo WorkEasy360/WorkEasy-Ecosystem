@@ -52,14 +52,27 @@ Django opens one connection per worker process. With ASGI and 4 processes × 8 w
 
 | Tier | Pooling | `CONN_MAX_AGE` | Pool size | `statement_timeout` |
 |---|---|---|---|---|
-| Web | PgBouncer, transaction mode | 0 (PgBouncer owns lifetime) | 60 | 10 s |
+| Web | PgBouncer, transaction mode | 0 at design time; **300 since the 2026-10 audit** (below) | 60 | 10 s |
 | Worker: default/events/notifications | PgBouncer, transaction mode | 0 | 50 total | 60 s |
 | Worker: billing | PgBouncer, transaction mode | 0 | 10 | 60 s |
 | Worker: imports | PgBouncer, transaction mode | 0 | 10 | 300 s |
 | Worker: reports | PgBouncer → **replica** | 0 | 5 | 300 s |
 | Migrations | Direct, owner role | 0 | 2 | none |
 
-`CONN_MAX_AGE = 0` with PgBouncer is deliberate: persistent Django connections plus a pooler means two pools fighting, and idle Django connections pin PgBouncer server connections, defeating the pooler.
+**Revised 2026-10 (architecture and performance audit): `CONN_MAX_AGE = 300` (seconds) with `CONN_HEALTH_CHECKS = True`.** The table above records the original plan. The reason given for `0` was that "idle Django connections pin PgBouncer server connections", which is true of *session* pooling, not of the *transaction* pooling actually deployed (`deploy/pgbouncer/pgbouncer.ini`): PgBouncer lends a server connection only for the length of one transaction, so an idle client connection holds nothing. What `0` did cost, measured on the staging stack:
+
+| Per request | `CONN_MAX_AGE = 0` | persistent |
+|---|---|---|
+| connect + SCRAM login + DNS lookup | ~6 ms wall, ~2.8 ms API CPU | none (one `SELECT 1` health check, ~0.15 ms) |
+| PgBouncer | a full client login each time | none |
+
+The connection arithmetic is unchanged at peak and bounded at both ends:
+- **Client side** (`max_client_conn = 500`): every api container holds `GUNICORN_WORKERS × GUNICORN_THREADS` client connections (3 × 4 = 12 today), every Celery worker one per process (4 + 4 + 2), Beat one. That is 23 for one instance of everything; 500 leaves room for about 35 api containers. Under `0` a busy container held the same number at peak, so persistence adds no new ceiling, it only keeps them between requests.
+- **Server side** (`default_pool_size = 40`, `max_db_connections = 80`): unchanged. PostgreSQL never sees more than the pool, however many api instances run.
+
+The worker tiers inherit the same setting: Celery's Django fixup closes a connection that has outlived its age between tasks.
+
+`CONN_MAX_AGE` must stay bounded (production refuses `None`), so every connection is re-established at least every 5 minutes and picks up a PgBouncer or DNS change; the per-request health check means a PgBouncer restart costs a reconnect, not an error.
 
 ### Transaction-mode pooling constraints
 

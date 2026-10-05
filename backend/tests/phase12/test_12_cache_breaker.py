@@ -46,7 +46,9 @@ def test_half_open_after_the_cooldown_and_closes_on_success():
     client = _GuardedClient(inner, breaker)
     with pytest.raises(RedisConnectionError):
         client.get("k")
-    time.sleep(0.06)
+    # Well past the cooldown: on Windows the monotonic clock ticks every
+    # ~15.6 ms, so a 10 ms margin failed now and then (2026-10 audit).
+    time.sleep(0.2)
     inner.down = False
     assert client.get("k") == "value"
     assert client.get("k") == "value"

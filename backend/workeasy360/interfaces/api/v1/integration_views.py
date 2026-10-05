@@ -18,7 +18,6 @@ response, ever, and must not be stored by anything on the way (Task 82).
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from django.http import HttpRequest, JsonResponse
@@ -26,6 +25,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods
 
 from workeasy360.contracts.errors import IntegrationValidationError
+from workeasy360.contracts.values import json_input
 
 # --- catalogues ----------------------------------------------------------------
 
@@ -312,7 +312,7 @@ def _body(request: HttpRequest) -> dict[str, Any]:
     """A JSON object body, or a 400 - raised before any service runs, so a
     malformed request never reaches a write (D-016)."""
     try:
-        payload = json.loads(request.body or b"{}")
+        payload = json_input.loads(request.body or b"{}")
     except (ValueError, UnicodeDecodeError):
         raise IntegrationValidationError("The request body must be valid JSON.") from None
     if not isinstance(payload, dict):

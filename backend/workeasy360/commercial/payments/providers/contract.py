@@ -32,6 +32,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
+from workeasy360.contracts.values import json_input
+
 RETRYABLE: Final = frozenset({"rate_limited", "server_error", "connect_failed"})
 
 # Webhook event kinds an adapter maps provider events onto.
@@ -159,7 +161,7 @@ def failure_for_status(status: int) -> ProviderFailure:
 
 def load_json(body: bytes) -> dict[str, Any]:
     try:
-        parsed = json.loads(body.decode("utf-8"))
+        parsed = json_input.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProviderFailure("invalid_response") from exc
     if not isinstance(parsed, dict):
@@ -169,7 +171,7 @@ def load_json(body: bytes) -> dict[str, Any]:
 
 def load_webhook_json(body: bytes) -> dict[str, Any]:
     try:
-        parsed = json.loads(body.decode("utf-8"))
+        parsed = json_input.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise InvalidWebhook("unparseable") from exc
     if not isinstance(parsed, dict):

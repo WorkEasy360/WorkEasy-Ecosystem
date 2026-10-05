@@ -9,13 +9,13 @@ dangerous, audited writes the integration registry API uses.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from django.http import HttpRequest, JsonResponse
 
 from workeasy360.commercial.controlplane import products
 from workeasy360.contracts.errors import ManifestRejected
+from workeasy360.contracts.values import json_input
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.integration.health import probe
 from workeasy360.interfaces.api.v1.control_plane_http import limited, staff_view
@@ -25,7 +25,7 @@ from workeasy360.platform.ecosystem import selectors as ecosystem_selectors
 
 def _body(request: HttpRequest) -> dict[str, Any]:
     try:
-        payload = json.loads(request.body or b"{}")
+        payload = json_input.loads(request.body or b"{}")
     except (ValueError, UnicodeDecodeError):
         raise ManifestRejected("The request body must be valid JSON.") from None
     if not isinstance(payload, dict):
