@@ -523,6 +523,23 @@ class ManifestRejected(ProductIntegrationError):
         super().__init__(message or "The manifest was rejected.", field=field, **context)
 
 
+class SignInPreferenceInvalid(ProductIntegrationError):
+    """A sign-in preference that cannot be stored (ADR-044): an unknown value,
+    a product with no integration, or a choice the product does not offer -
+    "prefer the product's sign-in" for a product that has none could never
+    take effect, so it is refused rather than silently ignored. 400, with the
+    offending ``field``: the caller's own input, so naming it discloses
+    nothing."""
+
+    code = "sign_in_preference_invalid"
+    http_status = 400
+
+    def __init__(self, message: str = "", *, field: str = "", **context: Any) -> None:
+        super().__init__(
+            message or "That sign-in preference cannot be saved.", field=field, **context
+        )
+
+
 # --- Platform services ---------------------------------------------------
 
 

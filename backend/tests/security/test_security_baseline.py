@@ -120,8 +120,20 @@ def _production_env(**overrides) -> dict[str, str]:
         "W360_INTEGRATION_SECRETS_KEYS": "i" * 40,
         # Phase 8 extension: seals invitation links waiting to be emailed.
         "W360_NOTIFICATION_SEAL_KEYS": "n" * 40,
-        "W360_ALLOWED_HOSTS": "app.workeasy360.com",
-        "W360_CSRF_TRUSTED_ORIGINS": "https://app.workeasy360.com",
+        # ADR-043: the five portal hosts, each its own origin.
+        "W360_ALLOWED_HOSTS": (
+            "admin.workeasy360.com,partner.workeasy360.com,app.workeasy360.com,"
+            "auth.workeasy360.com,api.workeasy360.com"
+        ),
+        "W360_CSRF_TRUSTED_ORIGINS": (
+            "https://admin.workeasy360.com,https://partner.workeasy360.com,"
+            "https://app.workeasy360.com,https://auth.workeasy360.com"
+        ),
+        "W360_ADMIN_ORIGIN": "https://admin.workeasy360.com",
+        "W360_PARTNER_ORIGIN": "https://partner.workeasy360.com",
+        "W360_APP_ORIGIN": "https://app.workeasy360.com",
+        "W360_AUTH_ORIGIN": "https://auth.workeasy360.com",
+        "W360_API_ORIGIN": "https://api.workeasy360.com",
         "W360_RELEASE": "2026.09.21-abc123",
         "W360_FILE_STORAGE_BACKEND": "s3",
         # Phase 12: the S3 adapter needs its bucket; credentials come from the
@@ -133,7 +145,7 @@ def _production_env(**overrides) -> dict[str, str]:
         # Required in production and asserted to be an https origin
         # with no trailing slash, because `iss` is compared by exact
         # string equality (OpenID Connect Core section 3.1.3.7).
-        "W360_OIDC_ISSUER": "https://app.workeasy360.com",
+        "W360_OIDC_ISSUER": "https://auth.workeasy360.com",
         # D-009. How many proxy hops of our own infrastructure sit in front
         # of this process. Required rather than defaulted because both wrong
         # answers are silent: too low and every client behind the proxy
@@ -199,6 +211,9 @@ def test_invalid_types_are_reported_with_the_offending_key():
         "W360_INTEGRATION_SECRETS_KEYS",
         "W360_RELEASE",
         "W360_TRUSTED_PROXY_COUNT",
+        "W360_ADMIN_ORIGIN",
+        "W360_AUTH_ORIGIN",
+        "W360_API_ORIGIN",
     ],
 )
 def test_production_refuses_to_start_without_a_critical_setting(missing, monkeypatch):
@@ -244,8 +259,48 @@ def test_production_refuses_to_start_without_a_critical_setting(missing, monkeyp
         # Phase 3. A plaintext issuer means the discovery document and
         # the key set can both be replaced in transit, and a trailing
         # slash makes every product reject every token.
-        ({"W360_OIDC_ISSUER": "http://app.workeasy360.com"}, "https origin"),
-        ({"W360_OIDC_ISSUER": "https://app.workeasy360.com/"}, "trailing slash"),
+        ({"W360_OIDC_ISSUER": "http://auth.workeasy360.com"}, "https origin"),
+        ({"W360_OIDC_ISSUER": "https://auth.workeasy360.com/"}, "trailing slash"),
+        # ADR-043: portals. No subdomain wildcard host, no wildcard or extra
+        # CSRF origin, every portal its own https host, the issuer on the
+        # central sign-in host.
+        ({"W360_ALLOWED_HOSTS": ".workeasy360.com"}, "leading-dot"),
+        (
+            {"W360_ALLOWED_HOSTS": "app.workeasy360.com,auth.workeasy360.com"},
+            "exactly the five portal hosts",
+        ),
+        (
+            {
+                "W360_ALLOWED_HOSTS": (
+                    "admin.workeasy360.com,partner.workeasy360.com,app.workeasy360.com,"
+                    "auth.workeasy360.com,api.workeasy360.com,crm.workeasy360.com"
+                )
+            },
+            "exactly the five portal hosts",
+        ),
+        ({"W360_PORTAL_HANDOFF_TTL_S": "3600"}, "W360_PORTAL_HANDOFF_TTL_S must be"),
+        (
+            {
+                "W360_CSRF_TRUSTED_ORIGINS": (
+                    "https://admin.workeasy360.com,https://partner.workeasy360.com,"
+                    "https://app.workeasy360.com,https://auth.workeasy360.com,"
+                    "https://*.workeasy360.com"
+                )
+            },
+            "exactly the four portal origins",
+        ),
+        (
+            {"W360_CSRF_TRUSTED_ORIGINS": "https://app.workeasy360.com"},
+            "exactly the four portal origins",
+        ),
+        ({"W360_ADMIN_ORIGIN": "http://admin.workeasy360.com"}, "bare https origin"),
+        ({"W360_ADMIN_ORIGIN": "https://admin.workeasy360.com/x"}, "bare https origin"),
+        ({"W360_PARTNER_ORIGIN": "https://app.workeasy360.com"}, "different host"),
+        ({"W360_OIDC_ISSUER": "https://app.workeasy360.com"}, "must be W360_AUTH_ORIGIN"),
+        (
+            {"W360_FRONTEND_URL": "https://auth.workeasy360.com"},
+            "must be W360_APP_ORIGIN",
+        ),
         # Phase 5 final audit. Key separation by value, not only by name.
         ({"W360_MFA_ENCRYPTION_KEY": "s" * 60}, "must differ"),
         ({"W360_MFA_ENCRYPTION_KEY": "f" * 40}, "must differ"),

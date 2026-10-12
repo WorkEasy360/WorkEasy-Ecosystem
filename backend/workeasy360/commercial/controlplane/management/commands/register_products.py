@@ -8,9 +8,17 @@ calls, so authorization, validation and audit are the ones the console has.
 
 What it deliberately does **not** do:
 
-- It defines no plan, price, trial or credential. Those are commercial
-  decisions made in the console; a product registered here has no price and
-  therefore shows "Contact sales" until staff set one.
+- It defines no plan, price or credential. Those are commercial decisions
+  made in the console; a product registered here has no price and therefore
+  shows "Contact sales" until staff set one.
+- A ``trial`` entry (``enabled``, ``duration_days``, optionally
+  ``eligible_plan_codes``) is applied through the console's own
+  ``configure_product_trial`` **only when the product has no trial
+  configuration yet** - a duration the owner decided once, never a value that
+  overwrites what staff later chose. A switched-on trial must name an
+  eligible plan (``validate_trial_terms``), and this file defines no plan, so
+  with none named the duration is stored **switched off** and the command
+  says so: staff switch it on in the Product Manager once a plan is published.
 - It never overwrites what staff have edited. An existing product or
   integration is left as it is (only a blank category or icon is filled in, so
   a product registered before those fields existed picks them up).
@@ -71,8 +79,10 @@ _PRODUCT_KEYS = frozenset(
         "marketing_url",
         "features",
         "integration",
+        "trial",
     }
 )
+_TRIAL_KEYS = frozenset({"enabled", "duration_days", "eligible_plan_codes"})
 _INTEGRATION_KEYS = frozenset(
     {
         "display_name",
@@ -81,6 +91,11 @@ _INTEGRATION_KEYS = frozenset(
         "health_url",
         "contact_email",
         "scopes",
+        # ADR-044: how the product lets people in, its own sign-in page, and
+        # where Workeasy360 may return a browser after a sign-out.
+        "sign_in_mode",
+        "login_url",
+        "post_logout_redirect_uris",
     }
 )
 
@@ -100,6 +115,9 @@ def _load(path: Path) -> list[dict[str, Any]]:
         integration = entry.get("integration") or {}
         unknown += [
             f"integration.{k}" for k in sorted(set(integration) - _INTEGRATION_KEYS)
+        ]
+        unknown += [
+            f"trial.{k}" for k in sorted(set(entry.get("trial") or {}) - _TRIAL_KEYS)
         ]
         if unknown:
             raise CommandError(
@@ -122,7 +140,13 @@ def _manifest(entry: dict[str, Any]) -> dict[str, Any]:
         "capabilities": [],
         "token_endpoint_auth_method": "private_key_jwt",
     }
-    for optional in ("health_url", "contact_email"):
+    for optional in (
+        "health_url",
+        "contact_email",
+        "sign_in_mode",
+        "login_url",
+        "post_logout_redirect_uris",
+    ):
         if spec.get(optional):
             manifest[optional] = spec[optional]
     return manifest
@@ -251,6 +275,45 @@ class Command(BaseCommand):
                 self._say(code, "product exists - left unchanged")
         if product is not None and not dry:
             self._features(sctx, entry, product["id"])
+        self._trial(sctx, entry, product, dry=dry)
+
+    def _trial(
+        self,
+        sctx: Any,
+        entry: dict[str, Any],
+        product: dict[str, Any] | None,
+        *,
+        dry: bool,
+    ) -> None:
+        spec = entry.get("trial")
+        code = entry["code"]
+        if not spec:
+            return
+        if product is not None and catalog_selectors.trial_offer(code) is not None:
+            self._say(code, "trial already configured - left unchanged")
+            return
+        if dry or product is None:
+            self._say(code, f"would configure a {spec.get('duration_days')}-day trial")
+            return
+        plans = list(spec.get("eligible_plan_codes") or [])
+        enabled = bool(spec.get("enabled")) and bool(plans)
+        catalog.configure_product_trial(
+            sctx,
+            product_id=product["id"],
+            enabled=enabled,
+            duration_days=spec.get("duration_days"),
+            eligible_plan_codes=plans,
+        )
+        if enabled:
+            self._say(code, f"trial configured: {spec.get('duration_days')} days, on")
+        elif spec.get("enabled"):
+            self._say(
+                code,
+                f"trial configured: {spec.get('duration_days')} days, OFF until a "
+                "published plan is marked eligible (Product Manager)",
+            )
+        else:
+            self._say(code, f"trial configured: {spec.get('duration_days')} days, off")
 
     def _features(self, sctx: Any, entry: dict[str, Any], product_id: Any) -> None:
         known = {f["key"] for f in catalog_selectors.features_for_product(product_id)}

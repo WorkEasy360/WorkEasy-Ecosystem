@@ -27,7 +27,9 @@ from django.core.validators import validate_email
 from django.db import transaction
 
 from workeasy360.commercial.partners import access, selectors
+from workeasy360.commercial.partners import portal as portal_fields
 from workeasy360.commercial.partners.domain import clean_text
+from workeasy360.commercial.partners.inputs import Problems
 from workeasy360.contracts.errors import PartnerRecordNotFound, PartnerValidationError
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.audit import services as audit
@@ -138,6 +140,7 @@ def update_brand(
     logo_file_id: UUID | None = None,
     expected_version: int | None = None,
     partner_id: UUID | None = None,
+    portal: Any = None,
 ) -> dict[str, Any]:
     """Create or replace the partner's brand.
 
@@ -150,6 +153,11 @@ def update_brand(
     a partner user never passes one. The same validation, the same version
     token and the same audit entry apply - only who may call it differs
     (``access.subject_partner``).
+
+    ``portal`` (the customer-portal words and sender identity,
+    ``portal.PORTAL_FIELDS``) is **merged**: the keys sent replace those keys and
+    every other stored key stays, so one screen saving its own fields never
+    wipes another's. Left out, the stored portal is untouched.
     """
     from workeasy360.commercial.partners.models import PartnerBrand
 
@@ -160,6 +168,9 @@ def update_brand(
     clean_theme = validate_theme(theme)
     email = validate_support_email(support_email)
     url = validate_support_url(support_url)
+    portal_problems = Problems()
+    clean_portal = portal_fields.parse(portal, portal_problems)
+    portal_problems.first()
     if logo_file_id is not None:
         _assert_logo_usable(ctx, logo_file_id, subject)
 
@@ -191,6 +202,8 @@ def update_brand(
         brand.support_email = email
         brand.support_url = url
         brand.logo_file_id = logo_file_id
+        if clean_portal:
+            brand.portal = {**(brand.portal or {}), **clean_portal}
         brand.updated_by_id = ctx.user_id
         brand.save()
         audit.record(
@@ -204,6 +217,7 @@ def update_brand(
                 "brand_name": clean_name,
                 "has_logo": logo_file_id is not None,
                 "theme_tokens": sorted(clean_theme),
+                "portal_fields": sorted(clean_portal),
                 "version": brand.version,
             },
         )

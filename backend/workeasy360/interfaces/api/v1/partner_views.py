@@ -339,6 +339,7 @@ def branding_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             support_url=body.get("support_url", ""),
             logo_file_id=_uuid(body, "logo_file_id", required=False),
             expected_version=_int(body, "expected_version"),
+            portal=body.get("portal"),
         )
     )
 

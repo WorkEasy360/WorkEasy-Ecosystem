@@ -384,8 +384,8 @@ def product_row(product: Any) -> dict[str, Any]:
 
 
 def product_presentations(codes: list[str]) -> dict[str, dict[str, str]]:
-    """How each of these products draws a card: slug, tagline, category, icon.
-    One query, for the app directory (which renders a card per product)."""
+    """How each of these products draws a card: name, slug, tagline, category,
+    icon. One query, for the app directory (which renders a card per product)."""
     from workeasy360.commercial.catalog.models import Product
 
     if not codes:
@@ -393,7 +393,7 @@ def product_presentations(codes: list[str]) -> dict[str, dict[str, str]]:
     return {
         row["code"]: row
         for row in Product.objects.filter(code__in=set(codes)).values(
-            "code", "slug", "tagline", "category", "icon"
+            "code", "name", "slug", "tagline", "category", "icon"
         )
     }
 

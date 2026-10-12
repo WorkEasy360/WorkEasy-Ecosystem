@@ -933,6 +933,9 @@ function exploreProduct(code: string, name: string, overrides: Record<string, un
     trial: { available: false, duration_days: null, seat_limit: null, payment_method_required: false, plan_codes: [] },
     holding: null,
     trial_state: "available",
+    trial_ends_at: null,
+    trial_days_left: null,
+    trial_outcome: null,
     ...overrides,
   };
 }
@@ -1045,20 +1048,26 @@ describe("explore: products (Phase 11)", () => {
     const { container } = renderOrg(<ExploreScreen />, ["commercial.subscription.manage"]);
     await screen.findByRole("heading", { name: "Products" });
 
-    // A trial-eligible product offers exactly that action, with its badge.
+    // A trial-eligible product: its trial, with the length the server
+    // states, then Buy now and Learn more (multi-portal brief, Part 12).
     const crm = card("Easy CRM");
-    expect(within(crm).getByText("Free trial available")).toBeInTheDocument();
-    expect(within(crm).getByRole("button", { name: "Start free trial: Easy CRM" })).toBeEnabled();
-    expect(within(crm).queryByRole("button", { name: "Buy: Easy CRM" })).not.toBeInTheDocument();
+    expect(within(crm).getByText("14-day free trial")).toBeInTheDocument();
+    expect(within(crm).getByRole("button", { name: "Start 14-day free trial: Easy CRM" })).toHaveTextContent(
+      "Start 14-Day Free Trial",
+    );
+    expect(within(crm).getByRole("button", { name: "Buy now: Easy CRM" })).toBeEnabled();
+    expect(within(crm).getByRole("link", { name: "Learn more: Easy CRM" })).toHaveAttribute("href", "/products/crm");
 
-    // No trial configured, but priced: Buy, never both buttons.
+    // No trial configured, but priced: Buy now, no trial.
     const book = card("EasyBook");
-    expect(within(book).getByRole("button", { name: "Buy: EasyBook" })).toBeEnabled();
-    expect(within(book).queryByRole("button", { name: /Start free trial/ })).not.toBeInTheDocument();
+    expect(within(book).getByRole("button", { name: "Buy now: EasyBook" })).toBeEnabled();
+    expect(within(book).queryByRole("button", { name: /free trial/ })).not.toBeInTheDocument();
 
-    // Already held: not shown here at all (Step 11 - no purchase CTA for
-    // something the organization already has; it belongs to My products).
-    expect(screen.queryByRole("article", { name: "Easy Help Desk" })).not.toBeInTheDocument();
+    // Already owned: shown, with Open and no purchase action at all.
+    const desk = card("Easy Help Desk");
+    expect(within(desk).getByText("Active")).toBeInTheDocument();
+    expect(within(desk).getByRole("button", { name: "Open Easy Help Desk" })).toBeEnabled();
+    expect(within(desk).queryByRole("button", { name: /Buy|trial/ })).not.toBeInTheDocument();
 
     await expectNoViolations(container);
   });
@@ -1082,7 +1091,7 @@ describe("explore: products (Phase 11)", () => {
       [`POST ${ORG}/trials`]: [{ status: 201, body: { id: "t1", product_code: "crm", plan_code: "crm_starter", status: "active" } }],
     });
     renderOrg(<ExploreScreen />, ["commercial.subscription.manage"]);
-    fireEvent.click(await screen.findByRole("button", { name: "Start free trial: Easy CRM" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start 14-day free trial: Easy CRM" }));
 
     await screen.findByText("Trial started: Easy CRM.");
     const started = posted(calls, `POST ${ORG}/trials`);
@@ -1113,7 +1122,7 @@ describe("explore: products (Phase 11)", () => {
       ],
     });
     renderOrg(<ExploreScreen />, ["commercial.subscription.manage"]);
-    fireEvent.click(await screen.findByRole("button", { name: "Start free trial: Easy CRM" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start 14-day free trial: Easy CRM" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Your organization has already trialled this product.",
@@ -1129,7 +1138,7 @@ describe("explore: products (Phase 11)", () => {
       ],
     });
     renderOrg(<ExploreScreen />, ["commercial.subscription.manage"]);
-    fireEvent.click(await screen.findByRole("button", { name: "Buy: EasyBook" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Buy now: EasyBook" }));
     await waitFor(() =>
       expect(nav.router.push).toHaveBeenCalledWith("/o/acme/checkout?plan=epv1&interval=monthly"),
     );
@@ -1145,7 +1154,8 @@ describe("explore: products (Phase 11)", () => {
     renderOrg(<ExploreScreen />, []);
     await screen.findByRole("heading", { name: "Products" });
     expect(within(card("Easy CRM")).queryByRole("button")).not.toBeInTheDocument();
-    expect(within(card("Easy CRM")).queryByRole("link")).not.toBeInTheDocument();
+    // Reading about the product is open to every member.
+    expect(within(card("Easy CRM")).getAllByRole("link").map((a) => a.textContent)).toEqual(["Learn more"]);
   });
 
   it("before billing details exist, a product on trial is priced at checkout - never 'Contact sales' (Phase 12)", async () => {
@@ -1160,21 +1170,91 @@ describe("explore: products (Phase 11)", () => {
     const crm = card("Easy CRM");
     expect(within(crm).getByText("Priced in your billing currency at checkout")).toBeInTheDocument();
     expect(within(crm).queryByText("Contact sales for pricing")).not.toBeInTheDocument();
-    expect(within(crm).getByRole("link", { name: "See plans: Easy CRM" })).toHaveAttribute("href", "#product-packages");
-    expect(container.querySelector("#product-packages")).not.toBeNull();
+    // Upgrading goes straight to checkout, which asks for the billing details first.
+    fireEvent.click(within(crm).getByRole("button", { name: "Upgrade: Easy CRM" }));
+    await waitFor(() => expect(nav.router.push).toHaveBeenCalledWith("/o/acme/checkout?plan=epv1&interval=monthly"));
     await expectNoViolations(container);
   });
 
-  it("when the organization already holds everything, says so plainly", async () => {
+  it("a new organization (no billing details yet) gets both the 7-day free trial and Buy now on every card", async () => {
+    const products = ["easy_crm", "easybook"].map((code) => {
+      const product = exploreProduct(code, code === "easy_crm" ? "Easy CRM" : "EasyBook", {
+        starting_price: null,
+        trial: { available: true, duration_days: 7, seat_limit: null, payment_method_required: false, plan_codes: [`${code}_starter`] },
+      });
+      product.plans[0].prices = [];
+      return product;
+    });
+    mockApi({
+      [`GET ${ORG}/marketplace`]: [{ status: 200, body: offers({ billing_account: false }) }],
+      [`GET ${ORG}/explore`]: [{ status: 200, body: explore({ billing_account: false, currency: null, products }) }],
+    });
+    const { container } = renderOrg(<ExploreScreen />, ["commercial.subscription.manage"]);
+    await screen.findByRole("heading", { name: "Products" });
+    for (const name of ["Easy CRM", "EasyBook"]) {
+      const c = card(name);
+      expect(within(c).getByText("7-day free trial")).toBeInTheDocument();
+      expect(within(c).getByRole("button", { name: `Start 7-day free trial: ${name}` })).toBeEnabled();
+      expect(within(c).getByRole("button", { name: `Buy now: ${name}` })).toBeEnabled();
+    }
+    fireEvent.click(within(card("EasyBook")).getByRole("button", { name: "Buy now: EasyBook" }));
+    await waitFor(() => expect(nav.router.push).toHaveBeenCalledWith("/o/acme/checkout?plan=epv1&interval=monthly"));
+    await expectNoViolations(container);
+  });
+
+  it("an active trial shows the server's days remaining, Open and Upgrade", async () => {
     mockApi({
       [`GET ${ORG}/marketplace`]: [{ status: 200, body: offers({ plans: [], bundles: [] }) }],
       [`GET ${ORG}/explore`]: [
-        { status: 200, body: explore({ products: [exploreProduct("crm", "Easy CRM", { trial_state: "owned" })] }) },
+        {
+          status: 200,
+          body: explore({
+            products: [
+              exploreProduct("crm", "Easy CRM", {
+                trial_state: "active",
+                holding: "trial",
+                trial_days_left: 5,
+                trial_ends_at: "2026-10-16T09:00:00+00:00",
+              }),
+            ],
+          }),
+        },
+      ],
+    });
+    const { container } = renderOrg(<ExploreScreen />, ["commercial.subscription.manage"]);
+    await screen.findByRole("heading", { name: "Products" });
+    const crm = card("Easy CRM");
+    expect(within(crm).getByText("Trial active — 5 days remaining")).toBeInTheDocument();
+    expect(within(crm).getByRole("button", { name: "Open Easy CRM" })).toBeEnabled();
+    expect(within(crm).getByRole("button", { name: "Upgrade: Easy CRM" })).toBeEnabled();
+    expect(within(crm).queryByRole("button", { name: /free trial/ })).not.toBeInTheDocument();
+    await expectNoViolations(container);
+  });
+
+  it("an expired trial says so and offers Upgrade / Buy now, never another trial", async () => {
+    mockApi({
+      [`GET ${ORG}/marketplace`]: [{ status: 200, body: offers({ plans: [], bundles: [] }) }],
+      [`GET ${ORG}/explore`]: [
+        {
+          status: 200,
+          body: explore({
+            products: [
+              exploreProduct("crm", "Easy CRM", {
+                trial_state: "used",
+                trial_outcome: "expired",
+                trial: { available: true, duration_days: 7, seat_limit: null, payment_method_required: false, plan_codes: ["crm_starter"] },
+              }),
+            ],
+          }),
+        },
       ],
     });
     renderOrg(<ExploreScreen />, ["commercial.subscription.manage"]);
-    expect(await screen.findByText("Your organization already has every product Workeasy360 offers.")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Products" })).not.toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Products" });
+    const crm = card("Easy CRM");
+    expect(within(crm).getByText("Trial expired")).toBeInTheDocument();
+    expect(within(crm).getByRole("button", { name: "Upgrade / Buy now: Easy CRM" })).toBeEnabled();
+    expect(within(crm).queryByRole("button", { name: /free trial|Open/ })).not.toBeInTheDocument();
   });
 });
 
@@ -1672,9 +1752,43 @@ describe("my apps and product access", () => {
     nav.search = new URLSearchParams("launch_error=no_seat");
     mockApi({ [`GET ${ORG}/apps`]: [{ status: 200, body: { apps: [app("books", "Books", "active"), app("desk", "Desk", "no_seat")] } }] });
     const { container } = renderOrg(<MyAppsScreen />, []);
-    expect(await screen.findByRole("button", { name: "Open" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open Books" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "My products" })).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("You don't have a seat for that product yet.");
+    await expectNoViolations(container);
+  });
+
+  it("lists the rest of the catalog as expired or available, from the server's states (multi-portal brief)", async () => {
+    mockApi({
+      [`GET ${ORG}/apps`]: [{ status: 200, body: { apps: [app("books", "EasyBook", "active")] } }],
+      [`GET ${ORG}/explore`]: [
+        {
+          status: 200,
+          body: explore({
+            products: [
+              exploreProduct("books", "EasyBook", { trial_state: "owned" }),
+              exploreProduct("crm", "Easy CRM", { trial_state: "used", trial_outcome: "expired" }),
+              exploreProduct("desk", "Easy Help Desk", {
+                trial_state: "available",
+                trial: { available: true, duration_days: 7, seat_limit: null, payment_method_required: false, plan_codes: ["desk_starter"] },
+              }),
+              exploreProduct("ops", "Easy Project", { trial_state: "unavailable" }),
+            ],
+          }),
+        },
+      ],
+    });
+    const { container } = renderOrg(<MyAppsScreen />, []);
+    const section = await screen.findByRole("region", { name: "Other products" });
+    const rows = within(section).getAllByRole("listitem").map((li) => li.textContent);
+    expect(rows).toEqual([
+      "Easy CRMTrial expiredUpgrade / Buy now",
+      "Easy Help DeskAvailableStart 7-Day Free Trial",
+      "Easy ProjectAvailableExplore",
+    ]);
+    // The held product stays in the grid above, not in this list.
+    expect(within(section).queryByText("EasyBook")).not.toBeInTheDocument();
+    for (const link of within(section).getAllByRole("link")) expect(link).toHaveAttribute("href", "/o/acme/explore");
     await expectNoViolations(container);
   });
 

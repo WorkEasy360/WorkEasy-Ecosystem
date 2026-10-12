@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { AppDirectoryEntry } from "@/lib/api/types";
 import { ProductIcon, productIconKnown } from "@/components/ProductIcon";
+import { whatHappens } from "@/features/signin/signInCopy";
 import { LaunchButton } from "./LaunchButton";
 import styles from "./AppCard.module.css";
 
@@ -165,8 +166,15 @@ export function AppCard({
         </dl>
       )}
       {hint && <p className={styles.hint}>{hint}</p>}
+      {app.state === "active" && app.sign_in && (
+        // ADR-044: what opening it will do, in the server's words of the
+        // person's own preference - never inferred here.
+        <p className={styles.signIn}>{whatHappens(app.sign_in, app.display_name)}</p>
+      )}
       <div className={styles.footer}>
-        {app.state === "active" && <LaunchButton orgSlug={orgSlug} productCode={app.product_code} />}
+        {app.state === "active" && (
+          <LaunchButton orgSlug={orgSlug} productCode={app.product_code} productName={app.display_name} />
+        )}
         {assignsSeats && seatsHref && (
           <Link
             className="w360-btn w360-btn-primary"
@@ -187,6 +195,15 @@ export function AppCard({
         {manageHref && app.state !== "no_entitlement" && app.state !== "product_unavailable" && (
           <Link className="w360-btn w360-btn-secondary" href={manageHref}>
             Manage subscription
+          </Link>
+        )}
+        {app.state === "active" && app.sign_in?.sso === "enabled" && (
+          <Link
+            className={styles.preferenceLink}
+            href={`/o/${orgSlug}/settings/sign-in-preferences`}
+            aria-label={`Sign-in preference for ${app.display_name}`}
+          >
+            Sign-in preference
           </Link>
         )}
       </div>

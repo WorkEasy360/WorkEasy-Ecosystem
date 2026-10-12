@@ -55,6 +55,7 @@ from workeasy360.contracts.errors import (
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.audit import services as audit
 from workeasy360.platform.authz import services as authz
+from workeasy360.platform.identity import portals as portal_links
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import metrics
 
@@ -94,7 +95,7 @@ def _ttl() -> timedelta:
 
 
 def _url(token: str) -> str:
-    return f"{settings.W360_FRONTEND_URL}/invitations/accept#token={token}"
+    return f"{portal_links.auth_url()}/invitations/accept#token={token}"
 
 
 def _authorize_role(ctx: TenantContext, role_key: str) -> None:

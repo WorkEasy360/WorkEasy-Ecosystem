@@ -7,6 +7,7 @@ import { LoadGate, Table, useAction, useLoad, when } from "@/features/controlpla
 import cp from "@/features/controlplane/ControlPlane.module.css";
 import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
+import { describePreferenceChange } from "@/features/signin/signInCopy";
 import { ChangePasswordForm } from "./ChangePasswordForm";
 import { PageHeader, Panel } from "./consoleUi";
 
@@ -39,6 +40,8 @@ export function describeAccountEvent(event: Pick<AccountEvent, "kind" | "reason"
       return "Account enabled";
     case "account_unlocked":
       return "Account unlocked";
+    case "sign_in_preference_changed":
+      return describePreferenceChange(event.reason);
     default:
       return event.kind.replace(/_/g, " ");
   }

@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { MfaSettings } from "@/features/security/MfaSettings";
 import { StepUpForm } from "@/features/security/StepUpForm";
 import styles from "@/features/console/Console.module.css";
+import { usePortalRouter } from "@/lib/portalRouter";
 
 /**
  * What the Super Admin shell shows when the backend answers `mfa_required`
@@ -14,7 +14,7 @@ import styles from "@/features/console/Console.module.css";
  * authenticator sets one up here first, as the organization policy gate does.
  */
 export function StaffMfaGate({ mfaEnrolled, onVerified }: { mfaEnrolled: boolean; onVerified: () => void }) {
-  const router = useRouter();
+  const router = usePortalRouter();
   const [enrolled, setEnrolled] = useState(mfaEnrolled);
 
   return (

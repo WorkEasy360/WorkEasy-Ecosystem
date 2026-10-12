@@ -99,6 +99,65 @@ export function Tabs<K extends string>({
 
 // --- labelled fields -------------------------------------------------------------------
 
+/** The sighted "required" cue: a mark that is hidden from assistive technology,
+ * which already hears the input's own `required`. */
+export function RequiredMark() {
+  return (
+    <span className={cp.required} aria-hidden="true">
+      {" *"}
+    </span>
+  );
+}
+
+/** A labelled multi-line plain-text field with a character count. */
+export function TextAreaField({
+  label,
+  value,
+  onChange,
+  hint,
+  error,
+  maxLength,
+  rows = 4,
+}: {
+  label: React.ReactNode;
+  value: string;
+  onChange: (value: string) => void;
+  hint?: React.ReactNode;
+  error?: string;
+  maxLength: number;
+  rows?: number;
+}) {
+  const id = useId();
+  const hintId = useId();
+  const errorId = useId();
+  return (
+    <div className={cp.field}>
+      <label className="w360-label" htmlFor={id}>
+        {label}
+      </label>
+      <textarea
+        id={id}
+        className="w360-input"
+        rows={rows}
+        value={value}
+        maxLength={maxLength}
+        onChange={(e) => onChange(e.target.value)}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy(hint ? hintId : false, error ? errorId : false)}
+      />
+      <p id={hintId} className="w360-hint">
+        {hint ? <>{hint} </> : null}
+        {value.length} of {maxLength} characters.
+      </p>
+      {error && (
+        <p id={errorId} className="w360-error-text">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function describedBy(...ids: (string | false | undefined)[]): string | undefined {
   const joined = ids.filter(Boolean).join(" ");
   return joined || undefined;
@@ -112,6 +171,7 @@ export function TextField({
   onChange,
   hint,
   error,
+  showRequired,
   ...input
 }: {
   label: React.ReactNode;
@@ -119,6 +179,9 @@ export function TextField({
   onChange: (value: string) => void;
   hint?: React.ReactNode;
   error?: string;
+  /** Draw the visible "required" mark after the label. The input's own
+   * `required` is what assistive technology announces; this is the sighted cue. */
+  showRequired?: boolean;
 } & Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "id">) {
   const id = useId();
   const hintId = useId();
@@ -127,6 +190,7 @@ export function TextField({
     <div className={cp.field}>
       <label className="w360-label" htmlFor={id}>
         {label}
+        {showRequired && <RequiredMark />}
       </label>
       <input
         {...input}
@@ -159,6 +223,8 @@ export function SelectField({
   hint,
   error,
   disabled,
+  required,
+  showRequired,
 }: {
   label: React.ReactNode;
   value: string;
@@ -167,6 +233,8 @@ export function SelectField({
   hint?: React.ReactNode;
   error?: string;
   disabled?: boolean;
+  required?: boolean;
+  showRequired?: boolean;
 }) {
   const id = useId();
   const hintId = useId();
@@ -175,12 +243,14 @@ export function SelectField({
     <div className={cp.field}>
       <label className="w360-label" htmlFor={id}>
         {label}
+        {showRequired && <RequiredMark />}
       </label>
       <select
         id={id}
         className="w360-input"
         value={value}
         disabled={disabled}
+        required={required}
         onChange={(e) => onChange(e.target.value)}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy(hint ? hintId : false, error ? errorId : false)}

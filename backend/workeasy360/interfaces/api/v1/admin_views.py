@@ -31,6 +31,7 @@ from workeasy360.commercial.controlplane import (
     partner_console,
     partner_detail,
     reseller_setup,
+    white_label_setup,
 )
 from workeasy360.commercial.controlplane import reads as cp_reads
 from workeasy360.commercial.controlplane import security as cp_security
@@ -38,8 +39,10 @@ from workeasy360.commercial.controlplane import subscriptions as cp_subscription
 from workeasy360.commercial.partners import activation
 from workeasy360.commercial.partners import branding as partner_branding
 from workeasy360.commercial.partners import domains as partner_domains
+from workeasy360.commercial.partners import profile as partner_profile
 from workeasy360.commercial.partners import selectors as partner_selectors
 from workeasy360.commercial.partners import services as partner_services
+from workeasy360.commercial.partners.domain import clean_text
 from workeasy360.contracts.enums import (
     ChangeTiming,
     PartnerLinkStatus,
@@ -49,6 +52,7 @@ from workeasy360.contracts.enums import (
 from workeasy360.contracts.errors import (
     CatalogValidationError,
     PartnerValidationError,
+    PermissionDenied,
 )
 from workeasy360.contracts.values.money import CurrencyCode
 from workeasy360.contracts.values.tenant import TenantContext
@@ -102,14 +106,24 @@ def _datetime(body: dict[str, Any], field: str) -> datetime:
 @staff_view(["GET"])
 def session_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     """Who the staff member is, and which control-plane permissions they hold -
-    the admin shell's navigation. The backend re-checks every request."""
-    return JsonResponse(
-        {
-            "is_staff": True,
-            "aal": ctx.aal,
-            "permissions": cp_security.my_permissions(ctx),
-        }
-    )
+    the admin shell's navigation. The backend re-checks every request.
+
+    **This is the answer to "may this person enter the Admin Console?"** The
+    sign-in page lets a person say they *intend* to sign in as an
+    administrator; that choice reaches no server and grants nothing. What
+    decides is this endpoint: a staff identity (``is_staff``), a session that
+    verified a second factor (``staff_view``), and at least one ``StaffGrant``
+    in force, read live. A staff identity whose every grant was revoked or has
+    expired is refused here on its very next request - the same rule as the
+    session's ``consoles.staff`` flag - instead of being shown an empty
+    console. Django's ``is_superuser`` is never consulted.
+    """
+    permissions = cp_security.my_permissions(ctx)
+    if not permissions:
+        raise PermissionDenied(
+            "Not permitted.", permission="platform.staff", reason="no_staff_grant"
+        )
+    return JsonResponse({"is_staff": True, "aal": ctx.aal, "permissions": permissions})
 
 
 @staff_view(["GET"])
@@ -412,6 +426,14 @@ def partners_overview_view(request: HttpRequest, ctx: TenantContext) -> JsonResp
 
 
 @staff_view(["GET"])
+def partners_recent_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """Recent activity for the Partner Control Center dashboard: a few rows of
+    existing data per section; money sections are ``null`` without the
+    commission permission."""
+    return JsonResponse(partner_console.recent(ctx))
+
+
+@staff_view(["GET"])
 def partner_resellers_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     """The reseller list: partners wearing the Reseller label (a filter over
     capability grants), or every partner with ``scope=all``."""
@@ -495,6 +517,16 @@ def partner_activity_view(
 
 
 @staff_view(["GET"])
+def partner_referrals_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID
+) -> JsonResponse:
+    """One partner's referral codes and referrals, read-only, for staff."""
+    return JsonResponse(
+        partner_detail.referrals(ctx, partner_id, **query_page_args(request))
+    )
+
+
+@staff_view(["GET"])
 def partner_white_label_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     """Partners holding branding or domain capability, with brand and domain."""
     return page_response(
@@ -529,8 +561,50 @@ def partner_brand_view(
             support_url=body.get("support_url", ""),
             logo_file_id=_uuid(body, "logo_file_id", required=False),
             expected_version=_int(body, "expected_version"),
+            portal=body.get("portal"),
         )
     )
+
+
+@staff_view(["GET", "PUT"])
+def partner_profile_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID
+) -> JsonResponse:
+    """A partner's business details, contacts, support details, payout
+    preferences and staff notes: read them, or (staff, second factor) change
+    them. Staff only - a partner portal has no route to this."""
+    if request.method == "GET":
+        return JsonResponse(partner_profile.get_profile(ctx, partner_id))
+    body = _body(request)
+    return JsonResponse(
+        partner_profile.update_profile(
+            ctx,
+            partner_id,
+            expected_version=_int(body, "expected_version"),
+            data={k: v for k, v in body.items() if k != "expected_version"},
+        )
+    )
+
+
+@staff_view(["GET"])
+def partner_white_label_setup_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID
+) -> JsonResponse:
+    """Everything the white-label wizard shows for one partner, in one read."""
+    return JsonResponse(white_label_setup.setup(ctx, partner_id))
+
+
+@staff_view(["POST"])
+def partner_white_label_enable_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID
+) -> JsonResponse:
+    """Give the partner the white-label pair of capabilities (never a new
+    account): the same two grants, made together."""
+    body = _body(request)
+    granted = partner_services.enable_white_label(
+        ctx, partner_id, reason=body.get("reason")
+    )
+    return JsonResponse({"granted": granted}, status=201 if granted else 200)
 
 
 @staff_view(["POST"])
@@ -718,13 +792,39 @@ def partner_administrator_invite_view(request, ctx, partner_id: UUID) -> JsonRes
     """Add a person to a partner, creating their account if the address has
     none. The answer is the same whether the address was new or known."""
     body = _body(request)
+    timing = body.get("send_invitation", "now")
+    if timing not in ("now", "on_activation"):
+        raise CatalogValidationError(
+            "send_invitation must be 'now' or 'on_activation'.", field="send_invitation"
+        )
+    names = [
+        clean_text(body.get(k), field=k, max_length=100, required=False)
+        for k in ("first_name", "last_name")
+    ]
     invite = partner_services.invite_member(
-        ctx, partner_id, email=body.get("email"), role=body.get("role")
+        ctx,
+        partner_id,
+        email=body.get("email"),
+        role=body.get("role"),
+        full_name=" ".join(n for n in names if n),
+        send_link=timing == "now",
     )
     return JsonResponse(
         {"id": str(invite.member.id), "role": invite.member.role, "invited": True},
         status=201,
     )
+
+
+@staff_view(["POST"])
+def partner_member_role_view(
+    request, ctx, partner_id: UUID, member_id: UUID
+) -> JsonResponse:
+    """Move a partner user between administrator and viewer."""
+    body = _body(request)
+    member = partner_services.change_member_role(
+        ctx, partner_id, member_id=member_id, role=body.get("role")
+    )
+    return JsonResponse({"id": str(member.id), "role": member.role})
 
 
 @staff_view(["POST"])
@@ -804,8 +904,33 @@ def partner_product_grant_view(request, ctx, partner_id: UUID) -> JsonResponse:
         partner_id,
         product_code=body.get("product_code"),
         plan_code=body.get("plan_code") or None,
+        trial_allowed=body.get("trial_allowed"),
+        portal_visible=body.get("portal_visible"),
     )
     return JsonResponse({"id": str(grant.id)}, status=201)
+
+
+@staff_view(["PATCH"])
+def partner_product_grant_update_view(
+    request, ctx, partner_id: UUID, grant_id: UUID
+) -> JsonResponse:
+    """Change whether a granted product may be trialled by this partner's
+    customers and whether it shows on its portal."""
+    body = _body(request)
+    grant = partner_services.update_product_grant(
+        ctx,
+        partner_id,
+        grant_id=grant_id,
+        trial_allowed=body.get("trial_allowed"),
+        portal_visible=body.get("portal_visible"),
+    )
+    return JsonResponse(
+        {
+            "id": str(grant.id),
+            "trial_allowed": grant.trial_allowed,
+            "portal_visible": grant.portal_visible,
+        }
+    )
 
 
 @staff_view(["POST"])

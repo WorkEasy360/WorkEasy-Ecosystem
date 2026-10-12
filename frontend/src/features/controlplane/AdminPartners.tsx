@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { adminApi } from "@/lib/api/controlPlane";
-import { partnerConsoleApi } from "@/lib/api/partnerConsole";
+import { partnerConsoleApi, type PartnerSummaryView } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
 import { ExperienceLabels } from "./PartnerConsole";
+import { BusinessDetailsTab, ContactsTab } from "./PartnerProfileTabs";
 import {
   ActivityTab,
   BrandingTab,
@@ -16,55 +17,39 @@ import {
   OverviewTab,
   PayoutsTab,
   ProductsTab,
+  ReferralsTab,
   SubscriptionsTab,
   UsersTab,
 } from "./ResellerTabs";
-import { LoadGate, MoreButton, ReasonAction, Status, Table, useAction, useLoad, usePaged } from "./ui";
+import { TAB_LABELS, TAB_ORDER, type TabKey } from "./partnerTabs";
+import { LoadGate, MoreButton, ReasonAction, Status, Table, useAction, useLoad, usePaged, type Load } from "./ui";
 import { Tabs, type TabItem } from "./widgets";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
+import ps from "./PartnerProfileTabs.module.css";
 
 /**
- * One partner (Phase 10c). The page that used to be a flat list of sections is
- * now the same sections under tabs - Overview, Customers, Products & Pricing,
- * Subscriptions, Commissions, Payouts, Branding, Domains, Users & Permissions
- * and Activity - with the lifecycle actions kept above them. Each tab keeps the
- * commands it always had; the tabs add reads, not a second way to change
- * anything.
+ * One partner (Phase 10c, complete setup). The partner's page is a set of tabs -
+ * Overview, Business Details, Contacts, Customers, Products & Pricing,
+ * Subscriptions, Commissions, Payouts, Branding, Domains, Users & Permissions,
+ * Referrals and Activity - with the lifecycle actions kept above them. Each tab
+ * keeps the commands it always had; the tabs add reads, not a second way to
+ * change anything, and the lifecycle is draft / active / suspended / terminated:
+ * there is no way to delete a partner, because its history is kept.
  */
 
-type TabKey =
-  | "overview"
-  | "customers"
-  | "products"
-  | "subscriptions"
-  | "commissions"
-  | "payouts"
-  | "branding"
-  | "domains"
-  | "users"
-  | "activity";
-
-const TAB_LABELS: Record<TabKey, string> = {
-  overview: "Overview",
-  customers: "Customers",
-  products: "Products & Pricing",
-  subscriptions: "Subscriptions",
-  commissions: "Commissions",
-  payouts: "Payouts",
-  branding: "Branding",
-  domains: "Domains",
-  users: "Users & Permissions",
-  activity: "Activity",
-};
-
-const TAB_ORDER = Object.keys(TAB_LABELS) as TabKey[];
-
-/** Which grant a tab's data needs. A convenience: the server re-checks every read. */
-function visibleTabs(permissions: string[]): TabItem<TabKey>[] {
+/** The tabs this staff member can read, and that are relevant to what the
+ * partner can do. Relevance is read from the labels the *server* derived from
+ * the partner's grants: Branding and Domains belong to a partner wearing
+ * White-label, Referrals to one wearing Affiliate. Hiding a tab is a
+ * convenience - the server re-checks every read, and the Overview tab still
+ * shows the white-label state and links to enabling it. */
+export function visibleTabs(permissions: string[], labels: string[]): TabItem<TabKey>[] {
   return TAB_ORDER.filter((key) => {
     if (key === "commissions" || key === "payouts") return can(permissions, "platform.staff_commission.view");
     if (key === "activity") return can(permissions, "platform.staff_audit.view");
+    if (key === "branding" || key === "domains") return labels.includes("white_label");
+    if (key === "referrals") return labels.includes("affiliate");
     return true;
   }).map((key) => ({ key, label: TAB_LABELS[key] }));
 }
@@ -76,23 +61,37 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
   const [tab, setTab] = useState<TabKey>(TAB_ORDER.includes(requested as TabKey) ? (requested as TabKey) : "overview");
   const [rev, setRev] = useState(0);
   const [load, reload] = useLoad(() => adminApi.partner(partnerId), [partnerId]);
+  // One overview read for the whole page: the Activate guidance, the Overview and
+  // the product options all show it, and a change refreshes it in place (the
+  // current answer stays on screen until the new one arrives).
+  const [summary, reloadSummary] = useLoad(() => partnerConsoleApi.summary(partnerId), [partnerId]);
   const bump = () => {
     reload();
+    reloadSummary();
     setRev((n) => n + 1);
   };
   const { act, busy, feedback } = useAction(bump);
   const manage = can(permissions, "platform.staff_partner.manage");
-  const items = visibleTabs(permissions);
-  const selected = items.some((i) => i.key === tab) ? tab : "overview";
 
   return (
     <div className={styles.stack}>
+      <p className={styles.muted}>
+        <Link href="/admin/partners/all">All partners</Link>
+      </p>
       <LoadGate load={load} what="this partner">
-        {(p) => (
+        {(p) => {
+          const labels = (p.experience ?? []).map((e) => e.key);
+          const items = visibleTabs(permissions, labels);
+          const selected = items.some((i) => i.key === tab) ? tab : "overview";
+          const available = items.map((i) => i.key);
+          const tabProps = { partnerId: p.id, partner: p, summary, rev, bump };
+          return (
           <>
-            <h1>
-              {p.display_name} <Status value={p.status} />
-            </h1>
+            <div className={local.titleRow}>
+              <h1>{p.display_name}</h1>
+              <Status value={p.status} />
+            </div>
+            <ExperienceLabels labels={p.experience ?? []} />
             <p className={styles.muted}>
               {p.code} · pays out in {p.payout_currency} · {p.live_customers} live customers
               {p.status_reason && ` · ${p.status_reason}`}
@@ -101,7 +100,12 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
             {manage && (
               <div className={styles.row}>
                 {p.status === "draft" && (
-                  <ReasonAction label="Activate" busy={busy} onConfirm={(r) => act(() => adminApi.setPartnerStatus(p.id, "active", r, p.version), "Partner activated.")} />
+                  <ActivateAction
+                    summary={summary}
+                    busy={busy}
+                    onOpenOverview={() => setTab("overview")}
+                    onConfirm={(r) => act(() => adminApi.setPartnerStatus(p.id, "active", r, p.version), "Partner activated.")}
+                  />
                 )}
                 {p.status === "active" && (
                   <ReasonAction label="Suspend" busy={busy} onConfirm={(r) => act(() => adminApi.setPartnerStatus(p.id, "suspended", r, p.version), "Partner suspended.")} />
@@ -115,22 +119,73 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
               </div>
             )}
             <Tabs label="Partner sections" items={items} selected={selected} onSelect={setTab}>
-              {selected === "overview" && (
-                <OverviewTab partnerId={p.id} partner={p} rev={rev} bump={bump} onOpen={(next) => setTab(next)} />
-              )}
-              {selected === "customers" && <CustomersTab partnerId={p.id} partner={p} rev={rev} bump={bump} />}
-              {selected === "products" && <ProductsTab partnerId={p.id} partner={p} rev={rev} bump={bump} />}
-              {selected === "subscriptions" && <SubscriptionsTab partnerId={p.id} partner={p} rev={rev} bump={bump} />}
-              {selected === "commissions" && <CommissionsTab partnerId={p.id} partner={p} rev={rev} bump={bump} />}
-              {selected === "payouts" && <PayoutsTab partnerId={p.id} partner={p} rev={rev} bump={bump} />}
-              {selected === "branding" && <BrandingTab partnerId={p.id} partner={p} rev={rev} bump={bump} />}
-              {selected === "domains" && <DomainsTab partnerId={p.id} partner={p} rev={rev} bump={bump} />}
-              {selected === "users" && <UsersTab partnerId={p.id} partner={p} rev={rev} bump={bump} />}
-              {selected === "activity" && <ActivityTab partnerId={p.id} partner={p} rev={rev} bump={bump} />}
+              {selected === "overview" && <OverviewTab {...tabProps} onOpen={(next) => setTab(next)} available={available} />}
+              {selected === "business" && <BusinessDetailsTab {...tabProps} />}
+              {selected === "contacts" && <ContactsTab {...tabProps} onOpen={(next) => setTab(next)} />}
+              {selected === "customers" && <CustomersTab {...tabProps} />}
+              {selected === "products" && <ProductsTab {...tabProps} />}
+              {selected === "subscriptions" && <SubscriptionsTab {...tabProps} />}
+              {selected === "commissions" && <CommissionsTab {...tabProps} />}
+              {selected === "payouts" && <PayoutsTab {...tabProps} />}
+              {selected === "branding" && <BrandingTab {...tabProps} />}
+              {selected === "domains" && <DomainsTab {...tabProps} />}
+              {selected === "users" && <UsersTab {...tabProps} />}
+              {selected === "referrals" && <ReferralsTab {...tabProps} />}
+              {selected === "activity" && <ActivityTab {...tabProps} />}
             </Tabs>
           </>
-        )}
+          );
+        }}
       </LoadGate>
+    </div>
+  );
+}
+
+/**
+ * Activate, for a draft partner. While the server's readiness answer lists what
+ * is missing the button is disabled and the reasons are written next to it - a
+ * disabled button cannot be focused, so the words are on the page, not only on
+ * the button. This is guidance: the server makes the final check when the action
+ * is confirmed. If the readiness answer cannot be read, the action is offered
+ * and the server decides.
+ */
+function ActivateAction({
+  summary,
+  busy,
+  onConfirm,
+  onOpenOverview,
+}: {
+  summary: Load<PartnerSummaryView>;
+  busy: boolean;
+  onConfirm: (reason: string) => void;
+  onOpenOverview: () => void;
+}) {
+  const why = useId();
+  if (summary.status === "loading") {
+    return (
+      <div className={ps.activateReason}>
+        <button type="button" className="w360-btn w360-btn-secondary" disabled aria-describedby={why}>
+          Activate
+        </button>
+        <p id={why} className={styles.muted}>
+          Checking whether this partner is ready to activate…
+        </p>
+      </div>
+    );
+  }
+  const missing = summary.status === "ready" ? summary.data.activation.missing : [];
+  if (missing.length === 0) return <ReasonAction label="Activate" busy={busy} onConfirm={onConfirm} />;
+  return (
+    <div className={ps.activateReason}>
+      <button type="button" className="w360-btn w360-btn-secondary" disabled aria-describedby={why}>
+        Activate
+      </button>
+      <p id={why} className={styles.muted}>
+        Setup incomplete, so this partner cannot be activated yet. Still missing: {missing.map((m) => m.label).join(", ")}.{" "}
+        <button type="button" className={`w360-btn w360-btn-secondary ${ps.linkButton}`} onClick={onOpenOverview}>
+          See the setup progress
+        </button>
+      </p>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { SignInSupport, SignInWelcome } from "@/features/controlplane/brandDisplay";
 import { useBranding } from "@/features/controlplane/useBranding";
 import brandStyles from "@/features/controlplane/ControlPlane.module.css";
 
@@ -40,6 +41,7 @@ export function BrandedLanding({ handoffUrl }: { handoffUrl: string }) {
           <img src={brand.logo_url} alt="" className={brandStyles.logo} />
         )}
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{name}</h1>
+        <SignInWelcome brand={brand} />
         <p style={{ color: "var(--w360-text-muted)", marginTop: "var(--w360-space-2)" }}>
           Sign in with your Workeasy360 account to reach your products.
         </p>
@@ -51,18 +53,8 @@ export function BrandedLanding({ handoffUrl }: { handoffUrl: string }) {
             Sign-in happens on the secure Workeasy360 page, where {name} is shown too.
           </p>
         </div>
-        {(brand?.support_email || brand?.support_url) && (
-          <p style={{ fontSize: 13, marginTop: "var(--w360-space-4)" }}>
-            Need help?{" "}
-            {brand?.support_url?.startsWith("https://") ? (
-              <a href={brand.support_url} rel="noopener noreferrer">
-                Support
-              </a>
-            ) : (
-              brand?.support_email && <a href={`mailto:${brand.support_email}`}>{brand.support_email}</a>
-            )}
-          </p>
-        )}
+        {/* Support details when the partner chose to show them, and its website: plain text and safe links only. */}
+        <SignInSupport brand={brand} centered />
       </div>
     </main>
   );

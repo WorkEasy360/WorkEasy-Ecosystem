@@ -277,7 +277,8 @@ def request_domain(
             "partner.domain_requested",
             resource_type="partners.domain",
             resource_id=domain.id,
-            changes={"hostname": name},
+            # The partner is named so the partner's Activity lists the request.
+            changes={"partner_id": str(subject), "hostname": name},
         )
     metrics.increment(DOMAIN_OPERATIONS, operation="request", outcome="ok")
     return domain
@@ -514,7 +515,11 @@ def recheck_proven_domains(*, limit: int = 200) -> dict[str, int]:
                     "partner.domain_disabled",
                     resource_type="partners.domain",
                     resource_id=row.id,
-                    changes={"hostname": row.hostname, "failure_code": "control_lost"},
+                    changes={
+                        "partner_id": str(row.partner_id),
+                        "hostname": row.hostname,
+                        "failure_code": "control_lost",
+                    },
                     reason="Domain-control record missing on repeated re-verification.",
                 )
                 invalidate_host(row.hostname)

@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { contentSecurityPolicy, isPublicPath } from "./proxy";
+import { NextRequest } from "next/server";
+import { contentSecurityPolicy, isPublicPath, proxy } from "./proxy";
 
 /**
  * The CSP is the one piece of this app that is *only* exercised by a real
@@ -97,5 +98,31 @@ describe("public paths (no session cookie needed)", () => {
     for (const path of ["/", "/o/acme", "/o/acme/settings/members", "/invitations", "/invitations/acceptx", "/billing/test-checkout", "/admin"]) {
       expect(isPublicPath(path), path).toBe(false);
     }
+  });
+});
+
+describe("signed-out visits (no session cookie)", () => {
+  const redirectOf = (path: string) => {
+    const response = proxy(new NextRequest(`http://127.0.0.1:3999${path}`));
+    const location = response.headers.get("location");
+    if (!location) return null;
+    const url = new URL(location);
+    return `${url.pathname}${url.search}`;
+  };
+
+  it("sends a console page to the Administrator sign-in, remembering it", () => {
+    expect(redirectOf("/admin")).toBe("/login?mode=admin");
+    expect(redirectOf("/admin/partners/affiliates?status=active")).toBe(
+      `/login?mode=admin&next=${encodeURIComponent("/admin/partners/affiliates?status=active")}`,
+    );
+  });
+
+  it("never turns a look-alike path into a console return address", () => {
+    expect(redirectOf("/administrator")).toBe("/login");
+    expect(redirectOf("/o/acme")).toBe("/login");
+  });
+
+  it("keeps a product resume token as the only thing carried", () => {
+    expect(redirectOf("/admin/partners?resume=abc")).toBe("/login?resume=abc");
   });
 });

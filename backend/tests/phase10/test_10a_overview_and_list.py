@@ -51,15 +51,14 @@ def test_the_capability_endpoint_serves_groups_and_presets(staff_client):
     body = client.get("/api/v1/admin/partners/capabilities").json()
     assert {c["key"] for c in body["results"]} == set(capabilities.CAPABILITIES)
     assert all(c["group"] for c in body["results"])
-    assert [g["key"] for g in body["groups"]][:7] == [
+    assert [g["key"] for g in body["groups"]][:4] == [
         "customer_management",
-        "sales",
-        "subscriptions",
-        "pricing",
-        "commissions",
-        "payouts",
+        "products_sales",
+        "commercial",
         "support",
     ]
+    # Every capability has a short, plain name for a setup form to list.
+    assert all(c["short_label"] for c in body["results"])
     preset = body["presets"][0]
     assert preset["key"] == "standard_reseller"
     assert set(preset["capabilities"]) <= set(capabilities.CAPABILITIES)
@@ -77,15 +76,19 @@ def _cards(client):
 def test_the_overview_states_facts_and_only_facts(console, viewer):
     cards = _cards(viewer)
     assert list(cards) == [
+        "total_partners",
         "active_partners",
         "active_resellers",
         "white_label_enabled",
+        "active_affiliates",
         "partner_customers",
         "active_partner_subscriptions",
         "pending_commissions",
         "pending_payouts",
         "domains_awaiting_verification",
     ]
+    assert cards["total_partners"]["count"] == 3  # ... and the draft
+    assert cards["active_affiliates"]["count"] == 0
     assert cards["active_partners"]["count"] == 2  # the reseller and the white-label
     assert cards["active_resellers"]["count"] == 1
     assert cards["white_label_enabled"]["count"] == 1
@@ -220,7 +223,7 @@ def test_the_row_carries_the_facts_the_columns_show(console, viewer):
     assert row["commission"] == [
         {"currency": "GBP", "balance_minor": 500, "unpaid_minor": 500, "entries": 1}
     ]
-    assert row["payouts"] == {"open": 0, "latest": None}
+    assert row["payouts"] == {"open": 0, "latest": None, "paid": []}
     assert row["capability_count"] >= 8
     assert row["last_activity_at"]
 

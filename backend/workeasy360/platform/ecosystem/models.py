@@ -32,10 +32,11 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
-from workeasy360.contracts.enums import StrEnum
+from workeasy360.contracts.enums import SignInPreference, StrEnum
 from workeasy360.contracts.values.manifest import ProductManifest, from_stored_manifest
 
 
@@ -618,6 +619,20 @@ class PendingAuthorization(models.Model):
     #: once set: see `authorization.resume_pending`.
     organization_id = models.UUIDField(null=True, blank=True)
 
+    #: Universal sign-in (ADR-044). Parked for the access chooser rather than
+    #: for sign-in or the organization chooser: ``resume`` refuses the row
+    #: until the person has answered, so a hand-typed resume link cannot skip
+    #: the question their preference asks for.
+    awaiting_choice = models.BooleanField(default=False, db_default=False)
+    #: The person a chooser row was parked for (the session's user at
+    #: ``/authorize``). Only they may read it, answer it or resume it. NULL
+    #: for a row parked for sign-in, which has no person yet.
+    user_id = models.UUIDField(null=True, blank=True)
+    #: ``prompt=login``: only a session that authenticated at or after this
+    #: moment may resume - the product asked for a fresh sign-in, not for
+    #: the one already in the browser.
+    authenticated_after = models.DateTimeField(null=True, blank=True)
+
     expires_at = models.DateTimeField()
     #: Set by a conditional UPDATE, exactly as `AuthorizationCode.redeemed_at`
     #: is - single use under concurrency needs no lock, only the WHERE clause.
@@ -637,3 +652,62 @@ class PendingAuthorization(models.Model):
     def __str__(self) -> str:  # pragma: no cover - display only
         state = "consumed" if self.consumed_at else "pending"
         return f"pending authorization for {self.integration_id} ({state})"
+
+
+class UserSignInPreference(models.Model):
+    """How one person wants to enter Workeasy360 products (ADR-044).
+
+    One row is the person's **default** (``product_code == ""``), applying to
+    every product - including every product registered after the row was
+    written, which is why a new product needs no migration. Any other row is
+    an **override** for one product. ``inherit`` is never stored: choosing it
+    deletes the override, so the absence of a row *is* "use my default".
+
+    Not tenant data: a preference belongs to the person across all of their
+    organizations, like ``identity.User`` itself, and no organization
+    administrator reads it. It never grants anything - it is consulted only
+    after membership, entitlement, seat and access policy have all said yes
+    (``contracts.values.sign_in``).
+    """
+
+    #: The values a row may hold. ``inherit`` is the absence of a row.
+    STORED = (
+        SignInPreference.AUTO_SSO,
+        SignInPreference.ASK,
+        SignInPreference.PRODUCT_LOGIN,
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
+    #: A ``ProductCode``, or ``""`` for the person's default.
+    product_code = models.CharField(max_length=32, blank=True, default="")
+    mode = models.CharField(
+        max_length=16,
+        choices=[(m.value, m.name.replace("_", " ").title()) for m in STORED],
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ecosystem_user_sign_in_preference"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "product_code"], name="uq_sign_in_preference"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    mode__in=[
+                        SignInPreference.AUTO_SSO.value,
+                        SignInPreference.ASK.value,
+                        SignInPreference.PRODUCT_LOGIN.value,
+                    ]
+                ),
+                name="ck_sign_in_preference_mode",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.product_code or '*'}={self.mode} for {self.user_id}"

@@ -90,6 +90,11 @@ class TokenSubject:
     scope: str
     aal: int
     nonce: str = ""
+    #: When the person last entered their password in the session that
+    #: authorized (epoch seconds), when known. OIDC Core's ``auth_time``:
+    #: lets a product that asked for a fresh sign-in (``prompt=login``) check
+    #: that it got one, instead of trusting the round trip (ADR-044).
+    auth_time: int | None = None
 
 
 def issuer() -> str:
@@ -126,6 +131,9 @@ def issue_id_token(
         # this token answers *its* request and is not one replayed from
         # another session.
         claims["nonce"] = subject.nonce
+
+    if subject.auth_time is not None:
+        claims["auth_time"] = subject.auth_time
 
     if profile:
         claims.update(profile)

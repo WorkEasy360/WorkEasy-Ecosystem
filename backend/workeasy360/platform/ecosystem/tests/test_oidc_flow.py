@@ -657,6 +657,48 @@ def test_personal_claims_require_the_scope_and_the_registration(
         assert ("email" in claims) is expect_email
 
 
+def test_the_organization_name_requires_the_organization_scope(
+    client, signing_key, register_product, entitled_org, signed_in, entitled
+):
+    """A product provisioning a tenant on a first sign-in may label it - but
+    only when it registered for, and asked for, the ``organization`` scope."""
+    minimal = register_product("crm", scopes=("openid",))
+    named = register_product("books", scopes=("openid", "organization"))
+    org = entitled_org("crm")
+    signed_in(org["user"])
+
+    for registration, scope, expected in (
+        (minimal, "openid", None),
+        (named, "openid", None),
+        (named, "openid organization", org["org"].display_name),
+    ):
+        entitled(org["org"].id, registration["product_code"])
+        verifier, challenge = _pkce()
+        granted = client.get(
+            AUTHORIZE,
+            _authorize_params(registration, org, scope=scope, code_challenge=challenge),
+        )
+        assert granted.status_code == 302, granted.content
+        exchanged = client.post(
+            TOKEN,
+            {
+                "grant_type": "authorization_code",
+                "code": _code_from(granted),
+                "redirect_uri": registration["redirect_uri"],
+                "code_verifier": verifier,
+                **_assertion(registration, client),
+            },
+        )
+        assert exchanged.status_code == 200, exchanged.json()
+        claims = tokens.verify(
+            exchanged.json()["id_token"],
+            audience=registration["client_id"],
+            expected_type=tokens.TYPE_ID_TOKEN,
+        )
+        assert claims.get("organization_name") == expected
+        assert claims["organization_id"] == str(org["org"].id)
+
+
 # --- userinfo -------------------------------------------------------------
 
 

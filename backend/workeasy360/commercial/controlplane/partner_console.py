@@ -46,11 +46,21 @@ from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.authz import services as authz
 
 PARTNER_VIEW = "platform.staff_partner.view"
+COMMISSION_VIEW = "platform.staff_commission.view"
 
 DEFAULT_PAGE = 25
 MAX_PAGE = 100
 
-SCOPES = ("resellers", "all")
+SCOPES = ("resellers", "affiliates", "all")
+
+#: Which derived label each list scope filters on. ``all`` filters on none.
+_SCOPE_LABEL = {
+    "resellers": capabilities.RESELLER,
+    "affiliates": capabilities.AFFILIATE,
+}
+
+#: Rows per section of the recent-activity panel.
+RECENT = 5
 
 #: Re-exported for the white-label filter validation and the detail tab.
 DOMAIN_FILTERS = partner_reads.DOMAIN_FILTERS
@@ -116,6 +126,7 @@ def overview(ctx: TenantContext) -> dict[str, Any]:
         now,
         reseller_keys=capabilities.experience_keys(capabilities.RESELLER),
         white_label_keys=capabilities.experience_keys(capabilities.WHITE_LABEL),
+        affiliate_keys=capabilities.experience_keys(capabilities.AFFILIATE),
     )
     pending_commission = commission_selectors.unpaid_by_currency()
     pending_payouts = commission_selectors.open_payouts_by_currency()
@@ -123,6 +134,11 @@ def overview(ctx: TenantContext) -> dict[str, Any]:
     return {
         "as_of": now.isoformat(),
         "cards": [
+            {
+                "key": "total_partners",
+                "label": "Total partners",
+                "count": counts["total_partners"],
+            },
             {
                 "key": "active_partners",
                 "label": "Active partners",
@@ -137,6 +153,11 @@ def overview(ctx: TenantContext) -> dict[str, Any]:
                 "key": "white_label_enabled",
                 "label": "White-label enabled",
                 "count": counts["white_label_enabled"],
+            },
+            {
+                "key": "active_affiliates",
+                "label": "Active affiliates",
+                "count": counts["active_affiliates"],
             },
             {
                 "key": "partner_customers",
@@ -186,9 +207,10 @@ def resellers_page(
     """One page of partners with the aggregates the reseller list shows.
 
     ``scope=resellers`` (the default) lists partners that wear the Reseller
-    label; ``scope=all`` lists every partner, so an account created but not yet
-    given capabilities is never invisible. Both are the same query - the label
-    is a filter over grants, not a table.
+    label, ``scope=affiliates`` those that wear the Affiliate label, and
+    ``scope=all`` every partner, so an account created but not yet given
+    capabilities is never invisible. All three are the same query - a label is
+    a filter over grants, not a table - and the same row shape.
     """
     authz.require(ctx, PARTNER_VIEW)
     page_size = _limit(limit)
@@ -202,8 +224,8 @@ def resellers_page(
     rows, has_more = partner_reads.partner_rows(
         now,
         experience_keys=(
-            capabilities.experience_keys(capabilities.RESELLER)
-            if which == "resellers"
+            capabilities.experience_keys(_SCOPE_LABEL[which])
+            if which in _SCOPE_LABEL
             else None
         ),
         query=needle,
@@ -244,7 +266,9 @@ def resellers_page(
                 "payouts": {
                     "open": facts["open_payouts"].get(row.id, 0),
                     "latest": facts["latest_payout"].get(row.id),
+                    "paid": facts["paid"].get(row.id, []),
                 },
+                "referrals": facts["referrals"].get(row.id, _NO_REFERRALS),
                 "last_activity_at": max(latest).isoformat(),
             }
         )
@@ -259,9 +283,10 @@ def _aggregates(partner_ids: list[UUID], now: datetime) -> dict[str, Any]:
     """Every per-partner figure of a list page, in a fixed number of queries.
 
     Five partner-owned reads (capabilities, live customers, subscriptions,
-    product grants, relationship stamps) and four commission-owned ones (ledger
-    totals, unpaid ledger totals, open payouts, latest payout) - the same nine
-    for one partner or a hundred.
+    product grants, relationship stamps) and seven commission-owned ones (ledger
+    totals, unpaid ledger totals, open payouts, latest payout, paid payouts,
+    referral codes, referral counts) - the same twelve for one partner or a
+    hundred.
     """
     facts = partner_reads.page_facts(partner_ids, now)
     out: dict[str, Any] = {
@@ -270,6 +295,8 @@ def _aggregates(partner_ids: list[UUID], now: datetime) -> dict[str, Any]:
         "open_payouts": {},
         "latest_payout": {},
         "ledger_at": {},
+        "paid": {},
+        "referrals": {},
     }
     if not partner_ids:
         return out
@@ -280,7 +307,94 @@ def _aggregates(partner_ids: list[UUID], now: datetime) -> dict[str, Any]:
     for partner_id, payouts in commission_selectors.payout_facts(partner_ids).items():
         out["open_payouts"][partner_id] = payouts["open"]
         out["latest_payout"][partner_id] = payouts["latest"]
+    out["paid"] = commission_selectors.paid_facts(partner_ids)
+    out["referrals"] = commission_selectors.referral_facts(partner_ids)
     return out
+
+
+_NO_REFERRALS: dict[str, Any] = {
+    "codes": [],
+    "active_codes": 0,
+    "captured": 0,
+    "converted": 0,
+}
+
+
+# --- recent activity -------------------------------------------------------------
+
+
+def recent(ctx: TenantContext) -> dict[str, Any]:
+    """What changed lately across the partner programme, a few rows per section.
+
+    **No new activity system.** Each section is a bounded read of data that
+    already exists: the newest partner accounts, the newest customer
+    relationships (``partner_detail.customers_page``), the newest ledger entries
+    (``commissions.selectors.accruals_page`` - an ``accrual`` row is a sale that
+    earned commission), the payouts still open (``payouts_page``) and the domain
+    requests not yet proven.
+
+    **Money stays behind its own permission.** The ledger and payout sections
+    need ``platform.staff_commission.view`` exactly as their full pages do; a
+    staff member without it gets ``null`` for those sections - not an empty
+    list, which would claim there is nothing.
+    """
+    from workeasy360.commercial.controlplane import partner_detail
+
+    authz.require(ctx, PARTNER_VIEW)
+    now = timezone.now()
+    partners = partner_reads.recent_partners(RECENT)
+    held = partner_reads.held_capabilities([p.id for p in partners], now)
+    provisioning = partner_detail.customers_page(ctx, partner_id=None, limit=RECENT)
+
+    sales = commission = payouts = None
+    if authz.check(ctx, COMMISSION_VIEW):
+        sales = commission_selectors.accruals_page(
+            partner_id=None, for_partner=False, kind="accrual", limit=RECENT
+        ).items
+        commission = commission_selectors.accruals_page(
+            partner_id=None, for_partner=False, limit=RECENT
+        ).items
+        payouts = commission_selectors.payouts_page(
+            partner_id=None,
+            for_partner=False,
+            status=commission_selectors.OPEN_PAYOUTS,
+            limit=RECENT,
+        ).items
+        names = partner_reads.partner_names(
+            {UUID(r["partner_id"]) for r in (*sales, *commission, *payouts)}
+        )
+        for item in (*sales, *commission, *payouts):
+            item["partner_name"] = names.get(UUID(item["partner_id"]), "")
+
+    return {
+        "as_of": now.isoformat(),
+        "partners": [
+            {
+                "id": str(p.id),
+                "code": p.code,
+                "display_name": p.display_name,
+                "status": p.status,
+                "created_at": p.created_at.isoformat(),
+                "experience": capabilities.experience_labels(held.get(p.id, set())),
+            }
+            for p in partners
+        ],
+        "provisioning": [
+            {
+                "organization_id": c["organization_id"],
+                "name": c["name"],
+                "partner_id": c["partner_id"],
+                "partner_name": c["partner_name"],
+                "link_status": c["link_status"],
+                "started_at": c["started_at"],
+            }
+            for c in provisioning.items
+        ],
+        "sales": sales,
+        "commission": commission,
+        "payouts": payouts,
+        "domains": partner_reads.domains_awaiting(RECENT),
+    }
 
 
 # --- the catalog the console sells from -------------------------------------------
@@ -314,6 +428,10 @@ def console_products(ctx: TenantContext) -> dict[str, Any]:
                 "name": p["name"],
                 "status": p["status"],
                 "plans": plans_by_product.get(p["code"], []),
+                # What the platform configured for this product's trial (none
+                # until staff set one). Read from the catalog - the wizard shows
+                # it and a partner can only narrow it; it adds no trial of its own.
+                "trial": p["trial"],
             }
             for p in products
         ]

@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { logout } from "@/lib/api/auth";
 import type { AccessPolicyDenial } from "@/lib/api/console";
 import { MfaSettings } from "@/features/security/MfaSettings";
 import { StepUpForm } from "@/features/security/StepUpForm";
 import { ChangePasswordForm } from "./ChangePasswordForm";
 import styles from "./Console.module.css";
+import { usePortalRouter } from "@/lib/portalRouter";
 
 /**
  * What the organization console shows when the organization's own access
@@ -31,7 +31,7 @@ export function PolicyGate({
   mfaEnrolled: boolean;
   onResolved: () => void;
 }) {
-  const router = useRouter();
+  const router = usePortalRouter();
 
   const signInAgain = () => logout().finally(() => router.replace("/login"));
 

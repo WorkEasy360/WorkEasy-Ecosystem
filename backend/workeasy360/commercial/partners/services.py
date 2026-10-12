@@ -57,6 +57,7 @@ from workeasy360.integration.events import services as events
 from workeasy360.platform.audit import services as audit
 from workeasy360.platform.authz import services as authz
 from workeasy360.platform.authz.control_plane import in_scope, organization_scope
+from workeasy360.platform.identity import portals as portal_links
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import metrics
 
@@ -202,6 +203,7 @@ def update_partner(
         for name, value in changes.items():
             setattr(partner, name, value)
         _bump(partner, list(changes))
+        _mirror_primary_contact(partner, changes)
         audit.record(
             ctx,
             "partner.updated",
@@ -211,6 +213,23 @@ def update_partner(
             changes={"fields": sorted(changes)},
         )
     return partner
+
+
+def _mirror_primary_contact(partner: Any, changes: dict[str, Any]) -> None:
+    """The account's contact name and email *are* the primary contact (see
+    ``PartnerContact``); changing them here changes the contact row too, so the
+    two can never disagree."""
+    from workeasy360.commercial.partners.models import PartnerContact
+
+    fields = {
+        column: changes[key]
+        for key, column in (("contact_name", "name"), ("contact_email", "email"))
+        if key in changes
+    }
+    if fields:
+        PartnerContact.objects.filter(partner_id=partner.id, kind="primary").update(
+            **fields
+        )
 
 
 @in_scope
@@ -269,6 +288,13 @@ def set_partner_status(
             # A suspended partner's custom domain stops serving its branding on
             # the next lookup, not a cache lifetime later.
             _refresh_public_hosts(partner.id)
+        invitations_sent = 0
+        if target is PartnerStatus.ACTIVE and current is PartnerStatus.DRAFT:
+            # People named while the partner was a draft were not emailed
+            # (``invite_member(send_link=False)``): activation is the moment
+            # they are invited. Only first activation - a reactivation after a
+            # suspension has nobody left to invite.
+            invitations_sent = _send_deferred_invitations(partner)
 
         payload = {"partner_id": str(partner.id), "from_status": current.value}
         if target is PartnerStatus.ACTIVE:
@@ -291,11 +317,37 @@ def set_partner_status(
                 "from": current.value,
                 "to": target.value,
                 "links_ended": links_ended,
+                **({"invitations_sent": invitations_sent} if invitations_sent else {}),
             },
             reason=why,
         )
     metrics.increment(PARTNER_OPERATIONS, operation=target.value, outcome="ok")
     return partner
+
+
+def _send_deferred_invitations(partner: Any) -> int:
+    """Email a setup link to each active member whose invitation was deferred
+    (``invite_member(send_link=False)``) and who still has no password. Returns
+    how many were sent. Members attached any other way are never touched."""
+    from workeasy360.commercial.partners.models import PartnerMember
+
+    sent = 0
+    for member in (
+        PartnerMember.objects.select_for_update()
+        .filter(
+            partner_id=partner.id,
+            status="active",
+            invitation_deferred=True,
+            invitation_sent_at__isnull=True,
+        )
+        .select_related("user")
+    ):
+        member.invitation_deferred = False
+        if _send_setup_link(partner, member, member.user_id):
+            member.invitation_sent_at = timezone.now()
+            sent += 1
+        member.save(update_fields=["invitation_deferred", "invitation_sent_at"])
+    return sent
 
 
 def _refresh_public_hosts(partner_id: UUID) -> None:
@@ -512,7 +564,99 @@ def revoke_capability(
     return grant
 
 
+@in_scope
+def enable_white_label(ctx: TenantContext, partner_id: UUID, *, reason: Any) -> list[str]:
+    """Give a partner the white-label pair, ``branding.manage`` and
+    ``domain.manage``, in one step. Returns the capabilities newly granted.
+
+    White-label is a *label the pair earns*, not a kind of account, so this is
+    only two ordinary capability grants made together: the same command, the
+    same second factor and the same audit entry each as granting them one at a
+    time - and nothing a partner could not be given by hand. Idempotent.
+    """
+    authz.require(ctx, MANAGE)
+    why = clean_reason(reason)
+    pair = (capabilities.BRANDING_MANAGE, capabilities.DOMAIN_MANAGE)
+    granted: list[str] = []
+    with transaction.atomic():
+        partner = _lock_partner(partner_id)
+        if partner.status_enum is PartnerStatus.TERMINATED:
+            raise PartnerValidationError(
+                "A terminated partner cannot be granted anything.", field="partner_id"
+            )
+        held = selectors.active_capabilities(partner_id)
+        for key in pair:
+            if key not in held:
+                grant_capability(ctx, partner_id, capability=key, reason=why)
+                granted.append(key)
+        if granted:
+            audit.record(
+                ctx,
+                "partner.white_label_enabled",
+                resource_type="partners.partner",
+                resource_id=partner_id,
+                changes={"partner_id": str(partner_id), "capabilities": granted},
+                reason=why,
+            )
+    return granted
+
+
 # --- members --------------------------------------------------------------
+
+
+@in_scope
+def change_member_role(
+    ctx: TenantContext, partner_id: UUID, *, member_id: UUID, role: Any
+) -> Any:
+    """Move a partner user between the two tiers.
+
+    Takes effect on their next request - permissions are computed from the row
+    on every check. An *active* partner must keep one administrator, so the last
+    one cannot be turned into a viewer (the same rule that stops activating a
+    partner nobody can act for).
+    """
+    from workeasy360.commercial.partners.models import PartnerMember
+
+    authz.require(ctx, MANAGE)
+    target = _parse_role(role)
+    with transaction.atomic():
+        partner = _lock_partner(partner_id)
+        member = (
+            PartnerMember.objects.select_for_update()
+            .filter(id=member_id, partner_id=partner_id, status="active")
+            .first()
+        )
+        if member is None:
+            raise PartnerRecordNotFound("No such member.", member_id=str(member_id))
+        if member.role == target.value:
+            return member
+        if (
+            member.role == PartnerMemberRole.ADMIN.value
+            and partner.status_enum is PartnerStatus.ACTIVE
+            and not PartnerMember.objects.filter(
+                partner_id=partner_id,
+                status="active",
+                role=PartnerMemberRole.ADMIN.value,
+                user__status="active",
+            )
+            .exclude(id=member.id)
+            .exists()
+        ):
+            raise PartnerValidationError(
+                "An active partner needs at least one administrator. Add another first.",
+                field="role",
+            )
+        before = member.role
+        member.role = target.value
+        member.save(update_fields=["role"])
+        audit.record(
+            ctx,
+            "partner.member_role_changed",
+            resource_type="partners.member",
+            resource_id=member.id,
+            changes={"partner_id": str(partner_id), "from": before, "to": target.value},
+        )
+    return member
 
 
 @in_scope
@@ -611,7 +755,13 @@ class MemberInvite:
 
 @in_scope
 def invite_member(
-    ctx: TenantContext, partner_id: UUID, *, email: Any, role: Any
+    ctx: TenantContext,
+    partner_id: UUID,
+    *,
+    email: Any,
+    role: Any,
+    full_name: Any = "",
+    send_link: bool = True,
 ) -> MemberInvite:
     """Attach a person to a partner - creating their account if the address has none.
 
@@ -628,6 +778,11 @@ def invite_member(
     "cannot be assigned" are one message, so the endpoint is not an account
     directory. An account that already has a password is attached without
     sending anything.
+
+    ``full_name`` names a person whose account this call creates (it never
+    renames an existing one). ``send_link=False`` attaches the person without
+    emailing them - used while a partner is still a draft, whose administrator
+    is invited when it is activated (``set_partner_status``).
     """
     from workeasy360.commercial.partners.models import PartnerMember
     from workeasy360.platform.identity.services import ensure_identity_for_email
@@ -635,6 +790,7 @@ def invite_member(
     authz.require(ctx, MANAGE)
     member_role = _parse_role(role)
     address = _clean_email(email, required=True)
+    person = clean_text(full_name, field="full_name", max_length=255, required=False)
 
     with transaction.atomic():
         partner = _lock_partner(partner_id)
@@ -642,7 +798,7 @@ def invite_member(
             raise PartnerValidationError(
                 "A terminated partner cannot take on members.", field="partner_id"
             )
-        user_id, created = ensure_identity_for_email(address)
+        user_id, created = ensure_identity_for_email(address, full_name=person)
         if user_id is None:
             raise PartnerValidationError("That account cannot be added.", field="email")
         already = (
@@ -672,7 +828,13 @@ def invite_member(
             raise PartnerValidationError(
                 "That account cannot be added.", field="email"
             ) from exc
-        sent = _send_setup_link(partner, member, user_id)
+        sent = _send_setup_link(partner, member, user_id) if send_link else False
+        if sent:
+            member.invitation_sent_at = timezone.now()
+            member.save(update_fields=["invitation_sent_at"])
+        elif not send_link and not _has_password(user_id):
+            member.invitation_deferred = True
+            member.save(update_fields=["invitation_deferred"])
         audit.record(
             ctx,
             "partner.member_invited",
@@ -683,6 +845,7 @@ def invite_member(
                 "role": member.role,
                 "account_created": created,
                 "setup_link_sent": sent,
+                "setup_link_deferred": not send_link,
             },
         )
     metrics.increment(PARTNER_OPERATIONS, operation="member_invite", outcome="ok")
@@ -707,6 +870,10 @@ def resend_member_setup(ctx: TenantContext, partner_id: UUID, *, member_id: UUID
         if member is None:
             raise PartnerRecordNotFound("No such member.", member_id=str(member_id))
         sent = _send_setup_link(partner, member, member.user_id)
+        if sent:
+            member.invitation_sent_at = timezone.now()
+            member.invitation_deferred = False
+            member.save(update_fields=["invitation_sent_at", "invitation_deferred"])
         audit.record(
             ctx,
             "partner.member_setup_resent",
@@ -715,6 +882,12 @@ def resend_member_setup(ctx: TenantContext, partner_id: UUID, *, member_id: UUID
             changes={"partner_id": str(partner_id), "setup_link_sent": sent},
         )
     return sent
+
+
+def _has_password(user_id: UUID) -> bool:
+    from workeasy360.platform.identity import selectors as identity
+
+    return bool(identity.has_usable_password(user_id))
 
 
 def _parse_role(role: Any) -> PartnerMemberRole:
@@ -765,7 +938,7 @@ def _send_setup_link(partner: Any, member: Any, user_id: UUID) -> bool:
             "expires_in": f"{days} day" + ("" if days == 1 else "s"),
         },
         sealed_context={
-            "setup_url": f"{settings.W360_FRONTEND_URL}/reset-password#token={token}"
+            "setup_url": f"{portal_links.auth_url()}/reset-password#token={token}"
         },
         idempotency_key=(
             f"partner-member:{member.id}:setup:"
@@ -778,15 +951,39 @@ def _send_setup_link(partner: Any, member: Any, user_id: UUID) -> bool:
 # --- product scope --------------------------------------------------------
 
 
+def _flag(value: Any, *, field: str) -> bool | None:
+    """An optional true/false from a request: absent is ``None`` (leave as is);
+    anything that is not a real boolean is refused, never coerced."""
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise PartnerValidationError(f"{field} must be true or false.", field=field)
+    return value
+
+
 @in_scope
 def grant_product(
-    ctx: TenantContext, partner_id: UUID, *, product_code: Any, plan_code: Any = None
+    ctx: TenantContext,
+    partner_id: UUID,
+    *,
+    product_code: Any,
+    plan_code: Any = None,
+    trial_allowed: Any = None,
+    portal_visible: Any = None,
 ) -> Any:
-    """Allow a partner to sell a product (or one plan of it). Idempotent."""
+    """Allow a partner to sell a product (or one plan of it). Idempotent.
+
+    ``trial_allowed`` and ``portal_visible`` are the two per-grant choices
+    (``PartnerProductGrant``); left out they default to ``True``. Granting
+    again with a different choice changes it - one command, whether the
+    product is new to the partner or not.
+    """
     from workeasy360.commercial.catalog import selectors as catalog
     from workeasy360.commercial.partners.models import PartnerProductGrant
 
     authz.require(ctx, MANAGE)
+    trial = _flag(trial_allowed, field="trial_allowed")
+    visible = _flag(portal_visible, field="portal_visible")
     product_id, plan_id = catalog.resolve_product_and_plan(
         str(product_code or ""), str(plan_code) if plan_code else None
     )
@@ -797,13 +994,18 @@ def grant_product(
             raise PartnerValidationError(
                 "A terminated partner cannot be granted anything.", field="partner_id"
             )
-        existing = PartnerProductGrant.objects.filter(
-            partner_id=partner_id,
-            product_id=product_id,
-            plan_id=plan_id,
-            status=GrantStatus.ACTIVE.value,
-        ).first()
+        existing = (
+            PartnerProductGrant.objects.select_for_update()
+            .filter(
+                partner_id=partner_id,
+                product_id=product_id,
+                plan_id=plan_id,
+                status=GrantStatus.ACTIVE.value,
+            )
+            .first()
+        )
         if existing is not None:
+            _apply_grant_flags(ctx, existing, trial, visible)
             return existing
         grant = PartnerProductGrant.objects.create(
             partner_id=partner_id,
@@ -811,6 +1013,8 @@ def grant_product(
             plan_id=plan_id,
             granted_by_id=ctx.user_id,
             granted_at=timezone.now(),
+            trial_allowed=True if trial is None else trial,
+            portal_visible=True if visible is None else visible,
         )
         audit.record(
             ctx,
@@ -821,8 +1025,70 @@ def grant_product(
                 "partner_id": str(partner_id),
                 "product_code": str(product_code),
                 "plan_code": str(plan_code) if plan_code else None,
+                "trial_allowed": grant.trial_allowed,
+                "portal_visible": grant.portal_visible,
             },
         )
+    return grant
+
+
+def _apply_grant_flags(
+    ctx: TenantContext, grant: Any, trial: bool | None, visible: bool | None
+) -> None:
+    """Change a live grant's two choices, recording what changed. A no-op (and
+    no audit entry) when nothing differs, so a retry is safe."""
+    changed: dict[str, bool] = {}
+    if trial is not None and trial != grant.trial_allowed:
+        grant.trial_allowed = trial
+        changed["trial_allowed"] = trial
+    if visible is not None and visible != grant.portal_visible:
+        grant.portal_visible = visible
+        changed["portal_visible"] = visible
+    if not changed:
+        return
+    grant.save(update_fields=list(changed))
+    audit.record(
+        ctx,
+        "partner.product_grant_updated",
+        resource_type="partners.product_grant",
+        resource_id=grant.id,
+        changes={"partner_id": str(grant.partner_id), **changed},
+    )
+
+
+@in_scope
+def update_product_grant(
+    ctx: TenantContext,
+    partner_id: UUID,
+    *,
+    grant_id: UUID,
+    trial_allowed: Any = None,
+    portal_visible: Any = None,
+) -> Any:
+    """Change whether this partner's customers may trial a product it sells and
+    whether the product shows on its portal. Neither can create a grant, widen
+    what a partner may sell or touch an entitlement."""
+    from workeasy360.commercial.partners.models import PartnerProductGrant
+
+    authz.require(ctx, MANAGE)
+    trial = _flag(trial_allowed, field="trial_allowed")
+    visible = _flag(portal_visible, field="portal_visible")
+    if trial is None and visible is None:
+        raise PartnerValidationError("Nothing to change.", field="body")
+    with transaction.atomic():
+        partner = _lock_partner(partner_id)
+        if partner.status_enum is PartnerStatus.TERMINATED:
+            raise PartnerValidationError(
+                "A terminated partner cannot be changed.", field="partner_id"
+            )
+        grant = (
+            PartnerProductGrant.objects.select_for_update()
+            .filter(id=grant_id, partner_id=partner_id, status=GrantStatus.ACTIVE.value)
+            .first()
+        )
+        if grant is None:
+            raise PartnerRecordNotFound("No such product grant.", grant_id=str(grant_id))
+        _apply_grant_flags(ctx, grant, trial, visible)
     return grant
 
 
@@ -867,7 +1133,12 @@ def capability_catalog(ctx: TenantContext) -> list[dict[str, str]]:
         for key in keys
     }
     return [
-        {"key": spec.key, "label": spec.label, "group": group_of.get(spec.key, "")}
+        {
+            "key": spec.key,
+            "label": spec.label,
+            "short_label": capabilities.SHORT_LABELS.get(spec.key, spec.label),
+            "group": group_of.get(spec.key, ""),
+        }
         for spec in capabilities.CAPABILITIES.values()
     ]
 

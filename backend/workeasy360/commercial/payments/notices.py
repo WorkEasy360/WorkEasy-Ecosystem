@@ -15,9 +15,9 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from django.conf import settings
 from django.db import transaction
 
+from workeasy360.platform.identity import portals as portal_links
 from workeasy360.platform.notifications.templates import Template, register
 from workeasy360.platform.observability.logging import get_logger
 
@@ -136,7 +136,7 @@ def _send(
                     recipient_email=recipient,
                     context={
                         "organization_name": summary.get("display_name", ""),
-                        "billing_url": f"{settings.W360_FRONTEND_URL}/o/"
+                        "billing_url": f"{portal_links.app_url()}/o/"
                         f"{summary.get('slug', '')}/billing",
                         **context,
                     },

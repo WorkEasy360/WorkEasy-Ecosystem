@@ -63,12 +63,29 @@ def trials_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     if blocked is not None:
         return blocked
     body = _body(request)
+    _refuse_if_partner_turned_trial_off(ctx, body.get("product_code"))
     started = trials.start_product_trial(
         ctx,
         idempotency_key=str(request.headers.get("Idempotency-Key") or ""),
         **{key: body.get(key) for key in _FIELDS},
     )
     return JsonResponse(trial_json(started), status=201)
+
+
+def _refuse_if_partner_turned_trial_off(ctx: Any, product_code: Any) -> None:
+    """A partner may decide its customers do not get a product's platform
+    trial (``PartnerProductGrant.trial_allowed``). It only ever narrows what the
+    platform offers: it adds no trial, and a direct customer or a product the
+    partner does not sell is never affected. The caller must already be allowed
+    to start a trial, so this refusal reveals nothing to someone who is not."""
+    from workeasy360.commercial.partners.selectors import trial_blocked_for_organization
+    from workeasy360.contracts.errors import TrialNotAllowed
+    from workeasy360.platform.authz import services as authz
+
+    authz.require(ctx, trials.MANAGE)
+    code = str(product_code or "")
+    if code and trial_blocked_for_organization(ctx.organization_id, code):
+        raise TrialNotAllowed(reason="not_offered", product_code=code)
 
 
 @require_http_methods(["POST"])
@@ -83,10 +100,37 @@ def trial_cancel_view(
 def explore_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     """The products this organization can discover, priced in its own currency,
     each with what it may do about it (buy, start a trial, nothing)."""
+    from workeasy360.commercial.partners import selectors as partner_selectors
     from workeasy360.commercial.subscriptions.marketplace import explore
 
     ctx = request.tenant_context  # type: ignore[attr-defined]
-    return JsonResponse(explore(ctx))
+    listing = explore(ctx)
+    # What this customer's *partner* chose to show and to trial. Presentation
+    # and a narrowing of the offer only: nothing here reads or changes an
+    # entitlement, and a product the customer already holds is never hidden.
+    choices = partner_selectors.product_choices_for_organization(ctx.organization_id)
+    if choices:  # a direct customer pays for nothing here: one query, then done
+        hidden = partner_selectors.hidden_product_codes_for_organization(
+            ctx.organization_id
+        )
+        shown = []
+        for product in listing["products"]:
+            if product["code"] in hidden and product.get("holding") is None:
+                continue
+            entry = choices.get(product["code"])
+            if entry is not None and not entry["trial_allowed"]:
+                product["trial"] = {
+                    **product["trial"],
+                    "available": False,
+                    "plan_codes": [],
+                }
+                if product["trial_state"] == "available":
+                    product["trial_state"] = "unavailable"
+                for plan in product["plans"]:
+                    plan["trial_available"] = False
+            shown.append(product)
+        listing["products"] = shown
+    return JsonResponse(listing)
 
 
 @require_http_methods(["GET"])

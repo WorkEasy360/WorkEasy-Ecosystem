@@ -38,14 +38,60 @@ def console_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     return JsonResponse(products.console(ctx))
 
 
-@staff_view(["PATCH"])
+@staff_view(["PATCH", "POST"])
 def integration_view(
     request: HttpRequest, ctx: TenantContext, product_code: str
 ) -> JsonResponse:
-    """Change a product's launch address and related public settings."""
+    """``PATCH``: change a product's launch, sign-in and redirect settings.
+    ``POST``: register the integration of a product that has none (ADR-044)."""
+    if request.method == "POST":
+        return JsonResponse(
+            products.register_integration(
+                ctx, product_code=product_code, spec=_body(request)
+            ),
+            status=201,
+        )
     return JsonResponse(
         products.update_integration(
             ctx, product_code=product_code, changes=_body(request)
+        )
+    )
+
+
+@staff_view(["GET", "POST"])
+def integration_credentials_view(
+    request: HttpRequest, ctx: TenantContext, product_code: str
+) -> JsonResponse:
+    """List a product's credentials (public references only), or add one.
+    A generated client secret is in the POST response and nowhere else."""
+    if request.method == "GET":
+        return JsonResponse(products.credentials(ctx, product_code=product_code))
+    body = _body(request)
+    response = JsonResponse(
+        products.add_credential(
+            ctx,
+            product_code=product_code,
+            kind=str(body.get("kind", "public_key")),
+            public_key_pem=str(body.get("public_key_pem", "")),
+            label=str(body.get("label", "")),
+        ),
+        status=201,
+    )
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@staff_view(["DELETE"])
+def integration_credential_view(
+    request: HttpRequest, ctx: TenantContext, product_code: str, credential_id: str
+) -> JsonResponse:
+    """Revoke one credential."""
+    return JsonResponse(
+        products.revoke_credential(
+            ctx,
+            product_code=product_code,
+            credential_id=credential_id,
+            reason=str(request.GET.get("reason", "")),
         )
     )
 

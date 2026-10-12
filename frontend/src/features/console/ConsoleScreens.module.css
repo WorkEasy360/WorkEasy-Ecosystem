@@ -315,3 +315,27 @@
 .problem p:last-child {
   margin-bottom: 0;
 }
+
+/* My products: the rest of the catalog (multi-portal brief, Part 4). */
+.otherProducts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--w360-space-3);
+}
+
+.otherProduct {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-3);
+  min-width: 0;
+}
+
+.otherName {
+  font-weight: 600;
+  flex: 1 1 10rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

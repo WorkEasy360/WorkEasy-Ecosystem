@@ -49,17 +49,21 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
+from workeasy360.contracts.values import json_input
 from workeasy360.interfaces.api.v1 import intelligence_product_views
 from workeasy360.platform.ecosystem import (
     authorization,
+    chooser,
     clientauth,
     discovery,
     keys,
     protocol,
     ratelimit,
+    sign_in,
     tokens,
     verification,
 )
+from workeasy360.platform.identity import portals as portal_links
 from workeasy360.platform.observability.correlation import current_correlation_id
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import metrics
@@ -144,6 +148,21 @@ def authorize(request: HttpRequest) -> HttpResponse:
     # or parks the request for the platform's own UI - see the docstring.
     try:
         parsed = authorization.parse_request(resolution, request.GET)
+        logger.info(
+            "ecosystem.sso.started",
+            product_code=parsed.integration.product_code,
+            organization_id=str(parsed.organization_id or ""),
+            prompt=" ".join(sorted(parsed.prompt)),
+        )
+        if parsed.prompt_login:
+            # The product asked for a fresh sign-in (ADR-044) - whoever it
+            # turns out to be. Parked before any check, because every check
+            # then runs at resume for the person who actually signed in.
+            return _park_and_redirect(
+                parsed,
+                protocol.OAuthError(protocol.LOGIN_REQUIRED, ""),
+                reauthenticate=True,
+            )
         user = getattr(request, "user", None)
         if user is None or not user.is_authenticated:
             raise protocol.OAuthError(
@@ -159,12 +178,48 @@ def authorize(request: HttpRequest) -> HttpResponse:
         )
         authorization.require_entitlement(subject, parsed.integration.product_code)
         authorization.require_seat(subject, parsed.integration.product_code)
+
+        # Step 10 (ADR-044): only now, with every refusal already delivered,
+        # the person's own preference. A preference never reaches a request
+        # that was going to be refused, and it can only *add* a question.
+        decision, doors = sign_in.decision_at_authorize(user.pk, parsed.integration)
+        if not doors.sso_available:
+            # Active but not SSO-ready (no usable credential): a code would be
+            # one the product can never redeem. Refused, never offered - the
+            # chooser must not pretend Workeasy360 sign-in works here.
+            raise protocol.OAuthError(
+                protocol.UNAUTHORIZED_CLIENT,
+                "This product is not ready for Workeasy360 sign-in.",
+            )
+        if parsed.wants_account_confirmation or not decision.silent:
+            if parsed.prompt_none:
+                raise protocol.OAuthError(
+                    protocol.INTERACTION_REQUIRED,
+                    "Workeasy360 needs to ask this person how to sign in.",
+                )
+            return _park_for_choice(parsed, user.pk)
         granted = authorization.issue_code(parsed, subject)
     except protocol.OAuthError as exc:
         if exc.error in (protocol.LOGIN_REQUIRED, protocol.ORGANIZATION_REQUIRED):
+            if parsed.prompt_none:
+                # prompt=none: no page may be shown, so the interaction the
+                # request needs is reported instead of performed.
+                return _redirect_error(
+                    resolution,
+                    protocol.OAuthError(
+                        protocol.LOGIN_REQUIRED,
+                        "No authenticated Workeasy360 session.",
+                    )
+                    if exc.error == protocol.LOGIN_REQUIRED
+                    else protocol.OAuthError(
+                        protocol.INTERACTION_REQUIRED,
+                        "An organization must be chosen in Workeasy360.",
+                    ),
+                )
             return _park_and_redirect(parsed, exc)
         return _redirect_error(resolution, exc)
 
+    _granted_log(parsed, subject.organization_id, path="silent")
     metrics.increment("ecosystem_authorizations_total", result="granted")
     return HttpResponseRedirect(
         _with_query(granted.redirect_uri, {"code": granted.code, "state": granted.state})
@@ -197,18 +252,40 @@ def resume(request: HttpRequest) -> HttpResponse:
         return _error_response(exc)
 
     token = request.GET.get("resume") or ""
-    try:
-        pending_request = authorization.resume_pending(token=token)
-    except protocol.OAuthError:
+    invalid = HttpResponseRedirect(
+        f"{portal_links.auth_url()}/login?error=resume_invalid"
+    )
+    parked = authorization.find_pending(token=token)
+    if parked is None:
         # No verified destination is known for an unrecognised token - see
         # ``resume_pending``'s docstring. Sent back to the platform's own
         # login page, never to any product-supplied URL.
-        return HttpResponseRedirect(
-            f"{settings.W360_FRONTEND_URL}/login?error=resume_invalid"
-        )
+        return invalid
 
     user = getattr(request, "user", None)
-    if user is None or not user.is_authenticated:
+    signed_in = user is not None and user.is_authenticated
+    if parked.awaiting_choice:
+        # Not answered yet (ADR-044): a resume link cannot skip the question
+        # the person's preference asks. Back to the chooser - for its person.
+        if signed_in and parked.user_id is not None and parked.bound_to(user.pk):
+            return _to_chooser(token)
+        return invalid
+    if signed_in and not parked.bound_to(user.pk):
+        # Answered by one person, resumed in another's session: spent, and
+        # refused, rather than completed for whoever happens to hold it.
+        authorization.claim_pending(parked)
+        return invalid
+    if signed_in and not parked.admits_session(_session_authenticated_at(request)):
+        # prompt=login: this session predates the request. Sign in again;
+        # the token stays live for the fresh session.
+        return HttpResponseRedirect(
+            f"{portal_links.auth_url()}/login?resume={token}&reauth=1"
+        )
+    if not authorization.claim_pending(parked):
+        return invalid
+    pending_request = parked.request
+
+    if not signed_in:
         # The token is already spent (single use). This is not a resumable
         # retry - the product's client library sees `login_required` via its
         # own redirect_uri and the browser restarts the flow from scratch.
@@ -228,7 +305,7 @@ def resume(request: HttpRequest) -> HttpResponse:
             # platform's own chooser is what asks (Task 5).
             requeued = authorization.create_pending(pending_request)
             return HttpResponseRedirect(
-                f"{settings.W360_FRONTEND_URL}/organizations/select?resume={requeued.token}"
+                f"{portal_links.auth_url()}/organizations/select?resume={requeued.token}"
             )
 
     try:
@@ -246,21 +323,277 @@ def resume(request: HttpRequest) -> HttpResponse:
     except protocol.OAuthError as exc:
         return _redirect_pending_error(pending_request, exc)
 
+    _granted_log(pending_request, subject.organization_id, path="resumed")
     metrics.increment("ecosystem_authorizations_total", result="granted")
     return HttpResponseRedirect(
         _with_query(granted.redirect_uri, {"code": granted.code, "state": granted.state})
     )
 
 
-def _park_and_redirect(request_obj: Any, exc: protocol.OAuthError) -> HttpResponse:
+def _park_and_redirect(
+    request_obj: Any, exc: protocol.OAuthError, *, reauthenticate: bool = False
+) -> HttpResponse:
     """Park a verified request and send the browser to the platform's own
-    login page or organization chooser. See ``authorize``'s docstring."""
-    pending = authorization.create_pending(request_obj)
+    login page or organization chooser. See ``authorize``'s docstring.
+
+    ``reauthenticate`` (``prompt=login``): only a session that signs in from
+    now on may resume it, and the login page asks for the password even when
+    a session exists."""
+    from django.utils import timezone
+
+    if reauthenticate:
+        pending = authorization.create_pending(
+            request_obj, authenticated_after=timezone.now()
+        )
+    else:
+        pending = authorization.create_pending(request_obj)
     path = "/login" if exc.error == protocol.LOGIN_REQUIRED else "/organizations/select"
-    metrics.increment("ecosystem_authorization_parked_total", kind=exc.error)
-    return HttpResponseRedirect(
-        f"{settings.W360_FRONTEND_URL}{path}?resume={pending.token}"
+    suffix = "&reauth=1" if reauthenticate else ""
+    metrics.increment(
+        "ecosystem_authorization_parked_total",
+        kind="reauthenticate" if reauthenticate else exc.error,
     )
+    return HttpResponseRedirect(
+        f"{portal_links.auth_url()}{path}?resume={pending.token}{suffix}"
+    )
+
+
+def _park_for_choice(request_obj: Any, user_id: Any) -> HttpResponse:
+    """Park a request that passed every check, for the access chooser
+    (ADR-044). Bound to this person: only they can answer or resume it."""
+    pending = authorization.create_pending(
+        request_obj, awaiting_choice=True, user_id=user_id
+    )
+    metrics.increment("ecosystem_authorization_parked_total", kind="choice")
+    logger.info(
+        "ecosystem.sso.chooser_shown",
+        product_code=request_obj.integration.product_code,
+        organization_id=str(request_obj.organization_id or ""),
+    )
+    return _to_chooser(pending.token)
+
+
+def _to_chooser(token: str) -> HttpResponse:
+    return HttpResponseRedirect(
+        f"{portal_links.auth_url()}/product-access?resume={token}"
+    )
+
+
+def _granted_log(request_obj: Any, organization_id: Any, *, path: str) -> None:
+    """Observability (design section 9): which product, which organization,
+    and how - never the code, the state, the nonce or any claim."""
+    logger.info(
+        "ecosystem.sso.succeeded",
+        product_code=request_obj.integration.product_code,
+        organization_id=str(organization_id),
+        path=path,
+    )
+
+
+def _session_authenticated_at(request: HttpRequest) -> float | None:
+    """When this session's password was entered (epoch seconds), or None."""
+    from workeasy360.platform.tenancy.resolution import SESSION_AUTHENTICATED_AT_KEY
+
+    raw = getattr(request, "session", {}).get(SESSION_AUTHENTICATED_AT_KEY)
+    try:
+        return float(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+# --- the access chooser (ADR-044) -------------------------------------------
+
+
+@require_GET
+@never_cache
+def pending_view(request: HttpRequest) -> JsonResponse:
+    """What the access chooser shows for a request parked for this person:
+    the product, the organization, the signed-in account and which answers
+    exist. Display facts only - never a redirect URI, state or PKCE value."""
+    try:
+        ratelimit.consume("chooser", _client_ip(request), endpoint="pending")
+    except protocol.OAuthError as exc:
+        return _error_response(exc)
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return _json_refusal("login_required", 401)
+    facts = chooser.chooser_facts(token=request.GET.get("resume") or "", user_id=user.pk)
+    if facts is None:
+        return _json_refusal("pending_invalid", 404)
+
+    from workeasy360.commercial.catalog import selectors as catalog
+    from workeasy360.platform.organizations.selectors import organization_names
+
+    shown = catalog.product_presentations([facts.product_code]).get(
+        facts.product_code, {}
+    )
+    organization = ""
+    if facts.organization_id is not None:
+        organization = organization_names([facts.organization_id]).get(
+            facts.organization_id, ""
+        )
+    response = JsonResponse(
+        {
+            "product": {
+                "code": facts.product_code,
+                "name": shown.get("name") or facts.display_name,
+                "icon": shown.get("icon", ""),
+            },
+            "organization": {"name": organization},
+            "account": {"email": user.email, "name": user.full_name},
+            "choices": {
+                "workeasy360": True,
+                "product": facts.product_login_available,
+            },
+            "remembered": facts.override.value,
+        }
+    )
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@require_POST
+@never_cache
+def pending_choose_view(request: HttpRequest) -> JsonResponse:
+    """The person's answer. Session-authenticated and CSRF-protected (the
+    global middleware, untouched). Answers ``{redirect_url}``: the page then
+    navigates there itself - a cross-origin destination cannot be a redirect
+    of a ``fetch``, and this way the URL is always one the server built from
+    the registry (the resume endpoint, the product's registered sign-in page,
+    the platform's own sign-in page, or the product's registered redirect URI
+    with ``access_denied``)."""
+    from workeasy360.interfaces.api.v1.auth_views import connection_facts
+
+    try:
+        ratelimit.consume("chooser", _client_ip(request), endpoint="pending_choose")
+    except protocol.OAuthError as exc:
+        return _error_response(exc)
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return _json_refusal("login_required", 401)
+    try:
+        body = json_input.loads(request.body or b"{}")
+    except (ValueError, UnicodeDecodeError):
+        return _json_refusal("pending_invalid", 400)
+    if not isinstance(body, dict):
+        return _json_refusal("pending_invalid", 400)
+
+    where = connection_facts(request)
+    outcome = chooser.answer(
+        token=str(body.get("resume") or ""),
+        user_id=user.pk,
+        choice=str(body.get("choice") or ""),
+        remember=body.get("remember") is True,
+        ip_prefix=where["ip_prefix"],
+        device_label=where["device_label"],
+    )
+    if outcome is None:
+        return _json_refusal("pending_invalid", 400)
+
+    if outcome.choice is chooser.Choice.WORKEASY360:
+        target = f"/api/v1/integrations/oauth/resume?resume={outcome.resume_token}"
+    elif outcome.choice is chooser.Choice.PRODUCT:
+        target = outcome.product_login_url
+    elif outcome.choice is chooser.Choice.SWITCH_ACCOUNT:
+        _sign_out(request)
+        target = f"/login?resume={outcome.resume_token}"
+    else:
+        assert outcome.request is not None
+        target = _error_redirect_url(
+            outcome.request.redirect_uri,
+            outcome.request.state,
+            protocol.OAuthError(
+                protocol.ACCESS_DENIED, "The person cancelled the sign-in."
+            ),
+        )
+    response = JsonResponse({"redirect_url": target})
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+def _sign_out(request: HttpRequest) -> None:
+    """End this sign-in everywhere (every portal session of it, ADR-043) -
+    the platform's own sign-out, not a second copy of it."""
+    from workeasy360.interfaces.api.v1.auth_views import sign_out
+
+    sign_out(request)
+
+
+def _json_refusal(code: str, status: int) -> JsonResponse:
+    response = JsonResponse({"code": code}, status=status)
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+# --- RP-initiated sign-out (ADR-044) ----------------------------------------
+
+
+@require_GET
+@never_cache
+def end_session(request: HttpRequest) -> HttpResponse:
+    """OpenID Connect RP-Initiated Logout 1.0 ``end_session_endpoint``.
+
+    A GET signs no one out (logout CSRF): a signed-in browser is sent to the
+    platform's confirmation page; a signed-out one straight back to the
+    product's registered post-logout URI. Until the client and that URI are
+    verified, the failure is rendered - never redirected."""
+    try:
+        ratelimit.consume("end_session", _client_ip(request), endpoint="end_session")
+    except protocol.OAuthError as exc:
+        return _error_response(exc)
+    try:
+        verified = chooser.logout_request(request.GET)
+    except protocol.OAuthError as exc:
+        return _render_error(exc)
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return HttpResponseRedirect(verified.return_url)
+    return HttpResponseRedirect(
+        f"{portal_links.auth_url()}/sign-out?{urlencode({'request': chooser.seal(verified)})}"
+    )
+
+
+@require_GET
+@never_cache
+def end_session_request_view(request: HttpRequest) -> JsonResponse:
+    """What the confirmation page names: the product and the account."""
+    verified = chooser.unseal(request.GET.get("request") or "")
+    if verified is None:
+        return _json_refusal("logout_invalid", 400)
+    user = getattr(request, "user", None)
+    signed_in = user is not None and user.is_authenticated
+    response = JsonResponse(
+        {
+            "product": {"name": verified.display_name},
+            "signed_in": signed_in,
+            "account": {"email": user.email} if signed_in else None,
+        }
+    )
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@require_POST
+@never_cache
+def end_session_confirm_view(request: HttpRequest) -> JsonResponse:
+    """The person's answer: sign out of Workeasy360 (``sign_out: true``) or
+    not, then return to the product's registered post-logout URI either way.
+    CSRF-protected like every session write."""
+    try:
+        body = json_input.loads(request.body or b"{}")
+    except (ValueError, UnicodeDecodeError):
+        return _json_refusal("logout_invalid", 400)
+    if not isinstance(body, dict):
+        return _json_refusal("logout_invalid", 400)
+    verified = chooser.unseal(str(body.get("request") or ""))
+    if verified is None:
+        return _json_refusal("logout_invalid", 400)
+    if body.get("sign_out") is True:
+        _sign_out(request)
+        logger.info("ecosystem.sso.signed_out", product_code=verified.product_code)
+    response = JsonResponse({"redirect_url": verified.return_url})
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 # --- token endpoint -------------------------------------------------------
@@ -324,9 +657,14 @@ def _token_response(redeemed: Any) -> dict[str, Any]:
         scope=" ".join(redeemed.scope),
         aal=redeemed.aal,
         nonce=redeemed.nonce,
+        auth_time=redeemed.auth_time,
     )
     id_token = tokens.issue_id_token(
-        subject, profile=_profile_claims(redeemed.user_id, redeemed.scope)
+        subject,
+        profile={
+            **_profile_claims(redeemed.user_id, redeemed.scope),
+            **_organization_claims(redeemed.organization_id, redeemed.scope),
+        },
     )
     access_token = tokens.issue_access_token(subject)
     return {
@@ -348,6 +686,23 @@ def _profile_claims(user_id: Any, scope: tuple[str, ...]) -> dict[str, Any]:
     from workeasy360.platform.identity.selectors import profile_claims
 
     return profile_claims(user_id=user_id, scopes=scope)
+
+
+def _organization_claims(organization_id: Any, scope: tuple[str, ...]) -> dict[str, Any]:
+    """``organization_name``, for the ``organization`` scope only.
+
+    A display string a product uses to label the tenant it provisions on a
+    first sign-in. It is never an identity: the customer can rename the
+    organization, so a product keys on ``organization_id`` and treats the name
+    as a starting label (docs/phase-3/05-token-claims.md section 1).
+    """
+    if "organization" not in scope:
+        return {}
+    from workeasy360.platform.organizations.selectors import organization_names
+
+    name = organization_names([organization_id]).get(organization_id, "")
+    # Omitted when empty, as the profile claims are (OIDC Core section 5.3.2).
+    return {"organization_name": name} if name else {}
 
 
 # --- userinfo -------------------------------------------------------------
@@ -437,14 +792,31 @@ def verify_entitlement(request: HttpRequest) -> JsonResponse:
 
     try:
         client = clientauth.authenticate(request, endpoint="entitlement_verify")
-        ratelimit.consume("verify", client.client_id, endpoint="entitlement_verify")
 
         try:
             organization_id = UUID(str(request.POST.get("organization_id", "")))
         except (ValueError, AttributeError):
+            # A malformed question still spends the product's budget.
+            ratelimit.consume("verify", client.client_id, endpoint="entitlement_verify")
             raise protocol.OAuthError(
                 protocol.INVALID_REQUEST, "organization_id must be a UUID."
             ) from None
+        # Optional: the person the product's session belongs to (the ID
+        # token's ``sub``). Bounded like every other caller-supplied string.
+        raw_subject = request.POST.get("subject")
+        subject = str(raw_subject)[:64] if raw_subject else None
+        # The per-(organization, person) bucket FIRST: a loop stuck on one key
+        # is refused there without spending the product's whole budget, which
+        # its other customers' questions need. A conforming product asks about
+        # each key at most once a minute, however many people an organization
+        # has. Keyed on the canonical UUID, so spellings of one subject share a
+        # count; every malformed subject shares one key.
+        ratelimit.consume(
+            "verify_org",
+            f"{client.client_id}:{organization_id}:{_subject_key(subject)}",
+            endpoint="entitlement_verify",
+        )
+        ratelimit.consume("verify", client.client_id, endpoint="entitlement_verify")
 
         result = verification.verify(
             organization_id=organization_id,
@@ -453,6 +825,7 @@ def verify_entitlement(request: HttpRequest) -> JsonResponse:
             # a product that did not ask about writes is told nothing that
             # would let it offer one.
             write=str(request.POST.get("write", "")).lower() in ("1", "true", "yes"),
+            subject=subject,
         )
     except protocol.OAuthError as exc:
         return _error_response(exc)
@@ -539,6 +912,21 @@ def publish_event(request: HttpRequest) -> JsonResponse:
 # --- shared response shaping ---------------------------------------------
 
 
+def _subject_key(subject: str | None) -> str:
+    """The rate-limit key part for an entitlement question's ``subject``: the
+    canonical UUID (``UUID()`` accepts case, braces, ``urn:uuid:`` and
+    missing dashes, which would otherwise be separate counts), ``""`` for none,
+    and one shared ``"invalid"`` for anything that is not a UUID."""
+    from uuid import UUID
+
+    if not subject:
+        return ""
+    try:
+        return str(UUID(subject))
+    except ValueError:
+        return "invalid"
+
+
 def _error_response(exc: protocol.OAuthError) -> JsonResponse:
     response = JsonResponse(
         exc.as_dict(correlation_id=str(current_correlation_id() or "")),
@@ -565,6 +953,7 @@ def _redirect_error(resolution: Any, exc: protocol.OAuthError) -> HttpResponse:
     therefore one the product registered - never one the request supplied.
     """
     metrics.increment("ecosystem_authorizations_total", result="denied")
+    _failed_log(resolution.integration, exc)
     return HttpResponseRedirect(
         _error_redirect_url(resolution.redirect_uri, resolution.state, exc)
     )
@@ -581,8 +970,19 @@ def _redirect_pending_error(
     drift on what belongs in the query string.
     """
     metrics.increment("ecosystem_authorizations_total", result="denied")
+    _failed_log(pending_request.integration, exc)
     return HttpResponseRedirect(
         _error_redirect_url(pending_request.redirect_uri, pending_request.state, exc)
+    )
+
+
+def _failed_log(integration: Any, exc: protocol.OAuthError) -> None:
+    """The failure category is the OAuth error code - a closed set, never a
+    value the caller sent (design section 9)."""
+    logger.info(
+        "ecosystem.sso.failed",
+        product_code=integration.product_code,
+        category=exc.error,
     )
 
 

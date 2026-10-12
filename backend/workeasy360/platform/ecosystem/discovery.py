@@ -38,6 +38,9 @@ PATHS: Final[dict[str, str]] = {
     "authorization": "/api/v1/integrations/oauth/authorize",
     "token": "/api/v1/integrations/oauth/token",
     "userinfo": "/api/v1/integrations/oauth/userinfo",
+    # ADR-044: OpenID Connect RP-Initiated Logout 1.0. A product's "sign out
+    # of Workeasy360 too" sends the browser here; the person confirms.
+    "end_session": "/api/v1/integrations/oauth/logout",
     "entitlement_verify": "/api/v1/integrations/entitlements/verify",
     # Phase 6: where a product publishes its events. Advertised here so a
     # product discovers it like every other endpoint rather than building
@@ -104,6 +107,7 @@ def document() -> dict[str, Any]:
         "authorization_endpoint": endpoint("authorization"),
         "token_endpoint": endpoint("token"),
         "userinfo_endpoint": endpoint("userinfo"),
+        "end_session_endpoint": endpoint("end_session"),
         "jwks_uri": endpoint("jwks"),
         "scopes_supported": list(SUPPORTED_SCOPES),
         "response_types_supported": [protocol.RESPONSE_TYPE_CODE],
@@ -120,6 +124,8 @@ def document() -> dict[str, Any]:
             keys.SUPPORTED_ALGORITHMS
         ),
         "code_challenge_methods_supported": [protocol.PKCE_METHOD_S256],
+        # ADR-044. Exactly the values parse_request implements.
+        "prompt_values_supported": list(protocol.PROMPT_VALUES),
         "claims_supported": [
             "iss",
             "sub",
@@ -130,6 +136,7 @@ def document() -> dict[str, Any]:
             "jti",
             "typ",
             "nonce",
+            "auth_time",
             # The three ecosystem claims. Documented in full, with their
             # meaning and stability guarantee, in
             # docs/phase-3/05-token-claims.md.
@@ -140,6 +147,7 @@ def document() -> dict[str, Any]:
             "email",
             "email_verified",
             "name",
+            "organization_name",
         ],
         "request_parameter_supported": False,
         "request_uri_parameter_supported": False,

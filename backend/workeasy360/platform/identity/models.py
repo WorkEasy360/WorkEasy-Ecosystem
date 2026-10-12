@@ -280,11 +280,16 @@ class UserSession(AbstractBaseSession):
     #: Coarse by design - see ``platform.identity.devices``.
     ip_prefix = models.CharField(max_length=64, blank=True, default="")
     device_label = models.CharField(max_length=64, blank=True, default="")
+    #: One password sign-in, shared by the central sign-in session and every
+    #: portal session handed off from it (ADR-043). Signing out on any of them
+    #: ends all of them. Empty for an anonymous session.
+    sign_in_id = models.UUIDField(null=True, blank=True)
 
     class Meta:
         db_table = "identity_session"
         indexes = [
             models.Index(fields=["user", "-last_activity_at"], name="ix_session_user"),
+            models.Index(fields=["user", "sign_in_id"], name="ix_session_sign_in"),
         ]
 
     @classmethod
@@ -319,15 +324,24 @@ class AccountEvent(models.Model):
         ACCOUNT_UNLOCKED = "account_unlocked", "Account unlocked"
         EMAIL_VERIFIED = "email_verified", "Email address verified"
         PASSWORD_RESET = "password_reset", "Password reset by email"
+        #: Universal sign-in (ADR-044): the person changed how Workeasy360
+        #: signs them in to products. ``reason`` is ``<product_code or
+        #: "default">=<mode>`` (or ``reset``). The person's own trail only -
+        #: never an organization's audit log (design section 5).
+        SIGN_IN_PREFERENCE_CHANGED = (
+            "sign_in_preference_changed",
+            "Product sign-in preference changed",
+        )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
     occurred_at = models.DateTimeField(default=timezone.now)
     kind = models.CharField(max_length=32, choices=Kind.choices)
     #: For a failed sign-in: ``invalid_credentials`` | ``account_locked`` |
-    #: ``account_disabled``. For staff actions: who acted is in the
-    #: control-plane audit trail, not here.
-    reason = models.CharField(max_length=32, blank=True, default="")
+    #: ``account_disabled``. For a sign-in preference change:
+    #: ``<product_code or "default">=<mode>``. For staff actions: who acted is
+    #: in the control-plane audit trail, not here.
+    reason = models.CharField(max_length=64, blank=True, default="")
     ip_prefix = models.CharField(max_length=64, blank=True, default="")
     device_label = models.CharField(max_length=64, blank=True, default="")
 
@@ -448,3 +462,54 @@ class AuthFactor(models.Model):
             self.Kind.TOTP,
             self.Kind.WEBAUTHN,
         }
+
+
+class SessionHandoff(models.Model):
+    """A one-time hand-off of a sign-in from the central sign-in host to one
+    portal host (ADR-043, docs/portals/design.md section 3).
+
+    Cookies are host-only, so a session established on ``auth.`` cannot be
+    read by ``admin.``. The sign-in page asks for one of these, the browser
+    carries the code to the portal in the URL **fragment**, and the portal
+    redeems it once for a new session of its own.
+
+    **No bearer secret is stored.** ``code_hash`` and ``state_hash`` are
+    SHA-256 digests; the code is 256 random bits shown once. ``state`` binds
+    the code to the browser the portal sent to sign in (a host-only cookie on
+    the portal), so a code handed to someone else's browser is refused.
+
+    ``auth_state`` copies what the sign-in established - AAL and its step-up
+    time, whether a factor was verified, when the password was entered, which
+    organizations' password policies it falls short of, the sign-in id - so a
+    portal session is never *more* elevated, or elevated for *longer*, than
+    the sign-in it came from.
+    """
+
+    code_hash = models.CharField(max_length=64, unique=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
+    #: ``admin``, ``partner`` or ``app`` (contracts.values.portals.DESTINATIONS).
+    portal = models.CharField(max_length=16)
+    #: The configured origin of that portal when the code was issued.
+    target_origin = models.CharField(max_length=255)
+    #: Already validated against the portal's allowlist (``safe_next``).
+    next_path = models.CharField(max_length=512)
+    state_hash = models.CharField(max_length=64)
+    #: ``User.session_epoch`` at issue: "sign out everywhere" since then
+    #: voids the code.
+    session_epoch = models.PositiveIntegerField(default=0)
+    #: The ``identity_session.public_id`` of the central sign-in session; it
+    #: must still be live when the code is redeemed.
+    source_session = models.UUIDField()
+    auth_state = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "identity_session_handoff"
+        indexes = [
+            models.Index(fields=["expires_at"], name="ix_handoff_expires"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"hand-off to {self.portal} for {self.user_id}"

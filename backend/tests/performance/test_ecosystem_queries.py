@@ -308,20 +308,34 @@ def test_listing_integrations_does_not_grow_a_query_per_row(
 # --- measured, not asserted ----------------------------------------------
 
 
+@pytest.mark.parametrize("per_person", [False, True], ids=["organization", "per-person"])
 def test_report_entitlement_verification_latency(
-    client, signing_key, register_product, entitled_org, capsys
+    client, signing_key, register_product, entitled_org, capsys, settings, per_person
 ):
-    """Measure and print p50/p95/p99 for the remote entitlement check.
+    """Measure and print p50/p95/p99 for the remote entitlement check, for the
+    organization-level question and for the per-person one (``subject``, the
+    ADR-044 addendum; docs/universal-sso/capacity.md uses both).
 
     Printed rather than asserted against a threshold: this runs on whatever
     machine the suite runs on, through PgBouncer, with a cold cache on the
     first iteration. A tight assertion would be a flaky test; an honest
     measurement is evidence. The numbers recorded in
     docs/phase-3/13-performance-review.md come from this, run deliberately.
+
+    The rate limits are lifted: forty questions about one organization in a
+    second is exactly what the per-(client, organization, person) bucket is
+    there to refuse, and this measures the answer, not the limiter.
     """
+    settings.ECOSYSTEM_RATE_LIMITS = {
+        **settings.ECOSYSTEM_RATE_LIMITS,
+        "verify": (10_000, 60),
+        "verify_org": (10_000, 60),
+    }
     registration = register_product("crm")
     org = entitled_org("crm")
     body = {"organization_id": org["organization_id"]}
+    if per_person:
+        body["subject"] = str(org["user"].id)
 
     samples: list[float] = []
     for _ in range(40):
@@ -330,6 +344,7 @@ def test_report_entitlement_verification_latency(
         response = client.post(VERIFY, payload)
         samples.append((time.perf_counter() - started) * 1000)
         assert response.status_code == 200
+        assert response.json()["decision"] == "allow"
 
     samples.sort()
 
@@ -338,7 +353,8 @@ def test_report_entitlement_verification_latency(
 
     with capsys.disabled():
         print(
-            f"\n  entitlement verify over {len(samples)} calls: "
+            f"\n  entitlement verify ({'per person' if per_person else 'organization'})"
+            f" over {len(samples)} calls: "
             f"p50={percentile(0.50):.1f}ms "
             f"p95={percentile(0.95):.1f}ms "
             f"p99={percentile(0.99):.1f}ms "

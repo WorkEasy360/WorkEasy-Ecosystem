@@ -171,7 +171,8 @@ anyway — and it is the one thing that lets their operator fix it.
 | Bucket | Default | Scope |
 |---|---|---|
 | `token` | 120/min | per client |
-| `verify` | 600/min | per client |
+| `verify` | 1,200/min (600 until 2026-10-12) | per client |
+| `verify_org` | 6/min | per (client, organization, person): a conforming product asks about each at most once a minute |
 | `client_auth_failure` | **10/min** | per client (or IP if unidentified) |
 
 The failure bucket is an order of magnitude tighter than the success path,
@@ -179,6 +180,8 @@ because a caller failing authentication ten times a minute is not a caller
 with a configuration problem.
 
 429 responses carry `Retry-After`.
+
+The verify sizes come from a capacity model, not a guess: `docs/universal-sso/capacity.md`.
 
 ## 10. Secrets never appear in logs or audit
 

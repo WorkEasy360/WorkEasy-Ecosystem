@@ -53,6 +53,7 @@ from workeasy360.contracts.errors import (
     SignupClosed,
     SignupValidationError,
 )
+from workeasy360.platform.identity import portals as portal_links
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import metrics
 
@@ -84,7 +85,7 @@ def _describe(ttl: timedelta) -> str:
 
 
 def _url(path: str, token: str | None = None) -> str:
-    base = f"{settings.W360_FRONTEND_URL}{path}"
+    base = f"{portal_links.auth_url()}{path}"
     return f"{base}#token={token}" if token else base
 
 

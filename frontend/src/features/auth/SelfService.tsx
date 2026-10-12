@@ -2,13 +2,14 @@
 
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { ApiError } from "@/lib/api/client";
 import { publicApi } from "@/lib/api/public";
 import { useSession } from "@/lib/auth/useSession";
 import { takeFragmentToken } from "@/lib/auth/fragmentToken";
 import { rememberIntent, useSiteSettings } from "@/features/site/SiteShell";
 import styles from "@/features/site/Site.module.css";
+import { usePortalRouter } from "@/lib/portalRouter";
 
 /**
  * Self-service accounts (Phase 9): sign up, confirm the address, recover a
@@ -247,7 +248,7 @@ function CheckYourEmail({ email }: { email: string }) {
 // --- verify ---------------------------------------------------------------------------------
 
 /** Where a finished verification or sign-in goes. Only internal paths. */
-async function finishSignIn(router: ReturnType<typeof useRouter>, organizationId: string | null) {
+async function finishSignIn(router: ReturnType<typeof usePortalRouter>, organizationId: string | null) {
   let referral: string | null = null;
   try {
     referral = sessionStorage.getItem(REFERRAL_TOKEN);
@@ -262,7 +263,7 @@ async function finishSignIn(router: ReturnType<typeof useRouter>, organizationId
 }
 
 export function VerifyEmailScreen() {
-  const router = useRouter();
+  const router = usePortalRouter();
   const token = useFragmentToken();
   const errorId = useId();
   const [password, setPassword] = useState("");

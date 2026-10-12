@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { login, type LoginErrorCode } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
 import { publicApi } from "@/lib/api/public";
+import { destinationAfterSignIn, type SignInMode } from "./signInMode";
 
 const ERROR_COPY: Record<LoginErrorCode | "unknown", string> = {
   invalid_credentials: "That email or password isn't right.",
@@ -17,7 +18,20 @@ const ERROR_COPY: Record<LoginErrorCode | "unknown", string> = {
   unknown: "Something went wrong. Please try again.",
 };
 
-export function LoginForm() {
+/**
+ * The one sign-in form. `mode` only chooses where to go afterwards: the request
+ * is the same email and password for everyone, and whether the person may use
+ * the Admin Console is decided by the server once they get there.
+ */
+export function LoginForm({
+  mode = null,
+  onSignedIn,
+}: {
+  mode?: SignInMode | null;
+  /** Multi-portal mode (ADR-043): the central sign-in hands the sign-in to
+   * the chosen portal itself, instead of navigating within this host. */
+  onSignedIn?: () => void;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const resume = searchParams.get("resume");
@@ -50,9 +64,16 @@ export function LoginForm() {
         window.location.href = `/api/v1/integrations/oauth/resume?resume=${encodeURIComponent(resume)}`;
         return;
       }
-      // Phase 9: everyone lands on the central dashboard, which decides
-      // where (organization, chooser, onboarding, Super Admin).
-      router.replace("/dashboard");
+      if (onSignedIn) {
+        onSignedIn();
+        return;
+      }
+      // Administrator: the Admin Console (or the console page that sent them
+      // here), which asks the server whether they may enter. User: the
+      // central dashboard, which picks the organization and never sends them
+      // to the console. No mode (an old link): the dashboard decides, as in
+      // Phase 9.
+      router.replace(destinationAfterSignIn(mode, searchParams.get("next")));
     } catch (err) {
       const code = err instanceof ApiError ? (err.code as LoginErrorCode) : "unknown";
       setError(ERROR_COPY[code] ?? ERROR_COPY.unknown);

@@ -12,7 +12,7 @@ from uuid import UUID
 
 from workeasy360.commercial.commissions import accrual, payouts
 from workeasy360.commercial.commissions import selectors as commission_selectors
-from workeasy360.commercial.partners import domains
+from workeasy360.commercial.partners import capabilities, domains
 from workeasy360.commercial.partners import selectors as partner_selectors
 from workeasy360.contracts.errors import PartnerRecordNotFound
 from workeasy360.contracts.values.cursor import Page
@@ -42,6 +42,11 @@ def partner(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
     detail = partner_selectors.partner_detail(partner_id)
     if detail is None:
         raise PartnerRecordNotFound("No such partner.")
+    # The badges in the partner's header (Partner Control Center): computed by
+    # the one labelling function from the grants in force, never stored.
+    detail["experience"] = capabilities.experience_labels(
+        {c["capability"] for c in detail["capabilities"] if c["is_effective"]}
+    )
     return detail
 
 

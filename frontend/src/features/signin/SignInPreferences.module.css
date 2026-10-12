@@ -1,0 +1,140 @@
+/* Settings -> Sign-in preferences (ADR-044). Tokens from globals.css. */
+
+.stack {
+  display: grid;
+  gap: var(--w360-space-5);
+  min-width: 0;
+}
+
+.fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.legend {
+  margin-bottom: var(--w360-space-3);
+  font-weight: 600;
+}
+
+.options {
+  display: grid;
+  gap: var(--w360-space-3);
+}
+
+.option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+}
+
+.option:has(input:checked) {
+  border-color: var(--w360-brand);
+}
+
+.option input {
+  margin-top: 4px;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.optionText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.optionLabel {
+  font-weight: 600;
+}
+
+.recommended {
+  color: var(--w360-text-muted);
+  font-weight: 400;
+}
+
+.optionHint {
+  color: var(--w360-text-muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  margin: var(--w360-space-2) 0 0;
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+.products {
+  display: grid;
+  gap: var(--w360-space-3);
+  margin: var(--w360-space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.product {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-3) 0;
+  border-top: 1px solid var(--w360-border);
+  min-width: 0;
+}
+
+.glyph {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-neutral-bg);
+  color: var(--w360-brand);
+  font-weight: 700;
+}
+
+.productBody {
+  display: grid;
+  gap: var(--w360-space-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.productBody select {
+  max-width: 360px;
+  width: 100%;
+}
+
+.productName {
+  font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3);
+}
+
+.ok {
+  margin: 0;
+  color: var(--w360-success, var(--w360-text));
+}
+
+.error {
+  margin: 0;
+  color: var(--w360-danger, #b91c1c);
+}
+
+@media (forced-colors: active) {
+  .option {
+    border-color: ButtonText;
+  }
+}

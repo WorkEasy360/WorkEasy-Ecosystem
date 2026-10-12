@@ -21,10 +21,12 @@ parameter means here, and what each error means for the product.
   "token_endpoint":         ".../api/v1/integrations/oauth/token",
   "userinfo_endpoint":      ".../api/v1/integrations/oauth/userinfo",
   "jwks_uri":               ".../.well-known/jwks.json",
+  "end_session_endpoint":   ".../api/v1/integrations/oauth/logout",
   "scopes_supported": ["openid", "profile", "email"],
   "response_types_supported": ["code"],
   "grant_types_supported": ["authorization_code"],
   "code_challenge_methods_supported": ["S256"],
+  "prompt_values_supported": ["none", "login", "consent", "select_account"],
   "id_token_signing_alg_values_supported": ["RS256", "ES256"],
   "token_endpoint_auth_methods_supported": [
     "private_key_jwt", "client_secret_basic", "client_secret_post"
@@ -48,7 +50,6 @@ repositories.
 |---|---|
 | `registration_endpoint` | Dynamic client registration would let anyone create a client |
 | `refresh_token` in `grant_types_supported` | There are none ([05 §6](05-token-claims.md)) |
-| `end_session_endpoint` | RP-initiated logout is not implemented |
 | `request_uri` / `request` parameter support | Advertised as `false`; unused surface is unbuilt surface |
 
 ## 2. Key set
@@ -81,7 +82,8 @@ lever against the platform.
 | `nonce` | recommended | Echoed into the ID token. Compare it |
 | `code_challenge` | ✅ | BASE64URL(SHA256(verifier)), unpadded |
 | `code_challenge_method` | ✅ | `S256`. `plain` is refused, not defaulted |
-| `organization` | ✅ | The organization's UUID, from your launch URL |
+| `organization` | ✅ | The organization's UUID, from your launch URL. Without it the platform shows its own organization chooser |
+| `prompt` | optional | Space-separated, OIDC Core 3.1.2.1 (ADR-044). `login`: the person must authenticate again, and only a session that signed in after your request arrived can complete it; check the ID token's `auth_time` and `sub` yourself. `none`: never show UI - `login_required` or `interaction_required` instead. `select_account` / `consent`: show the access chooser. Unknown values, and `none` combined with another, are `invalid_request` |
 
 **Success:** `302` to your exact registered `redirect_uri` with `code` and
 `state`.
@@ -89,6 +91,36 @@ lever against the platform.
 **Failure:** either a rendered JSON error (client or redirect URI could not be
 verified) or a `302` to your `redirect_uri` with `error`, `error_description`
 and `state`.
+
+### 3.1 The person's sign-in preference (ADR-044)
+
+Every person chooses how products they open are signed in: automatically with
+their Workeasy360 account, asked each time (the default), or with the
+product's own sign-in. It is applied **here**, after every membership,
+organization, access-policy, entitlement and seat check has passed - so a
+refusal is never hidden behind a question, and no preference ever grants
+access.
+
+| Effective preference | What your request gets |
+|---|---|
+| Automatic | A code at once: the existing Workeasy360 session, no password |
+| Ask each time | The platform's access chooser first ("How would you like to access ...?"). Continue: a code. Your own sign-in (only if your manifest offers one): the browser goes to your registered `login_url` and your request is spent. Cancel: `access_denied` |
+| Product sign-in | The chooser too, if the browser reached you anyway: the person asked not to be signed in automatically |
+
+A product registered `local_only` gets `unauthorized_client`: its registration
+says it does not use Workeasy360 sign-in.
+
+### 3.2 RP-initiated logout
+
+`GET /api/v1/integrations/oauth/logout?client_id=...&post_logout_redirect_uri=...&state=...`
+(OpenID Connect RP-Initiated Logout 1.0). End your own session first, then
+send the browser here. A GET cannot sign anyone out (logout CSRF): the
+platform asks "Sign out of Workeasy360 too?", signs the person out on
+confirmation, and returns the browser to `post_logout_redirect_uri`, which must
+be registered for your client **exactly** (`post_logout_redirect_uris` in the
+manifest), with `state` appended. Anything unregistered is refused, never
+followed. Other products' sessions are not ended: there is no front- or
+back-channel logout.
 
 ## 4. Token
 
@@ -140,6 +172,9 @@ cannot render the right call to action from that.
 | `invalid_grant` | 400 | Response | The code is invalid, expired, already used, not yours, **or the user's membership, organization status or entitlement changed since it was issued**. Deliberately does not say which — start the flow again and the authorization endpoint will tell you |
 | `unsupported_grant_type` | 400 | Response | Only `authorization_code` is served |
 | `invalid_scope` | 400 | Redirected | You asked for a scope you are not registered for |
+| `access_denied` | 302 | Redirected | The person chose Cancel on the access chooser (ADR-044). Nothing failed: offer to try again |
+| `unauthorized_client` | 302 | Redirected | Your registration is `local_only`: Workeasy360 does not sign people in to your product |
+| `interaction_required` | 302 | Redirected | Only to `prompt=none`: the person's preference requires the chooser, or no organization was named. Start an interactive flow |
 | `login_required` | 302 | Redirected | No Workeasy360 session. Send the user to the platform to sign in |
 | `organization_required` | 302 | Redirected | No `organization` parameter. You lost the launch context |
 | `membership_inactive` | 302 | Redirected | This user has no active membership in that organization. **Also returned when the organization does not exist** — the two are indistinguishable by design |

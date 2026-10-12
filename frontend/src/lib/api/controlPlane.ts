@@ -53,11 +53,32 @@ export interface PartnerSummary {
   status_reason: string;
 }
 
+/** One person who acts for a partner. `invitation_sent_at` null with no password
+ * means "named, not yet invited"; `mfa_enabled` is a yes/no, never which factor. */
+export interface PartnerMemberRow {
+  id: string;
+  user_id: string;
+  email: string;
+  role: string;
+  added_at: string;
+  password_set: boolean;
+  full_name: string;
+  last_login_at: string | null;
+  invitation_sent_at: string | null;
+  /** True for someone whose setup link will be sent when the partner is first
+   * activated. Null `invitation_sent_at` with this false and no password is a
+   * person attached before invitations were tracked: show "Invitation pending". */
+  invitation_deferred: boolean;
+  mfa_enabled: boolean;
+}
+
 export interface PartnerDetail extends PartnerSummary {
   capabilities: { capability: string; granted_at: string; expires_at: string | null; is_effective: boolean }[];
-  members: { id: string; user_id: string; email: string; role: string; added_at: string; password_set: boolean }[];
-  product_grants: { id: string; product_code: string; plan_code: string | null }[];
+  members: PartnerMemberRow[];
+  product_grants: { id: string; product_code: string; plan_code: string | null; trial_allowed: boolean; portal_visible: boolean }[];
   live_customers: number;
+  /** Derived by the server from the grants in force ("Reseller", ...). */
+  experience: { key: string; label: string }[];
 }
 
 export interface CustomerRow {
@@ -243,6 +264,54 @@ export interface ConsoleIntegration {
   suspension_reason: string;
   sso: "connected" | "integration_required";
   health: { status: "unknown" | "healthy" | "degraded" | "unreachable"; checked_at: string | null; detail: string };
+  // --- ADR-044: the Authentication section. Never a secret. ---------------
+  manifest_version: string;
+  sign_in_mode: "sso_only" | "sso_optional" | "local_only";
+  login_url: string;
+  post_logout_redirect_uris: string[];
+  scopes: string[];
+  token_endpoint_auth_method: string;
+  sso_state: "enabled" | "integration_required" | "disabled";
+}
+
+/** The console fields an integration may be registered with or changed to. */
+export type IntegrationChanges = Partial<
+  Pick<
+    ConsoleIntegration,
+    | "display_name"
+    | "launch_url"
+    | "health_url"
+    | "redirect_uris"
+    | "contact_email"
+    | "sign_in_mode"
+    | "login_url"
+    | "post_logout_redirect_uris"
+    | "scopes"
+  >
+>;
+
+/** A product credential by its public reference (ADR-044) - a secret is
+ * never stored, so it can never be listed. */
+export interface ConsoleCredential {
+  credential_id: string;
+  kind: "public_key" | "client_secret";
+  status: "active" | "revoked";
+  algorithm: string;
+  label: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_used_on: string | null;
+  created_at: string | null;
+}
+
+/** A credential just added. `client_secret` is present once, in this
+ * response only, for a generated secret. */
+export interface IssuedConsoleCredential {
+  credential_id: string;
+  kind: "public_key" | "client_secret";
+  expires_at: string;
+  client_secret?: string;
+  notice?: string;
 }
 
 export interface ConsoleProduct {
@@ -279,6 +348,8 @@ export interface ProductsConsole {
 export interface CapabilityInfo {
   key: string;
   label: string;
+  /** The plain short name a setup form lists (`Sell products`); `label` is the full sentence. */
+  short_label: string;
   /** Phase 10: the heading a form lists it under (`customer_management`, ...). */
   group: string;
 }
@@ -350,10 +421,19 @@ export const adminApi = {
   productsConsole: () => apiFetch<ProductsConsole>(`${admin}/products/console`),
   setTrialConfig: (productId: string, config: TrialConfig) =>
     apiFetch<TrialConfig>(`${admin}/catalog/products/${productId}/trial`, { method: "PUT", body: json(config) }),
-  updateIntegration: (
-    productCode: string,
-    changes: Partial<Pick<ConsoleIntegration, "display_name" | "launch_url" | "health_url" | "redirect_uris" | "contact_email">>,
-  ) => apiFetch<ConsoleIntegration>(`${admin}/products/${productCode}/integration`, { method: "PATCH", body: json(changes) }),
+  updateIntegration: (productCode: string, changes: IntegrationChanges) =>
+    apiFetch<ConsoleIntegration>(`${admin}/products/${productCode}/integration`, { method: "PATCH", body: json(changes) }),
+  registerIntegration: (productCode: string, spec: IntegrationChanges) =>
+    apiFetch<ConsoleIntegration>(`${admin}/products/${productCode}/integration`, { method: "POST", body: json(spec) }),
+  integrationCredentials: (productCode: string) =>
+    apiFetch<{ credentials: ConsoleCredential[] }>(`${admin}/products/${productCode}/integration/credentials`),
+  addIntegrationCredential: (productCode: string, body: { kind: "public_key" | "client_secret"; public_key_pem?: string; label?: string }) =>
+    apiFetch<IssuedConsoleCredential>(`${admin}/products/${productCode}/integration/credentials`, { method: "POST", body: json(body) }),
+  revokeIntegrationCredential: (productCode: string, credentialId: string, reason: string) =>
+    apiFetch<{ credential_id: string; status: string }>(
+      `${admin}/products/${productCode}/integration/credentials/${encodeURIComponent(credentialId)}?reason=${encodeURIComponent(reason)}`,
+      { method: "DELETE" },
+    ),
   setIntegrationStatus: (productCode: string, status: string, reason: string) =>
     apiFetch<ConsoleIntegration>(`${admin}/products/${productCode}/integration/status`, {
       method: "POST",
@@ -395,10 +475,10 @@ export const adminApi = {
   domains: (id: string) => apiFetch<{ results: DomainRow[] }>(`${admin}/partners/${id}/domains`),
   disableDomain: (domainId: string) =>
     apiFetch<DomainRow>(`${admin}/domains/${domainId}/disable`, { method: "POST", body: json({}) }),
-  grantProduct: (id: string, productCode: string, planCode?: string) =>
+  grantProduct: (id: string, productCode: string, planCode?: string, options: { trial_allowed?: boolean; portal_visible?: boolean } = {}) =>
     apiFetch(`${admin}/partners/${id}/product-grants`, {
       method: "POST",
-      body: json({ product_code: productCode, plan_code: planCode || undefined }),
+      body: json({ product_code: productCode, plan_code: planCode || undefined, ...options }),
     }),
 
   rules: () => apiFetch<{ results: RuleRow[] }>(`${admin}/commission/rules`),
@@ -505,7 +585,35 @@ export interface Brand {
   theme: Record<string, string>;
   support_email: string;
   support_url: string;
+  portal: BrandPortalFields;
   version: number;
+}
+
+/** The customer-portal words and sender identity a brand stores (plain text). */
+export interface BrandPortalFields {
+  short_name: string;
+  support_name: string;
+  support_phone: string;
+  website_url: string;
+  welcome_message: string;
+  footer_text: string;
+  sender_name: string;
+  reply_to_email: string;
+  login_show_welcome: boolean;
+  login_show_support: boolean;
+  use_for_invitations: boolean;
+}
+
+/** The part of the portal a customer's browser receives. */
+export interface PublicPortalFields {
+  short_name: string;
+  support_name: string;
+  support_phone: string;
+  website_url: string;
+  welcome_message: string;
+  footer_text: string;
+  login_show_welcome: boolean;
+  login_show_support: boolean;
 }
 
 export interface DomainRow {
@@ -555,7 +663,12 @@ export const partnerApi = {
   createReferralCode: (id: string, label: string) =>
     apiFetch(`${partner(id)}/referrals`, { method: "POST", body: json({ label }) }),
   brand: (id: string) => apiFetch<{ brand: Brand | null }>(`${partner(id)}/branding`),
-  saveBrand: (id: string, body: Partial<Omit<Brand, "logo_file_id">> & { brand_name: string; logo_file_id?: string }, expectedVersion?: number) =>
+  saveBrand: (
+    id: string,
+    // ``portal`` is merged by the server, so a save may carry only the keys it changes.
+    body: Partial<Omit<Brand, "logo_file_id" | "portal">> & { brand_name: string; logo_file_id?: string; portal?: Partial<BrandPortalFields> },
+    expectedVersion?: number,
+  ) =>
     apiFetch<Brand>(`${partner(id)}/branding`, {
       method: "PUT",
       body: json({ ...body, expected_version: expectedVersion }),
@@ -587,11 +700,12 @@ export interface OwnBrand {
   support_email: string;
   support_url: string;
   logo_url: string | null;
+  portal: PublicPortalFields;
 }
 
 export const brandingApi = {
   forHost: (host: string) =>
-    apiFetch<{ brand: (Omit<Brand, "logo_file_id" | "version"> & { logo_url: string | null }) | null }>(
+    apiFetch<{ brand: (Omit<Brand, "logo_file_id" | "version" | "portal"> & { logo_url: string | null; portal: PublicPortalFields }) | null }>(
       "/api/v1/public/branding",
       { query: { host } },
     ),

@@ -21,7 +21,7 @@ from uuid import UUID
 from django.db.models import Q
 from django.utils import timezone
 
-from workeasy360.commercial.partners import capabilities
+from workeasy360.commercial.partners import capabilities, portal
 from workeasy360.contracts.enums import (
     DomainStatus,
     GrantStatus,
@@ -124,6 +124,7 @@ def partner_detail(partner_id: UUID) -> dict[str, Any] | None:
         PartnerOrganizationLink,
         PartnerProductGrant,
     )
+    from workeasy360.platform.identity.selectors import users_with_second_factor
 
     row = partner_row(partner_id)
     if row is None:
@@ -140,6 +141,11 @@ def partner_detail(partner_id: UUID) -> dict[str, Any] | None:
             partner_id=partner_id, status=GrantStatus.ACTIVE.value
         ).order_by("capability")
     ]
+    member_rows = list(
+        PartnerMember.objects.filter(partner_id=partner_id, status="active")
+        .select_related("user")
+        .order_by("added_at")
+    )
     members = [
         {
             "id": str(m.id),
@@ -150,16 +156,27 @@ def partner_detail(partner_id: UUID) -> dict[str, Any] | None:
             # A person named before they ever signed in has no password until
             # they follow the emailed link: "invitation pending", not an error.
             "password_set": m.user.has_usable_password(),
+            "full_name": m.user.full_name,
+            "last_login_at": m.user.last_login_at.isoformat()
+            if m.user.last_login_at
+            else None,
+            "invitation_sent_at": m.invitation_sent_at.isoformat()
+            if m.invitation_sent_at
+            else None,
+            "invitation_deferred": m.invitation_deferred,
         }
-        for m in PartnerMember.objects.filter(partner_id=partner_id, status="active")
-        .select_related("user")
-        .order_by("added_at")
+        for m in member_rows
     ]
+    with_mfa = users_with_second_factor(m.user_id for m in member_rows)
+    for entry in members:
+        entry["mfa_enabled"] = UUID(entry["user_id"]) in with_mfa
     products = [
         {
             "id": str(g.id),
             "product_code": g.product.code,
             "plan_code": g.plan.code if g.plan_id else None,
+            "trial_allowed": g.trial_allowed,
+            "portal_visible": g.portal_visible,
         }
         for g in PartnerProductGrant.objects.filter(
             partner_id=partner_id, status=GrantStatus.ACTIVE.value
@@ -444,6 +461,8 @@ def granted_products(partner_id: UUID) -> list[dict[str, Any]]:
             "product_code": g.product.code,
             "product_name": g.product.name,
             "plan_code": g.plan.code if g.plan_id else None,
+            "trial_allowed": g.trial_allowed,
+            "portal_visible": g.portal_visible,
         }
         for g in PartnerProductGrant.objects.filter(
             partner_id=partner_id, status=GrantStatus.ACTIVE.value
@@ -451,6 +470,56 @@ def granted_products(partner_id: UUID) -> list[dict[str, Any]]:
         .select_related("product", "plan")
         .order_by("product__code", "plan__code")
     ]
+
+
+def product_choices_for_organization(organization_id: UUID) -> dict[str, dict[str, bool]]:
+    """What the partner this customer belongs to chose for each product it may
+    sell: ``{product_code: {"trial_allowed": bool, "portal_visible": bool}}``.
+
+    Empty when the organization has no live partner relationship, so a direct
+    customer is never touched. A product the partner holds several plan-level
+    grants for is allowed (or visible) when *any* of them is. Two queries.
+    """
+    from workeasy360.commercial.partners.models import PartnerProductGrant
+
+    link = live_link_for_organization(organization_id)
+    if link is None:
+        return {}
+    choices: dict[str, dict[str, bool]] = {}
+    for grant in PartnerProductGrant.objects.filter(
+        partner_id=link.partner_id, status=GrantStatus.ACTIVE.value
+    ).select_related("product"):
+        entry = choices.setdefault(
+            grant.product.code, {"trial_allowed": False, "portal_visible": False}
+        )
+        entry["trial_allowed"] = entry["trial_allowed"] or grant.trial_allowed
+        entry["portal_visible"] = entry["portal_visible"] or grant.portal_visible
+    return choices
+
+
+def trial_blocked_for_organization(organization_id: UUID, product_code: str) -> bool:
+    """Whether the partner this customer belongs to turned the product's trial
+    off for its customers. Only ever ``True`` for a product the partner sells
+    *and* chose not to trial: a direct customer, or a product the partner holds
+    no grant for, is never blocked here."""
+    entry = product_choices_for_organization(organization_id).get(str(product_code))
+    return entry is not None and not entry["trial_allowed"]
+
+
+def hidden_product_codes_for_organization(organization_id: UUID) -> frozenset[str]:
+    """Products the customer's white-label partner does not show on its portal.
+
+    Only a partner that is actually white-label (it holds the pair and has a
+    brand - the same test as :func:`brand_for_organization`) hides anything, and
+    what it hides is *discovery*: the Explore page. A product the customer
+    already holds still launches, and no entitlement is read or changed here."""
+    if brand_for_organization(organization_id) is None:
+        return frozenset()
+    return frozenset(
+        code
+        for code, entry in product_choices_for_organization(organization_id).items()
+        if not entry["portal_visible"]
+    )
 
 
 # --- branding and domains -------------------------------------------------
@@ -470,6 +539,7 @@ def brand_dict(row: Any) -> dict[str, Any]:
         "theme": row.theme,
         "support_email": row.support_email,
         "support_url": row.support_url,
+        "portal": portal.view(row.portal),
         "version": row.version,
         "updated_at": row.updated_at.isoformat(),
     }
@@ -541,6 +611,7 @@ def active_brand_for_host(hostname: str) -> dict[str, Any] | None:
         "theme": brand.theme,
         "support_email": brand.support_email,
         "support_url": brand.support_url,
+        "portal": portal.public_view(brand.portal),
     }
 
 
@@ -577,6 +648,36 @@ def brand_for_organization(organization_id: UUID) -> dict[str, Any] | None:
         "theme": brand.theme,
         "support_email": brand.support_email,
         "support_url": brand.support_url,
+        "portal": portal.public_view(brand.portal),
+    }
+
+
+def invitation_identity(partner: Any) -> dict[str, Any]:
+    """Who an email sent *in this partner's name* says it is from.
+
+    The partner's own name, unless it is white-label (it holds the pair and has
+    a brand) **and** chose "use my brand for invitations" - then its brand name,
+    its sender display name and its reply-to address. Always text: the address
+    the mail is sent from stays the deployment's, and nothing here is read by an
+    access decision.
+    """
+    plain = {"partner_name": partner.display_name, "envelope": {}}
+    brand = brand_for(partner.id)
+    if brand is None:
+        return plain
+    if not {capabilities.BRANDING_MANAGE, capabilities.DOMAIN_MANAGE} <= (
+        active_capabilities(partner.id)
+    ):
+        return plain
+    settings = portal.view(brand.portal)
+    if not settings["use_for_invitations"]:
+        return plain
+    return {
+        "partner_name": brand.brand_name,
+        "envelope": {
+            "sender_name": settings["sender_name"] or brand.brand_name,
+            "reply_to": settings["reply_to_email"] or brand.support_email,
+        },
     }
 
 

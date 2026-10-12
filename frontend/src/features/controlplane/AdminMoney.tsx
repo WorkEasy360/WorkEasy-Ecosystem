@@ -14,6 +14,7 @@ import {
   type TrialConfig,
 } from "@/lib/api/controlPlane";
 import { can, useAdmin } from "./ControlShell";
+import { AuthenticationEditor, AuthenticationFacts, CredentialsPanel, RegisterIntegration } from "./IntegrationAuthentication";
 import { LoadGate, MoreButton, ReasonAction, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
 import styles from "./ControlPlane.module.css";
 
@@ -143,7 +144,7 @@ function TrialConfigEditor({
 }) {
   const current = product.channels.trial;
   const [enabled, setEnabled] = useState(current?.enabled ?? false);
-  const [days, setDays] = useState(String(current?.duration_days ?? 14));
+  const [days, setDays] = useState(String(current?.duration_days ?? 7));
   const [seatLimit, setSeatLimit] = useState(current?.seat_limit != null ? String(current.seat_limit) : "");
   const [plans, setPlans] = useState<string[]>(current?.eligible_plan_codes ?? []);
   const standardPlans = product.plans.filter((p) => p.kind === "standard");
@@ -290,6 +291,7 @@ function IntegrationEditor({
 
 function IntegrationPanel({
   code,
+  name,
   integration,
   busy,
   manage,
@@ -297,6 +299,7 @@ function IntegrationPanel({
   reload,
 }: {
   code: string;
+  name: string;
   integration: ConsoleIntegration | null;
   busy: boolean;
   manage: boolean;
@@ -304,10 +307,16 @@ function IntegrationPanel({
   reload: () => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [editingAuth, setEditingAuth] = useState(false);
   const [health, setHealth] = useState<string | null>(null);
 
   if (!integration) {
-    return <p className={styles.muted}>No integration registered for this product.</p>;
+    return (
+      <div className={styles.stack}>
+        <p className={styles.muted}>No integration registered for this product.</p>
+        {manage && <RegisterIntegration code={code} name={name} busy={busy} act={act} />}
+      </div>
+    );
   }
   return (
     <div className={styles.stack}>
@@ -388,6 +397,29 @@ function IntegrationPanel({
           }}
         />
       )}
+      <h3 className={styles.cardTitle}>Authentication</h3>
+      <AuthenticationFacts integration={integration} />
+      {manage && (
+        <div className={styles.row}>
+          <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setEditingAuth((v) => !v)}>
+            {editingAuth ? "Cancel" : "Edit authentication"}
+          </button>
+          {integration.status === "draft" && (
+            <button
+              type="button"
+              className="w360-btn w360-btn-secondary"
+              disabled={busy}
+              onClick={() => act(() => adminApi.setIntegrationStatus(code, "active", ""), "Integration activated.")}
+            >
+              Activate
+            </button>
+          )}
+        </div>
+      )}
+      {editingAuth && (
+        <AuthenticationEditor code={code} integration={integration} busy={busy} act={act} onDone={() => setEditingAuth(false)} />
+      )}
+      <CredentialsPanel code={code} manage={manage} busy={busy} act={act} />
     </div>
   );
 }
@@ -452,14 +484,24 @@ function ProductConsoleCard({
           <dt>Trial</dt>
           <dd>
             {trial?.enabled
-              ? `${trial.duration_days}-day, ${trial.eligible_plan_codes.length} plan(s)`
-              : "Not configured"}
+              ? `${trial.duration_days} days, on · ${trial.eligible_plan_codes.length} eligible plan(s)`
+              : trial
+                ? `${trial.duration_days} days, off${trial.eligible_plan_codes.length === 0 ? " · switch on once a plan is marked eligible" : ""}`
+                : "Not configured"}
           </dd>
         </div>
       </dl>
 
       {canSeeIntegrations && (
-        <IntegrationPanel code={p.code} integration={p.integration} busy={busy} manage={manageIntegration} act={act} reload={reload} />
+        <IntegrationPanel
+          code={p.code}
+          name={p.name}
+          integration={p.integration}
+          busy={busy}
+          manage={manageIntegration}
+          act={act}
+          reload={reload}
+        />
       )}
 
       {manageCatalog && (

@@ -168,6 +168,9 @@ _IS_STAFF_READERS = {
     # already-staff actor (looked up by email, never created) - the same
     # pattern as the two commands above, not a new authority.
     "workeasy360/commercial/controlplane/management/commands/register_products.py",
+    # 2026-10-12: connects a registered product's SSO as the same kind of
+    # named, already-staff actor.
+    "workeasy360/commercial/controlplane/management/commands/connect_product_sso.py",
     # The field itself, and Django's own manager defaults.
     "workeasy360/platform/identity/models.py",
     # Phase 9: the one writer of the designation (``set_staff``), which the
@@ -304,7 +307,18 @@ def test_the_frontend_contains_no_product_screens():
         # Phase 10e: the public page a customer's owner opens from the emailed
         # link to activate the account a partner set up (debt D-020).
         "owner-invitations",
+        # ADR-043: /auth/continue, where each portal host redeems the central
+        # sign-in's one-time hand-off for its own session. Not a product screen.
+        "auth",
+        # ADR-044: the access chooser (/product-access) and the RP-initiated
+        # sign-out confirmation (/sign-out) - generic pages that name whichever
+        # registered product asked, from the registry - and /settings/sign-in,
+        # the person's own sign-in preferences outside any organization.
+        "product-access",
+        "sign-out",
+        "settings",
     }, top
+    assert {p.name for p in (app / "auth").iterdir()} == {"continue"}
     site = {p.name for p in (app / "(site)").iterdir() if p.is_dir()}
     assert site <= {"products", "pricing", "services", "contact"}, site
     # Phase 11: /products (the store index - four cards, server data only)

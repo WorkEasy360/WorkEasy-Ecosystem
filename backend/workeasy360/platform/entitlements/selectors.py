@@ -177,7 +177,10 @@ def feature_for_organization(organization_id: UUID, key: str) -> Any:
         EntitlementSnapshot,
         FeatureEntitlement,
     )
-    from workeasy360.platform.entitlements.services.read import _more_generous_feature
+    from workeasy360.platform.entitlements.services.read import (
+        _has_ended,
+        _more_generous_feature,
+    )
     from workeasy360.platform.tenancy.db import assert_tenant_scope, organization_db_scope
     from workeasy360.platform.tenancy.unscoped import unscoped_access
 
@@ -192,10 +195,14 @@ def feature_for_organization(organization_id: UUID, key: str) -> Any:
         assert_tenant_scope(organization_id, what="feature_for_organization")
         row = (
             EntitlementSnapshot.unscoped.filter(organization_id=organization_id)
-            .values("features")
+            .values("features", "products")
             .first()
         )
         if row is not None:
+            # Ended with its product, by server time (ADR-043; read.feature).
+            owner = (row["products"] or {}).get(str(key).split(".", 1)[0])
+            if owner is not None and _has_ended(owner):
+                return None
             return (row["features"] or {}).get(str(key))
 
         now = timezone.now()
@@ -220,6 +227,8 @@ def _live_products(model: Any, organization_id: UUID, merge: Any) -> dict[str, A
     """
     from django.utils import timezone
 
+    from workeasy360.platform.entitlements.services.read import snapshot_end
+
     now = timezone.now()
     out: dict[str, Any] = {}
     for row in model.unscoped.filter(organization_id=organization_id):
@@ -230,6 +239,7 @@ def _live_products(model: Any, organization_id: UUID, merge: Any) -> dict[str, A
             "seats": row.seats_total,
             "write": row.status_enum.allows_write,
             "grace_ends_at": row.grace_ends_at.isoformat() if row.grace_ends_at else None,
+            "ends_at": snapshot_end(row.effective_to),
         }
         out[row.product_code] = merge(out.get(row.product_code), candidate)
     return out

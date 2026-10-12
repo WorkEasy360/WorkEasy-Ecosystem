@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { partnerConsoleApi, type WhiteLabelRow } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
 import { ExperienceLabels } from "./PartnerConsole";
-import { MoreButton, Status, Table, useLoad, usePaged, when } from "./ui";
+import { MoreButton, Status, Table, usePaged, when } from "./ui";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
 
@@ -14,7 +14,9 @@ import local from "./PartnerConsole.module.css";
  * Partners → White-label (Phase 10d): a filtered view of partner accounts,
  * not a kind of account. A partner is listed while it holds branding or domain
  * capability; the brand and the domain shown are what those capabilities were
- * used to set up.
+ * used to set up. Setting one up - or enabling white-label for a partner that
+ * does not hold it yet - is the ten-step wizard at ``white-label/new`` (or
+ * ``white-label/<partner>`` with the partner already chosen).
  */
 
 const DOMAIN_FILTERS: { value: string; label: string }[] = [
@@ -51,12 +53,6 @@ export function WhiteLabelList() {
       }),
     [query, status, domainStatus, brand],
   );
-  // Partners that could be given white-label: any active partner, chosen here to open its setup.
-  const [candidates] = useLoad(
-    () => (manage ? partnerConsoleApi.resellers({ scope: "all", status: "active" }) : Promise.resolve(null)),
-    [manage],
-  );
-  const [pick, setPick] = useState("");
 
   return (
     <div className={styles.stack}>
@@ -138,33 +134,18 @@ export function WhiteLabelList() {
         </>
       )}
 
-      {manage && candidates.status === "ready" && candidates.data && (
+      {manage && (
         <section className={`w360-card ${styles.card}`} aria-labelledby="wl-enable">
           <h2 id="wl-enable" className={styles.cardTitle}>
             Set up white-label for a partner
           </h2>
-          <div className={local.filters}>
-            <div>
-              <label className="w360-label" htmlFor={`${searchId}-pick`}>
-                Partner
-              </label>
-              <select id={`${searchId}-pick`} className="w360-input" value={pick} onChange={(e) => setPick(e.target.value)}>
-                <option value="">Choose…</option>
-                {candidates.data.results.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.display_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {pick ? (
-              <Link className="w360-btn w360-btn-primary" href={`/admin/partners/white-label/${pick}`}>
-                Set up white-label
-              </Link>
-            ) : (
-              <span className={styles.muted}>Choose a partner to continue.</span>
-            )}
-          </div>
+          <p className={styles.muted}>
+            A ten-step setup for a partner that already exists - a reseller, an affiliate or any other. You choose the partner on the first
+            step; nothing is created, and nothing is served to its customers until you enable white-label on the last.
+          </p>
+          <Link className="w360-btn w360-btn-primary" href="/admin/partners/white-label/new">
+            Set up white-label
+          </Link>
         </section>
       )}
     </div>

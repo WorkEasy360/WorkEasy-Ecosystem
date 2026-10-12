@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { PortalsProvider } from "@/lib/portalContext";
+import { readPortalOrigins } from "@/lib/portals";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -45,7 +47,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <a href="#w360-main" className="w360-skip-link">
           Skip to main content
         </a>
-        {children}
+        {/* Runtime configuration, read per request (ADR-043): links to the
+            other portals and the sign-in hand-off. Never a permission. */}
+        <PortalsProvider origins={readPortalOrigins(process.env)}>{children}</PortalsProvider>
       </body>
     </html>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { brandingApi, type OwnBrand } from "@/lib/api/controlPlane";
+import { brandingApi, type OwnBrand, type PublicPortalFields } from "@/lib/api/controlPlane";
 
 /** Only a strict six-digit hex colour ever reaches the DOM. */
 const HEX = /^#[0-9a-fA-F]{6}$/;
@@ -123,6 +123,30 @@ export interface HostBrand {
   support_email: string;
   support_url: string;
   logo_url: string | null;
+  /** The words and support details a customer reads (plain text; see ``brandDisplay``). */
+  portal: PublicPortalFields;
+}
+
+const text = (value: unknown): string => (typeof value === "string" ? value : "");
+
+/**
+ * The portal fields as the page may rely on them: every key present, every text a
+ * string, both sign-in choices a boolean (shown unless the server said otherwise).
+ * A response from before the portal existed - or any malformed one - reads as "no
+ * words set", never as a crash, and never as markup: these are drawn as text only.
+ */
+export function normalizePortal(raw: Partial<PublicPortalFields> | null | undefined): PublicPortalFields {
+  const p = raw ?? {};
+  return {
+    short_name: text(p.short_name),
+    support_name: text(p.support_name),
+    support_phone: text(p.support_phone),
+    website_url: text(p.website_url),
+    welcome_message: text(p.welcome_message),
+    footer_text: text(p.footer_text),
+    login_show_welcome: typeof p.login_show_welcome === "boolean" ? p.login_show_welcome : true,
+    login_show_support: typeof p.login_show_support === "boolean" ? p.login_show_support : true,
+  };
 }
 
 /**
@@ -146,7 +170,7 @@ export function useBranding(forHost?: string): HostBrand | null {
       .forHost(forHost ?? window.location.host)
       .then(({ brand: b }) => {
         if (cancelled || !b) return;
-        setBrand(b);
+        setBrand({ ...b, portal: normalizePortal(b.portal) });
         applyAccent(document.documentElement, b.accent_color);
       })
       .catch(() => undefined);
@@ -178,7 +202,7 @@ export function useOrganizationBranding(slug: string): OwnBrand | null {
       .own(slug)
       .then(({ brand: b }) => {
         if (cancelled) return;
-        setBrand(b);
+        setBrand(b ? { ...b, portal: normalizePortal(b.portal) } : null);
         applyAccent(document.documentElement, b?.accent_color);
       })
       .catch(() => undefined);

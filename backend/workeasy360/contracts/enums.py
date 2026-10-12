@@ -608,6 +608,26 @@ class PartnerMemberRole(_StrEnum):
     VIEWER = "viewer"
 
 
+class PartnerContactKind(_StrEnum):
+    """Which business role a partner contact fills. A contact is a *record of a
+    person to reach*, never a login: nobody signs in as a contact."""
+
+    PRIMARY = "primary"
+    BILLING = "billing"
+    TECHNICAL = "technical"
+    SUPPORT = "support"
+
+
+class PayoutFrequency(_StrEnum):
+    """How often staff intend to prepare this partner's payouts. A preference
+    staff read when they prepare one - nothing runs on it and nothing is paid
+    automatically (the platform moves no money)."""
+
+    MONTHLY = "monthly"
+    QUARTERLY = "quarterly"
+    MANUAL = "manual"
+
+
 class GrantStatus(_StrEnum):
     ACTIVE = "active"
     REVOKED = "revoked"
@@ -651,3 +671,46 @@ class PayoutStatus(_StrEnum):
     APPROVED = "approved"
     PAID = "paid"
     CANCELLED = "cancelled"
+
+
+class ProductSignInMode(_StrEnum):
+    """How a product lets people in: the product's own declaration, recorded in
+    its integration manifest (``sign_in_mode``, manifest ``2026-10-12``).
+
+    Never a person's choice. A person's preference (:class:`SignInPreference`)
+    chooses between the doors a product offers; it cannot open one the product
+    does not have (docs/universal-sso/design.md section 2).
+    """
+
+    #: Workeasy360 sign-in is the only way in. The default for a manifest that
+    #: predates the field: a registration has redirect URIs by construction.
+    SSO_ONLY = "sso_only"
+    #: Workeasy360 sign-in, and the product's own sign-in page (``login_url``).
+    SSO_OPTIONAL = "sso_optional"
+    #: The product does not sign people in with Workeasy360 at all.
+    LOCAL_ONLY = "local_only"
+
+    @property
+    def offers_sso(self) -> bool:
+        return self is not ProductSignInMode.LOCAL_ONLY
+
+    @property
+    def offers_product_login(self) -> bool:
+        return self is not ProductSignInMode.SSO_ONLY
+
+
+class SignInPreference(_StrEnum):
+    """How a person wants to enter Workeasy360 products: once as their default
+    for every product (including products added later), optionally overridden
+    per product. Stored values only; the words a person reads are frontend copy.
+    """
+
+    #: Per product only: follow the person's default. Never stored - choosing
+    #: it removes the override.
+    INHERIT = "inherit"
+    #: Sign in with the existing Workeasy360 session, without asking.
+    AUTO_SSO = "auto_sso"
+    #: Ask each time: Workeasy360 or the product's own sign-in.
+    ASK = "ask"
+    #: Prefer the product's own sign-in page where the product has one.
+    PRODUCT_LOGIN = "product_login"

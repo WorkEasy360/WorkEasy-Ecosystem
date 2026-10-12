@@ -100,3 +100,15 @@
   font-size: 13px;
   margin: 0;
 }
+
+/* ADR-044: what opening the product will do, and where to change it. */
+.signIn {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: 13px;
+}
+
+.preferenceLink {
+  align-self: center;
+  font-size: 13px;
+}

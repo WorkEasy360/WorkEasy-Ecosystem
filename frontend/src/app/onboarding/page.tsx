@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth/useSession";
 import { StatusScreen } from "@/components/StatusScreen";
 import { CreateOrganizationForm } from "@/features/onboarding/CreateOrganizationForm";
+import { usePortalRouter } from "@/lib/portalRouter";
 
 /**
  * First-run flow (Task 2/14): a signed-in user with zero organizations lands
@@ -14,7 +14,7 @@ import { CreateOrganizationForm } from "@/features/onboarding/CreateOrganization
  * one field, submit - not a multi-page wizard (Task 14: "keep it simple").
  */
 export default function OnboardingPage() {
-  const router = useRouter();
+  const router = usePortalRouter();
   const session = useSession();
 
   useEffect(() => {

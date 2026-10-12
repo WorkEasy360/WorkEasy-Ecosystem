@@ -59,8 +59,49 @@ function ProductGrid({ slug, rows, manageHref }: { slug: string; rows: AppDirect
   );
 }
 
-/** My products: only what the organization holds, each with Open (when the
- * member may) and - for those who manage it - the subscription. */
+/**
+ * The rest of the catalog, under My products (multi-portal brief, Part 4):
+ * each product the organization does not hold, as **Expired** (its trial ran
+ * out - Upgrade / Buy) or **Available** (start a trial, or buy). The action is
+ * taken on Explore, where the trial and the purchase already live - nothing
+ * is decided here, and the states are the server's (`GET .../explore`).
+ */
+function OtherProducts({ slug, held }: { slug: string; held: Set<string> }) {
+  const [load] = useLoad(() => consoleApi.explore(slug), [slug]);
+  // A supplementary list: while loading, or if it cannot load, the page shows
+  // what the organization holds and nothing more - Explore is one link away.
+  if (load.status !== "ready") return null;
+  const rest = load.data.products.filter((p) => !held.has(p.code) && p.trial_state !== "owned" && p.trial_state !== "active");
+  if (rest.length === 0) return null;
+  return (
+    <section aria-labelledby="w360-other-products" className={local.section}>
+      <h2 id="w360-other-products" className={local.sectionTitle}>
+        Other products
+      </h2>
+      <ul className={local.otherProducts}>
+        {rest.map((p) => {
+          const expired = p.trial_state === "used" && p.trial_outcome === "expired";
+          const days = p.trial.available && p.trial_state === "available" ? p.trial.duration_days : null;
+          return (
+            <li key={p.code} className={`w360-card ${local.otherProduct}`}>
+              <span className={local.otherName}>{p.name}</span>
+              <span className={`w360-badge ${expired ? "w360-badge-warning" : "w360-badge-neutral"}`}>
+                {expired ? "Trial expired" : "Available"}
+              </span>
+              <Link href={`/o/${slug}/explore`} className="w360-btn w360-btn-secondary" aria-label={`${expired ? "Upgrade or buy" : days ? `Start ${days}-day free trial` : "Explore"}: ${p.name}`}>
+                {expired ? "Upgrade / Buy now" : days ? `Start ${days}-Day Free Trial` : "Explore"}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** My products: what the organization holds, each with Open (when the
+ * member may) and - for those who manage it - the subscription; then the
+ * rest of the catalog, expired or available. */
 export function MyProductsScreen({ banner }: { banner?: React.ReactNode }) {
   const { slug, can } = useOrgAccess();
   const [load] = useProducts(slug);
@@ -78,18 +119,21 @@ export function MyProductsScreen({ banner }: { banner?: React.ReactNode }) {
         }
       />
       <LoadGate load={load} what="your products">
-        {({ held }) =>
-          held.length === 0 ? (
-            <div className={local.notice}>
-              <p>Your organization doesn&apos;t have any products yet.</p>
-              <p>
-                <Link href={`/o/${slug}/explore`}>Explore products</Link> to buy one or start a free trial.
-              </p>
-            </div>
-          ) : (
-            <ProductGrid slug={slug} rows={held} manageHref={manage} />
-          )
-        }
+        {({ held }) => (
+          <>
+            {held.length === 0 ? (
+              <div className={local.notice}>
+                <p>Your organization doesn&apos;t have any products yet.</p>
+                <p>
+                  <Link href={`/o/${slug}/explore`}>Explore products</Link> to buy one or start a free trial.
+                </p>
+              </div>
+            ) : (
+              <ProductGrid slug={slug} rows={held} manageHref={manage} />
+            )}
+            <OtherProducts slug={slug} held={new Set(held.map((a) => a.product_code))} />
+          </>
+        )}
       </LoadGate>
     </div>
   );

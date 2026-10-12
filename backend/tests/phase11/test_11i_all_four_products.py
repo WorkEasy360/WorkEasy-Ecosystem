@@ -209,7 +209,12 @@ def test_catalog_trial_buy_entitlement_and_launch(code, four_products, shop_for,
     assert launched.status_code == 200, (code, launched.content)
     target = launched.json()["redirect_url"]
     assert target.startswith(f"https://{code}.example.com/")
-    assert "organization=" in target
+    # ADR-044: with no credential, Workeasy360 sign-in cannot complete for
+    # this product, so the launch is the product's own sign-in ("separate
+    # product sign-in required") - with no organization hint that would make
+    # the product start a Workeasy360 sign-in by itself.
+    assert launched.json()["sign_in"] == "product"
+    assert "organization=" not in target
 
     # unauthorized launch: a member with no seat is refused, in words the
     # UI can show, never a raw exception.

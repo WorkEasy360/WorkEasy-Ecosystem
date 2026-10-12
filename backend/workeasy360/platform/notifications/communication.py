@@ -23,6 +23,8 @@ import dataclasses
 import string
 from typing import Any, Final
 
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 
 from workeasy360.contracts.errors import CommunicationValidationError
@@ -76,11 +78,55 @@ def render_for_delivery(key: str, context: dict[str, Any]) -> RenderedMessage:
     if rendered is None:
         rendered = template.render(context)
     sender = CommunicationSettings.objects.filter(id=1).first()
-    if sender is None:
+    if sender is not None:
+        rendered = dataclasses.replace(
+            rendered, sender_name=sender.sender_name, reply_to=sender.reply_to
+        )
+    return _with_envelope(rendered, context)
+
+
+#: The context key a publisher may carry a per-message sender identity under.
+ENVELOPE_KEY: Final = "_envelope"
+
+
+def clean_envelope(raw: Any) -> dict[str, str]:
+    """The display name and reply-to a publisher may attach to one message, or
+    ``{}``. **Never an address the message is sent from**: the From address is
+    always the deployment's own (``channels.py``); only the name shown beside it
+    and where a reply goes can differ. Anything that is not a single line of
+    text / a valid address is dropped, whoever wrote it - so a notification row
+    edited by hand cannot make a mail header out of a newline."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    name = raw.get("sender_name")
+    if (
+        isinstance(name, str)
+        and name.strip()
+        and len(name.strip()) <= MAX_SENDER_NAME
+        # One printable line with no address-list punctuation: control
+        # characters (a newline would start another header), angle brackets and
+        # a double quote (they end a display name and begin an address).
+        and not any(ch in '<>"' for ch in name)
+        and not any(ord(ch) < 32 or ord(ch) == 127 for ch in name)
+    ):
+        out["sender_name"] = name.strip()
+    reply = raw.get("reply_to")
+    if isinstance(reply, str) and reply.strip() and len(reply.strip()) <= 254:
+        try:
+            validate_email(reply.strip())
+        except ValidationError:
+            pass
+        else:
+            out["reply_to"] = reply.strip()
+    return out
+
+
+def _with_envelope(rendered: RenderedMessage, context: dict[str, Any]) -> RenderedMessage:
+    envelope = clean_envelope(context.get(ENVELOPE_KEY))
+    if not envelope:
         return rendered
-    return dataclasses.replace(
-        rendered, sender_name=sender.sender_name, reply_to=sender.reply_to
-    )
+    return dataclasses.replace(rendered, **envelope)
 
 
 # --- validation ----------------------------------------------------------------

@@ -247,10 +247,14 @@ services:
   web:
     image: ${W360_FRONTEND_IMAGE:-workeasy360-frontend}:${W360_RELEASE}
     logging: *logging
-    # The frontend holds no secret: the canonical host is all it reads at
-    # runtime (BACKEND_ORIGIN is fixed at build).
+    # The frontend holds no secret: the portal origins are all it reads at
+    # runtime (BACKEND_ORIGIN is fixed at build) - which host shows which
+    # experience, and where a sign-in returns to (ADR-043).
     environment:
-      W360_CANONICAL_HOST: ${W360_CANONICAL_HOST:?W360_CANONICAL_HOST is required}
+      W360_ADMIN_ORIGIN: ${W360_ADMIN_ORIGIN:?W360_ADMIN_ORIGIN is required}
+      W360_PARTNER_ORIGIN: ${W360_PARTNER_ORIGIN:?W360_PARTNER_ORIGIN is required}
+      W360_APP_ORIGIN: ${W360_APP_ORIGIN:?W360_APP_ORIGIN is required}
+      W360_AUTH_ORIGIN: ${W360_AUTH_ORIGIN:?W360_AUTH_ORIGIN is required}
     restart: unless-stopped
     read_only: true
     tmpfs: [/tmp]
@@ -270,7 +274,12 @@ services:
     logging: *logging
     # The internet-facing container holds no secret (least privilege).
     environment:
-      W360_CANONICAL_HOST: ${W360_CANONICAL_HOST:?W360_CANONICAL_HOST is required}
+      W360_ADMIN_ORIGIN: ${W360_ADMIN_ORIGIN:?W360_ADMIN_ORIGIN is required}
+      W360_PARTNER_ORIGIN: ${W360_PARTNER_ORIGIN:?W360_PARTNER_ORIGIN is required}
+      W360_APP_ORIGIN: ${W360_APP_ORIGIN:?W360_APP_ORIGIN is required}
+      W360_AUTH_ORIGIN: ${W360_AUTH_ORIGIN:?W360_AUTH_ORIGIN is required}
+      W360_API_ORIGIN: ${W360_API_ORIGIN:?W360_API_ORIGIN is required}
+      W360_EDGE_UPSTREAM_HOST: ${W360_EDGE_UPSTREAM_HOST:?W360_EDGE_UPSTREAM_HOST is required}
       W360_TLS_ISSUER: ${W360_TLS_ISSUER:-acme}
       W360_EDGE_TRUSTED_PROXIES: ${W360_EDGE_TRUSTED_PROXIES:-127.0.0.1/32}
     ports:

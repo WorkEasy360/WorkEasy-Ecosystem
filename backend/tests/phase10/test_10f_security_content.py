@@ -591,7 +591,13 @@ def test_only_the_explicit_host_parameter_selects_a_brand_and_it_says_nothing_ab
         "support_email",
         "support_url",
         "logo_url",
+        "portal",
     }, set(brand)
+    # The portal a customer's browser receives is the public part only: never the
+    # sender identity of emails sent in the partner's name.
+    assert (
+        "sender_name" not in brand["portal"] and "reply_to_email" not in brand["portal"]
+    )
     text = json.dumps(brand)
     assert str(live_brand["partner"].id) not in text
     assert "no-store" in body["Cache-Control"]

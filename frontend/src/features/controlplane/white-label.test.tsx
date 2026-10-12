@@ -2,17 +2,23 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { PartnerShell } from "./ControlShell";
-import { PortalWhiteLabelPage, StaffWhiteLabelPage, WhiteLabelWizard, currentDomain } from "./WhiteLabelWizard";
+import { PortalWhiteLabelPage, WhiteLabelWizard, currentDomain } from "./WhiteLabelWizard";
 import { WhiteLabelList } from "./WhiteLabelList";
 import { LivePreview } from "./BrandPreview";
 import { AdminContextForTest, SIGNED_IN, expectNoViolations, mockApi, ok, type Call, type Reply } from "./testSupport";
 import { staffWhiteLabel } from "@/lib/api/partnerConsole";
 
 /**
- * Phase 10d: the white-label list and wizard. What the backend cannot enforce
- * for the browser: the preview stores nothing, each step is its own action (so a
- * second-factor prompt lands on the step that needs one), activation never
- * happens by itself, and nothing a partner typed is ever rendered as markup.
+ * Phase 10d: the white-label list and the partner's own five-step wizard. What
+ * the backend cannot enforce for the browser: the preview stores nothing, each
+ * step is its own action (so a second-factor prompt lands on the step that needs
+ * one), activation never happens by itself, and nothing a partner typed is ever
+ * rendered as markup.
+ *
+ * The wizard takes its calls as a ``WhiteLabelApi``, so these tests drive it
+ * through the staff address table (the same eight calls, easiest to route); the
+ * partner's own addresses are covered by "the partner portal" below. The staff
+ * ten-step setup has its own tests in ``WhiteLabelSetup.test.tsx``.
  */
 
 let query = "";
@@ -80,6 +86,24 @@ describe("currentDomain", () => {
     const rows = [domain("failed", { id: "f" }), domain("requested", { id: "r" }), domain("verified", { id: "v" }), domain("disabled", { id: "x" })];
     expect(currentDomain(rows as never)?.id).toBe("v");
     expect(currentDomain([domain("failed"), domain("disabled")] as never)).toBeNull();
+  });
+});
+
+describe("the partner's own wizard", () => {
+  it("stays the five steps a partner can take itself, with none of the staff-only ones", async () => {
+    mockApi({ [`GET ${BASE}/brand`]: [ok({ brand: null })], [`GET ${BASE}/domains`]: [ok({ results: [] })] });
+    const { container } = wizard();
+    await heading(1);
+    const steps = screen.getByRole("list", { name: "Steps" });
+    expect(within(steps).getAllByRole("listitem").map((li) => li.textContent?.replace(/^\d+\.\s*/, ""))).toEqual([
+      "Brand identity",
+      "Preview",
+      "Domain request",
+      "DNS verification",
+      "Activation",
+    ]);
+    // Products, portal words, communication and enabling white-label are staff acts: not here.
+    expect(container.textContent).not.toMatch(/Enable white-label|Visible in portal|Welcome message|Sender display name/);
   });
 });
 
@@ -341,63 +365,6 @@ describe("the domain steps", () => {
   });
 });
 
-describe("the staff page", () => {
-  const partner = (capabilities: string[], status = "active") => ({
-    id: ID,
-    code: "acme",
-    display_name: "Acme Partners",
-    legal_name: "",
-    contact_name: "",
-    contact_email: "",
-    payout_currency: "GBP",
-    status,
-    version: 1,
-    created_at: "2026-01-01T00:00:00Z",
-    activated_at: null,
-    status_reason: "",
-    capabilities: capabilities.map((c) => ({ capability: c, granted_at: "2026-01-01T00:00:00Z", expires_at: null, is_effective: true })),
-    members: [],
-    product_grants: [],
-    live_customers: 0,
-  });
-
-  it("offers to enable white-label when a capability is missing, granting exactly the missing ones", async () => {
-    const calls = mockApi({
-      [`GET ${BASE}`]: [ok(partner(["branding.manage"])), ok(partner(["branding.manage", "domain.manage"]))],
-      [`POST ${BASE}/capabilities`]: [{ status: 201, body: { id: "g", capability: "domain.manage" } }],
-      [`GET ${BASE}/brand`]: [ok({ brand: null })],
-      [`GET ${BASE}/domains`]: [ok({ results: [] })],
-    });
-    render(
-      <AdminContextForTest permissions={MANAGE}>
-        <StaffWhiteLabelPage partnerId={ID} />
-      </AdminContextForTest>,
-    );
-    fireEvent.click(await screen.findByRole("button", { name: "Enable white-label" }));
-    await screen.findByText("White-label enabled.");
-    expect(calls.filter((c) => c.key.endsWith("/capabilities")).map((c) => (c.body as { capability: string }).capability)).toEqual(["domain.manage"]);
-    expect(await screen.findByLabelText("Brand name")).toBeInTheDocument(); // then the wizard
-  });
-
-  it("refuses to run for someone who may not manage partners, or for a terminated partner", async () => {
-    mockApi({ [`GET ${BASE}`]: [ok(partner(["branding.manage", "domain.manage"]))] });
-    const { unmount } = render(
-      <AdminContextForTest permissions={["platform.staff_partner.view"]}>
-        <StaffWhiteLabelPage partnerId={ID} />
-      </AdminContextForTest>,
-    );
-    expect(await screen.findByRole("alert")).toHaveTextContent(/permission to change partners/);
-    unmount();
-    mockApi({ [`GET ${BASE}`]: [ok(partner(["branding.manage", "domain.manage"], "terminated"))] });
-    render(
-      <AdminContextForTest permissions={MANAGE}>
-        <StaffWhiteLabelPage partnerId={ID} />
-      </AdminContextForTest>,
-    );
-    expect(await screen.findByRole("alert")).toHaveTextContent(/terminated partner cannot take a new brand/);
-  });
-});
-
 describe("the partner portal", () => {
   it("runs the same wizard against the partner's own endpoints", async () => {
     const PORTAL = `/api/v1/partner/${ID}`;
@@ -483,15 +450,28 @@ describe("the white-label list", () => {
     await waitFor(() => expect(calls.filter((c) => c.key === "GET /api/v1/admin/partners/white-label").at(-1)!.url).toContain("brand=none"));
   });
 
-  it("opens the setup for a chosen partner", async () => {
-    mockApi(routes([]));
+  it("starts the ten-step setup, which chooses the partner itself, and opens a listed partner pre-selected", async () => {
+    mockApi(routes([row()]));
     render(
       <AdminContextForTest permissions={MANAGE}>
         <WhiteLabelList />
       </AdminContextForTest>,
     );
-    fireEvent.change(await screen.findByLabelText("Partner"), { target: { value: "p9" } });
-    expect(screen.getByRole("link", { name: "Set up white-label" })).toHaveAttribute("href", "/admin/partners/white-label/p9");
+    // The call to action under the list: a link into the wizard's first step (below).
+    // Each row opens the same wizard with that partner already chosen.
+    expect(await screen.findByRole("link", { name: "Set up white-label for Acme Partners" })).toHaveAttribute("href", `/admin/partners/white-label/${ID}`);
+    expect(screen.getByRole("link", { name: "Set up white-label" })).toHaveAttribute("href", "/admin/partners/white-label/new");
+  });
+
+  it("offers no setup to someone who may only view partners", async () => {
+    mockApi(routes([row()]));
+    render(
+      <AdminContextForTest permissions={["platform.staff_partner.view"]}>
+        <WhiteLabelList />
+      </AdminContextForTest>,
+    );
+    await screen.findByRole("table", { name: "White-label partners" });
+    expect(screen.queryByRole("link", { name: /Set up white-label/ })).not.toBeInTheDocument();
   });
 
   it("renders hostile brand and partner names as text", async () => {

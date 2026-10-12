@@ -637,3 +637,67 @@ def payout_status_counts(partner_id: UUID) -> dict[str, int]:
         .values("status")
         .annotate(n=Count("id"))
     }
+
+
+# --- what the affiliate list shows (Partner Control Center) ------------------
+
+
+def referral_facts(partner_ids: list[UUID]) -> dict[UUID, dict[str, Any]]:
+    """Per partner: its active referral codes (newest first, at most three),
+    and how many referrals were captured and converted. Two queries for any
+    number of partners; a partner with no code and no referral is absent.
+
+    Counts only - a referral row identifies nothing about the prospect."""
+    from workeasy360.commercial.commissions.models import Referral, ReferralCode
+    from workeasy360.contracts.enums import GrantStatus
+
+    if not partner_ids:
+        return {}
+    out: dict[UUID, dict[str, Any]] = {}
+
+    def entry(partner_id: UUID) -> dict[str, Any]:
+        return out.setdefault(
+            partner_id, {"codes": [], "active_codes": 0, "captured": 0, "converted": 0}
+        )
+
+    for code in ReferralCode.objects.filter(
+        partner_id__in=partner_ids, status=GrantStatus.ACTIVE.value
+    ).order_by("partner_id", "-created_at", "-id"):
+        found = entry(code.partner_id)
+        found["active_codes"] += 1
+        if len(found["codes"]) < 3:
+            found["codes"].append(code.code)
+    for row in (
+        Referral.objects.filter(partner_id__in=partner_ids)
+        .values("partner_id", "status")
+        .annotate(n=Count("id"))
+    ):
+        found = entry(row["partner_id"])
+        found["captured"] += row["n"]
+        if row["status"] == ReferralStatus.CONVERTED.value:
+            found["converted"] += row["n"]
+    return out
+
+
+def paid_facts(partner_ids: list[UUID]) -> dict[UUID, list[dict[str, Any]]]:
+    """Per partner and currency: what payouts confirmed as paid amounted to.
+    One query; never added across currencies."""
+    from workeasy360.commercial.commissions.models import Payout
+
+    if not partner_ids:
+        return {}
+    out: dict[UUID, list[dict[str, Any]]] = {}
+    for row in (
+        Payout.objects.filter(partner_id__in=partner_ids, status=PayoutStatus.PAID.value)
+        .values("partner_id", "currency")
+        .annotate(total=Sum("payable_minor"), n=Count("id"))
+        .order_by("partner_id", "currency")
+    ):
+        out.setdefault(row["partner_id"], []).append(
+            {
+                "currency": row["currency"],
+                "amount_minor": row["total"] or 0,
+                "payouts": row["n"],
+            }
+        )
+    return out

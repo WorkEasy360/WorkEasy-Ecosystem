@@ -2,7 +2,6 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { ApiError } from "@/lib/api/client";
 import { login, logout } from "@/lib/api/auth";
 import { ownerInvitationApi, type OwnerInvitationPreview } from "@/lib/api/partnerConsole";
@@ -12,6 +11,7 @@ import { describeError, when } from "@/features/controlplane/ui";
 import { NewAccountForm } from "./AcceptInvitation";
 import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
+import { usePortalRouter } from "@/lib/portalRouter";
 
 type View =
   | { status: "loading" }
@@ -150,7 +150,7 @@ function Activation({
   onSignedIn: (email: string) => void;
   onSignedOut: () => void;
 }) {
-  const router = useRouter();
+  const router = usePortalRouter();
   const [busy, setBusy] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
   const [needsSignIn, setNeedsSignIn] = useState(false);

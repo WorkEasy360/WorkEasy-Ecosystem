@@ -2,12 +2,13 @@
 
 import { Suspense, useCallback, useEffect, useId, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { getOrganizations } from "@/lib/api/auth";
 import { useSession } from "@/lib/auth/useSession";
 import { StatusScreen } from "@/components/StatusScreen";
 import type { OrganizationSummary } from "@/lib/api/types";
 import { Invitations } from "@/features/controlplane/Invitations";
+import { usePortalRouter } from "@/lib/portalRouter";
 
 type Load =
   | { status: "loading" }
@@ -21,7 +22,7 @@ type Load =
     };
 
 function Chooser() {
-  const router = useRouter();
+  const router = usePortalRouter();
   const searchParams = useSearchParams();
   const resume = searchParams.get("resume");
   const session = useSession();

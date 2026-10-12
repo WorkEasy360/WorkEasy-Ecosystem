@@ -171,11 +171,14 @@ def decide(
         metrics.increment(ENTITLEMENT_CHECKS, result="unknown")
         return EntitlementDecision.denied(EntitlementReason.UNKNOWN)
 
-    if not status.allows_read:
+    if not status.allows_read or _has_ended(entry):
+        # Past its end by server time (a trial's ``ends_at``, a cancelled
+        # subscription's period end, a grant's expiry): ended **now**, not when
+        # the sweeper next rewrites the snapshot (multi-portal brief, ADR-043).
         metrics.increment(ENTITLEMENT_CHECKS, result="denied")
         return EntitlementDecision(
             allowed=False,
-            status=status,
+            status=status if not status.allows_read else EntitlementStatus.EXPIRED,
             write_allowed=False,
             reason_code=EntitlementReason.EXPIRED,
             upgrade_hint=f"resubscribe:{product}",
@@ -222,8 +225,16 @@ def require(
 def feature(
     organization_id: UUID, key: FeatureKey | str, *, default: FeatureValue = None
 ) -> FeatureValue:
-    """Resolved value of a feature, most-generous-wins across sources."""
+    """Resolved value of a feature, most-generous-wins across sources.
+
+    A feature key's leading segment is its product's code (catalog rule), so a
+    feature ends when its product's entitlement has ended by server time - the
+    product entry's ``ends_at`` is the latest end of every source granting it
+    (ADR-043)."""
     resolved = _resolve(organization_id)
+    owner = resolved.products.get(str(key).split(".", 1)[0])
+    if owner is not None and _has_ended(owner):
+        return default
     return resolved.features.get(str(key), default)
 
 
@@ -282,12 +293,14 @@ def has_seat(
 
 
 def products(organization_id: UUID) -> Sequence[ProductCode]:
-    """Every product the organization currently holds."""
+    """Every product the organization currently holds - by server time: an
+    entry past its ``ends_at`` is not held, sweeper or no sweeper (ADR-043)."""
     resolved = _resolve(organization_id)
     return [
         ProductCode(code)
         for code, entry in resolved.products.items()
         if EntitlementStatus(entry.get("status", "expired")).allows_read
+        and not _has_ended(entry)
     ]
 
 
@@ -415,6 +428,7 @@ def _compute_live(organization_id: UUID) -> ResolvedEntitlements:
             "seats": row.seats_total,
             "write": row.status_enum.allows_write,
             "grace_ends_at": row.grace_ends_at.isoformat() if row.grace_ends_at else None,
+            "ends_at": snapshot_end(row.effective_to),
         }
         products_out[row.product_code] = more_generous_product(existing, candidate)
 
@@ -471,7 +485,41 @@ def more_generous_product(
     # Seats sum across active sources rather than taking the max: two
     # subscriptions of 5 seats each genuinely provide 10.
     seats = [s for s in (existing.get("seats"), candidate.get("seats")) if s is not None]
-    return {**winner, "seats": sum(seats) if seats else None}
+    merged = {**winner, "seats": sum(seats) if seats else None}
+    if "ends_at" in existing or "ends_at" in candidate:
+        merged["ends_at"] = _later_end(existing.get("ends_at"), candidate.get("ends_at"))
+    return merged
+
+
+def _later_end(first: Any, second: Any) -> Any:
+    """Access lasts while any overlapping source lasts: no end (``None``)
+    beats any end, otherwise the later one. Adding a source can never bring
+    the end forward."""
+    if first is None or second is None:
+        return None
+    a, b = _parse_dt(first), _parse_dt(second)
+    # An unreadable end stays in the entry, so `_has_ended` fails closed on it
+    # rather than the merge quietly turning it into "never ends".
+    if a is None:
+        return first
+    if b is None:
+        return second
+    return first if a >= b else second
+
+
+def snapshot_end(effective_to: Any) -> str | None:
+    """The ``ends_at`` a snapshot entry carries for one source."""
+    return effective_to.isoformat() if effective_to is not None else None
+
+
+def _has_ended(entry: dict[str, Any]) -> bool:
+    """Whether this entry's ``ends_at`` (if it carries one) has passed by
+    server time. An unreadable value is treated as ended: fail closed."""
+    raw = entry.get("ends_at")
+    if raw is None:
+        return False
+    ends = _parse_dt(raw)
+    return ends is None or ends <= timezone.now()
 
 
 def _more_generous_feature(existing: Any, candidate: Any) -> Any:

@@ -1,4 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { adminSignInUrl } from "@/features/auth/signInMode";
+import {
+  isState,
+  pageOwner,
+  portalForHost,
+  readPortalOrigins,
+  servesPage,
+  signInUrl,
+  stateCookieName,
+  type Destination,
+  type PortalOrigins,
+} from "@/lib/portals";
 
 /**
  * Two jobs, both request-scoped and both cheap - this is the "optimistic"
@@ -14,6 +26,10 @@ import { NextRequest, NextResponse } from "next/server";
  * too, by design - only whether one was sent at all.
  */
 const SESSION_COOKIE = "w360_session";
+/** Production's name for the same cookie (backend production.py): the
+ * `__Host-` prefix makes the browser refuse a same-named cookie planted for
+ * a parent domain by a sibling host (ADR-043). */
+const HOST_SESSION_COOKIE = "__Host-w360_session";
 
 /**
  * Reachable without a session cookie. `/invitations/accept` is where an
@@ -36,10 +52,83 @@ const PUBLIC_PATHS = [
   "/verify-email",
   "/forgot-password",
   "/reset-password",
+  // ADR-044: a product's "sign out of Workeasy360 too" lands here. A visitor
+  // whose session has already gone still gets a page that returns them to
+  // the product, rather than a sign-in form they did not ask for.
+  "/sign-out",
 ];
 
 export function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+/** Where a portal host lands a sign-in hand-off (ADR-043): reached before
+ * the portal has a session, by definition. */
+const HANDOFF_LANDING = "/auth/continue";
+
+export type PortalRouting = { kind: "serve" } | { kind: "redirect"; location: string; state?: string };
+
+/**
+ * The multi-portal routing decision for one page request (ADR-043), or `null`
+ * when the host is not one of the platform's portals (a partner's white-label
+ * domain, handled by {@link offCanonicalRedirect}). Display only: it picks
+ * which host shows a page and sends a signed-out visitor to the central
+ * sign-in; every permission is still decided by the server.
+ *
+ * `state` on a redirect is the portal's binding value for the hand-off: the
+ * caller sets it as this host's own cookie. An existing valid one is reused,
+ * so a second sign-in started before the first finishes does not void it. The
+ * cookie is spent by the first redemption: a tab redeeming after that asks
+ * for one more click ("Sign in again"), never a second password.
+ */
+export function routePortalRequest(args: {
+  origins: PortalOrigins;
+  host: string;
+  pathname: string;
+  search: string;
+  hasSession: boolean;
+  existingState?: string | null;
+  newState: () => string;
+}): PortalRouting | null {
+  const { origins, pathname, search, hasSession } = args;
+  const portal = portalForHost(args.host, origins);
+  if (portal === null) return null;
+  const params = new URLSearchParams(search);
+  const startSignIn = (destination: Destination, next: string | null): PortalRouting => {
+    const state = isState(args.existingState) ? args.existingState : args.newState();
+    return { kind: "redirect", location: signInUrl(origins, destination, next, state), state };
+  };
+
+  if (portal !== "auth" && pathname === "/login") {
+    const resume = params.get("resume");
+    if (resume) return { kind: "redirect", location: `${origins.auth}/login?resume=${encodeURIComponent(resume)}` };
+    return startSignIn(portal, params.get("next"));
+  }
+  if (pathname === "/") {
+    if (portal === "admin") return { kind: "redirect", location: `${origins.admin}/admin` };
+    if (portal === "partner") return { kind: "redirect", location: `${origins.partner}/partner` };
+    if (portal === "auth") return { kind: "redirect", location: `${origins.auth}/login` };
+    return { kind: "serve" }; // the public site's home, on the customer portal
+  }
+  if (!servesPage(portal, pathname)) {
+    const owner = pageOwner(pathname);
+    if (owner) return { kind: "redirect", location: `${origins[owner]}${pathname}${search}` };
+  }
+  const isPublic = isPublicPath(pathname) || (portal !== "auth" && pathname === HANDOFF_LANDING);
+  if (!hasSession && !isPublic) {
+    if (portal === "auth") {
+      const resume = params.get("resume");
+      return { kind: "redirect", location: `${origins.auth}/login${resume ? `?resume=${encodeURIComponent(resume)}` : ""}` };
+    }
+    return startSignIn(portal, `${pathname}${search}`);
+  }
+  return { kind: "serve" };
+}
+
+/** 32 random bytes, base64url: a hand-off binding value. */
+function randomState(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Buffer.from(bytes).toString("base64url");
 }
 
 /**
@@ -138,8 +227,41 @@ export function proxy(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const isDev = process.env.NODE_ENV === "development";
-  const canonical = process.env.W360_CANONICAL_HOST ?? "";
+  const origins = readPortalOrigins(process.env);
+  // In multi-portal mode a host that is none of the portals is a partner's
+  // white-label domain, and its other pages go to the customer portal.
+  const canonical = origins ? new URL(origins.app).host : (process.env.W360_CANONICAL_HOST ?? "");
   const host = request.headers.get("host") ?? "";
+  const hasSessionCookie = request.cookies.has(SESSION_COOKIE) || request.cookies.has(HOST_SESSION_COOKIE);
+
+  if (origins) {
+    const cookieName = stateCookieName(origins);
+    const routed = routePortalRequest({
+      origins,
+      host,
+      pathname,
+      search: request.nextUrl.search,
+      hasSession: hasSessionCookie,
+      existingState: request.cookies.get(cookieName)?.value,
+      newState: randomState,
+    });
+    if (routed?.kind === "redirect") {
+      const response = NextResponse.redirect(new URL(routed.location, request.url), 302);
+      if (routed.state) {
+        response.cookies.set(cookieName, routed.state, {
+          httpOnly: true,
+          sameSite: "lax",
+          secure: cookieName.startsWith("__Host-"),
+          path: "/",
+          maxAge: 600,
+        });
+      }
+      return response;
+    }
+    if (routed?.kind === "serve") {
+      return withSecurityHeaders(request, nonce, isDev, true);
+    }
+  }
 
   const handoff = offCanonicalRedirect(host, pathname, request.nextUrl.search, canonical);
   if (handoff) {
@@ -152,10 +274,12 @@ export function proxy(request: NextRequest): NextResponse {
     return NextResponse.redirect(handoff, 302);
   }
 
-  const hasSession = request.cookies.has(SESSION_COOKIE);
+  const hasSession = hasSessionCookie;
   const isPublic = isPublicPath(pathname);
 
-  if (!hasSession && !isPublic && pathname !== "/") {
+  // A partner's domain (multi-portal mode) serves only its branded landing,
+  // which needs no session.
+  if (!origins && !hasSession && !isPublic && pathname !== "/") {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     // Carry a resume token straight through (it is opaque to us) so a
@@ -163,9 +287,22 @@ export function proxy(request: NextRequest): NextResponse {
     // correctly once the real login page finishes (Task 31/32).
     const resume = request.nextUrl.searchParams.get("resume");
     url.search = resume ? `?resume=${encodeURIComponent(resume)}` : "";
+    // A console page asks for the Administrator sign-in and is returned to
+    // afterwards. Only a destination: the mode grants nothing, and `next` is
+    // accepted only as a same-site path under /admin (signInMode.ts).
+    if (!resume && (pathname === "/admin" || pathname.startsWith("/admin/"))) {
+      const target = new URL(adminSignInUrl(`${pathname}${request.nextUrl.search}`), url);
+      url.search = target.search;
+    }
     return NextResponse.redirect(url);
   }
 
+  const onCanonicalHost = offCanonicalRedirect(host, "/", "", canonical) === null;
+  return withSecurityHeaders(request, nonce, isDev, onCanonicalHost);
+}
+
+/** Serve the page, with the CSP and the security headers every page gets. */
+function withSecurityHeaders(request: NextRequest, nonce: string, isDev: boolean, onCanonicalHost: boolean): NextResponse {
   const csp = contentSecurityPolicy(nonce, isDev);
 
   const requestHeaders = new Headers(request.headers);
@@ -179,7 +316,6 @@ export function proxy(request: NextRequest): NextResponse {
   response.headers.set("X-Frame-Options", "DENY");
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  const onCanonicalHost = offCanonicalRedirect(host, "/", "", canonical) === null;
   for (const [name, value] of Object.entries(transportHeaders(isDev, onCanonicalHost))) {
     response.headers.set(name, value);
   }

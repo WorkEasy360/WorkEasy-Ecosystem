@@ -195,3 +195,10 @@
   max-height: 48px;
   max-width: 200px;
 }
+
+/* The sighted "required" cue after a label (the input's own `required` is what
+   assistive technology announces). */
+.required {
+  color: var(--w360-danger);
+  font-weight: 600;
+}

@@ -6,7 +6,9 @@ the view (F-7, C7).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.launcher.access import AppAccessDecision, can_launch_product
@@ -23,6 +25,68 @@ def launch(ctx: TenantContext, product_code: str) -> AppAccessDecision:
     to call the same function rather than two that are meant to agree.
     """
     return can_launch_product(ctx, product_code)
+
+
+#: The two ways a launch leaves the platform (ADR-044).
+SIGN_IN_WORKEASY360 = "workeasy360"
+SIGN_IN_PRODUCT = "product"
+
+
+@dataclass(frozen=True, slots=True)
+class LaunchRoute:
+    """Where an allowed launch sends the browser, and which way in that is.
+    Built from the registry and the person's own preference - never from the
+    request."""
+
+    sign_in: str
+    url: str
+
+
+def launch_route(ctx: TenantContext, decision: AppAccessDecision) -> LaunchRoute:
+    """For an ``ACTIVE`` decision only: the browser's destination.
+
+    - Effective sign-in ``auto_sso`` or ``ask``: the product's launch URL with
+      ``organization=<uuid>``. The product starts its own OIDC request; the
+      authorization endpoint then signs the person in silently or shows the
+      access chooser, per the same preference (docs/universal-sso/design.md
+      section 3).
+    - ``product_login`` (the person prefers the product's sign-in, or the
+      product cannot be entered through Workeasy360): the product's own
+      sign-in page, else its launch URL - with no organization hint, so the
+      product's page does not start Workeasy360 sign-in by itself.
+
+    Re-read live at every launch; the preference grants nothing (the access
+    decision has already said yes).
+    """
+    from workeasy360.platform.ecosystem import sign_in
+
+    found = sign_in.product_sign_in(ctx.user_id, [decision.product_code]).get(
+        decision.product_code
+    )
+    if found is not None and not found.decision.uses_sso:
+        return LaunchRoute(
+            sign_in=SIGN_IN_PRODUCT,
+            url=decision.product_login_url or decision.launch_url,
+        )
+    return LaunchRoute(
+        sign_in=SIGN_IN_WORKEASY360,
+        url=_with_organization(decision.launch_url, ctx.organization_id),
+    )
+
+
+def _with_organization(launch_url: str, organization_id: Any) -> str:
+    """``launch_url`` with ``organization=<id>`` added to whatever query it
+    already has (a registered launch URL may carry one), never a second ``?``.
+    The organization id is not a secret and never a token: the product starts
+    its own authorization request from here."""
+    parts = urlsplit(launch_url)
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key != "organization"
+    ]
+    query.append(("organization", str(organization_id)))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
 
 
 def assign_seat(

@@ -69,6 +69,7 @@ function app(overrides: Partial<AppDirectoryEntry> = {}): AppDirectoryEntry {
     seats: null,
     renews_at: null,
     cancel_at: null,
+    sign_in: null,
     ...overrides,
   };
 }
@@ -345,7 +346,7 @@ describe("accessibility properties axe cannot see", () => {
     // (`form-action 'self'`) refuses for every product, whose launch URL is
     // always a different origin (verified in Chrome; see LaunchButton).
     render(<AppCard orgSlug="acme" app={app({ state: "active" })} />);
-    const button = screen.getByRole("button", { name: "Open" });
+    const button = screen.getByRole("button", { name: "Open CRM" });
     expect(button).toHaveAttribute("type", "button");
     expect(button.closest("form")).toBeNull();
   });

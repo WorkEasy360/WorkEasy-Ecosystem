@@ -89,7 +89,10 @@ def test_the_reseller_overview_states_its_facts_and_setup_progress(console, staf
     }
     assert body["white_label"]["enabled"] is False
     steps = progress(body)
-    assert steps["profile"]["state"] == "complete"
+    # The fixture has a primary contact but no business email, and the business
+    # profile step asks for both (tests/partner_setup covers it completing).
+    assert steps["profile"]["state"] == "incomplete"
+    assert "business email" in steps["profile"]["detail"]
     assert steps["products"]["state"] == "complete"
     assert steps["pricing"]["state"] == "incomplete"  # customers pay list price
     assert steps["commission"]["state"] == "complete"

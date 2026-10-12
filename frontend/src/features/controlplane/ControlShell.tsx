@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { StatusScreen } from "@/components/StatusScreen";
 import {
   AccountMenu,
@@ -13,11 +13,17 @@ import { logout } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
 import { adminApi, partnerApi, type PortalPartner } from "@/lib/api/controlPlane";
 import { useSession } from "@/lib/auth/useSession";
+import { usePortals } from "@/lib/portalContext";
+import { portalHref } from "@/lib/portals";
 import consoleStyles from "@/features/console/Console.module.css";
+import { adminSignInUrl } from "@/features/auth/signInMode";
+import loginStyles from "@/features/auth/LoginScreen.module.css";
+import { centerItems } from "./partnerCenterNav";
 import { StaffMfaGate } from "./StaffMfaGate";
+import { usePortalRouter } from "@/lib/portalRouter";
 
 function useSignOut() {
-  const router = useRouter();
+  const router = usePortalRouter();
   // A failed sign-out must not look like a successful one: navigating to
   // /login anyway would resume the still-live session for whoever sits down
   // at this browser next.
@@ -62,21 +68,18 @@ export function adminNav(p: string[]): SidebarGroup[] {
       items: [
         { href: "/admin/users", label: "Users", icon: "users", when: can(p, "platform.staff_user.view") },
         { href: "/admin/customers", label: "Customers", icon: "building", when: can(p, "platform.staff_customer.view") },
-      ],
-    },
-    {
-      // Phase 10: one Partners section instead of a flat "Agencies & partners"
-      // entry. Reseller and White-label are ways of looking at the same partner
-      // accounts (their capabilities), not separate kinds of account.
-      title: "Partners",
-      items: [
-        { href: "/admin/partners", label: "Overview", icon: "handshake", exact: true, when: can(p, "platform.staff_partner.view") },
-        { href: "/admin/partners/resellers", label: "Resellers", icon: "store", when: can(p, "platform.staff_partner.view") },
-        { href: "/admin/partners/white-label", label: "White-label", icon: "palette", when: can(p, "platform.staff_partner.view") },
-        { href: "/admin/partners/customers", label: "Customers", icon: "building", when: can(p, "platform.staff_partner.view") },
-        { href: "/admin/partners/products", label: "Products & Pricing", icon: "tag", when: can(p, "platform.staff_partner.view") },
-        { href: "/admin/commissions", label: "Commissions", icon: "gift", when: can(p, "platform.staff_commission.view") },
-        { href: "/admin/payouts", label: "Payouts", icon: "receipt", when: can(p, "platform.staff_commission.view") },
+        {
+          // One "Partners" entry opens the Partner Control Center, whose own
+          // navigation holds the dashboard, the partner views (All, Resellers,
+          // White-label, Affiliates - the last three are filters on
+          // capabilities, not kinds of account) and the programme's money
+          // screens. It stays highlighted on every page under /admin/partners.
+          href: centerItems(p)[0]?.href ?? "/admin/partners",
+          label: "Partners",
+          icon: "handshake",
+          when: centerItems(p).length > 0,
+          match: "/admin/partners",
+        },
       ],
     },
     {
@@ -150,10 +153,44 @@ export function adminNav(p: string[]): SidebarGroup[] {
   ];
 }
 
+/** "You don't have administrator access" - the answer for a signed-in account
+ * the server refused (no staff identity, or no StaffGrant in force). It names
+ * no permission and shows nothing from the console. */
+export function AdminAccessDenied({ onSignOut, banner }: { onSignOut: () => void; banner?: React.ReactNode }) {
+  const router = usePortalRouter();
+  const portals = usePortals();
+  // Another portal in multi-portal mode (ADR-043): a full navigation there.
+  const asUser = () =>
+    portals ? window.location.assign(portalHref(portals, "app", "/dashboard")) : router.replace("/dashboard?mode=user");
+  // Its own page rather than StatusScreen: only the message is the live
+  // region, so the buttons are not read out as part of an alert.
+  return (
+    <main id="w360-main" className={`w360-container ${loginStyles.main}`}>
+      <div className={`w360-card ${loginStyles.card} ${loginStyles.denied}`}>
+        <div role="alert" aria-live="assertive">
+          <h1>You don&apos;t have administrator access.</h1>
+          <p>This account can&apos;t open the Workeasy360 Admin Console. You can continue to your own organization and products.</p>
+        </div>
+        {banner}
+        <div className={loginStyles.deniedActions}>
+          <button type="button" className="w360-btn w360-btn-primary" onClick={asUser}>
+            Continue as User
+          </button>
+          <button type="button" className="w360-btn w360-btn-secondary" onClick={onSignOut}>
+            Sign out
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+}
+
 /** The control-plane layout: a separate shell from any organization's, with
  * navigation derived from the permissions the staff member actually holds. */
 export function AdminShell({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
+  const router = usePortalRouter();
+  const portals = usePortals();
+  const pathname = usePathname();
   const session = useSession();
   const [state, setState] = useState<AdminState>({ status: "loading" });
   // Bumped after a successful verification to ask the backend again.
@@ -163,7 +200,10 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (session.status !== "ready") return;
     if (!session.session.authenticated) {
-      router.replace("/login");
+      // Sign in as an administrator, then come back to this page. The mode
+      // and the page are in the address only; the console still asks the
+      // server below whether this person may enter.
+      router.replace(adminSignInUrl(`${pathname ?? "/admin"}${window.location.search}`));
       return;
     }
     adminApi
@@ -176,7 +216,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         }
         setState({ status: err instanceof ApiError && (err.status === 403 || err.status === 401) ? "denied" : "error" });
       });
-  }, [session, router, attempt]);
+  }, [session, router, attempt, pathname]);
 
   if (session.status === "loading" || state.status === "loading") {
     return <StatusScreen>Loading the control plane…</StatusScreen>;
@@ -193,11 +233,10 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     );
   }
   if (state.status === "denied") {
-    return (
-      <StatusScreen role="alert">
-        <p>This area is for Workeasy360 staff.</p>
-      </StatusScreen>
-    );
+    // Signed in, but the server says this account may not use the console.
+    // Nothing from the console has been loaded; the person may carry on into
+    // their own workspace with the same sign-in.
+    return <AdminAccessDenied onSignOut={signOut} banner={banner} />;
   }
   if (state.status === "error") {
     return (
@@ -208,8 +247,8 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   }
   const who = session.status === "ready" ? session.session : null;
   const entries: AccountMenuEntry[] = [
-    { label: "My organizations", href: "/organizations/select" },
-    ...(who?.consoles?.partner ? [{ label: "Partner portal", href: "/partner" }] : []),
+    { label: "My organizations", href: portalHref(portals, "app", "/organizations/select") },
+    ...(who?.consoles?.partner ? [{ label: "Partner portal", href: portalHref(portals, "partner", "/partner") }] : []),
     { label: "Sign out", onSelect: signOut },
   ];
   return (
@@ -292,7 +331,8 @@ const STATUS_NOTICE: Record<string, string> = {
 /** The portal layout for one partner. Navigation comes from the partner's
  * **capabilities** - there is no partner type anywhere in this file. */
 export function PartnerShell({ partnerId, children }: { partnerId: string; children: React.ReactNode }) {
-  const router = useRouter();
+  const router = usePortalRouter();
+  const portals = usePortals();
   const session = useSession();
   const { signOut, banner } = useSignOut();
   const [state, setState] = useState<
@@ -335,8 +375,8 @@ export function PartnerShell({ partnerId, children }: { partnerId: string; child
   const who = session.status === "ready" ? session.session : null;
   const entries: AccountMenuEntry[] = [
     { label: "Switch partner account", href: "/partner" },
-    { label: "My organizations", href: "/organizations/select" },
-    ...(who?.consoles?.staff ? [{ label: "Super Admin console", href: "/admin" }] : []),
+    { label: "My organizations", href: portalHref(portals, "app", "/organizations/select") },
+    ...(who?.consoles?.staff ? [{ label: "Super Admin console", href: portalHref(portals, "admin", "/admin") }] : []),
     { label: "Sign out", onSelect: signOut },
   ];
   return (

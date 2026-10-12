@@ -1,0 +1,158 @@
+/* The sign-in page: the mode choice (Administrator / User) and the one form.
+   CSS modules only; tokens from globals.css so both themes work. */
+
+.main {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding-block: var(--w360-space-6);
+}
+
+.column {
+  width: 100%;
+  max-width: 420px;
+  min-width: 0;
+}
+
+.heading {
+  text-align: center;
+  margin-bottom: var(--w360-space-6);
+}
+
+.title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tagline {
+  color: var(--w360-text-muted);
+  margin: var(--w360-space-2) 0 0;
+}
+
+.card {
+  padding: var(--w360-space-6);
+}
+
+@media (max-width: 380px) {
+  .card {
+    padding: var(--w360-space-4);
+  }
+}
+
+.cardTitle {
+  font-size: 17px;
+  margin: 0 0 var(--w360-space-4);
+}
+
+.formHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--w360-space-2);
+}
+
+.change {
+  font-size: 14px;
+}
+
+.note {
+  color: var(--w360-text-muted);
+  font-size: 14px;
+  margin: 0 0 var(--w360-space-4);
+}
+
+.modes {
+  display: grid;
+  gap: var(--w360-space-3);
+  margin: 0 0 var(--w360-space-4);
+  padding: 0;
+  list-style: none;
+}
+
+/* Each mode is one large link: the whole card is the target (WCAG 2.5.8). */
+.mode {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+  min-height: 64px;
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+  color: var(--w360-text);
+  text-decoration: none;
+}
+
+.mode:hover {
+  border-color: var(--w360-brand);
+  background: var(--w360-neutral-bg);
+}
+
+.mode:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+.modeIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--w360-neutral-bg);
+  color: var(--w360-brand);
+}
+
+.modeText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.modeLabel {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.modeDescription {
+  color: var(--w360-text-muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.modeArrow {
+  font-size: 22px;
+  color: var(--w360-text-muted);
+}
+
+@media (forced-colors: active) {
+  .mode {
+    border-color: ButtonText;
+  }
+}
+
+.denied {
+  display: grid;
+  gap: var(--w360-space-3);
+  max-width: 460px;
+  text-align: left;
+}
+
+.denied h1 {
+  font-size: 20px;
+  margin: 0;
+}
+
+.deniedActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+}

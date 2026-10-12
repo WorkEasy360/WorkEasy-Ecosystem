@@ -95,6 +95,52 @@ def active_user_id_for_email(email: str) -> Any:
     )
 
 
+def account_can_authenticate(user_id: Any) -> bool:
+    """Whether this account may still be signed in to anything: the same
+    predicate as ``User.is_active`` (status ACTIVE), so an administrator's
+    DISABLED or LOCKED ends it and the failed-password brake does not - that
+    brake is a guess about a password, not a decision about the person, and
+    folding it in would let anyone who knows an address end its owner's
+    product sessions. ``False`` for an unknown id, indistinguishably."""
+    from workeasy360.contracts.enums import UserStatus
+    from workeasy360.platform.identity.models import User
+
+    status = User.objects.filter(id=user_id).values_list("status", flat=True).first()
+    return status is not None and UserStatus(status).can_authenticate
+
+
+def users_with_second_factor(user_ids: Any) -> set[Any]:
+    """Which of these accounts has confirmed a second factor. One query.
+
+    A yes/no per person for a staff screen ("MFA: on / off") - never which
+    factor, a label or anything about it.
+    """
+    from workeasy360.platform.identity.models import AuthFactor
+
+    ids = list(user_ids)
+    if not ids:
+        return set()
+    return set(
+        AuthFactor.objects.filter(user_id__in=ids, confirmed_at__isnull=False)
+        .exclude(kind=AuthFactor.Kind.RECOVERY_CODE)
+        .values_list("user_id", flat=True)
+        .distinct()
+    )
+
+
+def emails_for_users(user_ids: Any) -> dict[Any, str]:
+    """``{user_id: email}`` for these accounts. One query.
+
+    For a staff screen that names who did something (the audit trail's actor
+    column). Never for a customer-facing surface."""
+    from workeasy360.platform.identity.models import User
+
+    ids = {i for i in user_ids if i}
+    if not ids:
+        return {}
+    return dict(User.objects.filter(id__in=ids).values_list("id", "email"))
+
+
 def has_usable_password(user_id: Any) -> bool:
     """Whether this account can already sign in with a password.
 

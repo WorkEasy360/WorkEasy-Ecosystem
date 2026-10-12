@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { adminApi, type Brand, type DomainRow } from "@/lib/api/controlPlane";
-import { portalWhiteLabel, staffWhiteLabel, type WhiteLabelApi } from "@/lib/api/partnerConsole";
-import { can, useAdmin, usePartner } from "./ControlShell";
+import type { Brand, DomainRow } from "@/lib/api/controlPlane";
+import { portalWhiteLabel, type WhiteLabelApi } from "@/lib/api/partnerConsole";
+import { usePartner } from "./ControlShell";
 import { LivePreview } from "./BrandPreview";
 import { LoadGate, Status, useAction, useLoad } from "./ui";
 import { ErrorSummary, TextField } from "./widgets";
@@ -16,9 +15,11 @@ import local from "./PartnerConsole.module.css";
  * The white-label setup wizard (Phase 10d): brand identity, preview, domain
  * request, DNS verification, activation.
  *
- * **One wizard, two callers.** A partner runs it from its own portal; staff run
- * it for a partner from the console. The screens are the same and the calls go
- * through the same commands - only the address differs (``WhiteLabelApi``).
+ * **This is the partner's own wizard.** Staff set a partner up with the ten-step
+ * ``WhiteLabelSetup`` instead (brand, portal words, products, communication,
+ * domain, sign-in, review). Both go through the same commands; only the address
+ * differs (``WhiteLabelApi``), and the partner's own portal has no products,
+ * communication or enable steps because those are staff acts.
  *
  * **Every step is its own action.** Saving a brand and requesting a domain are
  * separate submits, each through ``useAction``, so a second-factor prompt
@@ -63,7 +64,8 @@ const draftOf = (brand: Brand | null): BrandDraft => ({
   url: brand?.support_url ?? "",
 });
 
-const FAILURES: Record<string, string> = {
+/** What each failed DNS check means, in words (also used by the staff setup wizard). */
+export const FAILURES: Record<string, string> = {
   record_not_found: "The record was not found yet. DNS changes can take a while to spread; check it again in a few minutes.",
   lookup_failed: "DNS could not be reached just now. Try again shortly - this is not a failed check.",
   verification_expired: "This request expired. Request the domain again to get a new record.",
@@ -479,67 +481,6 @@ function ActivateStep({
 }
 
 // --- the two places it runs -------------------------------------------------------------------------------
-
-/** Staff preparing a partner (Partners → White-label → a partner). */
-export function StaffWhiteLabelPage({ partnerId }: { partnerId: string }) {
-  const { permissions } = useAdmin();
-  const manage = can(permissions, "platform.staff_partner.manage");
-  const [load, reload] = useLoad(() => adminApi.partner(partnerId), [partnerId]);
-  const api = useMemo(() => staffWhiteLabel(partnerId), [partnerId]);
-  const { act, busy, feedback } = useAction(reload);
-  const REQUIRED = ["branding.manage", "domain.manage"];
-
-  return (
-    <div className={styles.stack}>
-      <LoadGate load={load} what="this partner">
-        {(p) => {
-          const held = new Set(p.capabilities.filter((c) => c.is_effective).map((c) => c.capability));
-          const missing = REQUIRED.filter((k) => !held.has(k));
-          return (
-            <>
-              <div className={local.headerRow}>
-                <h1>
-                  White-label: {p.display_name} <Status value={p.status} />
-                </h1>
-                <Link href={`/admin/partners/${p.id}`}>Back to the partner</Link>
-              </div>
-              {p.status === "terminated" ? (
-                <p role="alert">A terminated partner cannot take a new brand or domain.</p>
-              ) : !manage ? (
-                <p role="alert">You need the permission to change partners to set up white-label.</p>
-              ) : missing.length > 0 ? (
-                <section className={`w360-card ${styles.card}`} aria-labelledby="enable-wl">
-                  <h2 id="enable-wl" className={styles.cardTitle}>
-                    Enable white-label
-                  </h2>
-                  <p>
-                    White-label is a capability, not a kind of account. This partner does not yet hold: {missing.join(", ")}. Enabling
-                    grants exactly those capabilities.
-                  </p>
-                  {feedback}
-                  <button
-                    type="button"
-                    className="w360-btn w360-btn-primary"
-                    disabled={busy}
-                    onClick={() =>
-                      void act(async () => {
-                        for (const key of missing) await adminApi.grantCapability(p.id, key, "Enabled for white-label setup");
-                      }, "White-label enabled.")
-                    }
-                  >
-                    Enable white-label
-                  </button>
-                </section>
-              ) : (
-                <WhiteLabelWizard api={api} partnerName={p.display_name} />
-              )}
-            </>
-          );
-        }}
-      </LoadGate>
-    </div>
-  );
-}
 
 /** A partner setting up its own white-label (its portal). */
 export function PortalWhiteLabelPage({

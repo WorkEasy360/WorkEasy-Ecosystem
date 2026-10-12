@@ -1,14 +1,18 @@
 """SSO security, per real product (Phase 12, Steps 2-5).
 
-None of the four products can act as an OIDC client yet (their side: X-01 in
-docs/phase-12/01-audit-gap-list.md), so single sign-on is **BLOCKED** for all
-four and no production credential is issued - one would make the launcher
-claim SSO works. What *can* be proven, and is here, is the Workeasy360 half
-for each product's own registration: the exact manifest from
-``infra/ecosystem/products.json`` (its launch URL, its redirect URI, its
-product code), a test-only credential in the test database, and the reference
-product client standing in for the product. Every attack in the brief's
-Step 4 list must fail, for each product separately.
+What is proven here is the Workeasy360 half for each product's own
+registration: the exact manifest from ``infra/ecosystem/products.json`` (its
+launch URL, its redirect URI, its product code, and since ADR-044 its
+``sign_in_mode``), a test-only credential in the test database, and the
+reference product client standing in for the product. Every attack in the
+brief's Step 4 list must fail, for each product separately.
+
+ADR-044: all four products have OIDC clients (EasyBook and Easy CRM, then
+Easy Project and Easy Help Desk in the final-completion brief, 2026-10-12)
+and are registered ``sso_only``. The last test proves, on each real manifest
+with its mode set to ``local_only``, that the identity provider then refuses
+to sign anyone in to it at all - the state a product registered before it had
+a client is stored in.
 """
 
 from __future__ import annotations
@@ -33,6 +37,13 @@ REGISTRY = json.loads(
 )["products"]
 CODES = [entry["code"] for entry in REGISTRY]
 assert sorted(CODES) == ["easy_crm", "easy_helpdesk", "easy_project", "easybook"]
+#: The products whose registration offers Workeasy360 sign-in (ADR-044).
+SSO_CODES = [
+    entry["code"]
+    for entry in REGISTRY
+    if entry["integration"].get("sign_in_mode", "sso_only") != "local_only"
+]
+assert sorted(SSO_CODES) == ["easy_crm", "easy_helpdesk", "easy_project", "easybook"]
 
 
 @pytest.fixture
@@ -47,12 +58,17 @@ def real_product(client, signing_key, product_client):
     from workeasy360.platform.ecosystem import keys
     from workeasy360.platform.ecosystem import services as ecosystem
 
-    made: dict[str, dict] = {}
+    made: dict[tuple[str, str | None], dict] = {}
 
-    def make(code: str) -> dict:
-        if code in made:
-            return made[code]
+    def make(code: str, *, sign_in_mode: str | None = None) -> dict:
+        if (code, sign_in_mode) in made:
+            return made[(code, sign_in_mode)]
         entry = next(e for e in REGISTRY if e["code"] == code)
+        if sign_in_mode:
+            entry = {
+                **entry,
+                "integration": {**entry["integration"], "sign_in_mode": sign_in_mode},
+            }
         with staff_scope(
             "platform.staff_catalog.manage", "platform.staff_integration.manage"
         ) as ctx:
@@ -87,12 +103,12 @@ def real_product(client, signing_key, product_client):
             "client_secret": issued.secret,
             "private_key_pem": private_pem,
         }
-        made[code] = {
+        made[(code, sign_in_mode)] = {
             "entry": entry,
             "product": product_client(registration),
             **registration,
         }
-        return made[code]
+        return made[(code, sign_in_mode)]
 
     return make
 
@@ -108,7 +124,7 @@ def _error_of(response) -> str:
     return parse_qs(urlsplit(response["Location"]).query).get("error", [""])[0]
 
 
-@pytest.mark.parametrize("code", CODES)
+@pytest.mark.parametrize("code", SSO_CODES)
 def test_the_full_flow_binds_product_organization_and_nonce(
     code, client, real_product, entitled_org, signed_in
 ):
@@ -132,7 +148,7 @@ def test_the_full_flow_binds_product_organization_and_nonce(
     assert claims["aud"] == p["client_id"]
 
 
-@pytest.mark.parametrize("code", CODES)
+@pytest.mark.parametrize("code", SSO_CODES)
 def test_redirect_uri_tampering_is_rendered_never_redirected(
     code, client, real_product, entitled_org, signed_in
 ):
@@ -164,7 +180,7 @@ def test_redirect_uri_tampering_is_rendered_never_redirected(
         assert "Location" not in response, tampered
 
 
-@pytest.mark.parametrize("code", CODES)
+@pytest.mark.parametrize("code", SSO_CODES)
 def test_a_code_is_single_use_short_lived_and_bound_to_its_verifier(
     code, client, real_product, entitled_org, signed_in
 ):
@@ -206,7 +222,7 @@ def test_a_code_is_single_use_short_lived_and_bound_to_its_verifier(
     assert expired.value.error == protocol.INVALID_GRANT
 
 
-@pytest.mark.parametrize("code", CODES)
+@pytest.mark.parametrize("code", SSO_CODES)
 def test_a_code_minted_for_this_product_is_useless_to_another_product(
     code, client, real_product, entitled_org, signed_in
 ):
@@ -223,7 +239,7 @@ def test_a_code_minted_for_this_product_is_useless_to_another_product(
     assert refused.value.error == protocol.INVALID_GRANT
 
 
-@pytest.mark.parametrize("code", CODES)
+@pytest.mark.parametrize("code", SSO_CODES)
 def test_state_and_nonce_are_echoed_exactly_so_the_product_can_refuse_a_mismatch(
     code, client, real_product, entitled_org, signed_in
 ):
@@ -260,7 +276,7 @@ def test_state_and_nonce_are_echoed_exactly_so_the_product_can_refuse_a_mismatch
     assert refused.value.error == protocol.INVALID_GRANT
 
 
-@pytest.mark.parametrize("code", CODES)
+@pytest.mark.parametrize("code", SSO_CODES)
 def test_a_member_of_another_organization_cannot_sign_in_to_this_one(
     code, client, real_product, entitled_org, signed_in
 ):
@@ -272,7 +288,7 @@ def test_a_member_of_another_organization_cannot_sign_in_to_this_one(
     assert _error_of(response) == protocol.MEMBERSHIP_INACTIVE
 
 
-@pytest.mark.parametrize("code", CODES)
+@pytest.mark.parametrize("code", SSO_CODES)
 def test_removed_membership_missing_entitlement_and_missing_seat_are_refused(
     code, client, real_product, entitled_org, signed_in, organization_factory
 ):
@@ -307,7 +323,7 @@ def test_removed_membership_missing_entitlement_and_missing_seat_are_refused(
     assert _error_of(response) == protocol.MEMBERSHIP_INACTIVE
 
 
-@pytest.mark.parametrize("code", CODES)
+@pytest.mark.parametrize("code", SSO_CODES)
 def test_a_suspended_organization_signs_in_read_only(
     code, client, real_product, entitled_org, signed_in
 ):
@@ -330,3 +346,25 @@ def test_a_suspended_organization_signs_in_read_only(
     )
     assert read["decision"] == "allow", read
     assert write["decision"] == "deny" and write["reason"] == "suspended", write
+
+
+@pytest.mark.parametrize("code", CODES)
+def test_a_local_only_product_is_never_signed_in_through_workeasy360(
+    code, client, real_product, entitled_org, signed_in
+):
+    """ADR-044: a registration that says ``local_only`` gets no code, even for
+    an entitled, seated, signed-in person whose preference is automatic. The
+    refusal (``unauthorized_client``) goes to the registered redirect URI -
+    the client and URI were verified first - and nothing is minted."""
+    from workeasy360.platform.ecosystem.models import AuthorizationCode
+
+    p = real_product(code, sign_in_mode="local_only")
+    org = entitled_org(code)
+    signed_in(org["user"])
+    request, response = _authorize(p["product"], client, org["organization_id"])
+    assert response.status_code == 302
+    assert response["Location"].startswith(p["redirect_uri"] + "?")
+    assert _error_of(response) == protocol.UNAUTHORIZED_CLIENT
+    assert not AuthorizationCode.objects.filter(
+        integration__client_id=p["client_id"]
+    ).exists()

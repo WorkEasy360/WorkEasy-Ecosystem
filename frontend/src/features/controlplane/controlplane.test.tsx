@@ -96,18 +96,44 @@ describe("the Super Admin shell", () => {
     expect(navLabels()).toEqual(["Dashboard", "Customers", "Subscriptions", "Entitlements", "Audit"]);
   });
 
-  it("says plainly that the area is for staff when the backend refuses", async () => {
+  it("says plainly that the account has no administrator access when the backend refuses, and offers the User way in", async () => {
     mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/admin/session": [{ status: 403, body: { code: "permission_denied" } }],
     });
+    const replace = vi.spyOn(nav.router, "replace");
+    const { container } = render(
+      <AdminShell>
+        <h1>Secret</h1>
+      </AdminShell>,
+    );
+    expect(await screen.findByRole("heading", { name: "You don't have administrator access." })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/administrator access/);
+    // Nothing from the console: no page, no navigation, no permission named.
+    expect(screen.queryByRole("heading", { name: "Secret" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/platform\.staff_/);
+    await expectNoViolations(container);
+    fireEvent.click(screen.getByRole("button", { name: "Continue as User" }));
+    expect(replace).toHaveBeenCalledWith("/dashboard?mode=user");
+    replace.mockRestore();
+  });
+
+  it("sends a signed-out visitor to the Administrator sign-in, remembering the page", async () => {
+    pathname = "/admin/partners/resellers";
+    mockApi({ "GET /api/v1/auth/session": [{ status: 200, body: { authenticated: false } }] });
+    const replace = vi.spyOn(nav.router, "replace");
     render(
       <AdminShell>
         <h1>Secret</h1>
       </AdminShell>,
     );
-    await screen.findByText(/for Workeasy360 staff/);
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(`/login?mode=admin&next=${encodeURIComponent("/admin/partners/resellers")}`),
+    );
     expect(screen.queryByRole("heading", { name: "Secret" })).not.toBeInTheDocument();
+    replace.mockRestore();
+    pathname = "/admin";
   });
 
   it("asks for a code before the control plane opens, then loads it (D-037)", async () => {

@@ -133,17 +133,21 @@ def overview_counts(
     *,
     reseller_keys: frozenset[str],
     white_label_keys: frozenset[str],
+    affiliate_keys: frozenset[str],
 ) -> dict[str, int]:
-    """The counts the overview cards show: partners by label, live customers,
-    the live customers holding an active subscription, and domains awaiting proof."""
+    """The counts the overview cards show: partners (every one, and the active
+    ones by label), live customers, the live customers holding an active
+    subscription, and domains awaiting proof."""
     from workeasy360.commercial.partners.models import PartnerAccount, PartnerDomain
 
     active = PartnerAccount.objects.filter(status=PartnerStatus.ACTIVE.value)
     live = _live_links()
     return {
+        "total_partners": PartnerAccount.objects.count(),
         "active_partners": active.count(),
         "active_resellers": active.filter(_holds_any(now, reseller_keys)).count(),
         "white_label_enabled": active.filter(_holds_any(now, white_label_keys)).count(),
+        "active_affiliates": active.filter(_holds_any(now, affiliate_keys)).count(),
         "partner_customers": live.count(),
         # One live link per organization (a partial unique index), so counting
         # links is counting customers.
@@ -493,6 +497,7 @@ def summary_facts(partner_id: UUID, now: datetime) -> dict[str, Any]:
         PartnerDomain,
         PartnerMember,
         PartnerOrganizationLink,
+        PartnerProfile,
     )
 
     live = _with_latest_invite(
@@ -527,6 +532,13 @@ def summary_facts(partner_id: UUID, now: datetime) -> dict[str, Any]:
             .annotate(n=Count("id"))
         },
         "brand_configured": PartnerBrand.objects.filter(partner_id=partner_id).exists(),
+        # Two facts from the business profile - whether the company has a
+        # business email and a country - for the setup checklist. Nothing else
+        # of it leaves the profile read.
+        "profile": PartnerProfile.objects.filter(partner_id=partner_id)
+        .values("business_email", "country")
+        .first()
+        or {"business_email": "", "country": ""},
         "administrators": [
             {"password_set": m.user.has_usable_password()}
             for m in PartnerMember.objects.filter(
@@ -537,6 +549,17 @@ def summary_facts(partner_id: UUID, now: datetime) -> dict[str, Any]:
             ).select_related("user")
         ],
     }
+
+
+def live_customer_count(partner_id: UUID) -> int:
+    """Customers this partner is related to now (active or suspended). One query."""
+    from workeasy360.commercial.partners.models import PartnerOrganizationLink
+
+    return (
+        PartnerOrganizationLink.objects.filter(partner_id=partner_id)
+        .exclude(status=PartnerLinkStatus.ENDED.value)
+        .count()
+    )
 
 
 def audit_resource_ids(partner_id: UUID) -> list[UUID]:
@@ -565,3 +588,46 @@ def product_grant_counts() -> dict[str, int]:
         .annotate(partners=Count("partner_id", distinct=True))
     )
     return {row["product__code"]: int(row["partners"]) for row in rows}
+
+
+# --- recent activity (Partner Control Center) ---------------------------------------
+
+
+def recent_partners(limit: int) -> list[Any]:
+    """The newest partner accounts, whatever their capabilities. One query."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    return list(PartnerAccount.objects.order_by("-created_at", "-id")[:limit])
+
+
+def domains_awaiting(limit: int) -> list[dict[str, Any]]:
+    """Domain requests not yet proven, oldest first (the longest waiting is the
+    one to chase), with the partner each belongs to. One query."""
+    from workeasy360.commercial.partners.models import PartnerDomain
+
+    return [
+        {
+            "id": str(d.id),
+            "hostname": d.hostname,
+            "status": d.status,
+            "requested_at": d.created_at.isoformat(),
+            "partner_id": str(d.partner_id),
+            "partner_name": d.partner.display_name,
+        }
+        for d in PartnerDomain.objects.filter(status__in=AWAITING_VERIFICATION)
+        .select_related("partner")
+        .order_by("created_at", "id")[:limit]
+    ]
+
+
+def partner_names(partner_ids: set[UUID]) -> dict[UUID, str]:
+    """Display names for these partners. One query."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    if not partner_ids:
+        return {}
+    return dict(
+        PartnerAccount.objects.filter(id__in=partner_ids).values_list(
+            "id", "display_name"
+        )
+    )

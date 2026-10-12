@@ -15,6 +15,9 @@ export interface SidebarItem {
   when?: boolean;
   /** Active only on an exact match (an overview page whose URL prefixes others). */
   exact?: boolean;
+  /** The URL prefix this entry is current under, when it differs from `href`
+   * (a section entry whose link opens one of several pages beneath it). */
+  match?: string;
   children?: SidebarItem[];
 }
 
@@ -26,7 +29,8 @@ export interface SidebarGroup {
 
 function isActive(pathname: string, item: SidebarItem): boolean {
   if (item.exact) return pathname === item.href;
-  return pathname === item.href || pathname.startsWith(`${item.href}/`);
+  const prefix = item.match ?? item.href;
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }
 
 const visible = (items: SidebarItem[]) => items.filter((i) => i.when !== false);

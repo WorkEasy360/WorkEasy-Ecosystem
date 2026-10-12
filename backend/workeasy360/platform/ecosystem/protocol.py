@@ -33,18 +33,26 @@ UNSUPPORTED_GRANT_TYPE: Final = "unsupported_grant_type"
 INVALID_SCOPE: Final = "invalid_scope"
 SERVER_ERROR: Final = "server_error"
 
-# `access_denied` and `unauthorized_client` are registered by RFC 6749 and are
-# deliberately **not** declared here. Nothing raises either: a denial in this
-# platform always has a specific, actionable cause - membership, organization
-# status, entitlement, suspension - and `access_denied` is the code you emit
-# when you have decided not to say which. Declaring them anyway put two codes
-# in the published `workeasy360_error_codes` list that the server could not
-# produce, which is the failure this module's own docstring warns about from
-# the other direction. If one is ever genuinely needed, add it here and
-# `test_every_published_error_code_is_one_the_platform_can_emit` will hold the
-# list honest.
+# `access_denied` and `unauthorized_client` were deliberately left undeclared
+# until something genuinely raised them: a published code no client can
+# receive teaches an integrator to write a branch that never runs.
+# Universal sign-in (ADR-044) is that something, and each has exactly one
+# meaning here - never "a denial we decided not to explain":
+#
+# - `access_denied`: the *person* declined. They chose "Cancel" on
+#   Workeasy360's access chooser. Every platform-side refusal keeps its own
+#   specific code below.
+# - `unauthorized_client`: the product's registration says it does not use
+#   Workeasy360 sign-in (`sign_in_mode: local_only`), yet it asked for a code.
+ACCESS_DENIED: Final = "access_denied"
+UNAUTHORIZED_CLIENT: Final = "unauthorized_client"
 TEMPORARILY_UNAVAILABLE: Final = "temporarily_unavailable"
 LOGIN_REQUIRED: Final = "login_required"
+#: OIDC Core section 3.1.2.6. The product asked for no interaction
+#: (`prompt=none`), but this person's sign-in preference says Workeasy360 must
+#: ask them first - so it answers without showing anything, and the product
+#: offers its normal "Continue with Workeasy360" button instead.
+INTERACTION_REQUIRED: Final = "interaction_required"
 INVALID_TOKEN: Final = "invalid_token"  # noqa: S105 - an RFC 6750 error code
 
 #: Workeasy360-specific authorization failures.
@@ -95,8 +103,11 @@ ERROR_CODES: Final[frozenset[str]] = frozenset(
         UNSUPPORTED_GRANT_TYPE,
         INVALID_SCOPE,
         SERVER_ERROR,
+        ACCESS_DENIED,
+        UNAUTHORIZED_CLIENT,
         TEMPORARILY_UNAVAILABLE,
         LOGIN_REQUIRED,
+        INTERACTION_REQUIRED,
         INVALID_TOKEN,
         MEMBERSHIP_INACTIVE,
         ORGANIZATION_INACTIVE,
@@ -125,6 +136,21 @@ ERROR_CODES: Final[frozenset[str]] = frozenset(
 
 GRANT_TYPE_AUTHORIZATION_CODE: Final = "authorization_code"
 RESPONSE_TYPE_CODE: Final = "code"
+
+#: OIDC Core section 3.1.2.1 ``prompt`` values this provider implements
+#: (ADR-044). ``none`` must stand alone. ``consent`` is answered exactly like
+#: ``select_account`` - the access chooser, which names the account and the
+#: organization - because consent is not otherwise collected here.
+PROMPT_NONE: Final = "none"
+PROMPT_LOGIN: Final = "login"
+PROMPT_CONSENT: Final = "consent"
+PROMPT_SELECT_ACCOUNT: Final = "select_account"
+PROMPT_VALUES: Final[tuple[str, ...]] = (
+    PROMPT_NONE,
+    PROMPT_LOGIN,
+    PROMPT_CONSENT,
+    PROMPT_SELECT_ACCOUNT,
+)
 PKCE_METHOD_S256: Final = "S256"
 CLIENT_ASSERTION_TYPE_JWT_BEARER: Final = (
     "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"

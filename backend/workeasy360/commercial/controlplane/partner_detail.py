@@ -21,6 +21,7 @@ from django.utils import timezone
 
 from workeasy360.commercial.commissions import selectors as commission_selectors
 from workeasy360.commercial.controlplane import partner_console as console
+from workeasy360.commercial.controlplane import readiness
 from workeasy360.commercial.partners import capabilities
 from workeasy360.commercial.partners import console_reads as partner_reads
 from workeasy360.commercial.partners import selectors as partner_selectors
@@ -38,6 +39,7 @@ from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.audit import selectors as audit_selectors
 from workeasy360.platform.authz import services as authz
 from workeasy360.platform.authz.control_plane import in_scope
+from workeasy360.platform.identity import selectors as identity_selectors
 
 PARTNER_VIEW = console.PARTNER_VIEW
 AUDIT_VIEW = "platform.staff_audit.view"
@@ -191,6 +193,7 @@ def summary(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
     rule = commission_selectors.effective_rule(partner_id, product_code="", at=now)
     has_partner_price = price_selectors.has_partner_price(partner_id)
     admins = own["administrators"]
+    business_email = own["profile"]["business_email"]
 
     enabled = bool(held & capabilities.experience_keys(capabilities.WHITE_LABEL))
     return {
@@ -236,6 +239,9 @@ def summary(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
                 ),
             },
         },
+        # Counts only - a referral identifies nothing about the prospect. Read
+        # from the same grouped facts as the lists, so no extra query.
+        "referrals": facts["referrals"].get(partner_id, console._NO_REFERRALS),
         "setup_progress": _setup_progress(
             row,
             held,
@@ -245,6 +251,17 @@ def summary(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
             admins,
             brand_configured,
             domain_state,
+            business_email,
+        ),
+        # The same rule the Add Reseller review applies to a draft, applied to
+        # this saved partner: what is still missing before it can be activated.
+        "activation": readiness.evaluate(
+            contact_name=row.contact_name,
+            contact_email=row.contact_email,
+            business_email=business_email,
+            held=held,
+            product_count=len(products),
+            has_administrator=bool(admins),
         ),
     }
 
@@ -258,6 +275,7 @@ def _setup_progress(
     admins: list[dict[str, Any]],
     brand_configured: bool,
     domain_state: str,
+    business_email: str = "",
 ) -> list[dict[str, str]]:
     """Each thing a partner needs to work, and where it stands. States:
     ``complete``, ``incomplete`` (needs doing), ``pending`` (done on our side,
@@ -286,28 +304,42 @@ def _setup_progress(
         )
 
     if any(a["password_set"] for a in admins):
-        admin = step("administrator", "Administrator", "complete")
+        admin = step("administrator", "Admin user", "complete")
     elif admins:
         admin = step(
             "administrator",
-            "Administrator",
+            "Admin user",
             "pending",
             "Waiting for them to choose a password.",
         )
     else:
         admin = step(
             "administrator",
-            "Administrator",
+            "Admin user",
             "incomplete",
             "Nobody can act for this partner yet.",
         )
 
+    profile_gaps = [
+        label
+        for label, present in (
+            ("a primary contact", row.contact_name and row.contact_email),
+            ("a business email", business_email),
+        )
+        if not present
+    ]
     return [
         step(
             "profile",
-            "Profile",
-            "complete" if row.contact_email else "incomplete",
-            "" if row.contact_email else "Add a contact email.",
+            "Business profile",
+            "incomplete" if profile_gaps else "complete",
+            f"Add {' and '.join(profile_gaps)}." if profile_gaps else "",
+        ),
+        step(
+            "capabilities",
+            "Capabilities",
+            "complete" if held else "incomplete",
+            "" if held else "It holds no capability, so it can do nothing yet.",
         ),
         step(
             "products",
@@ -323,7 +355,7 @@ def _setup_progress(
         ),
         commission,
         admin,
-        step("branding", "Branding", "complete" if brand_configured else "optional"),
+        step("branding", "White-label", "complete" if brand_configured else "optional"),
         step(
             "domain",
             "Domain",
@@ -453,12 +485,123 @@ def activity(
     """
     authz.require(ctx, AUDIT_VIEW)
     console.require_partner(partner_id)
-    return audit_selectors.audit_page(
+    page = audit_selectors.audit_page(
         resource_ids=partner_reads.audit_resource_ids(partner_id),
         changes_match=("partner_id", str(partner_id)),
         limit=console._limit(limit),
         cursor=cursor,
     )
+    actors = identity_selectors.emails_for_users(
+        UUID(item["actor_user_id"]) for item in page.items if item["actor_user_id"]
+    )
+    return Page(
+        items=[_activity_item(item, actors) for item in page.items],
+        next_cursor=page.next_cursor,
+        has_more=page.has_more,
+    )
+
+
+#: What each recorded action is called to a person. An action not listed reads as
+#: its own code with the punctuation taken out - never blank, never hidden.
+ACTION_LABELS: dict[str, str] = {
+    "partner.created": "Partner created",
+    "partner.updated": "Partner details changed",
+    "partner.profile_updated": "Business details or contacts changed",
+    "partner.active": "Partner activated",
+    "partner.suspended": "Partner suspended",
+    "partner.terminated": "Partner terminated",
+    "partner.capability_granted": "Capability granted",
+    "partner.capability_revoked": "Capability revoked",
+    "partner.white_label_enabled": "White-label enabled",
+    "partner.product_granted": "Product granted",
+    "partner.product_grant_updated": "Product options changed",
+    "partner.product_grant_revoked": "Product removed",
+    "partner.price_set": "Pricing changed",
+    "partner.price_book_created": "Price book created",
+    "commission.partner_rule_assigned": "Commission rate assigned",
+    "commission.rule_created": "Commission rule created",
+    "commission.accrued": "Commission created",
+    "commission.reversed": "Commission reversed",
+    "commission.reversal_recorded": "Commission reversed",
+    "commission.adjustment_recorded": "Commission adjusted",
+    "partner.member_invited": "User invited",
+    "partner.member_added": "User added",
+    "partner.member_removed": "User removed",
+    "partner.member_role_changed": "User role changed",
+    "partner.member_setup_resent": "Setup link sent",
+    "partner.customer_provisioned": "Customer created",
+    "partner.provision_customer": "Customer created",
+    "partner.customer_linked": "Customer linked",
+    "partner.relationship_started": "Customer relationship started",
+    "partner.relationship_ended": "Customer relationship ended",
+    "partner.branding_changed": "Brand changed",
+    "partner.logo_uploaded": "Logo uploaded",
+    "partner.domain_requested": "Domain requested",
+    "partner.domain_verified": "Domain verified",
+    "partner.domain_verification_failed": "Domain verification failed",
+    "partner.domain_activated": "Domain activated",
+    "partner.domain_disabled": "Domain disabled",
+    "payout.prepared": "Payout prepared",
+    "payout.ready": "Payout marked ready",
+    "payout.approved": "Payout approved",
+    "payout.paid": "Payout marked paid",
+    "payout.cancelled": "Payout cancelled",
+}
+
+#: The facts of an entry that may be shown as its *target*, in the order they are
+#: tried. A closed list: whatever else an entry recorded stays in the audit log
+#: and is not echoed to this screen, so no value that was never meant to be seen
+#: here can leak through it.
+_TARGET_KEYS = (
+    "hostname",
+    "capability",
+    "product_code",
+    "brand_name",
+    "price_book",
+    "role",
+    "to",
+)
+
+
+def _activity_item(item: dict[str, Any], actors: dict[Any, str]) -> dict[str, Any]:
+    changes = item.get("changes") if isinstance(item.get("changes"), dict) else {}
+    action = str(item["action"])
+    label = (
+        ACTION_LABELS.get(action)
+        or action.replace(".", " ").replace("_", " ").capitalize()
+    )
+    target = ""
+    for key in _TARGET_KEYS:
+        value = changes.get(key)
+        if isinstance(value, str) and value:
+            if key == "capability" and value in capabilities.CAPABILITIES:
+                value = capabilities.CAPABILITIES[value].label
+            target = value
+            break
+    if action == "partner.capability_granted" or action == "partner.capability_revoked":
+        pass
+    elif action == "partner.white_label_enabled":
+        target = "Branding and domains"
+    elif action == "partner.profile_updated":
+        fields = changes.get("fields")
+        sections = (
+            sorted({str(f).split(".")[0] for f in fields})
+            if isinstance(fields, list)
+            else []
+        )
+        target = ", ".join(sections).replace("_", " ")
+    actor_id = item.get("actor_user_id")
+    actor = (actors.get(UUID(actor_id), "") if actor_id else "") or (
+        "System"
+        if item.get("actor_kind") in ("system", "")
+        else str(item.get("actor_kind")).capitalize()
+    )
+    return {
+        **item,
+        "label": label,
+        "actor": actor,
+        "target": target,
+    }
 
 
 # --- the brand -----------------------------------------------------------------------------------------
@@ -470,3 +613,34 @@ def brand(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
     console.require_partner(partner_id)
     row = partner_selectors.brand_for(partner_id)
     return {"brand": partner_selectors.brand_dict(row) if row is not None else None}
+
+
+# --- referrals -------------------------------------------------------------------------------------------
+
+
+def referrals(
+    ctx: TenantContext,
+    partner_id: UUID,
+    *,
+    limit: Any = console.DEFAULT_PAGE,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """The Referrals tab (Partner Control Center): the partner's codes, its
+    referrals counted by status, and one page of them - read through the same
+    commission selectors the partner's own portal uses. Staff read; nothing is
+    created here (a code is the partner's to create, through its own command).
+
+    A referral row identifies nothing about the prospect, here as in the portal.
+    """
+    authz.require(ctx, PARTNER_VIEW)
+    console.require_partner(partner_id)
+    page = commission_selectors.referrals_page(
+        partner_id, limit=console._limit(limit), cursor=cursor
+    )
+    return {
+        "summary": commission_selectors.referral_summary(partner_id),
+        "codes": commission_selectors.referral_codes(partner_id),
+        "results": page.items,
+        "next_cursor": page.next_cursor,
+        "has_more": page.has_more,
+    }

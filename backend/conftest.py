@@ -1085,16 +1085,35 @@ def signed_in(client, db):
     ``w360_aal`` is the claim that flow writes.
     """
 
-    def make(user, *, aal: int = 1, mfa_verified: bool | None = None):
+    def make(
+        user,
+        *,
+        aal: int = 1,
+        mfa_verified: bool | None = None,
+        sign_in_preference: str | None = "auto_sso",
+    ):
         """``mfa_verified`` (default: staff only) marks an AAL 1 session as
         having verified a factor earlier - what a staff session must have
-        since D-037 (Phase 12)."""
+        since D-037 (Phase 12).
+
+        ``sign_in_preference`` (ADR-044): the person's default product
+        sign-in. These suites exercise the *silent* authorization path - a
+        signed-in person entering a product with no question asked - which,
+        since universal sign-in, is what a person who chose "automatically
+        use my Workeasy360 account" gets. ``None`` leaves no stored
+        preference, so the platform default ("ask me each time") applies -
+        what ``tests/universal_sso`` uses."""
         from tests.factories.sessions import lapsed_step_up
+        from workeasy360.platform.ecosystem.models import UserSignInPreference
         from workeasy360.platform.tenancy.resolution import (
             record_step_up,
             reset_session_aal,
         )
 
+        if sign_in_preference is not None:
+            UserSignInPreference.objects.update_or_create(
+                user=user, product_code="", defaults={"mode": sign_in_preference}
+            )
         client.force_login(user)
         session = client.session
         verified = user.is_staff if mfa_verified is None else mfa_verified

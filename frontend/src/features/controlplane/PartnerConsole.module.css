@@ -248,3 +248,214 @@
   padding: var(--w360-space-2) var(--w360-space-3);
   border-left: 4px solid var(--w360-brand);
 }
+
+/* --- the Partner Control Center ----------------------------------------------------
+   One sidebar entry ("Partners") opens this: a header, a local navigation and
+   the page. Grid with minmax(0, 1fr) so nothing inside can widen the page past
+   a 320px viewport (WCAG 1.4.10). */
+
+.center {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.center > * {
+  min-width: 0;
+}
+
+.centerHeader {
+  display: grid;
+  gap: 2px;
+}
+
+.centerTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--w360-text-muted);
+}
+
+.centerLead {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+/* The local navigation: pills that wrap on a wide screen and become one
+   sideways-scrolling strip on a narrow one. The strip scrolls inside itself, so
+   the page never scrolls horizontally; every entry is a link, so the strip is
+   reachable by keyboard. */
+.centerNav {
+  border-bottom: 1px solid var(--w360-border);
+  padding-bottom: var(--w360-space-3);
+}
+
+.centerNav ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.centerLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  min-height: 36px;
+  padding: 4px 12px;
+  border: 1px solid var(--w360-border);
+  border-radius: 999px;
+  color: var(--w360-text);
+  background: var(--w360-surface);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.centerLink:hover {
+  border-color: var(--w360-border-strong);
+  background: var(--w360-neutral-bg);
+}
+
+.centerLink:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+/* The current section: a heavier border, the brand colour *and* bold text, so
+   it is not signalled by colour alone (WCAG 1.4.1). */
+.centerLink[aria-current="page"] {
+  border: 2px solid var(--w360-brand);
+  color: var(--w360-text);
+  font-weight: 800;
+  background: var(--w360-neutral-bg);
+}
+
+@media (max-width: 640px) {
+  .centerNav ul {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-padding-inline: var(--w360-space-2);
+    padding: 2px 2px var(--w360-space-1);
+  }
+}
+
+@media (forced-colors: active) {
+  .centerLink[aria-current="page"] {
+    border-color: Highlight;
+  }
+}
+
+.centerBody {
+  min-width: 0;
+}
+
+.quickActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+}
+
+.panels {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+}
+
+.panel {
+  display: grid;
+  gap: var(--w360-space-2);
+  align-content: start;
+  padding: var(--w360-space-4);
+  min-width: 0;
+}
+
+.panel h3 {
+  margin: 0;
+}
+
+.panelMore {
+  font-size: 14px;
+  justify-self: start;
+}
+
+.activity {
+  display: grid;
+  gap: var(--w360-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activityItem {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding-bottom: var(--w360-space-2);
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.activityItem:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.activityMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: baseline;
+  font-size: 14px;
+}
+
+.purposes {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.purpose {
+  display: grid;
+  gap: var(--w360-space-1);
+  height: 100%;
+  padding: var(--w360-space-4);
+  color: inherit;
+  text-decoration: none;
+}
+
+.purpose:hover {
+  border-color: var(--w360-border-strong);
+}
+
+.purpose:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+.purposeTitle {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.titleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+}
+
+.titleRow h1 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

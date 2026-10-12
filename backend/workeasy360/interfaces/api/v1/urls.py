@@ -48,6 +48,14 @@ urlpatterns = [
     path("auth/login", auth_views.login_view, name="auth-login"),
     path("auth/logout", auth_views.logout_view, name="auth-logout"),
     path("auth/session", auth_views.session_view, name="auth-session"),
+    # Portal hand-off (ADR-043): issued on the central sign-in host, redeemed
+    # once on the portal host it names.
+    path("auth/handoff", auth_views.handoff_view, name="auth-handoff"),
+    path(
+        "auth/handoff/redeem",
+        auth_views.handoff_redeem_view,
+        name="auth-handoff-redeem",
+    ),
     path("organizations", auth_views.organizations_view, name="organizations"),
     # --- MFA: enrollment, challenge, step-up (Task 37-39) ---
     path("auth/mfa/totp/enroll", mfa_views.totp_enroll_view, name="mfa-totp-enroll"),
@@ -73,6 +81,12 @@ urlpatterns = [
         name="auth-session-revoke",
     ),
     path("auth/activity", account_views.activity_view, name="auth-activity"),
+    # ADR-044: how Workeasy360 signs this person in to products.
+    path(
+        "auth/sign-in-preferences",
+        account_views.sign_in_preferences_view,
+        name="auth-sign-in-preferences",
+    ),
     # The invitee's side of an invitation: reached before any membership
     # exists, so not under the tenant path. POST for both, so the token never
     # travels in a URL.
@@ -426,6 +440,35 @@ urlpatterns = [
         "integrations/oauth/resume",
         ecosystem_views.resume,
         name="oidc-authorize-resume",
+    ),
+    # ADR-044: the access chooser - what it shows and the person's answer.
+    # Session-authenticated and CSRF-protected, on the central sign-in host.
+    path(
+        "integrations/oauth/pending",
+        ecosystem_views.pending_view,
+        name="oidc-pending",
+    ),
+    path(
+        "integrations/oauth/pending/choose",
+        ecosystem_views.pending_choose_view,
+        name="oidc-pending-choose",
+    ),
+    # ADR-044: OpenID Connect RP-Initiated Logout (end_session_endpoint),
+    # and the confirmation page's two calls.
+    path(
+        "integrations/oauth/logout",
+        ecosystem_views.end_session,
+        name="oidc-end-session",
+    ),
+    path(
+        "integrations/oauth/logout/request",
+        ecosystem_views.end_session_request_view,
+        name="oidc-end-session-request",
+    ),
+    path(
+        "integrations/oauth/logout/confirm",
+        ecosystem_views.end_session_confirm_view,
+        name="oidc-end-session-confirm",
     ),
     path(
         "integrations/oauth/token",
@@ -795,6 +838,18 @@ _admin = [
         admin_product_views.integration_status_view,
         name="admin-product-integration-status",
     ),
+    # ADR-044: a product's credentials, by public reference; a generated
+    # secret appears once, in the POST response.
+    path(
+        "admin/products/<str:product_code>/integration/credentials",
+        admin_product_views.integration_credentials_view,
+        name="admin-product-integration-credentials",
+    ),
+    path(
+        "admin/products/<str:product_code>/integration/credentials/<str:credential_id>",
+        admin_product_views.integration_credential_view,
+        name="admin-product-integration-credential",
+    ),
     path(
         "admin/products/<str:product_code>/integration/health-check",
         admin_product_views.integration_health_check_view,
@@ -971,6 +1026,11 @@ _admin = [
         name="admin-partners-overview",
     ),
     path(
+        "admin/partners/recent",
+        admin_views.partners_recent_view,
+        name="admin-partners-recent",
+    ),
+    path(
         "admin/partners/resellers",
         admin_views.partner_resellers_view,
         name="admin-partner-resellers",
@@ -1016,9 +1076,29 @@ _admin = [
         name="admin-partner-activity",
     ),
     path(
+        "admin/partners/<uuid:partner_id>/referrals",
+        admin_views.partner_referrals_view,
+        name="admin-partner-referrals",
+    ),
+    path(
         "admin/partners/white-label",
         admin_views.partner_white_label_view,
         name="admin-partners-white-label",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/profile",
+        admin_views.partner_profile_view,
+        name="admin-partner-profile",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/white-label",
+        admin_views.partner_white_label_setup_view,
+        name="admin-partner-white-label-setup",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/white-label/enable",
+        admin_views.partner_white_label_enable_view,
+        name="admin-partner-white-label-enable",
     ),
     path(
         "admin/partners/<uuid:partner_id>/brand",
@@ -1059,6 +1139,11 @@ _admin = [
         "admin/partners/<uuid:partner_id>/administrators",
         admin_views.partner_administrator_invite_view,
         name="admin-partner-administrator-invite",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/members/<uuid:member_id>/role",
+        admin_views.partner_member_role_view,
+        name="admin-partner-member-role",
     ),
     path(
         "admin/partners/<uuid:partner_id>/members/<uuid:member_id>/resend-setup",
@@ -1114,6 +1199,11 @@ _admin = [
         "admin/partners/<uuid:partner_id>/product-grants",
         admin_views.partner_product_grant_view,
         name="admin-partner-product-grant",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/product-grants/<uuid:grant_id>",
+        admin_views.partner_product_grant_update_view,
+        name="admin-partner-product-grant-update",
     ),
     path(
         "admin/partners/<uuid:partner_id>/product-grants/<uuid:grant_id>/revoke",

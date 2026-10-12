@@ -32,7 +32,7 @@ the platform — asserted by
 | `launch_url` | ✅ | Where the launcher sends the user. Stored; never fetched. |
 | `redirect_uris` | ✅ | Compared by **exact string equality**, always. Max 10. |
 | `post_logout_redirect_uris` | | Registered now, unused until RP-initiated logout exists. See §5. |
-| `scopes` | | Default `["openid"]`. `profile` and `email` must be registered to be grantable. |
+| `scopes` | | Default `["openid"]`. `profile`, `email` and `organization` must be registered to be grantable. |
 | `capabilities` | | Statements about the product. None grants anything. |
 | `token_endpoint_auth_method` | | `private_key_jwt` (default) or `client_secret_basic`. |
 | `health_url` | | Stored for future ecosystem display. Never fetched. |

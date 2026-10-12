@@ -69,6 +69,7 @@ from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.audit import services as audit
 from workeasy360.platform.authz import services as authz
 from workeasy360.platform.authz.control_plane import in_scope
+from workeasy360.platform.identity import portals as portal_links
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import metrics
 
@@ -110,7 +111,7 @@ def invite_ttl() -> timedelta:
 
 
 def _url(token: str) -> str:
-    return f"{settings.W360_FRONTEND_URL}/owner-invitations/accept#token={token}"
+    return f"{portal_links.auth_url()}/owner-invitations/accept#token={token}"
 
 
 def public_state(invite: Any, now: Any | None = None) -> dict[str, Any]:
@@ -168,16 +169,20 @@ def issue_and_send(invite: Any) -> None:
     organization_name = organization_names([invite.organization_id]).get(
         invite.organization_id, ""
     )
+    # The partner's own name - or, when it is white-label and chose to, its
+    # brand: the email is sent in the partner's name.
+    sender = selectors.invitation_identity(invite.partner)
     notify_account(
         template_key=TEMPLATE_KEY,
         recipient_email=identity.contact_address(invite.user_id),
         context={
             "organization_name": organization_name,
-            "partner_name": invite.partner.display_name,
+            "partner_name": sender["partner_name"],
             "expires_on": invite.expires_at.strftime("%d %B %Y"),
         },
         sealed_context={"claim_url": _url(token)},
         idempotency_key=f"owner-invite:{invite.id}:{invite.send_count}",
+        envelope=sender["envelope"],
     )
     metrics.increment("partner_owner_invitations_sent_total")
 

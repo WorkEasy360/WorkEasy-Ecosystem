@@ -89,6 +89,21 @@ export interface AppDirectoryEntry {
   seats: { total: number; used: number } | null;
   renews_at: string | null;
   cancel_at: string | null;
+  /** ADR-044: how this person enters the product - whether Workeasy360
+   * sign-in works for it, their own setting, and what therefore happens.
+   * Decided by the server; null when the product has no registration. */
+  sign_in: AppSignIn | null;
+}
+
+/** The card's sign-in facts (ADR-044). */
+export interface AppSignIn {
+  sso: "enabled" | "integration_required" | "disabled";
+  mode: "sso_only" | "sso_optional" | "local_only";
+  product_login_available: boolean;
+  override: "inherit" | "auto_sso" | "ask" | "product_login";
+  preference: "auto_sso" | "ask" | "product_login";
+  effective: "auto_sso" | "ask" | "product_login";
+  constraint: "" | "sso_unavailable" | "product_requires_sso";
 }
 
 export interface SeatMember {

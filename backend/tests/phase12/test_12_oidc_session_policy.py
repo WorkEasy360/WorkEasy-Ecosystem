@@ -35,6 +35,13 @@ pytestmark = pytest.mark.django_db
 
 
 def _sign_in(client, user, *, mfa: bool, authenticated_at: float | None = None):
+    from workeasy360.platform.ecosystem.models import UserSignInPreference
+
+    # The silent path, as the root ``signed_in`` fixture sets up (ADR-044): this suite is about the
+    # access policy, not the person's sign-in preference, whose default would ask first.
+    UserSignInPreference.objects.update_or_create(
+        user=user, product_code="", defaults={"mode": "auto_sso"}
+    )
     client.force_login(user)
     session = client.session
     if mfa:

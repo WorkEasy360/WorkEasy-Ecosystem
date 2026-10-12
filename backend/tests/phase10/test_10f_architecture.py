@@ -169,6 +169,10 @@ def test_the_partner_models_are_the_frozen_set():
         "PartnerDomain",
         "PartnerOwnerInvite",
         "PartnerLogoUpload",
+        # The complete reseller + white-label setup (ADR-042): business facts and
+        # contact records. tests/partner_setup pins what they may never become.
+        "PartnerProfile",
+        "PartnerContact",
     }
 
 

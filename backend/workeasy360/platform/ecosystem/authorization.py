@@ -13,7 +13,9 @@ and every step denies:
     7. The organization's status permits login          -> organization_inactive
     8. The organization is entitled to the product      -> product_not_entitled
     9. A per-seat product: this member holds a seat     -> product_no_seat
-   10. Only then: mint a code
+   10. The person's sign-in preference (ADR-044): mint a code silently, or
+       park the request for Workeasy360's access chooser first
+   11. Only then: mint a code
 
 Steps 1 and 2 come first because until both hold, **the platform does not
 know where the browser is allowed to go**, and every later error must be
@@ -65,7 +67,11 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from workeasy360.contracts.enums import LicensingMode, OrganizationStatus
+from workeasy360.contracts.enums import (
+    LicensingMode,
+    OrganizationStatus,
+    ProductSignInMode,
+)
 from workeasy360.contracts.ports.entitlements import get_gate
 from workeasy360.contracts.values import access_policy
 from workeasy360.contracts.values.access_policy import SessionFacts
@@ -115,6 +121,25 @@ class AuthorizationRequest:
     code_challenge_method: str
     nonce: str
     organization_id: UUID | None
+    #: OIDC ``prompt`` values (ADR-044). Empty for a resumed request: it has
+    #: already been through the interaction the prompt asked for.
+    prompt: frozenset[str] = frozenset()
+
+    @property
+    def prompt_none(self) -> bool:
+        return protocol.PROMPT_NONE in self.prompt
+
+    @property
+    def prompt_login(self) -> bool:
+        return protocol.PROMPT_LOGIN in self.prompt
+
+    @property
+    def wants_account_confirmation(self) -> bool:
+        """``select_account`` or ``consent``: show the access chooser even to
+        a person whose preference is to be signed in automatically."""
+        return bool(
+            self.prompt & {protocol.PROMPT_SELECT_ACCOUNT, protocol.PROMPT_CONSENT}
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +245,18 @@ def parse_request(resolution: ClientResolution, params: Any) -> AuthorizationReq
             "This integration is not accepting authentication.",
         )
 
+    if integration.manifest_obj.sign_in_mode is ProductSignInMode.LOCAL_ONLY:
+        # The registration says this product does not use Workeasy360
+        # sign-in (ADR-044). Honoured here rather than only in the launcher,
+        # so the declaration is a fact about the identity provider and not a
+        # hint a product can ignore.
+        raise protocol.OAuthError(
+            protocol.UNAUTHORIZED_CLIENT,
+            "This product is not registered to use Workeasy360 sign-in.",
+        )
+
+    prompt = _parse_prompt(params.get("prompt"))
+
     code_challenge = str(params.get("code_challenge") or "")
     method = str(params.get("code_challenge_method") or "")
     if not code_challenge:
@@ -277,7 +314,30 @@ def parse_request(resolution: ClientResolution, params: Any) -> AuthorizationReq
         code_challenge_method=method,
         nonce=nonce,
         organization_id=organization_id,
+        prompt=prompt,
     )
+
+
+def _parse_prompt(raw: Any) -> frozenset[str]:
+    """OIDC Core section 3.1.2.1. Space-delimited; ``none`` must stand alone.
+
+    An unsupported value is refused rather than ignored: the discovery
+    document advertises exactly the values implemented
+    (``prompt_values_supported``), and silently ignoring ``login`` would
+    hand a product that asked for a fresh sign-in the old one instead.
+    """
+    values = frozenset(v for v in str(raw or "").split(" ") if v)
+    if not values:
+        return values
+    if not values <= set(protocol.PROMPT_VALUES):
+        raise protocol.OAuthError(
+            protocol.INVALID_REQUEST, "prompt contains an unsupported value."
+        )
+    if protocol.PROMPT_NONE in values and len(values) > 1:
+        raise protocol.OAuthError(
+            protocol.INVALID_REQUEST, "prompt=none cannot be combined with other values."
+        )
+    return values
 
 
 def _granted_scope(integration: Any, requested: str) -> tuple[str, ...]:
@@ -512,21 +572,7 @@ def require_seat(subject: ResolvedSubject, product_code: str) -> None:
     ``product_not_entitled``, rather than the seat-specific ``product_no_seat``
     a caller would otherwise have to explain away.
     """
-    from workeasy360.contracts.ports.catalog import get_product_directory
-    from workeasy360.contracts.values.identifiers import ProductCode
-    from workeasy360.platform.tenancy.context import tenant_context
-    from workeasy360.platform.tenancy.db import tenant_db_scope
-
-    descriptor = get_product_directory().get(ProductCode(product_code))
-    if descriptor is None or descriptor.licensing_mode != LicensingMode.PER_SEAT:
-        return
-
-    ctx = subject.to_context()
-    with tenant_context(ctx), tenant_db_scope(ctx):
-        held = get_gate().has_seat(
-            subject.organization_id, subject.membership_id, ProductCode(product_code)
-        )
-    if held:
+    if _holds_seat_if_required(subject, product_code):
         return
 
     metrics.increment(
@@ -538,6 +584,78 @@ def require_seat(subject: ResolvedSubject, product_code: str) -> None:
         "This organization holds this product, but you have not been "
         "assigned a seat. Ask an administrator to assign you one.",
     )
+
+
+def _holds_seat_if_required(subject: ResolvedSubject, product_code: str) -> bool:
+    """True unless ``product_code`` is per-seat licensed and this member holds
+    no seat in it. Shared by ``require_seat`` and ``person_access_reason`` so
+    sign-in and the entitlement API can never disagree about a seat."""
+    from workeasy360.contracts.ports.catalog import get_product_directory
+    from workeasy360.contracts.values.identifiers import ProductCode
+    from workeasy360.platform.tenancy.context import tenant_context
+    from workeasy360.platform.tenancy.db import tenant_db_scope
+
+    descriptor = get_product_directory().get(ProductCode(product_code))
+    if descriptor is None or descriptor.licensing_mode != LicensingMode.PER_SEAT:
+        return True
+
+    ctx = subject.to_context()
+    with tenant_context(ctx), tenant_db_scope(ctx):
+        return bool(
+            get_gate().has_seat(
+                subject.organization_id, subject.membership_id, ProductCode(product_code)
+            )
+        )
+
+
+#: The entitlement API's per-person reasons (``person_access_reason``).
+PERSON_MEMBERSHIP_INACTIVE = "membership_inactive"
+PERSON_NO_SEAT = "no_seat"
+
+
+def person_access_reason(
+    *, user_id: UUID, organization_id: UUID, product_code: str
+) -> str | None:
+    """Whether one person may still use ``product_code`` in this organization,
+    for a product session that outlives its sign-in (the entitlement API's
+    optional ``subject``, ADR-044 addendum).
+
+    ``None`` when they may; otherwise ``membership_inactive`` (the account is
+    disabled or locked by an administrator, or the membership is suspended,
+    removed or never existed - one answer for all, as at step 6, so the
+    question cannot enumerate members) or ``no_seat`` (step 9).
+
+    The organization's own status and entitlement are the caller's first
+    question (``verification.verify``); this answers only what is personal.
+    The access policy (step 6's MFA, allow-list, session age) is not applied:
+    it judges a browser session at sign-in, and a server asking later has none
+    to describe. Anything that is not an answer - the database is down -
+    propagates, so the endpoint says 503 rather than "removed".
+    """
+    from workeasy360.platform.identity.selectors import account_can_authenticate
+    from workeasy360.platform.organizations.resolver import resolve_by_organization_id
+
+    # Both reads, always, before either is judged: "unknown", "disabled",
+    # "not a member" and "removed" then cost the same queries, so the time the
+    # answer takes says no more than the answer does. (``allow`` and
+    # ``no_seat`` necessarily reveal an active membership; they are answers
+    # about a person the product already signed in.)
+    usable = account_can_authenticate(user_id)
+    resolution = resolve_by_organization_id(
+        user_id=user_id, organization_id=organization_id
+    )
+    if not usable or resolution is None or not resolution.membership_status.grants_access:
+        return PERSON_MEMBERSHIP_INACTIVE
+    subject = ResolvedSubject(
+        user_id=user_id,
+        organization_id=resolution.organization_id,
+        membership_id=resolution.membership_id,
+        organization_status=resolution.organization_status,
+        aal=1,
+    )
+    if not _holds_seat_if_required(subject, product_code):
+        return PERSON_NO_SEAT
+    return None
 
 
 # --- steps 4-5, interrupted: park the request at the platform's own UI ----
@@ -557,14 +675,26 @@ class PendingGrant:
     expires_in: int
 
 
-def create_pending(request: AuthorizationRequest) -> PendingGrant:
+def create_pending(
+    request: AuthorizationRequest,
+    *,
+    awaiting_choice: bool = False,
+    user_id: UUID | None = None,
+    authenticated_after: Any = None,
+) -> PendingGrant:
     """Park a verified request. The browser is sent to the platform's own
-    login or organization-chooser page next, carrying only this token.
+    login, organization-chooser or access-chooser page next, carrying only
+    this token.
 
     Everything the eventual resume needs is copied from ``request`` - which
     was itself built by ``parse_request`` from a verified ``ClientResolution``
     - onto the row. The token is the only thing that travels through the
     browser between now and ``resume_pending``.
+
+    ``awaiting_choice`` parks it for the access chooser (ADR-044): it cannot
+    be resumed until the person bound by ``user_id`` answers.
+    ``authenticated_after`` (``prompt=login``) admits only a session that
+    signed in at or after that moment.
     """
     from workeasy360.platform.ecosystem.models import PendingAuthorization
 
@@ -581,9 +711,106 @@ def create_pending(request: AuthorizationRequest) -> PendingGrant:
         code_challenge_method=request.code_challenge_method,
         nonce=request.nonce,
         organization_id=request.organization_id,
+        awaiting_choice=awaiting_choice,
+        user_id=user_id,
+        authenticated_after=authenticated_after,
         expires_at=timezone.now() + timedelta(seconds=ttl),
     )
     return PendingGrant(token=token, expires_in=ttl)
+
+
+@dataclass(frozen=True, slots=True)
+class ParkedRequest:
+    """A live (unconsumed, unexpired) parked request, read without spending
+    it - what the access chooser shows and what ``resume`` decides on."""
+
+    pk: Any
+    request: AuthorizationRequest
+    awaiting_choice: bool
+    user_id: UUID | None
+    authenticated_after: Any
+
+    def bound_to(self, user_id: Any) -> bool:
+        """Whether ``user_id`` may act on it: anyone, for a row parked for
+        sign-in (it has no person yet); only its person otherwise."""
+        return self.user_id is None or str(self.user_id) == str(user_id)
+
+    def admits_session(self, authenticated_at: float | None) -> bool:
+        """``prompt=login``: whether a session that authenticated at
+        ``authenticated_at`` (epoch seconds) is fresh enough to resume it."""
+        if self.authenticated_after is None:
+            return True
+        if authenticated_at is None:
+            return False
+        return authenticated_at >= self.authenticated_after.timestamp()
+
+
+def find_pending(*, token: str) -> ParkedRequest | None:
+    """The live parked request for ``token``, or ``None`` - unknown, expired
+    and already-spent are one answer. Spends nothing."""
+    from workeasy360.platform.ecosystem.models import PendingAuthorization
+
+    if not token:
+        return None
+    row = (
+        PendingAuthorization.objects.select_related("integration")
+        .filter(
+            token_hash=hash_code(token),
+            consumed_at__isnull=True,
+            expires_at__gt=timezone.now(),
+        )
+        .first()
+    )
+    if row is None:
+        return None
+    return ParkedRequest(
+        pk=row.pk,
+        request=AuthorizationRequest(
+            integration=row.integration,
+            redirect_uri=row.redirect_uri,
+            state=row.state,
+            scope=tuple(s for s in row.scope.split(" ") if s),
+            code_challenge=row.code_challenge,
+            code_challenge_method=row.code_challenge_method,
+            nonce=row.nonce,
+            organization_id=row.organization_id,
+        ),
+        awaiting_choice=row.awaiting_choice,
+        user_id=row.user_id,
+        authenticated_after=row.authenticated_after,
+    )
+
+
+def claim_pending(parked: ParkedRequest) -> bool:
+    """Spend a parked request, exactly once - the same conditional UPDATE as
+    ``resume_pending`` and ``redeem_code``. ``False``: someone else won."""
+    from workeasy360.platform.ecosystem.models import PendingAuthorization
+
+    with transaction.atomic():
+        spent = PendingAuthorization.objects.filter(
+            pk=parked.pk, consumed_at__isnull=True, expires_at__gt=timezone.now()
+        ).update(consumed_at=timezone.now())
+    if spent != 1:
+        logger.warning("ecosystem.resume.token_replayed")
+        metrics.increment("ecosystem_pending_authorization_replay_total")
+    return spent == 1
+
+
+def release_choice(parked: ParkedRequest) -> bool:
+    """The person answered "Continue with Workeasy360": let the row be
+    resumed. A conditional UPDATE, so two answers in two tabs release it
+    once; the row is still spent only by ``resume``, which re-runs every
+    check."""
+    from workeasy360.platform.ecosystem.models import PendingAuthorization
+
+    with transaction.atomic():
+        released = PendingAuthorization.objects.filter(
+            pk=parked.pk,
+            awaiting_choice=True,
+            consumed_at__isnull=True,
+            expires_at__gt=timezone.now(),
+        ).update(awaiting_choice=False)
+    return released == 1
 
 
 def resume_pending(*, token: str) -> AuthorizationRequest:
@@ -615,12 +842,12 @@ def resume_pending(*, token: str) -> AuthorizationRequest:
         "This sign-in link is invalid, expired or already used. Start again "
         "from the product you were opening.",
     )
-    if row is None or row.expires_at <= timezone.now():
+    if row is None or row.expires_at <= timezone.now() or row.awaiting_choice:
         raise failure
 
     with transaction.atomic():
         spent = PendingAuthorization.objects.filter(
-            pk=row.pk, consumed_at__isnull=True
+            pk=row.pk, consumed_at__isnull=True, awaiting_choice=False
         ).update(consumed_at=timezone.now())
     if spent != 1:
         logger.warning("ecosystem.resume.token_replayed")
@@ -746,6 +973,8 @@ class RedeemedCode:
     aal: int
     scope: tuple[str, ...]
     nonce: str
+    #: ``auth_time`` for the ID token: when the authorizing session signed in.
+    auth_time: int | None = None
 
 
 def redeem_code(
@@ -837,6 +1066,7 @@ def redeem_code(
         metrics.increment("ecosystem_code_replay_total")
         raise failure
 
+    facts = facts_from_record(row.session_facts)
     return RedeemedCode(
         integration=row.integration,
         user_id=row.user_id,
@@ -845,6 +1075,11 @@ def redeem_code(
         aal=row.aal,
         scope=tuple(s for s in row.scope.split(" ") if s),
         nonce=row.nonce,
+        auth_time=(
+            int(facts.authenticated_at)
+            if facts is not None and facts.authenticated_at is not None
+            else None
+        ),
     )
 
 

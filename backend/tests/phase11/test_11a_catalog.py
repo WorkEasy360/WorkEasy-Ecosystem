@@ -291,19 +291,43 @@ def test_the_command_registers_the_four_products_and_is_idempotent(staff_factory
     assert _state() == before
 
 
-def test_the_command_invents_no_plan_price_trial_or_credential(staff_factory):
+def test_the_command_invents_no_plan_price_or_credential(staff_factory):
+    """The definitions file carries the owner's trial decision (7 days; the
+    multi-portal brief of 2026-10-11) - and still no plan or price. A trial
+    that is switched on must name an eligible plan, so with none the 7 days
+    are stored switched off, for staff to switch on once a plan exists."""
     from workeasy360.commercial.catalog.models import Plan, ProductTrialConfig
     from workeasy360.commercial.pricing.models import PlanPrice
 
     call_command("register_products", actor=_actor(staff_factory))
     assert not Plan.objects.exists()
     assert not PlanPrice.objects.exists()
-    assert not ProductTrialConfig.objects.exists()
+    configs = {
+        c.product.code: (c.enabled, c.duration_days, list(c.eligible_plan_codes))
+        for c in ProductTrialConfig.objects.select_related("product")
+    }
+    assert configs == {
+        code: (False, 7, [])
+        for code in ("easy_crm", "easybook", "easy_project", "easy_helpdesk")
+    }
     seen = public_product("easy_crm")
     assert seen["plans"] == []
     assert seen["starting_price"] is None
     assert seen["trial"]["available"] is False
     assert [f["name"] for f in seen["features"]] == ["Customer records", "Sales pipeline"]
+
+
+def test_the_command_never_overwrites_a_trial_staff_configured(staff_factory):
+    from workeasy360.commercial.catalog.models import ProductTrialConfig
+
+    actor = _actor(staff_factory)
+    call_command("register_products", actor=actor)
+    ProductTrialConfig.objects.filter(product__code="easybook").update(
+        enabled=False, duration_days=14
+    )
+    call_command("register_products", actor=actor)
+    row = ProductTrialConfig.objects.get(product__code="easybook")
+    assert (row.enabled, row.duration_days) == (False, 14)
 
 
 def test_activation_is_explicit_and_leaves_no_credential(staff_factory):

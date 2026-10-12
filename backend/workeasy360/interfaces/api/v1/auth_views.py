@@ -125,12 +125,17 @@ def establish_session(request: HttpRequest, user: Any, *, password: str) -> None
     never stored - only the list of those organizations is.
     """
     import time
+    import uuid
+
+    from django.contrib.auth import SESSION_KEY
 
     from workeasy360.contracts.values.access_policy import password_meets
+    from workeasy360.platform.identity import handoff
     from workeasy360.platform.identity.account import record_sign_in
     from workeasy360.platform.identity.sessions import (
         SESSION_DEVICE_KEY,
         SESSION_IP_PREFIX_KEY,
+        SESSION_SIGN_IN_ID_KEY,
     )
     from workeasy360.platform.organizations.selectors import (
         password_min_lengths_for_user,
@@ -139,6 +144,12 @@ def establish_session(request: HttpRequest, user: Any, *, password: str) -> None
         SESSION_AUTHENTICATED_AT_KEY,
         SESSION_PASSWORD_NONCOMPLIANT_KEY,
     )
+
+    # Who was signed in on this browser session before, and under which
+    # sign-in (ADR-044: re-authentication for ``prompt=login``, and a
+    # different person signing in) - read before django_login flushes it.
+    previous_user = request.session.get(SESSION_KEY)
+    previous_sign_in = request.session.get(SESSION_SIGN_IN_ID_KEY)
 
     # django_login rotates the session key (CVE-class session fixation) -
     # Django does this internally on every call, which is why the session
@@ -156,6 +167,22 @@ def establish_session(request: HttpRequest, user: Any, *, password: str) -> None
     request.session[SESSION_IP_PREFIX_KEY] = where["ip_prefix"]
     request.session[SESSION_DEVICE_KEY] = where["device_label"]
     request.session[SESSION_AUTHENTICATED_AT_KEY] = time.time()
+    # One id per password sign-in, inherited by every portal session handed
+    # off from it, so signing out of any of them ends all of them (ADR-043).
+    #
+    # ADR-044: the same person re-entering their password (a product asked
+    # for ``prompt=login``) continues the same sign-in - otherwise signing out
+    # on one portal would leave this re-authenticated session behind. A
+    # *different* person signing in over someone's session ends every session
+    # of that previous sign-in (each portal's), so two people's sessions never
+    # coexist in one browser.
+    same_person = previous_user is not None and str(previous_user) == str(user.pk)
+    if same_person and previous_sign_in:
+        request.session[SESSION_SIGN_IN_ID_KEY] = previous_sign_in
+    else:
+        if previous_user is not None and previous_sign_in:
+            handoff.end_sign_in(previous_user, previous_sign_in)
+        request.session[SESSION_SIGN_IN_ID_KEY] = uuid.uuid4().hex
     request.session[SESSION_PASSWORD_NONCOMPLIANT_KEY] = [
         organization_id
         for organization_id, minimum in password_min_lengths_for_user(user.id).items()
@@ -212,14 +239,231 @@ def _throttle_login(request: HttpRequest, email: str) -> JsonResponse | None:
 
 @require_http_methods(["POST"])
 def logout_view(request: HttpRequest) -> JsonResponse:
-    """End the session. Idempotent - logging out twice is not an error."""
+    """End the session - and every other session of the same sign-in: the
+    central sign-in host's and each portal's (ADR-043), so signing out of the
+    customer portal leaves no elevated Super Admin session behind on another
+    host. Idempotent - logging out twice is not an error."""
+    sign_out(request)
+    return JsonResponse({"ok": True})
+
+
+def sign_out(request: HttpRequest) -> None:
+    """The one sign-out: this session and every other session of the same
+    sign-in (ADR-043). Also what the access chooser's "use another account"
+    and a product's "sign out of Workeasy360 too" do (ADR-044)."""
+    from workeasy360.platform.identity import handoff
+    from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
+
     user = getattr(request, "user", None)
-    if user is not None and user.is_authenticated and user.is_staff:
+    if user is not None and user.is_authenticated:
+        if user.is_staff:
+            from workeasy360.platform.administration.staff_users import (
+                record_staff_session,
+            )
+
+            record_staff_session(user, signed_in=False, where=connection_facts(request))
+        handoff.end_sign_in(user.id, request.session.get(SESSION_SIGN_IN_ID_KEY))
+    django_logout(request)
+
+
+def _handed_off_keys() -> tuple[str, ...]:
+    """What a portal session inherits from the sign-in it was handed off
+    from: never more elevated, never elevated for longer (ADR-043)."""
+    from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
+    from workeasy360.platform.tenancy.resolution import (
+        SESSION_AAL_KEY,
+        SESSION_AUTHENTICATED_AT_KEY,
+        SESSION_MFA_VERIFIED_KEY,
+        SESSION_PASSWORD_NONCOMPLIANT_KEY,
+        SESSION_STEP_UP_AT_KEY,
+    )
+
+    return (
+        SESSION_AAL_KEY,
+        SESSION_STEP_UP_AT_KEY,
+        SESSION_MFA_VERIFIED_KEY,
+        SESSION_AUTHENTICATED_AT_KEY,
+        SESSION_PASSWORD_NONCOMPLIANT_KEY,
+        SESSION_SIGN_IN_ID_KEY,
+    )
+
+
+def _refused(code: str, status: int) -> JsonResponse:
+    return JsonResponse({"code": code}, status=status)
+
+
+@require_http_methods(["POST"])
+def handoff_view(request: HttpRequest) -> JsonResponse:
+    """Hand this sign-in to one portal (ADR-043): ``{mode, next, state}`` ->
+    ``{redirect_url}``, a one-time code in the URL *fragment* of that portal's
+    ``/auth/continue``.
+
+    ``mode`` is the sign-in page's navigation intent and grants nothing: the
+    account must be allowed into that portal - **live** StaffGrants for the
+    Super Admin portal (and a verified factor when one is enrolled), an
+    active partner membership for the Partner portal - and the portal checks
+    again on every request. ``next`` is only a path, validated against that
+    portal's allowlist; the origin always comes from configuration.
+    """
+    from workeasy360.contracts.values import portals
+    from workeasy360.platform.identity import handoff
+    from workeasy360.platform.identity.sessions import session_public_id
+    from workeasy360.platform.tenancy.resolution import session_aal
+
+    if not settings.PORTALS_ENABLED:
+        return _refused("not_found", 404)
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return _refused("login_required", 401)
+    limited = _throttle(request, "handoff_issue", str(user.id))
+    if limited is not None:
+        return limited
+
+    body = _body(request)
+    portal = portals.MODE_TO_PORTAL.get(str(body.get("mode") or ""))
+    state = body.get("state")
+    if portal is None or not handoff.valid_state(state):
+        return _refused("handoff_invalid", 400)
+
+    consoles = _consoles(user)
+    if portal == portals.ADMIN:
+        if not consoles["staff"]:
+            return _refused("portal_access_denied", 403)
+        if user.has_mfa and session_aal(request.session) < 2:
+            # Verify the factor here, on the sign-in host; the portal session
+            # then starts at the same level, with the same expiry.
+            return _refused("mfa_required", 403)
+    elif portal == portals.PARTNER and not consoles["partner"]:
+        return _refused("portal_access_denied", 403)
+
+    source = session_public_id(request.session)
+    if source is None:
+        return _refused("login_required", 401)
+    # A sign-in from before sign-in ids existed gets one now, so the portal
+    # session joins it and signing out ends both (final audit).
+    from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
+
+    if not request.session.get(SESSION_SIGN_IN_ID_KEY):
+        import uuid
+
+        request.session[SESSION_SIGN_IN_ID_KEY] = uuid.uuid4().hex
+    origin = settings.W360_PORTAL_ORIGINS[portal]
+    keys = _handed_off_keys()
+    code = handoff.issue(
+        user=user,
+        portal=portal,
+        target_origin=origin,
+        next_path=portals.safe_next(portal, body.get("next")),
+        state=str(state),
+        source_session=source,
+        auth_state={k: request.session[k] for k in keys if k in request.session},
+    )
+    metrics.increment("identity_portal_handoffs_total", portal=portal, result="issued")
+    response = JsonResponse({"redirect_url": f"{origin}/auth/continue#code={code}"})
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@require_http_methods(["POST"])
+def handoff_redeem_view(request: HttpRequest) -> JsonResponse:
+    """Redeem a hand-off code on the portal it was issued for, establishing
+    that portal's own host-only session (ADR-043).
+
+    Refused - one answer for every reason - unless the code is unspent and
+    unexpired, this request's host is the code's portal, the portal's binding
+    cookie matches the ``state`` the code was issued with, the account is
+    still active and not signed out everywhere since, and the sign-in the code
+    came from is still live.
+    """
+    from workeasy360.contracts.values import portals
+    from workeasy360.platform.identity import handoff
+    from workeasy360.platform.identity.sessions import (
+        SESSION_DEVICE_KEY,
+        SESSION_IP_PREFIX_KEY,
+    )
+
+    if not settings.PORTALS_ENABLED:
+        return _refused("not_found", 404)
+    limited = _throttle(
+        request, "handoff_redeem_ip", rate_limit_identity(client_ip(request))
+    )
+    if limited is not None:
+        return limited
+
+    host = request.get_host().lower()
+    if (
+        portals.portal_for_host(host, settings.W360_PORTAL_ORIGINS)
+        not in portals.DESTINATIONS
+    ):
+        return _refused("not_found", 404)
+    body = _body(request)
+    redemption = handoff.redeem(
+        code=body.get("code"),
+        state=request.COOKIES.get(settings.PORTAL_STATE_COOKIE_NAME, ""),
+        host=host,
+    )
+    if redemption is None:
+        metrics.increment(
+            "identity_portal_handoffs_total", portal="unknown", result="refused"
+        )
+        response = _refused("handoff_invalid", 400)
+        _clear_state_cookie(response)
+        return response
+
+    user = redemption.user
+    # Rotates the key (session fixation) - and flushes a session that
+    # belonged to anyone else on this host.
+    django_login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+    request.session[SESSION_EPOCH_KEY] = user.session_epoch
+    reset_session_aal(request.session)
+    allowed = set(_handed_off_keys())
+    for key, value in redemption.auth_state.items():
+        if key in allowed:
+            request.session[key] = value
+    where = connection_facts(request)
+    request.session[SESSION_IP_PREFIX_KEY] = where["ip_prefix"]
+    request.session[SESSION_DEVICE_KEY] = where["device_label"]
+    if redemption.portal == portals.ADMIN and user.is_staff:
+        # The staff session trail records each console session it opens.
         from workeasy360.platform.administration.staff_users import record_staff_session
 
-        record_staff_session(user, signed_in=False, where=connection_facts(request))
-    django_logout(request)
-    return JsonResponse({"ok": True})
+        record_staff_session(user, signed_in=True, where=where)
+
+    # The portal session ends when its sign-in does, not 30 days from now.
+    from workeasy360.platform.identity.sessions import date_from_sign_in
+
+    date_from_sign_in(request.session)
+
+    metrics.increment(
+        "identity_portal_handoffs_total", portal=redemption.portal, result="redeemed"
+    )
+    response = JsonResponse({"next": redemption.next_path})
+    response["Cache-Control"] = "no-store"
+    _clear_state_cookie(response)
+    return response
+
+
+def _clear_state_cookie(response: JsonResponse) -> None:
+    response.delete_cookie(settings.PORTAL_STATE_COOKIE_NAME, path="/", samesite="Lax")
+
+
+def _throttle(request: HttpRequest, bucket: str, identity: str) -> JsonResponse | None:
+    """One bucket of ``AUTH_RATE_LIMITS``; a 429 when exhausted."""
+    limits = getattr(settings, "AUTH_RATE_LIMITS", {})
+    limit, window = limits.get(bucket, (0, 60))
+    limit, window = int(limit), max(1, int(window))
+    if limit <= 0:
+        return None
+    key = f"{_KEY_PREFIX}{bucket}:{identity}:{throttle.window_slot(window)}"
+    if throttle.hit(key, window) <= limit:
+        return None
+    metrics.increment("identity_login_throttled_total", bucket=bucket)
+    response = JsonResponse(
+        {"code": "rate_limited", "detail": "Too many attempts. Try again shortly."},
+        status=429,
+    )
+    response["Retry-After"] = str(throttle.retry_after(window))
+    return response
 
 
 @require_http_methods(["GET"])

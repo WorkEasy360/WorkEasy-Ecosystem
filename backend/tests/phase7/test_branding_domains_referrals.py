@@ -261,7 +261,12 @@ def test_a_domain_is_inactive_until_ownership_is_proven(partner_factory, dns):
         "theme",
         "support_email",
         "support_url",
+        # The public part of the customer portal (ADR-042): never the sender identity.
+        "portal",
     }
+    assert (
+        "sender_name" not in brand["portal"] and "reply_to_email" not in brand["portal"]
+    )
 
 
 def test_a_wrong_or_someone_elses_token_does_not_verify(partner_factory, dns):

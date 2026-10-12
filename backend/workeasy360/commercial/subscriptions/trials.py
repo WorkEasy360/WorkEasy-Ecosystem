@@ -39,6 +39,7 @@ from workeasy360.contracts.enums import ProductTrialStatus, TrialSource
 from workeasy360.contracts.errors import (
     CatalogValidationError,
     CommercialRecordNotFound,
+    SeatLimitReached,
     TrialNotAllowed,
 )
 from workeasy360.contracts.values.identifiers import ProductCode
@@ -170,7 +171,46 @@ def start_product_trial(
 
     metrics.increment(PRODUCT_TRIALS_STARTED, source=source.value)
     notify_commercial_change(ctx.organization_id)
+    _seat_the_starter(ctx, code, trial.id)
     return _resolve_trial_ref(f"subscriptions.trial:{trial.id}")
+
+
+def _seat_the_starter(ctx: TenantContext, code: str, trial_id: UUID) -> None:
+    """Give the person who started the trial one of its seats, so "Open" works
+    the moment the trial starts instead of first asking an administrator.
+
+    Runs after provisioning has granted the trial's seats (the listener is
+    synchronous). Best effort: a product licensed organization-wide has no
+    seat pool, and a full pool or a failed provisioning pass leaves the trial
+    started - seats can still be assigned by hand.
+    """
+    from workeasy360.platform.entitlements.services import seats
+
+    if (
+        ctx.membership_id is None
+        or seats.capacity(ctx.organization_id, pool_key=code) == 0
+    ):
+        return
+    try:
+        assignment = seats.assign_seat(
+            ctx.organization_id,
+            pool_key=code,
+            membership_id=ctx.membership_id,
+            assigned_by_membership_id=ctx.membership_id,
+        )
+    except SeatLimitReached:
+        return
+    audit.record(
+        ctx,
+        "commercial.product_trial.seat_assigned",
+        resource_type="SeatAssignment",
+        resource_id=str(assignment.id),
+        changes={
+            "product_code": code,
+            "membership_id": str(ctx.membership_id),
+            "trial_id": str(trial_id),
+        },
+    )
 
 
 def cancel_product_trial(

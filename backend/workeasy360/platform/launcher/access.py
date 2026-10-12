@@ -92,6 +92,10 @@ class AppAccessDecision:
     #: product (``trial``, ``active``, ``past_due``...), so My Products can say
     #: "Trial" - read from the same gate answer, never a second lookup.
     entitlement_status: str = ""
+    #: ADR-044: the product's own sign-in page, populated with ``launch_url``
+    #: (only for ``ACTIVE``), for a person whose effective sign-in is the
+    #: product's own. Never serialised to the app directory either.
+    product_login_url: str = ""
 
 
 def can_launch_product(
@@ -142,7 +146,11 @@ def can_launch_product(
     licensing_mode = descriptor.licensing_mode if descriptor else LicensingMode.PER_SEAT
 
     def decision(
-        state: AppAccessState, *, launch_url: str = "", status: str = ""
+        state: AppAccessState,
+        *,
+        launch_url: str = "",
+        status: str = "",
+        product_login_url: str = "",
     ) -> AppAccessDecision:
         return AppAccessDecision(
             product_code=str(product_code),
@@ -152,6 +160,7 @@ def can_launch_product(
             state=state,
             launch_url=launch_url,
             entitlement_status=status,
+            product_login_url=product_login_url,
         )
 
     target = ecosystem_selectors.launch_target(str(product_code))
@@ -180,4 +189,9 @@ def can_launch_product(
         if not held:
             return decision(AppAccessState.NO_SEAT, status=status)
 
-    return decision(AppAccessState.ACTIVE, launch_url=target.launch_url, status=status)
+    return decision(
+        AppAccessState.ACTIVE,
+        launch_url=target.launch_url,
+        status=status,
+        product_login_url=target.product_login_url,
+    )

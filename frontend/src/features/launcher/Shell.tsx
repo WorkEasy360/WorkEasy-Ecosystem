@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname } from "next/navigation";
 import { useSession } from "@/lib/auth/useSession";
+import { usePortals } from "@/lib/portalContext";
+import { portalHref } from "@/lib/portals";
 import { logout } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
 import {
@@ -19,10 +21,12 @@ import {
   type AccountMenuEntry,
   type SidebarGroup,
 } from "@/components/sidebar/SidebarShell";
+import { BrandFooter, DashboardWelcome } from "@/features/controlplane/brandDisplay";
 import { useOrganizationBranding } from "@/features/controlplane/useBranding";
 import { OrgAccessContext } from "@/features/console/OrgAccess";
 import { PolicyGate } from "@/features/console/PolicyGate";
 import consoleStyles from "@/features/console/Console.module.css";
+import { usePortalRouter } from "@/lib/portalRouter";
 
 type OrgState =
   | { status: "loading" }
@@ -108,6 +112,8 @@ export function organizationNav(slug: string, can: (permission: string) => boole
           when: can("platform.security.view"),
         },
         { href: `${base}/settings/security`, label: "My security", icon: "shield", exact: true },
+        // ADR-044: the person's own product sign-in preferences - every member.
+        { href: `${base}/settings/sign-in-preferences`, label: "Sign-in preferences", icon: "key" },
       ],
     },
     {
@@ -136,11 +142,13 @@ export function organizationNav(slug: string, can: (permission: string) => boole
  * regardless.
  */
 export function Shell({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
+  const router = usePortalRouter();
   const params = useParams<{ orgSlug: string }>();
   const orgSlug = params.orgSlug;
+  const pathname = usePathname();
   const brand = useOrganizationBranding(orgSlug);
   const session = useSession();
+  const portals = usePortals();
   const [org, setOrg] = useState<OrgState>({ status: "loading" });
   const [tick, setTick] = useState(0);
   // A failed sign-out must not look like a successful one.
@@ -226,8 +234,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const entries: AccountMenuEntry[] = [
     { label: "Profile", href: `/o/${orgSlug}/settings/profile` },
     { label: "My security", href: `/o/${orgSlug}/settings/security` },
-    ...(consoles?.staff ? [{ label: "Super Admin console", href: "/admin" }] : []),
-    ...(consoles?.partner ? [{ label: "Partner portal", href: "/partner" }] : []),
+    { label: "Sign-in preferences", href: `/o/${orgSlug}/settings/sign-in-preferences` },
+    ...(consoles?.staff ? [{ label: "Super Admin console", href: portalHref(portals, "admin", "/admin") }] : []),
+    ...(consoles?.partner ? [{ label: "Partner portal", href: portalHref(portals, "partner", "/partner") }] : []),
     { label: "Switch organization", href: "/organizations/select" },
     {
       label: "Sign out",
@@ -245,7 +254,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
     <OrgAccessContext.Provider value={{ slug: orgSlug, access, reload, memberName: who?.name || undefined }}>
       <SidebarShell
         area="Organization"
-        brandName={brand?.brand_name}
+        // The header says the short name where the partner set one (it is meant for tight places).
+        brandName={brand ? brand.portal.short_name.trim() || brand.brand_name : undefined}
         brandLogoUrl={brand?.logo_url}
         context={
           <button
@@ -272,10 +282,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 This organization is read-only ({access.organization.status}). You can view and export data.
               </p>
             )}
+            {/* The partner's welcome message greets customers on their dashboard (plain text). */}
+            {pathname === `/o/${orgSlug}/dashboard` && <DashboardWelcome brand={brand} />}
           </>
         }
       >
         {children}
+        <BrandFooter brand={brand} />
       </SidebarShell>
     </OrgAccessContext.Provider>
   );

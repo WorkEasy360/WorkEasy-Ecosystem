@@ -373,6 +373,11 @@ export interface ExploreProduct {
   trial: { available: boolean; duration_days: number | null; seat_limit: number | null; plan_codes: string[] };
   holding: "subscription" | "trial" | null;
   trial_state: "owned" | "active" | "used" | "available" | "unavailable";
+  /** Server time only (multi-portal brief): the running trial's end and whole
+   * days left (rounded up), or - for one that ran - how it ended. */
+  trial_ends_at: string | null;
+  trial_days_left: number | null;
+  trial_outcome: "expired" | "cancelled" | "converted" | "ended" | null;
 }
 
 export interface ExploreCatalog {

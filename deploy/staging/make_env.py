@@ -16,7 +16,12 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-CANONICAL = "app.staging.workeasy360.com"
+#: The five portal hosts (ADR-043), each its own origin.
+PORTALS = {
+    name: f"{name}.staging.workeasy360.com"
+    for name in ("admin", "partner", "app", "auth", "api")
+}
+WEB = ("admin", "partner", "app", "auth")
 
 
 def token(n: int = 48) -> str:
@@ -34,11 +39,12 @@ def main(out: Path) -> None:
     values = {
         "W360_ENVIRONMENT": "staging",
         "W360_RELEASE": "p12-rc1",
-        "W360_CANONICAL_HOST": CANONICAL,
-        "W360_ALLOWED_HOSTS": CANONICAL,
-        "W360_CSRF_TRUSTED_ORIGINS": f"https://{CANONICAL}",
-        "W360_FRONTEND_URL": f"https://{CANONICAL}",
-        "W360_OIDC_ISSUER": f"https://{CANONICAL}",
+        **{f"W360_{name.upper()}_ORIGIN": f"https://{host}" for name, host in PORTALS.items()},
+        "W360_EDGE_UPSTREAM_HOST": PORTALS["api"],
+        "W360_ALLOWED_HOSTS": ",".join(PORTALS.values()),
+        "W360_CSRF_TRUSTED_ORIGINS": ",".join(f"https://{PORTALS[n]}" for n in WEB),
+        "W360_FRONTEND_URL": f"https://{PORTALS['app']}",
+        "W360_OIDC_ISSUER": f"https://{PORTALS['auth']}",
         "W360_TRUSTED_PROXY_COUNT": "1",
         "W360_TLS_ISSUER": "internal",
         "W360_SECRET_KEY": token(64),

@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 from urllib.parse import urlsplit
 
+from workeasy360.contracts.enums import ProductSignInMode
 from workeasy360.contracts.events.namespaces import MAX_EVENT_VERSION, product_owns
 from workeasy360.contracts.values.identifiers import ProductCode
 
@@ -46,11 +47,18 @@ from workeasy360.contracts.values.identifiers import ProductCode
 #: recognise is refused rather than best-effort parsed: guessing at a future
 #: shape is how a security-relevant field gets dropped.
 #:
-#: ``2026-10-01`` (Phase 6) adds one optional field, ``events``: the event
+#: ``2026-10-12`` (universal sign-in, ADR-044) adds two optional fields:
+#: ``sign_in_mode`` - whether the product signs people in with Workeasy360
+#: only, offers its own sign-in page as well, or does not use Workeasy360
+#: sign-in - and ``login_url``, that sign-in page. A person's sign-in
+#: preference chooses between the doors these declare and can open no other.
+MANIFEST_VERSION: Final = "2026-10-12"
+
+#: ``2026-10-01`` (Phase 6) added one optional field, ``events``: the event
 #: types the product publishes into the ecosystem. It is the contract that
 #: makes a product's events routable at all - an event type not declared
-#: here is refused at ingestion.
-MANIFEST_VERSION: Final = "2026-10-01"
+#: here is refused at ingestion. Still accepted, unchanged.
+EVENTS_MANIFEST_VERSION: Final = "2026-10-01"
 
 #: The Phase 3 shape. Still accepted, unchanged: every product registered
 #: before Phase 6 keeps working without re-registering, and simply publishes
@@ -61,11 +69,21 @@ LEGACY_MANIFEST_VERSION: Final = "2026-09-01"
 #: that accepting two during a migration window - which is now - did not
 #: require changing the type of this constant.
 SUPPORTED_MANIFEST_VERSIONS: Final[frozenset[str]] = frozenset(
-    {LEGACY_MANIFEST_VERSION, MANIFEST_VERSION}
+    {LEGACY_MANIFEST_VERSION, EVENTS_MANIFEST_VERSION, MANIFEST_VERSION}
 )
 
 #: Versions whose shape includes ``events``.
-_VERSIONS_WITH_EVENTS: Final[frozenset[str]] = frozenset({MANIFEST_VERSION})
+_VERSIONS_WITH_EVENTS: Final[frozenset[str]] = frozenset(
+    {EVENTS_MANIFEST_VERSION, MANIFEST_VERSION}
+)
+
+#: Versions whose shape includes ``sign_in_mode`` and ``login_url``.
+_VERSIONS_WITH_SIGN_IN: Final[frozenset[str]] = frozenset({MANIFEST_VERSION})
+
+#: How a manifest that predates ``sign_in_mode`` reads: a registration has
+#: redirect URIs by construction, so it is an OIDC client - with no sign-in
+#: page of its own that Workeasy360 knows of.
+DEFAULT_SIGN_IN_MODE: Final = ProductSignInMode.SSO_ONLY
 
 #: The scopes a product may request. Deliberately tiny.
 #:
@@ -73,8 +91,10 @@ _VERSIONS_WITH_EVENTS: Final[frozenset[str]] = frozenset({MANIFEST_VERSION})
 #: binding - everything the SSO contract promises. ``profile`` and ``email``
 #: add personal data and are therefore separate, denied by default, and
 #: granted per integration rather than per request
-#: (docs/phase-3/05-token-claims.md).
-SUPPORTED_SCOPES: Final[tuple[str, ...]] = ("openid", "profile", "email")
+#: (docs/phase-3/05-token-claims.md). ``organization`` releases the
+#: organization's display name, so a product provisioning a tenant on first
+#: sign-in can label it - a display string only, never an identity.
+SUPPORTED_SCOPES: Final[tuple[str, ...]] = ("openid", "profile", "email", "organization")
 REQUIRED_SCOPE: Final = "openid"
 
 #: Capabilities a product declares it implements. Advertised back to the
@@ -111,6 +131,8 @@ _MANIFEST_FIELDS: Final[frozenset[str]] = frozenset(
         "health_url",
         "contact_email",
         "events",
+        "sign_in_mode",
+        "login_url",
     }
 )
 
@@ -206,12 +228,19 @@ class ProductManifest:
     contact_email: str
     #: Event types this product publishes. Empty for a legacy manifest.
     events: tuple[EventDeclaration, ...] = ()
+    #: How the product lets people in (manifest ``2026-10-12``). A manifest
+    #: that predates the field reads as :data:`DEFAULT_SIGN_IN_MODE`.
+    sign_in_mode: ProductSignInMode = DEFAULT_SIGN_IN_MODE
+    #: The product's own sign-in page, where it has one. Where Workeasy360
+    #: sends a person who prefers the product's sign-in - never anywhere else.
+    login_url: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         """The round-trip form. What the registration API echoes back.
 
-        ``events`` is present only when declared, so a legacy (``2026-09-01``)
-        manifest round-trips to exactly the shape it was submitted in.
+        ``events`` is present only when declared, and the sign-in fields only
+        for a version that has them, so an older manifest round-trips to
+        exactly the shape it was submitted in.
         """
         body: dict[str, Any] = {
             "manifest_version": self.manifest_version,
@@ -228,7 +257,32 @@ class ProductManifest:
         }
         if self.events:
             body["events"] = [e.as_dict() for e in self.events]
+        if self.manifest_version in _VERSIONS_WITH_SIGN_IN:
+            body["sign_in_mode"] = self.sign_in_mode.value
+            if self.login_url:
+                body["login_url"] = self.login_url
         return body
+
+    @property
+    def product_login_url(self) -> str:
+        """Where a person who wants the product's *own* sign-in is sent, or
+        ``""`` when the product offers none Workeasy360 may send them to.
+
+        ``sso_only`` never has one, whatever is stored. ``local_only`` falls
+        back to the launch URL: the product's front door is its sign-in.
+        """
+        if not self.sign_in_mode.offers_product_login:
+            return ""
+        if self.login_url:
+            return self.login_url
+        if self.sign_in_mode is ProductSignInMode.LOCAL_ONLY:
+            return self.launch_url
+        return ""
+
+    def permits_post_logout_redirect(self, candidate: str) -> bool:
+        """Exact string match against the registered post-logout URIs - the
+        same rule, and for the same reason, as :meth:`permits_redirect`."""
+        return candidate in self.post_logout_redirect_uris
 
     def declares_event(self, event_type: str, version: int) -> bool:
         """Whether this product registered ``event_type`` at ``version``."""
@@ -287,6 +341,10 @@ def from_stored_manifest(payload: dict[str, Any]) -> ProductManifest:
             )
             for e in payload.get("events", ())
         ),
+        sign_in_mode=ProductSignInMode(
+            str(payload.get("sign_in_mode") or DEFAULT_SIGN_IN_MODE.value)
+        ),
+        login_url=str(payload.get("login_url", "")),
     )
 
 
@@ -398,6 +456,10 @@ def parse_manifest(payload: Any, *, allow_insecure_urls: bool = False) -> Produc
         )
     events = _validate_events(raw_events or (), product_code=str(product_code))
 
+    sign_in_mode, login_url = _validate_sign_in(
+        payload, version=version, allow_insecure=allow_insecure_urls
+    )
+
     return ProductManifest(
         manifest_version=version,
         product_code=product_code,
@@ -411,10 +473,61 @@ def parse_manifest(payload: Any, *, allow_insecure_urls: bool = False) -> Produc
         health_url=health_url,
         contact_email=contact_email,
         events=events,
+        sign_in_mode=sign_in_mode,
+        login_url=login_url,
     )
 
 
 # --- field validators -----------------------------------------------------
+
+
+def _validate_sign_in(
+    payload: dict[str, Any], *, version: str, allow_insecure: bool
+) -> tuple[ProductSignInMode, str]:
+    """``sign_in_mode`` and ``login_url`` (manifest ``2026-10-12``).
+
+    ``login_url`` is a place a browser is sent, so it passes the same gate as
+    ``launch_url``: https (loopback http outside production), no credentials
+    in the URL, no internal or metadata host. ``sso_optional`` must name it -
+    a product that says it has its own sign-in but not where would leave a
+    person who prefers it with nowhere to go.
+    """
+    raw_mode = payload.get("sign_in_mode")
+    raw_login = payload.get("login_url")
+    if version not in _VERSIONS_WITH_SIGN_IN:
+        for name, value in (("sign_in_mode", raw_mode), ("login_url", raw_login)):
+            if value is not None:
+                raise ManifestError(
+                    f"Manifest field {name!r} requires manifest_version "
+                    f"{MANIFEST_VERSION!r}; {version!r} predates it.",
+                    field=name,
+                )
+        return DEFAULT_SIGN_IN_MODE, ""
+
+    mode_value = _as_str(raw_mode or DEFAULT_SIGN_IN_MODE.value, "sign_in_mode")
+    try:
+        mode = ProductSignInMode(mode_value)
+    except ValueError:
+        raise ManifestError(
+            f"Unknown sign_in_mode {mode_value!r}. Supported: "
+            f"{', '.join(m.value for m in ProductSignInMode)}.",
+            field="sign_in_mode",
+        ) from None
+
+    login_url = ""
+    if raw_login:
+        login_url = _validate_url(
+            _as_str(raw_login, "login_url"),
+            field="login_url",
+            allow_insecure=allow_insecure,
+        )
+    if mode is ProductSignInMode.SSO_OPTIONAL and not login_url:
+        raise ManifestError(
+            "sign_in_mode 'sso_optional' needs login_url: the product's own "
+            "sign-in page, where a person who prefers it is sent.",
+            field="login_url",
+        )
+    return mode, login_url
 
 
 def _as_str(value: Any, field: str) -> str:

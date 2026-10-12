@@ -37,9 +37,11 @@ from django.db import models
 from workeasy360.contracts.enums import (
     DomainStatus,
     GrantStatus,
+    PartnerContactKind,
     PartnerLinkStatus,
     PartnerMemberRole,
     PartnerStatus,
+    PayoutFrequency,
 )
 from workeasy360.contracts.values.money import CurrencyCode
 
@@ -101,6 +103,111 @@ class PartnerAccount(models.Model):
     @property
     def status_enum(self) -> PartnerStatus:
         return PartnerStatus(self.status)
+
+
+class PartnerProfile(models.Model):
+    """What a partner is as a business, beyond what every channel shares.
+
+    One row per partner, created the first time anything here is saved. It holds
+    *facts to reach and invoice a company* - a website, a registration and tax
+    number, an address, customer-facing support details, how payouts are
+    preferred, and staff-only notes - and nothing a decision reads: no
+    permission, price, commission or entitlement depends on a column here.
+
+    Kept off ``PartnerAccount`` so that table stays "only what every channel
+    shares" (the module docstring): an affiliate that never sets a tax number
+    carries no empty columns for one, and a business detail can change without
+    touching the version token a status change is serialised on. The partner's
+    own name, legal name, currency and lifecycle remain on the account.
+
+    Personal data. Never copied into an event or an audit entry (those record
+    *which* fields changed), never shown to another partner, and read by staff
+    only.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.OneToOneField(
+        PartnerAccount, on_delete=models.PROTECT, related_name="profile"
+    )
+    business_email = models.EmailField(max_length=254, blank=True, default="")
+    website = models.CharField(max_length=300, blank=True, default="")
+    phone = models.CharField(max_length=32, blank=True, default="")
+    alternative_email = models.EmailField(max_length=254, blank=True, default="")
+    registration_number = models.CharField(max_length=64, blank=True, default="")
+    tax_number = models.CharField(max_length=64, blank=True, default="")
+    #: ISO 3166-1 alpha-2 (``contracts.values.countries``), or empty.
+    country = models.CharField(max_length=2, blank=True, default="")
+    #: ``{line1, line2, city, region, postal_code}`` - a closed key set.
+    address = models.JSONField(default=dict)
+
+    #: Customer-facing support details of the *reseller business*. (A
+    #: white-label brand carries its own support details for its own portal.)
+    support_email = models.EmailField(max_length=254, blank=True, default="")
+    support_phone = models.CharField(max_length=32, blank=True, default="")
+    support_url = models.CharField(max_length=300, blank=True, default="")
+
+    #: Payout *preferences*. Currency is the account's ``payout_currency``.
+    payout_frequency = models.CharField(
+        max_length=16,
+        choices=_choices(PayoutFrequency),
+        default=PayoutFrequency.MANUAL.value,
+    )
+    payout_contact_email = models.EmailField(max_length=254, blank=True, default="")
+
+    #: Staff only. Never serialised to a partner, a customer or a public page.
+    internal_notes = models.TextField(blank=True, default="")
+
+    updated_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "partners_profile"
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"profile of {self.partner_id}"
+
+
+class PartnerContact(models.Model):
+    """A person to reach at a partner, in one business role.
+
+    **Not an account.** A contact is name, title, email and phone *as text* - it
+    has no password, no membership, no permission and cannot sign in; the people
+    who act for a partner are ``PartnerMember`` rows over the one identity
+    table. A role with no row means "same as the primary contact" (the screens
+    say so) rather than a copied row that could drift from the original.
+
+    The primary contact's name and email are mirrored onto the account
+    (``contact_name`` / ``contact_email``) in the same transaction, because the
+    partner lists and the setup checks have always read them there.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="contacts"
+    )
+    kind = models.CharField(max_length=16, choices=_choices(PartnerContactKind))
+    name = models.CharField(max_length=120, blank=True, default="")
+    job_title = models.CharField(max_length=120, blank=True, default="")
+    email = models.EmailField(max_length=254, blank=True, default="")
+    phone = models.CharField(max_length=32, blank=True, default="")
+    updated_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "partners_contact"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["partner", "kind"], name="uq_partner_contact_kind"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.kind} contact of {self.partner_id}"
 
 
 class PartnerCapabilityGrant(models.Model):
@@ -203,6 +310,15 @@ class PartnerMember(models.Model):
         on_delete=models.PROTECT,
         related_name="+",
     )
+    #: When a one-time setup link was last emailed to this person. ``None`` for
+    #: someone with no password means "named, not yet invited" - what lets a
+    #: partner be set up in draft and its administrator invited at activation.
+    invitation_sent_at = models.DateTimeField(null=True, blank=True)
+    #: True only for a person attached with ``invite_member(send_link=False)``:
+    #: their setup link is sent when the partner is first activated. Someone
+    #: attached any other way (an existing account, ``add_member``) is never
+    #: emailed by activation.
+    invitation_deferred = models.BooleanField(default=False, db_default=False)
 
     class Meta:
         db_table = "partners_member"
@@ -338,6 +454,14 @@ class PartnerProductGrant(models.Model):
         "identity.User", on_delete=models.PROTECT, related_name="+"
     )
     granted_at = models.DateTimeField()
+    #: Whether this partner's customers may start the product's *existing*
+    #: platform trial. It only ever narrows: a product with no trial configured
+    #: has none whatever this says, and a trial already started is untouched.
+    trial_allowed = models.BooleanField(default=True, db_default=True)
+    #: Whether the product is shown on the partner's white-label portal. Display
+    #: only - it never grants or removes an entitlement, so a customer who holds
+    #: the product still launches it.
+    portal_visible = models.BooleanField(default=True, db_default=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
     revoked_by = models.ForeignKey(
         "identity.User",
@@ -406,6 +530,12 @@ class PartnerBrand(models.Model):
     theme = models.JSONField(default=dict)
     support_email = models.EmailField(max_length=254, blank=True, default="")
     support_url = models.CharField(max_length=300, blank=True, default="")
+    #: Bounded plain text and flags the customer portal shows (a short name, a
+    #: welcome message, a footer, support details) and the sender identity of
+    #: emails sent in the partner's name. A closed key set validated on write
+    #: (``branding.PORTAL_FIELDS``), like ``theme``: no markup, no URLs to
+    #: fetch, nothing an authorization decision reads.
+    portal = models.JSONField(default=dict, db_default={})
 
     version = models.IntegerField(default=0)
     updated_by = models.ForeignKey(

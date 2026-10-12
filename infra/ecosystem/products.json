@@ -1,5 +1,5 @@
 {
-  "_note": "Operator-owned definitions for `manage.py register_products`. Data only: no plan, no price, no credential and no trial is defined here (those are commercial decisions made in the Super Admin console). Descriptions and features are DRAFT copy to be confirmed by each product's owner and editable in the product manager. Each redirect URI is a PLACEHOLDER: a product must implement OIDC authorization code + PKCE and its owner must replace it (PUT the manifest) before single sign-on can work. Until an unrevoked credential exists the console reports 'SSO integration required'.",
+  "_note": "Operator-owned definitions for `manage.py register_products`. Data only: no plan, no price and no credential is defined here (those are commercial decisions made in the Super Admin console). Each product's trial (enabled, 7 days: the owner's decision of 2026-10-11) is applied only when the product has no trial configuration yet, and a trial starts only on a published plan staff mark eligible. Descriptions and features are DRAFT copy to be confirmed by each product's owner and editable in the product manager. Each redirect URI is the path a product's OIDC client (authorization code + PKCE, private_key_jwt) must serve; all four products implement exactly these (2026-10-12). Single sign-on works once an operator runs `manage.py connect_product_sso` with the product's public key (it sets the redirect URIs and scopes, registers the credential and activates the integration). Until an unrevoked credential exists the console reports 'SSO integration required'. `sign_in_mode` (ADR-044) declares how each product lets people in: EasyBook and Easy CRM are `sso_only` because their production deployments run with WORKEASY360_SSO_ONLY on (the owner's decision of 2026-10-12) - switch one to `sso_optional`, with its `login_url`, in the console if its deployment re-enables its own password sign-in. Easy Project and Easy Help Desk implement the same client (2026-10-12: repositories Project-Module and helpdesk-workeasy, each with docs/workeasy360-sso.md) and are `sso_only` too: Easy Project never had a sign-in of its own, and the Help Desk's production deployment runs with WORKEASY360_SSO_ONLY on. An environment that registered either before then holds it `local_only`; `connect_product_sso` switches it to `sso_only` when it registers the key. `post_logout_redirect_uris` are where Workeasy360 may return a browser after the product's 'sign out of Workeasy360 too'. A product registered before ADR-044 reads as `sso_only`.",
   "products": [
     {
       "code": "easy_crm",
@@ -11,6 +11,7 @@
       "description": "Easy CRM is a sales and customer relationship product. It runs as its own application: Workeasy360 provides your account, plan, seats and access, and your CRM data stays in Easy CRM.",
       "licensing_mode": "per_seat",
       "sort_order": 10,
+      "trial": {"enabled": true, "duration_days": 7},
       "features": [
         {"key": "easy_crm.sales.pipeline", "name": "Sales pipeline"},
         {"key": "easy_crm.customers.records", "name": "Customer records"}
@@ -18,7 +19,9 @@
       "integration": {
         "display_name": "Easy CRM",
         "launch_url": "https://crm.workeasy360.com/",
-        "redirect_uris": ["https://crm.workeasy360.com/api/auth/callback/workeasy360"]
+        "redirect_uris": ["https://crm.workeasy360.com/api/auth/callback/workeasy360"],
+        "sign_in_mode": "sso_only",
+        "post_logout_redirect_uris": ["https://crm.workeasy360.com/login"]
       }
     },
     {
@@ -31,13 +34,16 @@
       "description": "EasyBook is an accounting product. It runs as its own application: Workeasy360 provides your account, plan, seats and access, and your accounting data stays in EasyBook.",
       "licensing_mode": "per_seat",
       "sort_order": 20,
+      "trial": {"enabled": true, "duration_days": 7},
       "features": [
         {"key": "easybook.accounting.records", "name": "Accounting records"}
       ],
       "integration": {
         "display_name": "EasyBook",
         "launch_url": "https://book.workeasy360.com/",
-        "redirect_uris": ["https://book.workeasy360.com/api/auth/callback/workeasy360"]
+        "redirect_uris": ["https://book.workeasy360.com/api/auth/callback/workeasy360"],
+        "sign_in_mode": "sso_only",
+        "post_logout_redirect_uris": ["https://book.workeasy360.com/login"]
       }
     },
     {
@@ -50,6 +56,7 @@
       "description": "Easy Project is a project and operations product. It runs as its own application: Workeasy360 provides your account, plan, seats and access, and your projects and tasks stay in Easy Project.",
       "licensing_mode": "per_seat",
       "sort_order": 30,
+      "trial": {"enabled": true, "duration_days": 7},
       "features": [
         {"key": "easy_project.work.projects_tasks", "name": "Projects, tasks and subtasks"},
         {"key": "easy_project.work.risks_issues", "name": "Risks and issues"},
@@ -59,7 +66,9 @@
       "integration": {
         "display_name": "Easy Project",
         "launch_url": "https://ops.workeasy360.com/",
-        "redirect_uris": ["https://ops.workeasy360.com/api/auth/callback/workeasy360"]
+        "redirect_uris": ["https://ops.workeasy360.com/api/auth/callback/workeasy360"],
+        "sign_in_mode": "sso_only",
+        "post_logout_redirect_uris": ["https://ops.workeasy360.com/"]
       }
     },
     {
@@ -72,13 +81,16 @@
       "description": "Easy Help Desk is a customer support product. It runs as its own application: Workeasy360 provides your account, plan, seats and access, and your support tickets stay in Easy Help Desk.",
       "licensing_mode": "per_seat",
       "sort_order": 40,
+      "trial": {"enabled": true, "duration_days": 7},
       "features": [
         {"key": "easy_helpdesk.support.tickets", "name": "Support tickets"}
       ],
       "integration": {
         "display_name": "Easy Help Desk",
         "launch_url": "https://help.workeasy360.com/",
-        "redirect_uris": ["https://help.workeasy360.com/api/auth/callback/workeasy360"]
+        "redirect_uris": ["https://help.workeasy360.com/api/auth/callback/workeasy360"],
+        "sign_in_mode": "sso_only",
+        "post_logout_redirect_uris": ["https://help.workeasy360.com/login"]
       }
     }
   ]

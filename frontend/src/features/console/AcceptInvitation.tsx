@@ -2,7 +2,6 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { ApiError } from "@/lib/api/client";
 import { logout } from "@/lib/api/auth";
 import { accountApi, type InvitationPreview } from "@/lib/api/console";
@@ -11,6 +10,7 @@ import { takeFragmentToken } from "@/lib/auth/fragmentToken";
 import { describeError, when } from "@/features/controlplane/ui";
 import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
+import { usePortalRouter } from "@/lib/portalRouter";
 
 
 type View =
@@ -130,7 +130,7 @@ function Invitation({
   onInvalid: () => void;
   onSignedOut: () => void;
 }) {
-  const router = useRouter();
+  const router = usePortalRouter();
   const [busy, setBusy] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
   const [needsSignIn, setNeedsSignIn] = useState(false);

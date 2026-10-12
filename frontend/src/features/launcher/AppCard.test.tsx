@@ -24,6 +24,7 @@ function app(overrides: Partial<AppDirectoryEntry>): AppDirectoryEntry {
     seats: null,
     renews_at: null,
     cancel_at: null,
+    sign_in: null,
     ...overrides,
   };
 }
@@ -31,12 +32,12 @@ function app(overrides: Partial<AppDirectoryEntry>): AppDirectoryEntry {
 describe("AppCard", () => {
   it("renders an Open action for an active app", () => {
     render(<AppCard orgSlug="acme" app={app({ state: "active", can_launch: true })} />);
-    expect(screen.getByRole("button", { name: "Open" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open CRM" })).toBeInTheDocument();
   });
 
   it("never renders an Open action for a no_seat app (Task 8/16: state drives the UI, not a guess)", () => {
     render(<AppCard orgSlug="acme" app={app({ state: "no_seat", can_launch: false })} />);
-    expect(screen.queryByRole("button", { name: "Open" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open CRM" })).not.toBeInTheDocument();
     expect(screen.getByText("No seat")).toBeInTheDocument();
     expect(screen.getByText("Ask an admin")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Assign a seat/ })).not.toBeInTheDocument();
@@ -50,7 +51,7 @@ describe("AppCard", () => {
         seatsHref="/o/acme/settings/products"
       />,
     );
-    expect(screen.queryByRole("button", { name: "Open" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open CRM" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /^Assign a seat: / })).toHaveAttribute("href", "/o/acme/settings/products");
     expect(screen.queryByText("Ask an admin")).not.toBeInTheDocument();
     expect(screen.queryByText(/Ask an administrator/)).not.toBeInTheDocument();
@@ -80,7 +81,7 @@ describe("AppCard", () => {
     vi.stubGlobal("location", { ...window.location, assign });
 
     render(<AppCard orgSlug="acme" app={app({ state: "active" })} />);
-    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open CRM" }));
 
     await waitFor(() =>
       expect(assign).toHaveBeenCalledWith("https://crm.example.com/launch?organization=org-1"),
@@ -100,7 +101,7 @@ describe("AppCard", () => {
     vi.stubGlobal("location", { ...window.location, assign });
 
     render(<AppCard orgSlug="acme" app={app({ state: "active" })} />);
-    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open CRM" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "You don't have a seat for that product yet. Ask an administrator to assign you one.",
@@ -117,7 +118,7 @@ describe("AppCard", () => {
     vi.stubGlobal("location", { ...window.location, assign });
 
     render(<AppCard orgSlug="acme" app={app({ state: "active" })} />);
-    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open CRM" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/organization is read-only/);
     expect(screen.queryByText("organization_not_writable")).not.toBeInTheDocument();
@@ -129,7 +130,7 @@ describe("AppCard", () => {
       "POST /api/v1/orgs/acme/apps/crm/launch": [{ status: 500, body: { code: "internal_error" } }],
     });
     render(<AppCard orgSlug="acme" app={app({ state: "active" })} />);
-    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open CRM" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("That app couldn't be opened right now.");
   });
 });
@@ -189,7 +190,7 @@ describe("AppCard - Phase 11 facts and status", () => {
     render(<AppCard orgSlug="acme" app={app({ entitlement_status: "suspended", state: "active" })} />);
     expect(screen.getByText("Suspended", { selector: "li" })).toBeInTheDocument();
     expect(screen.getByText(/Read-only until payment resumes/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Open CRM" })).toBeEnabled();
   });
 
   it("a cancelled subscription still shows Active, with an ending note - it has not lost access yet", () => {

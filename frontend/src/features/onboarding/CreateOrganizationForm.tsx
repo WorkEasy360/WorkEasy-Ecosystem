@@ -1,9 +1,9 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { createOrganization } from "@/lib/api/organizations";
 import { ApiError } from "@/lib/api/client";
+import { usePortalRouter } from "@/lib/portalRouter";
 
 type ErrorCode =
   | "organization_validation_error"
@@ -34,7 +34,7 @@ function classify(err: unknown): ErrorCode {
 }
 
 export function CreateOrganizationForm() {
-  const router = useRouter();
+  const router = usePortalRouter();
   const nameId = useId();
   const errorId = useId();
 

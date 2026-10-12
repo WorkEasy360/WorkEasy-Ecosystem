@@ -59,6 +59,13 @@ function product(overrides: Record<string, unknown> = {}) {
       suspension_reason: "",
       sso: "connected",
       health: { status: "unknown", checked_at: null, detail: "" },
+      manifest_version: "2026-10-12",
+      sign_in_mode: "sso_only",
+      login_url: "",
+      post_logout_redirect_uris: [],
+      scopes: ["openid", "email"],
+      token_endpoint_auth_method: "private_key_jwt",
+      sso_state: "enabled",
     },
     ...overrides,
   };
@@ -117,7 +124,7 @@ describe("the products console", () => {
     await screen.findByRole("heading", { level: 2, name: "Easy CRM" });
     expect(screen.getByText(/3 partner\(s\) granted/)).toBeInTheDocument();
     expect(screen.getByText(/1 product rule\(s\) · programme default applies/)).toBeInTheDocument();
-    expect(screen.getByText(/14-day, 1 plan\(s\)/)).toBeInTheDocument();
+    expect(screen.getByText(/14 days, on · 1 eligible plan\(s\)/)).toBeInTheDocument();
     expect(screen.getByText(/Not ready/)).toBeInTheDocument();
   });
 
@@ -228,12 +235,16 @@ describe("the products console", () => {
     expect(await screen.findByText("healthy (http_200)")).toBeInTheDocument();
   });
 
-  it("never shows a client id, secret or key anywhere on the page", async () => {
+  it("shows the client id but never a secret or key anywhere on the page", async () => {
+    // ADR-044: the brief's Authentication section shows the client id. It is
+    // a public identifier - it travels in every authorization URL and is the
+    // ID token's audience - not a credential. Secrets and keys are never in
+    // the console's response at all, so they can never be on the page.
     mockApi({ [`GET ${ADMIN}/products/console`]: [{ status: 200, body: console_() }] });
     renderConsole([...CATALOG, ...INTEGRATION]);
     await screen.findByRole("heading", { level: 2, name: "Easy CRM" });
-    expect(screen.queryByText("cid-1")).not.toBeInTheDocument();
-    expect(document.body.innerHTML).not.toContain("cid-1");
+    expect(screen.getByText("cid-1")).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toMatch(/secret_hash|PRIVATE KEY|client_secret/i);
   });
 
   it("adding a product SKU sends only a code and a name", async () => {

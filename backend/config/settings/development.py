@@ -33,6 +33,10 @@ CSRF_COOKIE_SECURE = False
 SECURE_SSL_REDIRECT = False
 SECURE_HSTS_SECONDS = 0
 
+# base.py derives this from its own DEBUG (False), before DEBUG is turned on
+# above, so the offline test payment provider has to be switched on here.
+PAYMENTS_FAKE_PROVIDER_ENABLED = env.bool("W360_PAYMENTS_FAKE_PROVIDER", True)
+
 LOG_FORMAT = env.choice("W360_LOG_FORMAT", ("json", "console"), default="console")
 LOG_LEVEL = env.choice(
     "W360_LOG_LEVEL", ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"), default="DEBUG"

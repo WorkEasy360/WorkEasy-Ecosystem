@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { consoleApi, type ExploreProduct, type ListPrice, type MarketplaceOffers } from "@/lib/api/console";
 import { ApiError } from "@/lib/api/client";
 import { ProductIcon, productIconKnown } from "@/components/ProductIcon";
+import { LaunchButton } from "@/features/launcher/LaunchButton";
 import { LoadGate, money, useAction, useLoad } from "@/features/controlplane/ui";
 import cp from "@/features/controlplane/ControlPlane.module.css";
 import styles from "./Console.module.css";
@@ -29,11 +30,12 @@ type Bundle = MarketplaceOffers["bundles"][number];
 /**
  * Explore products (Phase 9; extended Phase 11). Two sections:
  *
- * - **Products** (`ExploreProducts`, new): every product the organization
- *   does not already hold, as a card - icon, category, whether a free trial
- *   is open to it right now, and the server's own price. Step 11 of the
- *   brief: a product already held never shows a purchase CTA here at all -
- *   it belongs to My products instead.
+ * - **Products** (`ExploreProducts`): every product in the catalog, as a
+ *   card - icon, category, its trial (offered, running with the days left,
+ *   or expired), and the server's own price. A product already owned shows
+ *   only "Open product"; a running trial shows Open and Upgrade; an expired
+ *   one says so and offers Buy. Days left come from the server, never from
+ *   this browser's clock (multi-portal brief, Parts 12, 16, 19).
  * - **Plans & bundles** (`Offers`, unchanged): the existing plan-and-bundle
  *   marketplace, for add-ons and bundled packages that span several products.
  *
@@ -53,7 +55,7 @@ export function ExploreScreen() {
     <div className={styles.page}>
       <PageHeader
         title="Explore products"
-        lead="Products your organization doesn't have yet. Prices are in your billing currency, before any tax."
+        lead="Every Workeasy360 product, and what your organization has of each. Prices are in your billing currency, before any tax."
       />
       <ExploreProducts slug={slug} canBuy={canBuy} />
       <LoadGate load={load} what="plans and bundles">
@@ -85,11 +87,11 @@ function ExploreProducts({ slug, canBuy }: { slug: string; canBuy: boolean }) {
   return (
     <LoadGate load={load} what="products">
       {(data) => {
-        const discoverable = data.products.filter((p) => p.trial_state !== "owned");
+        const discoverable = data.products;
         if (discoverable.length === 0) {
           return (
             <div className={local.notice}>
-              <p>Your organization already has every product Workeasy360 offers.</p>
+              <p>No products are available right now.</p>
             </div>
           );
         }
@@ -105,6 +107,7 @@ function ExploreProducts({ slug, canBuy }: { slug: string; canBuy: boolean }) {
               {discoverable.map((product) => (
                 <ExploreProductCard
                   key={product.code}
+                  slug={slug}
                   product={product}
                   canBuy={canBuy}
                   busy={busy}
@@ -122,8 +125,7 @@ function ExploreProducts({ slug, canBuy }: { slug: string; canBuy: boolean }) {
   );
 }
 
-/** Where a product card sends someone to choose a plan when it cannot price
- * one itself (no billing details yet, so no currency). */
+/** The single-product packages section, for comparing a product's plans. */
 const PACKAGES_ANCHOR = "product-packages";
 
 const CYCLE_PER: Record<string, string> = { monthly: "month", quarterly: "quarter", semi_annual: "6 months", annual: "year" };
@@ -141,7 +143,33 @@ function planForExploreStartingPrice(product: ExploreProduct) {
   );
 }
 
+/** "5 days remaining" - the server's count, rounded up, so the last day of a
+ * trial that still works never reads "0 days". */
+export function daysRemaining(days: number | null | undefined): string {
+  if (days === null || days === undefined) return "";
+  return days === 1 ? "1 day remaining" : `${days} days remaining`;
+}
+
+/** The badge a product card shows, from the server's trial facts only. */
+export function trialBadge(product: ExploreProduct, trialOffered: boolean): { label: string; tone: string } | null {
+  if (product.trial_state === "owned") return { label: "Active", tone: "w360-badge-success" };
+  if (product.trial_state === "active") {
+    const left = daysRemaining(product.trial_days_left);
+    return { label: left ? `Trial active — ${left}` : "Trial active", tone: "w360-badge-success" };
+  }
+  if (product.trial_state === "used") {
+    return product.trial_outcome === "expired"
+      ? { label: "Trial expired", tone: "w360-badge-warning" }
+      : { label: "Trial used", tone: "w360-badge-neutral" };
+  }
+  if (trialOffered && product.trial.duration_days) {
+    return { label: `${product.trial.duration_days}-day free trial`, tone: "w360-badge-success" };
+  }
+  return null;
+}
+
 function ExploreProductCard({
+  slug,
   product,
   canBuy,
   busy,
@@ -149,6 +177,7 @@ function ExploreProductCard({
   onStartTrial,
   onBuy,
 }: {
+  slug: string;
   product: ExploreProduct;
   canBuy: boolean;
   busy: boolean;
@@ -161,20 +190,25 @@ function ExploreProductCard({
     product.trial_state === "available"
       ? product.plans.find((p) => product.trial.plan_codes.includes(p.plan_code))
       : undefined;
-  const buyPlan = trialPlan ? undefined : planForExploreStartingPrice(product);
+  const held = product.trial_state === "owned" || product.trial_state === "active";
   // No billing details yet means no currency, so the server prices nothing -
-  // the product is still for sale; the checkout asks for the details first.
+  // the product is still for sale; the checkout asks for the details first,
+  // then prices the plan this card names (the trial's plan when there is one).
   const pricedAtCheckout = !hasAccount && !product.starting_price && product.plans.some((p) => p.kind === "standard");
-  const priceInterval = buyPlan?.prices.find((p) => p.amount_minor === product.starting_price?.amount_minor)?.interval ?? "monthly";
+  const checkoutPlan = pricedAtCheckout
+    ? product.plans.find((p) => p.kind === "standard" && product.trial.plan_codes.includes(p.plan_code)) ??
+      product.plans.find((p) => p.kind === "standard")
+    : undefined;
+  const buyPlan = product.trial_state === "owned" ? undefined : (planForExploreStartingPrice(product) ?? checkoutPlan);
+  const priceInterval =
+    buyPlan?.prices.find((p) => p.amount_minor === product.starting_price?.amount_minor)?.interval ??
+    buyPlan?.prices[0]?.interval ??
+    "monthly";
 
-  const badge: { label: string; tone: string } | null =
-    product.trial_state === "active"
-      ? { label: "Trial active", tone: "w360-badge-success" }
-      : product.trial_state === "used"
-        ? { label: "Trial used", tone: "w360-badge-neutral" }
-        : trialPlan
-          ? { label: "Free trial available", tone: "w360-badge-success" }
-          : null;
+  const badge = trialBadge(product, Boolean(trialPlan));
+  const days = product.trial.duration_days;
+  const expired = product.trial_state === "used" && product.trial_outcome === "expired";
+  const buyLabel = product.trial_state === "active" ? "Upgrade" : expired ? "Upgrade / Buy now" : "Buy now";
 
   return (
     <article className={`w360-card ${local.offer}`} aria-labelledby={titleId}>
@@ -219,39 +253,34 @@ function ExploreProductCard({
       ) : (
         <p className={local.priceNote}>Contact sales for pricing</p>
       )}
-      {canBuy && product.availability === "available" && (
-        <div className={local.offerAction}>
-          {trialPlan ? (
-            <button
-              type="button"
-              className="w360-btn w360-btn-primary"
-              aria-label={`Start free trial: ${product.name}`}
-              disabled={busy}
-              onClick={() => onStartTrial(trialPlan.plan_code)}
-            >
-              Start free trial
-            </button>
-          ) : buyPlan ? (
-            <button
-              type="button"
-              className="w360-btn w360-btn-primary"
-              aria-label={`Buy: ${product.name}`}
-              disabled={busy}
-              onClick={() => onBuy(buyPlan.plan_version_id, priceInterval)}
-            >
-              Buy
-            </button>
-          ) : pricedAtCheckout ? (
-            <a href={`#${PACKAGES_ANCHOR}`} className="w360-btn w360-btn-primary" aria-label={`See plans: ${product.name}`}>
-              See plans
-            </a>
-          ) : product.trial_state !== "used" ? (
-            <Link href={`/products/${product.slug}`} className="w360-btn w360-btn-secondary">
-              Learn more
-            </Link>
-          ) : null}
-        </div>
-      )}
+      <div className={local.offerAction}>
+        {held && <LaunchButton orgSlug={slug} productCode={product.code} productName={product.name} />}
+        {canBuy && product.availability === "available" && !held && trialPlan && (
+          <button
+            type="button"
+            className="w360-btn w360-btn-primary"
+            aria-label={`${days ? `Start ${days}-day free trial` : "Start free trial"}: ${product.name}`}
+            disabled={busy}
+            onClick={() => onStartTrial(trialPlan.plan_code)}
+          >
+            {days ? `Start ${days}-Day Free Trial` : "Start free trial"}
+          </button>
+        )}
+        {canBuy && product.availability === "available" && buyPlan && (
+          <button
+            type="button"
+            className={trialPlan || held ? "w360-btn w360-btn-secondary" : "w360-btn w360-btn-primary"}
+            aria-label={`${buyLabel}: ${product.name}`}
+            disabled={busy}
+            onClick={() => onBuy(buyPlan.plan_version_id, priceInterval)}
+          >
+            {buyLabel}
+          </button>
+        )}
+        <Link href={`/products/${product.slug}`} className="w360-btn w360-btn-secondary" aria-label={`Learn more: ${product.name}`}>
+          Learn more
+        </Link>
+      </div>
     </article>
   );
 }

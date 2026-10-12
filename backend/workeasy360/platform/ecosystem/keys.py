@@ -148,7 +148,7 @@ def active_signing_key() -> Any:
         logger.error("ecosystem.signing_key.none_active")
         raise SigningKeyUnavailable(
             "No active signing key. Token issuance is impossible until one is "
-            "promoted - run `manage.py w360_rotate_signing_key --promote`."
+            "promoted - run `manage.py w360_signing_key promote --kid <kid>`."
         )
     return key
 

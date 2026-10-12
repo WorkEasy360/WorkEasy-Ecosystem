@@ -49,7 +49,7 @@ def record_account_event(
     AccountEvent.objects.create(
         user_id=user_id,
         kind=kind,
-        reason=reason[:32],
+        reason=reason[:64],
         ip_prefix=ip_prefix[:64],
         device_label=device_label[:64],
     )

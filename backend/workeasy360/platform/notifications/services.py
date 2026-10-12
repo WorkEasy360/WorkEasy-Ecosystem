@@ -127,9 +127,15 @@ def notify_account(
     idempotency_key: str,
     context: dict[str, Any] | None = None,
     sealed_context: dict[str, str] | None = None,
+    envelope: dict[str, str] | None = None,
 ) -> UUID:
     """Queue an email addressed to a *person* rather than an organization
     (Phase 9: verification, password reset).
+
+    ``envelope`` may carry a ``sender_name`` and a ``reply_to`` for this one
+    message (a partner's brand on an email sent in its name). It is re-validated
+    when the message is delivered (``communication.clean_envelope``) and can
+    never change the address the mail is sent *from*.
 
     A notification is tenant-scoped, and a person signing up belongs to no
     organization yet, so these are anchored on the **platform organization** -
@@ -146,13 +152,22 @@ def notify_account(
 
     ensure_platform_organization()
     ctx = routing_context(PLATFORM_ORGANIZATION_ID, OrganizationStatus.ACTIVE)
+    from workeasy360.platform.notifications.communication import (
+        ENVELOPE_KEY,
+        clean_envelope,
+    )
+
+    message_context = dict(context or {})
+    clean = clean_envelope(envelope)
+    if clean:
+        message_context[ENVELOPE_KEY] = clean
     with tenant_context(ctx), organization_db_scope(PLATFORM_ORGANIZATION_ID):
         return notify(
             NotificationRequest(
                 organization_id=PLATFORM_ORGANIZATION_ID,
                 template_key=template_key,
                 recipient_email=recipient_email,
-                context=dict(context or {}),
+                context=message_context,
                 sealed_context=dict(sealed_context or {}),
                 idempotency_key=idempotency_key,
             )

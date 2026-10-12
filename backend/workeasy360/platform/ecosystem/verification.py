@@ -105,7 +105,11 @@ class VerificationResult:
 
 
 def verify(
-    *, organization_id: UUID, product_code: str, write: bool = False
+    *,
+    organization_id: UUID,
+    product_code: str,
+    write: bool = False,
+    subject: str | None = None,
 ) -> VerificationResult:
     """Decide whether ``organization_id`` may use ``product_code``.
 
@@ -113,12 +117,24 @@ def verify(
     that a suspended organization is read-only inside the product exactly as
     it is inside the platform (R-10) - without the product having to know
     what "suspended" means or that the concept exists.
+
+    ``subject`` (optional; the ``sub`` of the ID token the product signed the
+    person in with) adds the personal half of sign-in's checks, so a product
+    session ends within one revalidation window when the person's account is
+    disabled, their membership is removed or their seat is unassigned - not
+    only at their next sign-in (ADR-044 addendum). Asked only once the
+    organization itself is allowed: an organization-level denial is the more
+    useful answer and says nothing about the person. Answered ``deny`` with
+    ``membership_inactive`` or ``no_seat``; an unknown or malformed subject is
+    ``membership_inactive``, indistinguishable from a removed member.
     """
+    from workeasy360.platform.ecosystem.authorization import person_access_reason
     from workeasy360.platform.entitlements.selectors import decision_for_organization
     from workeasy360.platform.organizations.selectors import organization_status
 
     now = timezone.now()
     revalidate_after = int(settings.OIDC_ENTITLEMENT_REVALIDATE_AFTER_S)
+    person_reason: str | None = None
 
     try:
         with timed("ecosystem_entitlement_verify_duration_seconds"):
@@ -146,6 +162,15 @@ def verify(
             # reported ``write_allowed: true`` here, because the entitlement
             # decision only knows about *subscription* suspension.
             status = organization_status(organization_id)
+            if (
+                subject is not None
+                and decision.allowed
+                and status is not None
+                and status.allows_read
+            ):
+                person_reason = _person_reason(
+                    subject, organization_id, product_code, person_access_reason
+                )
     except Exception as exc:
         # Everything else - the database is down, the snapshot table is
         # unreadable, the gate is unregistered. None of these is a statement
@@ -206,6 +231,22 @@ def verify(
             revalidate_after=revalidate_after,
         )
 
+    if person_reason is not None:
+        metrics.increment(
+            "ecosystem_entitlement_verifications_total",
+            decision=DENY,
+            reason=person_reason,
+        )
+        return VerificationResult(
+            decision=DENY,
+            reason=person_reason,
+            product_code=product_code,
+            organization_id=str(organization_id),
+            write_allowed=False,
+            checked_at=now.isoformat(),
+            revalidate_after=revalidate_after,
+        )
+
     metrics.increment(
         "ecosystem_entitlement_verifications_total", decision=ALLOW, reason="entitled"
     )
@@ -229,4 +270,27 @@ def verify(
         write_allowed=decision.write_allowed and organization_writable,
         checked_at=now.isoformat(),
         revalidate_after=revalidate_after,
+    )
+
+
+def _person_reason(
+    subject: str, organization_id: UUID, product_code: str, check: Any
+) -> str | None:
+    """``check`` (``authorization.person_access_reason``) for a subject that is
+    a UUID; a subject this platform could never have issued (every ``sub`` is
+    a user id) is a person who is not a member, not a malformed request - a
+    400 would read to the product as its own credential being refused. It is
+    still asked about, as the nil UUID (no account has it), so a malformed
+    subject costs the same reads as an unknown one."""
+    try:
+        user_id = UUID(subject)
+    except ValueError:
+        check(
+            user_id=UUID(int=0),
+            organization_id=organization_id,
+            product_code=product_code,
+        )
+        return "membership_inactive"
+    return check(
+        user_id=user_id, organization_id=organization_id, product_code=product_code
     )

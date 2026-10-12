@@ -216,6 +216,11 @@ class LaunchTargetDTO:
     #: its own field rather than folded into a single "unavailable" boolean,
     #: so a future caller that *does* need to distinguish them still can.
     is_terminal: bool
+    #: ADR-044: the product's own sign-in page, for a person whose effective
+    #: sign-in is the product's (``ProductManifest.product_login_url``), or
+    #: ``""``. A place a browser is sent, like ``launch_url`` - never a
+    #: redirect URI or a credential.
+    product_login_url: str = ""
 
 
 def launch_target(product_code: str) -> LaunchTargetDTO | None:
@@ -251,6 +256,7 @@ def launch_target(product_code: str) -> LaunchTargetDTO | None:
         can_authenticate=status.can_authenticate,
         is_suspended=status is IntegrationStatus.SUSPENDED,
         is_terminal=status.is_terminal,
+        product_login_url=manifest.product_login_url,
     )
 
 

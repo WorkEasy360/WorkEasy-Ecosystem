@@ -19,7 +19,17 @@ import styles from "./AppCard.module.css";
  * only for the instant between the response arriving and the browser leaving
  * this page.
  */
-export function LaunchButton({ orgSlug, productCode }: { orgSlug: string; productCode: string }) {
+export function LaunchButton({
+  orgSlug,
+  productCode,
+  productName,
+}: {
+  orgSlug: string;
+  productCode: string;
+  /** Named on the button ("Open Easy CRM"), so several cards' buttons are
+   * told apart by everyone, a screen reader included. */
+  productName?: string;
+}) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,7 +54,7 @@ export function LaunchButton({ orgSlug, productCode }: { orgSlug: string; produc
   return (
     <>
       <button type="button" className="w360-btn w360-btn-primary" onClick={open} disabled={pending}>
-        {pending ? "Opening…" : "Open"}
+        {pending ? "Opening…" : productName ? `Open ${productName}` : "Open"}
       </button>
       {error && (
         <p role="alert" className={styles.launchError}>

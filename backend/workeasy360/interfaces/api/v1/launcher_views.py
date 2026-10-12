@@ -18,12 +18,12 @@ from __future__ import annotations
 import math
 from datetime import datetime
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import urlencode
 
-from django.conf import settings
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.views.decorators.http import require_http_methods
 
+from workeasy360.platform.identity import portals as portal_links
 from workeasy360.platform.launcher import selectors, services
 from workeasy360.platform.launcher.access import AppAccessDecision
 from workeasy360.platform.observability.metrics import metrics
@@ -85,17 +85,17 @@ def launch_view(request: HttpRequest, org_slug: str, product_code: str) -> HttpR
                 status=409,
             )
         query = urlencode({"launch_error": decision.state.value, "product": product_code})
-        return HttpResponseRedirect(
-            f"{settings.W360_FRONTEND_URL}/o/{org_slug}/apps?{query}"
-        )
+        return HttpResponseRedirect(f"{portal_links.app_url()}/o/{org_slug}/apps?{query}")
 
-    metrics.increment("launcher_launch_allowed_total")
-    # The documented convention every product integration guide names
-    # (docs/phase-3/09-product-integration-guide.md): the browser arrives at
+    # ADR-044: which way in. The documented convention every product
+    # integration guide names (docs/phase-3/09-product-integration-guide.md)
+    # is unchanged for Workeasy360 sign-in: the browser arrives at
     # launch_url?organization=<uuid>, and the product itself starts the OIDC
     # authorization request from there, generating its own PKCE pair - the
     # launcher never touches a code, a token or a client credential (Task 17).
-    target = _launch_target(decision.launch_url, ctx.organization_id)
+    # A person who prefers the product's own sign-in goes to that page.
+    route = services.launch_route(ctx, decision)
+    metrics.increment("launcher_launch_allowed_total", sign_in=route.sign_in)
     if wants_json:
         # The same server-owned destination, handed to the page's own script
         # instead of a 302. The page cannot choose it: it is what this
@@ -104,8 +104,14 @@ def launch_view(request: HttpRequest, org_slug: str, product_code: str) -> HttpR
         # (``form-action 'self'``) the moment it leaves the origin - which is
         # every real product - so the shell submits with ``fetch`` and then
         # navigates itself.
-        return JsonResponse({"redirect_url": target, "state": decision.state.value})
-    return HttpResponseRedirect(target)
+        return JsonResponse(
+            {
+                "redirect_url": route.url,
+                "state": decision.state.value,
+                "sign_in": route.sign_in,
+            }
+        )
+    return HttpResponseRedirect(route.url)
 
 
 @require_http_methods(["GET"])
@@ -147,21 +153,6 @@ def _wants_json(request: HttpRequest) -> bool:
     return "application/json" in request.headers.get("Accept", "")
 
 
-def _launch_target(launch_url: str, organization_id: Any) -> str:
-    """``launch_url`` with ``organization=<id>`` added to whatever query it
-    already has (a registered launch URL may carry one), never a second ``?``.
-    The organization id is not a secret and never a token: the product starts
-    its own authorization request from here."""
-    parts = urlsplit(launch_url)
-    query = [
-        (key, value)
-        for key, value in parse_qsl(parts.query, keep_blank_values=True)
-        if key != "organization"
-    ]
-    query.append(("organization", str(organization_id)))
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
-
-
 def _days_left(ends_at: datetime, now: datetime) -> int:
     """Whole days left, rounded up, never negative: "1 day left" until the
     last moment, not "0 days left" for a trial that still works."""
@@ -183,6 +174,7 @@ def _card_extras(ctx: Any, product_codes: list[str]) -> dict[str, dict[str, Any]
     from workeasy360.commercial.subscriptions import my_products
     from workeasy360.platform.authz import services as authz
     from workeasy360.platform.ecosystem import selectors as ecosystem
+    from workeasy360.platform.ecosystem import sign_in
     from workeasy360.platform.entitlements.services import seats as seat_services
 
     now = timezone.now()
@@ -192,6 +184,9 @@ def _card_extras(ctx: Any, product_codes: list[str]) -> dict[str, dict[str, Any]
 
     presentation = catalog.product_presentations(product_codes)
     presence = ecosystem.presence_for(product_codes)
+    # ADR-044: how this person enters each product - two fixed queries for the
+    # whole directory (the registry, and this person's own preferences).
+    signing_in = sign_in.product_sign_in(ctx.user_id, product_codes)
     held = my_products.holdings(at=now)
     usage = seat_services.usage_by_pool(ctx.organization_id) if may_see_seats else {}
 
@@ -219,6 +214,7 @@ def _card_extras(ctx: Any, product_codes: list[str]) -> dict[str, dict[str, Any]
             "seats": None,
             "renews_at": None,
             "cancel_at": None,
+            "sign_in": _sign_in_json(signing_in.get(code)),
         }
         if holding is not None:
             if holding.trial_ends_at is not None:
@@ -240,6 +236,28 @@ def _card_extras(ctx: Any, product_codes: list[str]) -> dict[str, dict[str, Any]
                 card["seats"] = {"total": total, "used": assigned}
         extras[code] = card
     return extras
+
+
+def _sign_in_json(found: Any) -> dict[str, Any] | None:
+    """The card's sign-in facts (ADR-044): whether Workeasy360 sign-in works
+    for this product (``sso``: enabled / integration_required / disabled),
+    the product's own mode, this person's setting and what therefore happens.
+    The server decides all of it; the card only words it."""
+    if found is None:
+        return None
+    full = found.as_dict()
+    return {
+        key: full[key]
+        for key in (
+            "sso",
+            "mode",
+            "product_login_available",
+            "override",
+            "preference",
+            "effective",
+            "constraint",
+        )
+    }
 
 
 def _public_dict(

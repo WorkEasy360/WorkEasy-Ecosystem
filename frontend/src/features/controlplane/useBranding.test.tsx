@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { applyAccent, contrastOn, hoverOf, textOnDark, textOnLight, useOrganizationBranding } from "./useBranding";
+import { applyAccent, contrastOn, hoverOf, textOnDark, textOnLight, useBranding, useOrganizationBranding } from "./useBranding";
 
 /**
  * The colours that follow from a partner's accent. Found by the Phase 10 browser
@@ -160,5 +160,80 @@ describe("useOrganizationBranding", () => {
     global.fetch = vi.fn(async () => new Response(null, { status: 500 })) as typeof fetch;
     render(<Probe slug="acme" />);
     await waitFor(() => expect(screen.getByTestId("brand")).toHaveTextContent("none"));
+  });
+});
+
+/** Since the white-label wizard, both public brand lookups carry the portal: the
+ * words and support details a customer reads. A response without it (an older
+ * one) must read as "none set", never as a crash. */
+function HostProbe({ host }: { host?: string }) {
+  const brand = useBranding(host);
+  return (
+    <div>
+      <span data-testid="name">{brand ? brand.brand_name : "none"}</span>
+      <span data-testid="short">{brand ? brand.portal.short_name : "-"}</span>
+      <span data-testid="welcome">{brand ? `${brand.portal.welcome_message}|${brand.portal.login_show_welcome}|${brand.portal.login_show_support}` : "-"}</span>
+    </div>
+  );
+}
+
+function OrgPortalProbe() {
+  const brand = useOrganizationBranding("acme");
+  return <span data-testid="portal">{brand ? JSON.stringify(brand.portal) : "none"}</span>;
+}
+
+describe("the portal on the public brand", () => {
+  const reply = (brand: unknown) =>
+    vi.fn(async () => new Response(JSON.stringify({ brand }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    document.documentElement.removeAttribute("style");
+  });
+
+  it("gives the host brand its portal fields, and its accent to <html>", async () => {
+    global.fetch = reply({
+      brand_name: "WL",
+      accent_color: "#336699",
+      support_email: "",
+      support_url: "",
+      logo_url: null,
+      portal: { short_name: "W", support_name: "", support_phone: "", website_url: "", welcome_message: "Hello", footer_text: "", login_show_welcome: false, login_show_support: true },
+    });
+    render(<HostProbe host="app.wl.example" />);
+    await waitFor(() => expect(screen.getByTestId("name")).toHaveTextContent("WL"));
+    expect(screen.getByTestId("short")).toHaveTextContent("W");
+    expect(screen.getByTestId("welcome")).toHaveTextContent("Hello|false|true");
+    expect(document.documentElement.style.getPropertyValue("--w360-brand")).toBe("#336699");
+  });
+
+  it("reads a host brand with no portal as no words set and both sign-in choices on", async () => {
+    global.fetch = reply({ brand_name: "Old", accent_color: "", support_email: "", support_url: "", logo_url: null });
+    render(<HostProbe host="app.wl.example" />);
+    await waitFor(() => expect(screen.getByTestId("name")).toHaveTextContent("Old"));
+    expect(screen.getByTestId("welcome")).toHaveTextContent("|true|true");
+  });
+
+  it("gives the organization's own brand a complete portal, whatever the server sent", async () => {
+    global.fetch = reply({
+      brand_name: "ABC",
+      accent_color: "",
+      support_email: "",
+      support_url: "",
+      logo_url: null,
+      portal: { short_name: "A", welcome_message: 7, login_show_welcome: "yes" },
+    });
+    render(<OrgPortalProbe />);
+    await waitFor(() => expect(screen.getByTestId("portal")).not.toHaveTextContent("none"));
+    expect(JSON.parse(screen.getByTestId("portal").textContent ?? "")).toEqual({
+      short_name: "A",
+      support_name: "",
+      support_phone: "",
+      website_url: "",
+      welcome_message: "",
+      footer_text: "",
+      login_show_welcome: true,
+      login_show_support: true,
+    });
   });
 });

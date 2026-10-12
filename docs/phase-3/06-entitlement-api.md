@@ -15,6 +15,7 @@ Content-Type: application/x-www-form-urlencoded
 
 organization_id=b21c…
 write=false
+subject=7f3e…            (optional, since 2026-10-12: the `sub` the product signed the person in with)
 + client authentication
 ```
 
@@ -35,7 +36,8 @@ revocation it was supposed to reflect.
 
 ## 2. There is no `product_code` parameter
 
-The subject comes from the **authenticated client's registration**.
+The product being asked about comes from the **authenticated client's
+registration**.
 
 This is stronger than validating a supplied code against the caller's
 identity, because there is nothing to validate: a CRM client asking about
@@ -65,7 +67,8 @@ response is JSON; the token endpoint has exactly the same shape.
 | `expired` | `deny` | Held and lapsed. Show a resubscribe path |
 | `suspended` | `deny` | Held but suspended |
 | `read_only` | `deny` (on `write=true`) | Reads permitted, writes are not |
-| `no_seat` | `deny` | Reserved; see §7 |
+| `no_seat` | `deny` (with `subject`) | A per-seat product, and this person holds no seat; see §7 |
+| `membership_inactive` | `deny` (with `subject`) | This person may no longer use the organization: account disabled or locked by an administrator, membership suspended or removed, or not a member at all; see §7 |
 
 These are **mapped** from the platform's internal `EntitlementReason` enum,
 not passed through. That enum is a platform internal which commercial code may
@@ -126,43 +129,53 @@ relaxed: a bug there returns nothing rather than another tenant's row.
 Both paths reach the same `services.read.decide()`, so the platform and a
 product can never be told different things about the same entitlement.
 
-## 7. Seats: a stated gap
+## 7. Seats and people: the optional `subject` (2026-10-12)
 
-**Seat enforcement does not happen at sign-in**, and that is a deliberate,
-documented decision rather than an oversight.
+**Before 2026-10-12** this endpoint answered for the organization only, so a
+product session outlived a removed member, a disabled account or an
+unassigned seat until the person's next sign-in: the authorization and token
+endpoints check all three (`authorization.py` steps 6 and 9), but a session
+already open never asked again. This section used to carry that as a stated
+P2 gap and named its fix: let this endpoint accept a `sub`.
 
-The reasoning: `entitlements.has_seat()` cannot distinguish "this user has no
-seat" from "this product is not seat-licensed". For a per-organization
-product there are no seat grants at all, so blanket enforcement would deny
-**every** user of **every** per-org product. Distinguishing the two requires
-`LicensingMode`, which is commercial data that `platform/ecosystem` may not
-read (F-4).
+**Now a product may send `subject`**, the `sub` of the ID token it signed the
+person in with (ADR-044 addendum). The platform first answers for the
+organization exactly as before; only if that is `allow` does it ask the
+personal questions sign-in asks, through the same functions
+(`authorization.person_access_reason`):
 
-**Consequence:** an organization holding CRM with 5 of 5 seats assigned will
-still authenticate user 6 into CRM. Seat enforcement inside the platform is
-unchanged (`authz.check` step 5).
+1. the account may still authenticate (`User.status` is `active`: an
+   administrator's DISABLED or LOCKED ends it; the failed-password brake does
+   **not** - it is a guess about a password, and folding it in would let anyone
+   who knows an address end its owner's product sessions);
+2. the membership in this organization is active;
+3. for a per-seat product, the member holds a seat.
 
-**And a product cannot enforce it on the platform's behalf either.** This is
-the part worth stating explicitly, because "the product can handle it" is the
-obvious assumption and it is wrong here: the ID token deliberately carries no
-`membership_id` ([05 §4](05-token-claims.md)), and this endpoint takes an
-organization and nothing else. There is therefore no field anywhere in the
-remote contract in which a product could ask, or be told, whether *this user*
-holds a seat. The gap is closed by the platform or it is not closed.
+The answers are `deny` + `membership_inactive` (1 or 2) or `deny` + `no_seat`
+(3). An unknown or malformed subject, and a person from another organization,
+are `membership_inactive` too: one answer for "removed", "never a member" and
+"no such person". The work behind those answers is the same as well (the
+account and the membership are always both read; a malformed subject is asked
+about as the nil UUID), so their timing does not tell them apart either
+(`test_every_denied_person_costs_the_same_reads`). What remains is inherent:
+`allow` and `no_seat` say the person is an active member, which is what a
+product asking about someone it signed in needs to know. Only an authenticated
+product client can ask, only about its own product, and only with user ids it
+already holds.
+The access policy (MFA, allow-list, session age) is not applied: it judges a
+browser session at sign-in, and a server asking later has none to describe.
 
-**Carried as P2** with two candidate resolutions: extend the entitlement
-snapshot to carry a seat-licensed flag the platform can read without
-commercial, or add a `no_seat` answer keyed on membership — which would also
-require the token to carry a per-member identifier, or this endpoint to
-accept a `sub`. The `no_seat` reason code is already reserved in the contract
-so that adding it later is not a breaking change.
+**Without `subject` nothing changes**, which is what a product asks for its
+background work, where there is no person.
 
-**Not a security gap.** A user reaching a product without a seat is an
-authenticated member of an organization that genuinely holds the product;
-nothing is escalated and no tenant boundary is crossed. It is a commercial
-licensing gap, which is why it is P2 and not P1, and why it belongs with the
-app launcher — the surface that already has to answer "which products can
-*this person* open?" and render "ask your administrator for a seat".
+**Not covered:** "sign out of all sessions" for a member, or a password reset,
+does not reach product sessions through this question (it ends Workeasy360's own
+sessions; products have no front- or back-channel logout, ADR-044). Removal,
+suspension, an administrator disabling or locking the account, and an
+unassigned seat do.
+
+**Cost.** One account read, the membership resolution and (per-seat products)
+the seat read, on top of the organization's answer: measured below.
 
 ## 8. What never crosses this boundary
 
@@ -186,6 +199,8 @@ A product should:
 - call this when a user first arrives;
 - call it again when `revalidate_after` elapses;
 - call it before a privileged or irreversible operation, with `write=true`;
+- send `subject` for a signed-in person's requests, so their removal reaches
+  their open session within the window, and leave it out for background work;
 - **not** call it per request — that is the tight coupling this design exists
   to avoid;
 - on `503`, **continue honouring its last known answer** and retry.
@@ -202,3 +217,10 @@ Measured on the local stack, through PgBouncer, over 40 calls:
 | Query budget | ≤ 12, asserted, and flat in the number of registered integrations |
 
 Full method and caveats in [13](13-performance-review.md).
+
+**2026-10-12, re-measured** with `test_report_entitlement_verification_latency`
+(test settings, a busy development machine, through PgBouncer, 40 calls each):
+the organization question p50 36 ms / p95 49 ms, the per-person question
+(`subject`) p50 71 ms / p95 116 ms. The absolute numbers are this machine's;
+the ratio - the personal half roughly doubles the work - is what
+`docs/universal-sso/capacity.md` uses.

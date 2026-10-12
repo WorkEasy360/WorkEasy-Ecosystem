@@ -46,11 +46,15 @@ const DETAIL = {
   status_reason: "",
   capabilities: [{ capability: "customer.provision", granted_at: "2026-01-02T00:00:00Z", expires_at: null, is_effective: true }],
   members: [
-    { id: "m1", user_id: "u1", email: "boss@acme.example", role: "admin", added_at: "2026-01-02T00:00:00Z", password_set: false },
-    { id: "m2", user_id: "u2", email: "ops@acme.example", role: "viewer", added_at: "2026-01-03T00:00:00Z", password_set: true },
+    { id: "m1", user_id: "u1", email: "boss@acme.example", role: "admin", added_at: "2026-01-02T00:00:00Z", password_set: false, full_name: "", last_login_at: null, invitation_sent_at: "2026-01-02T00:00:00Z", invitation_deferred: false, mfa_enabled: false },
+    { id: "m2", user_id: "u2", email: "ops@acme.example", role: "viewer", added_at: "2026-01-03T00:00:00Z", password_set: true, full_name: "Olu Ops", last_login_at: "2026-02-01T09:00:00Z", invitation_sent_at: "2026-01-03T00:00:00Z", invitation_deferred: false, mfa_enabled: true },
   ],
-  product_grants: [{ id: "g1", product_code: "crm", plan_code: null }],
+  product_grants: [{ id: "g1", product_code: "crm", plan_code: null, trial_allowed: true, portal_visible: true }],
   live_customers: 2,
+  experience: [
+    { key: "reseller", label: "Reseller" },
+    { key: "white_label", label: "White-label" },
+  ],
 };
 
 const SUMMARY = {
@@ -60,21 +64,24 @@ const SUMMARY = {
     { key: "customer.provision", label: "Create customer organizations", group: "customer_management", granted_at: "2026-01-02T00:00:00Z", expires_at: null },
   ],
   customers: { live: 2, active: 2, suspended: 0, ended: 1, owner_activation_pending: 1 },
-  products: [{ grant_id: "g1", product_code: "crm", product_name: "CRM", plan_code: null }],
+  products: [{ grant_id: "g1", product_code: "crm", product_name: "CRM", plan_code: null, trial_allowed: true, portal_visible: true }],
   active_subscriptions: 1,
   commission: [{ currency: "GBP", balance_minor: 5000, unpaid_minor: 2000, entries: 3 }],
   commission_rule: { code: "default", version: 1, rate_bp: 1000, product_code: "", scope: "programme_default", effective_from: "2026-01-01T00:00:00Z" },
   payouts: { open: 1, by_status: { draft: 1, ready: 0, approved: 0, paid: 0, cancelled: 0 }, latest: { id: "po1", status: "draft", currency: "GBP", period_end: "2026-02-01", payable_minor: 2000 } },
   white_label: { enabled: true, brand_configured: false, domain_status: "requested", domains: { active: 0, verified: 0, awaiting: 1 } },
+  referrals: { codes: [], active_codes: 0, captured: 0, converted: 0 },
   setup_progress: [
-    { key: "profile", label: "Profile", state: "complete", detail: "" },
+    { key: "profile", label: "Business profile", state: "complete", detail: "" },
+    { key: "capabilities", label: "Capabilities", state: "complete", detail: "" },
     { key: "products", label: "Products", state: "complete", detail: "" },
     { key: "pricing", label: "Pricing", state: "incomplete", detail: "Customers pay the list price." },
     { key: "commission", label: "Commission", state: "complete", detail: "programme default" },
-    { key: "administrator", label: "Administrator", state: "pending", detail: "Waiting for them to choose a password." },
-    { key: "branding", label: "Branding", state: "optional", detail: "" },
+    { key: "administrator", label: "Admin user", state: "pending", detail: "Waiting for them to choose a password." },
+    { key: "branding", label: "White-label", state: "optional", detail: "" },
     { key: "domain", label: "Domain", state: "pending", detail: "requested" },
   ],
+  activation: { can_activate: true, missing: [] },
 };
 
 function customerRow(overrides: Record<string, unknown> = {}) {
@@ -137,7 +144,7 @@ function routes(extra: Record<string, Reply[]> = {}): Record<string, Reply[]> {
     [`GET /api/v1/admin/partners/${ID}/pricing`]: [ok(PRICING)],
     [`GET /api/v1/admin/partners/${ID}/commission`]: [ok(COMMISSION)],
     "GET /api/v1/admin/partners/products": [ok({ results: [{ code: "crm", name: "CRM", status: "available", plans: [] }, { code: "books", name: "Books", status: "available", plans: [] }] })],
-    "GET /api/v1/admin/partners/capabilities": [ok({ results: [{ key: "customer.provision", label: "Create customer organizations", group: "customer_management" }], groups: [], presets: [] })],
+    "GET /api/v1/admin/partners/capabilities": [ok({ results: [{ key: "customer.provision", label: "Create customer organizations", short_label: "Create customers", group: "customer_management" }], groups: [], presets: [] })],
     ...extra,
   };
 }
@@ -162,13 +169,15 @@ beforeEach(() => {
 });
 
 describe("the tabs", () => {
-  it("shows the ten sections in order, and starts on Overview", async () => {
+  it("shows the twelve sections in order, and starts on Overview", async () => {
     mockApi(routes());
     mount();
     await screen.findByRole("heading", { name: /Acme Partners/ });
     const tabs = within(screen.getByRole("tablist", { name: "Partner sections" })).getAllByRole("tab");
     expect(tabs.map((t) => t.textContent)).toEqual([
       "Overview",
+      "Business Details",
+      "Contacts",
       "Customers",
       "Products & Pricing",
       "Subscriptions",
@@ -225,6 +234,7 @@ describe("Overview", () => {
     expect(screen.getByText("Needs attention")).toBeInTheDocument();
     expect(screen.getAllByText("Waiting")).toHaveLength(2);
     expect(screen.getAllByText("Optional")).toHaveLength(1);
+    expect(screen.getByText("Customers pay the list price.")).toBeInTheDocument();
     expect(screen.getByText("Earns 10% (programme default).")).toBeInTheDocument();
     expect(screen.getByText("1 awaiting their owner.")).toBeInTheDocument();
     expect(container.textContent).toMatch(/50\.00.*earned/);
@@ -454,14 +464,14 @@ describe("Users & Permissions", () => {
     expect(await screen.findByRole("table", { name: "Granted capabilities" })).toBeInTheDocument();
     const members = await screen.findByRole("table", { name: "Members" });
     const boss = within(members).getByText("boss@acme.example").closest("tr")!;
-    expect(within(boss).getByText("Invitation pending")).toBeInTheDocument();
-    expect(within(boss).getByRole("button", { name: "Resend setup link" })).toBeInTheDocument();
+    expect(within(boss).getByText(/^Invitation sent/)).toBeInTheDocument();
+    expect(within(boss).getByRole("button", { name: /Resend setup link/ })).toBeInTheDocument();
     const ops = within(members).getByText("ops@acme.example").closest("tr")!;
-    expect(within(ops).getByText("Ready")).toBeInTheDocument();
-    expect(within(ops).queryByRole("button", { name: "Resend setup link" })).not.toBeInTheDocument();
+    expect(within(ops).getByText("Active")).toBeInTheDocument();
+    expect(within(ops).queryByRole("button", { name: /Resend setup link/ })).not.toBeInTheDocument();
   });
 
-  it("adds a person through the invitation path and can resend a setup link", async () => {
+  it("invites a person through the invitation path and can resend a setup link", async () => {
     const calls = mockApi(
       routes({
         [`POST /api/v1/admin/partners/${ID}/administrators`]: [{ status: 201, body: { id: "m3", role: "admin", invited: true } }],
@@ -470,22 +480,36 @@ describe("Users & Permissions", () => {
     );
     mount();
     await openTab("Users & Permissions");
-    fireEvent.change(await screen.findByLabelText("Add a person by email"), { target: { value: "new@acme.example" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add user" }));
-    await screen.findByText(/emailed a link to choose a password/);
+    fireEvent.change(await screen.findByLabelText(/Email address/), { target: { value: "new@acme.example" } });
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+    await screen.findByText(/a link to choose one was emailed/);
     expect(calls.find((c) => c.key.endsWith("/administrators"))!.body).toEqual({ email: "new@acme.example", role: "admin" });
-    fireEvent.click(screen.getByRole("button", { name: "Resend setup link" }));
+    fireEvent.click(screen.getByRole("button", { name: /Resend setup link/ }));
     await screen.findByText(/The old one no longer works/);
   });
 });
 
 describe("Activity", () => {
-  it("lists the audit entries the server returned", async () => {
+  it("lists the audit entries the server returned, in words", async () => {
     mockApi(
       routes({
         [`GET /api/v1/admin/partners/${ID}/activity`]: [
           ok({
-            results: [{ id: "e1", occurred_at: "2026-02-01T00:00:00Z", action: "partner.capability_granted", actor_kind: "staff", resource_type: "partners.capability_grant", resource_id: "x", outcome: "success", reason: "Set up" }],
+            results: [
+              {
+                id: "e1",
+                occurred_at: "2026-02-01T00:00:00Z",
+                action: "partner.capability_granted",
+                label: "Capability granted",
+                actor: "staff@example.com",
+                actor_kind: "staff",
+                target: "Sell products",
+                resource_type: "partners.capability_grant",
+                resource_id: "x",
+                outcome: "success",
+                reason: "Set up",
+              },
+            ],
             next_cursor: null,
             has_more: false,
           }),
@@ -495,7 +519,10 @@ describe("Activity", () => {
     const { container } = mount();
     await openTab("Activity");
     const table = await screen.findByRole("table", { name: "Partner activity" });
-    expect(within(table).getByText("partner.capability_granted")).toBeInTheDocument();
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Timestamp", "Actor", "Action", "Target", "Reason"]);
+    expect(within(table).getByText("Capability granted")).toBeInTheDocument();
+    expect(within(table).getByText("staff@example.com")).toBeInTheDocument();
+    expect(within(table).getByText("Sell products")).toBeInTheDocument();
     await expectNoViolations(container);
   });
 });
@@ -576,5 +603,89 @@ describe("Partners → Customers", () => {
     );
     await screen.findByText("No customers match.");
     expect(calls[0].url).toContain("subscription=active");
+  });
+});
+
+describe("Partner Control Center: badges, relevant tabs and referrals", () => {
+  const AFFILIATE_DETAIL = {
+    ...DETAIL,
+    capabilities: [
+      { capability: "referral.create", granted_at: "2026-01-02T00:00:00Z", expires_at: null, is_effective: true },
+      { capability: "commission.earn", granted_at: "2026-01-02T00:00:00Z", expires_at: null, is_effective: true },
+    ],
+    experience: [{ key: "affiliate", label: "Affiliate" }],
+  };
+  const AFFILIATE_SUMMARY = {
+    ...SUMMARY,
+    experience: [{ key: "affiliate", label: "Affiliate" }],
+    white_label: { enabled: false, brand_configured: false, domain_status: "none", domains: { active: 0, verified: 0, awaiting: 0 } },
+    referrals: { codes: ["K7Q2M9"], active_codes: 1, captured: 4, converted: 1 },
+  };
+  const REFERRALS = {
+    summary: { captured: 3, converted: 1, expired: 0 },
+    codes: [{ id: "c1", code: "K7Q2M9", label: "Spring", status: "active", created_at: "2026-02-01T00:00:00Z" }],
+    results: [
+      { id: "r1", code: "K7Q2M9", label: "Spring", status: "converted", captured_at: "2026-02-02T00:00:00Z", converted_at: "2026-02-03T00:00:00Z" },
+      { id: "r2", code: "K7Q2M9", label: "Spring", status: "captured", captured_at: "2026-02-04T00:00:00Z", converted_at: null },
+    ],
+    next_cursor: null,
+    has_more: false,
+  };
+
+  it("shows the server's labels as badges in the header", async () => {
+    mockApi(routes());
+    mount();
+    await screen.findByRole("heading", { level: 1, name: "Acme Partners" });
+    const badges = screen.getAllByRole("list", { name: "Derived from capabilities" })[0];
+    expect(within(badges).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Reseller", "White-label"]);
+  });
+
+  it("shows Referrals for a partner wearing Affiliate, and Branding and Domains only with White-label", async () => {
+    mockApi(
+      routes({
+        [`GET /api/v1/admin/partners/${ID}`]: [ok(AFFILIATE_DETAIL)],
+        [`GET /api/v1/admin/partners/${ID}/summary`]: [ok(AFFILIATE_SUMMARY)],
+        [`GET /api/v1/admin/partners/${ID}/referrals`]: [ok(REFERRALS)],
+      }),
+    );
+    const { container } = mount();
+    await screen.findByRole("heading", { level: 1, name: "Acme Partners" });
+    const tabs = screen.getAllByRole("tab").map((t) => t.textContent);
+    expect(tabs).toContain("Referrals");
+    expect(tabs).not.toContain("Branding");
+    expect(tabs).not.toContain("Domains");
+    // The overview still leads to enabling white-label, and to the referrals.
+    expect(await screen.findByRole("link", { name: "Enable white-label" })).toHaveAttribute("href", `/admin/partners/white-label/${ID}`);
+    expect(screen.getByText("1 converted of 4 captured")).toBeInTheDocument();
+
+    await openTab("Referrals");
+    const codes = await screen.findByRole("table", { name: "Referral codes" });
+    expect(within(codes).getByText("K7Q2M9")).toBeInTheDocument();
+    const referrals = screen.getByRole("table", { name: "Referrals" });
+    expect(within(referrals).getAllByRole("row")).toHaveLength(3); // header + 2
+    // Counts by state, in words.
+    expect(screen.getByText("Waiting to convert").nextElementSibling?.textContent).toBe("3");
+    // No column could hold who was referred.
+    expect(within(referrals).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Code", "Status", "Captured", "Converted"]);
+    await expectNoViolations(container);
+  });
+
+  it("opens a requested tab only when it is relevant", async () => {
+    query = "tab=branding";
+    mockApi(
+      routes({
+        [`GET /api/v1/admin/partners/${ID}`]: [ok(AFFILIATE_DETAIL)],
+        [`GET /api/v1/admin/partners/${ID}/summary`]: [ok(AFFILIATE_SUMMARY)],
+      }),
+    );
+    mount();
+    await screen.findByRole("heading", { level: 1, name: "Acme Partners" });
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("offers the way back to all partners", async () => {
+    mockApi(routes());
+    mount();
+    expect(await screen.findByRole("link", { name: "All partners" })).toHaveAttribute("href", "/admin/partners/all");
   });
 });

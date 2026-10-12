@@ -166,6 +166,9 @@ def register_integration(ctx: TenantContext, *, manifest: Any) -> Any:
                 "client_id": integration.client_id,
                 "redirect_uris": list(parsed.redirect_uris),
                 "scopes": list(parsed.scopes),
+                "sign_in_mode": parsed.sign_in_mode.value,
+                "login_url": parsed.login_url,
+                "post_logout_redirect_uris": list(parsed.post_logout_redirect_uris),
             },
         )
 
@@ -226,6 +229,19 @@ def update_manifest(ctx: TenantContext, *, client_id: str, manifest: Any) -> Any
                 "redirect_uris_after": list(parsed.redirect_uris),
                 "scopes_before": list(previous.scopes),
                 "scopes_after": list(parsed.scopes),
+                # ADR-044: where a browser may be sent on the product's behalf
+                # and how it lets people in - each is security-relevant, so
+                # each is in the immutable trail, before and after.
+                "sign_in_mode_before": previous.sign_in_mode.value,
+                "sign_in_mode_after": parsed.sign_in_mode.value,
+                "login_url_before": previous.login_url,
+                "login_url_after": parsed.login_url,
+                "launch_url_before": previous.launch_url,
+                "launch_url_after": parsed.launch_url,
+                "post_logout_redirect_uris_before": list(
+                    previous.post_logout_redirect_uris
+                ),
+                "post_logout_redirect_uris_after": list(parsed.post_logout_redirect_uris),
             },
         )
 

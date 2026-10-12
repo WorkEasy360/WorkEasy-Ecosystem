@@ -80,13 +80,13 @@ def edge_tls_allowed_view(request: HttpRequest) -> JsonResponse:
     edge refuses to proxy this path from outside, so in production only the
     edge itself reaches it.
     """
-    from urllib.parse import urlsplit
-
-    from django.conf import settings
+    from workeasy360.platform.identity import portals as portal_links
 
     raw = request.GET.get("domain", "")
-    canonical = (urlsplit(settings.W360_FRONTEND_URL).hostname or "").lower()
-    if raw and raw.strip().lower().rstrip(".") == canonical:
+    # The platform's own hosts: the portals and the API (ADR-043), or the one
+    # frontend host in single-host mode. Hosts, compared without a port.
+    own = {host.split(":")[0] for host in portal_links.platform_hosts()}
+    if raw and raw.strip().lower().rstrip(".") in own:
         return JsonResponse({"allowed": True})
     if domains.public_brand_for_host(raw) is not None:
         return JsonResponse({"allowed": True})

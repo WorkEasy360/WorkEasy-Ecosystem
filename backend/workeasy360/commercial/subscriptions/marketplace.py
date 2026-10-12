@@ -238,7 +238,7 @@ def explore(ctx: TenantContext) -> dict[str, Any]:
     trial is offered).
     """
     from workeasy360.commercial.billing.services import billing_account_or_none
-    from workeasy360.commercial.subscriptions import my_products
+    from workeasy360.commercial.subscriptions import my_products, selectors
     from workeasy360.commercial.subscriptions.selectors import trialled_product_codes
 
     authz.require(ctx, "platform.organization.view")
@@ -250,6 +250,9 @@ def explore(ctx: TenantContext) -> dict[str, Any]:
 
     held = my_products.holdings(at=now)
     trialled = trialled_product_codes(ctx.organization_id)
+    # The newest product trial per product: what the card says about a trial
+    # that ran (ended by time, cancelled, converted) - from server time only.
+    latest = {t.product_code: t for t in selectors.product_trials()}
     for product in products:
         holding = held.get(product["code"])
         product["holding"] = holding.source if holding is not None else None
@@ -264,12 +267,50 @@ def explore(ctx: TenantContext) -> dict[str, Any]:
         else:
             state = "unavailable"
         product["trial_state"] = state
+        product.update(_trial_facts(state, holding, latest.get(product["code"]), now))
     return {
         "currency": currency,
         "billing_account": account is not None,
         "products": products,
         "bundles": bundles,
     }
+
+
+def _trial_facts(state: str, holding: Any, trial: Any, now: Any) -> dict[str, Any]:
+    """What a card says about this organization's trial of one product, all
+    computed here from server time - never from the browser's clock:
+
+    ``trial_ends_at`` and ``trial_days_left`` (whole days, rounded up, never
+    below 0) while one is running; ``trial_outcome`` for one that has run:
+    ``expired`` (time ran out - access already ended at ``ends_at``, whether
+    or not the sweeper has marked it yet), ``cancelled``, ``converted``, or
+    ``ended`` for an older plan-level trial.
+    """
+    import math
+
+    from workeasy360.contracts.enums import ProductTrialStatus
+
+    facts: dict[str, Any] = {
+        "trial_ends_at": None,
+        "trial_days_left": None,
+        "trial_outcome": None,
+    }
+    if state == "active" and holding is not None and holding.trial_ends_at is not None:
+        facts["trial_ends_at"] = holding.trial_ends_at.isoformat()
+        facts["trial_days_left"] = max(
+            0, math.ceil((holding.trial_ends_at - now).total_seconds() / 86400)
+        )
+    elif state == "used":
+        if trial is None:
+            facts["trial_outcome"] = "ended"
+        elif trial.status is ProductTrialStatus.ACTIVE:
+            # Past its window (else it would be held): ended by time.
+            facts["trial_outcome"] = "expired"
+        else:
+            facts["trial_outcome"] = trial.status.value
+        if trial is not None:
+            facts["trial_ends_at"] = trial.ends_at.isoformat()
+    return facts
 
 
 def public_catalog(*, currency: Any = None) -> dict[str, Any]:

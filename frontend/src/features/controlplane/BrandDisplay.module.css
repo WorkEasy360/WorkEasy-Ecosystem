@@ -1,0 +1,77 @@
+/* A partner's brand as a customer reads it: the welcome message, the support
+   details and the footer. CSS modules only; every value is drawn as text. */
+
+.welcome {
+  margin: var(--w360-space-2) 0 0;
+  overflow-wrap: anywhere;
+}
+
+/* The welcome message at the top of a customer's dashboard. */
+.welcomeBanner {
+  margin: 0 0 var(--w360-space-4);
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border-left: 4px solid var(--w360-brand);
+  background: var(--w360-neutral-bg);
+  overflow-wrap: anywhere;
+}
+
+.support {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--w360-space-1) var(--w360-space-2);
+  font-size: 14px;
+  min-width: 0;
+}
+
+.supportCentered {
+  justify-content: center;
+}
+
+.supportHeading {
+  font-weight: 600;
+}
+
+.supportList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1) var(--w360-space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.supportList li {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.website {
+  font-size: 14px;
+  margin: 0;
+}
+
+.footer {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin-top: var(--w360-space-6);
+  padding-top: var(--w360-space-4);
+  border-top: 1px solid var(--w360-border);
+  color: var(--w360-text-muted);
+  font-size: 14px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.footer p {
+  margin: 0;
+}
+
+/* Support details and the website under the sign-in card. */
+.signInSupport {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin-top: var(--w360-space-4);
+  text-align: center;
+}

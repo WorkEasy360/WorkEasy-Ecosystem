@@ -212,3 +212,68 @@ def invitation_accept_view(request: HttpRequest) -> JsonResponse:
             "account_created": result.account_created,
         }
     )
+
+
+# --- product sign-in preferences (ADR-044) -----------------------------------
+
+
+@require_http_methods(["GET", "PUT", "DELETE"])
+@never_cache
+def sign_in_preferences_view(request: HttpRequest) -> JsonResponse:
+    """The caller's own product sign-in preferences: a default for every
+    product (including products registered later) and optional per-product
+    overrides. ``PUT`` changes only the keys sent (``inherit`` removes an
+    override); ``DELETE`` is "Reset all to default". The person's own - no
+    user id is accepted, no organization administrator can read or change it,
+    and it grants nothing: entitlement, seat and access policy are decided
+    before any preference is read. Takes effect on the next launch."""
+    from workeasy360.contracts.errors import SignInPreferenceInvalid
+    from workeasy360.platform.ecosystem import sign_in
+
+    user = _user(request)
+    where = connection_facts(request)
+    if request.method == "PUT":
+        body = _body(request)
+        products = body.get("products")
+        if products is not None and not isinstance(products, dict):
+            raise SignInPreferenceInvalid("products must be an object.", field="products")
+        sign_in.set_preferences(
+            user.pk,
+            default=body.get("default"),
+            products=products,
+            ip_prefix=where["ip_prefix"],
+            device_label=where["device_label"],
+        )
+    elif request.method == "DELETE":
+        sign_in.reset_preferences(
+            user.pk, ip_prefix=where["ip_prefix"], device_label=where["device_label"]
+        )
+    return JsonResponse(_sign_in_preferences(user.pk))
+
+
+def _sign_in_preferences(user_id: Any) -> dict[str, Any]:
+    """Every product that can be entered (registered, not draft or retired),
+    with the product's own sign-in mode, whether Workeasy360 sign-in works for
+    it, the person's override and the effective result. Names and icons from
+    the catalog; nothing about any organization."""
+    from workeasy360.commercial.catalog import selectors as catalog
+    from workeasy360.contracts.values.sign_in import DEFAULT_CHOICES, DEFAULT_PREFERENCE
+    from workeasy360.platform.ecosystem import sign_in
+
+    default, _overrides = sign_in.preferences_of(user_id)
+    products = sign_in.product_sign_in(user_id)
+    shown = catalog.product_presentations(list(products))
+    rows = []
+    for code, dto in products.items():
+        row = dto.as_dict()
+        presentation = shown.get(code, {})
+        row["name"] = presentation.get("name") or dto.display_name
+        row["icon"] = presentation.get("icon", "")
+        rows.append(row)
+    rows.sort(key=lambda r: (str(r["name"]).lower(), r["product_code"]))
+    return {
+        "default": (default or DEFAULT_PREFERENCE).value,
+        "default_is_set": default is not None,
+        "default_choices": [c.value for c in DEFAULT_CHOICES],
+        "products": rows,
+    }

@@ -490,7 +490,7 @@ def remove_mfa_factor(user_id: Any, factor_id: Any) -> None:
             ).delete()
 
 
-def ensure_identity_for_email(email: str) -> tuple[Any, bool]:
+def ensure_identity_for_email(email: str, *, full_name: str = "") -> tuple[Any, bool]:
     """The account for ``email``, creating an **uncredentialed** one if absent.
     Returns ``(user_id, created)``; ``None`` for the id if the address belongs
     to an account that may not be assigned anything (disabled or locked).
@@ -503,6 +503,10 @@ def ensure_identity_for_email(email: str) -> tuple[Any, bool]:
     mailbox (a partner-provisioned customer owner: ``partners.activation``;
     a partner's own administrator: the setup link).
     Creating it is not granting anything.
+
+    ``full_name`` is the name the caller was told for this person. It is used
+    **only when this call creates the account** - an existing account's name is
+    its owner's to change and is never overwritten by whoever names them.
 
     Race-safe: two callers naming a new address at once both end with the one
     row the unique index allows.
@@ -534,6 +538,7 @@ def ensure_identity_for_email(email: str) -> tuple[Any, bool]:
                 email=email.strip(),
                 password=None,
                 acquisition_source=User.AcquisitionSource.PARTNER,
+                full_name=full_name.strip()[:255],
             )
         return user.id, True
     except IntegrityError:

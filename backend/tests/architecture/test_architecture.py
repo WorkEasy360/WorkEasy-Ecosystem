@@ -543,6 +543,11 @@ def test_unscoped_manager_use_is_allowlisted():
         # every write that follows goes through the ordinary staff-context
         # services, which enter their own scope as always.
         "commercial/controlplane/management/commands/register_products.py",
+        # 2026-10-12: finishing a registered product's single sign-on (its
+        # redirect URIs, scopes and public key). The same named-actor lookup
+        # before any tenant context as register_products; every write goes
+        # through the ordinary staff-context ecosystem services.
+        "commercial/controlplane/management/commands/connect_product_sso.py",
         # --- Phase 8 extension ---
         #
         # An invitee redeems an invitation before any membership - and so any

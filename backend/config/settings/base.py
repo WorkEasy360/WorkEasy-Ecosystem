@@ -194,6 +194,10 @@ MIDDLEWARE = [
     # SESSION_REFRESH_INTERVAL_S rather than on every request (2026-10 audit).
     "workeasy360.platform.identity.middleware.SlidingSessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    # After host validation, before CSRF and the session user: a portal-owned
+    # API prefix on another portal's host is a 404 (ADR-043). A narrowing
+    # only - it never lets anything through that would otherwise be refused.
+    "workeasy360.interfaces.api.portal_surface.PortalSurfaceMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     # Immediately after: every view downstream must see a revoked session as
@@ -416,6 +420,44 @@ SECURE_PROXY_SSL_HEADER = (
 # ProductIntegration's own registered manifest (Task 55), never from this
 # setting, and this value is not itself a registered redirect URI.
 W360_FRONTEND_URL = env.str("W360_FRONTEND_URL", "http://localhost:3000").rstrip("/")
+
+# --- Portals (docs/portals/design.md, ADR-043) ----------------------------
+#
+# The origin of each experience: the Super Admin, Partner and Customer
+# portals, the central sign-in, and the API host. All five or none: unset is
+# single-host mode (development, the test suite), where one host serves
+# everything exactly as before. Production requires all five.
+#
+# An origin decides which UI a host shows and which privileged API prefixes a
+# host refuses (interfaces/api/portal_surface.py - a narrowing, only ever a
+# denial). It never decides what anyone may do: StaffGrant, PartnerMember and
+# Membership are checked on every request, whatever the Host.
+W360_PORTAL_ORIGINS: dict[str, str] = {
+    name: env.str(f"W360_{name.upper()}_ORIGIN", "").strip().rstrip("/")
+    for name in ("admin", "partner", "app", "auth", "api")
+}
+_configured_portals = [name for name, origin in W360_PORTAL_ORIGINS.items() if origin]
+# Reported with every other problem by the settings module's require_all().
+env.check(
+    not _configured_portals or len(_configured_portals) == len(W360_PORTAL_ORIGINS),
+    "Set every portal origin (W360_ADMIN_ORIGIN, W360_PARTNER_ORIGIN, "
+    "W360_APP_ORIGIN, W360_AUTH_ORIGIN, W360_API_ORIGIN) or none of them; only "
+    f"{', '.join(_configured_portals) or 'none'} are set.",
+)
+PORTALS_ENABLED = len(_configured_portals) == len(W360_PORTAL_ORIGINS)
+# Links name their portal through platform/identity/portals.py (auth_url,
+# app_url), read at call time; in single-host mode both are W360_FRONTEND_URL.
+# A hand-off code (auth host -> portal host) lives this long, and is single use.
+PORTAL_HANDOFF_TTL_S = env.int("W360_PORTAL_HANDOFF_TTL_S", 60)
+# The portal host's binding value for a hand-off (set by the frontend proxy
+# when it sends a signed-out visitor to sign in). Named as the frontend names
+# it (frontend/src/lib/portals.ts stateCookieName): the ``__Host-`` form
+# whenever the portals are served over https, as production always is.
+PORTAL_STATE_COOKIE_NAME = (
+    "__Host-w360_portal_state"
+    if W360_PORTAL_ORIGINS["auth"].startswith("https://")
+    else "w360_portal_state"
+)
 
 # --- Content Security Policy (Phase 4) ------------------------------------
 #
@@ -737,10 +779,24 @@ ECOSYSTEM_RATE_LIMITS = {
     # Per client. A token exchange follows an authorization, so the ceiling
     # only has to exceed the authorize rate.
     "token": (env.int("W360_RL_TOKEN", 120), 60),
-    # Per client. Products revalidate on OIDC_ENTITLEMENT_REVALIDATE_AFTER_S,
-    # so this supports a large tenant population without being a free
-    # enumeration budget.
-    "verify": (env.int("W360_RL_VERIFY", 600), 60),
+    # Per client: a product's whole verification budget. Sized from the
+    # capacity model in docs/universal-sso/capacity.md: a product asks once
+    # per signed-in person (and once per organization for its background
+    # work) per OIDC_ENTITLEMENT_REVALIDATE_AFTER_S (900 s), so 1,200/min
+    # serves 18,000 people active in the same 15 minutes, per product. It is
+    # also the most one product - misbehaving or compromised - can take from
+    # the API: 20 requests/s, about half of the Phase 12 three-worker host at
+    # the measured per-person cost. A bound on harm, not a target: the API
+    # must be sized for the expected rate long before products approach their
+    # caps (the capacity note says how). Not an enumeration budget.
+    "verify": (env.int("W360_RL_VERIFY", 1200), 60),
+    # Per (client, organization, person). A conforming product asks about one
+    # at most once a minute (its denial re-check and its outage back-off are
+    # both 60 s); 6 leaves room for several processes asking at once while the
+    # product's own shared cache is down. Asked BEFORE "verify", so a loop
+    # stuck on one key is cut off here without spending the product's whole
+    # budget and starving its other customers.
+    "verify_org": (env.int("W360_RL_VERIFY_ORG", 6), 60),
     # Per client, counted only on *failed* authentication. An order of
     # magnitude tighter than the success path: credential brute force is the
     # thing this one exists for.
@@ -748,6 +804,11 @@ ECOSYSTEM_RATE_LIMITS = {
     # Per caller address. Phase 4's authorization-resume endpoint is reached
     # before any client is known, so it cannot be keyed on one.
     "resume": (env.int("W360_RL_RESUME", 60), 60),
+    # ADR-044. The access chooser's read and answer, and the RP-initiated
+    # sign-out endpoint: per caller address, like `resume` and for the same
+    # reason - reached by a browser, with no client established.
+    "chooser": (env.int("W360_RL_CHOOSER", 60), 60),
+    "end_session": (env.int("W360_RL_END_SESSION", 60), 60),
     # Phase 6, event ingestion (Task 51). Per product client - the budget
     # one product has, whatever organizations it publishes for...
     "event_ingest": (env.int("W360_RL_EVENT_INGEST", 3000), 60),
@@ -807,6 +868,10 @@ ECOSYSTEM_RATE_LIMITS = {
 AUTH_RATE_LIMITS = {
     "login_ip": (env.int("W360_RL_LOGIN_IP", 30), 60),
     "login_account": (env.int("W360_RL_LOGIN_ACCOUNT", 20), 60),
+    # Portal hand-off (ADR-043): issuing is cheap and per-session, redeeming is
+    # an online guessing budget against a 256-bit code - bounded anyway.
+    "handoff_issue": (env.int("W360_RL_HANDOFF_ISSUE", 30), 60),
+    "handoff_redeem_ip": (env.int("W360_RL_HANDOFF_REDEEM_IP", 30), 60),
 }
 
 # Phase 5, Task 11. Deliberately generous: this is abuse protection (a

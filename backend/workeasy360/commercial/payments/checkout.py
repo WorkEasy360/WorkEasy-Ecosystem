@@ -42,6 +42,7 @@ from workeasy360.contracts.errors import (
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.audit import services as audit
 from workeasy360.platform.authz import services as authz
+from workeasy360.platform.identity import portals as portal_links
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import metrics
 
@@ -186,7 +187,7 @@ def attempt_status(ctx: TenantContext, attempt_id: UUID) -> dict[str, Any]:
 def hosted_page_url(attempt: Any, reference: str) -> str:
     """The development test provider's "hosted page": the platform's own."""
     return (
-        f"{settings.W360_FRONTEND_URL}/billing/test-checkout#reference={reference}"
+        f"{portal_links.app_url()}/billing/test-checkout#reference={reference}"
         f"&org={attempt.organization_id}"
     )
 
@@ -294,7 +295,7 @@ def _return_url(organization_id: UUID, attempt: Any, outcome: str) -> str:
 
     slug = organization_slug(organization_id) or ""
     return (
-        f"{settings.W360_FRONTEND_URL}/o/{slug}/settings/billing?payment={attempt.id}"
+        f"{portal_links.app_url()}/o/{slug}/settings/billing?payment={attempt.id}"
         f"&outcome={outcome}"
     )
 

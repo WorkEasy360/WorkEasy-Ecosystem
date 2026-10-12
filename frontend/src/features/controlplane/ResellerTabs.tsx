@@ -5,18 +5,26 @@ import Link from "next/link";
 import { adminApi, type PartnerDetail } from "@/lib/api/controlPlane";
 import {
   partnerConsoleApi,
+  type ActivationReadiness,
+  type ConsoleProduct,
   type PartnerPricingRow,
+  type PartnerReferrals,
   type PartnerSummaryView,
   type SetupStep,
+  type SummaryProduct,
 } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
 import { CommissionSummary, ExperienceLabels } from "./PartnerConsole";
 import { CustomerTable, StaffOwnerActions } from "./PartnerCustomers";
 import { PayoutRowView } from "./AdminMoney";
+import { MembersSection } from "./PartnerMembers";
+import { Section } from "./PartnerSection";
+import { MISSING_TAB, STEP_TAB, TAB_LABELS, type TabKey, type TabProps } from "./partnerTabs";
 import { LoadGate, MoreButton, ReasonAction, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
 import { formatBasisPoints, toBasisPoints, toMinor } from "./amounts";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
+import ps from "./PartnerProfileTabs.module.css";
 
 /**
  * The panels of the reseller detail (Phase 10c). Each tab reads through the
@@ -25,27 +33,12 @@ import local from "./PartnerConsole.module.css";
  * and payouts each keep the one implementation they always had. Subscriptions
  * are shown here and changed where they always were (the customer's page), and
  * nothing in this file writes a subscription or an entitlement.
+ *
+ * The Business Details and Contacts tabs are in `PartnerProfileTabs.tsx`, the
+ * people table in `PartnerMembers.tsx`.
  */
 
-export interface TabProps {
-  partnerId: string;
-  partner: PartnerDetail;
-  /** Bumped after any change, so panels re-read. */
-  rev: number;
-  bump: () => void;
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  const id = useId();
-  return (
-    <section className={`w360-card ${styles.card}`} aria-labelledby={id}>
-      <h3 id={id} className={styles.cardTitle}>
-        {title}
-      </h3>
-      {children}
-    </section>
-  );
-}
+export type { TabProps };
 
 // --- overview ---------------------------------------------------------------------------------
 
@@ -63,17 +56,78 @@ const STEP_BADGE: Record<SetupStep["state"], string> = {
   optional: "w360-badge w360-badge-neutral",
 };
 
-export function OverviewTab({
-  partnerId,
-  partner,
-  rev,
-  onOpen,
-}: TabProps & { onOpen: (tab: "customers" | "products" | "commissions" | "payouts" | "branding" | "domains" | "users") => void }) {
-  const [load] = useLoad(() => partnerConsoleApi.summary(partnerId), [partnerId, rev]);
+type OnOpen = (tab: TabKey) => void;
+
+/** A button that moves to another tab. The tab it opens is named in words, and
+ * the thing it is for is added for a screen reader so several of them differ. */
+function OpenTab({ tab, forWhat, onOpen }: { tab: TabKey; forWhat: string; onOpen: OnOpen }) {
   return (
-    <LoadGate load={load} what="the overview">
-      {(d) => <OverviewBody summary={d} partner={partner} onOpen={onOpen} />}
+    <button type="button" className={`w360-btn w360-btn-secondary ${ps.linkButton}`} onClick={() => onOpen(tab)}>
+      Open {TAB_LABELS[tab]}{" "}
+      <span className="w360-visually-hidden">to deal with {forWhat}</span>
+    </button>
+  );
+}
+
+export function OverviewTab({
+  partner,
+  summary,
+  onOpen,
+  available,
+}: TabProps & { onOpen: OnOpen; /** The tabs this page is showing: a link to any other would lead nowhere. */ available: TabKey[] }) {
+  return (
+    <LoadGate load={summary} what="the overview">
+      {(d) => <OverviewBody summary={d} partner={partner} onOpen={onOpen} available={available} />}
     </LoadGate>
+  );
+}
+
+/** A draft partner can do nothing until it is activated. Says what stands in the
+ * way, in the server's own words, and where each thing is fixed; or says it can
+ * be activated. The server still makes the final check when it is. */
+function ActivationNotice({ activation, onOpen, available }: { activation: ActivationReadiness; onOpen: OnOpen; available: TabKey[] }) {
+  const id = useId();
+  const { permissions } = useAdmin();
+  if (activation.can_activate) {
+    return (
+      <section className={ps.ready} aria-labelledby={id}>
+        <h3 id={id}>Ready to activate</h3>
+        <p>
+          Everything needed before activation is in place.{" "}
+          {can(permissions, "platform.staff_partner.manage")
+            ? "Use Activate above to start this partner; the server makes the final check."
+            : "Someone who may manage partners can activate it."}
+        </p>
+      </section>
+    );
+  }
+  return (
+    <section className={ps.notice} aria-labelledby={id}>
+      <h3 id={id}>Setup incomplete</h3>
+      <p>This partner is still a draft. It can do nothing until it is activated, and it cannot be activated yet:</p>
+      <ul className={ps.missing}>
+        {activation.missing.map((m) => {
+          const tab = MISSING_TAB[m.key];
+          return (
+            <li key={m.key}>
+              <strong>{m.label}</strong>
+              <span className={styles.muted}>{m.detail}</span>
+              {tab && available.includes(tab) && <OpenTab tab={tab} forWhat={m.label} onOpen={onOpen} />}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function Stat({ label, children, note }: { label: string; children: React.ReactNode; note?: string }) {
+  return (
+    <li className={ps.stat}>
+      <span className={ps.statLabel}>{label}</span>
+      <span className={ps.statValue}>{children}</span>
+      {note && <span className={ps.statNote}>{note}</span>}
+    </li>
   );
 }
 
@@ -81,22 +135,48 @@ function OverviewBody({
   summary: d,
   partner,
   onOpen,
+  available,
 }: {
   summary: PartnerSummaryView;
   partner: PartnerDetail;
-  onOpen: (tab: "customers" | "products" | "commissions" | "payouts" | "branding" | "domains" | "users") => void;
+  onOpen: OnOpen;
+  available: TabKey[];
 }) {
   return (
     <div className={styles.stack}>
+      {partner.status === "draft" && <ActivationNotice activation={d.activation} onOpen={onOpen} available={available} />}
+      <ul className={ps.stats} aria-label="Key figures">
+        <Stat label="Customers" note={d.customers.owner_activation_pending > 0 ? `${d.customers.owner_activation_pending} awaiting owner activation` : undefined}>
+          {d.customers.live}
+        </Stat>
+        <Stat label="Products">{d.products.length}</Stat>
+        <Stat label="Subscriptions" note="active">
+          {d.active_subscriptions}
+        </Stat>
+        <Stat label="Commission" note={d.commission_rule ? d.commission_rule.scope.replace(/_/g, " ") : "no rule applies"}>
+          {d.commission_rule ? formatBasisPoints(d.commission_rule.rate_bp) : "None"}
+        </Stat>
+        <Stat label="Pending payout" note="open">
+          {d.payouts.open}
+        </Stat>
+        <Stat label="Domain status">{d.white_label.domain_status === "none" ? "None" : <Status value={d.white_label.domain_status} />}</Stat>
+      </ul>
       <Section title="Setup progress">
-        <ul className={local.checks}>
-          {d.setup_progress.map((s) => (
-            <li key={s.key} className={local.progressItem}>
-              <span className={STEP_BADGE[s.state]}>{STEP_TEXT[s.state]}</span>
-              <strong>{s.label}</strong>
-              {s.detail && <span className={styles.muted}>{s.detail}</span>}
-            </li>
-          ))}
+        <ul className={ps.progress}>
+          {d.setup_progress.map((s) => {
+            const tab = STEP_TAB[s.key];
+            const fixable = (s.state === "incomplete" || s.state === "pending") && tab !== undefined && available.includes(tab);
+            return (
+              <li key={s.key} className={ps.progressRow}>
+                <span className={STEP_BADGE[s.state]}>{STEP_TEXT[s.state]}</span>
+                <span className={ps.progressText}>
+                  <strong>{s.label}</strong>
+                  {s.detail && <span className={styles.muted}>{s.detail}</span>}
+                </span>
+                {fixable && <OpenTab tab={tab} forWhat={s.label} onOpen={onOpen} />}
+              </li>
+            );
+          })}
         </ul>
       </Section>
       <div className={local.split}>
@@ -216,14 +296,43 @@ function OverviewBody({
               <dd>{d.white_label.domain_status === "none" ? "None" : <Status value={d.white_label.domain_status} />}</dd>
             </div>
           </dl>
-          <div className={styles.row}>
-            <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpen("branding")}>
-              Branding
+          {d.white_label.enabled ? (
+            <div className={styles.row}>
+              <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpen("branding")}>
+                Branding
+              </button>
+              <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpen("domains")}>
+                Domains
+              </button>
+            </div>
+          ) : (
+            <Link className="w360-btn w360-btn-secondary" href={`/admin/partners/white-label/${partner.id}`}>
+              Enable white-label
+            </Link>
+          )}
+        </Section>
+        <Section title="Affiliate & referrals">
+          {d.experience.some((e) => e.key === "affiliate") ? (
+            <dl className={local.review}>
+              <div>
+                <dt>Active referral codes</dt>
+                <dd>{d.referrals.active_codes}</dd>
+              </div>
+              <div>
+                <dt>Referrals</dt>
+                <dd>
+                  {d.referrals.converted} converted of {d.referrals.captured} captured
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p className={styles.muted}>This partner holds no referral capability.</p>
+          )}
+          {d.experience.some((e) => e.key === "affiliate") && (
+            <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpen("referrals")}>
+              Open referrals
             </button>
-            <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpen("domains")}>
-              Domains
-            </button>
-          </div>
+          )}
         </Section>
       </div>
     </div>
@@ -293,7 +402,7 @@ export function CustomersTab({ partnerId, rev }: TabProps) {
 
 // --- products & pricing --------------------------------------------------------------------------------------
 
-export function ProductsTab({ partnerId, partner, rev, bump }: TabProps) {
+export function ProductsTab({ partnerId, partner, summary, rev, bump }: TabProps) {
   const { permissions } = useAdmin();
   const manage = can(permissions, "platform.staff_partner.manage");
   const canPrice = can(permissions, "platform.staff_pricing.manage");
@@ -356,6 +465,26 @@ export function ProductsTab({ partnerId, partner, rev, bump }: TabProps) {
         )}
       </Section>
 
+      <Section title="Product options">
+        <p className={styles.muted}>
+          Two choices for each product this partner may sell. A partner can only narrow the platform&apos;s free trial: ticking the trial
+          here never creates one, and a trial that has already started is not touched. Showing a product on the partner&apos;s portal
+          never grants or removes access: a customer who holds the product can still open it either way.
+        </p>
+        {partner.status === "terminated" && <p className={styles.muted}>This partner is terminated, so its product options can no longer be changed.</p>}
+        <LoadGate load={summary} what="the product options">
+          {(d) => (
+            <ProductOptions
+              products={d.products}
+              trials={catalog.status === "ready" ? catalog.data.results : null}
+              manage={manage && partner.status !== "terminated"}
+              busy={busy}
+              onChange={(product, change, success) => act(() => partnerConsoleApi.updateProductGrant(partner.id, product.grant_id, change), success)}
+            />
+          )}
+        </LoadGate>
+      </Section>
+
       <Section title="Prices">
         <p className={styles.muted}>
           The customer pays the partner price; the partner earns commission on it. The server calculates every figure. A plan
@@ -370,6 +499,90 @@ export function ProductsTab({ partnerId, partner, rev, bump }: TabProps) {
 
       <CommissionSection partnerId={partnerId} rev={rev} canManage={canCommission} act={act} busy={busy} products={catalog.status === "ready" ? catalog.data.results : []} />
     </div>
+  );
+}
+
+const yesNo = (value: boolean) => (value ? "Yes" : "No");
+
+/** What the platform's own trial is for one product, as a sentence. The trial is
+ * the platform's; this only says whether there is one for the partner's choice to narrow. */
+function platformTrialText(product: ConsoleProduct | undefined): string {
+  if (!product) return "";
+  return product.trial?.enabled
+    ? `The platform's free trial for this product lasts ${product.trial.duration_days} days.`
+    : "The platform has no free trial for this product, so none can start whatever is chosen here.";
+}
+
+function ProductOptions({
+  products,
+  trials,
+  manage,
+  busy,
+  onChange,
+}: {
+  products: SummaryProduct[];
+  /** The catalog, for what the platform's trial is; `null` until it has loaded. */
+  trials: ConsoleProduct[] | null;
+  manage: boolean;
+  busy: boolean;
+  onChange: (product: SummaryProduct, change: { trial_allowed?: boolean; portal_visible?: boolean }, success: string) => void;
+}) {
+  if (products.length === 0) return <p className={styles.muted}>None: this partner may not sell any product yet, so there is nothing to choose.</p>;
+  return (
+    <ul className={ps.options}>
+      {products.map((p) => {
+        const name = p.plan_code ? `${p.product_name} (${p.plan_code} only)` : p.product_name;
+        const hint = platformTrialText(trials?.find((t) => t.code === p.product_code));
+        return (
+          <li key={p.grant_id}>
+            {manage ? (
+              <fieldset className={ps.optionGroup} aria-busy={busy}>
+                <legend>{name}</legend>
+                <label className={ps.optionLabel}>
+                  <input
+                    type="checkbox"
+                    checked={p.trial_allowed}
+                    aria-describedby={hint ? `trial-hint-${p.grant_id}` : undefined}
+                    onChange={(e) => onChange(p, { trial_allowed: e.target.checked }, "Trial choice saved.")}
+                  />
+                  <span>Customers may start the free trial</span>
+                </label>
+                {hint && (
+                  <p id={`trial-hint-${p.grant_id}`} className="w360-hint">
+                    {hint}
+                  </p>
+                )}
+                <label className={ps.optionLabel}>
+                  <input
+                    type="checkbox"
+                    checked={p.portal_visible}
+                    onChange={(e) => onChange(p, { portal_visible: e.target.checked }, "Portal visibility saved.")}
+                  />
+                  <span>Shown on the partner&apos;s portal</span>
+                </label>
+              </fieldset>
+            ) : (
+              <div className={ps.optionGroup}>
+                <strong>{name}</strong>
+                <dl className={ps.readOnly}>
+                  <div>
+                    <dt>Customers may start the free trial</dt>
+                    <dd>
+                      {yesNo(p.trial_allowed)}
+                      {hint && <span className="w360-hint"> {hint}</span>}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Shown on the partner&apos;s portal</dt>
+                    <dd>{yesNo(p.portal_visible)}</dd>
+                  </div>
+                </dl>
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -841,12 +1054,12 @@ export function UsersTab({ partner, bump }: TabProps) {
   const [caps] = useLoad(() => adminApi.capabilities(), []);
   const { act, busy, feedback } = useAction(bump);
   const capId = useId();
-  const memberId = useId();
   const [capability, setCapability] = useState("");
   const [capReason, setCapReason] = useState("");
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState("admin");
   const p = partner;
+  // The friendly name of each capability, from the server's catalog. A key the
+  // catalog does not know (or a catalog that did not load) is shown as its key.
+  const labelOf = (key: string): string | null => (caps.status === "ready" ? (caps.data.results.find((c) => c.key === key)?.label ?? null) : null);
   return (
     <div className={styles.stack}>
       {feedback}
@@ -855,8 +1068,11 @@ export function UsersTab({ partner, bump }: TabProps) {
         <Table caption="Granted capabilities" head={["Capability", "Granted", "Expires", ""]} isEmpty={p.capabilities.length === 0} empty="None granted: this partner can do nothing.">
           {p.capabilities.map((c) => (
             <tr key={c.capability}>
-              <th scope="row" className={styles.mono}>
-                {c.capability}
+              <th scope="row">
+                <div className={ps.stackedCell}>
+                  {labelOf(c.capability) && <span>{labelOf(c.capability)}</span>}
+                  <span className={`${styles.mono} ${styles.muted}`}>{c.capability}</span>
+                </div>
               </th>
               <td>{when(c.granted_at)}</td>
               <td>{c.expires_at ? when(c.expires_at) : "never"}</td>
@@ -880,7 +1096,7 @@ export function UsersTab({ partner, bump }: TabProps) {
                 <option value="">Choose…</option>
                 {caps.data.results.map((c) => (
                   <option key={c.key} value={c.key}>
-                    {c.key} — {c.label}
+                    {c.label} ({c.key})
                   </option>
                 ))}
               </select>
@@ -900,65 +1116,7 @@ export function UsersTab({ partner, bump }: TabProps) {
         )}
       </Section>
 
-      <Section title="Partner users">
-        <Table caption="Members" head={["Email", "Role", "Sign-in", "Added", ""]} isEmpty={p.members.length === 0} empty="No users yet.">
-          {p.members.map((m) => (
-            <tr key={m.id}>
-              <th scope="row">{m.email}</th>
-              <td>{m.role}</td>
-              <td>{m.password_set ? "Ready" : "Invitation pending"}</td>
-              <td>{when(m.added_at)}</td>
-              <td>
-                <div className={styles.row}>
-                  {manage && !m.password_set && (
-                    <button type="button" className="w360-btn w360-btn-secondary" disabled={busy} onClick={() => act(() => partnerConsoleApi.resendSetup(p.id, m.id), "A new setup link was sent. The old one no longer works.")}>
-                      Resend setup link
-                    </button>
-                  )}
-                  {manage && (
-                    <button type="button" className="w360-btn w360-btn-secondary" disabled={busy} onClick={() => act(() => adminApi.removeMember(p.id, m.id), "User removed. Their access ended immediately.")}>
-                      Remove
-                    </button>
-                  )}
-                </div>
-              </td>
-            </tr>
-          ))}
-        </Table>
-        {manage && (
-          <form
-            className={styles.form}
-            onSubmit={(e) => {
-              e.preventDefault();
-              void act(async () => {
-                await partnerConsoleApi.inviteAdministrator(p.id, email.trim(), role);
-                setEmail("");
-              }, "Added. If the address had no account, one was created and the person was emailed a link to choose a password.");
-            }}
-          >
-            <div className={styles.field}>
-              <label className="w360-label" htmlFor={memberId}>
-                Add a person by email
-              </label>
-              <input id={memberId} className="w360-input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-            </div>
-            <div className={styles.field}>
-              <label className="w360-label" htmlFor={`${memberId}-role`}>
-                Role
-              </label>
-              <select id={`${memberId}-role`} className="w360-input" value={role} onChange={(e) => setRole(e.target.value)}>
-                <option value="admin">Administrator</option>
-                <option value="viewer">Viewer (read-only)</option>
-              </select>
-            </div>
-            <div>
-              <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !email.trim()}>
-                Add user
-              </button>
-            </div>
-          </form>
-        )}
-      </Section>
+      <MembersSection partner={p} manage={manage} act={act} busy={busy} />
     </div>
   );
 }
@@ -975,16 +1133,97 @@ export function ActivityTab({ partnerId, rev }: TabProps) {
       {paged.state === "error" && <p role="alert">Couldn&apos;t load activity.</p>}
       {paged.state === "ready" && (
         <>
-          <Table caption="Partner activity" head={["When", "Action", "By", "Outcome", "Reason"]} isEmpty={paged.rows.length === 0} empty="No activity recorded.">
+          <Table caption="Partner activity" head={["Timestamp", "Actor", "Action", "Target", "Reason"]} isEmpty={paged.rows.length === 0} empty="No activity recorded.">
             {paged.rows.map((a) => (
               <tr key={a.id}>
                 <td>{when(a.occurred_at)}</td>
-                <th scope="row" className={styles.mono}>
-                  {a.action}
+                <td>{a.actor}</td>
+                <th scope="row">
+                  <div className={ps.stackedCell}>
+                    <span>
+                      {a.label}
+                      {a.outcome && a.outcome !== "success" && <span className={styles.muted}> ({a.outcome})</span>}
+                    </span>
+                    <span className={`${styles.mono} ${styles.muted}`} title="The recorded action">
+                      {a.action}
+                    </span>
+                  </div>
                 </th>
-                <td>{a.actor_kind}</td>
-                <td>{a.outcome}</td>
-                <td>{a.reason || "—"}</td>
+                <td>{a.target || "-"}</td>
+                <td>{a.reason || "-"}</td>
+              </tr>
+            ))}
+          </Table>
+          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+        </>
+      )}
+    </div>
+  );
+}
+
+// --- referrals ---------------------------------------------------------------------------------------
+
+const REFERRAL_STATES: { key: string; label: string }[] = [
+  { key: "captured", label: "Waiting to convert" },
+  { key: "converted", label: "Converted" },
+  { key: "expired", label: "Expired" },
+];
+
+/** The partner's referral codes and referrals - read-only for staff (a code is
+ * the partner's to create, from its own portal). Counts and codes only: a
+ * referral row identifies nothing about who was referred. */
+export function ReferralsTab({ partnerId, rev }: TabProps) {
+  const [head, setHead] = useState<Pick<PartnerReferrals, "summary" | "codes"> | null>(null);
+  const paged = usePaged(
+    async (cursor?: string) => {
+      const page = await partnerConsoleApi.referrals(partnerId, cursor);
+      if (!cursor) setHead({ summary: page.summary, codes: page.codes });
+      return page;
+    },
+    [partnerId, rev],
+  );
+  return (
+    <div className={styles.stack}>
+      {paged.state === "loading" && <p aria-live="polite">Loading referrals…</p>}
+      {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to this partner&apos;s referrals.</p>}
+      {paged.state === "error" && <p role="alert">Couldn&apos;t load referrals.</p>}
+      {paged.state === "ready" && head && (
+        <>
+          <Section title="Referrals by state">
+            <dl className={local.review}>
+              {REFERRAL_STATES.map((s) => (
+                <div key={s.key}>
+                  <dt>{s.label}</dt>
+                  <dd>{head.summary[s.key] ?? 0}</dd>
+                </div>
+              ))}
+            </dl>
+          </Section>
+          <Table caption="Referral codes" head={["Code", "Campaign", "Status", "Created"]} isEmpty={head.codes.length === 0} empty="This partner has not created a referral code.">
+            {head.codes.map((c) => (
+              <tr key={c.id}>
+                <th scope="row" className={styles.mono}>
+                  {c.code}
+                </th>
+                <td>{c.label || "—"}</td>
+                <td>
+                  <Status value={c.status} />
+                </td>
+                <td>{when(c.created_at)}</td>
+              </tr>
+            ))}
+          </Table>
+          <Table caption="Referrals" head={["Code", "Status", "Captured", "Converted"]} isEmpty={paged.rows.length === 0} empty="No referral has been captured yet.">
+            {paged.rows.map((r) => (
+              <tr key={r.id}>
+                <th scope="row" className={styles.mono}>
+                  {r.code}
+                </th>
+                <td>
+                  <Status value={r.status} />
+                </td>
+                <td>{when(r.captured_at)}</td>
+                <td>{when(r.converted_at)}</td>
               </tr>
             ))}
           </Table>

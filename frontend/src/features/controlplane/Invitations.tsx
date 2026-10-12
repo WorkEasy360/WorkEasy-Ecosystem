@@ -1,15 +1,15 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { invitationApi } from "@/lib/api/controlPlane";
 import { useAction, useLoad, when } from "./ui";
 import styles from "./ControlPlane.module.css";
+import { usePortalRouter } from "@/lib/portalRouter";
 
 /** Ownership invitations for the signed-in account - e.g. a customer a
  * partner created on their behalf. Accepting is the owner's own act; it is
  * never done for them. Renders nothing when there is nothing to accept. */
 export function Invitations() {
-  const router = useRouter();
+  const router = usePortalRouter();
   const [load] = useLoad(() => invitationApi.list(), []);
   const { act, busy, feedback } = useAction(() => router.refresh());
 

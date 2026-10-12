@@ -173,7 +173,11 @@ def test_a_product_with_no_credential_says_sso_integration_required(
     response = launch(shop)
     assert response.status_code == 200
     target = response.json()["redirect_url"]
-    assert target.startswith("https://crm.example.com/launch?organization=")
+    # ADR-044: Workeasy360 sign-in cannot complete without a credential, so
+    # the launch is the product's own page, with no organization hint that
+    # would make the product start a Workeasy360 sign-in by itself.
+    assert response.json()["sign_in"] == "product"
+    assert target == "https://crm.example.com/launch"
     assert "token" not in target and "code=" not in target
 
 

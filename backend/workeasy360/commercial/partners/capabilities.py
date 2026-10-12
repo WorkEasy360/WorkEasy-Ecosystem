@@ -160,15 +160,37 @@ EXPERIENCES: Final[dict[str, tuple[str, frozenset[str]]]] = {
 #: exactly one group (asserted by a test), so nothing is unreachable from a form.
 CAPABILITY_GROUPS: Final[tuple[tuple[str, str, tuple[str, ...]], ...]] = (
     ("customer_management", "Customer management", (CUSTOMER_PROVISION, CUSTOMER_MANAGE)),
-    ("sales", "Sales", (SUBSCRIPTION_SELL,)),
-    ("subscriptions", "Subscriptions", (SUBSCRIPTION_MANAGE,)),
-    ("pricing", "Pricing", (PRICING_VIEW,)),
-    ("commissions", "Commissions", (COMMISSION_EARN, COMMISSION_VIEW)),
-    ("payouts", "Payouts", (PAYOUT_VIEW,)),
+    (
+        "products_sales",
+        "Products and sales",
+        (SUBSCRIPTION_SELL, SUBSCRIPTION_MANAGE, PRICING_VIEW),
+    ),
+    ("commercial", "Commercial", (COMMISSION_EARN, COMMISSION_VIEW, PAYOUT_VIEW)),
     ("support", "Support", (SUPPORT_ACCESS,)),
     ("white_label", "White-label", (BRANDING_MANAGE, DOMAIN_MANAGE)),
     ("referrals", "Referrals", (REFERRAL_CREATE, REFERRAL_VIEW)),
 )
+
+#: The short name a form shows beside each capability. The registry ``label`` is
+#: the full sentence (it is what the audit log and the grant form say); this is
+#: the plain two-or-three-word version a setup wizard lists under a heading.
+#: Presentation only - the key is what is stored and granted. (Viewing customers
+#: is not a capability of its own: it comes with either customer capability.)
+SHORT_LABELS: Final[dict[str, str]] = {
+    CUSTOMER_PROVISION: "Create customers",
+    CUSTOMER_MANAGE: "Manage customers",
+    SUBSCRIPTION_SELL: "Sell products",
+    SUBSCRIPTION_MANAGE: "Manage subscriptions",
+    PRICING_VIEW: "View pricing",
+    COMMISSION_EARN: "Earn commissions",
+    COMMISSION_VIEW: "View commissions",
+    PAYOUT_VIEW: "View payouts",
+    SUPPORT_ACCESS: "Customer support access",
+    BRANDING_MANAGE: "Manage branding",
+    DOMAIN_MANAGE: "Manage custom domains",
+    REFERRAL_CREATE: "Create referral codes",
+    REFERRAL_VIEW: "View referrals",
+}
 
 #: One-click starting points for a capability form. A preset is only a list of
 #: keys the form ticks; applying it goes through the ordinary
@@ -192,6 +214,34 @@ CAPABILITY_PRESETS: Final[tuple[dict[str, object], ...]] = (
             COMMISSION_VIEW,
             PAYOUT_VIEW,
             SUPPORT_ACCESS,
+        ),
+    },
+    # The Add Partner flow offers one starting point per business purpose
+    # (Partner Control Center). Each is still only a list of registry keys:
+    # choosing "White-label" or "Affiliate" stores no purpose anywhere - the
+    # partner wears that label because, and only while, it holds the grants.
+    {
+        "key": "white_label",
+        "label": "White-label",
+        "description": (
+            "Configure the partner's own brand and register custom domains. "
+            "Add selling or referral capabilities separately if it needs them."
+        ),
+        "capabilities": (BRANDING_MANAGE, DOMAIN_MANAGE),
+    },
+    {
+        "key": "affiliate",
+        "label": "Affiliate",
+        "description": (
+            "Create referral codes and see their conversion, earn commission on "
+            "referred customers, and view that commission and its payouts."
+        ),
+        "capabilities": (
+            REFERRAL_CREATE,
+            REFERRAL_VIEW,
+            COMMISSION_EARN,
+            COMMISSION_VIEW,
+            PAYOUT_VIEW,
         ),
     },
 )

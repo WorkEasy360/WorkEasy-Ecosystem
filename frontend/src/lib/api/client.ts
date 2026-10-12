@@ -16,6 +16,10 @@
  */
 
 const CSRF_COOKIE = "w360_csrf";
+/** Production's name (backend production.py, ADR-043): `__Host-` makes the
+ * browser refuse a same-named cookie a sibling host plants for the parent
+ * domain, which would otherwise hand an attacker a known token. */
+const HOST_CSRF_COOKIE = "__Host-w360_csrf";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export class ApiError extends Error {
@@ -40,7 +44,7 @@ export class ApiError extends Error {
  * every unsafe method). Django accepts the same token as a
  * `csrfmiddlewaretoken` form field on a plain POST. */
 export function getCsrfToken(): string | undefined {
-  return readCookie(CSRF_COOKIE);
+  return readCookie(HOST_CSRF_COOKIE) ?? readCookie(CSRF_COOKIE);
 }
 
 function readCookie(name: string): string | undefined {
@@ -79,7 +83,7 @@ export async function apiFetch<T>(path: string, options: ApiOptions = {}): Promi
     headers.set("Content-Type", "application/json");
   }
   if (!SAFE_METHODS.has(method)) {
-    const token = readCookie(CSRF_COOKIE);
+    const token = readCookie(HOST_CSRF_COOKIE) ?? readCookie(CSRF_COOKIE);
     if (token) headers.set("X-CSRFToken", token);
   }
 

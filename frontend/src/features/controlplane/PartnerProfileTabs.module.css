@@ -1,0 +1,291 @@
+/* The complete-setup additions to a partner's page: the profile tabs, the
+   Overview's setup cards, the product options and the people table's inline
+   confirmations. CSS modules only - nothing from the server reaches a style.
+   Every grid uses minmax(0, 1fr) so nothing inside can widen the page past a
+   320px viewport (WCAG 1.4.10). */
+
+.stats {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stat {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  min-width: 0;
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+}
+
+.statLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--w360-text-muted);
+}
+
+.statValue {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.statNote {
+  font-size: 13px;
+  color: var(--w360-text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* A callout: a heavier left rule *and* a heading in words, so the state is not
+   carried by colour alone (WCAG 1.4.1). */
+.notice,
+.ready {
+  display: grid;
+  gap: var(--w360-space-2);
+  padding: var(--w360-space-4);
+  border: 1px solid var(--w360-border);
+  border-left-width: 6px;
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-neutral-bg);
+  min-width: 0;
+}
+
+.notice {
+  border-left-color: var(--w360-warning);
+}
+
+.ready {
+  border-left-color: var(--w360-success);
+}
+
+.notice h3,
+.ready h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.notice p,
+.ready p {
+  margin: 0;
+}
+
+.missing {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.missing li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: baseline;
+}
+
+.progress {
+  display: grid;
+  gap: var(--w360-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.progressRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+  min-width: 0;
+}
+
+.progressText {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: baseline;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.linkButton {
+  font-size: 13px;
+  padding: 2px 10px;
+  min-height: 28px;
+}
+
+.activateReason {
+  display: grid;
+  gap: var(--w360-space-1);
+  max-width: 44rem;
+}
+
+.activateReason p {
+  margin: 0;
+}
+
+/* The forms. */
+
+.formStack {
+  display: grid;
+  gap: var(--w360-space-5);
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 820px;
+}
+
+.formStack > * {
+  min-width: 0;
+}
+
+.sectionFields {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.sectionFields > * {
+  min-width: 0;
+}
+
+.actionsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3);
+  align-items: center;
+}
+
+.conflict {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3);
+  align-items: center;
+}
+
+.readOnly {
+  display: grid;
+  gap: var(--w360-space-3);
+  margin: 0;
+}
+
+.readOnly dt {
+  font-weight: 700;
+}
+
+.readOnly dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.contactBlock {
+  display: grid;
+  gap: var(--w360-space-2);
+  min-width: 0;
+}
+
+.contactBlock h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+/* Product options. */
+
+.options {
+  display: grid;
+  gap: var(--w360-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.optionGroup {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  min-width: 0;
+}
+
+.optionGroup legend {
+  padding: 0 var(--w360-space-1);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.optionLabel {
+  display: flex;
+  gap: var(--w360-space-2);
+  align-items: flex-start;
+}
+
+.optionLabel input {
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+/* The people table. */
+
+.memberActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.panel {
+  display: grid;
+  gap: var(--w360-space-2);
+  min-width: 14rem;
+  max-width: 24rem;
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-surface);
+}
+
+.panel p {
+  margin: 0;
+  white-space: normal;
+}
+
+.stackedCell {
+  display: grid;
+  gap: 2px;
+}
+
+.inviteForm {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 560px;
+}
+
+.inviteForm > * {
+  min-width: 0;
+}
+
+.nameRow {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+}
+
+@media (forced-colors: active) {
+  .notice,
+  .ready,
+  .stat,
+  .panel {
+    border-color: CanvasText;
+  }
+}

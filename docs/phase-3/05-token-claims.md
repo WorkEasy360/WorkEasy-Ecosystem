@@ -36,6 +36,7 @@ discovery document, so this file cannot drift from what is actually minted.
 | `jti` | Unique per token | Detect a replay within the lifetime |
 | `typ` | `id_token` | Refuse an access token presented as an identity assertion — both verify against the same key with the same audience |
 | `nonce` | Echoed from the request | Detect a token replayed from another session |
+| `auth_time` | When the person last entered their credentials at Workeasy360 (seconds since the epoch), present whenever the session's authentication time is known (ADR-044) | After `prompt=login`, check it is no older than your request - a round trip on a still-open session proves nothing. Base "recently authenticated" on it, not on when your callback ran |
 
 `iat`, `nbf` and `exp` come from **one** clock reading. Three calls to
 `time.time()` can straddle a second boundary and produce `iat > nbf`, which
@@ -58,6 +59,7 @@ for it on this request:
 |---|---|
 | `profile` | `name` |
 | `email` | `email`, `email_verified` |
+| `organization` | `organization_name` |
 
 A claim with an empty value is omitted rather than sent as `""` (OIDC Core
 §5.3.2) — a product rendering `""` as a display name shows a blank where it
@@ -70,7 +72,7 @@ expected a person.
 | `membership_id` | **Considered and rejected.** A product keys its data on `(sub, organization_id)` and has no use for the platform's join row. Issuing it would invite products to store and reason about a platform-internal identifier |
 | Roles or permissions | Platform authorization is the platform's. A product owns its own domain permissions ([10 §6](10-product-certification-checklist.md)) |
 | Plan, subscription, seats, price, currency, renewal date | A product asks "entitled?" and gets yes/no ([ADR-005](../architecture/adrs/ADR-005-product-entitlement-model.md)). It must never branch on how a capability was purchased |
-| Organization name or slug | Display strings. `organization_id` is the identity; a name is something a customer can change |
+| Organization name or slug, as an identity | Display strings. `organization_id` is the identity; a name is something a customer can change. The name is released only as `organization_name` behind the `organization` scope (added 2026-10-12), so a product provisioning a tenant on a first sign-in can label it. A product must not key on it or keep it in sync |
 | Any other user PII | Behind scopes, or not at all |
 | Anything about other organizations the user belongs to | The token concerns exactly one tenant |
 

@@ -19,12 +19,16 @@ from config.settings.base import (
     EMAIL_USE_SSL,
     EMAIL_USE_TLS,
     FILE_STORAGE_BACKEND,
+    PORTAL_HANDOFF_TTL_S,
     REDIS_URL,
     S3_BUCKET,
     S3_ENDPOINT_URL,
     SESSION_REFRESH_INTERVAL_S,
+    W360_PORTAL_ORIGINS,
     env,
 )
+from workeasy360.contracts.values.portals import host_of as _host_of
+from workeasy360.contracts.values.portals import parse_origin as _parse_origin
 
 # --- Remote product integration -----------------------------------------
 #
@@ -143,6 +147,24 @@ PAYMENTS_FAKE_PROVIDER_ENABLED = False
 ALLOWED_HOSTS = env.list("W360_ALLOWED_HOSTS", required=True)
 CSRF_TRUSTED_ORIGINS = env.list("W360_CSRF_TRUSTED_ORIGINS", required=True)
 
+# --- Portals (ADR-043) -----------------------------------------------------
+#
+# Production always runs the five portal hosts: the Super Admin, Partner and
+# Customer portals, the central sign-in and the API. Each host gets its own
+# host-only cookies, so the ``__Host-`` prefix makes the *browser* enforce
+# what the architecture assumes: Secure, Path=/ and no Domain attribute. A
+# sibling host - one of the separately deployed products on another
+# workeasy360.com subdomain - therefore cannot plant a same-named
+# ``.workeasy360.com`` cookie into a portal (cookie tossing: session fixation
+# or a known CSRF token).
+for _portal in ("admin", "partner", "app", "auth", "api"):
+    env.str(f"W360_{_portal.upper()}_ORIGIN", required=True)
+SESSION_COOKIE_NAME = "__Host-w360_session"
+CSRF_COOKIE_NAME = "__Host-w360_csrf"
+PORTAL_STATE_COOKIE_NAME = "__Host-w360_portal_state"
+SESSION_COOKIE_DOMAIN = None
+CSRF_COOKIE_DOMAIN = None
+
 RELEASE = env.str("W360_RELEASE", required=True)
 
 # --- Trusted proxy topology (D-009) --------------------------------------
@@ -214,6 +236,59 @@ env.check(
 env.check(
     all(o.startswith("https://") for o in CSRF_TRUSTED_ORIGINS),
     "Every W360_CSRF_TRUSTED_ORIGINS entry must be https://.",
+)
+env.check(
+    not any(h.startswith(".") for h in ALLOWED_HOSTS),
+    "W360_ALLOWED_HOSTS must not contain a leading-dot entry: '.workeasy360.com' "
+    "matches every subdomain, including the separately deployed products and any "
+    "name pointed at the edge.",
+)
+_PORTAL_ORIGINS = {name: o for name, o in W360_PORTAL_ORIGINS.items() if o}
+env.check(
+    len(_PORTAL_ORIGINS) == 5
+    and all(
+        (p := _parse_origin(o)) is not None and p[0] == "https"
+        for o in _PORTAL_ORIGINS.values()
+    ),
+    "W360_ADMIN_ORIGIN, W360_PARTNER_ORIGIN, W360_APP_ORIGIN, W360_AUTH_ORIGIN and "
+    "W360_API_ORIGIN must each be a bare https origin (https://host, no path).",
+)
+env.check(
+    len({_host_of(o) for o in _PORTAL_ORIGINS.values()}) == len(_PORTAL_ORIGINS),
+    "Every portal origin must be a different host: the host decides which "
+    "experience is shown, and sessions are scoped per host.",
+)
+env.check(
+    {_host_of(o).split(":")[0] for o in _PORTAL_ORIGINS.values()} == set(ALLOWED_HOSTS),
+    "W360_ALLOWED_HOSTS must be exactly the five portal hosts (admin, partner, app, "
+    "auth, api): no other name may reach the application.",
+)
+env.check(
+    10 <= PORTAL_HANDOFF_TTL_S <= 300,
+    "W360_PORTAL_HANDOFF_TTL_S must be 10-300 seconds: a hand-off code is a "
+    "one-time sign-in, used within seconds.",
+)
+_WEB_ORIGINS = {_PORTAL_ORIGINS.get(n, "") for n in ("admin", "partner", "app", "auth")}
+env.check(
+    set(CSRF_TRUSTED_ORIGINS) == _WEB_ORIGINS
+    and not any("*" in o for o in CSRF_TRUSTED_ORIGINS),
+    "W360_CSRF_TRUSTED_ORIGINS must be exactly the four portal origins (admin, "
+    "partner, app, auth): no wildcard, no product host, no partner domain - a "
+    "partner's custom domain serves no form at all (ADR-039), and products call "
+    "the API server-to-server (ADR-043).",
+)
+env.check(
+    OIDC_ISSUER == _PORTAL_ORIGINS.get("auth"),
+    "W360_OIDC_ISSUER must be W360_AUTH_ORIGIN: the authorization endpoint needs the "
+    "central sign-in session, which lives on that host only.",
+)
+env.check(
+    W360_FRONTEND_URL == _PORTAL_ORIGINS.get("app"),
+    "W360_FRONTEND_URL must be W360_APP_ORIGIN (the customer portal).",
+)
+env.check(
+    SESSION_COOKIE_DOMAIN is None and CSRF_COOKIE_DOMAIN is None,
+    "Session and CSRF cookies must be host-only (no Domain attribute).",
 )
 env.check(
     SECRET_KEY != "insecure-development-key-do-not-use",  # noqa: S105 - comparison, not a credential

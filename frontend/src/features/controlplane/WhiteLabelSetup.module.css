@@ -1,0 +1,465 @@
+/* The staff white-label setup wizard. CSS modules only: no inline styles, and
+   nothing the server or a person typed is ever written into a style (the one
+   brand colour reaches the preview through the CSSOM, see useBranding). A grid
+   with minmax(0, 1fr) so nothing inside can widen the page past a 320px
+   viewport (WCAG 1.4.10). */
+
+.wizard {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 880px;
+}
+
+.wizard > * {
+  min-width: 0;
+}
+
+/* --- the progress list ---------------------------------------------------------
+   Ten steps wrap on a wide screen; on a narrow one only the current step is
+   drawn (the step heading still says "Step 3 of 10"), so the list never forces
+   the page to scroll sideways. */
+
+.progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.progressItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  padding: 2px 10px;
+  border: 1px solid var(--w360-border);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--w360-text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* The current step: weight and a heavier border, not colour alone. */
+.progressItem[aria-current="step"] {
+  color: var(--w360-text);
+  font-weight: 700;
+  border-color: var(--w360-brand);
+  border-width: 2px;
+}
+
+@media (max-width: 640px) {
+  .progressItem:not([aria-current="step"]) {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .progressItem[aria-current="step"] {
+    border-color: Highlight;
+  }
+}
+
+.notice {
+  margin: 0;
+  min-height: 0;
+}
+
+.notice:empty {
+  display: none;
+}
+
+/* --- a step ------------------------------------------------------------------------ */
+
+.step {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.step > * {
+  min-width: 0;
+}
+
+.stepTitle {
+  font-size: 18px;
+  margin: 0;
+}
+
+.stepTitle:focus {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 4px;
+}
+
+.lead {
+  margin: 0;
+  color: var(--w360-text-muted);
+}
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+  padding-top: var(--w360-space-3);
+  border-top: 1px solid var(--w360-border);
+}
+
+.split {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+}
+
+.split > * {
+  min-width: 0;
+}
+
+.group {
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  padding: var(--w360-space-3) var(--w360-space-4);
+  margin: 0;
+  min-width: 0;
+  display: grid;
+  gap: var(--w360-space-3);
+}
+
+.group legend {
+  font-weight: 700;
+  padding: 0 var(--w360-space-1);
+}
+
+.check {
+  display: flex;
+  gap: var(--w360-space-2);
+  align-items: flex-start;
+}
+
+.check input {
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.callout {
+  border-left: 4px solid var(--w360-border-strong);
+  padding: var(--w360-space-2) var(--w360-space-3);
+  background: var(--w360-neutral-bg);
+  margin: 0;
+}
+
+.callout p {
+  margin: 0;
+}
+
+.callout p + p {
+  margin-top: var(--w360-space-2);
+}
+
+.problem {
+  border-left: 4px solid var(--w360-danger);
+  padding: var(--w360-space-2) var(--w360-space-3);
+  background: var(--w360-neutral-bg);
+  margin: 0;
+}
+
+/* --- identity: the logo and the colour -------------------------------------------- */
+
+.colourRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3);
+  align-items: flex-end;
+}
+
+.colourRow > div {
+  min-width: 0;
+}
+
+.colourPicker {
+  width: 56px;
+  height: 40px;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.logoField {
+  display: grid;
+  gap: var(--w360-space-1);
+  min-width: 0;
+}
+
+.logoField input[type="file"] {
+  max-width: 100%;
+}
+
+.logoThumb {
+  max-height: 48px;
+  max-width: 200px;
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-surface);
+  padding: var(--w360-space-1);
+}
+
+/* --- partner selection ---------------------------------------------------------------- */
+
+.searchRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3);
+  align-items: flex-end;
+}
+
+.searchRow > div {
+  display: grid;
+  gap: var(--w360-space-1);
+  min-width: 0;
+  flex: 1 1 14rem;
+}
+
+.pick {
+  display: flex;
+  gap: var(--w360-space-2);
+  align-items: flex-start;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pick input {
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+/* --- products -------------------------------------------------------------------------------- */
+
+.productCell {
+  display: grid;
+  gap: var(--w360-space-1);
+  min-width: 0;
+}
+
+.reason {
+  font-size: 13px;
+  color: var(--w360-text-muted);
+}
+
+/* --- the honest status box --------------------------------------------------------------- */
+
+.statusBox {
+  border: 2px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  padding: var(--w360-space-3) var(--w360-space-4);
+  display: grid;
+  gap: var(--w360-space-2);
+  background: var(--w360-surface);
+}
+
+.statusBox h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.facts {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+}
+
+.facts dt {
+  font-weight: 700;
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.factRow {
+  display: grid;
+  gap: 2px;
+}
+
+@media (min-width: 640px) {
+  .factRow {
+    grid-template-columns: minmax(10rem, 14rem) minmax(0, 1fr);
+    gap: var(--w360-space-3);
+  }
+}
+
+/* --- the domain step ---------------------------------------------------------------------- */
+
+.lifecycle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.lifecycleItem {
+  padding: 2px 10px;
+  border: 1px solid var(--w360-border);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--w360-text-muted);
+}
+
+.lifecycleItem[aria-current="step"] {
+  color: var(--w360-text);
+  font-weight: 700;
+  border: 2px solid var(--w360-brand);
+}
+
+.dns {
+  display: grid;
+  gap: var(--w360-space-3);
+  margin: 0;
+}
+
+.dnsRow {
+  display: grid;
+  gap: var(--w360-space-1);
+  min-width: 0;
+}
+
+.dnsLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.dnsValue {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  user-select: all;
+  min-width: 0;
+}
+
+.dns dt {
+  font-weight: 700;
+}
+
+.dns dd {
+  margin: 0;
+  min-width: 0;
+}
+
+/* --- the review ------------------------------------------------------------------------------- */
+
+.reviewSection {
+  display: grid;
+  gap: var(--w360-space-2);
+}
+
+.reviewSection h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.badgeList {
+  display: grid;
+  gap: var(--w360-space-2);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.badgeItem {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: baseline;
+}
+
+.notAvailable {
+  display: grid;
+  gap: var(--w360-space-1);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+/* --- the portal preview ------------------------------------------------------------------- */
+
+.previewHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  padding-bottom: var(--w360-space-2);
+  border-bottom: 3px solid var(--w360-brand);
+}
+
+.previewPane {
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  padding: var(--w360-space-4);
+  background: var(--w360-surface);
+  display: grid;
+  gap: var(--w360-space-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.previewFooter {
+  border-top: 1px solid var(--w360-border);
+  padding-top: var(--w360-space-2);
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--w360-text-muted);
+}
+
+.previewTiles {
+  display: grid;
+  gap: var(--w360-space-2);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+}
+
+.previewMute {
+  color: var(--w360-text-muted);
+  margin: 0;
+  font-size: 14px;
+}
+
+.previewMark {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--w360-brand);
+  flex-shrink: 0;
+}
+
+.previewLogo {
+  max-height: 32px;
+  max-width: 160px;
+}
+
+.previewTile {
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  padding: var(--w360-space-2) var(--w360-space-3);
+  border-left: 4px solid var(--w360-brand);
+}
+
+.previewButton {
+  background: var(--w360-brand);
+  color: var(--w360-brand-contrast, #fff);
+  border-radius: var(--w360-radius-sm);
+  padding: 6px 12px;
+  font-weight: 600;
+  justify-self: start;
+}
+
+.subTitle {
+  font-size: 15px;
+  margin: 0 0 var(--w360-space-2);
+}
