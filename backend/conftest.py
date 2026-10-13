@@ -1101,8 +1101,9 @@ def signed_in(client, db):
         signed-in person entering a product with no question asked - which,
         since universal sign-in, is what a person who chose "automatically
         use my Workeasy360 account" gets. ``None`` leaves no stored
-        preference, so the platform default ("ask me each time") applies -
-        what ``tests/universal_sso`` uses."""
+        preference, so the platform default applies (Automatic, since the
+        one-login brief; ``tests/universal_sso`` passes ``"ask"`` where it
+        needs the access chooser)."""
         from tests.factories.sessions import lapsed_step_up
         from workeasy360.platform.ecosystem.models import UserSignInPreference
         from workeasy360.platform.tenancy.resolution import (

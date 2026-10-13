@@ -49,13 +49,13 @@ A manifest without `sign_in_mode` is an OIDC client registration by construction
 
 `SignInPreference` values: `inherit`, `auto_sso`, `ask`, `product_login` (enum `contracts.enums.SignInPreference`; labels are frontend copy only).
 
-- A **default** for every product, including products added later. No stored default means `ask` (the brief's recommended default; no product requirement justifies another).
+- A **default** for every product, including products added later. No stored default means `auto_sso` (since the one-login brief, `one-login.md` §1 and ADR-044 item 14; it meant `ask` before).
 - An optional **override per product**. `inherit` is not stored: choosing it deletes the override, so a product added in six months needs no migration and no per-product row.
 
 ### 2.3 Effective sign-in (one pure function, `contracts.values.sign_in.resolve`)
 
 1. Product not SSO-ready (`local_only`, no credential, not active) -> **`product_login`**, constraint `sso_unavailable`. The card says "Separate product sign-in required"; nothing pretends SSO works.
-2. Preference = product override if set, else the person's default, else `ask`.
+2. Preference = product override if set, else the person's default, else `auto_sso` (the platform default).
 3. Preference `product_login` but the product offers no sign-in of its own (`sso_only`, or no `login_url`) -> **`ask`**, constraint `product_requires_sso`. The person's wish not to be signed in automatically is still honoured; the product's constraint is too.
 4. Otherwise the preference.
 

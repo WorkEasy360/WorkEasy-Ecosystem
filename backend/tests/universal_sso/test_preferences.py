@@ -24,19 +24,20 @@ def _by_code(body):
     return {p["product_code"]: p for p in body["products"]}
 
 
-def test_a_new_person_is_asked_and_sees_every_product_that_can_be_entered(
+def test_a_new_person_is_signed_in_automatically_and_sees_every_product_that_can_be_entered(
     client, products, user_factory
 ):
     client.force_login(user_factory())
     body = client.get(PREFS).json()
-    assert body["default"] == "ask" and body["default_is_set"] is False
+    # Nothing stored: the platform default, Automatic (one-login brief).
+    assert body["default"] == "auto_sso" and body["default_is_set"] is False
     assert body["default_choices"] == ["auto_sso", "ask", "product_login"]
     rows = _by_code(body)
     assert set(rows) == {"crm", "books"}
     crm, books = rows["crm"], rows["books"]
     assert crm["mode"] == "sso_optional" and crm["sso"] == "enabled"
     assert crm["choices"] == ["inherit", "auto_sso", "ask", "product_login"]
-    assert crm["override"] == "inherit" and crm["effective"] == "ask"
+    assert crm["override"] == "inherit" and crm["effective"] == "auto_sso"
     assert books["choices"] == ["inherit", "auto_sso", "ask"]  # no door of its own
     # Display facts only: nothing identifying the registration.
     for row in body["products"]:
@@ -144,19 +145,22 @@ def test_draft_and_retired_products_are_not_listed(
     assert client.get(PREFS).json()["products"] == []
 
 
-def test_reset_puts_everything_back_to_ask(client, products, user_factory):
+def test_reset_puts_everything_back_to_the_automatic_default(
+    client, products, user_factory
+):
     from workeasy360.platform.ecosystem.models import UserSignInPreference
 
     client.force_login(user_factory())
     client.put(
         PREFS,
-        {"default": "auto_sso", "products": {"crm": "product_login"}},
+        {"default": "ask", "products": {"crm": "product_login"}},
         content_type="application/json",
     )
     body = client.delete(PREFS).json()
-    assert body["default"] == "ask" and body["default_is_set"] is False
+    assert body["default"] == "auto_sso" and body["default_is_set"] is False
     assert all(
-        p["override"] == "inherit" and p["effective"] == "ask" for p in body["products"]
+        p["override"] == "inherit" and p["effective"] == "auto_sso"
+        for p in body["products"]
     )
     assert not UserSignInPreference.objects.exists()
 
@@ -198,15 +202,15 @@ def test_a_preference_is_private_to_its_person(products, user_factory):
     a, b = Client(), Client()
     a.force_login(ana)
     b.force_login(ben)
-    a.put(PREFS, {"default": "auto_sso"}, content_type="application/json")
-    assert b.get(PREFS).json()["default"] == "ask"
+    a.put(PREFS, {"default": "ask"}, content_type="application/json")
+    assert b.get(PREFS).json()["default"] == "auto_sso"
     # No endpoint takes a person: a user id in the body changes nothing.
     b.put(
         PREFS,
         {"default": "product_login", "user_id": str(ana.id)},
         content_type="application/json",
     )
-    assert a.get(PREFS).json()["default"] == "auto_sso"
+    assert a.get(PREFS).json()["default"] == "ask"
 
 
 def test_signed_out_callers_get_nothing(products):

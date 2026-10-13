@@ -231,6 +231,9 @@ describe("sign-in preferences", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Sign-in preferences" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Ask me each time/ })).toBeChecked();
     expect(screen.getByRole("radio", { name: /Automatically sign me in/ })).not.toBeChecked();
+    // Automatic is the recommended choice (and the platform default); the person's stored "ask" wins here.
+    expect(screen.getByRole("radio", { name: /Automatically sign me in.*\(recommended\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Ask me each time/ })).not.toHaveAccessibleName(/recommended/);
 
     const crm = screen.getByRole("combobox", { name: "Easy CRM" });
     expect(within(crm).getAllByRole("option").map((o) => o.textContent)).toEqual([
@@ -274,7 +277,7 @@ describe("sign-in preferences", () => {
     });
     render(<SignInPreferencesScreen />);
     fireEvent.click(await screen.findByRole("button", { name: "Reset all to default" }));
-    expect(await screen.findByText(/Reset\. Workeasy360 will ask you each time/)).toBeInTheDocument();
+    expect(await screen.findByText("Reset. Workeasy360 will sign you in to every product automatically.")).toBeInTheDocument();
     expect(calls.some((c) => c.key === "DELETE /api/v1/auth/sign-in-preferences")).toBe(true);
   });
 

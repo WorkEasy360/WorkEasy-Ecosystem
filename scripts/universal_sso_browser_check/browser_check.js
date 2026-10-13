@@ -36,6 +36,14 @@
 //      another account's password is refused; Ana's password confirms
 //  12  REMOVED: Ana suspends Ben in Workeasy360 -> each product refuses his open session within
 //      the window (per-person entitlement, membership_inactive)
+//  14  DIRECT (one-login brief, journey B): signed in to Workeasy360 only, Ana types each product's
+//      address -> the product starts the flow itself, Workeasy360 reuses its session (default
+//      Automatic: nothing stored), the product opens signed in - no product sign-in page, no
+//      password; deep links survive; after "Sign out of <product>" it shows its sign-in page instead
+//      of signing her back in; with no Workeasy360 session the central sign-in appears first.
+//      Easy CRM auto-starts only when its own password sign-in is off: USSO_CRM_SSO_ONLY=1 (pass 2)
+//  15  CROSS-ORG: Cara asks each product for Customer Company (not hers) -> refused; her own
+//      sessions are bound to Trial Company and list none of Customer Company's people
 // On every audited page: CSP violations, console errors, axe WCAG 2.1 A/AA,
 // a visible focus indicator, one h1. Reflow at 1280, 768, 375 px.
 // Not part of CI. A manual screen-reader pass is NOT part of it.
@@ -52,7 +60,9 @@ const PY = process.env.PY;
 const REPO = process.env.REPO;
 const SEED = JSON.parse(fs.readFileSync(path.join(WORK, "seed.json"), "utf8"));
 const PASSWORD = SEED.password;
-const ONLY = (process.env.ONLY || "1,2,3,4,5,6,7,8,9,10,11,12,13").split(",");
+const ONLY = (process.env.ONLY || "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15").split(",");
+// Pass 2 of journey 14: Easy CRM restarted with its own password sign-in off (production's mode).
+const CRM_SSO_ONLY = process.env.USSO_CRM_SSO_ONLY === "1";
 const W360 = "http://127.0.0.1:3021";
 const CRM = "http://localhost:4022";
 const BOOK = "http://127.0.0.2:3023";
@@ -89,15 +99,30 @@ async function newPage(width = 1280) {
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   await page.setViewport({ width, height: 900 });
-  await page.evaluateOnNewDocument(() => {
+  await page.evaluateOnNewDocument((w360) => {
     window.__csp = [];
     document.addEventListener("securitypolicyviolation", (e) =>
       window.__csp.push(`${e.violatedDirective} ${e.blockedURI} (${e.disposition}) from ${e.sourceFile || "?"}:${e.lineNumber}`),
     );
-  });
+    // Journey 14: whether a product ever rendered its sign-in button, even for a moment before a
+    // redirect (reported through the console, which survives the document being replaced).
+    if (location.origin === w360) return;
+    let told = false;
+    const look = () => {
+      if (told || !document.body) return;
+      const hit = [...document.querySelectorAll("button, a")].find((el) => /^(Continue with Workeasy360|Access Easy CRM|Access EasyBook)/.test((el.innerText || "").trim()));
+      if (hit) {
+        told = true;
+        console.log(`__SIGN_IN_PAGE__ ${location.href}`);
+      }
+    };
+    new MutationObserver(look).observe(document, { childList: true, subtree: true });
+  }, W360);
   page.__nav = [];
   page.on("framenavigated", (f) => f === page.mainFrame() && page.__nav.push(f.url()));
+  page.__signInSeen = [];
   page.on("console", (m) => {
+    if (m.type() === "log" && m.text().startsWith("__SIGN_IN_PAGE__ ")) page.__signInSeen.push(brief(m.text().slice(17)));
     if (m.type() !== "error") return;
     const line = `${page.url()} :: ${m.text()}`;
     if (/status of (400|401|402|403|404|409)/.test(m.text())) report.expected.push(line);
@@ -419,17 +444,18 @@ async function journeyAuto() {
 async function journeyAsk() {
   const page = await newPage();
   await w360SignIn(page, "ben@usso.test");
-  // "Reset all to default" first, so the journey starts from Ask whatever an
-  // earlier run left behind - and the reset button is exercised.
+  // "Reset all to default" first, whatever an earlier run left behind - and the reset button is
+  // exercised. The default is Automatic (one-login brief), so Ben then chooses "Ask me each time".
   await page.goto(`${W360}/o/${SLUG}/settings/sign-in-preferences`, { waitUntil: "networkidle0", timeout: 40000 });
   await clickText(page, "Reset all to default", "button");
-  await waitForText(page, "Reset. Workeasy360 will ask you each time, for every product.");
+  await waitForText(page, "Reset. Workeasy360 will sign you in to every product automatically.");
   const afterReset = await w360Api(page, "/api/v1/auth/sign-in-preferences");
   flow(
-    "2 ASK: Reset all to default leaves no stored choice - every product asks",
-    afterReset.status === 200 && afterReset.body.default === "ask" && !afterReset.body.default_is_set && afterReset.body.products.every((p) => p.override === "inherit"),
+    "2 ASK: Reset all to default leaves no stored choice - every product is Automatic, the platform default",
+    afterReset.status === 200 && afterReset.body.default === "auto_sso" && !afterReset.body.default_is_set && afterReset.body.products.every((p) => p.override === "inherit" && p.effective === "auto_sso"),
     { afterReset: afterReset.body && { default: afterReset.body.default, set: afterReset.body.default_is_set } },
   );
+  await setPreferences(page, SLUG, { def: "ask" });
   await openFromMyProducts(page, SLUG, "Easy CRM");
   await waitForUrl(page, (u) => u.startsWith(`${W360}/product-access`));
   await waitForText(page, "How would you like to access Easy CRM?");
@@ -927,16 +953,17 @@ async function journeyTrial() {
     await clickLabel(page, `Start 7-day free trial: ${product.name}`);
     await waitForText(page, `Trial started: ${product.name}.`);
   }
-  // While the trials run, each opens through Workeasy360 (Cara's default is Ask) and serves her organization.
+  // While the trials run, each opens through Workeasy360 and serves her organization. Cara never chose a
+  // sign-in preference, so the platform default applies: Automatic, no chooser (one-login brief).
   const trialUsers = {};
   for (const [key, product] of Object.entries(PRODUCTS)) {
     const opened = await openProduct(page, TRIAL_SLUG, product);
     const data = await product.data(page);
     trialUsers[key] = opened.who;
     flow(
-      `6 TRIAL: while the 7-day trial runs, ${product.name} opens through Workeasy360 and serves the organization`,
-      opened.who.email === "cara@usso.test" && data.status === 200 && !askedForPassword(page, opened.from),
-      { who: opened.who, data },
+      `6 TRIAL: while the 7-day trial runs, ${product.name} opens through Workeasy360 with no question (nothing stored: Automatic) and serves the organization`,
+      opened.who.email === "cara@usso.test" && data.status === 200 && !askedForPassword(page, opened.from) && !opened.asked,
+      { who: opened.who, data, asked: opened.asked },
     );
   }
   fs.writeFileSync(path.join(WORK, "trial_users.json"), JSON.stringify(trialUsers));
@@ -1084,7 +1111,8 @@ async function journeySwitch() {
   const asBen = (await openProduct(page, SLUG, PRODUCTS.crm)).who;
   flow("7 SWITCH: after A signs out and B signs in, Easy CRM holds B - nothing of A survives", asAna.email === "ana@usso.test" && out.status === 200 && session.body.authenticated === false && asBen.email === "ben@usso.test", { asAna, asBen });
 
-  // "Use another Workeasy360 account" on the chooser (Ben is asked for EasyBook).
+  // "Use another Workeasy360 account" on the chooser (Ben chooses to be asked).
+  await setPreferences(page, SLUG, { def: "ask", overrides: { EasyBook: "inherit" } });
   await openFromMyProducts(page, SLUG, "EasyBook");
   await waitForUrl(page, (u) => u.startsWith(`${W360}/product-access`) || u.startsWith(BOOK));
   if (!page.url().startsWith(`${W360}/product-access`)) {
@@ -1127,13 +1155,35 @@ async function journeyLogout() {
 
 /** A product's own sign-out, as its account menu offers it. `everywhere` picks "Sign out of <product>
  * and Workeasy360" (RP-initiated logout) over the product-only one. */
+/** EasyBook's first sign-in for an organization asks for its fiscal year (the suggested dates cover
+ * today): confirm it, as a person would, so the app with its account menu appears. */
+async function finishBookOnboarding(page) {
+  if (!page.url().startsWith(`${BOOK}/onboarding/`)) return;
+  if (page.url().includes("/onboarding/fiscal-year")) {
+    await clickText(page, "Confirm fiscal year", "button");
+    await waitForUrl(page, (u) => u.startsWith(`${BOOK}/dashboard`));
+    report.notes.push("EasyBook: first sign-in for the organization confirmed its suggested fiscal year (onboarding).");
+  } else {
+    throw new Error(`EasyBook onboarding step not handled by the check: ${brief(page.url())}`);
+  }
+}
+
 async function productSignOut(page, key, everywhere) {
   const product = PRODUCTS[key];
+  if (key === "book") await finishBookOnboarding(page);
   // Easy Help Desk's product-only item is plain "Sign out"; the others name the product.
   const label = everywhere ? `Sign out of ${product.name} and Workeasy360` : key === "helpdesk" ? "Sign out" : `Sign out of ${product.name}`;
   if (key === "project") {
     const trigger = await page.waitForSelector('button.identity-trigger[aria-haspopup="dialog"]', { visible: true, timeout: 25000 });
     await trigger.click();
+    await clickText(page, label, "button");
+  } else if (key === "book") {
+    // A disclosure button named by screen-reader text ("Account menu for Ana Owner").
+    const trigger = await page.waitForFunction(
+      () => [...document.querySelectorAll("button[aria-expanded]")].find((b) => b.textContent.includes("Account menu for") && !b.disabled),
+      { timeout: 25000 },
+    );
+    await trigger.asElement().click();
     await clickText(page, label, "button");
   } else if (key === "helpdesk") {
     // Its account button is named after the person ("Account menu for Ana Owner").
@@ -1147,16 +1197,18 @@ async function productSignOut(page, key, everywhere) {
 }
 
 async function journeySwitchProducts() {
-  // Brief item 12 for Easy Project and Easy Help Desk: A signs in and opens the product; A signs out
-  // of Workeasy360; B signs in and opens the same product - which must hold B, never A's session.
+  // Account switching for EasyBook, Easy Project and Easy Help Desk (Easy CRM: journeySwitch): A signs
+  // in and opens the product; A signs out of Workeasy360; B signs in and opens the same product -
+  // which must hold B, never A's session.
+  const keys = ["book", "project", "helpdesk"];
   const page = await newPage();
   await w360SignIn(page, "ana@usso.test");
   const asAna = {};
-  for (const key of ["project", "helpdesk"]) asAna[key] = (await openProduct(page, SLUG, PRODUCTS[key])).who;
+  for (const key of keys) asAna[key] = (await openProduct(page, SLUG, PRODUCTS[key])).who;
   await page.goto(`${W360}/o/${SLUG}/apps`, { waitUntil: "networkidle0" });
   const out = await w360Api(page, "/api/v1/auth/logout", "POST");
   await w360SignIn(page, "ben@usso.test");
-  for (const key of ["project", "helpdesk"]) {
+  for (const key of keys) {
     const product = PRODUCTS[key];
     const opened = await openProduct(page, SLUG, product);
     // Back on the product's own origin a moment later, it still holds B.
@@ -1171,10 +1223,15 @@ async function journeySwitchProducts() {
 }
 
 async function journeyLogoutProducts() {
-  // Brief item 13 for Easy Project and Easy Help Desk: product-local sign-out leaves Workeasy360
-  // signed in; "and Workeasy360" asks at Workeasy360 first, then ends both.
-  const postLogout = { project: (u) => u.startsWith(PROJECT) && !u.includes("/api/"), helpdesk: (u) => u.startsWith(`${HELPDESK}/login`) };
-  for (const key of ["project", "helpdesk"]) {
+  // EasyBook, Easy Project and Easy Help Desk (Easy CRM: journeyLogout): product-local sign-out
+  // leaves Workeasy360 signed in; "and Workeasy360" asks at Workeasy360 first, then ends both and
+  // the browser is back on the product's sign-in page - never signed straight back in.
+  const postLogout = {
+    book: (u) => u.startsWith(`${BOOK}/login`),
+    project: (u) => u.startsWith(PROJECT) && !u.includes("/api/"),
+    helpdesk: (u) => u.startsWith(`${HELPDESK}/login`),
+  };
+  for (const key of ["book", "project", "helpdesk"]) {
     const product = PRODUCTS[key];
     const page = await newPage();
     await w360SignIn(page, "ana@usso.test");
@@ -1199,12 +1256,243 @@ async function journeyLogoutProducts() {
     const stillIn = await w360Api(page, "/api/v1/auth/session");
     await clickStarting(page, "Sign out of Workeasy360", "button");
     await waitForUrl(page, postLogout[key]);
+    // Still there a moment later: the product shows its sign-in page rather than starting a new
+    // sign-in (Easy Project's sign-out address is its root - its sign-out marker is what holds).
+    await sleep(2500);
+    const settledAt = page.url();
     const productSession = await product.user(page);
     const w360 = await newPageSameContext(page, `${W360}/api/v1/auth/session`);
     flow(
-      `8 LOGOUT: 'Sign out of ${product.name} and Workeasy360' - Workeasy360 asks first, then both are signed out and the browser is back at ${product.name}`,
-      stillIn.body.authenticated === true && productSession.status !== 200 && w360.authenticated === false,
-      { productSession, w360 },
+      `8 LOGOUT: 'Sign out of ${product.name} and Workeasy360' - Workeasy360 asks first, then both are signed out and the browser is back at ${product.name}'s sign-in`,
+      stillIn.body.authenticated === true && productSession.status !== 200 && w360.authenticated === false && postLogout[key](settledAt),
+      { productSession, w360, settledAt: brief(settledAt) },
+    );
+  }
+}
+
+// ------------------------------------------------------------- one login (14, 15) --
+
+/** A page deeper than each product's home, for "a deep link survives the sign-in". */
+const DEEP = { crm: "/contacts", book: "/sales/invoices", project: "/#/settings", helpdesk: "/settings/profile" };
+
+/** The product's own sign-in button, on screen now. */
+const signInButtonShown = (page) =>
+  page
+    .evaluate(() =>
+      [...document.querySelectorAll("button, a")].some(
+        (el) => /^(Continue with Workeasy360|Access Easy CRM|Access EasyBook)/.test((el.innerText || "").trim()) && el.getBoundingClientRect().height > 0,
+      ),
+    )
+    .catch(() => false);
+
+const onW360Login = (u) => u.startsWith(W360) && new URL(u).pathname === "/login";
+
+/** Where a browser settles after a product address was typed: signed in to the product (its own
+ * session answers), on the product's sign-in page, or on Workeasy360's central sign-in. */
+async function settle(page, key, timeout = 45000) {
+  const product = PRODUCTS[key];
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const u = page.url();
+    if (onW360Login(u)) return { where: "w360_login", at: u };
+    if (u.startsWith(product.origin) && !u.includes("/api/")) {
+      // Let the page do what it does on load (its own session check, a redirect) first.
+      await page.waitForNetworkIdle({ idleTime: 800, timeout: 10000 }).catch(() => {});
+      if (page.url() === u) {
+        if (await signInButtonShown(page)) return { where: "product_sign_in", at: u };
+        const who = await product.user(page).catch(() => ({ status: 0 }));
+        if (who.status === 200) return { where: "signed_in", at: page.url(), who };
+      }
+    }
+    await sleep(300);
+  }
+  return { where: "timeout", at: page.url() };
+}
+
+/** Type a product's address into the browser and see what happens. */
+async function directVisit(page, key, pathname) {
+  const navFrom = page.__nav.length;
+  const seenFrom = page.__signInSeen.length;
+  await page.goto(`${PRODUCTS[key].origin}${pathname}`, { waitUntil: "domcontentloaded", timeout: 40000 });
+  const settled = await settle(page, key);
+  const nav = page.__nav.slice(navFrom);
+  return {
+    ...settled,
+    nav,
+    started: nav.some((u) => u.includes("/api/auth/workeasy360/start")),
+    viaIdp: nav.some((u) => u.includes("/oauth/authorize")),
+    chooser: nav.some((u) => u.includes("/product-access")),
+    password: askedForPassword(page, navFrom),
+    signInShown: page.__signInSeen.slice(seenFrom),
+  };
+}
+
+/** Whether `at` is `pathname` of the product (Easy Project's routes are hash routes). */
+function landedOn(at, pathname) {
+  const u = new URL(at);
+  return pathname.startsWith("/#") ? u.hash.startsWith(pathname.slice(1)) : u.pathname.startsWith(pathname);
+}
+
+async function journeyDirect() {
+  // The brief's journey B and DIRECT URL JOURNEY. Easy CRM starts by itself only when its own password
+  // sign-in is off - production's mode, pass 2 (USSO_CRM_SSO_ONLY=1); in pass 1 it is sso_optional.
+  const keys = Object.keys(PRODUCTS);
+  const autoStarts = (key) => key !== "crm" || CRM_SSO_ONLY;
+  const page = await newPage();
+  await w360SignIn(page, "ana@usso.test");
+  // Nothing stored: the platform default applies (Automatic, one-login brief).
+  await page.goto(`${W360}/o/${SLUG}/settings/sign-in-preferences`, { waitUntil: "networkidle0", timeout: 40000 });
+  await clickText(page, "Reset all to default", "button");
+  await waitForText(page, "Reset. Workeasy360 will sign you in to every product automatically.");
+  const prefs = await w360Api(page, "/api/v1/auth/sign-in-preferences");
+  flow(
+    "14 DIRECT: Ana has no stored sign-in preference - the platform default is Automatic",
+    prefs.status === 200 && prefs.body.default === "auto_sso" && !prefs.body.default_is_set,
+    { default: prefs.body && prefs.body.default, set: prefs.body && prefs.body.default_is_set },
+  );
+
+  // Signed in to Workeasy360 only; she types each product's address.
+  for (const key of keys) {
+    const product = PRODUCTS[key];
+    const v = await directVisit(page, key, "/");
+    if (autoStarts(key)) {
+      flow(
+        `14 DIRECT: typing ${product.name}'s address with only a Workeasy360 session - it starts sign-in itself, Workeasy360 reuses its session, ${product.name} opens signed in as Ana: no sign-in page, no password, no chooser`,
+        v.where === "signed_in" && v.who.email === "ana@usso.test" && v.started && v.viaIdp && !v.password && !v.chooser && !v.signInShown.length,
+        { where: v.where, at: brief(v.at), who: v.who, signInShown: v.signInShown, nav: v.nav.slice(-8) },
+      );
+    } else {
+      const text = await bodyText(page);
+      flow(
+        "14 DIRECT: Easy CRM with its own password sign-in also on (pass 1) shows its sign-in page with both ways in - it cannot know which the person wants",
+        v.where === "product_sign_in" && !v.viaIdp && text.includes("Already a Workeasy360 user?"),
+        { where: v.where, at: brief(v.at), nav: v.nav.slice(-6) },
+      );
+    }
+  }
+
+  // "Sign out of <product>" (the product only): typing its address again must not sign her back in.
+  for (const key of keys.filter(autoStarts)) {
+    const product = PRODUCTS[key];
+    await page.goto(`${product.origin}/`, { waitUntil: "networkidle0", timeout: 40000 });
+    await settle(page, key);
+    await productSignOut(page, key, false);
+    // Signed out once the product shows its sign-in page (the browser was on its origin already).
+    const signedOutBy = Date.now() + 25000;
+    while (!(await signInButtonShown(page)) && Date.now() < signedOutBy) await sleep(300);
+    const again = await directVisit(page, key, "/");
+    const w360 = await newPageSameContext(page, `${W360}/api/v1/auth/session`);
+    flow(
+      `14 DIRECT: after 'Sign out of ${product.name}', typing its address shows its sign-in page instead of signing Ana straight back in (Workeasy360 stays signed in)`,
+      again.where === "product_sign_in" && !again.viaIdp && w360.authenticated === true,
+      { where: again.where, at: brief(again.at), w360: w360.authenticated, nav: again.nav.slice(-6) },
+    );
+    if (key === "project") await audit(page, "Easy Project sign-in page after a sign-out (no automatic sign-in)");
+    // One click there, no password: signed in again (which also clears the sign-out marker).
+    const before = page.__nav.length;
+    await clickStarting(page, { crm: "Access Easy CRM", book: "Access EasyBook" }[key] || "Continue with Workeasy360", "button, a");
+    const back = await settle(page, key);
+    flow(
+      `14 DIRECT: on ${product.name}'s sign-in page one click signs Ana in again - no password`,
+      back.where === "signed_in" && back.who.email === "ana@usso.test" && !askedForPassword(page, before),
+      { where: back.where, at: brief(back.at), who: back.who },
+    );
+  }
+
+  // Deep links survive the sign-in: a fresh browser, signed in to Workeasy360 only.
+  const deep = await newPage();
+  await w360SignIn(deep, "ana@usso.test");
+  for (const key of keys.filter(autoStarts)) {
+    const product = PRODUCTS[key];
+    const v = await directVisit(deep, key, DEEP[key]);
+    flow(
+      `14 DIRECT: a deep link (${DEEP[key]}) survives - ${product.name} signs Ana in with no password and opens that page`,
+      v.where === "signed_in" && v.who.email === "ana@usso.test" && landedOn(v.at, DEEP[key]) && !v.password && !v.signInShown.length,
+      { where: v.where, at: brief(v.at), signInShown: v.signInShown, nav: v.nav.slice(-6) },
+    );
+  }
+  await deep.browserContext().close();
+
+  // No Workeasy360 session at all: the product sends the browser to the central sign-in, then opens.
+  let audited = false;
+  for (const key of keys.filter(autoStarts)) {
+    const product = PRODUCTS[key];
+    const fresh = await newPage();
+    const v = await directVisit(fresh, key, "/");
+    let after = { where: "not reached" };
+    if (v.where === "w360_login") {
+      if (!audited) {
+        await audit(fresh, "Workeasy360 central sign-in reached from a product's address");
+        audited = true;
+      }
+      await fresh.waitForSelector('input[type="email"]', { visible: true, timeout: 25000 });
+      await fresh.type('input[type="email"]', "ana@usso.test");
+      await fresh.type('input[type="password"]', PASSWORD);
+      await clickText(fresh, "Sign in");
+      await waitForUrl(fresh, (u) => !onW360Login(u));
+      after = await settle(fresh, key);
+    }
+    flow(
+      `14 DIRECT: with no Workeasy360 session, typing ${product.name}'s address shows the central Workeasy360 sign-in (never a product password form); after it ${product.name} opens signed in`,
+      v.where === "w360_login" && !v.signInShown.length && after.where === "signed_in" && after.who.email === "ana@usso.test",
+      { first: v.where, signInShown: v.signInShown, after: { where: after.where, at: after.at && brief(after.at), who: after.who } },
+    );
+    await fresh.browserContext().close();
+  }
+  await page.browserContext().close();
+}
+
+/** Raw text of a listing a product shows its signed-in person: its people, or for Easy Project
+ * (no people table) its session's organization. */
+async function productListing(page, key) {
+  const paths = { crm: "/api/v1/members/", book: "/api/bff/organizations/members", project: "/api/auth/session" };
+  if (key === "helpdesk") {
+    return page.evaluate(async (api) => {
+      const refreshed = await fetch(`${api}/api/v1/auth/refresh`, { method: "POST", credentials: "include", headers: { Accept: "application/json" } });
+      if (refreshed.status !== 200) return { status: refreshed.status, text: "" };
+      const token = ((await refreshed.json()).data || {}).accessToken;
+      const r = await fetch(`${api}/api/v1/users`, { credentials: "include", headers: { Accept: "application/json", Authorization: `Bearer ${token}` } });
+      return { status: r.status, text: await r.text() };
+    }, HELPDESK_API);
+  }
+  return page.evaluate(async (p) => {
+    const r = await fetch(p, { credentials: "same-origin", headers: { Accept: "application/json" } });
+    return { status: r.status, text: await r.text() };
+  }, paths[key]);
+}
+
+async function journeyCrossOrg() {
+  // Cara belongs to Trial Company only (after journey 10 it holds all four products). Neither the
+  // launcher's organization hint nor anything else opens Customer Company's data to her.
+  const page = await newPage();
+  await w360SignIn(page, "cara@usso.test");
+  for (const [key, product] of Object.entries(PRODUCTS)) {
+    const from = page.__locations.length;
+    const navFrom = page.__nav.length;
+    await page.goto(`${product.origin}/?organization=${SEED.company_id}`, { waitUntil: "networkidle0", timeout: 40000 });
+    const deadline = Date.now() + 40000;
+    let seen = null;
+    while (!seen && Date.now() < deadline) {
+      seen = page.__locations.slice(from).find((u) => u.startsWith(product.origin) && u.includes("sso_error=")) || (page.url().includes("sso_error=") ? page.url() : null);
+      if (!seen) await sleep(300);
+    }
+    await page.waitForNetworkIdle({ idleTime: 800, timeout: 15000 }).catch(() => {});
+    const code = seen ? decodeURIComponent(seen.split("sso_error=")[1].split(/[&#]/)[0]) : null;
+    const who = await product.user(page);
+    flow(
+      `15 CROSS-ORG: Cara asks ${product.name} for Customer Company, which is not hers - Workeasy360 refuses and ${product.name} opens no session`,
+      Boolean(code) && who.status !== 200 && !askedForPassword(page, navFrom),
+      { code, who, nav: page.__nav.slice(navFrom).slice(-6) },
+    );
+  }
+  for (const [key, product] of Object.entries(PRODUCTS)) {
+    const opened = await openProduct(page, TRIAL_SLUG, product);
+    const listing = await productListing(page, key);
+    const bound = key === "project" ? listing.text.includes(SEED.trial_company_id) && !listing.text.includes(SEED.company_id) : true;
+    flow(
+      `15 CROSS-ORG: Cara's ${product.name} session is bound to Trial Company - it serves her and shows no one from Customer Company`,
+      opened.who.email === "cara@usso.test" && listing.status === 200 && !/(ana|ben)@usso\.test/.test(listing.text) && bound,
+      { who: opened.who, listing: { status: listing.status, size: listing.text.length } },
     );
   }
 }
@@ -1287,7 +1575,14 @@ async function journeyReauth() {
     try {
       return await fn();
     } catch (e) {
-      flow(`${name} (did not complete)`, false, { error: String(e && e.message ? e.message : e).slice(-1500) });
+      // Where every open page was when it stopped (addresses as `brief` shows them, the start of
+      // each page's text), so a stalled wait says what the browser was looking at.
+      const where = [];
+      for (const p of await browser.pages().catch(() => [])) {
+        const text = await p.evaluate(() => (document.body ? document.body.innerText : "")).catch(() => "");
+        where.push(`${brief(p.url())} :: ${text.slice(0, 200).replace(/\s+/g, " ")}`);
+      }
+      flow(`${name} (did not complete)`, false, { error: String(e && e.message ? e.message : e).slice(-1500), where: where.slice(-4) });
       return undefined;
     }
   };
@@ -1299,13 +1594,16 @@ async function journeyReauth() {
     await run("11", "11 OVERRIDE", () => journeyOverride(ben));
     await run("13", "13 PRODUCT_LOGIN", () => journeyProductLogin(ben));
   }
+  await run("14", "14 DIRECT", journeyDirect);
   rp = await run("5", "5 FUTURE", journeyFuture);
   await run("6", "6 TRIAL", journeyTrial);
   await run("10", "10 PAID", journeyPaid);
+  // After 10: Cara holds all four products in Trial Company.
+  await run("15", "15 CROSS-ORG", journeyCrossOrg);
   await run("7", "7 SWITCH", journeySwitch);
-  await run("7", "7 SWITCH (Easy Project, Easy Help Desk)", journeySwitchProducts);
+  await run("7", "7 SWITCH (EasyBook, Easy Project, Easy Help Desk)", journeySwitchProducts);
   await run("8", "8 LOGOUT", journeyLogout);
-  await run("8", "8 LOGOUT (Easy Project, Easy Help Desk)", journeyLogoutProducts);
+  await run("8", "8 LOGOUT (EasyBook, Easy Project, Easy Help Desk)", journeyLogoutProducts);
   await run("9", "9 REAUTH", journeyReauth);
   // Last: it suspends Ben.
   await run("12", "12 REMOVED", journeyRemoved);

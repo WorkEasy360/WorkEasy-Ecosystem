@@ -170,11 +170,18 @@ def authorize(request: HttpRequest) -> HttpResponse:
                 "No authenticated Workeasy360 session.",
             )
 
+        # The request itself keeps what the product sent: an implied
+        # organization belongs to this person only, so a request parked for
+        # the access chooser never carries it to whoever might resume it next
+        # ("Use another Workeasy360 account") - they get their own.
+        organization_id = authorization.organization_for(
+            user_id=user.pk, named=parsed.organization_id
+        )
         subject = authorization.resolve_subject(
             user_id=user.pk,
-            organization_id=parsed.organization_id,
+            organization_id=organization_id,
             aal=_session_aal(request),
-            facts=_session_facts(request, parsed.organization_id),
+            facts=_session_facts(request, organization_id),
         )
         authorization.require_entitlement(subject, parsed.integration.product_code)
         authorization.require_seat(subject, parsed.integration.product_code)
@@ -219,7 +226,12 @@ def authorize(request: HttpRequest) -> HttpResponse:
             return _park_and_redirect(parsed, exc)
         return _redirect_error(resolution, exc)
 
-    _granted_log(parsed, subject.organization_id, path="silent")
+    _granted_log(
+        parsed,
+        subject.organization_id,
+        path="silent",
+        source="named" if parsed.organization_id else "implied",
+    )
     metrics.increment("ecosystem_authorizations_total", result="granted")
     return HttpResponseRedirect(
         _with_query(granted.redirect_uri, {"code": granted.code, "state": granted.state})
@@ -294,11 +306,21 @@ def resume(request: HttpRequest) -> HttpResponse:
         )
 
     organization_id = pending_request.organization_id
+    source = "named"
     if organization_id is None:
         raw = request.GET.get("organization_id") or ""
         try:
             organization_id = UUID(raw)
+            source = "chosen"
         except ValueError:
+            organization_id = None
+            source = "implied"
+        # Nothing chosen at the chooser: the person's only organization, if
+        # they have exactly one (the same rule ``authorize`` applies).
+        organization_id = authorization.organization_for(
+            user_id=user.pk, named=organization_id
+        )
+        if organization_id is None:
             # The chooser did not supply one either. Re-park under a fresh
             # token rather than fail to the product - the user is signed in
             # and the only missing piece is which organization, which the
@@ -319,11 +341,32 @@ def resume(request: HttpRequest) -> HttpResponse:
             subject, pending_request.integration.product_code
         )
         authorization.require_seat(subject, pending_request.integration.product_code)
+        if parked.user_id is None and parked.signed_in_before_parking(
+            _session_authenticated_at(request)
+        ):
+            # Parked for sign-in or for the organization chooser by a person
+            # who was ALREADY signed in: nothing was typed for this flow, so
+            # their preference applies exactly as at ``authorize`` (step 10,
+            # after every check). Without this a resume link opened in a
+            # signed-in browser, or an organization chosen by someone set to
+            # "Ask me each time", completed with no question.
+            decision, doors = sign_in.decision_at_authorize(
+                user.pk, pending_request.integration
+            )
+            if not doors.sso_available:
+                raise protocol.OAuthError(
+                    protocol.UNAUTHORIZED_CLIENT,
+                    "This product is not ready for Workeasy360 sign-in.",
+                )
+            if not decision.silent:
+                # Parked as the product sent it: a chosen or implied
+                # organization is this person's, not the request's.
+                return _park_for_choice(pending_request, user.pk)
         granted = authorization.issue_code(pending_request, subject)
     except protocol.OAuthError as exc:
         return _redirect_pending_error(pending_request, exc)
 
-    _granted_log(pending_request, subject.organization_id, path="resumed")
+    _granted_log(pending_request, subject.organization_id, path="resumed", source=source)
     metrics.increment("ecosystem_authorizations_total", result="granted")
     return HttpResponseRedirect(
         _with_query(granted.redirect_uri, {"code": granted.code, "state": granted.state})
@@ -379,14 +422,20 @@ def _to_chooser(token: str) -> HttpResponse:
     )
 
 
-def _granted_log(request_obj: Any, organization_id: Any, *, path: str) -> None:
+def _granted_log(
+    request_obj: Any, organization_id: Any, *, path: str, source: str
+) -> None:
     """Observability (design section 9): which product, which organization,
-    and how - never the code, the state, the nonce or any claim."""
+    and how - never the code, the state, the nonce or any claim. ``source``
+    is where the organization came from: ``named`` by the product (the
+    launcher), ``chosen`` at the organization chooser, or ``implied`` - the
+    person's only organization (ADR-044 item 16)."""
     logger.info(
         "ecosystem.sso.succeeded",
         product_code=request_obj.integration.product_code,
         organization_id=str(organization_id),
         path=path,
+        organization_source=source,
     )
 
 

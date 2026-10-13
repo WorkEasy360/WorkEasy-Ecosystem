@@ -133,6 +133,25 @@ def resolve_by_organization_id(
     return _resolve(user_id, id=organization_id)
 
 
+def sole_organization_id(*, user_id: UUID) -> UUID | None:
+    """The organization a product sign-in means when the product named none:
+    this user's only organization, or None when they belong to several (or
+    none) - those are asked, never guessed (ADR-044 item 16).
+
+    Read from the chooser projection - exactly the list the organization
+    chooser would offer. It grants nothing: the caller resolves the answer
+    through :func:`resolve_by_organization_id` like any named organization,
+    so membership, organization status and access policy are still checked
+    against ``Membership``.
+    """
+    from workeasy360.platform.organizations.selectors import organizations_for_user
+
+    page = organizations_for_user(user_id, limit=1)
+    if page.has_more or len(page.items) != 1:
+        return None
+    return UUID(page.items[0]["organization_id"])
+
+
 class DatabaseTenantResolver:
     """Resolves (user, org slug) to a full tenant resolution."""
 

@@ -77,7 +77,11 @@ def chooser_facts(*, token: str, user_id: Any) -> ChooserFacts | None:
     return ChooserFacts(
         product_code=integration.product_code,
         display_name=manifest.display_name or integration.product_code,
-        organization_id=parked.request.organization_id,
+        # What the product named, else this person's only organization - shown
+        # to them, never stored on the request (ADR-044 item 16).
+        organization_id=authorization.organization_for(
+            user_id=user_id, named=parked.request.organization_id
+        ),
         product_login_available=offered.product_login_available,
         override=overrides.get(integration.product_code, SignInPreference.INHERIT),
     )

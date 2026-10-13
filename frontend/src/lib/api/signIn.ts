@@ -57,7 +57,7 @@ export function saveSignInPreferences(changes: SignInPreferenceChanges): Promise
   return apiFetch("/api/v1/auth/sign-in-preferences", { method: "PUT", body: JSON.stringify(changes) });
 }
 
-/** "Reset all to default": the default back to "ask", every override gone. */
+/** "Reset all to default": the platform default (Automatic) again, every override gone. */
 export function resetSignInPreferences(): Promise<SignInPreferences> {
   return apiFetch("/api/v1/auth/sign-in-preferences", { method: "DELETE" });
 }

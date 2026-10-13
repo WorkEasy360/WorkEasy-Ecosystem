@@ -31,10 +31,14 @@ M = ProductSignInMode
 # --- the resolution rule -----------------------------------------------------------------------------
 
 
-def test_a_person_who_never_chose_is_asked():
-    assert DEFAULT_PREFERENCE is P.ASK
-    assert stored_preference(None, None) is P.ASK
-    assert stored_preference(None, P.INHERIT) is P.ASK
+def test_a_person_who_never_chose_is_signed_in_automatically():
+    # docs/universal-sso/one-login.md section 1: the recommended experience.
+    assert DEFAULT_PREFERENCE is P.AUTO_SSO
+    assert stored_preference(None, None) is P.AUTO_SSO
+    assert stored_preference(None, P.INHERIT) is P.AUTO_SSO
+    # ...which never overrides a product that cannot take it.
+    not_ready = ProductDoors(mode=M.SSO_ONLY, sso_ready=False, has_product_login=False)
+    assert resolve(not_ready, default=None, override=None).effective is P.PRODUCT_LOGIN
 
 
 def test_an_override_beats_the_default_and_inherit_follows_it():

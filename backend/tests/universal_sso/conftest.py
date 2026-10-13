@@ -3,9 +3,10 @@
 Everything here registers products and people through the same services
 production uses - the registry, the sole entitlement writer, the real login
 endpoint where a password matters - so the suites below exercise states the
-system can actually reach. ``signed_in(..., sign_in_preference=None)`` is the
-platform default ("ask me each time"); the older OIDC suites pass
-``auto_sso`` (see the root ``signed_in`` fixture).
+system can actually reach. ``signed_in(..., sign_in_preference=None)`` stores
+nothing, so the platform default applies (Automatic since the one-login brief,
+docs/universal-sso/one-login.md); the suites that need the access chooser pass
+``"ask"`` (see the root ``signed_in`` fixture).
 """
 
 from __future__ import annotations

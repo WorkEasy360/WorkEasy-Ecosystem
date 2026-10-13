@@ -279,8 +279,8 @@ def remember_choice(
 def reset_preferences(
     user_id: Any, *, ip_prefix: str = "", device_label: str = ""
 ) -> bool:
-    """ "Reset all to default": the default back to *ask*, every override
-    gone. Returns whether anything was stored."""
+    """ "Reset all to default": the platform default (Automatic) again, every
+    override gone. Returns whether anything was stored."""
     from workeasy360.platform.ecosystem.models import UserSignInPreference
 
     deleted, _ = UserSignInPreference.objects.filter(user_id=user_id).delete()

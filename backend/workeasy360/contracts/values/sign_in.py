@@ -21,10 +21,13 @@ from typing import Final
 
 from workeasy360.contracts.enums import ProductSignInMode, SignInPreference
 
-#: The preference of a person who never chose one. "Ask me each time" keeps a
-#: person in control until they decide otherwise (the brief's recommended
-#: default; no product requirement justifies another).
-DEFAULT_PREFERENCE: Final = SignInPreference.ASK
+#: The preference of a person who never chose one. Automatic: click Open (or
+#: type the product's address) and the product opens with the Workeasy360
+#: session - the "one login for all products" brief's recommended experience
+#: (docs/universal-sso/one-login.md section 1). It only decides *how*: every
+#: access check has already passed, and a person can still choose "Ask me each
+#: time" or the product's own sign-in.
+DEFAULT_PREFERENCE: Final = SignInPreference.AUTO_SSO
 
 #: What a person may store as their default for every product.
 DEFAULT_CHOICES: Final[tuple[SignInPreference, ...]] = (

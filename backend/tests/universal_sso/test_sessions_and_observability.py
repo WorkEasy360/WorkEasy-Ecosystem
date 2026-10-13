@@ -88,7 +88,7 @@ def test_the_sso_lifecycle_is_observable_and_leaks_nothing(
 ):
     crm = sso_product("crm", mode="sso_optional")
     org = entitled_org("crm")
-    signed_in(org["user"], sign_in_preference=None)
+    signed_in(org["user"], sign_in_preference="ask")
     with caplog.at_level("DEBUG"):
         verifier, query = authorize_query(
             crm,

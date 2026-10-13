@@ -528,15 +528,22 @@ def test_an_unauthenticated_user_is_parked_at_the_platform_login_page(
     assert "resume" in parse_qs(location.query)
 
 
-def test_a_signed_in_user_with_no_organization_named_is_parked_at_the_chooser(
-    client, signing_key, register_product, entitled_org, signed_in, settings
+def test_a_signed_in_user_in_several_organizations_with_none_named_is_parked_at_the_chooser(
+    client,
+    signing_key,
+    register_product,
+    entitled_org,
+    organization_factory,
+    signed_in,
+    settings,
 ):
-    """Deliberately not "pick the user's only organization": an implicit
-    choice is one the user did not make and cannot see, and it silently
-    changes behaviour the day they join a second organization. The browser
-    goes to the platform's own organization chooser, not to the product."""
+    """Someone in more than one organization is asked, never guessed for:
+    the browser goes to the platform's own organization chooser, not to the
+    product. (Someone with exactly one organization is not asked a question
+    with one answer - ADR-044 item 16, tests/universal_sso/test_one_login_guards.py.)"""
     registration = register_product("crm")
     org = entitled_org("crm")
+    organization_factory(owner=org["user"])
     signed_in(org["user"])
 
     params = _authorize_params(registration, org)

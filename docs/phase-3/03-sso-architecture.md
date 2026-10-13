@@ -94,10 +94,15 @@ display handle: human-chosen, visible in URLs, changeable in principle. Using
 it as security identity would make the tenant a product can name depend on a
 string a customer picked (P-6).
 
-**There is no "pick their only organization" fallback.** An implicit choice is
-one the user did not make and cannot see, and it silently changes behaviour
-the day they join a second organization. Absent, the endpoint returns
-`organization_required`.
+**Superseded in part (ADR-044 item 16, 2026-10-13).** This section used to
+say there was no "pick their only organization" fallback. There now is one,
+narrowly: a request that names no organization, from a person who has exactly
+one, is for that organization. That is what a product opened by typing its
+address sends, and the person's only organization is then checked exactly like
+a named one. Someone in several organizations is still asked
+(`organization_required`, the organization chooser), never guessed for. Joining
+a second organization turns the implicit answer into a visible question, not
+into a different silent one. The launcher always names the organization.
 
 ## 4. What the code is bound to, and why
 

@@ -244,6 +244,43 @@ the `kid` stops resolving and you reject the token.
   and `interaction_required` are new ([04 §7](04-oidc-contract.md)); map each to
   a message.
 
+## 6b. Someone opens you directly (SSO-only products)
+
+A person signed in to Workeasy360 who types your address must arrive signed
+in, without your sign-in page and without a password
+(`docs/universal-sso/one-login.md`). When your product is **SSO-only**:
+
+1. **Start, don't ask.** A page navigation to anything that needs a
+   signed-in person, from a browser with no session of yours, goes straight to
+   your own `/api/auth/workeasy360/start?next=<that page>` (no organization
+   hint). Workeasy360 completes it silently when its own session exists and
+   the person's preference is Automatic (the default), asks first when it is
+   "Ask me each time", and shows its central sign-in when there is no
+   Workeasy360 session. With no hint it uses the person's only organization,
+   or asks someone who has several which one. The ID token's
+   `organization_id` is whichever was chosen; bind your session to it. You
+   never see a password.
+2. **Never start by yourself** (show your sign-in page, with
+   "Continue with Workeasy360", instead):
+   - on your sign-in page itself, whatever its query - including after a
+     refusal (`?sso_error=`);
+   - after the person signed out of you in this browser: both of your
+     sign-outs leave a marker (preferably a session cookie, so every tab and a
+     server-side check see it; at most one browser session) that suppresses
+     automatic starts until the person signs in to you again, so a sign-out
+     never ends in a silent sign-in. A successful sign-in clears it;
+   - when this browser already started automatically less than 60 seconds
+     ago and still has no session (the loop guard: a dropped cookie, a
+     failure not reported as `sso_error`).
+3. **A session whose access ended keeps its explanation.** Automatic start is
+   only for "no session at all"; never replace a session silently.
+4. **API calls are never redirected.** They answer 401 as before; only a page
+   navigation (or your single-page app's route guard) starts sign-in.
+5. `next` stays a validated same-site path (§4).
+6. **Not SSO-only** (your own password sign-in is on too): unchanged. Your
+   sign-in page offers both, because you cannot know which one the person
+   wants.
+
 ## 7. Check entitlement
 
 ```

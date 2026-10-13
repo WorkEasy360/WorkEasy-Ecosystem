@@ -396,6 +396,14 @@ class UserOrganizationAccess(models.Model):
     wrongly *appear* to a user; it cannot make an organization wrongly
     *act upon* for them, because nothing reads this table on that path.
 
+    One read here does steer a sign-in (ADR-044 item 16): a product sign-in
+    that names no organization is for the person's only organization, and
+    "only" is counted here (``resolver.sole_organization_id``). That picks
+    which organization is *checked*, never what is granted - the answer is
+    then resolved against ``Membership`` exactly like a named organization.
+    A missing row can at worst choose among the person's real memberships
+    without asking; the drift checker reports missing rows.
+
     **Why not a ``TenantScopedModel``.** The one query this table exists to
     answer - "every organization for user X" - is a cross-tenant read by
     definition. RLS keyed on ``organization_id`` (Layer 3) would force this

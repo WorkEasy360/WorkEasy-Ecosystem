@@ -153,12 +153,14 @@ def test_a_full_browser_shaped_resume_round_trip(
 
 
 def test_no_organization_named_parks_at_the_chooser_then_resumes(
-    client, signing_key, register_product, entitled_org, signed_in
+    client, signing_key, register_product, entitled_org, organization_factory, signed_in
 ):
-    """A request with no organization at all: signed in, still parked - at
-    the chooser, not the product - then resumed with the user's choice."""
+    """A request with no organization at all, from someone in several
+    organizations: signed in, still parked - at the chooser, not the
+    product - then resumed with the user's choice."""
     registration = register_product("crm")
     org = entitled_org("crm")
+    organization_factory(owner=org["user"])
     signed_in(org["user"])
 
     params = _authorize_params(registration)  # no organization
@@ -175,13 +177,15 @@ def test_no_organization_named_parks_at_the_chooser_then_resumes(
 
 
 def test_resuming_with_no_organization_choice_re_parks_at_the_chooser(
-    client, signing_key, register_product, entitled_org, signed_in
+    client, signing_key, register_product, entitled_org, organization_factory, signed_in
 ):
     """Resume reached with still no organization decided (e.g. the chooser
-    page was reloaded): re-parked under a fresh token, not failed back to
-    the product - the user is signed in, only the choice is missing."""
+    page was reloaded) by someone in several organizations: re-parked under
+    a fresh token, not failed back to the product - the user is signed in,
+    only the choice is missing."""
     registration = register_product("crm")
     org = entitled_org("crm")
+    organization_factory(owner=org["user"])
     signed_in(org["user"])
 
     parked = client.get(AUTHORIZE, _authorize_params(registration))

@@ -24,14 +24,32 @@ def _codes(registration):
     ).count()
 
 
-def test_a_person_who_never_chose_is_asked_before_anything_is_minted(
+def test_a_person_who_never_chose_is_signed_in_with_no_question(
+    client, signing_key, sso_product, entitled_org, signed_in
+):
+    """One login for all products: the default is Automatic, so a product
+    opened (or typed) by a person who never chose completes silently with the
+    Workeasy360 session - every access check still ran first."""
+    from workeasy360.platform.ecosystem.models import UserSignInPreference
+
+    crm = sso_product("crm")
+    org = entitled_org("crm")
+    signed_in(org["user"], sign_in_preference=None)
+    assert not UserSignInPreference.objects.filter(user=org["user"]).exists()
+    response = _authorize(client, crm, org["organization_id"])
+    assert response["Location"].startswith(crm["redirect_uri"] + "?")
+    assert query_of(response)["code"][0]
+    assert _codes(crm) == 1
+
+
+def test_a_person_who_chose_ask_is_asked_before_anything_is_minted(
     client, signing_key, sso_product, entitled_org, signed_in
 ):
     from workeasy360.platform.ecosystem.models import PendingAuthorization
 
     crm = sso_product("crm")
     org = entitled_org("crm")
-    signed_in(org["user"], sign_in_preference=None)
+    signed_in(org["user"], sign_in_preference="ask")
     response = _authorize(client, crm, org["organization_id"])
     assert response.status_code == 302
     assert path_of(response) == "/product-access"
@@ -95,7 +113,7 @@ def test_a_product_can_ask_to_confirm_the_account_even_for_automatic_sign_in(
 
 
 def test_prompt_none_never_shows_a_page(
-    client, signing_key, sso_product, entitled_org, signed_in, prefer
+    client, signing_key, sso_product, entitled_org, second_org_for, signed_in, prefer
 ):
     crm = sso_product("crm")
     org = entitled_org("crm")
@@ -106,7 +124,9 @@ def test_prompt_none_never_shows_a_page(
     assert query_of(response)["error"] == [protocol.INTERACTION_REQUIRED]
     assert query_of(response)["state"] == ["client-state"]
     assert _codes(crm) == 0
-    # An organization that still has to be chosen is interaction too.
+    # An organization that still has to be chosen (several, none named) is
+    # interaction too.
+    second_org_for(org["user"], "crm")
     response = _authorize(client, crm, None, prompt="none")
     assert query_of(response)["error"] == [protocol.INTERACTION_REQUIRED]
     # Automatic: silent, as asked.

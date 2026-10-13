@@ -403,6 +403,26 @@ class ResolvedSubject:
         )
 
 
+def organization_for(*, user_id: UUID, named: UUID | None) -> UUID | None:
+    """Which organization a product sign-in is for.
+
+    The one the request names (the launcher always names the organization
+    the person picked), else the person's **only** organization - a product
+    opened by typing its address has nothing to name, and asking someone
+    with one organization to pick it is a question with one answer (the
+    one-login brief, ADR-044 item 16). Someone with several organizations
+    is asked, never guessed for: joining a second organization turns the
+    implicit answer into a visible question, not into a different silent
+    one. Whatever this returns is then resolved and checked exactly like a
+    named organization (``resolve_subject``, entitlement, seat).
+    """
+    if named is not None:
+        return named
+    from workeasy360.platform.organizations.resolver import sole_organization_id
+
+    return sole_organization_id(user_id=user_id)
+
+
 def resolve_subject(
     *,
     user_id: UUID,
@@ -423,11 +443,9 @@ def resolve_subject(
     from workeasy360.platform.organizations.resolver import resolve_by_organization_id
 
     if organization_id is None:
-        # Deliberately not "pick the user's only organization". An implicit
-        # choice here is a choice the user did not make and cannot see, and
-        # the moment they join a second organization the behaviour silently
-        # changes. The launcher knows which organization the user selected;
-        # it passes it (docs/phase-3/03-sso-architecture.md section 5).
+        # Never a guess here: the caller decides which organization a request
+        # without one means (``organization_for``) - and when it cannot, the
+        # person is asked at the organization chooser.
         raise protocol.OAuthError(
             protocol.ORGANIZATION_REQUIRED,
             "An organization must be specified for this authorization.",
@@ -729,6 +747,8 @@ class ParkedRequest:
     awaiting_choice: bool
     user_id: UUID | None
     authenticated_after: Any
+    #: When it was parked (its expiry less the parking lifetime).
+    parked_at: Any = None
 
     def bound_to(self, user_id: Any) -> bool:
         """Whether ``user_id`` may act on it: anyone, for a row parked for
@@ -743,6 +763,17 @@ class ParkedRequest:
         if authenticated_at is None:
             return False
         return authenticated_at >= self.authenticated_after.timestamp()
+
+    def signed_in_before_parking(self, authenticated_at: float | None) -> bool:
+        """Whether the session resuming it was already signed in when it was
+        parked - so nothing was typed for this flow. An unknown sign-in time
+        counts as already signed in (the cautious answer: the person's
+        preference is then applied)."""
+        if self.parked_at is None:
+            return False
+        if authenticated_at is None:
+            return True
+        return authenticated_at < self.parked_at.timestamp()
 
 
 def find_pending(*, token: str) -> ParkedRequest | None:
@@ -778,6 +809,8 @@ def find_pending(*, token: str) -> ParkedRequest | None:
         awaiting_choice=row.awaiting_choice,
         user_id=row.user_id,
         authenticated_after=row.authenticated_after,
+        parked_at=row.expires_at
+        - timedelta(seconds=int(settings.OIDC_PENDING_AUTHORIZATION_TTL_S)),
     )
 
 

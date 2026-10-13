@@ -30,7 +30,7 @@ type Load = { status: "loading" } | { status: "error"; signedOut: boolean } | { 
  */
 export function SignInPreferencesScreen() {
   const [load, setLoad] = useState<Load>({ status: "loading" });
-  const [draftDefault, setDraftDefault] = useState<EffectiveSignIn>("ask");
+  const [draftDefault, setDraftDefault] = useState<EffectiveSignIn>("auto_sso");
   const [draftOverrides, setDraftOverrides] = useState<Record<string, SignInPreferenceValue>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
@@ -101,7 +101,7 @@ export function SignInPreferencesScreen() {
     setMessage(null);
     try {
       apply(await resetSignInPreferences());
-      setMessage({ tone: "ok", text: "Reset. Workeasy360 will ask you each time, for every product." });
+      setMessage({ tone: "ok", text: "Reset. Workeasy360 will sign you in to every product automatically." });
     } catch {
       setMessage({ tone: "error", text: "Couldn't reset your sign-in preferences. Try again in a moment." });
     } finally {
@@ -195,7 +195,7 @@ function DefaultOption({
       <label htmlFor={id} className={styles.optionText}>
         <span className={styles.optionLabel}>
           {copy.label}
-          {value === "ask" && <span className={styles.recommended}> (recommended)</span>}
+          {value === "auto_sso" && <span className={styles.recommended}> (recommended)</span>}
         </span>
         <span id={hintId} className={styles.optionHint}>
           {copy.hint}

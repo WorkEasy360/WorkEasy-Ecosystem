@@ -135,7 +135,9 @@ def crm_env(seed: dict | None = None) -> dict[str, str]:
         CSRF_TRUSTED_ORIGINS="http://localhost:4022",
         ALLOWED_HOSTS="localhost,127.0.0.1",
         AUTO_LOGIN_ENABLED="0",
-        WORKEASY360_SSO_ONLY="0",
+        # Pass 1 keeps Easy CRM's own password sign-in on (sso_optional: journeys 4 and 13); pass 2 of
+        # journey 14 restarts it SSO-only, production's mode (README).
+        WORKEASY360_SSO_ONLY=os.environ.get("USSO_CRM_SSO_ONLY", "0"),
         WORKEASY360_ISSUER="http://127.0.0.1:8021",
         WORKEASY360_REDIRECT_URI="http://localhost:4022/api/auth/callback/workeasy360",
         WORKEASY360_PRIVATE_KEY_FILE=str(WORK / "crm.key"),

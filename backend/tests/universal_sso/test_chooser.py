@@ -23,13 +23,13 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def asked(client, signing_key, sso_product, entitled_org, signed_in):
-    """A signed-in person (default: ask) whose product sign-in is parked at
+    """A signed-in person who chose "ask" whose product sign-in is parked at
     the chooser. ``mode`` is the product's sign-in mode."""
 
     def make(mode: str = "sso_optional", code: str = "crm"):
         product = sso_product(code, mode=mode)
         org = entitled_org(code)
-        signed_in(org["user"], sign_in_preference=None)
+        signed_in(org["user"], sign_in_preference="ask")
         verifier, query = authorize_query(product, org["organization_id"])
         response = client.get(AUTHORIZE, query)
         assert path_of(response) == "/product-access"
@@ -99,8 +99,11 @@ def test_continuing_releases_the_request_to_resume_which_rechecks_and_issues_the
     )
     claims = reference.verify_id_token(tokens["id_token"], expected_nonce="client-nonce")
     assert claims["sub"] == str(flow["org"]["user"].id)
-    # Not remembered: the next sign-in asks again.
-    assert not UserSignInPreference.objects.exists()
+    # Not remembered: the next sign-in asks again (only the person's own "ask"
+    # default is stored).
+    assert list(UserSignInPreference.objects.values_list("product_code", "mode")) == [
+        ("", "ask")
+    ]
 
 
 def test_remembering_continue_makes_this_product_automatic_and_only_this_one(
@@ -111,7 +114,11 @@ def test_remembering_continue_makes_this_product_automatic_and_only_this_one(
 
     flow = asked()
     _choose(client, flow["token"], "workeasy360", remember=True)
-    rows = list(UserSignInPreference.objects.values_list("product_code", "mode"))
+    rows = list(
+        UserSignInPreference.objects.exclude(product_code="").values_list(
+            "product_code", "mode"
+        )
+    )
     assert rows == [("crm", "auto_sso")]
     assert AccountEvent.objects.filter(
         user=flow["org"]["user"],
@@ -133,9 +140,11 @@ def test_choosing_the_products_own_sign_in_goes_to_its_registered_page(client, a
     answered = _choose(client, flow["token"], "product", remember=True)
     assert answered.json()["redirect_url"] == LOGIN_URL
     assert PendingAuthorization.objects.get().consumed_at is not None  # spent
-    assert list(UserSignInPreference.objects.values_list("product_code", "mode")) == [
-        ("crm", "product_login")
-    ]
+    assert list(
+        UserSignInPreference.objects.exclude(product_code="").values_list(
+            "product_code", "mode"
+        )
+    ) == [("crm", "product_login")]
     # The spent request can no longer be resumed.
     resumed = client.get(f"/api/v1/integrations/oauth/resume?resume={flow['token']}")
     assert "resume_invalid" in resumed["Location"]
@@ -280,9 +289,10 @@ def test_using_another_account_signs_this_one_out_and_the_next_person_gets_their
     assert claims["sub"] != str(first.id)
 
 
-def test_an_answer_needs_the_csrf_token(signing_key, sso_product, entitled_org):
+def test_an_answer_needs_the_csrf_token(signing_key, sso_product, entitled_org, prefer):
     product = sso_product("crm", mode="sso_optional")
     org = entitled_org("crm")
+    prefer(org["user"], "ask")
     strict = Client(enforce_csrf_checks=True)
     strict.force_login(org["user"])
     strict.get("/api/v1/auth/session")
