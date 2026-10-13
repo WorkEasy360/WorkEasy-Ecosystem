@@ -95,7 +95,12 @@ function ProductGlyph({ app }: { app: AppDirectoryEntry }) {
 }
 
 function when(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return new Date(iso).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 export function AppCard({
