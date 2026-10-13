@@ -93,24 +93,39 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-      - run: pip install detect-secrets
+      # Pinned: .secrets.baseline records the version and plugin set it was
+      # generated with, and is compared against a scan by the same version.
+      - run: pip install detect-secrets==1.5.0
       - name: Scan working tree
+        # The full scan still runs; it is compared against .secrets.baseline,
+        # whose every finding was audited and marked a false positive
+        # (is_secret: false). Re-scanning with --baseline keeps those labels
+        # and adds anything new unlabelled, so only a NEW finding (or one
+        # audited as real) fails the build. To accept a reviewed false
+        # positive, re-run this scan locally on a Linux checkout, then
+        # `detect-secrets audit .secrets.baseline`, and commit the baseline.
         run: |
           detect-secrets scan --all-files \
             --exclude-files '\.venv/.*' \
             --exclude-files 'package-lock\.json' \
-            > .secrets.scan.json
+            --baseline .secrets.baseline
           python - <<'PY'
           import json, sys
-          with open(".secrets.scan.json") as fh:
+          with open(".secrets.baseline") as fh:
               report = json.load(fh)
-          findings = report.get("results", {})
+          findings = [
+              (path, item)
+              for path, items in report.get("results", {}).items()
+              for item in items
+              if item.get("is_secret") is not False
+          ]
           if findings:
-              for path, items in findings.items():
-                  for item in items:
-                      print(f"{path}:{item.get('line_number')} {item.get('type')}")
-              sys.exit("Potential secrets detected. Rotate anything real.")
-          print("No secrets detected.")
+              for path, item in findings:
+                  print(f"{path}:{item.get('line_number')} {item.get('type')}")
+              sys.exit(
+                  "Potential secrets not in the audited baseline. Rotate anything real."
+              )
+          print("No new secrets detected.")
           PY
       - name: gitleaks (history and working tree)
         # Phase 12. The allowlist in .gitleaks.toml is triaged entry by entry

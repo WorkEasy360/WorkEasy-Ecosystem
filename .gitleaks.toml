@@ -20,6 +20,10 @@ regexes = [
   '''<secret>''',
   # Environment-variable NAME prefixes, e.g. W360_OIDC_SIGNING_KEY_.
   '''W360_[A-Z0-9_]+_["']''',
+  # .secrets.baseline (detect-secrets): the SHA-1 digest of each audited false
+  # positive, never the value itself. Only the digest field is exempt; the
+  # rest of the file is still scanned.
+  '''hashed_secret": "[0-9a-f]{40}"''',
 ]
 paths = [
   # Vendored and generated trees (never shipped; excluded from images).
