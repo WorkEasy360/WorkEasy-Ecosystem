@@ -377,8 +377,18 @@ jobs:
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.70.0               image --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$image"
           done
       - name: Caddyfile and alert rules are valid
+        # The Caddyfile's site addresses are the portal origins (ADR-043); an
+        # unset {$VAR} expands to nothing and leaves a site block without an
+        # address, so each one the edge requires is set to a placeholder.
         run: |
-          docker run --rm -e W360_CANONICAL_HOST=app.example.net -e W360_TLS_ISSUER=internal             -v "$PWD/deploy/edge/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm -e W360_TLS_ISSUER=internal \
+            -e W360_ADMIN_ORIGIN=https://admin.example.net \
+            -e W360_PARTNER_ORIGIN=https://partner.example.net \
+            -e W360_APP_ORIGIN=https://app.example.net \
+            -e W360_AUTH_ORIGIN=https://auth.example.net \
+            -e W360_API_ORIGIN=https://api.example.net \
+            -e W360_EDGE_UPSTREAM_HOST=api.example.net \
+            -v "$PWD/deploy/edge/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           docker run --rm --entrypoint promtool -v "$PWD/deploy/observability:/w:ro"             prom/prometheus:v3.5.0 check rules /w/alerts.yml
 
   gate:
