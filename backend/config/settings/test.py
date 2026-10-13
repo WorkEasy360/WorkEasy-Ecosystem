@@ -40,7 +40,7 @@ CSRF_COOKIE_SECURE = False
 LOG_LEVEL = env.choice(
     "W360_LOG_LEVEL",
     ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
-    default="WARNING",
+    default="INFO",
 )
 LOG_FORMAT = "console"
 
