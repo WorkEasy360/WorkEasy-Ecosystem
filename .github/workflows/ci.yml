@@ -204,7 +204,46 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Dependency vulnerabilities
-        run: npm audit --audit-level=moderate
+        # The full audit, dev dependencies included, at moderate and above.
+        # One advisory is accepted by ID: GHSA-vfj7-8cjw-p6xm (braces <=
+        # 3.0.3) has no fixed version and reaches only lint tooling
+        # (eslint-config-next -> fast-glob -> micromatch); the image prunes
+        # dev dependencies and production dependencies audit clean
+        # (docs/audit-2026-10, owner decision on PR #1). Any other advisory
+        # still fails the build. Remove the ID once upstream ships a fix.
+        run: |
+          npm audit --json > "$RUNNER_TEMP/npm-audit.json" || true
+          node - "$RUNNER_TEMP/npm-audit.json" <<'JS'
+          const report = JSON.parse(require("fs").readFileSync(process.argv[2], "utf8"));
+          if (report.error || !report.vulnerabilities) {
+            console.error(JSON.stringify(report.error ?? report, null, 2));
+            process.exit(1);
+          }
+          const ACCEPTED = new Set(["GHSA-vfj7-8cjw-p6xm"]);
+          const LEVELS = ["info", "low", "moderate", "high", "critical"];
+          // Advisories are the object entries in `via`; string entries only
+          // point at another vulnerable package.
+          const advisories = new Map();
+          for (const vulnerability of Object.values(report.vulnerabilities)) {
+            for (const via of vulnerability.via) {
+              if (typeof via === "object") advisories.set(via.url, via);
+            }
+          }
+          let failed = false;
+          for (const [url, advisory] of advisories) {
+            if (LEVELS.indexOf(advisory.severity) < LEVELS.indexOf("moderate")) continue;
+            const id = url.split("/").pop();
+            const line = `${id} ${advisory.name} ${advisory.range} (${advisory.severity}): ${advisory.title}`;
+            if (ACCEPTED.has(id)) {
+              console.log(`accepted, still open upstream: ${line}`);
+            } else {
+              console.log(line);
+              failed = true;
+            }
+          }
+          if (failed) process.exit(1);
+          console.log("No unaccepted advisories at moderate or above.");
+          JS
       # The build's own output is a gate. A nonce-based CSP requires every
       # route to be dynamically rendered (frontend/src/app/layout.tsx); a
       # route that slips back into static prerendering ships script tags with
