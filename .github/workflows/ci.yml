@@ -104,10 +104,14 @@ jobs:
         # audited as real) fails the build. To accept a reviewed false
         # positive, re-run this scan locally on a Linux checkout, then
         # `detect-secrets audit .secrets.baseline`, and commit the baseline.
+        # .git/ is git's metadata, not the working tree: FETCH_HEAD records
+        # the commit each run fetched, a new 40-hex value every time, which
+        # no baseline can hold. History is scanned by gitleaks below.
         run: |
           detect-secrets scan --all-files \
             --exclude-files '\.venv/.*' \
             --exclude-files 'package-lock\.json' \
+            --exclude-files '^\.git/' \
             --baseline .secrets.baseline
           python - <<'PY'
           import json, sys
