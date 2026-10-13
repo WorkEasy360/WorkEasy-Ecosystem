@@ -147,8 +147,9 @@ def seed(org_a: uuid.UUID, org_b: uuid.UUID) -> tuple[uuid.UUID, uuid.UUID]:
                     "INSERT INTO identity_user "
                     "(id, password, email, email_original, full_name, status, "
                     " is_staff, is_superuser, failed_login_count, session_epoch, "
-                    " created_at, updated_at) "
-                    "VALUES (%s,'!',%s,%s,'Spike','active',false,false,0,0,now(),now())",
+                    " mfa_failed_attempts, acquisition_source, created_at, updated_at) "
+                    "VALUES (%s,'!',%s,%s,'Spike','active',false,false,0,0,0,'',"
+                    "now(),now())",
                     [user_id, email, email],
                 )
             for org_id, slug, creator in (
@@ -158,8 +159,11 @@ def seed(org_a: uuid.UUID, org_b: uuid.UUID) -> tuple[uuid.UUID, uuid.UUID]:
                 cur.execute(
                     "INSERT INTO organizations_organization "
                     "(id, slug, legal_name, display_name, status, residency_region, "
-                    " shard_key, created_by_id, created_at, updated_at, suspension_reason) "
-                    "VALUES (%s,%s,%s,%s,'active','eu-west-1',%s,%s,now(),now(),'')",
+                    " shard_key, created_by_id, created_at, updated_at, suspension_reason, "
+                    " require_mfa, ip_allowlist_enabled, ip_allowlist, "
+                    " security_policy_version) "
+                    "VALUES (%s,%s,%s,%s,'active','eu-west-1',%s,%s,now(),now(),'',"
+                    "false,false,'[]',1)",
                     [org_id, slug, slug, slug, str(org_id), creator],
                 )
         conn.commit()

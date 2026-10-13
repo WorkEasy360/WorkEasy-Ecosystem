@@ -420,6 +420,13 @@ def _exchange(
 
         sock.settimeout(min(timeouts.read, remaining()))
         response = connection.getresponse()
+        if watchdog.expired:
+            # http.client takes an early EOF inside the header block for the
+            # end of the headers, so a deadline that cut the headers off
+            # returns a partial response here instead of raising.
+            raise EgressFailure(
+                "deadline_exceeded", "The request exceeded its overall time budget."
+            )
 
         chunks: list[bytes] = []
         received = 0

@@ -78,7 +78,10 @@ def test_member_directory_carries_roles_and_last_sign_in(console_org, login):
     assert by_email[org["owner"].email]["roles"][0] == "owner"
     assert by_email[admin["user"].email]["roles"] == ["admin"]
     assert by_email[admin["user"].email]["last_sign_in_at"] is not None
-    searched = login(org["owner"]).get(url(org["slug"], "members"), {"q": "ada"}).json()
+    # Not just "ada": fixture emails are random hex, which can contain it.
+    searched = (
+        login(org["owner"]).get(url(org["slug"], "members"), {"q": "ada admin"}).json()
+    )
     assert [r["email"] for r in searched["results"]] == [admin["user"].email]
 
 

@@ -93,24 +93,43 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-      - run: pip install detect-secrets
+      # Pinned: .secrets.baseline records the version and plugin set it was
+      # generated with, and is compared against a scan by the same version.
+      - run: pip install detect-secrets==1.5.0
       - name: Scan working tree
+        # The full scan still runs; it is compared against .secrets.baseline,
+        # whose every finding was audited and marked a false positive
+        # (is_secret: false). Re-scanning with --baseline keeps those labels
+        # and adds anything new unlabelled, so only a NEW finding (or one
+        # audited as real) fails the build. To accept a reviewed false
+        # positive, re-run this scan locally on a Linux checkout, then
+        # `detect-secrets audit .secrets.baseline`, and commit the baseline.
+        # .git/ is git's metadata, not the working tree: FETCH_HEAD records
+        # the commit each run fetched, a new 40-hex value every time, which
+        # no baseline can hold. History is scanned by gitleaks below.
         run: |
           detect-secrets scan --all-files \
             --exclude-files '\.venv/.*' \
             --exclude-files 'package-lock\.json' \
-            > .secrets.scan.json
+            --exclude-files '^\.git/' \
+            --baseline .secrets.baseline
           python - <<'PY'
           import json, sys
-          with open(".secrets.scan.json") as fh:
+          with open(".secrets.baseline") as fh:
               report = json.load(fh)
-          findings = report.get("results", {})
+          findings = [
+              (path, item)
+              for path, items in report.get("results", {}).items()
+              for item in items
+              if item.get("is_secret") is not False
+          ]
           if findings:
-              for path, items in findings.items():
-                  for item in items:
-                      print(f"{path}:{item.get('line_number')} {item.get('type')}")
-              sys.exit("Potential secrets detected. Rotate anything real.")
-          print("No secrets detected.")
+              for path, item in findings:
+                  print(f"{path}:{item.get('line_number')} {item.get('type')}")
+              sys.exit(
+                  "Potential secrets not in the audited baseline. Rotate anything real."
+              )
+          print("No new secrets detected.")
           PY
       - name: gitleaks (history and working tree)
         # Phase 12. The allowlist in .gitleaks.toml is triaged entry by entry
@@ -185,7 +204,46 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Dependency vulnerabilities
-        run: npm audit --audit-level=moderate
+        # The full audit, dev dependencies included, at moderate and above.
+        # One advisory is accepted by ID: GHSA-vfj7-8cjw-p6xm (braces <=
+        # 3.0.3) has no fixed version and reaches only lint tooling
+        # (eslint-config-next -> fast-glob -> micromatch); the image prunes
+        # dev dependencies and production dependencies audit clean
+        # (docs/audit-2026-10, owner decision on PR #1). Any other advisory
+        # still fails the build. Remove the ID once upstream ships a fix.
+        run: |
+          npm audit --json > "$RUNNER_TEMP/npm-audit.json" || true
+          node - "$RUNNER_TEMP/npm-audit.json" <<'JS'
+          const report = JSON.parse(require("fs").readFileSync(process.argv[2], "utf8"));
+          if (report.error || !report.vulnerabilities) {
+            console.error(JSON.stringify(report.error ?? report, null, 2));
+            process.exit(1);
+          }
+          const ACCEPTED = new Set(["GHSA-vfj7-8cjw-p6xm"]);
+          const LEVELS = ["info", "low", "moderate", "high", "critical"];
+          // Advisories are the object entries in `via`; string entries only
+          // point at another vulnerable package.
+          const advisories = new Map();
+          for (const vulnerability of Object.values(report.vulnerabilities)) {
+            for (const via of vulnerability.via) {
+              if (typeof via === "object") advisories.set(via.url, via);
+            }
+          }
+          let failed = false;
+          for (const [url, advisory] of advisories) {
+            if (LEVELS.indexOf(advisory.severity) < LEVELS.indexOf("moderate")) continue;
+            const id = url.split("/").pop();
+            const line = `${id} ${advisory.name} ${advisory.range} (${advisory.severity}): ${advisory.title}`;
+            if (ACCEPTED.has(id)) {
+              console.log(`accepted, still open upstream: ${line}`);
+            } else {
+              console.log(line);
+              failed = true;
+            }
+          }
+          if (failed) process.exit(1);
+          console.log("No unaccepted advisories at moderate or above.");
+          JS
       # The build's own output is a gate. A nonce-based CSP requires every
       # route to be dynamically rendered (frontend/src/app/layout.tsx); a
       # route that slips back into static prerendering ships script tags with
@@ -358,8 +416,18 @@ jobs:
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.70.0               image --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$image"
           done
       - name: Caddyfile and alert rules are valid
+        # The Caddyfile's site addresses are the portal origins (ADR-043); an
+        # unset {$VAR} expands to nothing and leaves a site block without an
+        # address, so each one the edge requires is set to a placeholder.
         run: |
-          docker run --rm -e W360_CANONICAL_HOST=app.example.net -e W360_TLS_ISSUER=internal             -v "$PWD/deploy/edge/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm -e W360_TLS_ISSUER=internal \
+            -e W360_ADMIN_ORIGIN=https://admin.example.net \
+            -e W360_PARTNER_ORIGIN=https://partner.example.net \
+            -e W360_APP_ORIGIN=https://app.example.net \
+            -e W360_AUTH_ORIGIN=https://auth.example.net \
+            -e W360_API_ORIGIN=https://api.example.net \
+            -e W360_EDGE_UPSTREAM_HOST=api.example.net \
+            -v "$PWD/deploy/edge/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           docker run --rm --entrypoint promtool -v "$PWD/deploy/observability:/w:ro"             prom/prometheus:v3.5.0 check rules /w/alerts.yml
 
   gate:

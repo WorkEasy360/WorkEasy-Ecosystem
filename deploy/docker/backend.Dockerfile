@@ -28,6 +28,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     DJANGO_SETTINGS_MODULE=config.settings.production
 
+# Debian security fixes published after the base image was built (openssl,
+# libssl3t64, libpcre2-8-0 - trivy HIGH, fixed versions available).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/*
+
 # An unprivileged, fixed uid: nothing in the container runs as root, and a
 # fixed id makes volume ownership predictable across rebuilds.
 RUN groupadd --system --gid 10001 w360 \
