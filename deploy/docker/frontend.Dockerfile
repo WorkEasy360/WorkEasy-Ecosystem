@@ -33,6 +33,9 @@ RUN npm run build \
 
 FROM ${NODE_IMAGE}
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+# Debian security fixes published after the base image was built (openssl,
+# libssl3t64, libpcre2-8-0 - trivy HIGH, fixed versions available).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/*
 # The runtime needs node and the app's own node_modules, nothing else. The npm
 # and corepack CLIs bundled with the base image carried every Node.js CVE the
 # Phase 12 trivy scan found (brace-expansion, undici, ip-address, tar), none of
