@@ -370,7 +370,7 @@ describe("the partner portal", () => {
     const PORTAL = `/api/v1/partner/${ID}`;
     const calls = mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
-      "GET /api/v1/partner/portal": [ok({ partners: [{ partner_id: ID, code: "acme", display_name: "Acme Partners", status: "active", role: "admin", is_admin: true, capabilities: ["branding.manage", "domain.manage"] }] })],
+      "GET /api/v1/partner/portal": [ok({ partners: [{ partner_id: ID, code: "acme", display_name: "Acme Partners", status: "active", role: "admin", is_admin: true, capabilities: ["branding.manage", "domain.manage"], permissions: ["platform.partner_branding.view", "platform.partner_branding.manage", "platform.partner_domain.view", "platform.partner_domain.manage", "platform.partner_dashboard.view"] }] })],
       [`GET ${PORTAL}/branding`]: [ok({ brand: null })],
       [`GET ${PORTAL}/domains`]: [ok({ results: [] })],
     });

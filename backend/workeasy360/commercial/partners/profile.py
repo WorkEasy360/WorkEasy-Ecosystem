@@ -44,6 +44,7 @@ BUSINESS_KEYS: Final = (
     "registration_number",
     "tax_number",
     "country",
+    "timezone",
     "address",
 )
 CONTACT_KEYS: Final = ("name", "job_title", "email", "phone", "same_as_primary")
@@ -120,6 +121,7 @@ def _business(raw: dict[str, Any], out: Parsed) -> None:
         ),
         "tax_number": lambda v: inputs.clean_reference(v, field="tax_number"),
         "country": lambda v: inputs.clean_country(v),
+        "timezone": lambda v: inputs.clean_timezone(v),
     }
     for key, clean in cleaners.items():
         if key in raw:
@@ -288,6 +290,7 @@ def profile_view(partner_id: UUID) -> dict[str, Any] | None:
             "registration_number": profile.registration_number if profile else "",
             "tax_number": profile.tax_number if profile else "",
             "country": profile.country if profile else "",
+            "timezone": profile.timezone if profile else "",
             "address": {key: address.get(key, "") for key in ADDRESS_KEYS},
         },
         "contacts": {kind.value: contact(kind.value) for kind in PartnerContactKind},
@@ -335,10 +338,12 @@ def update_profile(
     changes after creation, because commission and payouts are denominated in
     the one and the other is the partner's permanent address in history.
     """
-    from workeasy360.commercial.partners import services
-    from workeasy360.commercial.partners.models import PartnerContact, PartnerProfile
-
     authz.require(ctx, MANAGE)
+    parsed = _parsed_for_save(data, expected_version)
+    return _apply_profile(ctx, partner_id, expected_version, parsed)
+
+
+def _parsed_for_save(data: Any, expected_version: Any) -> Parsed:
     if isinstance(expected_version, bool) or not isinstance(expected_version, int):
         raise PartnerValidationError(
             "expected_version is required: the version of the partner you read.",
@@ -348,6 +353,14 @@ def update_profile(
     parsed.problems.first()
     if not parsed.sections:
         raise PartnerValidationError("Nothing to change.", field="body")
+    return parsed
+
+
+def _apply_profile(
+    ctx: TenantContext, partner_id: UUID, expected_version: int, parsed: Parsed
+) -> dict[str, Any]:
+    from workeasy360.commercial.partners import services
+    from workeasy360.commercial.partners.models import PartnerContact, PartnerProfile
 
     with transaction.atomic():
         partner = services._lock_partner(partner_id, expected_version=expected_version)
@@ -414,4 +427,61 @@ def update_profile(
         )
     view = profile_view(partner_id)
     assert view is not None
+    return view
+
+
+# --- the partner's own view and edit (ADR-045) -----------------------------------
+
+OWN_VIEW: Final = "platform.partner_profile.view"
+OWN_MANAGE: Final = "platform.partner_profile.manage"
+
+#: What a partner may change about itself. The payout section (where money goes)
+#: and the staff notes stay with Workeasy360: a stolen partner session must not be
+#: able to redirect a payout contact, and notes are not the partner's to read.
+OWN_SECTIONS: Final = ("business", "contacts", "support")
+
+
+def _own_partner(ctx: TenantContext, *, permission: str) -> UUID:
+    if ctx.partner_id is None:
+        raise PartnerRecordNotFound("No such partner.")
+    authz.require(ctx, permission)
+    return ctx.partner_id
+
+
+def get_own_profile(ctx: TenantContext) -> dict[str, Any]:
+    """The caller's own partner profile, without anything staff-only."""
+    partner_id = _own_partner(ctx, permission=OWN_VIEW)
+    view = profile_view(partner_id)
+    if view is None:
+        raise PartnerRecordNotFound("No such partner.", partner_id=str(partner_id))
+    view.pop("internal_notes", None)
+    view["payout"] = {"currency": view["payout"]["currency"]}
+    return view
+
+
+@in_scope
+def update_own_profile(
+    ctx: TenantContext, *, expected_version: int, data: Any
+) -> dict[str, Any]:
+    """Change the caller's own business profile and contacts.
+
+    The same parser, version check and audit as the staff command; the only
+    differences are the permission (``platform.partner_profile.manage``), the
+    partner (always the caller's own - never taken from the request) and the
+    sections that may be sent (``OWN_SECTIONS``). The partner must be active.
+    """
+    from workeasy360.commercial.partners.access import require_transacting
+
+    partner_id = _own_partner(ctx, permission=OWN_MANAGE)
+    require_transacting(ctx)
+    body = inputs.mapping(data)
+    refused = sorted(set(body) - set(OWN_SECTIONS))
+    if refused:
+        raise PartnerValidationError(
+            f"{refused[0]} cannot be changed here. Contact Workeasy360.", field=refused[0]
+        )
+    parsed = _parsed_for_save(body, expected_version)
+    view = _apply_profile(ctx, partner_id, expected_version, parsed)
+    view.pop("internal_notes", None)
+    view["payout"] = {"currency": view["payout"]["currency"]}
     return view

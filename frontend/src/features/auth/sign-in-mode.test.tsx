@@ -156,7 +156,7 @@ describe("the sign-in page", () => {
     });
     const { container } = render(<LoginScreen />);
     expect(await screen.findByRole("heading", { name: "Sign in as Administrator" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Change/ })).toHaveAttribute("href", "/login");
+    expect(screen.queryByRole("link", { name: /Change/ })).not.toBeInTheDocument();
     await expectNoViolations(container);
     await signIn();
     await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/admin"));

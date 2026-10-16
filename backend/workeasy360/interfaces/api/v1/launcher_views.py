@@ -36,9 +36,36 @@ def app_directory_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     catalog, not from anything hardcoded here (Task 21/22)."""
     ctx = request.tenant_context  # type: ignore[attr-defined]
     decisions = selectors.app_directory(ctx)
+    decisions = _apply_portal_presentation(ctx, decisions)
     extras = _card_extras(ctx, [d.product_code for d in decisions])
     return JsonResponse(
         {"apps": [_public_dict(d, extras.get(d.product_code)) for d in decisions]}
+    )
+
+
+def _apply_portal_presentation(ctx: Any, decisions: list[Any]) -> list[Any]:
+    """The white-label partner's order and "show in My Products" choice (ADR-045).
+
+    A product this organization holds is never hidden - this decides only which of
+    the products it does not hold are listed, and in what order. A direct customer
+    (or a partner that is not white-label) gets the list untouched."""
+    from workeasy360.commercial.partners import selectors as partner_selectors
+
+    presentation = partner_selectors.portal_presentation_for_organization(
+        ctx.organization_id
+    )
+    if not presentation:
+        return decisions
+    kept = [
+        d
+        for d in decisions
+        if d.entitlement_status
+        or presentation.get(d.product_code, {}).get("show_in_my_products", True)
+    ]
+    return sorted(
+        kept,
+        key=lambda d: presentation.get(d.product_code, {}).get("display_order", 0)
+        or 10**6,
     )
 
 

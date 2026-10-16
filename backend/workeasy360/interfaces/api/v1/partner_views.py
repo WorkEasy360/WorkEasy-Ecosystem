@@ -45,6 +45,14 @@ _int = legacy._int
 _flag = legacy._flag
 
 
+def _owner_name(body: dict[str, Any]) -> str:
+    """The owner's name from the first/last fields the form sends (or a single
+    ``owner_name``). Joined here; validated as text where it is used."""
+    first = str(body.get("owner_first_name") or "").strip()
+    last = str(body.get("owner_last_name") or "").strip()
+    return f"{first} {last}".strip() or str(body.get("owner_name") or "")
+
+
 def _key(request: HttpRequest, body: dict[str, Any]) -> str:
     return legacy._idempotency_key(request, body)
 
@@ -89,6 +97,7 @@ def customers_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
         owner_email=body.get("owner_email"),
         idempotency_key=_key(request, body),
         currency=body.get("currency"),
+        owner_name=_owner_name(body),
     )
     return JsonResponse(
         {

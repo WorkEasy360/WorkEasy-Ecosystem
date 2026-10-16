@@ -514,9 +514,14 @@ def test_only_a_partner_manager_with_a_second_factor_can_invite(
         services.invite_member(
             weak, fx["partner"].id, email="a@example.com", role="admin"
         )
-    with pytest.raises(PermissionDenied):
+    # A partner's own administrator may now invite into *its own* partner
+    # (ADR-045, tests/partner_panel); into any other partner it is a 404.
+    from workeasy360.contracts.errors import PartnerRecordNotFound
+
+    other = partner_factory()
+    with pytest.raises(PartnerRecordNotFound):
         services.invite_member(
-            fx["actor"](), fx["partner"].id, email="a@example.com", role="admin"
+            fx["actor"](), other["partner"].id, email="a@example.com", role="admin"
         )
 
 

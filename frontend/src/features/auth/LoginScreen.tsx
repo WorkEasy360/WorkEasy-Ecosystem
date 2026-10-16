@@ -205,11 +205,6 @@ function SignInCard() {
         <h2 className={styles.cardTitle}>
           {reauthenticating(searchParams) ? "Confirm it's you" : changeable || mode === "admin" ? SIGN_IN_TITLE[mode] : "Sign in"}
         </h2>
-        {changeable && (
-          <Link href="/login" className={styles.change}>
-            Change<span className="w360-visually-hidden"> how you sign in</span>
-          </Link>
-        )}
       </div>
       {mode === "admin" && (
         <p className={styles.note}>

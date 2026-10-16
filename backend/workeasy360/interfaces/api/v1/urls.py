@@ -32,6 +32,7 @@ from workeasy360.interfaces.api.v1 import (
     intelligence_views,
     launcher_views,
     mfa_views,
+    partner_panel_views,
     partner_views,
     payment_views,
     public_site_views,
@@ -1421,6 +1422,142 @@ _partner = [
         "partner/<uuid:partner_id>/domains/<uuid:domain_id>/disable",
         partner_views.domain_disable_view,
         name="partner-domain-disable",
+    ),
+    # --- the partner business panel (ADR-045) ---
+    path(
+        "partner/<uuid:partner_id>/dashboard",
+        partner_panel_views.dashboard_view,
+        name="partner-dashboard",
+    ),
+    path(
+        "partner/<uuid:partner_id>/balance",
+        partner_panel_views.balance_view,
+        name="partner-balance",
+    ),
+    path(
+        "partner/<uuid:partner_id>/features",
+        partner_panel_views.features_view,
+        name="partner-features",
+    ),
+    path(
+        "partner/<uuid:partner_id>/orders",
+        partner_panel_views.orders_view,
+        name="partner-orders",
+    ),
+    path(
+        "partner/<uuid:partner_id>/activity",
+        partner_panel_views.activity_view,
+        name="partner-activity",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/export",
+        partner_panel_views.customers_export_view,
+        name="partner-customers-export",
+    ),
+    path(
+        "partner/<uuid:partner_id>/products",
+        partner_panel_views.products_view,
+        name="partner-products",
+    ),
+    path(
+        "partner/<uuid:partner_id>/products/order",
+        partner_panel_views.product_order_view,
+        name="partner-product-order",
+    ),
+    path(
+        "partner/<uuid:partner_id>/products/<str:product_code>",
+        partner_panel_views.product_setting_view,
+        name="partner-product-setting",
+    ),
+    path(
+        "partner/<uuid:partner_id>/plans",
+        partner_panel_views.plans_view,
+        name="partner-plans",
+    ),
+    path(
+        "partner/<uuid:partner_id>/packages",
+        partner_panel_views.packages_view,
+        name="partner-packages",
+    ),
+    path(
+        "partner/<uuid:partner_id>/currencies",
+        partner_panel_views.currencies_view,
+        name="partner-currencies",
+    ),
+    path(
+        "partner/<uuid:partner_id>/price-book",
+        partner_panel_views.price_book_view,
+        name="partner-price-book",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sub-partners",
+        partner_panel_views.sub_partners_view,
+        name="partner-sub-partners",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sub-partners/options",
+        partner_panel_views.sub_partner_options_view,
+        name="partner-sub-partner-options",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sub-partners/<uuid:child_id>/activate",
+        partner_panel_views.sub_partner_activate_view,
+        name="partner-sub-partner-activate",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sub-partners/<uuid:child_id>/suspend",
+        partner_panel_views.sub_partner_suspend_view,
+        name="partner-sub-partner-suspend",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sub-partners/<uuid:child_id>/resume",
+        partner_panel_views.sub_partner_resume_view,
+        name="partner-sub-partner-resume",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sub-partners/<uuid:child_id>/equipment",
+        partner_panel_views.sub_partner_equipment_view,
+        name="partner-sub-partner-equipment",
+    ),
+    path(
+        "partner/<uuid:partner_id>/affiliates",
+        partner_panel_views.affiliates_view,
+        name="partner-affiliates",
+    ),
+    path(
+        "partner/<uuid:partner_id>/affiliates/conversions",
+        partner_panel_views.conversions_view,
+        name="partner-affiliate-conversions",
+    ),
+    path(
+        "partner/<uuid:partner_id>/members",
+        partner_panel_views.members_view,
+        name="partner-members",
+    ),
+    path(
+        "partner/<uuid:partner_id>/members/<uuid:member_id>",
+        partner_panel_views.member_view,
+        name="partner-member",
+    ),
+    path(
+        "partner/<uuid:partner_id>/members/<uuid:member_id>/resend-setup",
+        partner_panel_views.member_resend_view,
+        name="partner-member-resend",
+    ),
+    path(
+        "partner/<uuid:partner_id>/profile",
+        partner_panel_views.profile_view,
+        name="partner-profile",
+    ),
+    path(
+        "partner/<uuid:partner_id>/authentication",
+        partner_panel_views.authentication_view,
+        name="partner-authentication",
+    ),
+    path(
+        "partner/<uuid:partner_id>/communication",
+        partner_panel_views.communication_view,
+        name="partner-communication",
     ),
 ]
 

@@ -1,28 +1,41 @@
 :root {
-  --w360-bg: #f7f8fa;
+  /* Palette: mint canvas, white cards, deep-navy text, green brand. Brand green
+     is dark enough to carry white labels AND to read as text on the mint canvas
+     (both >= 4.5:1). --w360-accent is the vivid logo green, decorative only. */
+  --w360-bg: #eef7f2;
   --w360-surface: #ffffff;
   --w360-surface-raised: #ffffff;
-  --w360-border: #e2e5eb;
-  --w360-border-strong: #c9ced9;
-  --w360-text: #14171f;
-  --w360-text-muted: #5c6470;
-  --w360-text-faint: #8a92a0;
-  --w360-brand: #4338ca;
-  --w360-brand-hover: #3730a3;
+  --w360-border: #d9e6df;
+  --w360-border-strong: #b4c9bd;
+  --w360-text: #0f1b2d;
+  --w360-text-muted: #475a6b;
+  --w360-text-faint: #64768a;
+  --w360-navy: #0f1b2d;
+  --w360-navy-contrast: #ffffff;
+  --w360-accent: #16c060;
+  --w360-brand: #0a8043;
+  --w360-brand-hover: #07692f;
   --w360-brand-contrast: #ffffff;
-  --w360-focus-ring: #4338ca;
-  --w360-success: #0f7a4c;
-  --w360-success-bg: #e7f6ee;
-  --w360-warning: #92600a;
-  --w360-warning-bg: #fdf3df;
+  /* Call-to-action buttons: the vivid logo green with navy text (7:1). A partner's
+     accent replaces all three together (useBranding.applyAccent). */
+  --w360-cta: #16c060;
+  --w360-cta-hover: #3fd980;
+  --w360-cta-contrast: #0b1b2e;
+  --w360-focus-ring: #0a8043;
+  --w360-success: #0a7a40;
+  --w360-success-bg: #dcf5e7;
+  --w360-warning: #8a5a00;
+  --w360-warning-bg: #fdf0c8;
   --w360-danger: #b3261e;
   --w360-danger-bg: #fbeaea;
-  --w360-neutral-bg: #eef0f4;
+  --w360-info: #2549b8;
+  --w360-info-bg: #e3ebfd;
+  --w360-neutral-bg: #e6efea;
   --w360-radius-sm: 6px;
   --w360-radius-md: 10px;
   --w360-radius-lg: 16px;
-  --w360-shadow-sm: 0 1px 2px rgba(20, 23, 31, 0.06);
-  --w360-shadow-md: 0 4px 16px rgba(20, 23, 31, 0.08);
+  --w360-shadow-sm: 0 1px 2px rgba(15, 27, 45, 0.06);
+  --w360-shadow-md: 0 4px 16px rgba(15, 27, 45, 0.08);
   --w360-space-1: 4px;
   --w360-space-2: 8px;
   --w360-space-3: 12px;
@@ -36,50 +49,68 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --w360-bg: #0f1115;
-    --w360-surface: #171a21;
-    --w360-surface-raised: #1d212a;
-    --w360-border: #2a2f3a;
-    --w360-border-strong: #3a4152;
-    --w360-text: #eef0f4;
-    --w360-text-muted: #a4abb8;
-    --w360-text-faint: #767e8c;
-    --w360-brand: #818cf8;
-    --w360-brand-hover: #a5b0fb;
-    --w360-brand-contrast: #14171f;
-    --w360-focus-ring: #a5b0fb;
+    --w360-bg: #0a1424;
+    --w360-surface: #101d31;
+    --w360-surface-raised: #15263d;
+    --w360-border: #22344d;
+    --w360-border-strong: #34496a;
+    --w360-text: #eaf2f8;
+    --w360-text-muted: #a3b4c6;
+    --w360-text-faint: #7387a0;
+    --w360-navy: #060e1b;
+    --w360-navy-contrast: #ffffff;
+    --w360-accent: #2fd47a;
+    --w360-brand: #34d681;
+    --w360-brand-hover: #5fe39b;
+    --w360-brand-contrast: #06180d;
+    --w360-cta: #34d681;
+    --w360-cta-hover: #5fe39b;
+    --w360-cta-contrast: #06180d;
+    --w360-focus-ring: #5fe39b;
     --w360-success: #4ade80;
-    --w360-success-bg: #113224;
+    --w360-success-bg: #0f3322;
     --w360-warning: #fbbf24;
-    --w360-warning-bg: #332506;
+    --w360-warning-bg: #332806;
     --w360-danger: #f87171;
     --w360-danger-bg: #341313;
-    --w360-neutral-bg: #232734;
+    --w360-info: #8fb0ff;
+    --w360-info-bg: #14264f;
+    --w360-neutral-bg: #1a2b43;
     --w360-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --w360-shadow-md: 0 4px 20px rgba(0, 0, 0, 0.5);
   }
 }
 
 :root[data-theme="dark"] {
-  --w360-bg: #0f1115;
-  --w360-surface: #171a21;
-  --w360-surface-raised: #1d212a;
-  --w360-border: #2a2f3a;
-  --w360-border-strong: #3a4152;
-  --w360-text: #eef0f4;
-  --w360-text-muted: #a4abb8;
-  --w360-text-faint: #767e8c;
-  --w360-brand: #818cf8;
-  --w360-brand-hover: #a5b0fb;
-  --w360-brand-contrast: #14171f;
-  --w360-focus-ring: #a5b0fb;
+  --w360-bg: #0a1424;
+  --w360-surface: #101d31;
+  --w360-surface-raised: #15263d;
+  --w360-border: #22344d;
+  --w360-border-strong: #34496a;
+  --w360-text: #eaf2f8;
+  --w360-text-muted: #a3b4c6;
+  --w360-text-faint: #7387a0;
+  --w360-navy: #060e1b;
+  --w360-navy-contrast: #ffffff;
+  --w360-accent: #2fd47a;
+  --w360-brand: #34d681;
+  --w360-brand-hover: #5fe39b;
+  --w360-brand-contrast: #06180d;
+  --w360-cta: #34d681;
+  --w360-cta-hover: #5fe39b;
+  --w360-cta-contrast: #06180d;
+  --w360-focus-ring: #5fe39b;
   --w360-success: #4ade80;
-  --w360-success-bg: #113224;
+  --w360-success-bg: #0f3322;
   --w360-warning: #fbbf24;
-  --w360-warning-bg: #332506;
+  --w360-warning-bg: #332806;
   --w360-danger: #f87171;
   --w360-danger-bg: #341313;
-  --w360-neutral-bg: #232734;
+  --w360-info: #8fb0ff;
+  --w360-info-bg: #14264f;
+  --w360-neutral-bg: #1a2b43;
+  --w360-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --w360-shadow-md: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
 * {
@@ -199,13 +230,29 @@ button:disabled {
   min-height: 40px;
 }
 
+/* The important action on a screen: vivid fill with a glow so it draws the eye
+   first. Colours come from the --w360-cta tokens, so a partner's accent carries
+   through. */
 .w360-btn-primary {
-  background: var(--w360-brand);
-  color: var(--w360-brand-contrast);
+  background: var(--w360-cta);
+  color: var(--w360-cta-contrast);
+  font-weight: 700;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--w360-cta) 50%, transparent);
+  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
-.w360-btn-primary:hover {
-  background: var(--w360-brand-hover);
+.w360-btn-primary:hover:not(:disabled) {
+  background: var(--w360-cta-hover);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--w360-cta) 60%, transparent);
+  transform: translateY(-1px);
+}
+
+.w360-btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.w360-btn-primary:disabled {
+  box-shadow: none;
 }
 
 .w360-btn-secondary {
@@ -216,6 +263,15 @@ button:disabled {
 
 .w360-btn-secondary:hover {
   background: var(--w360-neutral-bg);
+  border-color: var(--w360-brand);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .w360-btn-primary,
+  .w360-btn-primary:hover:not(:disabled) {
+    transition: none;
+    transform: none;
+  }
 }
 
 .w360-btn:disabled {

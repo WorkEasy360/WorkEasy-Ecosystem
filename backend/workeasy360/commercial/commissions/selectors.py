@@ -701,3 +701,177 @@ def paid_facts(partner_ids: list[UUID]) -> dict[UUID, list[dict[str, Any]]]:
             }
         )
     return out
+
+
+# --- the partner's own money picture (ADR-045) -------------------------------
+
+
+def partner_money(partner_id: UUID, now: datetime) -> list[dict[str, Any]]:
+    """One partner's ledger broken down by what can happen to it next, per
+    currency (never added across currencies). Four queries at most.
+
+    - ``balance``: the sum of every ledger row - the ledger *is* the balance;
+    - ``pending``: still inside the holdback (``clears_at`` in the future);
+    - ``available``: cleared and in no live payout - what a payout can claim;
+    - ``in_payouts``: in a payout still to be decided or paid (draft, ready,
+      approved);
+    - ``paid``: in a payout confirmed as paid.
+
+    Reading only: nothing here writes to the ledger, and the browser never sends
+    a figure back. ``balance`` equals ``pending + available + in_payouts + paid``
+    except for rows in a cancelled payout (released), which return to the pool.
+    """
+    from workeasy360.commercial.commissions.models import (
+        CommissionAccrual,
+        Payout,
+        PayoutLine,
+    )
+
+    totals: dict[str, dict[str, Any]] = {}
+
+    def row(currency: str) -> dict[str, Any]:
+        return totals.setdefault(
+            currency,
+            {
+                "currency": currency,
+                "balance_minor": 0,
+                "pending_minor": 0,
+                "available_minor": 0,
+                "in_payouts_minor": 0,
+                "paid_minor": 0,
+                "entries": 0,
+            },
+        )
+
+    for r in (
+        CommissionAccrual.objects.filter(partner_id=partner_id)
+        .values("currency")
+        .annotate(total=Sum("amount_minor"), n=Count("id"))
+    ):
+        entry = row(r["currency"])
+        entry["balance_minor"] = r["total"] or 0
+        entry["entries"] = r["n"]
+    for r in (
+        CommissionAccrual.objects.filter(partner_id=partner_id, clears_at__gt=now)
+        .values("currency")
+        .annotate(total=Sum("amount_minor"))
+    ):
+        row(r["currency"])["pending_minor"] = r["total"] or 0
+    for r in (
+        _unpaid_entries()
+        .filter(partner_id=partner_id, clears_at__lte=now)
+        .values("currency")
+        .annotate(total=Sum("amount_minor"))
+    ):
+        row(r["currency"])["available_minor"] = r["total"] or 0
+    for r in (
+        PayoutLine.objects.filter(
+            payout__partner_id=partner_id,
+            released_at__isnull=True,
+            payout__status__in=_OPEN_PAYOUT_STATES,
+        )
+        .values("payout__currency")
+        .annotate(total=Sum("amount_minor"))
+    ):
+        row(r["payout__currency"])["in_payouts_minor"] = r["total"] or 0
+    for r in (
+        Payout.objects.filter(partner_id=partner_id, status=PayoutStatus.PAID.value)
+        .values("currency")
+        .annotate(total=Sum("payable_minor"))
+    ):
+        row(r["currency"])["paid_minor"] = r["total"] or 0
+    return [totals[key] for key in sorted(totals)]
+
+
+def partner_sales_by_day(
+    partner_id: UUID, start: datetime, end: datetime
+) -> list[dict[str, Any]]:
+    """Sales and commission per day and currency inside ``[start, end)``, from
+    the ledger. One query.
+
+    A *sale* is an ``accrual`` row; its amount is the snapshotted basis. The
+    commission figure is net of reversals and adjustments in the same day. The
+    ledger only records a sale on which this partner earns, so a sale that earns
+    nothing is not here - the screens say so rather than imply it is complete.
+    """
+    from django.db.models.functions import TruncDate
+
+    from workeasy360.commercial.commissions.models import CommissionAccrual
+
+    return [
+        {
+            "date": r["day"].isoformat(),
+            "currency": r["currency"],
+            "basis_currency": r["basis_currency"],
+            "sales": r["sales"] or 0,
+            "gross_minor": r["gross"] or 0,
+            "commission_minor": r["commission"] or 0,
+        }
+        for r in CommissionAccrual.objects.filter(
+            partner_id=partner_id, event_at__gte=start, event_at__lt=end
+        )
+        .annotate(day=TruncDate("event_at"))
+        .values("day", "currency", "basis_currency")
+        .annotate(
+            sales=Count("id", filter=Q(kind=AccrualKind.ACCRUAL.value)),
+            gross=Sum("basis_minor", filter=Q(kind=AccrualKind.ACCRUAL.value)),
+            commission=Sum("amount_minor"),
+        )
+        .order_by("day", "currency")
+    ]
+
+
+def partner_conversions_page(
+    partner_id: UUID, *, limit: int = 25, cursor: str | None = None
+) -> Page:
+    """Converted referrals of one partner, newest first: when the visitor became
+    a customer, the product the customer holds and the commission it earned -
+    and nothing that identifies the customer (the referral row carries none)."""
+    from workeasy360.commercial.commissions.models import (
+        CommissionAccrual,
+        Referral,
+    )
+
+    limit = _limit(limit)
+    queryset = Referral.objects.filter(
+        partner_id=partner_id, status=ReferralStatus.CONVERTED.value
+    ).select_related("code")
+    decoded = decode_cursor(cursor)
+    if decoded is not None:
+        stamp, last_id = decoded
+        queryset = queryset.filter(
+            Q(converted_at__lt=stamp) | Q(converted_at=stamp, id__lt=last_id)
+        )
+    rows = list(queryset.order_by("-converted_at", "-id")[: limit + 1])
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    earned = {
+        r["organization_id"]: (r["total"] or 0, r["currency"])
+        for r in CommissionAccrual.objects.filter(
+            partner_id=partner_id,
+            organization_id__in=[r.organization_id for r in rows],
+        )
+        .values("organization_id", "currency")
+        .annotate(total=Sum("amount_minor"))
+    }
+    items = []
+    for r in rows:
+        amount, currency = earned.get(r.organization_id, (0, ""))
+        items.append(
+            {
+                "id": str(r.id),
+                "code": r.code.code,
+                "code_label": r.code.label,
+                "captured_at": r.captured_at.isoformat(),
+                "converted_at": r.converted_at.isoformat() if r.converted_at else None,
+                "commission_minor": amount,
+                "currency": currency,
+            }
+        )
+    return Page(
+        items=items,
+        next_cursor=(
+            encode_cursor(rows[-1].converted_at, rows[-1].id) if has_more else None
+        ),
+        has_more=has_more,
+    )

@@ -294,10 +294,10 @@ def test_a_draft_partner_may_demote_its_only_administrator(manager, draft):
     )
 
 
-def test_the_role_must_be_a_known_tier(manager, channel):
+def test_the_role_must_be_a_known_preset(manager, channel):
     pid = channel["partner"].id
     member = PartnerMember.objects.filter(partner_id=pid, status="active").first()
-    for role in ("owner", "root", "", None, 1):
+    for role in ("root", "superuser", "", None, 1):
         assert (
             post(manager, role_url(pid, member.id), {"role": role}, key=False).status_code
             == 400

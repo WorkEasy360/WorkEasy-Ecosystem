@@ -85,3 +85,12 @@ def invoice(ctx: TenantContext, invoice_id: UUID) -> dict[str, Any]:
             for a in sorted(row.attempts.all(), key=lambda a: a.created_at, reverse=True)
         ],
     }
+
+
+def order_summaries() -> Any:
+    """Every order's control-plane summary row, as a queryset a caller may narrow
+    (the partner panel narrows it to one partner's customers). Identifiers, codes
+    and amounts only - see ``OrderSummary``."""
+    from workeasy360.commercial.payments.models import OrderSummary
+
+    return OrderSummary.objects.all()

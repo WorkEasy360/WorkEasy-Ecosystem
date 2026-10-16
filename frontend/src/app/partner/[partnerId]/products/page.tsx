@@ -1,7 +1,7 @@
 "use client";
 
-import { PartnerProducts } from "@/features/controlplane/PartnerScreens";
+import { Products } from "@/features/partnerpanel/Catalog";
 
 export default function Page() {
-  return <PartnerProducts />;
+  return <Products />;
 }

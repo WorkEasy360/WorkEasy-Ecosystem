@@ -543,8 +543,13 @@ export interface PortalPartner {
   display_name: string;
   status: string;
   role: string;
+  /** "Partner Owner", "Sales", ... - the server's wording for the role. */
+  role_label?: string;
   is_admin: boolean;
   capabilities: string[];
+  /** What the server will let this person do right now. Navigation is drawn
+   * from it; every request is authorized again by the service it reaches. */
+  permissions?: string[];
 }
 
 export interface PartnerCustomerRow {
@@ -555,6 +560,8 @@ export interface PartnerCustomerRow {
   started_at: string;
   ended_at: string | null;
   subscription_status: string;
+  /** `customer` (a paid or granted product is live), `trial` or empty. */
+  access_class?: string;
   products: string[];
   owner_activation: PortalOwnerActivation;
 }
@@ -631,11 +638,16 @@ export const partnerApi = {
   portal: () => apiFetch<{ partners: PortalPartner[] }>("/api/v1/partner/portal"),
   customers: (id: string, cursor?: string) =>
     apiFetch<Page<PartnerCustomerRow>>(`${partner(id)}/customers`, { query: { cursor } }),
-  provision: (id: string, organizationName: string, ownerEmail: string, key: string) =>
+  provision: (id: string, organizationName: string, ownerEmail: string, key: string, owner?: { first?: string; last?: string }) =>
     apiFetch<{ organization_id: string; slug: string; replayed: boolean }>(`${partner(id)}/customers`, {
       method: "POST",
       headers: idem(key),
-      body: json({ organization_name: organizationName, owner_email: ownerEmail }),
+      body: json({
+        organization_name: organizationName,
+        owner_email: ownerEmail,
+        owner_first_name: owner?.first || undefined,
+        owner_last_name: owner?.last || undefined,
+      }),
     }),
   catalog: (id: string) => apiFetch<{ results: ApprovedPlan[] }>(`${partner(id)}/catalog`),
   sell: (id: string, orgId: string, planVersionId: string, quantity: number, key: string) =>

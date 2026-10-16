@@ -1,0 +1,437 @@
+/* The partner business panel. CSS modules only - no inline style attributes, and
+   no value from the server is written into a stylesheet. Design tokens come from
+   globals.css so light and dark follow the platform. */
+
+.page {
+  display: grid;
+  gap: var(--w360-space-5);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.page > * {
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3) var(--w360-space-4);
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 26px;
+  letter-spacing: -0.02em;
+}
+
+.lead {
+  margin: var(--w360-space-1) 0 0;
+  color: var(--w360-text-muted);
+  max-width: 62ch;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.kpis {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kpi {
+  display: grid;
+  gap: var(--w360-space-1);
+  align-content: start;
+  padding: var(--w360-space-4);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+  box-shadow: var(--w360-shadow-sm);
+}
+
+.kpiLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--w360-text-muted);
+}
+
+.kpiValue {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.kpiNote {
+  font-size: 13px;
+  color: var(--w360-text-muted);
+}
+
+.amounts {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.twoCol {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+}
+
+.panel {
+  padding: var(--w360-space-4) var(--w360-space-5);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+  min-width: 0;
+}
+
+.panel {
+  min-inline-size: 0;
+}
+
+.panel h2,
+.panel h3 {
+  margin: 0 0 var(--w360-space-3);
+  font-size: 16px;
+}
+
+.quick {
+  display: grid;
+  gap: var(--w360-space-2);
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.quick a {
+  display: block;
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--w360-text);
+  background: var(--w360-surface);
+}
+
+.quick a:hover {
+  border-color: var(--w360-brand);
+  color: var(--w360-brand);
+}
+
+.list {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.listItem {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1) var(--w360-space-3);
+  justify-content: space-between;
+  padding-bottom: var(--w360-space-2);
+  border-bottom: 1px solid var(--w360-border);
+  font-size: 14px;
+}
+
+.muted {
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3);
+  align-items: flex-end;
+}
+
+.range fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1);
+}
+
+.range legend {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--w360-text-muted);
+  margin-bottom: var(--w360-space-1);
+  padding: 0;
+}
+
+.rangeButton {
+  min-height: 40px;
+  padding: 0 var(--w360-space-3);
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-surface);
+  color: var(--w360-text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.rangeButton[aria-pressed="true"] {
+  background: var(--w360-brand);
+  border-color: var(--w360-brand);
+  color: var(--w360-brand-contrast);
+}
+
+.dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: flex-end;
+}
+
+.chartFrame {
+  display: grid;
+  gap: var(--w360-space-2);
+}
+
+.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.chartBar {
+  fill: var(--w360-brand);
+}
+
+.chartGrid {
+  stroke: var(--w360-border);
+  stroke-width: 1;
+}
+
+.chartAxis {
+  fill: var(--w360-text-muted);
+  font-size: 11px;
+}
+
+.chartControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.emptyState {
+  display: grid;
+  gap: var(--w360-space-2);
+  justify-items: start;
+  padding: var(--w360-space-5);
+  border: 1px dashed var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  color: var(--w360-text-muted);
+}
+
+.notice {
+  display: grid;
+  gap: var(--w360-space-2);
+  padding: var(--w360-space-4) var(--w360-space-5);
+  border: 1px solid var(--w360-border-strong);
+  border-left: 4px solid var(--w360-warning);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+}
+
+.notice h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.notice p {
+  margin: 0;
+}
+
+.cards {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: grid;
+  gap: var(--w360-space-3);
+  align-content: start;
+  padding: var(--w360-space-4);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+  box-shadow: var(--w360-shadow-sm);
+  min-width: 0;
+}
+
+.cardHead {
+  display: flex;
+  gap: var(--w360-space-3);
+  align-items: center;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 17px;
+}
+
+.monogram {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-neutral-bg);
+  color: var(--w360-brand);
+  font-weight: 800;
+}
+
+.facts {
+  display: grid;
+  gap: var(--w360-space-1) var(--w360-space-3);
+  grid-template-columns: auto minmax(0, 1fr);
+  margin: 0;
+  font-size: 14px;
+}
+
+.facts dt {
+  color: var(--w360-text-muted);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1);
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.tabs a {
+  padding: var(--w360-space-2) var(--w360-space-3);
+  text-decoration: none;
+  color: var(--w360-text-muted);
+  border-bottom: 2px solid transparent;
+  font-weight: 600;
+}
+
+.tabs a[aria-current="page"] {
+  color: var(--w360-brand);
+  border-bottom-color: var(--w360-brand);
+}
+
+.formGrid {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  max-width: 760px;
+}
+
+.checks {
+  /* A fieldset's default minimum width is its content's: without this a long
+     label stretches the page past 320px instead of wrapping. */
+  min-width: 0;
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.checks label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  display: flex;
+  gap: var(--w360-space-2);
+  align-items: flex-start;
+}
+
+.swatches {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr));
+}
+
+.swatch {
+  display: grid;
+  gap: var(--w360-space-1);
+  padding: var(--w360-space-2);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-surface);
+  text-align: left;
+  font: inherit;
+  color: var(--w360-text);
+  cursor: pointer;
+}
+
+.swatch[aria-pressed="true"] {
+  border-color: var(--w360-brand);
+  outline: 2px solid var(--w360-brand);
+}
+
+.swatchDot {
+  display: block;
+  height: 28px;
+  border-radius: var(--w360-radius-sm);
+}
+
+.dotEmerald {
+  background: #0a8043;
+}
+.dotBlue {
+  background: #2549b8;
+}
+.dotViolet {
+  background: #6b3fb8;
+}
+.dotAmber {
+  background: #8a5a00;
+}
+.dotRose {
+  background: #b3265b;
+}
+.dotSlate {
+  background: #334155;
+}

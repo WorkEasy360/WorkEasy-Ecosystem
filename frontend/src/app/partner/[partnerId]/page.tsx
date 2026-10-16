@@ -1,7 +1,7 @@
 "use client";
 
-import { PartnerHome } from "@/features/controlplane/PartnerScreens";
+import { PartnerDashboard } from "@/features/partnerpanel/Dashboard";
 
 export default function Page() {
-  return <PartnerHome />;
+  return <PartnerDashboard />;
 }

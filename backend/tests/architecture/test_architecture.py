@@ -548,6 +548,13 @@ def test_unscoped_manager_use_is_allowlisted():
         # before any tenant context as register_products; every write goes
         # through the ordinary staff-context ecosystem services.
         "commercial/controlplane/management/commands/connect_product_sso.py",
+        # 2026-10-16 (ADR-045): the development-only demo partner. Like
+        # bootstrap_superadmin it reads and creates one global identity (the
+        # control-plane system user, the demo owner) before any tenant context
+        # exists; it refuses every environment but development and test, and
+        # every other write goes through the ordinary partner commands.
+        "commercial/controlplane/demo_partner.py",
+        "commercial/controlplane/management/commands/create_demo_partner.py",
         # --- Phase 8 extension ---
         #
         # An invitee redeems an invitation before any membership - and so any

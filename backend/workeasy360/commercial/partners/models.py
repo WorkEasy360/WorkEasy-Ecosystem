@@ -38,6 +38,7 @@ from workeasy360.contracts.enums import (
     DomainStatus,
     GrantStatus,
     PartnerContactKind,
+    PartnerHierarchyStatus,
     PartnerLinkStatus,
     PartnerMemberRole,
     PartnerStatus,
@@ -137,6 +138,10 @@ class PartnerProfile(models.Model):
     tax_number = models.CharField(max_length=64, blank=True, default="")
     #: ISO 3166-1 alpha-2 (``contracts.values.countries``), or empty.
     country = models.CharField(max_length=2, blank=True, default="")
+    #: An IANA zone name (``Asia/Kolkata``) validated against the platform's
+    #: zone database on write, or empty. Presentation only: it decides how this
+    #: partner's own screens write a time, never when anything happens.
+    timezone = models.CharField(max_length=64, blank=True, default="", db_default="")
     #: ``{line1, line2, city, region, postal_code}`` - a closed key set.
     address = models.JSONField(default=dict)
 
@@ -498,6 +503,132 @@ class PartnerProductGrant(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.partner_id} may sell {self.product_id}"
+
+
+class PartnerHierarchyLink(models.Model):
+    """One partner (the parent) delegating to another (the sub-partner).
+
+    **Architecture-neutral on purpose.** This is the one table the sub-partner
+    relationship needs: a parent ``PartnerAccount`` points at a child
+    ``PartnerAccount``. There is no agency, sub-agency or sub-partner model - a
+    sub-partner is an ordinary partner account that happens to have a live row
+    here as ``child`` - and the depth rule lives in ``hierarchy.py`` (today one
+    level), not in the schema, so a deeper chain is a policy change and never a
+    migration.
+
+    **Never inferred and never a permission.** The row grants the *parent* the
+    right to see the child's status and counts and to suspend it; it grants the
+    child nothing and the parent nothing of the child's customers, profile,
+    payout details or secrets. Every access decision still comes from the
+    child's own capability grants.
+
+    **Invariants held by the database**, not only the service:
+
+    - a partner is never its own parent (``ck_hierarchy_not_self``);
+    - a partner has at most one *live* parent (``uq_one_live_parent_per_child``),
+      so two parents can never both believe they own a sub-partner;
+    - an ended row is stamped (``ck_hierarchy_end_stamped``).
+
+    Cycles are refused by the service under a lock on the child.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    parent = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="child_links"
+    )
+    child = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="parent_links"
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=_choices(PartnerHierarchyStatus),
+        default=PartnerHierarchyStatus.ACTIVE.value,
+    )
+    created_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    created_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    ended_by = models.ForeignKey(
+        "identity.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    end_reason = models.CharField(max_length=64, blank=True, default="")
+    version = models.IntegerField(default=0)
+
+    class Meta:
+        db_table = "partners_hierarchy_link"
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(parent=models.F("child")),
+                name="ck_hierarchy_not_self",
+            ),
+            models.UniqueConstraint(
+                fields=["child"],
+                condition=~models.Q(status="ended"),
+                name="uq_one_live_parent_per_child",
+            ),
+            models.CheckConstraint(
+                condition=(~models.Q(status="ended") & models.Q(ended_at__isnull=True))
+                | models.Q(status="ended", ended_at__isnull=False),
+                name="ck_hierarchy_end_stamped",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["parent", "status", "-created_at", "-id"],
+                name="ix_hierarchy_parent",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.parent_id} -> {self.child_id} [{self.status}]"
+
+
+class PartnerProductSetting(models.Model):
+    """How one partner presents and offers a product it was granted.
+
+    **Presentation and a sale switch - never an entitlement.** A row exists only
+    once a partner has changed something; no row means the defaults (offered,
+    visible, catalog order). It is read in exactly two places: the partner's
+    own sell path (``enabled_for_sale`` can only *narrow* what the grant
+    allows - a partner cannot enable a product it holds no ``PartnerProductGrant``
+    for, because the grant is checked first and separately) and the display of
+    its customers' portal (order and visibility). Nothing here reaches
+    authorization, entitlement, pricing or tenant resolution, and turning a
+    product off for new sales ends nobody's subscription.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="product_settings"
+    )
+    product = models.ForeignKey(
+        "catalog.Product", on_delete=models.PROTECT, related_name="+"
+    )
+    enabled_for_sale = models.BooleanField(default=True, db_default=True)
+    #: Lower sorts first; ties fall back to the catalog's own order.
+    display_order = models.PositiveSmallIntegerField(default=0, db_default=0)
+    show_in_explore = models.BooleanField(default=True, db_default=True)
+    show_in_my_products = models.BooleanField(default=True, db_default=True)
+    updated_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "partners_product_setting"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["partner", "product"], name="uq_partner_product_setting"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"settings of {self.partner_id} for {self.product_id}"
 
 
 class PartnerBrand(models.Model):

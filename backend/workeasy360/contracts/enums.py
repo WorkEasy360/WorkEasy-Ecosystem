@@ -596,16 +596,32 @@ class PartnerLinkStatus(_StrEnum):
 
 
 class PartnerMemberRole(_StrEnum):
-    """A partner user's tier. Two tiers, deliberately.
+    """A partner user's role: a *preset over the partner's capabilities*.
 
-    ``ADMIN`` receives every permission the partner's capability grants
-    unlock; ``VIEWER`` receives only the read permissions among them. More
-    granular partner-user roles would be an RBAC system of their own, which
-    nothing needs yet.
+    ``OWNER`` and ``ADMIN`` receive every permission the partner's capability
+    grants unlock; ``VIEWER`` receives only the read permissions among them.
+    ``SALES``, ``FINANCE``, ``SUPPORT`` and ``MARKETING`` are narrower presets
+    (``partners.capabilities.ROLE_PRESETS``): each names the capabilities its
+    holder may exercise, and can only ever *narrow* what the partner holds. A
+    role is never a permission string and cannot grant a capability the partner
+    lacks.
     """
 
+    OWNER = "owner"
     ADMIN = "admin"
+    SALES = "sales"
+    FINANCE = "finance"
+    SUPPORT = "support"
+    MARKETING = "marketing"
     VIEWER = "viewer"
+
+
+class PartnerHierarchyStatus(_StrEnum):
+    """A sub-partner relationship's lifecycle. ``ENDED`` is terminal."""
+
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    ENDED = "ended"
 
 
 class PartnerContactKind(_StrEnum):

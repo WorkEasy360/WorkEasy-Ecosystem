@@ -87,6 +87,9 @@ describe("colours derived from a partner's accent", () => {
       "--w360-brand-hover",
       "--w360-brand-text-on-light",
       "--w360-brand-text-on-dark",
+      "--w360-cta",
+      "--w360-cta-contrast",
+      "--w360-cta-hover",
     ]) {
       expect(el.style.getPropertyValue(name), name).toMatch(/^#[0-9a-f]{6}$/);
     }

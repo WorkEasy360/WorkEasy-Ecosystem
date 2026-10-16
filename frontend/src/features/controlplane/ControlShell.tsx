@@ -19,6 +19,7 @@ import consoleStyles from "@/features/console/Console.module.css";
 import { adminSignInUrl } from "@/features/auth/signInMode";
 import loginStyles from "@/features/auth/LoginScreen.module.css";
 import { centerItems } from "./partnerCenterNav";
+import { ForcedPasswordChange } from "./ForcedPasswordChange";
 import { StaffMfaGate } from "./StaffMfaGate";
 import { usePortalRouter } from "@/lib/portalRouter";
 
@@ -272,49 +273,80 @@ const PartnerContext = createContext<{ partner: PortalPartner | null }>({ partne
 export const usePartner = () => useContext(PartnerContext);
 
 export function partnerNav(partner: PortalPartner): SidebarGroup[] {
-  // What the server will answer, by status (partners/resolver.py): an ended
-  // partner can still read the money it is owed and nothing else, and one that
-  // was never activated can do nothing. Offering a page that can only refuse is
-  // not a courtesy.
-  const ended = partner.status === "terminated";
-  const inactive = partner.status === "draft";
-  const grants = (capability: string) => partner.capabilities.includes(capability);
-  const has = (capability: string) => grants(capability) && !ended && !inactive;
-  const money = (capability: string) => grants(capability) && !inactive;
+  // The server resolves what this person may do (their role over the partner's
+  // capability grants, by the partner's status: partners/resolver.py) and sends
+  // it as ``permissions``. A page that could only refuse is not offered; an
+  // ended partner reads its money and nothing else, a draft nothing at all.
+  // Navigation convenience only: every request is authorized again.
+  const held = new Set(partner.permissions ?? []);
+  const can = (...keys: string[]) => keys.some((k) => held.has(`platform.partner_${k}`));
   const base = `/partner/${partner.partner_id}`;
+  const sells = can("customer.view", "pricing.view");
   return [
-    { items: [{ href: base, label: "Overview", icon: "dashboard", exact: true }] },
+    { items: [{ href: base, label: "Dashboard", icon: "dashboard", exact: true, when: can("dashboard.view") }] },
     {
-      title: "Customers",
+      title: "Audience",
       items: [
-        {
-          href: `${base}/customers`,
-          label: "Customers",
-          icon: "building",
-          when: has("customer.provision") || has("customer.manage") || has("subscription.sell") || has("subscription.manage"),
-        },
-        { href: `${base}/products`, label: "Products & plans", icon: "tag", when: has("pricing.view") || has("subscription.sell") },
+        { href: `${base}/customers`, label: "Customers", icon: "building", when: can("customer.view") },
+        { href: `${base}/sub-partners`, label: "Sub-Partners", icon: "handshake", when: can("subpartner.view") },
+        { href: `${base}/affiliates`, label: "Affiliates", icon: "gift", when: can("referral.view") },
       ],
     },
     {
-      title: "Earnings",
+      title: "Commercial",
       items: [
-        { href: `${base}/referrals`, label: "Referrals", icon: "gift", when: has("referral.create") || has("referral.view") },
-        { href: `${base}/commissions`, label: "Commissions", icon: "currency", when: money("commission.view") },
-        { href: `${base}/payouts`, label: "Payouts", icon: "receipt", when: money("payout.view") },
+        { href: `${base}/products`, label: "Products", icon: "tag", when: can("product.view") },
+        { href: `${base}/plans`, label: "Plans & Add-ons", icon: "tag", when: can("pricing.view") },
+        { href: `${base}/pricing`, label: "Pricing", icon: "currency", when: can("pricing.view") },
+        { href: `${base}/subscriptions`, label: "Subscriptions", icon: "card", when: can("customer.view") },
+        { href: `${base}/orders`, label: "Orders", icon: "receipt", when: can("customer.view") },
+        { href: `${base}/commissions`, label: "Commissions", icon: "currency", when: can("commission.view") },
+        { href: `${base}/payouts`, label: "Payouts", icon: "receipt", when: can("payout.view") },
       ],
     },
     {
-      title: "Brand",
+      title: "Billing",
       items: [
+        { href: `${base}/currencies`, label: "Currencies", icon: "currency", when: can("pricing.view") },
+        { href: `${base}/balance`, label: "Partner Balance", icon: "card", when: can("commission.view") },
+        { href: `${base}/payments`, label: "Payments", icon: "receipt", when: can("customer.view") },
+        { href: `${base}/payment-links`, label: "Payment Links", icon: "network", when: can("dashboard.view") && sells },
+        { href: `${base}/product-billing`, label: "Product Billing", icon: "tag", when: can("product.view") },
+      ],
+    },
+    {
+      title: "Customization",
+      items: [
+        { href: `${base}/branding`, label: "Brand Settings", icon: "palette", when: can("branding.view") },
         {
           href: `${base}/white-label`,
           label: "Set up white-label",
           icon: "palette",
-          when: has("branding.manage") && has("domain.manage"),
+          when: can("branding.manage") && can("domain.manage"),
         },
-        { href: `${base}/branding`, label: "Branding", icon: "palette", when: has("branding.manage") },
-        { href: `${base}/domains`, label: "Domains", icon: "network", when: has("domain.manage") },
+        { href: `${base}/domains`, label: "Domains", icon: "network", when: can("domain.view") },
+        { href: `${base}/product-manager`, label: "Product Manager", icon: "tag", when: can("product.view") },
+        { href: `${base}/appearance`, label: "Appearance", icon: "palette", when: can("branding.view") },
+      ],
+    },
+    {
+      title: "Communication",
+      items: [
+        { href: `${base}/communication/channels`, label: "Channels", icon: "mail", when: can("profile.view") },
+        { href: `${base}/communication/templates`, label: "Templates", icon: "mail", when: can("profile.view") },
+        { href: `${base}/communication/alerts`, label: "Alerts", icon: "mail", when: can("profile.view") },
+        { href: `${base}/communication/logs`, label: "Logs", icon: "receipt", when: can("profile.view") },
+      ],
+    },
+    {
+      title: "Platform",
+      items: [
+        { href: `${base}/integrations`, label: "Integrations", icon: "network", when: can("profile.view") },
+        { href: `${base}/authentication`, label: "Authentication", icon: "shield", when: can("profile.view") },
+        { href: `${base}/shared-resources`, label: "Shared Resources", icon: "building", when: can("profile.view") },
+        { href: `${base}/team`, label: "Users & Permissions", icon: "users", when: can("member.view") },
+        { href: `${base}/activity`, label: "Activity", icon: "chart", when: can("activity.view") },
+        { href: `${base}/settings`, label: "Settings", icon: "settings", when: can("profile.view") },
       ],
     },
   ];
@@ -356,6 +388,9 @@ export function PartnerShell({ partnerId, children }: { partnerId: string; child
 
   if (session.status === "loading" || state.status === "loading") {
     return <StatusScreen>Loading the partner portal…</StatusScreen>;
+  }
+  if (session.status === "ready" && session.session.password_change_required) {
+    return <ForcedPasswordChange />;
   }
   if (state.status === "missing") {
     return (

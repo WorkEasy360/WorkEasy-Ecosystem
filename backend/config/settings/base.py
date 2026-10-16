@@ -203,6 +203,9 @@ MIDDLEWARE = [
     # Immediately after: every view downstream must see a revoked session as
     # logged out, not merely be able to check for it (Phase 4, Task 33).
     "workeasy360.platform.identity.middleware.SessionEpochMiddleware",
+    # Directly after: a session whose password was chosen by someone else (a
+    # temporary one) is served only the calls that let its owner replace it.
+    "workeasy360.platform.identity.middleware.PasswordChangeRequiredMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "workeasy360.platform.observability.middleware.RequestLogMiddleware",
@@ -904,6 +907,9 @@ CONTROL_PLANE_RATE_LIMITS = {
     "payment_webhook_ip": (env.int("W360_RL_PAYMENT_WEBHOOK_IP", 600), 60),
     "partner_provision_user": (env.int("W360_RL_PARTNER_PROVISION_USER", 20), 60),
     "partner_provision_ip": (env.int("W360_RL_PARTNER_PROVISION_IP", 60), 60),
+    # ADR-045: the customer export, a bounded read that still copies data out.
+    "partner_export_user": (env.int("W360_RL_PARTNER_EXPORT_USER", 5), 60),
+    "partner_export_ip": (env.int("W360_RL_PARTNER_EXPORT_IP", 20), 60),
     "domain_verify_user": (env.int("W360_RL_DOMAIN_VERIFY_USER", 10), 60),
     "domain_verify_ip": (env.int("W360_RL_DOMAIN_VERIFY_IP", 30), 60),
     "diagnose_user": (env.int("W360_RL_DIAGNOSE_USER", 30), 60),

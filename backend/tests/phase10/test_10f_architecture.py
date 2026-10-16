@@ -173,6 +173,11 @@ def test_the_partner_models_are_the_frozen_set():
         # contact records. tests/partner_setup pins what they may never become.
         "PartnerProfile",
         "PartnerContact",
+        # The partner business control panel (ADR-045): the sub-partner
+        # relationship and per-product presentation. tests/partner_panel pins
+        # what they may never become.
+        "PartnerHierarchyLink",
+        "PartnerProductSetting",
     }
 
 

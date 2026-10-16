@@ -210,3 +210,21 @@ def account_statistics(*, since: Any) -> dict[str, int]:
         signed_in=Count("id", filter=Q(last_login_at__gte=since)),
     )
     return {key: int(value or 0) for key, value in counts.items()}
+
+
+def users_with_mfa(user_ids: Any) -> set[Any]:
+    """Which of these accounts have a confirmed second factor. One query.
+
+    A fact about enrollment only (never the factor, its secret or its kind), for
+    the team page of a partner that wants to know who has not yet secured their
+    account."""
+    from workeasy360.platform.identity.models import AuthFactor
+
+    ids = {i for i in user_ids if i}
+    if not ids:
+        return set()
+    return set(
+        AuthFactor.objects.filter(user_id__in=ids, confirmed_at__isnull=False)
+        .values_list("user_id", flat=True)
+        .distinct()
+    )

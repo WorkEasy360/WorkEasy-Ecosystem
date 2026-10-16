@@ -132,6 +132,16 @@ def clean_country(value: Any, *, field: str = "country") -> str:
     return text
 
 
+def clean_timezone(value: Any, *, field: str = "timezone") -> str:
+    """An IANA zone name from the platform's own zone database, or empty."""
+    from zoneinfo import available_timezones
+
+    text = clean_text(value, field=field, max_length=64, required=False)
+    if text and text not in available_timezones():
+        raise PartnerValidationError("Choose a time zone from the list.", field=field)
+    return text
+
+
 def clean_postal_code(value: Any, *, field: str) -> str:
     text = clean_text(value, field=field, max_length=20, required=False)
     if text and not _POSTAL_RE.match(text):

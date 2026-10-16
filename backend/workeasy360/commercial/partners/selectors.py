@@ -26,7 +26,6 @@ from workeasy360.contracts.enums import (
     DomainStatus,
     GrantStatus,
     PartnerLinkStatus,
-    PartnerMemberRole,
     PartnerStatus,
 )
 from workeasy360.contracts.values.cursor import (
@@ -287,11 +286,33 @@ def partners_for_user(user_id: UUID) -> list[dict[str, Any]]:
                 "display_name": m.partner.display_name,
                 "status": m.partner.status,
                 "role": m.role,
-                "is_admin": m.role == PartnerMemberRole.ADMIN.value,
+                "role_label": capabilities.ROLE_PRESETS[m.role].label
+                if m.role in capabilities.ROLE_PRESETS
+                else m.role,
+                "is_admin": capabilities.is_admin_role(m.role),
                 "capabilities": sorted(active_capabilities(m.partner_id)),
+                # What the server will let this person do right now. The
+                # portal's navigation is drawn from it; every request is
+                # still authorized again by the service it reaches.
+                "permissions": sorted(_permissions_of(m)),
             }
         )
     return result
+
+
+def _permissions_of(member: Any) -> frozenset[str]:
+    """The resolved permission set of one membership (a read, for navigation)."""
+    from workeasy360.commercial.partners import resolver
+    from workeasy360.contracts.enums import PrincipalKind
+    from workeasy360.platform.authz.control_plane import platform_context
+
+    ctx = platform_context(
+        user_id=member.user_id,
+        aal=1,
+        principal=PrincipalKind.PARTNER,
+        partner_id=member.partner_id,
+    )
+    return resolver.partner_permissions(ctx)
 
 
 # --- relationships --------------------------------------------------------
@@ -389,6 +410,9 @@ def partner_customers_page(
                 "started_at": link.started_at.isoformat(),
                 "ended_at": link.ended_at.isoformat() if link.ended_at else None,
                 "subscription_status": summary.subscription_status if summary else "",
+                #: ``customer`` (a paid or granted product is live), ``trial``
+                #: (only trials) or empty (nothing yet).
+                "access_class": summary.access_class if summary else "",
                 "products": list(summary.product_codes) if summary else [],
                 "owner_activation": _activation_of(invites.get(link.organization_id)),
             }
@@ -438,7 +462,26 @@ def _activation_of(invite: Any) -> dict[str, Any]:
 
 
 def may_sell(partner_id: UUID, *, product_code: str, plan_code: str) -> bool:
-    """Whether an active grant covers this product (and plan)."""
+    """Whether an active grant covers this product (and plan) and the partner has
+    not turned the product off for new sales."""
+    from workeasy360.commercial.partners.models import PartnerProductSetting
+
+    if not may_sell_ignoring_switch(
+        partner_id, product_code=product_code, plan_code=plan_code
+    ):
+        return False
+    # The partner's own "disable for new sales" switch can only narrow a grant.
+    return not PartnerProductSetting.objects.filter(
+        partner_id=partner_id, product__code=product_code, enabled_for_sale=False
+    ).exists()
+
+
+def may_sell_ignoring_switch(
+    partner_id: UUID, *, product_code: str, plan_code: str
+) -> bool:
+    """Whether an active grant covers this product (and plan) - the authority.
+    A screen listing what the partner holds uses this so a switched-off product
+    still appears (as off); every sale uses :func:`may_sell`."""
     from workeasy360.commercial.partners.models import PartnerProductGrant
 
     return (
@@ -504,6 +547,34 @@ def trial_blocked_for_organization(organization_id: UUID, product_code: str) -> 
     no grant for, is never blocked here."""
     entry = product_choices_for_organization(organization_id).get(str(product_code))
     return entry is not None and not entry["trial_allowed"]
+
+
+def portal_presentation_for_organization(
+    organization_id: UUID,
+) -> dict[str, dict[str, Any]]:
+    """How the white-label partner of this customer presents each product:
+    ``{product_code: {display_order, show_in_explore, show_in_my_products,
+    enabled_for_sale}}``. Empty for a direct customer or a partner that is not
+    white-label, so nothing changes for anyone else. Presentation only - nothing
+    here reads or changes an entitlement. Three small queries."""
+    from workeasy360.commercial.partners.models import PartnerProductSetting
+
+    if brand_for_organization(organization_id) is None:
+        return {}
+    link = live_link_for_organization(organization_id)
+    if link is None:
+        return {}
+    return {
+        row.product.code: {
+            "display_order": row.display_order,
+            "show_in_explore": row.show_in_explore,
+            "show_in_my_products": row.show_in_my_products,
+            "enabled_for_sale": row.enabled_for_sale,
+        }
+        for row in PartnerProductSetting.objects.filter(
+            partner_id=link.partner_id
+        ).select_related("product")
+    }
 
 
 def hidden_product_codes_for_organization(organization_id: UUID) -> frozenset[str]:

@@ -114,6 +114,7 @@ def provision_customer(
     owner_email: Any,
     idempotency_key: Any,
     currency: Any = None,
+    owner_name: Any = "",
 ) -> ProvisionResult:
     """Create a customer organization, relate this partner to it and invite its owner.
 
@@ -147,6 +148,9 @@ def provision_customer(
 
     name = clean_text(organization_name, field="organization_name", max_length=120)
     address = clean_text(owner_email, field="owner_email", max_length=254).lower()
+    # Names an owner whose account this call creates; never renames one that
+    # already exists (``ensure_identity_for_email``).
+    person = clean_text(owner_name, field="owner_name", max_length=255, required=False)
     partner = selectors.partner_row(ctx.partner_id)
     try:
         billing_currency = (
@@ -175,7 +179,7 @@ def provision_customer(
         if claim.is_replay:
             return _replayed(ctx, claim.result_ref)
 
-        owner_id, _created = ensure_identity_for_email(address)
+        owner_id, _created = ensure_identity_for_email(address, full_name=person)
         if owner_id is None:
             # One message for a malformed address and an account that may not
             # be assigned, so this is not a way to probe which exist.

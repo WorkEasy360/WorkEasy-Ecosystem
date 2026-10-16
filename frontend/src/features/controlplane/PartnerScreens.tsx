@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { partnerApi, newKey, type Brand, type Diagnosis } from "@/lib/api/controlPlane";
+import { panelApi } from "@/lib/api/partnerPanel";
 import { portalOwnerInvitationApi } from "@/lib/api/partnerConsole";
 import { usePartner } from "./ControlShell";
 import { ActivationBadge, OwnerInvitationActions } from "./PartnerCustomers";
@@ -90,6 +91,10 @@ export function PartnerCustomers() {
   const emailId = useId();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [first, setFirst] = useState("");
+  const [last, setLast] = useState("");
+  const firstId = useId();
+  const lastId = useId();
   // One command id per *attempt*: a double click or a retry after a network
   // failure replays the same provisioning instead of creating a second customer.
   const key = useRef(newKey());
@@ -98,13 +103,36 @@ export function PartnerCustomers() {
   return (
     <div className={styles.stack}>
       <h1>Customers</h1>
+      {has("customer.provision") || has("customer.manage") ? (
+        <div className={styles.row}>
+          <button
+            type="button"
+            className="w360-btn w360-btn-secondary"
+            disabled={busy}
+            onClick={() =>
+              void act(async () => {
+                const { blob, truncated } = await panelApi.exportCustomers(id);
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = "customers.csv";
+                link.click();
+                URL.revokeObjectURL(url);
+                if (truncated) throw new Error("The export was cut at 5,000 customers.");
+              }, "Your customer list was downloaded.")
+            }
+          >
+            Export customers (CSV)
+          </button>
+        </div>
+      ) : null}
       {feedback}
       {paged.state === "loading" && <p aria-live="polite">Loading customers…</p>}
       {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to customers.</p>}
       {paged.state === "error" && <p role="alert">Couldn&apos;t load customers.</p>}
       {paged.state === "ready" && (
         <>
-          <Table caption="Your customers" head={["Customer", "Relationship", "Owner", "Subscription", "Products", "Since", ""]} isEmpty={paged.rows.length === 0} empty="No customers yet.">
+          <Table caption="Your customers" head={["Customer", "Relationship", "Owner", "Subscription", "Products", "Joined", ""]} isEmpty={paged.rows.length === 0} empty="No customers yet.">
             {paged.rows.map((c) => {
               // An ended relationship is history: the server returns none of the
               // customer's current details for it, so there is nothing to show or act on.
@@ -128,7 +156,16 @@ export function PartnerCustomers() {
                       </div>
                     )}
                   </td>
-                  <td>{ended ? "—" : <Status value={c.subscription_status} />}</td>
+                  <td>
+                    {ended ? (
+                      "—"
+                    ) : (
+                      <>
+                        <Status value={c.subscription_status} />
+                        {c.access_class === "trial" && <span className={styles.muted}> trial</span>}
+                      </>
+                    )}
+                  </td>
                   <td>{c.products.join(", ") || "—"}</td>
                   <td>{when(c.started_at)}</td>
                   <td>
@@ -163,14 +200,17 @@ export function PartnerCustomers() {
       )}
       {has("customer.provision") && active && (
         <form
+          id="add-customer"
           className={`w360-card ${styles.card} ${styles.form}`}
           onSubmit={(e) => {
             e.preventDefault();
             void act(async () => {
-              await partnerApi.provision(id, name.trim(), email.trim(), key.current);
+              await partnerApi.provision(id, name.trim(), email.trim(), key.current, { first: first.trim(), last: last.trim() });
               key.current = newKey();
               setName("");
               setEmail("");
+              setFirst("");
+              setLast("");
             }, "Customer created. Their owner has been emailed a one-time link to activate the account; until they do, the customer shows as awaiting activation.");
           }}
         >
@@ -180,6 +220,18 @@ export function PartnerCustomers() {
               Organization name
             </label>
             <input id={nameId} className="w360-input" required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className={styles.field}>
+            <label className="w360-label" htmlFor={firstId}>
+              Owner&apos;s first name
+            </label>
+            <input id={firstId} className="w360-input" maxLength={100} value={first} onChange={(e) => setFirst(e.target.value)} />
+          </div>
+          <div className={styles.field}>
+            <label className="w360-label" htmlFor={lastId}>
+              Owner&apos;s last name
+            </label>
+            <input id={lastId} className="w360-input" maxLength={100} value={last} onChange={(e) => setLast(e.target.value)} />
           </div>
           <div className={styles.field}>
             <label className="w360-label" htmlFor={emailId}>

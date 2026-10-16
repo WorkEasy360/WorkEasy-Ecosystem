@@ -93,6 +93,9 @@ const ACCENT_VARIABLES = [
   "--w360-brand-hover",
   "--w360-brand-text-on-light",
   "--w360-brand-text-on-dark",
+  "--w360-cta",
+  "--w360-cta-contrast",
+  "--w360-cta-hover",
 ] as const;
 
 /**
@@ -112,6 +115,9 @@ export function applyAccent(el: HTMLElement, color: string | null | undefined): 
     el.style.setProperty("--w360-brand-hover", hoverOf(safe));
     el.style.setProperty("--w360-brand-text-on-light", textOnLight(safe));
     el.style.setProperty("--w360-brand-text-on-dark", textOnDark(safe));
+    el.style.setProperty("--w360-cta", safe);
+    el.style.setProperty("--w360-cta-contrast", contrastOn(safe));
+    el.style.setProperty("--w360-cta-hover", hoverOf(safe));
   } else {
     for (const name of ACCENT_VARIABLES) el.style.removeProperty(name);
   }

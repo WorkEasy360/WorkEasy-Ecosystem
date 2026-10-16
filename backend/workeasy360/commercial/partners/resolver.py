@@ -43,15 +43,19 @@ def partner_permissions(ctx: TenantContext) -> frozenset[str]:
         return frozenset()
 
     held = selectors.active_capabilities(ctx.partner_id)
-    is_admin = member.role == PartnerMemberRole.ADMIN.value
 
     if status is PartnerStatus.ACTIVE:
-        keys = capabilities.permissions_for(held, admin=is_admin)
+        keys = capabilities.permissions_for_role(held, role=member.role)
     elif status is PartnerStatus.SUSPENDED:
-        keys = capabilities.permissions_for(held, admin=False)
+        # History stays visible; nothing new can be done. The read tier of the
+        # capabilities the member's role may exercise, and the baseline views.
+        keys = capabilities.permissions_for_role(
+            held, role=PartnerMemberRole.VIEWER.value
+        ) & capabilities.permissions_for_role(held, role=member.role)
     else:  # terminated
         keys = (
-            capabilities.permissions_for(held, admin=False)
+            capabilities.permissions_for_role(held, role=member.role)
+            & capabilities.permissions_for(held, admin=False)
             & capabilities.HISTORY_ONLY_PERMISSIONS
         )
     return permission_registry.expand(keys)

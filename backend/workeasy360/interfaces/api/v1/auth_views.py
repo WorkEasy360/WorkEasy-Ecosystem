@@ -490,6 +490,11 @@ def session_view(request: HttpRequest) -> JsonResponse:
             # whether they can satisfy an organization's "require MFA". The
             # consoles re-check everything server-side on every request.
             "mfa_enrolled": user.has_mfa,
+            # True while the password is a temporary one someone else chose:
+            # the shell sends the person to the change-password screen.
+            "password_change_required": bool(
+                getattr(user, "password_change_required", False)
+            ),
             "consoles": _consoles(user),
         }
     )

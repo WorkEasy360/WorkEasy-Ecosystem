@@ -106,6 +106,24 @@ def complete_with_password(
     user.save(update_fields=fields)
 
 
+def set_temporary_password(user: Any, password: str) -> None:
+    """A password someone *other than the owner* chose (an operator's demo
+    account). It works once: the account is flagged so every API call but the
+    password change is refused until its owner replaces it
+    (``PasswordChangeRequiredMiddleware``), and every existing session ends."""
+    user.set_password(password)
+    user.password_change_required = True
+    user.session_epoch += 1
+    user.save(
+        update_fields=[
+            "password",
+            "password_change_required",
+            "session_epoch",
+            "updated_at",
+        ]
+    )
+
+
 def reset_credentials(user: Any, password: str, *, at: datetime | None = None) -> None:
     """A new password from a reset link. The link proved the mailbox, so the
     account is also verified and activated, both lockouts are cleared and

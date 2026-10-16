@@ -47,18 +47,19 @@ PAYOUT_VIEW: Final = "payout.view"
 SUPPORT_ACCESS: Final = "support.access"
 REFERRAL_CREATE: Final = "referral.create"
 REFERRAL_VIEW: Final = "referral.view"
+SUBPARTNER_MANAGE: Final = "subpartner.manage"
 
 _SPECS: Final = (
     CapabilitySpec(
         CUSTOMER_PROVISION,
         "Create customer organizations",
-        view=("platform.partner_customer.view",),
+        view=("platform.partner_customer.view", "platform.partner_customer.export"),
         manage=("platform.partner_customer.provision",),
     ),
     CapabilitySpec(
         CUSTOMER_MANAGE,
         "Manage the commercial setup of related customers",
-        view=("platform.partner_customer.view",),
+        view=("platform.partner_customer.view", "platform.partner_customer.export"),
         manage=("platform.partner_customer.manage",),
     ),
     CapabilitySpec(
@@ -120,6 +121,12 @@ _SPECS: Final = (
         "View referrals and their conversion",
         view=("platform.partner_referral.view",),
     ),
+    CapabilitySpec(
+        SUBPARTNER_MANAGE,
+        "Create and manage sub-partners under this partner",
+        view=("platform.partner_subpartner.view",),
+        manage=("platform.partner_subpartner.manage",),
+    ),
 )
 
 CAPABILITIES: Final[dict[str, CapabilitySpec]] = {spec.key: spec for spec in _SPECS}
@@ -169,6 +176,7 @@ CAPABILITY_GROUPS: Final[tuple[tuple[str, str, tuple[str, ...]], ...]] = (
     ("support", "Support", (SUPPORT_ACCESS,)),
     ("white_label", "White-label", (BRANDING_MANAGE, DOMAIN_MANAGE)),
     ("referrals", "Referrals", (REFERRAL_CREATE, REFERRAL_VIEW)),
+    ("sub_partners", "Sub-partners", (SUBPARTNER_MANAGE,)),
 )
 
 #: The short name a form shows beside each capability. The registry ``label`` is
@@ -190,6 +198,7 @@ SHORT_LABELS: Final[dict[str, str]] = {
     DOMAIN_MANAGE: "Manage custom domains",
     REFERRAL_CREATE: "Create referral codes",
     REFERRAL_VIEW: "View referrals",
+    SUBPARTNER_MANAGE: "Manage sub-partners",
 }
 
 #: One-click starting points for a capability form. A preset is only a list of
@@ -289,8 +298,189 @@ def permissions_for(
     return frozenset(granted)
 
 
+# --- the partner's own account: baseline permissions -------------------------
+#
+# Running the account itself - the dashboard, the business profile, the team,
+# the product list, the activity trail - belongs to no sellable capability: a
+# pure affiliate has an account too. These are held by every member of an active
+# partner (the view set) or by its administrators (the manage set), and they
+# reach nothing of a customer, a price or a payout.
+
+BASELINE_VIEW: Final = (
+    "platform.partner_dashboard.view",
+    "platform.partner_profile.view",
+    "platform.partner_member.view",
+    "platform.partner_product.view",
+)
+BASELINE_MANAGE: Final = (
+    "platform.partner_profile.manage",
+    "platform.partner_member.manage",
+    "platform.partner_product.manage",
+    "platform.partner_activity.view",
+)
+
+# --- member roles: presets over the capabilities -----------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RoleSpec:
+    key: str
+    label: str
+    description: str
+    #: Holds the account-management permissions (``BASELINE_MANAGE``).
+    admin: bool
+    #: May exercise the *manage* tier of the capabilities below.
+    manage: bool
+    #: The capabilities this role may exercise; ``None`` means every capability
+    #: the partner holds. Always intersected with what the partner holds, so a
+    #: role can narrow a partner's powers and never widen them.
+    capabilities: frozenset[str] | None
+
+    @property
+    def value(self) -> str:
+        """The stored role string (the same word ``PartnerMemberRole`` uses)."""
+        return self.key
+
+
+ROLE_PRESETS: Final[dict[str, RoleSpec]] = {
+    spec.key: spec
+    for spec in (
+        RoleSpec(
+            "owner",
+            "Partner Owner",
+            "Everything the partner can do, including who else may act for it.",
+            admin=True,
+            manage=True,
+            capabilities=None,
+        ),
+        RoleSpec(
+            "admin",
+            "Partner Admin",
+            "Everything the partner can do, except changing an owner.",
+            admin=True,
+            manage=True,
+            capabilities=None,
+        ),
+        RoleSpec(
+            "sales",
+            "Sales",
+            "Create customers, sell and manage subscriptions, see prices and referrals.",
+            admin=False,
+            manage=True,
+            capabilities=frozenset(
+                {
+                    CUSTOMER_PROVISION,
+                    CUSTOMER_MANAGE,
+                    SUBSCRIPTION_SELL,
+                    SUBSCRIPTION_MANAGE,
+                    PRICING_VIEW,
+                    REFERRAL_CREATE,
+                    REFERRAL_VIEW,
+                }
+            ),
+        ),
+        RoleSpec(
+            "finance",
+            "Finance",
+            "Read prices, commission and payouts. Changes nothing.",
+            admin=False,
+            manage=False,
+            capabilities=frozenset({PRICING_VIEW, COMMISSION_VIEW, PAYOUT_VIEW}),
+        ),
+        RoleSpec(
+            "support",
+            "Support",
+            "Run read-only access diagnostics for related customers.",
+            admin=False,
+            manage=True,
+            capabilities=frozenset({SUPPORT_ACCESS}),
+        ),
+        RoleSpec(
+            "marketing",
+            "Marketing",
+            "Manage the brand and referral links. Custom domains stay with admins.",
+            admin=False,
+            manage=True,
+            capabilities=frozenset(
+                {BRANDING_MANAGE, REFERRAL_CREATE, REFERRAL_VIEW, PRICING_VIEW}
+            ),
+        ),
+        RoleSpec(
+            "viewer",
+            "Viewer",
+            "Read-only access to everything the partner holds.",
+            admin=False,
+            manage=False,
+            capabilities=None,
+        ),
+    )
+}
+
+#: Roles that run the account (hold ``BASELINE_MANAGE``). A partner needs one.
+ADMIN_ROLES: Final = frozenset(k for k, r in ROLE_PRESETS.items() if r.admin)
+
+
+def is_admin_role(role: str) -> bool:
+    return role in ADMIN_ROLES
+
+
+def require_role(key: object) -> RoleSpec:
+    """The preset for ``key``, or a 400 - a role is never free text."""
+    spec = ROLE_PRESETS.get(key) if isinstance(key, str) else None
+    if spec is None:
+        raise PartnerValidationError(
+            f"role must be one of {sorted(ROLE_PRESETS)}.", field="role"
+        )
+    return spec
+
+
+def permissions_for_role(
+    capabilities: frozenset[str] | set[str], *, role: str
+) -> frozenset[str]:
+    """Permissions a member in ``role`` holds over the partner's ``capabilities``.
+
+    Capabilities are narrowed to the role's, the manage tier is included only
+    when the role has it, and the account-management baseline follows the role's
+    ``admin`` flag. An unknown stored role gets the read-only viewer set: it
+    fails closed.
+    """
+    spec = ROLE_PRESETS.get(role) or ROLE_PRESETS["viewer"]
+    usable = (
+        set(capabilities)
+        if spec.capabilities is None
+        else set(capabilities) & spec.capabilities
+    )
+    granted = set(permissions_for(usable, admin=spec.manage))
+    granted.update(BASELINE_VIEW)
+    if spec.admin:
+        granted.update(BASELINE_MANAGE)
+    return frozenset(granted)
+
+
+# --- what a parent may hand to a sub-partner ----------------------------------
+
+#: The capabilities a partner holding ``subpartner.manage`` may give a sub-partner
+#: it creates, and only those the parent holds itself. Deliberately absent:
+#: money (commission, payouts - staff decide who earns), custom domains (a
+#: dangerous, takeover-adjacent act), and ``subpartner.manage`` itself (the
+#: hierarchy is one level deep).
+DELEGABLE_CAPABILITIES: Final = frozenset(
+    {
+        CUSTOMER_PROVISION,
+        CUSTOMER_MANAGE,
+        SUBSCRIPTION_SELL,
+        SUBSCRIPTION_MANAGE,
+        PRICING_VIEW,
+        SUPPORT_ACCESS,
+        BRANDING_MANAGE,
+        REFERRAL_CREATE,
+        REFERRAL_VIEW,
+    }
+)
+
+
 def all_partner_permission_keys() -> frozenset[str]:
-    keys: set[str] = set()
+    keys: set[str] = set(BASELINE_VIEW) | set(BASELINE_MANAGE)
     for spec in CAPABILITIES.values():
         keys.update(spec.view)
         keys.update(spec.manage)

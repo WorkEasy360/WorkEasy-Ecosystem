@@ -59,19 +59,50 @@ function mockApi(routes: Record<string, Reply[]>) {
 const SIGNED_IN: Reply = { status: 200, body: { authenticated: true, user_id: "u1", email: "s@example.com" } };
 const PARTNER = "11111111-1111-1111-1111-111111111111";
 
+/** What the server resolves for a member (partners/resolver.py), spelled out
+ * for the few capabilities the tests use. The shell draws its navigation from
+ * this list and from nothing else. */
+const CAPABILITY_PERMISSIONS: Record<string, string[]> = {
+  "customer.provision": ["customer.view", "customer.provision", "customer.export"],
+  "subscription.sell": ["customer.view", "pricing.view", "subscription.sell"],
+  "pricing.view": ["pricing.view"],
+  "referral.create": ["referral.view", "referral.create"],
+  "commission.view": ["commission.view"],
+  "payout.view": ["payout.view"],
+  "branding.manage": ["branding.view", "branding.manage"],
+  "domain.manage": ["domain.view", "domain.manage"],
+};
+
+function permissionsFor(capabilities: string[], status: string, admin: boolean): string[] {
+  const own = capabilities.flatMap((c) => CAPABILITY_PERMISSIONS[c] ?? []);
+  if (status === "draft") return [];
+  if (status === "terminated") return own.filter((p) => ["commission.view", "payout.view"].includes(p)).map((p) => `platform.partner_${p}`);
+  const base = ["dashboard.view", "profile.view", "member.view", "product.view", ...(admin ? ["profile.manage", "member.manage", "product.manage", "activity.view"] : [])];
+  return [...own, ...base].map((p) => `platform.partner_${p}`);
+}
+
 function portal(capabilities: string[], status = "active", role = "admin"): Reply {
   return {
     status: 200,
     body: {
       partners: [
-        { partner_id: PARTNER, code: "acme", display_name: "Acme Partners", status, role, is_admin: role === "admin", capabilities },
+        {
+          partner_id: PARTNER,
+          code: "acme",
+          display_name: "Acme Partners",
+          status,
+          role,
+          is_admin: role === "admin",
+          capabilities,
+          permissions: permissionsFor(capabilities, status, role === "admin"),
+        },
       ],
     },
   };
 }
 
 function navLabels(): string[] {
-  return within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent ?? "");
+  return within(screen.getByRole("navigation")).queryAllByRole("link").map((a) => a.textContent ?? "");
 }
 
 beforeEach(() => {
@@ -395,7 +426,11 @@ describe("the partner shell", () => {
       </PartnerShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(navLabels()).toEqual(["Overview", "Commissions", "Payouts"]);
+    const labels = navLabels();
+    expect(labels).toEqual(expect.arrayContaining(["Dashboard", "Commissions", "Payouts", "Partner Balance"]));
+    for (const absent of ["Customers", "Sub-Partners", "Affiliates", "Plans & Add-ons", "Brand Settings", "Domains"]) {
+      expect(labels).not.toContain(absent);
+    }
   });
 
   it("a reseller-like and an affiliate-like partner differ only by what they were granted", async () => {
@@ -410,7 +445,11 @@ describe("the partner shell", () => {
       </PartnerShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(navLabels()).toEqual(["Overview", "Customers", "Products & plans", "Referrals", "Commissions"]);
+    const labels = navLabels();
+    expect(labels).toEqual(expect.arrayContaining(["Dashboard", "Customers", "Products", "Plans & Add-ons", "Affiliates", "Commissions"]));
+    for (const absent of ["Payouts", "Sub-Partners", "Brand Settings", "Domains"]) {
+      expect(labels).not.toContain(absent);
+    }
   });
 
   it("explains a suspended partner and keeps history readable", async () => {
@@ -439,7 +478,7 @@ describe("the partner shell", () => {
     );
     expect(await screen.findByText(/This partner account has ended/)).toBeInTheDocument();
     // The server refuses everything else for an ended partner, so nothing else is offered.
-    expect(navLabels()).toEqual(["Overview", "Commissions", "Payouts"]);
+    expect(navLabels()).toEqual(["Commissions", "Payouts", "Partner Balance"]);
   });
 
   it("offers a partner that was never activated nothing to do", async () => {
@@ -454,7 +493,7 @@ describe("the partner shell", () => {
       </PartnerShell>,
     );
     expect(await screen.findByText(/isn.t active yet/)).toBeInTheDocument();
-    expect(navLabels()).toEqual(["Overview"]);
+    expect(navLabels()).toEqual([]);
   });
 
   it("does not reveal a partner the person does not belong to", async () => {

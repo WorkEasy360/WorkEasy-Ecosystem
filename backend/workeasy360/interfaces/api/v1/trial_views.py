@@ -130,7 +130,37 @@ def explore_view(request: HttpRequest, org_slug: str) -> JsonResponse:
                     plan["trial_available"] = False
             shown.append(product)
         listing["products"] = shown
+    _apply_portal_presentation(ctx, listing)
     return JsonResponse(listing)
+
+
+def _apply_portal_presentation(ctx: Any, listing: dict[str, Any]) -> None:
+    """The white-label partner's own order and visibility for Explore (ADR-045).
+
+    Presentation only. A product the customer already holds is never hidden, and
+    a product the partner turned off for new sales is not offered to discover.
+    Nothing is added, no price is read and no entitlement is touched."""
+    from workeasy360.commercial.partners import selectors as partner_selectors
+
+    presentation = partner_selectors.portal_presentation_for_organization(
+        ctx.organization_id
+    )
+    if not presentation:
+        return
+    shown = []
+    for product in listing["products"]:
+        entry = presentation.get(product["code"])
+        if (
+            entry is not None
+            and product.get("holding") is None
+            and (not entry["show_in_explore"] or not entry["enabled_for_sale"])
+        ):
+            continue
+        shown.append(product)
+    listing["products"] = sorted(
+        shown,
+        key=lambda p: (presentation.get(p["code"], {}).get("display_order", 0) or 10**6,),
+    )
 
 
 @require_http_methods(["GET"])
