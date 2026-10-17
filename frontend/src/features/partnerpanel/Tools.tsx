@@ -204,7 +204,7 @@ function KeysTable({
                     </span>
                     <button
                       type="button"
-                      className="w360-btn w360-btn-primary"
+                      className="w360-btn w360-btn-danger"
                       disabled={busy}
                       onClick={() => {
                         setConfirming(null);

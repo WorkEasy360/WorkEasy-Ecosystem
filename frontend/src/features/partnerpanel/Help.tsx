@@ -179,7 +179,7 @@ export function Notifications() {
               </button>
             </div>
             {d.items.length === 0 ? (
-              <EmptyState title={view === "unread" ? "You are all caught up" : "Nothing here yet"}>
+              <EmptyState title={view === "unread" ? "You are all caught up" : "Nothing here yet"} icon="bell">
                 <span>New events on your account will appear here.</span>
               </EmptyState>
             ) : (

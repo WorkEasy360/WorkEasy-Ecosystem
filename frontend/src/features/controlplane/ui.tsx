@@ -147,19 +147,23 @@ export function useAction(after?: () => void) {
   return { act, busy, feedback };
 }
 
-/** A button that asks for the *reason* an auditor will read, then confirms. */
+/** A button that asks for the *reason* an auditor will read, then confirms.
+ * `danger` marks a destructive confirmation (suspend, remove): it is drawn in
+ * the semantic red, never the brand green. */
 export function ReasonAction({
   label,
   confirmLabel,
   onConfirm,
   busy,
   minLength = 10,
+  danger = false,
 }: {
   label: string;
   confirmLabel?: string;
   onConfirm: (reason: string) => void;
   busy?: boolean;
   minLength?: number;
+  danger?: boolean;
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -202,7 +206,7 @@ export function ReasonAction({
       <div className={styles.row}>
         <button
           type="submit"
-          className="w360-btn w360-btn-primary"
+          className={`w360-btn ${danger ? "w360-btn-danger" : "w360-btn-primary"}`}
           disabled={busy || reason.trim().length < minLength}
         >
           {confirmLabel ?? "Confirm"}
@@ -231,7 +235,8 @@ const BADGES: Record<string, string> = {
   error: "w360-badge w360-badge-danger",
   accepted: "w360-badge w360-badge-success",
   succeeded: "w360-badge w360-badge-success",
-  trialing: "w360-badge w360-badge-neutral",
+  trialing: "w360-badge w360-badge-info",
+  trial: "w360-badge w360-badge-info",
   open: "w360-badge w360-badge-neutral",
   pending: "w360-badge w360-badge-neutral",
   awaiting_payment: "w360-badge w360-badge-neutral",
@@ -291,7 +296,7 @@ export function Table({
   isEmpty?: boolean;
 }) {
   const captionId = useId();
-  if (isEmpty) return <p className={styles.muted}>{empty ?? "Nothing to show."}</p>;
+  if (isEmpty) return <p className={styles.empty}>{empty ?? "Nothing to show."}</p>;
   // A table wider than its column scrolls sideways; the wrapper is a named,
   // focusable region so a keyboard user can scroll it too (WCAG 2.1.1).
   return (

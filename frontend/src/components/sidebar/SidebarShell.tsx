@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Logo } from "@/components/brand/Logo";
 import { NavIcon } from "./icons";
 import styles from "./SidebarShell.module.css";
 
@@ -123,7 +124,9 @@ export function SidebarShell({
             <span className={styles.brandName}>{brandName}</span>
           </span>
         ) : (
-          <span className={styles.brand}>Workeasy360</span>
+          <span className={styles.brand}>
+            <Logo compact />
+          </span>
         )}
         {context && <div className={styles.context}>{context}</div>}
         <div className={styles.spacer} />

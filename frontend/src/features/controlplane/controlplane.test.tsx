@@ -708,7 +708,7 @@ describe("hostile text is rendered as text (XSS)", () => {
   const EVIL = `<img src=x onerror="window.__pwned=1"><script>window.__pwned=2</script>`;
 
   function expectInert(container: HTMLElement) {
-    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("img:not([data-w360-logo])")).toBeNull(); // the shell's own logo aside
     expect(container.querySelector("script")).toBeNull();
     expect(container.querySelector("[onerror]")).toBeNull();
     expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
@@ -834,7 +834,7 @@ describe("hostile text is rendered as text (XSS)", () => {
       </PartnerShell>,
     );
     fireEvent.change(await screen.findByLabelText("Brand name"), { target: { value: EVIL } });
-    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("img:not([data-w360-logo])")).toBeNull(); // the shell's own logo aside
     expect(container.querySelector("script")).toBeNull();
     expect(container.querySelector("strong")?.textContent).toBe(EVIL);
   });

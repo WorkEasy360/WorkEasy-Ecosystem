@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useId } from "react";
 import { usePathname } from "next/navigation";
+import { NavIcon } from "@/components/sidebar/icons";
 import { usePartner } from "@/features/controlplane/ControlShell";
 import { money } from "@/features/controlplane/ui";
 import type { CurrencyAmount } from "@/lib/api/partnerPanel";
@@ -56,11 +57,27 @@ export function NotAvailable({ title, reasons }: { title: string; reasons: strin
   );
 }
 
-export function EmptyState({ title, children }: { title: string; children?: React.ReactNode }) {
+/** Nothing here yet: a soft mint illustration, a dark headline, muted words,
+ * and (passed as children) the action that fills it. */
+export function EmptyState({
+  title,
+  icon = "sparkles",
+  children,
+}: {
+  title: string;
+  /** A sidebar icon name for the illustration; decorative only. */
+  icon?: string;
+  children?: React.ReactNode;
+}) {
   return (
     <div className={styles.emptyState}>
-      <strong>{title}</strong>
-      {children}
+      <span className={styles.emptyArt} aria-hidden="true">
+        <NavIcon name={icon} />
+      </span>
+      <div className={styles.emptyText}>
+        <strong>{title}</strong>
+        {children}
+      </div>
     </div>
   );
 }
@@ -82,16 +99,26 @@ export function Kpi({
   value,
   note,
   unavailable,
+  icon,
 }: {
   label: string;
   value?: React.ReactNode;
   note?: string;
   /** Why the figure is missing - shown instead of a zero that could be mistaken for a fact. */
   unavailable?: string;
+  /** A sidebar icon name, drawn green on a light mint disc; decorative only. */
+  icon?: string;
 }) {
   return (
     <li className={styles.kpi}>
-      <span className={styles.kpiLabel}>{label}</span>
+      <span className={styles.kpiHead}>
+        <span className={styles.kpiLabel}>{label}</span>
+        {icon && (
+          <span className={styles.kpiIcon} aria-hidden="true">
+            <NavIcon name={icon} />
+          </span>
+        )}
+      </span>
       {unavailable ? (
         <span className={styles.kpiNote}>{unavailable}</span>
       ) : (

@@ -200,7 +200,7 @@ describe("API key manager", () => {
     mockApi({ ...BASE, [`GET ${API}/api-keys`]: [ok({ ...OVERVIEW, keys: [{ ...KEY, name: EVIL }] })] });
     const { container } = shell(<ApiKeys />);
     await screen.findByRole("table", { name: "Your API keys" });
-    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("img:not([data-w360-logo])")).toBeNull(); // the shell's own logo aside
     expect(container.querySelector("script")).toBeNull();
     expect(screen.getByText(EVIL)).toBeInTheDocument();
   });
@@ -347,7 +347,7 @@ describe("notification center", () => {
     mockApi({ ...BASE, [`GET ${API}/notifications`]: [ok(response("unread", [{ ...ITEMS[0]!, detail: EVIL }]))] });
     const { container } = shell(<Notifications />);
     await screen.findByRole("list", { name: "Notifications" });
-    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("img:not([data-w360-logo])")).toBeNull(); // the shell's own logo aside
     expect(container.querySelector("script")).toBeNull();
   });
 

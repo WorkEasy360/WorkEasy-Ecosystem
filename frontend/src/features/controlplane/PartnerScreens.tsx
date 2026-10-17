@@ -11,6 +11,7 @@ import { DiagnosticResult } from "./AdminScreens";
 import { applyAccent, safeColor } from "./useBranding";
 import { LoadGate, MoreButton, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
 import styles from "./ControlPlane.module.css";
+import local from "./PartnerConsole.module.css";
 
 function usePartnerId(): { id: string; has: (c: string) => boolean; active: boolean; isAdmin: boolean } {
   const { partner } = usePartner();
@@ -453,9 +454,50 @@ export function PartnerBranding() {
         Your name, accent colour and logo are shown to your customers on your domain. The layout, and every security
         prompt, stay Workeasy360&apos;s.
       </p>
+      <BrandScope />
       <LoadGate load={load} what="your branding">
         {({ brand }) => <BrandForm partnerId={id} brand={brand} disabled={!active} onSaved={reload} />}
       </LoadGate>
+    </div>
+  );
+}
+
+/** Which brand is which: the WorkEasy360 platform brand (this panel, every
+ * security prompt - never changed here) and the partner's own white-label
+ * brand (what their customers see - edited below). */
+function BrandScope() {
+  return (
+    <div className={styles.brandScope}>
+      <section className={styles.scopeCard} aria-labelledby="scope-platform">
+        <p className={styles.scopeTag}>Fixed</p>
+        <h2 id="scope-platform" className={styles.cardTitle}>
+          WorkEasy360 platform brand
+        </h2>
+        <p className={styles.muted}>
+          This partner panel, the sign-in security prompts and Workeasy360&apos;s own messages always use the WorkEasy360
+          look. It is not changed by your branding.
+        </p>
+        <ul className={styles.platformSwatches} aria-label="WorkEasy360 colours">
+          <li>
+            <span className={`${styles.platformSwatch} ${styles.swatchGreen}`} aria-hidden="true" />
+            WorkEasy360 green
+          </li>
+          <li>
+            <span className={`${styles.platformSwatch} ${styles.swatchInk}`} aria-hidden="true" />
+            Deep navy
+          </li>
+        </ul>
+      </section>
+      <section className={`${styles.scopeCard} ${styles.scopeCardPartner}`} aria-labelledby="scope-partner">
+        <p className={styles.scopeTag}>Yours to edit</p>
+        <h2 id="scope-partner" className={styles.cardTitle}>
+          Your white-label brand
+        </h2>
+        <p className={styles.muted}>
+          What your customers see on your domain: your brand name, accent colour and logo. Change it below; the live
+          preview shows your colours as you type.
+        </p>
+      </section>
     </div>
   );
 }
@@ -578,17 +620,33 @@ function BrandForm({ partnerId, brand, disabled, onSaved }: { partnerId: string;
         </div>
       </form>
 
+      {/* The partner's colours apply inside this section only (applyAccent on
+          its own element); the panel around it stays WorkEasy360's. */}
       <section aria-labelledby="preview-h" className={styles.preview} ref={preview}>
         <h2 id="preview-h" className={styles.cardTitle}>
-          Preview
+          Your white-label brand: live preview
         </h2>
-        <p>
-          <span className={styles.previewMark} aria-hidden="true" />
-          <strong>{name || "Your brand"}</strong>
+        <p className={styles.muted}>
+          Customers see this beside the standard Workeasy360 sign-in.{" "}
+          {safeColor(color) ? `Accent ${color}.` : "The default accent until you choose one."}
         </p>
-        {/* eslint-disable-next-line @next/next/no-img-element -- a data: URL of a local, validated file */}
-        {logoPreview && <img className={styles.logo} src={logoPreview} alt={`${name || "Your"} logo preview`} />}
-        <p className={styles.muted}>Customers see this beside the standard Workeasy360 sign-in.</p>
+        <div className={local.simulated}>
+          <div className={local.simHeader}>
+            {logoPreview ? (
+              // eslint-disable-next-line @next/next/no-img-element -- a data: URL of a local, validated file
+              <img className={styles.logo} src={logoPreview} alt={`${name || "Your"} logo preview`} />
+            ) : (
+              <span className={styles.previewMark} aria-hidden="true" />
+            )}
+            <strong>{name || "Your brand"}</strong>
+          </div>
+          <div className={styles.previewSignIn} aria-hidden="true">
+            <p>Sign in to {name || "your brand"}</p>
+            <div className={local.simTile}>Email</div>
+            <div className={local.simTile}>Password</div>
+            <span className={styles.previewButton}>Sign in</span>
+          </div>
+        </div>
       </section>
     </div>
   );

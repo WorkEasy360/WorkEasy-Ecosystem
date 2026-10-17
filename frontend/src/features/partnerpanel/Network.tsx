@@ -112,6 +112,7 @@ function SubPartnerRowView({
                 <ReasonAction
                   label="Suspend"
                   confirmLabel="Suspend"
+                  danger
                   busy={busy}
                   onConfirm={(reason) => void act(() => panelApi.subPartnerAction(partnerId, row.id, "suspend", reason), `${row.name} is suspended.`)}
                 />
@@ -657,6 +658,7 @@ function MemberLine({
             <ReasonAction
               label="Remove"
               confirmLabel="Remove"
+              danger
               busy={busy}
               minLength={3}
               onConfirm={() => void act(() => panelApi.removeMember(partnerId, m.id), `${m.email} was removed.`)}

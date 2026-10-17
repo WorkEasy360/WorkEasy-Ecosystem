@@ -145,10 +145,43 @@
   vertical-align: top;
 }
 
-.table th {
-  color: var(--w360-text-muted);
+/* Column headings on a very light mint band; rows white, a soft mint on hover,
+   the light brand mint when selected. Green stays for status and actions. */
+.table thead th {
+  background: var(--w360-bg-soft);
+  color: var(--w360-text);
   font-weight: 600;
+  font-size: 13px;
   white-space: nowrap;
+  border-bottom-color: var(--w360-border);
+}
+
+.table tbody th {
+  color: var(--w360-text);
+  font-weight: 600;
+}
+
+.table tbody tr {
+  background: var(--w360-surface);
+}
+
+.table tbody tr:hover {
+  background: var(--w360-bg-soft);
+}
+
+.table tbody tr[aria-selected="true"] {
+  background: var(--w360-brand-soft);
+}
+
+/* A table with nothing in it yet: a calm statement, not an error. */
+.empty {
+  margin: 0;
+  padding: var(--w360-space-4) var(--w360-space-5);
+  border: 1px dashed var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-bg-soft);
+  color: var(--w360-text-muted);
+  font-size: 14px;
 }
 
 .num {
@@ -194,6 +227,98 @@
 .logo {
   max-height: 48px;
   max-width: 200px;
+}
+
+/* Brand Settings: the platform brand beside the partner's own. */
+.brandScope {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+}
+
+.scopeCard {
+  display: grid;
+  gap: var(--w360-space-2);
+  align-content: start;
+  padding: var(--w360-space-4) var(--w360-space-5);
+  border: 1px solid var(--w360-border);
+  border-top: 4px solid var(--w360-indicator);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+  min-width: 0;
+}
+
+.scopeCard .cardTitle,
+.scopeCard p {
+  margin: 0;
+}
+
+/* The partner's card is marked by a neutral edge: its colour is theirs. */
+.scopeCardPartner {
+  border-top-color: var(--w360-border-strong);
+}
+
+.scopeTag {
+  justify-self: start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--w360-neutral-bg);
+  color: var(--w360-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.platformSwatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2) var(--w360-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+
+.platformSwatches li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+}
+
+.platformSwatch {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--w360-radius-sm);
+  border: 1px solid var(--w360-border-strong);
+}
+
+.swatchGreen {
+  background: var(--w360-green-500);
+}
+
+.swatchInk {
+  background: var(--w360-ink-900);
+}
+
+.previewSignIn {
+  display: grid;
+  gap: var(--w360-space-2);
+}
+
+.previewSignIn p {
+  margin: 0;
+}
+
+/* The sample call-to-action draws the --w360-cta tokens, which the partner's
+   accent replaces inside the preview section only. */
+.previewButton {
+  justify-self: start;
+  padding: 8px 16px;
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-cta);
+  color: var(--w360-cta-contrast);
+  font-weight: 700;
 }
 
 /* The sighted "required" cue after a label (the input's own `required` is what

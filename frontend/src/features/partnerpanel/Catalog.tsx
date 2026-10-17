@@ -6,7 +6,8 @@ import { LoadGate, MoreButton, Status, Table, money, useAction, useLoad, usePage
 import { partnerApi } from "@/lib/api/controlPlane";
 import { panelApi, type ManagedProduct } from "@/lib/api/partnerPanel";
 import { PartnerCommissions } from "@/features/controlplane/PartnerScreens";
-import { NotAvailable, PageHeader, SubNav, UsersNav, usePanel } from "./PanelKit";
+import { ProductIcon, productIconKnown } from "@/components/ProductIcon";
+import { NotAvailable, PageHeader, SubNav, UsersNav, monogram, usePanel } from "./PanelKit";
 import styles from "./PartnerPanel.module.css";
 
 const INTERVALS: Record<string, string> = {
@@ -55,8 +56,15 @@ export function PartnerProducts() {
               {d.products.map((p) => (
                 <tr key={p.code}>
                   <th scope="row">
-                    {p.name}
-                    <div className={styles.muted}>{p.tagline || p.category}</div>
+                    <div className={styles.productCell}>
+                      <span className={styles.productIcon} aria-hidden="true">
+                        {productIconKnown(p.icon) ? <ProductIcon icon={p.icon} /> : monogram(p.name)}
+                      </span>
+                      <div>
+                        {p.name}
+                        <div className={styles.muted}>{p.tagline || p.category}</div>
+                      </div>
+                    </div>
                   </th>
                   <td>
                     <Status value="granted" />

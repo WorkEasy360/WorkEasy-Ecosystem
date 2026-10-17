@@ -46,8 +46,10 @@ function mix(hex: string, toward: "#000000" | "#ffffff", amount: number): string
   return `#${channel(1)}${channel(3)}${channel(5)}`;
 }
 
-// The lightest surface a link can sit on in each theme (see globals.css).
-const LIGHT_SURFACE = "#f7f8fa";
+// The surface a link must still read on in each theme (see globals.css): the
+// darkest light one - the sign-in page's mint canvas, where a partner's support
+// links sit - and the lightest dark one (the raised surface).
+const LIGHT_SURFACE = "#eaf6ef";
 const DARK_SURFACE = "#1d212a";
 const WCAG_AA_TEXT = 4.5;
 

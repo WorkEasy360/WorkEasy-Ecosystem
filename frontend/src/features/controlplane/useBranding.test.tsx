@@ -23,8 +23,8 @@ const contrast = (a: string, b: string) => {
   return (hi + 0.05) / (lo + 0.05);
 };
 
-const LIGHT_SURFACES = ["#f7f8fa", "#ffffff"];
-const DARK_SURFACES = ["#0f1115", "#171a21", "#1d212a"];
+const LIGHT_SURFACES = ["#eaf6ef", "#f4faf7", "#f7f8fa", "#ffffff"];
+const DARK_SURFACES = ["#0f1115", "#171a21", "#1d212a", "#0f171c", "#161d24", "#19222a"];
 
 // A spread of accents: the extremes, the awkward mid-tones, and a deterministic sweep.
 const ACCENTS = [

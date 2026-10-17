@@ -104,30 +104,33 @@ function Kpis({ d }: { d: DashboardData }) {
   const noMoney = "Needs commission access.";
   return (
     <ul className={styles.kpis} aria-label="Key figures">
-      <Kpi label="Total customers" value={d.customers?.total} note={d.customers ? `${d.customers.active} active` : undefined} unavailable={d.customers ? undefined : noCustomers} />
+      <Kpi icon="users" label="Total customers" value={d.customers?.total} note={d.customers ? `${d.customers.active} active` : undefined} unavailable={d.customers ? undefined : noCustomers} />
       <Kpi
+        icon="card"
         label="Active subscriptions"
         value={d.customers?.active_subscriptions}
         unavailable={d.customers ? undefined : noCustomers}
       />
-      <Kpi label="Total transactions" value={d.sales?.transactions} note="Sales on which you earn" unavailable={d.sales ? undefined : noMoney} />
-      <Kpi label="Gross sales" value={<Amounts amounts={d.sales?.gross} />} unavailable={d.sales ? undefined : noMoney} />
-      <Kpi label="Partner cost" unavailable={d.not_implemented.partner_cost} />
-      <Kpi label="Commission earned" value={<Amounts amounts={d.sales?.commission_earned} />} unavailable={d.sales ? undefined : noMoney} />
+      <Kpi icon="receipt" label="Total transactions" value={d.sales?.transactions} note="Sales on which you earn" unavailable={d.sales ? undefined : noMoney} />
+      <Kpi icon="chart" label="Gross sales" value={<Amounts amounts={d.sales?.gross} />} unavailable={d.sales ? undefined : noMoney} />
+      <Kpi icon="tag" label="Partner cost" unavailable={d.not_implemented.partner_cost} />
+      <Kpi icon="currency" label="Commission earned" value={<Amounts amounts={d.sales?.commission_earned} />} unavailable={d.sales ? undefined : noMoney} />
       <Kpi
+        icon="history"
         label="Pending commission"
         value={<Amounts amounts={d.money?.pending_commission} />}
         note="Still in the holding period"
         unavailable={d.money ? undefined : noMoney}
       />
       <Kpi
+        icon="handshake"
         label="Pending payout"
         value={<Amounts amounts={d.money?.pending_payout} />}
         note="Cleared, awaiting payment"
         unavailable={d.money ? undefined : noMoney}
       />
-      <Kpi label="Customer limit" unavailable={d.not_implemented.customer_limit} />
-      {d.sub_partners && <Kpi label="Sub-partners" value={d.sub_partners.total} />}
+      <Kpi icon="building" label="Customer limit" unavailable={d.not_implemented.customer_limit} />
+      {d.sub_partners && <Kpi icon="network" label="Sub-partners" value={d.sub_partners.total} />}
     </ul>
   );
 }
@@ -180,7 +183,7 @@ function SalesOverview({ d }: { d: DashboardData }) {
         </button>
       </div>
       {points.length === 0 ? (
-        <EmptyState title="No sales in this period">
+        <EmptyState title="No sales in this period" icon="chart">
           <span>Sales you make, and the commission they earn, appear here as soon as they are recorded.</span>
         </EmptyState>
       ) : table ? (
@@ -341,7 +344,7 @@ function Recent({ d, base }: { d: DashboardData; base: string }) {
     <section className={styles.panel} aria-labelledby="recent">
       <h2 id="recent">Recent activity</h2>
       {nothing ? (
-        <EmptyState title="Nothing yet">
+        <EmptyState title="Nothing yet" icon="history">
           <span>Your first customer, sale or payout will show up here.</span>
         </EmptyState>
       ) : (

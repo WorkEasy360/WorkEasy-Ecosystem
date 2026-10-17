@@ -10,6 +10,23 @@
   padding-block: var(--w360-space-6);
 }
 
+/* The sign-in canvas: the light mint of workeasy360.com with a very faint wash
+   of the call-to-action colour in two corners - a partner's accent on their
+   branded sign-in, the WorkEasy360 green otherwise. Decoration only. */
+:global(body):has(.main) {
+  background:
+    radial-gradient(48rem 28rem at 100% 0%, color-mix(in srgb, var(--w360-cta) 12%, transparent), transparent 70%),
+    radial-gradient(40rem 26rem at 0% 100%, color-mix(in srgb, var(--w360-surface-mint) 90%, transparent), transparent 70%),
+    var(--w360-bg);
+  background-attachment: fixed;
+}
+
+.logoRow {
+  display: flex;
+  justify-content: center;
+  margin-bottom: var(--w360-space-5);
+}
+
 .column {
   width: 100%;
   max-width: 420px;
@@ -22,8 +39,9 @@
 }
 
 .title {
-  font-size: 22px;
-  font-weight: 700;
+  color: var(--w360-text);
+  font-size: 24px;
+  font-weight: 800;
   margin: 0;
   overflow-wrap: anywhere;
 }
@@ -35,6 +53,7 @@
 
 .card {
   padding: var(--w360-space-6);
+  box-shadow: var(--w360-shadow-md);
 }
 
 @media (max-width: 380px) {
@@ -86,7 +105,7 @@
 
 .mode:hover {
   border-color: var(--w360-brand);
-  background: var(--w360-neutral-bg);
+  background: var(--w360-brand-soft);
 }
 
 .mode:focus-visible {
@@ -102,7 +121,7 @@
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: var(--w360-neutral-bg);
+  background: var(--w360-brand-soft);
   color: var(--w360-brand);
 }
 

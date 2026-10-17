@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useId, useState } from "react";
 import Link from "next/link";
+import { Logo } from "@/components/brand/Logo";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/auth/useSession";
 import { usePortals } from "@/lib/portalContext";
@@ -91,8 +92,16 @@ function Heading({ brand }: { brand: HostBrand | null }) {
   // The partner's own welcome message replaces the platform's tagline when it
   // chose to show one on the sign-in page; otherwise the tagline stays.
   const welcome = !choosing && brand?.portal.login_show_welcome && brand.portal.welcome_message.trim();
+  // The WorkEasy360 logo on the platform's own sign-in only. A partner-branded
+  // sign-in never shows it - not even while that partner's brand is loading.
+  const platform = !brand && !brandHostParam(searchParams.get("brand"));
   return (
     <div className={styles.heading}>
+      {platform && (
+        <div className={styles.logoRow}>
+          <Logo size="lg" />
+        </div>
+      )}
       {brand?.logo_url?.startsWith("/api/v1/") && (
         // eslint-disable-next-line @next/next/no-img-element -- same-origin, scanned PNG/JPEG
         <img src={brand.logo_url} alt="" className={brandStyles.logo} />
