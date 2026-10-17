@@ -51,6 +51,9 @@ DANGEROUS_PARTNER = frozenset(
         # under it, are each as consequential as selling.
         "platform.partner_member.manage",
         "platform.partner_subpartner.manage",
+        # ADR-046: minting, rotating or revoking a credential that reads the
+        # partner's data from outside the portal.
+        "platform.partner_apikey.manage",
     }
 )
 

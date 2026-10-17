@@ -155,6 +155,29 @@ NOT_IMPLEMENTED: Final[dict[str, str]] = {
         "The attribution window and the commission rates are platform settings. "
         "A partner reads them; it does not change them."
     ),
+    "custom_roles": (
+        "Roles are the fixed presets (Owner, Admin, Sales, Finance, Support, "
+        "Marketing, Viewer), each a subset of what the partner holds. A "
+        "partner-defined role would need a place to store it and a rule for who "
+        "may define it; neither exists."
+    ),
+    "auth_policy": (
+        "How your customers are authenticated is Workeasy360's policy, not a "
+        "partner setting: a default sign-in destination, a stronger second-factor "
+        "rule, a session length and the single-sign-on mode would each change "
+        "security for people who belong to their own organization. Only how the "
+        "sign-in page is presented (your brand) is yours to choose."
+    ),
+    "appearance_layout": (
+        "A custom sign-in background, landing cards, a preloader and a menu layout "
+        "have no storage. The customer portal uses the standard layout with your "
+        "brand name, logo and colours."
+    ),
+    "partner_tickets": (
+        "Workeasy360 has no ticket system of its own, so open and resolved "
+        "requests are not listed in the portal. Requests are handled in Easy Help "
+        "Desk, where their status, priority and history live."
+    ),
 }
 
 
@@ -885,6 +908,82 @@ def communication(ctx: TenantContext) -> dict[str, Any]:
                 "Deliveries are recorded per recipient organization or account, "
                 "not per partner, so there is no partner-scoped delivery log yet."
             )
+        },
+    }
+
+
+#: What each connection state tells the person. The portal draws the state it
+#: is given; ``disconnected`` and ``error`` are in the vocabulary for a channel
+#: that has a real connection to lose, and no channel can report them today
+#: because the only channel the platform sends through is its own mail provider.
+CHANNEL_STATES: Final = (
+    ("connected", "Connected", "Messages can be sent through this channel."),
+    (
+        "needs_setup",
+        "Needs setup",
+        "The channel works, but something of yours is not filled in yet.",
+    ),
+    ("disconnected", "Disconnected", "The channel was connected and is not any more."),
+    ("error", "Error", "The channel is connected but its last use failed."),
+    ("not_available", "Not available", "The platform has no provider for this channel."),
+)
+
+
+@in_scope
+def channel_manager(ctx: TenantContext) -> dict[str, Any]:
+    """The state of each outbound channel, honestly.
+
+    Email goes through the platform's own mail provider and is the only channel
+    that exists; it is ``connected``, or ``needs_setup`` when the partner has a
+    white-label brand but has not yet named the sender. WhatsApp, SMS and a
+    partner webhook have no provider, so they are ``not_available`` - not
+    ``disconnected`` (there was never a connection) and not faked."""
+    data = communication(ctx)
+    channels = []
+    for ch in data["channels"]:
+        if ch["key"] == "email":
+            white_label = (
+                capabilities.BRANDING_MANAGE
+                in partner_selectors.active_capabilities(ctx.partner_id)
+            )
+            needs = white_label and not ch["sender_name"]
+            channels.append(
+                {
+                    "key": "email",
+                    "label": ch["label"],
+                    "state": "needs_setup" if needs else "connected",
+                    "detail": (
+                        "Name the sender so email sent in your name says who it is from."
+                        if needs
+                        else "Sent through Workeasy360's mail provider"
+                        + (
+                            f", in the name {ch['sender_name']}."
+                            if ch["sender_name"]
+                            else "."
+                        )
+                    ),
+                    "editable": ch["editable"],
+                }
+            )
+        else:
+            channels.append(
+                {
+                    "key": ch["key"],
+                    "label": ch["label"],
+                    "state": "not_available",
+                    "detail": "No provider exists for this channel on the platform.",
+                    "editable": False,
+                }
+            )
+    return {
+        "channels": channels,
+        "states": [
+            {"key": key, "label": label, "meaning": meaning}
+            for key, label, meaning in CHANNEL_STATES
+        ],
+        "not_implemented": {
+            "whatsapp_sms_webhook": NOT_IMPLEMENTED["whatsapp_sms_webhook"],
+            "partner_smtp": NOT_IMPLEMENTED["partner_smtp"],
         },
     }
 

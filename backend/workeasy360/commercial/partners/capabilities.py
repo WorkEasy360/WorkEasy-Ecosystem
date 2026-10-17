@@ -317,6 +317,8 @@ BASELINE_MANAGE: Final = (
     "platform.partner_member.manage",
     "platform.partner_product.manage",
     "platform.partner_activity.view",
+    "platform.partner_apikey.view",
+    "platform.partner_apikey.manage",
 )
 
 # --- member roles: presets over the capabilities -----------------------------

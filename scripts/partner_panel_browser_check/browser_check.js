@@ -302,16 +302,34 @@ const apiGet = (page, path) =>
 // ------------------------------------------------------------------ routes --
 
 const ROUTES = [
-  ["", "dashboard"], ["customers", "customers"], ["sub-partners", "sub-partners"], ["affiliates", "affiliates"],
-  ["affiliates/conversions", "affiliate conversions"], ["affiliates/payouts", "affiliate payouts"], ["affiliates/settings", "affiliate settings"],
-  ["products", "products"], ["plans", "plans"], ["pricing/packages", "pricing packages"], ["pricing/rules", "pricing rules"],
-  ["subscriptions", "subscriptions"], ["orders", "orders"], ["commissions", "commissions"], ["payouts", "payouts"],
-  ["currencies", "currencies"], ["balance", "balance"], ["payments", "payments"], ["payment-links", "payment links"], ["product-billing", "product billing"],
-  ["branding", "brand settings"], ["domains", "domains"], ["product-manager", "product manager"], ["appearance", "appearance"],
-  ["communication/channels", "communication channels"], ["communication/templates", "communication templates"],
+  ["", "dashboards"], ["users", "users"], ["users/subscriptions", "user subscriptions"], ["agency", "agency"],
+  ["affiliates", "affiliates"], ["affiliates/conversions", "affiliate conversions"], ["affiliates/payouts", "affiliate payouts"], ["affiliates/settings", "affiliate settings"],
+  ["plans", "plans"], ["plans/add-ons", "add-ons"], ["pricing/currency", "currency"], ["pricing/packages", "package & pricing"], ["pricing/rules", "pricing rule"],
+  ["payments", "payments"], ["payments/commissions", "commissions"], ["payments/balance", "balance"], ["product-billing", "product billing"],
+  ["brand-settings", "brand settings"], ["brand-settings/url-manager", "url manager"], ["product-manager", "product manager"], ["appearance", "appearance"],
+  ["communication/channel", "communication channel"], ["communication/templates", "communication templates"],
   ["communication/alerts", "communication alerts"], ["communication/logs", "communication logs"],
-  ["integrations", "integrations"], ["authentication", "authentication"], ["shared-resources", "shared resources"],
-  ["team", "users & permissions"], ["activity", "activity"], ["settings", "settings"],
+  ["integrations", "integrations"], ["partner-products", "partner products"], ["auth-configuration", "auth configuration"], ["shared-resources", "shared resources"],
+  ["account", "account"], ["channel-manager", "channel manager"], ["api-keys", "api key manager"], ["translations", "translation manager"],
+  ["roles", "role & permissions"], ["team", "team members"], ["support-manager", "support manager"], ["notifications", "notification center"],
+];
+
+/** The approved sidebar, verbatim. */
+const APPROVED_NAV = [
+  "Dashboards", "Users", "Agency", "Affiliates", "Plans & Add-ons", "Currency & Pricing", "Payments", "Product Billing",
+  "Brand Settings", "Product Manager", "Appearance", "Communication", "Integrations", "Partner Products", "Auth Configuration",
+  "Shared Resources", "Account", "Channel Manager", "API Key Manager", "Translation Manager", "Role & Permissions", "Team Members",
+  "Support Manager", "Notification Center",
+];
+
+/** Every address the old portal served, and where it must now land. */
+const LEGACY = [
+  ["customers", "users"], ["subscriptions", "users/subscriptions"], ["sub-partners", "agency"], ["referrals", "affiliates"],
+  ["commissions", "payments/commissions"], ["payouts", "affiliates/payouts"], ["balance", "payments/balance"], ["orders", "payments"],
+  ["payment-links", "payments"], ["currencies", "pricing/currency"], ["pricing", "pricing/currency"], ["pricing/currencies", "pricing/currency"],
+  ["branding", "brand-settings"], ["domains", "brand-settings/url-manager"], ["white-label", "brand-settings/white-label-setup"],
+  ["products", "partner-products"], ["authentication", "auth-configuration"], ["settings", "account"], ["activity", "notifications"],
+  ["communication", "communication/channel"], ["communication/channels", "communication/channel"], ["support", "support-manager"],
 ];
 
 // ------------------------------------------------------------------ main --
@@ -334,7 +352,7 @@ const ROUTES = [
     await page.goto(`${BASE}/partner/${PANEL_ID}`, { waitUntil: "networkidle0" });
     await waitForText(page, "don't have access to this partner account");
     const text = await page.evaluate(() => document.body.innerText);
-    expectThat(!text.includes("Panel Partner") && !text.includes("Customers"), "partner details leaked to a customer");
+    expectThat(!text.includes("Panel Partner") && !text.includes("Users"), "partner details leaked to a customer");
     const api = await apiGet(page, `/api/v1/partner/${PANEL_ID}/dashboard`);
     expectThat(api.status === 404, `dashboard API gave ${api.status}`);
     await page.close();
@@ -351,10 +369,8 @@ const ROUTES = [
     expectThat(text.includes("£1.50"), "commission £1.50 not shown");
     expectThat(/wholesale-cost model/.test(text), "partner cost is not explained");
     expectThat(/No customer or user limit/.test(text), "customer limit is not explained");
-    const nav = await owner.evaluate(() => [...document.querySelectorAll("nav a")].map((a) => a.innerText.trim()));
-    for (const label of ["Dashboard", "Customers", "Sub-Partners", "Affiliates", "Products", "Plans & Add-ons", "Pricing", "Subscriptions", "Orders", "Commissions", "Payouts", "Currencies", "Partner Balance", "Payments", "Payment Links", "Product Billing", "Brand Settings", "Domains", "Product Manager", "Appearance", "Channels", "Templates", "Alerts", "Logs", "Integrations", "Authentication", "Shared Resources", "Users & Permissions", "Activity", "Settings"]) {
-      expectThat(nav.includes(label), `navigation lacks ${label}`);
-    }
+    const nav = await owner.evaluate(() => [...document.querySelector('nav[aria-label^="Partner "]').querySelectorAll("a")].map((a) => a.innerText.trim()));
+    expectThat(JSON.stringify(nav) === JSON.stringify(APPROVED_NAV), `the sidebar is not exactly the approved menu: ${JSON.stringify(nav)}`);
     return `${nav.length} navigation links`;
   });
 
@@ -387,7 +403,7 @@ const ROUTES = [
 
   // ---- B. customers
   await flow("B add a customer, see it, export the list", async () => {
-    await visit(owner, `/partner/${PANEL_ID}/customers`, "customers (b)", { auditIt: false });
+    await visit(owner, `/partner/${PANEL_ID}/users`, "users (b)", { auditIt: false });
     await type(owner, "Organization name", "Browser Check Ltd");
     await type(owner, "Owner's first name", "Bea");
     await type(owner, "Owner's last name", "Browser");
@@ -408,7 +424,7 @@ const ROUTES = [
     expectThat(probe.text.includes("Browser Check Ltd") && probe.text.includes("Zen Retail") && !probe.text.includes("Rival Customer"), "export content wrong");
     await clickText(owner, "Export customers (CSV)");
     await waitForText(owner, "Your customer list was downloaded.");
-    await visit(owner, `/partner/${PANEL_ID}/subscriptions`, "subscriptions (b)", { auditIt: false });
+    await visit(owner, `/partner/${PANEL_ID}/users/subscriptions`, "subscriptions (b)", { auditIt: false });
     await waitForText(owner, "Zen Retail");
   });
 
@@ -425,7 +441,7 @@ const ROUTES = [
       [...row.querySelectorAll("button")].find((b) => b.innerText.includes("Disable for new sales")).click();
     });
     await waitForText(owner, "Example Desk is off for new sales.");
-    await visit(owner, `/partner/${PANEL_ID}/customers`, "customers (f)", { auditIt: false });
+    await visit(owner, `/partner/${PANEL_ID}/users`, "users (f)", { auditIt: false });
     await clickText(owner, "Sell a plan");
     await owner.waitForSelector("select", { timeout: 8000 });
     const offered = await owner.evaluate(() => [...document.querySelectorAll("select option")].map((o) => o.innerText));
@@ -452,21 +468,21 @@ const ROUTES = [
 
   // ---- E. white-label
   await flow("E brand, colour scheme and domain request", async () => {
-    await visit(owner, `/partner/${PANEL_ID}/branding`, "branding (e)", { auditIt: false });
+    await visit(owner, `/partner/${PANEL_ID}/brand-settings`, "branding (e)", { auditIt: false });
     await type(owner, "Brand name", "Panel Brand");
     await clickText(owner, "Save", { within: "main" });
     await untilDone(owner, PANEL_TOTP, () => /saved|Brand saved/i.test(document.body.innerText), 60000).catch(() => {});
     await visit(owner, `/partner/${PANEL_ID}/appearance`, "appearance (e)", { auditIt: false });
     await waitForText(owner, "Violet");
-    await clickText(owner, "Violet");
+    await clickText(owner, "Violet", { within: "main" });
     await waitForText(owner, "Violet applied.");
-    await visit(owner, `/partner/${PANEL_ID}/domains`, "domains (e)", { auditIt: false });
+    await visit(owner, `/partner/${PANEL_ID}/brand-settings/url-manager`, "domains (e)", { auditIt: false });
     await waitForText(owner, "domain");
   });
 
   // ---- G. communication
   await flow("G communication shows one live channel and no credential field", async () => {
-    await visit(owner, `/partner/${PANEL_ID}/communication/channels`, "channels (g)", { auditIt: false });
+    await visit(owner, `/partner/${PANEL_ID}/communication/channel`, "channels (g)", { auditIt: false });
     await waitForText(owner, "Webhook");
     const hasPassword = await owner.evaluate(() => !!document.querySelector('input[type="password"]'));
     expectThat(!hasPassword, "a password field exists on the communication page");
@@ -496,9 +512,10 @@ const ROUTES = [
     await signIn(page, "finance@panel.test");
     await visit(page, `/partner/${PANEL_ID}`, "dashboard (finance)");
     await waitForText(page, "Welcome, Panel Partner");
-    const nav = await page.evaluate(() => [...document.querySelectorAll("nav a")].map((a) => a.innerText.trim()));
-    expectThat(nav.includes("Commissions") && nav.includes("Partner Balance"), "finance lacks the money pages");
-    for (const absent of ["Customers", "Sub-Partners", "Domains", "Brand Settings"]) expectThat(!nav.includes(absent), `finance sees ${absent}`);
+    const nav = await page.evaluate(() => [...document.querySelector('nav[aria-label^="Partner "]').querySelectorAll("a")].map((a) => a.innerText.trim()));
+    expectThat(nav.includes("Payments") && nav.includes("Affiliates"), "finance lacks the money pages");
+    for (const absent of ["Users", "Agency", "Brand Settings", "API Key Manager"]) expectThat(!nav.includes(absent), `finance sees ${absent}`);
+    expectThat(nav.every((l) => APPROVED_NAV.includes(l)), `finance sees an item outside the approved menu: ${JSON.stringify(nav)}`);
     const text = await bodyText(page);
     expectThat(text.includes("Not shown for your role."), "hidden customer section is not explained");
     const api = await apiGet(page, `/api/v1/partner/${PANEL_ID}/customers`);
@@ -508,16 +525,16 @@ const ROUTES = [
 
   // ---- C. sub-partner
   await flow("C create a sub-partner, activate it, it signs in and sees only its own customers", async () => {
-    await visit(owner, `/partner/${PANEL_ID}/sub-partners`, "sub-partners (c)", { auditIt: false });
-    await waitForText(owner, "Add a sub-partner");
+    await visit(owner, `/partner/${PANEL_ID}/agency`, "agency (c)", { auditIt: false });
+    await waitForText(owner, "Add an agency");
     await type(owner, "Partner name", "North Agency");
     await type(owner, "Administrator's name", "Nora North");
     await type(owner, "Administrator's email", "admin@north.test");
     await tick(owner, "Create customers", true, { legend: "What it can do" });
     await tick(owner, "Sell products", true, { legend: "What it can do" });
     await tick(owner, "Example Desk", true, { legend: "Products it may sell" });
-    await clickText(owner, "Create sub-partner", { exact: true });
-    await untilDone(owner, PANEL_TOTP, () => document.body.innerText.includes("Sub-partner created in draft"), 90000);
+    await clickText(owner, "Add agency", { exact: true });
+    await untilDone(owner, PANEL_TOTP, () => document.body.innerText.includes("Agency created in draft"), 90000);
     await owner.reload({ waitUntil: "networkidle0" });
     await waitForText(owner, "North Agency");
     await clickText(owner, "Activate", { exact: true, within: "tbody" });
@@ -528,12 +545,12 @@ const ROUTES = [
     const portal = await apiGet(child, "/api/v1/partner/portal");
     const mine = portal.body.partners[0];
     expectThat(portal.body.partners.length === 1 && mine.display_name === "North Agency", "the sub-partner's portal is wrong");
-    await visit(child, `/partner/${mine.partner_id}/customers`, "customers (sub-partner)");
+    await visit(child, `/partner/${mine.partner_id}/users`, "users (sub-partner)");
     await waitForText(child, "No customers yet.");
     const text = await bodyText(child);
     expectThat(!text.includes("Zen Retail") && !text.includes("Orchid Studio"), "the parent's customers leaked to the sub-partner");
-    const nav = await child.evaluate(() => [...document.querySelectorAll("nav a")].map((a) => a.innerText.trim()));
-    expectThat(!nav.includes("Sub-Partners"), "the sub-partner may create sub-partners");
+    const nav = await child.evaluate(() => [...document.querySelector('nav[aria-label^="Partner "]').querySelectorAll("a")].map((a) => a.innerText.trim()));
+    expectThat(!nav.includes("Agency"), "the sub-partner may create agencies");
     const up = await apiGet(child, `/api/v1/partner/${PANEL_ID}/customers`);
     expectThat(up.status === 404, `the sub-partner reached its parent's customers (${up.status})`);
     const own = await apiGet(child, `/api/v1/partner/${mine.partner_id}/members`);
@@ -552,6 +569,120 @@ const ROUTES = [
     const activity = await apiGet(owner, `/api/v1/partner/${PANEL_ID}/activity`);
     expectThat(activity.status === 200, "own activity unavailable");
     expectThat(!JSON.stringify(activity.body).includes("Rival"), "another partner's activity leaked");
+  });
+
+  // ---- J. the old addresses redirect to the new homes, and nothing renders at them
+  await flow("J every old partner address redirects permanently to its new page", async () => {
+    const probe = await owner.evaluate(async (id, legacy) => {
+      const out = [];
+      for (const [from, to] of legacy) {
+        const r = await fetch(`/partner/${id}/${from}?x=1`, { redirect: "manual", credentials: "same-origin" });
+        out.push({ from, to, type: r.type, status: r.status });
+      }
+      return out;
+    }, PANEL_ID, LEGACY);
+    // A manual redirect to a same-origin URL is an opaque redirect; follow it to read the landing page.
+    for (const { from, to } of probe) {
+      const page = owner;
+      await page.goto(`${BASE}/partner/${PANEL_ID}/${from}`, { waitUntil: "networkidle0" });
+      const path = await page.evaluate(() => location.pathname);
+      expectThat(path === `/partner/${PANEL_ID}/${to}`, `/${from} landed on ${path}, not /${to}`);
+    }
+    const seen = probe.filter((p) => p.type !== "opaqueredirect" && p.status !== 308);
+    expectThat(seen.length === 0, `not permanent redirects: ${JSON.stringify(seen)}`);
+    return `${LEGACY.length} redirects`;
+  });
+
+  // ---- K. API keys: shown once, scoped, revocable
+  await flow("K create an API key, see its secret once, use it, rotate it, revoke it", async () => {
+    await visit(owner, `/partner/${PANEL_ID}/api-keys`, "api keys (k)", { auditIt: false });
+    await type(owner, "Key name", "Browser check key");
+    await tick(owner, "Read customers", true, { legend: "Scope" });
+    await clickText(owner, "Create key", { exact: true });
+    await untilDone(owner, PANEL_TOTP, () => !!document.querySelector('[data-testid="new-secret"]'), 90000);
+    const secret = await owner.evaluate(() => document.querySelector('[data-testid="new-secret"]').innerText.trim());
+    expectThat(/^w360pk_[0-9a-f]{12}_\S{20,}$/.test(secret), "the secret has the wrong shape");
+    const used = await owner.evaluate(async (s) => {
+      const r = await fetch("/api/v1/partner-api/customers", { headers: { Authorization: `Bearer ${s}` }, credentials: "omit" });
+      return { status: r.status, text: await r.text() };
+    }, secret);
+    expectThat(used.status === 200 && used.text.includes("Zen Retail") && !used.text.includes("Rival Customer"), `key read gave ${used.status}`);
+    const noScope = await owner.evaluate(async (s) => (await fetch("/api/v1/partner-api/commissions", { headers: { Authorization: `Bearer ${s}` }, credentials: "omit" })).status, secret);
+    expectThat(noScope === 403, `a key without the scope read commissions (${noScope})`);
+    await clickText(owner, "I have stored it", { exact: true });
+    await owner.reload({ waitUntil: "networkidle0" });
+    const page = await bodyText(owner);
+    expectThat(!page.includes(secret) && !page.includes(secret.split("_")[2]), "the secret is shown again after it was dismissed");
+    const listing = await apiGet(owner, `/api/v1/partner/${PANEL_ID}/api-keys`);
+    expectThat(!JSON.stringify(listing.body).includes(secret.split("_")[2]), "the list API returns the secret");
+    await owner.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Rotate Browser check key").click());
+    await clickText(owner, "Confirm rotate", { exact: true });
+    await untilDone(owner, PANEL_TOTP, () => !!document.querySelector('[data-testid="new-secret"]'), 90000);
+    const after = await owner.evaluate(async (s) => (await fetch("/api/v1/partner-api/customers", { headers: { Authorization: `Bearer ${s}` }, credentials: "omit" })).status, secret);
+    expectThat(after === 401, `the rotated-out secret still works (${after})`);
+    await clickText(owner, "I have stored it", { exact: true });
+    await owner.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Revoke Browser check key" && !b.disabled).click());
+    await clickText(owner, "Confirm revoke", { exact: true });
+    await untilDone(owner, PANEL_TOTP, () => document.body.innerText.includes("was revoked"), 90000);
+  });
+
+  await flow("K2 a member without key permission has no API key manager", async () => {
+    const page = await newPage(await fresh());
+    await signIn(page, "finance@panel.test");
+    const r = await apiGet(page, `/api/v1/partner/${PANEL_ID}/api-keys`);
+    expectThat(r.status === 403, `finance read the key list (${r.status})`);
+    await page.close();
+  });
+
+  // ---- L. translations
+  await flow("L translations: word a string, it is plain text, markup is refused", async () => {
+    await visit(owner, `/partner/${PANEL_ID}/translations`, "translations (l)", { auditIt: false });
+    await choose(owner, "Language", "French");
+    await waitForText(owner, "Shown now:");
+    await type(owner, "Welcome heading", "Bienvenue chez nous");
+    await clickText(owner, "Save translations", { exact: true });
+    await waitForText(owner, "Translations saved.");
+    const bad = await owner.evaluate(async (id) => {
+      const token = document.cookie.split("; ").map((c) => c.split("=")).find(([k]) => k.endsWith("w360_csrf"));
+      const r = await fetch(`/api/v1/partner/${id}/translations`, {
+        method: "PUT", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": token ? token[1] : "" },
+        body: JSON.stringify({ locale: "fr", strings: { "portal.welcome_title": "<img src=x onerror=alert(1)>" } }),
+      });
+      return r.status;
+    }, PANEL_ID);
+    expectThat(bad === 400, `markup was accepted (${bad})`);
+  });
+
+  // ---- M. notifications and support
+  await flow("M notifications: unread, important, mark read, mark all read; support points at help", async () => {
+    await visit(owner, `/partner/${PANEL_ID}/notifications`, "notifications (m)", { auditIt: false });
+    await waitForText(owner, "Notification Center");
+    const before = await bodyText(owner);
+    expectThat(/Unread \(\d+\)/.test(before), "no unread count");
+    await clickText(owner, "Important", { within: "main" });
+    await owner.waitForNetworkIdle({ idleTime: 400 }).catch(() => {});
+    await clickText(owner, "Unread", { within: "main" });
+    await owner.waitForNetworkIdle({ idleTime: 400 }).catch(() => {});
+    await clickText(owner, "Mark all read", { exact: true });
+    await waitForText(owner, "Everything is marked read.");
+    await waitForText(owner, "You are all caught up");
+    await visit(owner, `/partner/${PANEL_ID}/support-manager`, "support (m)", { auditIt: false });
+    await waitForText(owner, "Open and resolved requests");
+    const links = await owner.evaluate(() => [...document.querySelectorAll("main a")].map((a) => a.href));
+    expectThat(links.every((h) => /^(https:|mailto:|http:\/\/127\.0\.0\.1|http:\/\/localhost)/.test(h)), `unsafe link on support: ${links}`);
+  });
+
+  // ---- N. team: suspend and resume
+  await flow("N suspend and resume a team member", async () => {
+    await visit(owner, `/partner/${PANEL_ID}/team`, "team (n)", { auditIt: false });
+    await waitForText(owner, "ops@panel.test");
+    const clickRow = async (name) => owner.evaluate((n) => { const row = [...document.querySelectorAll("tbody tr")].find((r) => r.innerText.includes("ops@panel.test")); const b = [...row.querySelectorAll("button")].find((x) => x.innerText.trim() === n); if (b) b.click(); return !!b; }, name);
+    await clickRow("Suspend");
+    await untilDone(owner, PANEL_TOTP, () => document.body.innerText.includes("is suspended"), 90000);
+    await owner.reload({ waitUntil: "networkidle0" });
+    expectThat(await clickRow("Resume"), "no Resume for a suspended member");
+    await untilDone(owner, PANEL_TOTP, () => document.body.innerText.includes("has access again"), 90000);
   });
 
   // ---- demo partner: temporary password

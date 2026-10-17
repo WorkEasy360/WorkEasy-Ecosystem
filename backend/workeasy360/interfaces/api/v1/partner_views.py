@@ -84,6 +84,7 @@ def customers_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             partner_selectors.partner_customers_page(
                 ctx.partner_id,
                 status=request.GET.get("status") or None,
+                search=request.GET.get("q") or None,
                 **query_page_args(request),
             )
         )

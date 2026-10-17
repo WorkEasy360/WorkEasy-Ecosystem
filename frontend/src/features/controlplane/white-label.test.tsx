@@ -383,7 +383,9 @@ describe("the partner portal", () => {
     await screen.findByLabelText("Brand name");
     expect(calls.some((c) => c.key === `GET ${PORTAL}/branding`)).toBe(true);
     expect(calls.some((c) => c.url.includes("/api/v1/admin/"))).toBe(false); // never the staff endpoints
-    expect(screen.getByRole("link", { name: "Set up white-label" })).toHaveAttribute("href", `/partner/${ID}/white-label`);
+    // The wizard is reached from Brand Settings now (ADR-046), not a sidebar entry of its own.
+    expect(screen.getByRole("link", { name: "Brand Settings" })).toHaveAttribute("href", `/partner/${ID}/brand-settings`);
+    expect(screen.queryByRole("link", { name: "Set up white-label" })).not.toBeInTheDocument();
   });
 
   it("says when white-label is not enabled or the partner is not active", () => {

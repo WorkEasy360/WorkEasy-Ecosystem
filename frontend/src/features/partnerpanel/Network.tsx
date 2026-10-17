@@ -1,36 +1,51 @@
 "use client";
 
+import Link from "next/link";
 import { useId, useState } from "react";
 import { LoadGate, MoreButton, ReasonAction, Status, Table, money, useAction, useLoad, usePaged, when } from "@/features/controlplane/ui";
 import { partnerApi } from "@/lib/api/controlPlane";
 import { panelApi, type MemberRow, type SubPartnerRow } from "@/lib/api/partnerPanel";
-import { PartnerPayouts } from "@/features/controlplane/PartnerScreens";
-import { NotAvailable, PageHeader, SubNav, usePanel } from "./PanelKit";
+import { PartnerCustomers, PartnerPayouts } from "@/features/controlplane/PartnerScreens";
+import { NotAvailable, PageHeader, SubNav, UsersNav, usePanel } from "./PanelKit";
 import styles from "./PartnerPanel.module.css";
 
-// --- sub-partners --------------------------------------------------------------------
+// --- users: the customers a partner serves -------------------------------------------
 
-export function SubPartners() {
+/** Customers and where their subscriptions stand. The same provisioning and
+ * relationship services as ever: there is no second customer database, and a
+ * customer stays its own independent organization. */
+export function Users() {
+  return (
+    <div className={styles.page}>
+      <UsersNav />
+      <PartnerCustomers />
+    </div>
+  );
+}
+
+// --- agency (the partner's child partners) --------------------------------------------------------------------
+
+export function Agency() {
   const { id, can, active } = usePanel();
   const paged = usePaged((cursor) => panelApi.subPartners(id, cursor), [id]);
   const { act, busy, feedback } = useAction(paged.reload);
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Sub-partners"
-        lead="Partners you have set up under your own account. Each signs in on its own, sees only its own customers, and can use only what you give it."
+        title="Agency"
+        lead="The agencies you have set up under your own account. Each signs in on its own, sees only its own customers, and can use only what you give it."
       />
       {feedback}
-      {paged.state === "loading" && <p aria-live="polite">Loading sub-partners…</p>}
-      {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to sub-partners.</p>}
-      {paged.state === "error" && <p role="alert">Couldn&apos;t load sub-partners.</p>}
+      {paged.state === "loading" && <p aria-live="polite">Loading agencies…</p>}
+      {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to agencies.</p>}
+      {paged.state === "error" && <p role="alert">Couldn&apos;t load agencies.</p>}
       {paged.state === "ready" && (
         <>
           <Table
-            caption="Your sub-partners"
+            caption="Your agencies"
             head={["Partner", "Status", "Administrator", "Country", "Currency", "Customers", "Products", "Last sign-in", "Added", "Actions"]}
             isEmpty={paged.rows.length === 0}
-            empty="You have no sub-partners yet."
+            empty="You have no agencies yet."
           >
             {paged.rows.map((p) => (
               <SubPartnerRowView key={p.id} row={p} manage={can("subpartner.manage") && active} act={act} busy={busy} onChanged={paged.reload} partnerId={id} />
@@ -203,11 +218,11 @@ function NewSubPartner({ onCreated }: { onCreated: () => void }) {
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   return (
     <section id="new-sub-partner" className={styles.panel} aria-labelledby="new-sub-partner-title">
-      <h2 id="new-sub-partner-title">Add a sub-partner</h2>
+      <h2 id="new-sub-partner-title">Add an agency</h2>
       <LoadGate load={options} what="the options">
         {(o) =>
           !o.depth.can_have_children ? (
-            <p className={styles.muted}>A sub-partner cannot have sub-partners of its own.</p>
+            <p className={styles.muted}>An agency cannot have agencies of its own.</p>
           ) : (
             <form
               className={styles.page}
@@ -226,7 +241,7 @@ function NewSubPartner({ onCreated }: { onCreated: () => void }) {
                   setPerson("");
                   setCaps([]);
                   setProducts([]);
-                }, "Sub-partner created in draft. Activate it when you are ready: its administrator is emailed a link to set a password then.");
+                }, "Agency created in draft. Activate it when you are ready: its administrator is emailed a link to set a password then.");
               }}
             >
               {feedback}
@@ -270,10 +285,10 @@ function NewSubPartner({ onCreated }: { onCreated: () => void }) {
                   ))}
                 </fieldset>
               </div>
-              <NotAvailable title="What a sub-partner does not get" reasons={Object.values(o.not_implemented)} />
+              <NotAvailable title="What an agency does not get" reasons={Object.values(o.not_implemented)} />
               <div>
                 <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !name.trim() || !email.trim()}>
-                  Create sub-partner
+                  Add agency
                 </button>
               </div>
             </form>
@@ -287,14 +302,14 @@ function NewSubPartner({ onCreated }: { onCreated: () => void }) {
 // --- affiliates ------------------------------------------------------------------------
 
 function AffiliateNav() {
-  const { base } = usePanel();
+  const { base, can } = usePanel();
   return (
     <SubNav
       items={[
-        { href: `${base}/affiliates`, label: "Affiliates" },
-        { href: `${base}/affiliates/conversions`, label: "Conversions" },
-        { href: `${base}/affiliates/payouts`, label: "Payouts" },
-        { href: `${base}/affiliates/settings`, label: "Settings" },
+        { href: `${base}/affiliates`, label: "Overview", show: can("referral.view") },
+        { href: `${base}/affiliates/conversions`, label: "Conversions", show: can("referral.view") },
+        { href: `${base}/affiliates/payouts`, label: "Payouts", show: can("payout.view") },
+        { href: `${base}/affiliates/settings`, label: "Settings", show: can("referral.view") },
       ]}
     />
   );
@@ -308,7 +323,7 @@ export function Affiliates() {
   const [label, setLabel] = useState("");
   return (
     <div className={styles.page}>
-      <PageHeader title="Affiliates" lead="Your referral links, and the sub-partners that refer customers for you." />
+      <PageHeader title="Affiliates" lead="Your referral links, and the agencies that refer customers for you." />
       <AffiliateNav />
       {feedback}
       <LoadGate load={load} what="affiliates">
@@ -359,7 +374,7 @@ export function Affiliates() {
               </form>
             )}
             {d.affiliates.length > 0 && (
-              <Table caption="Sub-partners that refer for you" head={["Partner", "Status", "Administrator", "Active links", "Captured", "Converted"]}>
+              <Table caption="Agencies that refer for you" head={["Partner", "Status", "Administrator", "Active links", "Captured", "Converted"]}>
                 {d.affiliates.map((a) => (
                   <tr key={a.id}>
                     <th scope="row">{a.name}</th>
@@ -471,7 +486,7 @@ export function AffiliateSettings() {
 // --- the team --------------------------------------------------------------------------
 
 export function Team() {
-  const { id, active } = usePanel();
+  const { id, active, base } = usePanel();
   const [load, reload] = useLoad(() => panelApi.members(id), [id]);
   const { act, busy, feedback } = useAction(reload);
   const emailId = useId();
@@ -482,7 +497,11 @@ export function Team() {
   const [role, setRole] = useState("viewer");
   return (
     <div className={styles.page}>
-      <PageHeader title="Users & permissions" lead="The people who work for your partner account, and what each role can do." />
+      <PageHeader
+        title="Team Members"
+        lead="The people who work for your partner account. Removing someone ends their access to this partner at once; it never deletes their Workeasy360 identity."
+        actions={<Link href={`${base}/roles`}>Role &amp; permissions</Link>}
+      />
       {feedback}
       <LoadGate load={load} what="your team">
         {(d) => (
@@ -544,17 +563,6 @@ export function Team() {
                 </div>
               </form>
             )}
-            <section className={styles.panel} aria-labelledby="roles">
-              <h2 id="roles">What each role can do</h2>
-              <ul className={styles.list}>
-                {d.roles.map((r) => (
-                  <li key={r.key} className={styles.listItem}>
-                    <strong>{r.label}</strong>
-                    <span className={styles.muted}>{r.description}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
           </>
         )}
       </LoadGate>
@@ -585,7 +593,7 @@ function MemberLine({
       </th>
       <td>{m.email}</td>
       <td>
-        {manage && !m.is_you ? (
+        {manage && !m.is_you && m.status !== "suspended" ? (
           <>
             <label className="w360-visually-hidden" htmlFor={roleId}>
               Role of {m.email}
@@ -625,6 +633,25 @@ function MemberLine({
                 onClick={() => void act(() => panelApi.resendSetup(partnerId, m.id), `A new setup link was sent to ${m.email}.`)}
               >
                 Resend link
+              </button>
+            )}
+            {m.status === "suspended" ? (
+              <button
+                type="button"
+                className="w360-btn w360-btn-secondary"
+                disabled={busy}
+                onClick={() => void act(() => panelApi.resumeMember(partnerId, m.id), `${m.email} has access again.`)}
+              >
+                Resume
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="w360-btn w360-btn-secondary"
+                disabled={busy}
+                onClick={() => void act(() => panelApi.suspendMember(partnerId, m.id), `${m.email} is suspended. They cannot use this partner account until resumed.`)}
+              >
+                Suspend
               </button>
             )}
             <ReasonAction

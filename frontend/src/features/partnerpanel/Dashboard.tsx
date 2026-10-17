@@ -90,6 +90,8 @@ export function PartnerDashboard() {
               <QuickLinks base={base} can={can} />
               <Recent d={d} base={base} />
             </div>
+            {can("product.view") && <ProductActivity />}
+            <NotificationsPreview />
           </>
         )}
       </LoadGate>
@@ -240,15 +242,79 @@ function BarChart({ points, label, title }: { points: { date: string; value: num
   );
 }
 
+/** Per-product customers and subscriptions, from the same server read the product
+ * screens use. A product granted later appears here by itself. */
+function ProductActivity() {
+  const { id } = usePanel();
+  const [load] = useLoad(() => panelApi.products(id), [id]);
+  return (
+    <section className={styles.panel} aria-labelledby="dash-products">
+      <h2 id="dash-products">Product activity</h2>
+      <LoadGate load={load} what="product activity">
+        {(d) =>
+          d.products.length === 0 ? (
+            <p className={styles.muted}>No products have been granted to your account yet.</p>
+          ) : (
+            <Table caption="Customers and subscriptions by product" head={["Product", "For sale", "Customers", "Active subscriptions"]}>
+              {d.products.map((p) => (
+                <tr key={p.code}>
+                  <th scope="row">{p.name}</th>
+                  <td>
+                    <Status value={p.enabled_for_sale ? "enabled" : "disabled"} />
+                  </td>
+                  <td className={styles.num}>{p.customers ?? "—"}</td>
+                  <td className={styles.num}>{p.active_subscriptions ?? "—"}</td>
+                </tr>
+              ))}
+            </Table>
+          )
+        }
+      </LoadGate>
+    </section>
+  );
+}
+
+/** The newest unread notifications. The full list, and marking read, is the
+ * Notification Center; this only shows that something is waiting. */
+function NotificationsPreview() {
+  const { id, base } = usePanel();
+  const [load] = useLoad(() => panelApi.notifications(id, "unread"), [id]);
+  return (
+    <section className={styles.panel} aria-labelledby="dash-notifications">
+      <h2 id="dash-notifications">Notifications</h2>
+      <LoadGate load={load} what="notifications">
+        {(n) =>
+          n.items.length === 0 ? (
+            <p className={styles.muted}>You are all caught up.</p>
+          ) : (
+            <ul className={styles.list} aria-label="Unread notifications">
+              {n.items.slice(0, 4).map((i) => (
+                <li key={i.id} className={styles.listItem}>
+                  <span>
+                    {i.title}
+                    {i.detail ? <span className={styles.muted}> — {i.detail}</span> : null}
+                  </span>
+                  <span className={styles.muted}>{when(i.occurred_at)}</span>
+                </li>
+              ))}
+            </ul>
+          )
+        }
+      </LoadGate>
+      <Link href={`${base}/notifications`}>All notifications</Link>
+    </section>
+  );
+}
+
 function QuickLinks({ base, can }: { base: string; can: (...k: string[]) => boolean }) {
   const items = [
-    { href: `${base}/customers#add-customer`, label: "Add customer", show: can("customer.provision") },
-    { href: `${base}/sub-partners#new-sub-partner`, label: "Add sub-partner", show: can("subpartner.manage") },
-    { href: `${base}/customers`, label: "Sell a product", show: can("subscription.sell") },
-    { href: `${base}/products`, label: "Manage products", show: can("product.view") },
-    { href: `${base}/commissions`, label: "View commission", show: can("commission.view") },
-    { href: `${base}/payouts`, label: "Review payouts", show: can("payout.view") },
-    { href: `${base}/branding`, label: "Brand settings", show: can("branding.view") },
+    { href: `${base}/users#add-customer`, label: "Add customer", show: can("customer.provision") },
+    { href: `${base}/agency#new-sub-partner`, label: "Add agency", show: can("subpartner.manage") },
+    { href: `${base}/users`, label: "Sell a product", show: can("subscription.sell") },
+    { href: `${base}/partner-products`, label: "Partner products", show: can("product.view") },
+    { href: `${base}/payments/commissions`, label: "View commission", show: can("commission.view") },
+    { href: `${base}/affiliates/payouts`, label: "Review payouts", show: can("payout.view") },
+    { href: `${base}/brand-settings`, label: "Brand settings", show: can("branding.view") },
   ].filter((i) => i.show);
   return (
     <section className={styles.panel} aria-labelledby="quick-links">
@@ -293,7 +359,7 @@ function Recent({ d, base }: { d: DashboardData; base: string }) {
                   </li>
                 ))}
               </ul>
-              <Link href={`${base}/customers`}>All customers</Link>
+              <Link href={`${base}/users`}>All customers</Link>
             </div>
           )}
           {!!commissions?.length && (
@@ -307,7 +373,7 @@ function Recent({ d, base }: { d: DashboardData; base: string }) {
                   </li>
                 ))}
               </ul>
-              <Link href={`${base}/commissions`}>All commissions</Link>
+              <Link href={`${base}/payments/commissions`}>All commissions</Link>
             </div>
           )}
           {!!payouts?.length && (
@@ -321,7 +387,7 @@ function Recent({ d, base }: { d: DashboardData; base: string }) {
                   </li>
                 ))}
               </ul>
-              <Link href={`${base}/payouts`}>All payouts</Link>
+              <Link href={`${base}/affiliates/payouts`}>All payouts</Link>
             </div>
           )}
         </div>

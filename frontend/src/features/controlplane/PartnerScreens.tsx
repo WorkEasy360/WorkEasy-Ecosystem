@@ -49,43 +49,16 @@ export function PortalChooser() {
   );
 }
 
-// --- overview ------------------------------------------------------------------------------
-
-export function PartnerHome() {
-  const { id, has } = usePartnerId();
-  const { partner } = usePartner();
-  return (
-    <div className={styles.stack}>
-      <h1>{partner?.display_name}</h1>
-      <p className={styles.lead}>
-        What you can do here depends on the capabilities Workeasy360 has enabled for your account.
-      </p>
-      <section className={`w360-card ${styles.card}`} aria-labelledby="caps">
-        <h2 id="caps" className={styles.cardTitle}>
-          Your capabilities
-        </h2>
-        {partner && partner.capabilities.length > 0 ? (
-          <ul>
-            {partner.capabilities.map((c) => (
-              <li key={c} className={styles.mono}>
-                {c}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className={styles.muted}>None are enabled yet. Contact Workeasy360 to set up your programme.</p>
-        )}
-        {has("commission.view") && <Link href={`/partner/${id}/commissions`}>View your commission</Link>}
-      </section>
-    </div>
-  );
-}
-
 // --- customers ---------------------------------------------------------------------------------
 
 export function PartnerCustomers() {
   const { id, has, active } = usePartnerId();
-  const paged = usePaged((cursor) => partnerApi.customers(id, cursor), [id]);
+  // Searching is the server's: it matches the name of a live customer and
+  // never reaches a former one (whose name is not shown to the partner).
+  const [search, setSearch] = useState("");
+  const [applied, setApplied] = useState("");
+  const searchId = useId();
+  const paged = usePaged((cursor) => partnerApi.customers(id, cursor, applied), [id, applied]);
   const { act, busy, feedback } = useAction(paged.reload);
   const nameId = useId();
   const emailId = useId();
@@ -102,7 +75,38 @@ export function PartnerCustomers() {
 
   return (
     <div className={styles.stack}>
-      <h1>Customers</h1>
+      <h1>Users</h1>
+      <p className={styles.lead}>
+        The customer organizations you serve and who has access to what. Each customer stays its own organization with its own people: you manage the relationship and the subscriptions, never their data.
+      </p>
+      <form
+        className={styles.row}
+        role="search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setApplied(search.trim());
+        }}
+      >
+        <label className="w360-label" htmlFor={searchId}>
+          Search customers
+        </label>
+        <input id={searchId} className="w360-input" type="search" maxLength={80} value={search} onChange={(e) => setSearch(e.target.value)} />
+        <button type="submit" className="w360-btn w360-btn-secondary">
+          Search
+        </button>
+        {applied && (
+          <button
+            type="button"
+            className="w360-btn w360-btn-secondary"
+            onClick={() => {
+              setSearch("");
+              setApplied("");
+            }}
+          >
+            Clear
+          </button>
+        )}
+      </form>
       {has("customer.provision") || has("customer.manage") ? (
         <div className={styles.row}>
           <button
@@ -132,7 +136,7 @@ export function PartnerCustomers() {
       {paged.state === "error" && <p role="alert">Couldn&apos;t load customers.</p>}
       {paged.state === "ready" && (
         <>
-          <Table caption="Your customers" head={["Customer", "Relationship", "Owner", "Subscription", "Products", "Joined", ""]} isEmpty={paged.rows.length === 0} empty="No customers yet.">
+          <Table caption="Your customers" head={["Customer", "Relationship", "Owner", "Subscription", "Products", "Joined", ""]} isEmpty={paged.rows.length === 0} empty={applied ? "No customer matches that search." : "No customers yet."}>
             {paged.rows.map((c) => {
               // An ended relationship is history: the server returns none of the
               // customer's current details for it, so there is nothing to show or act on.
@@ -349,102 +353,6 @@ function PartnerDiagnose({ partnerId, organizationId }: { partnerId: string; org
       {error && <p role="alert">{error}</p>}
       {result && <DiagnosticResult result={result} />}
     </form>
-  );
-}
-
-// --- products --------------------------------------------------------------------------------------
-
-export function PartnerProducts() {
-  const { id } = usePartnerId();
-  const [load] = useLoad(() => partnerApi.catalog(id), [id]);
-  return (
-    <div className={styles.stack}>
-      <h1>Products you can sell</h1>
-      <p className={styles.lead}>Only the plans Workeasy360 has approved for your account, at your price.</p>
-      <LoadGate load={load} what="the catalog">
-        {(d) => (
-          <Table caption="Approved plans" head={["Product", "Plan", "Included seats", "Trial", "Price"]} isEmpty={d.results.length === 0} empty="Nothing has been approved for your account yet.">
-            {d.results.map((p) => (
-              <tr key={p.plan_version_id}>
-                <th scope="row">{p.product_name}</th>
-                <td>{p.plan_name}</td>
-                <td className={styles.num}>{p.included_seats}</td>
-                <td>{p.trial_days ? `${p.trial_days} days` : "—"}</td>
-                <td className={styles.num}>{p.price ? `${money(p.price.total_amount_minor, p.price.currency)} / ${p.price.interval}` : "Not priced"}</td>
-              </tr>
-            ))}
-          </Table>
-        )}
-      </LoadGate>
-    </div>
-  );
-}
-
-// --- referrals ---------------------------------------------------------------------------------------
-
-export function PartnerReferrals() {
-  const { id, has, active } = usePartnerId();
-  const [load, reload] = useLoad(() => partnerApi.referrals(id), [id]);
-  const { act, busy, feedback } = useAction(reload);
-  const labelId = useId();
-  const [label, setLabel] = useState("");
-  return (
-    <div className={styles.stack}>
-      <h1>Referrals</h1>
-      <p className={styles.lead}>The first partner a visitor arrives through is credited. Later links don&apos;t replace it.</p>
-      {feedback}
-      <LoadGate load={load} what="referrals">
-        {(d) => (
-          <>
-            <ul className={styles.row}>
-              {Object.entries(d.counts).map(([k, v]) => (
-                <li key={k} className="w360-card">
-                  <span className={styles.statValue}>{v}</span> {k.replace(/_/g, " ")}
-                </li>
-              ))}
-            </ul>
-            <Table caption="Referral codes" head={["Code", "Label", "Status"]} isEmpty={d.codes.length === 0} empty="No codes yet.">
-              {d.codes.map((c) => (
-                <tr key={c.id}>
-                  <th scope="row" className={styles.mono}>
-                    {c.code}
-                  </th>
-                  <td>{c.label}</td>
-                  <td>
-                    <Status value={c.status} />
-                  </td>
-                </tr>
-              ))}
-            </Table>
-          </>
-        )}
-      </LoadGate>
-      {has("referral.create") && active && (
-        <form
-          className={`w360-card ${styles.card} ${styles.form}`}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(async () => {
-              await partnerApi.createReferralCode(id, label.trim());
-              setLabel("");
-            }, "Referral code created.");
-          }}
-        >
-          <h2 className={styles.cardTitle}>Create a code</h2>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={labelId}>
-              Label (only you see this)
-            </label>
-            <input id={labelId} className="w360-input" required maxLength={80} value={label} onChange={(e) => setLabel(e.target.value)} />
-          </div>
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !label.trim()}>
-              Create code
-            </button>
-          </div>
-        </form>
-      )}
-    </div>
   );
 }
 

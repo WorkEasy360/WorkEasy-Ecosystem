@@ -435,3 +435,48 @@
 .dotSlate {
   background: #334155;
 }
+
+/* A secret shown exactly once (API key manager): wrapped so it never forces a
+   horizontal scroll, selectable so it can be copied by hand. */
+.secret {
+  display: block;
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+  font-family: var(--w360-font-mono, ui-monospace, monospace);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.notificationList {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notification {
+  display: grid;
+  gap: var(--w360-space-1);
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border: 1px solid var(--w360-border);
+  border-left: 4px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+}
+
+.notification[data-unread="true"] {
+  border-left-color: var(--w360-brand);
+}
+
+.notification[data-important="true"] {
+  border-left-color: var(--w360-warning);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+}

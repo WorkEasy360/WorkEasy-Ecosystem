@@ -917,7 +917,29 @@ CONTROL_PLANE_RATE_LIMITS = {
     "public_branding_ip": (env.int("W360_RL_PUBLIC_BRANDING_IP", 120), 60),
     "public_referral_ip": (env.int("W360_RL_PUBLIC_REFERRAL_IP", 20), 60),
     "referral_convert_user": (env.int("W360_RL_REFERRAL_CONVERT_USER", 10), 60),
+    # ADR-046: partner API keys. Managing them (create / rotate / revoke) is a
+    # dangerous action and is limited tightly; the key-authenticated read API has
+    # a per-address ceiling here and a per-key one in the view.
+    "partner_apikey_user": (env.int("W360_RL_PARTNER_APIKEY_USER", 10), 60),
+    "partner_apikey_ip": (env.int("W360_RL_PARTNER_APIKEY_IP", 30), 60),
+    "partner_api_ip": (env.int("W360_RL_PARTNER_API_IP", 600), 60),
+    #: Counted only for a presented credential that was refused.
+    "partner_api_fail_ip": (env.int("W360_RL_PARTNER_API_FAIL_IP", 20), 60),
+    "partner_translation_user": (env.int("W360_RL_PARTNER_TRANSLATION_USER", 30), 60),
+    "partner_translation_ip": (env.int("W360_RL_PARTNER_TRANSLATION_IP", 60), 60),
 }
+
+#: Per-key ceiling of the partner API (requests per minute), enforced by the view.
+PARTNER_API_RATE_PER_KEY = env.int("W360_PARTNER_API_RATE_PER_KEY", 120)
+
+#: Where a partner is pointed for help (shown in the Support Manager). Empty means
+#: no address is offered; Easy Help Desk is found from the product registry.
+W360_PARTNER_SUPPORT_EMAIL = env.str("W360_PARTNER_SUPPORT_EMAIL", "")
+#: The registered product whose launch address the Support Manager offers as the
+#: help desk. A setting, not a code constant: the platform names no product.
+W360_PARTNER_HELP_DESK_PRODUCT = env.str(
+    "W360_PARTNER_HELP_DESK_PRODUCT", "easy_helpdesk"
+)
 
 # Phase 7. Custom-domain verification and commission timing.
 #: Hostnames the platform itself serves; a partner may never claim them or a

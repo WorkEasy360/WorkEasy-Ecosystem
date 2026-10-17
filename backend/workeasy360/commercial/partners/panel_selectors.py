@@ -182,11 +182,14 @@ def children_page(parent_id: UUID, *, limit: Any = 25, cursor: str | None = None
 
 
 def team(partner_id: UUID) -> list[Any]:
-    """The partner's active members, oldest first, with their accounts (at most 200)."""
+    """The partner's active and paused members, oldest first, with their accounts
+    (at most 200). A removed member is history and is not listed."""
     from workeasy360.commercial.partners.models import PartnerMember
 
     return list(
-        PartnerMember.objects.filter(partner_id=partner_id, status="active")
+        PartnerMember.objects.filter(
+            partner_id=partner_id, status__in=("active", "suspended")
+        )
         .select_related("user")
         .order_by("added_at", "id")[:200]
     )
@@ -214,11 +217,34 @@ def active_member_user_ids(partner_id: UUID) -> list[UUID]:
     )
 
 
+def role_counts(partner_id: UUID) -> dict[str, int]:
+    """``{role: number of active members}`` - one grouped query."""
+    from django.db.models import Count
+
+    from workeasy360.commercial.partners.models import PartnerMember
+
+    rows = (
+        PartnerMember.objects.filter(partner_id=partner_id, status="active")
+        .values("role")
+        .annotate(n=Count("id"))
+    )
+    return {row["role"]: int(row["n"]) for row in rows}
+
+
 def has_active_member(partner_id: UUID, member_id: UUID) -> bool:
     from workeasy360.commercial.partners.models import PartnerMember
 
     return PartnerMember.objects.filter(
         id=member_id, partner_id=partner_id, status="active"
+    ).exists()
+
+
+def has_listed_member(partner_id: UUID, member_id: UUID) -> bool:
+    """Active or paused: a row the team screen shows and an administrator may act on."""
+    from workeasy360.commercial.partners.models import PartnerMember
+
+    return PartnerMember.objects.filter(
+        id=member_id, partner_id=partner_id, status__in=("active", "suspended")
     ).exists()
 
 

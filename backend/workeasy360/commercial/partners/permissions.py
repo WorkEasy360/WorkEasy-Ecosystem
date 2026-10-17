@@ -147,6 +147,17 @@ PARTNER_PERMISSIONS: Final = (
         "Export the partner's customer list",
         implies=("platform.partner_customer.view",),
     ),
+    # Partner API keys (ADR-046): administrators only - a key reads the
+    # partner's data from outside the portal, so who may mint one is as
+    # sensitive as who may be on the team. Creating, rotating and revoking are
+    # dangerous (AAL 2).
+    _d("platform.partner_apikey.view", "See the partner's API keys (never a secret)"),
+    _d(
+        "platform.partner_apikey.manage",
+        "Create, rotate and revoke the partner's API keys",
+        implies=("platform.partner_apikey.view",),
+        dangerous=True,
+    ),
     _d("platform.partner_subpartner.view", "See the partner's sub-partners"),
     _d(
         "platform.partner_subpartner.manage",

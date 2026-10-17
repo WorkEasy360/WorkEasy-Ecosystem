@@ -1,11 +1,11 @@
-# Real-browser verification: the partner business panel
+# Real-browser verification: the partner business panel and its final menu (ADR-045, ADR-046)
 
 Same harness and rules as `../partner_setup_browser_check/`:
 - it runs against the production build and a real backend;
 - it uses a scratch database (`w360_ppanel_fresh`);
 - it adds no dependency to the repository (`puppeteer-core` lives in a scratch directory; the browser is the installed Chrome).
 
-**Checks on every audited page** (34 screens of the panel, plus the forced password change): CSP violations and console errors; axe WCAG 2.1 A/AA; a visible keyboard focus indicator; exactly one `h1`. **Reflow** (no horizontal scroll) at 1440, 1024, 768, 390 and 320 px for all 34 screens.
+**Checks on every audited page** (the 37 screens of the final menu and its tabs, plus the forced password change): CSP violations and console errors; axe WCAG 2.1 A/AA; a visible keyboard focus indicator; exactly one `h1`. **Reflow** (no horizontal scroll) at 1440, 1024, 768, 390 and 320 px for all 37 screens (185 checks). The sidebar is asserted to be **exactly the 24 approved entries**, in order.
 
 **Journeys, driven through the UI**
 
@@ -18,6 +18,11 @@ Same harness and rules as `../partner_setup_browser_check/`:
 - **G.** Communication: one live channel, the others "not available", no password field, templates not editable.
 - **H.** Invite a person, change their role; a finance member sees the money and no customers (API 403).
 - **I.** Another partner's address shows "no access" and every one of its API reads answers 404.
+- **J.** Every address the old portal served (21 of them) redirects permanently to the page that holds the feature now.
+- **K.** API keys: create one (second factor), see its secret once, use it against the read-only partner API (scoped: a missing scope is 403), dismiss it and never see it again (page and list API), rotate it (the old secret then answers 401), revoke it. **K2.** A finance member cannot read the key list (403).
+- **L.** Translations: word a string in French, and a markup value is refused by the server (400).
+- **M.** Notification Center: unread / important / mark all read; Support Manager links are only https or mailto.
+- **N.** Suspend and resume a team member.
 
 `ONLY=A5,H2` runs only the journeys whose names start with those codes.
 
@@ -32,6 +37,7 @@ Not part of this check: a manual screen-reader pass (reported as **NOT EXECUTED*
 #    (drops, migrates and seeds w360_ppanel_fresh; prints PANEL_ID, RIVAL_ID, DEMO_ID, PANEL_TOTP)
 # 3. backend on 127.0.0.1:8011 (see ../partner_setup_browser_check/README.md)
 # 4. CHECK_PASSWORD=<the same value> NODE_PATH=<scratch>/pptr/node_modules AXE_PATH=<axe.min.js> PANEL_ID=... RIVAL_ID=... DEMO_ID=... PANEL_TOTP=... \
+#    (also export, for set_password.py: PYTHONPATH="backend;scripts/extension_browser_check" DJANGO_SETTINGS_MODULE=w360_extension_browser_settings W360_DB_NAME=w360_ppanel_fresh W360_DB_HOST=127.0.0.1 W360_DB_PORT=5442 W360_DB_DIRECT_HOST=127.0.0.1 W360_DB_DIRECT_PORT=5442 W360_DB_POOL_MODE=direct)
 #    DEMO_PASSWORD_FILE=... PYTHON=<venv python> SET_PASSWORD_PY=scripts/partner_panel_browser_check/set_password.py \
 #    OUT=<report.json> node scripts/partner_panel_browser_check/browser_check.js
 python scripts/partner_panel_browser_check/prepare.py --drop

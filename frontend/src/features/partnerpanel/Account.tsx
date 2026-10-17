@@ -20,15 +20,16 @@ function zones(): string[] {
   }
 }
 
-export function Settings() {
-  const { id } = usePanel();
+export function Account() {
+  const { id, can } = usePanel();
   const [load, reload] = useLoad(() => panelApi.profile(id), [id]);
   return (
     <div className={styles.page}>
-      <PageHeader title="Settings" lead="Your business details. These are how Workeasy360 reaches and invoices you; they are not customer records." />
+      <PageHeader title="Account" lead="Your business details. These are how Workeasy360 reaches and invoices you; they are not customer records." />
       <LoadGate load={load} what="your settings">
         {(p) => <ProfileForm key={p.version} profile={p} onSaved={reload} />}
       </LoadGate>
+      {can("activity.view") && <ActivityTrail />}
     </div>
   );
 }
@@ -156,12 +157,13 @@ function ProfileForm({ profile, onSaved }: { profile: OwnProfile; onSaved: () =>
 
 // --- authentication ------------------------------------------------------------------------------
 
-export function Authentication() {
+export function AuthConfiguration() {
   const { id, base } = usePanel();
   const [load] = useLoad(() => panelApi.authentication(id), [id]);
+  const [features] = useLoad(() => panelApi.features(id), [id]);
   return (
     <div className={styles.page}>
-      <PageHeader title="Authentication" lead="How you and your customers sign in. This is Workeasy360's secure sign-in; it is not something a partner changes." />
+      <PageHeader title="Auth Configuration" lead="How you and your customers sign in. This is Workeasy360's secure sign-in; a partner chooses only how it is presented, never how it is secured." />
       <LoadGate load={load} what="authentication">
         {(a) => (
           <>
@@ -206,9 +208,12 @@ export function Authentication() {
                     <li key={t}>{t}</li>
                   ))}
                 </ul>
-                <Link href={`${base}/branding`}>Brand settings</Link>
+                <Link href={`${base}/brand-settings`}>Brand settings</Link>
               </section>
             </div>
+            <LoadGate load={features} what="what is available">
+              {(f) => <NotAvailable title="Not a partner setting" reasons={[f.not_implemented.auth_policy ?? ""]} />}
+            </LoadGate>
           </>
         )}
       </LoadGate>
@@ -223,7 +228,7 @@ function CommunicationNav() {
   return (
     <SubNav
       items={[
-        { href: `${base}/communication/channels`, label: "Channels" },
+        { href: `${base}/communication/channel`, label: "Channel" },
         { href: `${base}/communication/templates`, label: "Templates" },
         { href: `${base}/communication/alerts`, label: "Alerts" },
         { href: `${base}/communication/logs`, label: "Logs" },
@@ -257,7 +262,7 @@ export function CommunicationChannels() {
               ))}
             </Table>
             <p className={styles.muted}>
-              The sender name and reply-to for emails sent in your name are set in <Link href={`${base}/branding`}>Brand settings</Link>. The sending address always stays Workeasy360&apos;s,
+              The sender name and reply-to for emails sent in your name are set in <Link href={`${base}/brand-settings`}>Brand settings</Link>. The sending address always stays Workeasy360&apos;s,
               so mail is authenticated.
             </p>
             <NotAvailable title="What is not offered" reasons={[c.not_implemented.partner_smtp ?? "", c.not_implemented.whatsapp_sms_webhook ?? ""]} />
@@ -354,12 +359,16 @@ export function SharedResources() {
 
 // --- activity ---------------------------------------------------------------------------------------
 
-export function Activity() {
+/** The partner's own activity trail, from the platform's tamper-evident audit
+ * log: what was done on the account and by whom. It lives on the Account page
+ * (and its newest entries on the dashboard) rather than as a menu of its own. */
+function ActivityTrail() {
   const { id } = usePanel();
   const paged = usePaged((cursor) => panelApi.activity(id, cursor), [id]);
   return (
-    <div className={styles.page}>
-      <PageHeader title="Activity" lead="What has been done on your account, and by whom. This comes from the platform's tamper-evident audit log." />
+    <section className={styles.panel} aria-labelledby="activity-title">
+      <h2 id="activity-title">Activity</h2>
+      <p className={styles.muted}>What has been done on your account, and by whom. This comes from the platform&apos;s tamper-evident audit log.</p>
       {paged.state === "loading" && <p aria-live="polite">Loading activity…</p>}
       {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to activity.</p>}
       {paged.state === "error" && <p role="alert">Couldn&apos;t load activity.</p>}
@@ -378,7 +387,7 @@ export function Activity() {
           <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
         </>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -408,21 +417,136 @@ export function Appearance() {
   const [features] = useLoad(() => panelApi.features(id), [id]);
   return (
     <div className={styles.page}>
-      <PageHeader title="Appearance" lead="Pick a colour scheme for your branded customer portal. Schemes are fixed sets of colours that Workeasy360 checks; arbitrary CSS or scripts are not allowed." />
+      <PageHeader title="Appearance" lead="How your branded customer portal looks. Colours come from checked sets and values; arbitrary CSS or scripts are not allowed." />
       <LoadGate load={load} what="your appearance">
         {(d) =>
           d.brand ? (
-            <SchemePicker brand={d.brand} editable={can("branding.manage") && active} onSaved={reload} />
+            <>
+              <section className={styles.panel} aria-labelledby="scheme-title">
+                <h2 id="scheme-title">Themes and colour scheme</h2>
+                <SchemePicker brand={d.brand} editable={can("branding.manage") && active} onSaved={reload} />
+              </section>
+              <ThemeTokens key={d.brand.version} brand={d.brand} editable={can("branding.manage") && active} onSaved={reload} />
+            </>
           ) : (
             <NotAvailable title="No brand yet" reasons={["Set up your brand first; a colour scheme applies to it."]} />
           )
         }
       </LoadGate>
       <LoadGate load={features} what="what is available">
-        {(f) => <NotAvailable title="Not offered" reasons={[f.not_implemented.custom_css ?? "", f.not_implemented.brand_assets ?? ""]} />}
+        {(f) => (
+          <NotAvailable
+            title="Not offered"
+            reasons={[f.not_implemented.appearance_layout ?? "", f.not_implemented.custom_css ?? "", f.not_implemented.brand_assets ?? ""].filter(Boolean)}
+          />
+        )}
       </LoadGate>
-      <Link href={`${base}/branding`}>Brand settings</Link>
+      <Link href={`${base}/brand-settings`}>Brand settings</Link>
     </div>
+  );
+}
+
+/** The brand colour tokens, as colour pickers. These replace "custom CSS": a fixed
+ * set of six tokens, each a six-digit hex colour the server checks again. There is
+ * no stylesheet, no selector and no value that is anything but a colour. */
+const TOKENS: { key: string; label: string }[] = [
+  { key: "primary", label: "Primary colour" },
+  { key: "on_primary", label: "Text on primary" },
+  { key: "surface", label: "Surface colour" },
+  { key: "on_surface", label: "Text on surface" },
+  { key: "accent", label: "Accent colour" },
+  { key: "border", label: "Border colour" },
+];
+
+const HEX = /^#[0-9a-f]{6}$/;
+
+/** WCAG relative-luminance contrast of two six-digit colours. */
+export function contrastRatio(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const [r, g, bl] = [1, 3, 5].map((i) => {
+      const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    }) as [number, number, number];
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+function ThemeTokens({ brand, editable, onSaved }: { brand: Brand; editable: boolean; onSaved: () => void }) {
+  const { id } = usePanel();
+  const { act, busy, feedback } = useAction(onSaved);
+  const [tokens, setTokens] = useState<Record<string, string>>(() =>
+    Object.fromEntries(TOKENS.map((t) => [t.key, brand.theme[t.key] ?? (t.key === "primary" ? brand.accent_color : "")])),
+  );
+  const valid = TOKENS.every((t) => HEX.test(tokens[t.key] ?? ""));
+  const pairs = [
+    { label: "Text on primary", ratio: valid ? contrastRatio(tokens.on_primary!, tokens.primary!) : 0 },
+    { label: "Text on surface", ratio: valid ? contrastRatio(tokens.on_surface!, tokens.surface!) : 0 },
+  ];
+  const readable = valid && pairs.every((p) => p.ratio >= 4.5);
+  return (
+    <form
+      className={styles.panel}
+      onSubmit={(e) => {
+        e.preventDefault();
+        void act(
+          () =>
+            partnerApi.saveBrand(
+              id,
+              {
+                brand_name: brand.brand_name,
+                accent_color: tokens.primary!,
+                theme: tokens,
+                support_email: brand.support_email,
+                support_url: brand.support_url,
+                logo_file_id: brand.logo_file_id ?? undefined,
+              },
+              brand.version,
+            ),
+          "Theme tokens saved.",
+        );
+      }}
+    >
+      <h2>Advanced theme tokens</h2>
+      <p className={styles.muted}>Six colours, nothing else. In place of custom CSS, which is not available because it can inject script and leak styling between customers.</p>
+      {feedback}
+      <div className={styles.formGrid}>
+        {TOKENS.map((t) => (
+          <div key={t.key}>
+            <label className="w360-label" htmlFor={`token-${t.key}`}>
+              {t.label}
+            </label>
+            <input
+              id={`token-${t.key}`}
+              className="w360-input"
+              type="color"
+              disabled={!editable || busy}
+              value={HEX.test(tokens[t.key] ?? "") ? tokens[t.key] : "#000000"}
+              onChange={(e) => setTokens((cur) => ({ ...cur, [t.key]: e.target.value.toLowerCase() }))}
+            />
+            <span className={styles.mono}>{tokens[t.key] || "not set"}</span>
+          </div>
+        ))}
+      </div>
+      <ul className={styles.list} aria-label="Contrast checks">
+        {pairs.map((p) => (
+          <li key={p.label} className={styles.listItem}>
+            <span>{p.label}</span>
+            <span>{valid ? `${p.ratio.toFixed(1)}:1 ${p.ratio >= 4.5 ? "readable" : "too low - needs 4.5:1"}` : "—"}</span>
+          </li>
+        ))}
+      </ul>
+      {editable ? (
+        <div>
+          <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !readable}>
+            Save theme tokens
+          </button>
+        </div>
+      ) : (
+        <p className={styles.muted}>Changing colours needs the brand permission.</p>
+      )}
+    </form>
   );
 }
 

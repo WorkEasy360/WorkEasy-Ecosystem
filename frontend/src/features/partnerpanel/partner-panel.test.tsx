@@ -4,9 +4,10 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { PartnerShell } from "@/features/controlplane/ControlShell";
 import { expectNoViolations, mockApi, ok, SIGNED_IN, type Reply } from "@/features/controlplane/testSupport";
 import { PartnerDashboard } from "./Dashboard";
-import { Affiliates, SubPartners, Team } from "./Network";
-import { Balance, PaymentLinks, ProductBilling, Products } from "./Catalog";
-import { Integrations, Settings } from "./Account";
+import { Affiliates, Agency, Team } from "./Network";
+import { Balance, PartnerProducts, Payments, ProductBilling } from "./Catalog";
+import { Account, Integrations } from "./Account";
+import { APPROVED_LABELS } from "./menu";
 
 let pathname = "/partner/p1";
 const nav = vi.hoisted(() => ({ router: { replace: () => {}, push: () => {}, refresh: () => {} } }));
@@ -104,46 +105,31 @@ function shell(children: React.ReactNode) {
   return render(<PartnerShell partnerId={ID}>{children}</PartnerShell>);
 }
 
+const NOTIFICATIONS_EMPTY = {
+  view: "unread",
+  items: [],
+  counts: { all: 0, unread: 0, important: 0, important_unread: 0 },
+  window: 100,
+  truncated: false,
+  not_implemented: {},
+};
+
+const NO_PRODUCTS = { currency: "INR", products: [], available: [], can_manage: true, not_implemented: {} };
+
+function sidebarLinks(): string[] {
+  return within(screen.getByRole("navigation", { name: /^Partner / })).getAllByRole("link").map((a) => a.textContent ?? "");
+}
+
 describe("the partner navigation", () => {
-  it("offers every area of the panel to an owner, in the brief's groups", async () => {
-    mockApi({ "GET /api/v1/auth/session": [SIGNED_IN], "GET /api/v1/partner/portal": [portal()] });
+  it("offers an owner exactly the approved menu, in the approved order and groups", async () => {
+    mockApi({ "GET /api/v1/auth/session": [SIGNED_IN], "GET /api/v1/partner/portal": [portal([...OWNER_PERMISSIONS, "platform.partner_apikey.view"])] });
     shell(<h1>Page</h1>);
     await screen.findByRole("heading", { name: "Page" });
-    const links = within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent);
-    for (const label of [
-      "Dashboard",
-      "Customers",
-      "Sub-Partners",
-      "Affiliates",
-      "Products",
-      "Plans & Add-ons",
-      "Pricing",
-      "Subscriptions",
-      "Orders",
-      "Commissions",
-      "Payouts",
-      "Currencies",
-      "Partner Balance",
-      "Payments",
-      "Payment Links",
-      "Product Billing",
-      "Brand Settings",
-      "Domains",
-      "Product Manager",
-      "Appearance",
-      "Channels",
-      "Templates",
-      "Alerts",
-      "Logs",
-      "Integrations",
-      "Authentication",
-      "Shared Resources",
-      "Users & Permissions",
-      "Activity",
-      "Settings",
-    ]) {
-      expect(links, label).toContain(label);
-    }
+    expect(sidebarLinks()).toEqual([...APPROVED_LABELS]);
+    const headings = within(screen.getByRole("navigation", { name: /^Partner / }))
+      .getAllByText(/^(Menu|Audience|Billing|Panel customization|New product settings|Settings|Team|Help)$/)
+      .map((e) => e.textContent);
+    expect(headings).toEqual(["Menu", "Audience", "Billing", "Panel customization", "New product settings", "Settings", "Team", "Help"]);
   });
 
   it("shows a role only what its permissions allow", async () => {
@@ -153,11 +139,38 @@ describe("the partner navigation", () => {
     mockApi({ "GET /api/v1/auth/session": [SIGNED_IN], "GET /api/v1/partner/portal": [portal(finance)] });
     shell(<h1>Page</h1>);
     await screen.findByRole("heading", { name: "Page" });
-    const links = within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent);
-    expect(links).toEqual(expect.arrayContaining(["Commissions", "Payouts", "Partner Balance"]));
-    for (const absent of ["Customers", "Sub-Partners", "Affiliates", "Brand Settings", "Domains", "Activity"]) {
+    const links = sidebarLinks();
+    expect(links).toEqual(expect.arrayContaining(["Dashboards", "Affiliates", "Payments", "Plans & Add-ons", "Currency & Pricing", "Account", "Team Members", "Notification Center"]));
+    for (const absent of ["Users", "Agency", "Brand Settings", "Appearance", "API Key Manager", "Translation Manager"]) {
       expect(links).not.toContain(absent);
     }
+  });
+
+  it("an affiliate-only partner sees the affiliate, account, team and help items and nothing of reseller pricing", async () => {
+    const affiliate = ["dashboard.view", "profile.view", "member.view", "product.view", "referral.view", "referral.create", "commission.view", "payout.view"].map(
+      (p) => `platform.partner_${p}`,
+    );
+    mockApi({ "GET /api/v1/auth/session": [SIGNED_IN], "GET /api/v1/partner/portal": [portal(affiliate)] });
+    shell(<h1>Page</h1>);
+    await screen.findByRole("heading", { name: "Page" });
+    const links = sidebarLinks();
+    for (const present of ["Dashboards", "Affiliates", "Payments", "Account", "Team Members", "Support Manager", "Notification Center"]) {
+      expect(links).toContain(present);
+    }
+    for (const absent of ["Users", "Agency", "Plans & Add-ons", "Currency & Pricing", "Product Billing", "Product Manager", "Brand Settings", "API Key Manager"]) {
+      expect(links).not.toContain(absent);
+    }
+    // Every item is still one of the approved ones.
+    expect(links.every((l) => APPROVED_LABELS.includes(l))).toBe(true);
+  });
+
+  it("opens each money entry on a tab its holder can actually read", async () => {
+    mockApi({ "GET /api/v1/auth/session": [SIGNED_IN], "GET /api/v1/partner/portal": [portal(["dashboard.view", "commission.view", "payout.view"].map((p) => `platform.partner_${p}`))] });
+    shell(<h1>Page</h1>);
+    await screen.findByRole("heading", { name: "Page" });
+    const nav = screen.getByRole("navigation", { name: /^Partner / });
+    expect(within(nav).getByRole("link", { name: "Payments" })).toHaveAttribute("href", `/partner/${ID}/payments/commissions`);
+    expect(within(nav).getByRole("link", { name: "Affiliates" })).toHaveAttribute("href", `/partner/${ID}/affiliates/payouts`);
   });
 
   it("replaces the whole portal with the password change while a temporary password is in force", async () => {
@@ -179,6 +192,8 @@ describe("the dashboard", () => {
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/partner/portal": [portal()],
       [`GET ${API}/dashboard`]: [ok(DASHBOARD)],
+      [`GET ${API}/notifications`]: [ok(NOTIFICATIONS_EMPTY)],
+      [`GET ${API}/products`]: [ok(NO_PRODUCTS)],
     });
     const { container } = shell(<PartnerDashboard />);
     expect(await screen.findByRole("heading", { name: "Welcome, Acme Partners" })).toBeInTheDocument();
@@ -201,6 +216,8 @@ describe("the dashboard", () => {
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/partner/portal": [portal()],
       [`GET ${API}/dashboard`]: [ok({ ...DASHBOARD, customers: null, sales: null, money: null, charts: null, sub_partners: null })],
+      [`GET ${API}/notifications`]: [ok(NOTIFICATIONS_EMPTY)],
+      [`GET ${API}/products`]: [ok(NO_PRODUCTS)],
     });
     shell(<PartnerDashboard />);
     const figures = await screen.findByRole("list", { name: "Key figures" });
@@ -214,6 +231,8 @@ describe("the dashboard", () => {
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/partner/portal": [portal()],
       [`GET ${API}/dashboard`]: [ok(DASHBOARD)],
+      [`GET ${API}/notifications`]: [ok(NOTIFICATIONS_EMPTY)],
+      [`GET ${API}/products`]: [ok(NO_PRODUCTS)],
     });
     shell(<PartnerDashboard />);
     await screen.findByRole("list", { name: "Key figures" });
@@ -233,6 +252,8 @@ describe("the dashboard", () => {
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/partner/portal": [portal()],
       [`GET ${API}/dashboard`]: [ok(DASHBOARD)],
+      [`GET ${API}/notifications`]: [ok(NOTIFICATIONS_EMPTY)],
+      [`GET ${API}/products`]: [ok(NO_PRODUCTS)],
     });
     shell(<PartnerDashboard />);
     const chart = await screen.findByRole("img", { name: /Gross sales by day: 2 days/ });
@@ -252,11 +273,13 @@ describe("the dashboard", () => {
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/partner/portal": [portal(limited)],
       [`GET ${API}/dashboard`]: [ok(DASHBOARD)],
+      [`GET ${API}/notifications`]: [ok(NOTIFICATIONS_EMPTY)],
+      [`GET ${API}/products`]: [ok(NO_PRODUCTS)],
     });
     shell(<PartnerDashboard />);
     const quick = await screen.findByRole("heading", { name: "Quick links" });
     const links = within(quick.closest("section")!).getAllByRole("link").map((a) => a.textContent);
-    expect(links).toEqual(["Manage products", "View commission"]);
+    expect(links).toEqual(["Partner products", "View commission"]);
   });
 
   it("invites a first sale when there is nothing yet", async () => {
@@ -266,6 +289,8 @@ describe("the dashboard", () => {
       [`GET ${API}/dashboard`]: [
         ok({ ...DASHBOARD, customers: { total: 0, active: 0, suspended: 0, ended: 0, active_subscriptions: 0 }, sales: { transactions: 0, gross: [], commission_earned: [], source: "commission_ledger" }, charts: { gross: {}, commission: {}, transactions: [] }, recent: { customers: [], commissions: [], payouts: [] } }),
       ],
+      [`GET ${API}/notifications`]: [ok(NOTIFICATIONS_EMPTY)],
+      [`GET ${API}/products`]: [ok(NO_PRODUCTS)],
     });
     shell(<PartnerDashboard />);
     expect(await screen.findByText("No sales in this period")).toBeInTheDocument();
@@ -273,7 +298,7 @@ describe("the dashboard", () => {
   });
 });
 
-describe("sub-partners", () => {
+describe("agency", () => {
   const ROW = {
     id: "c1",
     link_id: "l1",
@@ -300,7 +325,7 @@ describe("sub-partners", () => {
     not_implemented: { subpartner_pricing: "A sub-partner sells at list price.", subpartner_commission: "A parent sees no sub-partner commission." },
   };
 
-  it("lists sub-partners with their facts, activates a draft and creates a new one", async () => {
+  it("lists agencies with their facts, activates a draft and creates a new one", async () => {
     const calls = mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/partner/portal": [portal()],
@@ -309,8 +334,8 @@ describe("sub-partners", () => {
       [`POST ${API}/sub-partners/c1/activate`]: [ok({ id: "c1", status: "active" })],
       [`POST ${API}/sub-partners`]: [{ status: 201, body: { id: "c2", code: "x", status: "draft" } }],
     });
-    const { container } = shell(<SubPartners />);
-    const table = await screen.findByRole("table", { name: "Your sub-partners" });
+    const { container } = shell(<Agency />);
+    const table = await screen.findByRole("table", { name: "Your agencies" });
     expect(within(table).getByText("Northern Agency")).toBeInTheDocument();
     expect(within(table).getByText("nora@northern.example.com")).toBeInTheDocument();
     fireEvent.click(within(table).getByRole("button", { name: "Activate" }));
@@ -320,7 +345,7 @@ describe("sub-partners", () => {
     fireEvent.change(screen.getByLabelText("Administrator's email"), { target: { value: "sam@southern.example.com" } });
     fireEvent.click(screen.getByRole("checkbox", { name: "Create customers" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Easy CRM" }));
-    fireEvent.click(screen.getByRole("button", { name: "Create sub-partner" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add agency" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${API}/sub-partners`)).toBe(true));
     const create = calls.find((c) => c.key === `POST ${API}/sub-partners`)!;
     expect(create.body).toEqual({
@@ -335,15 +360,15 @@ describe("sub-partners", () => {
     await expectNoViolations(container);
   });
 
-  it("says plainly what a sub-partner does not get", async () => {
+  it("says plainly what an agency does not get", async () => {
     mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/partner/portal": [portal()],
       [`GET ${API}/sub-partners`]: [ok({ results: [], next_cursor: null, has_more: false })],
       [`GET ${API}/sub-partners/options`]: [ok(OPTIONS)],
     });
-    shell(<SubPartners />);
-    expect(await screen.findByText("You have no sub-partners yet.")).toBeInTheDocument();
+    shell(<Agency />);
+    expect(await screen.findByText("You have no agencies yet.")).toBeInTheDocument();
     expect(await screen.findByText("A sub-partner sells at list price.")).toBeInTheDocument();
     expect(screen.getByText("A parent sees no sub-partner commission.")).toBeInTheDocument();
   });
@@ -355,9 +380,9 @@ describe("sub-partners", () => {
       "GET /api/v1/partner/portal": [portal(viewOnly)],
       [`GET ${API}/sub-partners`]: [ok({ results: [ROW], next_cursor: null, has_more: false })],
     });
-    shell(<SubPartners />);
-    await screen.findByRole("table", { name: "Your sub-partners" });
-    expect(screen.queryByRole("button", { name: "Create sub-partner" })).not.toBeInTheDocument();
+    shell(<Agency />);
+    await screen.findByRole("table", { name: "Your agencies" });
+    expect(screen.queryByRole("button", { name: "Add agency" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Activate" })).not.toBeInTheDocument();
   });
 });
@@ -412,6 +437,7 @@ describe("the team", () => {
       [`PATCH ${API}/members/m2`]: [ok({ id: "m2", role: "viewer" })],
     });
     const { container } = shell(<Team />);
+    expect(await screen.findByRole("heading", { name: "Team Members" })).toBeInTheDocument();
     const table = await screen.findByRole("table", { name: "Your team" });
     // The person themselves: no role control, no remove.
     const self = within(table).getByText("owner@acme.example.com").closest("tr")!;
@@ -465,27 +491,23 @@ describe("products and billing", () => {
   };
   const LIST = { currency: "INR", products: [PRODUCT], available: [{ code: "easybook", name: "EasyBook", tagline: "Books" }], can_manage: true, not_implemented: {} };
 
-  it("draws a card per granted product and changes only the partner's own switches", async () => {
+  it("lists the granted products read-only, with sell access, pricing and trial, and the ones not yet granted", async () => {
     const calls = mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/partner/portal": [portal()],
       [`GET ${API}/products`]: [ok(LIST)],
-      [`PUT ${API}/products/easy_crm`]: [ok({})],
     });
-    shell(<Products />);
-    const cards = await screen.findByRole("list", { name: "Your products" });
-    expect(within(cards).getByText("Easy CRM")).toBeInTheDocument();
-    expect(within(cards).getByText(/1,499\.00 monthly/)).toBeInTheDocument();
+    const { container } = shell(<PartnerProducts />);
+    const table = await screen.findByRole("table", { name: "Products granted to your account" });
+    expect(within(table).getByText("Easy CRM")).toBeInTheDocument();
+    expect(within(table).getByText(/1,499\.00 monthly/)).toBeInTheDocument();
+    expect(within(table).getByText("7 days")).toBeInTheDocument();
     expect(screen.getByText("EasyBook")).toBeInTheDocument(); // available, not granted: listed, not switchable
-    fireEvent.click(within(cards).getByRole("button", { name: "Edit" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Offer for new sales" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(calls.some((c) => c.key === `PUT ${API}/products/easy_crm`)).toBe(true));
-    expect(calls.find((c) => c.key === `PUT ${API}/products/easy_crm`)!.body).toEqual({
-      enabled_for_sale: false,
-      show_in_explore: true,
-      show_in_my_products: true,
-    });
+    // A partner cannot grant itself a product: there is nothing to press here.
+    expect(within(screen.getByRole("main")).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("main")).queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(calls.every((c) => c.key.startsWith("GET"))).toBe(true);
+    await expectNoViolations(container);
   });
 
   it("disables a product for new sales from product billing", async () => {
@@ -533,14 +555,17 @@ describe("what the platform does not have", () => {
     },
   };
 
-  it("explains payment links instead of offering them", async () => {
+  it("explains wallet recharge and payment links on Payments instead of offering them", async () => {
     mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/partner/portal": [portal()],
+      [`GET ${API}/orders`]: [ok({ results: [], next_cursor: null, has_more: false })],
       [`GET ${API}/features`]: [ok(FEATURES)],
     });
-    shell(<PaymentLinks />);
+    shell(<Payments />);
     expect(await screen.findByText("Payment links exist only for a customer's own order.")).toBeInTheDocument();
+    expect(screen.getByText("There is no prepaid partner credit.")).toBeInTheDocument();
+    expect(screen.getByText(/No card, CVV or bank details are collected or stored/)).toBeInTheDocument();
     const page = within(screen.getByRole("main"));
     expect(page.queryByRole("button")).not.toBeInTheDocument();
     expect(page.queryByRole("textbox")).not.toBeInTheDocument();
@@ -558,7 +583,7 @@ describe("what the platform does not have", () => {
   });
 });
 
-describe("settings", () => {
+describe("account", () => {
   const PROFILE = {
     partner_id: ID,
     version: 7,
@@ -575,8 +600,9 @@ describe("settings", () => {
       "GET /api/v1/partner/portal": [portal()],
       [`GET ${API}/profile`]: [ok(PROFILE)],
       [`PUT ${API}/profile`]: [ok({ ...PROFILE, version: 8 })],
+      [`GET ${API}/activity`]: [ok({ results: [{ id: "a1", occurred_at: "2026-10-01T00:00:00Z", label: "Business details or contacts changed", target: "business", actor: "owner@acme.example.com", outcome: "success" }], next_cursor: null, has_more: false })],
     });
-    const { container } = shell(<Settings />);
+    const { container } = shell(<Account />);
     fireEvent.change(await screen.findByLabelText("Business name"), { target: { value: "Acme Partners Pvt" } });
     expect(screen.getByText("INR")).toBeInTheDocument();
     expect(screen.queryByLabelText(/currency/i)).not.toBeInTheDocument();
@@ -588,5 +614,16 @@ describe("settings", () => {
     // Money, payout and notes are not in what the browser can send from here.
     expect(Object.keys(body).sort()).toEqual(["business", "contacts", "expected_version", "support"]);
     await expectNoViolations(container);
+  });
+
+  it("keeps the activity trail on the account page for those who may read it, and nowhere else", async () => {
+    mockApi({
+      "GET /api/v1/auth/session": [SIGNED_IN],
+      "GET /api/v1/partner/portal": [portal(OWNER_PERMISSIONS.filter((p) => !p.endsWith("activity.view")))],
+      [`GET ${API}/profile`]: [ok(PROFILE)],
+    });
+    shell(<Account />);
+    await screen.findByLabelText("Business name");
+    expect(screen.queryByRole("heading", { name: "Activity" })).not.toBeInTheDocument();
   });
 });

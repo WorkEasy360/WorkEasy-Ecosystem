@@ -17,13 +17,19 @@ from uuid import UUID
 
 from django.http import HttpRequest, HttpResponse, JsonResponse
 
-from workeasy360.commercial.controlplane import partner_network, partner_portal
+from workeasy360.commercial.controlplane import (
+    partner_help,
+    partner_network,
+    partner_portal,
+)
 from workeasy360.commercial.partners import (
+    api_keys,
     hierarchy,
     panel_selectors,
     product_settings,
     profile,
     services,
+    translations,
 )
 from workeasy360.contracts.errors import PartnerRecordNotFound, PartnerValidationError
 from workeasy360.contracts.values.tenant import TenantContext
@@ -269,7 +275,9 @@ def members_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
 
 
 def _member_in_partner(ctx: TenantContext, member_id: UUID) -> None:
-    if not panel_selectors.has_active_member(ctx.partner_id, member_id):
+    # Active or paused: an administrator may act on both (the service narrows
+    # each action to the state it applies to). Removed members are history.
+    if not panel_selectors.has_listed_member(ctx.partner_id, member_id):
         raise PartnerRecordNotFound("No such member.", member_id=str(member_id))
 
 
@@ -285,6 +293,29 @@ def member_view(
         ctx, ctx.partner_id, member_id=member_id, role=_body(request).get("role")
     )
     return JsonResponse({"id": str(member.id), "role": member.role})
+
+
+@partner_view(["POST"])
+def member_suspend_view(
+    request: HttpRequest, ctx: TenantContext, member_id: UUID
+) -> JsonResponse:
+    _member_in_partner(ctx, member_id)
+    member = services.suspend_member(ctx, ctx.partner_id, member_id=member_id)
+    return JsonResponse({"id": str(member.id), "status": member.status})
+
+
+@partner_view(["POST"])
+def member_resume_view(
+    request: HttpRequest, ctx: TenantContext, member_id: UUID
+) -> JsonResponse:
+    _member_in_partner(ctx, member_id)
+    member = services.resume_member(ctx, ctx.partner_id, member_id=member_id)
+    return JsonResponse({"id": str(member.id), "status": member.status})
+
+
+@partner_view(["GET"])
+def roles_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    return JsonResponse(partner_network.roles(ctx))
 
 
 @partner_view(["POST"])
@@ -322,3 +353,103 @@ def authentication_view(request: HttpRequest, ctx: TenantContext) -> JsonRespons
 @partner_view(["GET"])
 def communication_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     return JsonResponse(partner_portal.communication(ctx))
+
+
+@partner_view(["GET"])
+def channels_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    return JsonResponse(partner_portal.channel_manager(ctx))
+
+
+# --- translations ------------------------------------------------------------------------------
+
+
+@partner_view(["GET", "PUT"])
+def translations_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    if request.method == "GET":
+        return JsonResponse(
+            translations.overview(ctx, locale=request.GET.get("locale") or "en")
+        )
+    blocked = limited(request, "partner_translation", user=request.user)
+    if blocked is not None:
+        return blocked
+    body = _body(request)
+    return JsonResponse(
+        translations.save(ctx, locale=body.get("locale"), strings=body.get("strings"))
+    )
+
+
+# --- API keys ------------------------------------------------------------------------------------
+
+
+def _no_store(response: JsonResponse) -> JsonResponse:
+    """A response that carries a secret is never cached, anywhere."""
+    response["Cache-Control"] = "no-store"
+    response["Pragma"] = "no-cache"
+    return response
+
+
+@partner_view(["GET", "POST"])
+def api_keys_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    if request.method == "GET":
+        return _no_store(JsonResponse(api_keys.overview(ctx)))
+    blocked = limited(request, "partner_apikey", user=request.user)
+    if blocked is not None:
+        return blocked
+    body = _body(request)
+    issued = api_keys.create(
+        ctx,
+        name=body.get("name"),
+        scopes=body.get("scopes"),
+        expires_in_days=body.get("expires_in_days"),
+    )
+    return _no_store(
+        JsonResponse({"key": issued.key, "secret": issued.secret}, status=201)
+    )
+
+
+@partner_view(["POST"])
+def api_key_rotate_view(
+    request: HttpRequest, ctx: TenantContext, key_id: UUID
+) -> JsonResponse:
+    blocked = limited(request, "partner_apikey", user=request.user)
+    if blocked is not None:
+        return blocked
+    issued = api_keys.rotate(
+        ctx, key_id=key_id, expires_in_days=_body(request).get("expires_in_days")
+    )
+    return _no_store(JsonResponse({"key": issued.key, "secret": issued.secret}))
+
+
+@partner_view(["POST"])
+def api_key_revoke_view(
+    request: HttpRequest, ctx: TenantContext, key_id: UUID
+) -> JsonResponse:
+    blocked = limited(request, "partner_apikey", user=request.user)
+    if blocked is not None:
+        return blocked
+    return _no_store(JsonResponse({"key": api_keys.revoke(ctx, key_id=key_id)}))
+
+
+# --- help: notifications and support ----------------------------------------------------------------
+
+
+@partner_view(["GET"])
+def notifications_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    return JsonResponse(
+        partner_help.notifications(ctx, view=request.GET.get("view") or "all")
+    )
+
+
+@partner_view(["POST"])
+def notifications_read_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    body = _body(request)
+    return JsonResponse(
+        partner_help.mark_read(
+            ctx, ids=body.get("ids"), everything=body.get("all") is True
+        )
+    )
+
+
+@partner_view(["GET"])
+def support_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    return JsonResponse(partner_help.support(ctx))

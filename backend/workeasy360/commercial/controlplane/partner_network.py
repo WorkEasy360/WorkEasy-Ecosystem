@@ -123,6 +123,16 @@ def affiliates(ctx: TenantContext) -> dict[str, Any]:
                 "commission earned",
             ],
             "never_shown": ["name", "email", "phone", "country"],
+            # Eligible offerings and payout settings, as the platform holds them:
+            # a partner earns on the products it has been granted, and is paid in
+            # its own payout currency by Workeasy360, outside this platform.
+            "eligible_products": sorted(
+                {
+                    g["product_name"]
+                    for g in partner_selectors.granted_products(partner_id)
+                }
+            ),
+            "payout_currency": partner_selectors.partner_row(partner_id).payout_currency,
             "commission_rules": (
                 commission_selectors.partner_rules(partner_id, now=now)
                 if COMMISSION_VIEW in permissions
@@ -199,7 +209,13 @@ def members(ctx: TenantContext) -> dict[str, Any]:
                 "email": m.user.email_original or m.user.email,
                 "role": m.role,
                 "role_label": spec.label if spec else m.role,
-                "status": "active" if m.user.status == "active" else "disabled",
+                "status": (
+                    "suspended"
+                    if m.status == "suspended"
+                    else "active"
+                    if m.user.status == "active"
+                    else "disabled"
+                ),
                 "setup_pending": not m.user.has_usable_password(),
                 "mfa_enrolled": m.user_id in secured,
                 "invited_at": m.invitation_sent_at.isoformat()
@@ -219,4 +235,83 @@ def members(ctx: TenantContext) -> dict[str, Any]:
             for s in capabilities.ROLE_PRESETS.values()
         ],
         "can_manage": "platform.partner_member.manage" in permissions,
+    }
+
+
+# --- roles and permissions ---------------------------------------------------------------
+
+#: What every role gets for running the account, in words (``BASELINE_VIEW`` and
+#: ``BASELINE_MANAGE`` in ``capabilities``; a test pins that these stay in step).
+ACCOUNT_ACCESS_EVERYONE: Final = (
+    "See the dashboard, the business profile, the team and the products",
+)
+ACCOUNT_ACCESS_ADMINISTRATORS: Final = (
+    "Change the business profile",
+    "Invite, re-role, pause and remove team members",
+    "Arrange and switch products for sale",
+    "See the activity trail and manage API keys",
+)
+
+
+@in_scope
+def roles(ctx: TenantContext) -> dict[str, Any]:
+    """The role presets as they apply to *this* partner.
+
+    A role is a preset over the capabilities the partner holds (never a new
+    permission): what a member in it can do is the role's list **intersected with
+    the partner's own capabilities**, so a role can narrow a partner's powers and
+    never widen them. There are no custom roles - the closed set below is the
+    set - and nobody can give themselves, or anyone else, more than the partner
+    holds (``services.change_member_role`` also refuses a role change to oneself).
+    """
+    authz.require(ctx, MEMBER_VIEW)
+    permissions = authz.effective_permissions(ctx)
+    held = partner_selectors.active_capabilities(ctx.partner_id)
+    counts = panel_selectors.role_counts(ctx.partner_id)
+    order = list(capabilities.CAPABILITIES)
+
+    def listed(spec: capabilities.RoleSpec) -> list[dict[str, str]]:
+        usable = held if spec.capabilities is None else held & spec.capabilities
+        rows = []
+        for key in sorted(usable, key=order.index):
+            cap = capabilities.CAPABILITIES[key]
+            if spec.manage and cap.manage:
+                access = "manage"
+            elif cap.view or cap.manage:
+                access = "view"
+            else:
+                continue  # an earning-only capability opens no screen
+            rows.append(
+                {
+                    "key": key,
+                    "label": capabilities.SHORT_LABELS.get(key, key),
+                    "access": access,
+                }
+            )
+        return rows
+
+    return {
+        "roles": [
+            {
+                "key": spec.key,
+                "label": spec.label,
+                "description": spec.description,
+                "administrator": spec.admin,
+                "can_change": spec.manage,
+                "owner_only": spec.key == "owner",
+                "members": counts.get(spec.key, 0),
+                "capabilities": listed(spec),
+            }
+            for spec in capabilities.ROLE_PRESETS.values()
+        ],
+        "partner_capabilities": [
+            {"key": k, "label": capabilities.SHORT_LABELS.get(k, k)}
+            for k in sorted(held, key=order.index)
+        ],
+        "account_access": {
+            "everyone": list(ACCOUNT_ACCESS_EVERYONE),
+            "administrators": list(ACCOUNT_ACCESS_ADMINISTRATORS),
+        },
+        "can_manage": "platform.partner_member.manage" in permissions,
+        "not_implemented": {"custom_roles": NOT_IMPLEMENTED["custom_roles"]},
     }

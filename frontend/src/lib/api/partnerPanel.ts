@@ -200,6 +200,8 @@ export interface Affiliates {
     attribution_window_days: number;
     visible_to_you: string[];
     never_shown: string[];
+    eligible_products: string[];
+    payout_currency: string;
     commission_rules:
       | { code: string; version: number; product_code: string; rate_bp: number; state: string; effective_from: string }[]
       | null;
@@ -325,6 +327,116 @@ export interface CommunicationOverview {
   not_implemented: NotImplemented;
 }
 
+// --- roles, channels, translations, API keys, help (ADR-046) -----------------------------
+
+export interface RoleView {
+  key: string;
+  label: string;
+  description: string;
+  administrator: boolean;
+  can_change: boolean;
+  owner_only: boolean;
+  members: number;
+  capabilities: { key: string; label: string; access: "view" | "manage" }[];
+}
+
+export interface RolesResponse {
+  roles: RoleView[];
+  partner_capabilities: { key: string; label: string }[];
+  account_access: { everyone: string[]; administrators: string[] };
+  can_manage: boolean;
+  not_implemented: NotImplemented;
+}
+
+export type ChannelState = "connected" | "needs_setup" | "disconnected" | "error" | "not_available";
+
+export interface ChannelManagerResponse {
+  channels: { key: string; label: string; state: ChannelState; detail: string; editable: boolean }[];
+  states: { key: ChannelState; label: string; meaning: string }[];
+  not_implemented: NotImplemented;
+}
+
+export interface TranslationString {
+  key: string;
+  group: string;
+  label: string;
+  max_length: number;
+  /** What the partner has worded for this locale ("" = nothing). */
+  value: string;
+  effective: string;
+  source: "partner" | "platform" | "english";
+  english: string;
+}
+
+export interface TranslationsOverview {
+  locale: string;
+  locales: { code: string; name: string; translated: number }[];
+  strings: TranslationString[];
+  can_manage: boolean;
+  fallback: string[];
+  never_translatable: string[];
+}
+
+export interface ApiKeyRow {
+  id: string;
+  name: string;
+  key_id: string;
+  scopes: { key: string; label: string }[];
+  status: "active" | "revoked" | "expired";
+  created_at: string;
+  created_by: string;
+  expires_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  rotated_from: boolean;
+}
+
+export interface ApiKeysOverview {
+  keys: ApiKeyRow[];
+  scopes: { key: string; label: string; description: string }[];
+  expiry_days: number[];
+  default_expiry_days: number;
+  can_manage: boolean;
+  limit: number;
+  never_issued: string[];
+}
+
+/** A freshly minted credential. The `secret` is shown once and never again. */
+export interface IssuedKey {
+  key: ApiKeyRow;
+  secret: string;
+}
+
+export type NotificationView = "all" | "unread" | "important";
+
+export interface NotificationItem {
+  id: string;
+  occurred_at: string;
+  title: string;
+  category: string;
+  important: boolean;
+  detail: string;
+  read: boolean;
+}
+
+export interface NotificationsResponse {
+  view: NotificationView;
+  items: NotificationItem[];
+  counts: { all: number; unread: number; important: number; important_unread: number };
+  window: number;
+  truncated: boolean;
+  not_implemented: NotImplemented;
+}
+
+export interface SupportResponse {
+  contact: { email: string; available: boolean };
+  help_desk: { name: string; available: boolean; url: string; suspended: boolean };
+  partner: { name: string };
+  priorities: string[];
+  requests: null;
+  not_implemented: NotImplemented;
+}
+
 // --- the client --------------------------------------------------------------------------
 
 export const panelApi = {
@@ -400,6 +512,34 @@ export const panelApi = {
     }),
   authentication: (id: string) => apiFetch<AuthenticationStatement>(`${partner(id)}/authentication`),
   communication: (id: string) => apiFetch<CommunicationOverview>(`${partner(id)}/communication`),
+  channels: (id: string) => apiFetch<ChannelManagerResponse>(`${partner(id)}/channels`),
+  roles: (id: string) => apiFetch<RolesResponse>(`${partner(id)}/roles`),
+  suspendMember: (id: string, memberId: string) =>
+    apiFetch(`${partner(id)}/members/${memberId}/suspend`, { method: "POST", body: json({}) }),
+  resumeMember: (id: string, memberId: string) =>
+    apiFetch(`${partner(id)}/members/${memberId}/resume`, { method: "POST", body: json({}) }),
+
+  translations: (id: string, locale: string) =>
+    apiFetch<TranslationsOverview>(`${partner(id)}/translations`, { query: { locale } }),
+  saveTranslations: (id: string, locale: string, strings: Record<string, string>) =>
+    apiFetch<TranslationsOverview>(`${partner(id)}/translations`, { method: "PUT", body: json({ locale, strings }) }),
+
+  apiKeys: (id: string) => apiFetch<ApiKeysOverview>(`${partner(id)}/api-keys`),
+  createApiKey: (id: string, body: { name: string; scopes: string[]; expires_in_days: number }) =>
+    apiFetch<IssuedKey>(`${partner(id)}/api-keys`, { method: "POST", body: json(body) }),
+  rotateApiKey: (id: string, keyId: string, expiresInDays: number) =>
+    apiFetch<IssuedKey>(`${partner(id)}/api-keys/${keyId}/rotate`, {
+      method: "POST",
+      body: json({ expires_in_days: expiresInDays }),
+    }),
+  revokeApiKey: (id: string, keyId: string) =>
+    apiFetch<{ key: ApiKeyRow }>(`${partner(id)}/api-keys/${keyId}/revoke`, { method: "POST", body: json({}) }),
+
+  notifications: (id: string, view: NotificationView) =>
+    apiFetch<NotificationsResponse>(`${partner(id)}/notifications`, { query: { view } }),
+  markNotificationsRead: (id: string, body: { ids: string[] } | { all: true }) =>
+    apiFetch<NotificationsResponse>(`${partner(id)}/notifications/read`, { method: "POST", body: json(body) }),
+  support: (id: string) => apiFetch<SupportResponse>(`${partner(id)}/support`),
 
   /** The customer CSV, fetched (not navigated to) so a refusal is shown as a
    * message instead of replacing the page. Returns the bytes and whether the

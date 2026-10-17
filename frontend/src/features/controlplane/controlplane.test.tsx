@@ -427,8 +427,9 @@ describe("the partner shell", () => {
     );
     await screen.findByRole("heading", { name: "Page" });
     const labels = navLabels();
-    expect(labels).toEqual(expect.arrayContaining(["Dashboard", "Commissions", "Payouts", "Partner Balance"]));
-    for (const absent of ["Customers", "Sub-Partners", "Affiliates", "Plans & Add-ons", "Brand Settings", "Domains"]) {
+    // Commission and payouts are read from Payments and Affiliates now (ADR-046).
+    expect(labels).toEqual(expect.arrayContaining(["Dashboards", "Payments", "Affiliates"]));
+    for (const absent of ["Users", "Agency", "Plans & Add-ons", "Brand Settings", "Currency & Pricing"]) {
       expect(labels).not.toContain(absent);
     }
   });
@@ -446,8 +447,8 @@ describe("the partner shell", () => {
     );
     await screen.findByRole("heading", { name: "Page" });
     const labels = navLabels();
-    expect(labels).toEqual(expect.arrayContaining(["Dashboard", "Customers", "Products", "Plans & Add-ons", "Affiliates", "Commissions"]));
-    for (const absent of ["Payouts", "Sub-Partners", "Brand Settings", "Domains"]) {
+    expect(labels).toEqual(expect.arrayContaining(["Dashboards", "Users", "Partner Products", "Plans & Add-ons", "Affiliates", "Payments"]));
+    for (const absent of ["Agency", "Brand Settings"]) {
       expect(labels).not.toContain(absent);
     }
   });
@@ -478,7 +479,7 @@ describe("the partner shell", () => {
     );
     expect(await screen.findByText(/This partner account has ended/)).toBeInTheDocument();
     // The server refuses everything else for an ended partner, so nothing else is offered.
-    expect(navLabels()).toEqual(["Commissions", "Payouts", "Partner Balance"]);
+    expect(navLabels()).toEqual(["Affiliates", "Payments"]);
   });
 
   it("offers a partner that was never activated nothing to do", async () => {
@@ -793,21 +794,30 @@ describe("hostile text is rendered as text (XSS)", () => {
   });
 
   it("a referral label, a domain, and a commission reason in the partner screens", async () => {
-    pathname = `/partner/${PARTNER}/referrals`;
+    pathname = `/partner/${PARTNER}/affiliates`;
     mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/partner/portal": [portal(["referral.create", "referral.view"])],
-      [`GET /api/v1/partner/${PARTNER}/referrals`]: [
-        { status: 200, body: { counts: { captured: 1 }, codes: [{ id: "c1", code: "abc", label: EVIL, status: "active" }] } },
+      [`GET /api/v1/partner/${PARTNER}/affiliates`]: [
+        {
+          status: 200,
+          body: {
+            programme: { enabled: true, attribution_window_days: 90, visible_to_you: [], never_shown: [], eligible_products: [], payout_currency: "INR", commission_rules: [] },
+            summary: { captured: 1 },
+            codes: [{ id: "c1", code: "abc", label: EVIL, status: "active", url: "https://auth.example.com/signup?ref=abc" }],
+            affiliates: [],
+            not_implemented: {},
+          },
+        },
       ],
     });
-    const { PartnerReferrals } = await import("./PartnerScreens");
+    const { Affiliates } = await import("@/features/partnerpanel/Network");
     const { container } = render(
       <PartnerShell partnerId={PARTNER}>
-        <PartnerReferrals />
+        <Affiliates />
       </PartnerShell>,
     );
-    await screen.findByRole("table", { name: "Referral codes" });
+    await screen.findByRole("table", { name: "Your referral links" });
     expectInert(container);
   });
 

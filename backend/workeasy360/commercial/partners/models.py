@@ -300,7 +300,11 @@ class PartnerMember(models.Model):
     )
     status = models.CharField(
         max_length=16,
-        choices=[("active", "Active"), ("removed", "Removed")],
+        choices=[
+            ("active", "Active"),
+            ("suspended", "Suspended"),
+            ("removed", "Removed"),
+        ],
         default="active",
     )
     added_by = models.ForeignKey(
@@ -881,3 +885,153 @@ class PartnerLogoUpload(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"logo {self.file_id} of {self.partner_id}"
+
+
+class PartnerApiKey(models.Model):
+    """A scoped credential a partner's own systems present to the partner API.
+
+    **Only a hash is stored.** The secret is 256 random bits shown once, at
+    creation or rotation; what is kept is its SHA-256 (enough for a
+    high-entropy random value, and what the platform already does for every
+    other bearer secret) and a short public ``key_id`` that names the row. The
+    secret is never returned again, never logged and never audited.
+
+    A key is bound to the **partner** (its data is the only data it can reach),
+    to a closed set of **scopes** from ``api_keys.SCOPES`` (never free text),
+    and to the **member who created it**: it works only while that member is
+    still an active member of the partner, so removing or pausing a person
+    ends their keys with their access. It always expires.
+
+    Rotation never edits a secret in place: the old row is revoked and a new
+    row (``replaces`` -> the old one) carries the new secret.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="api_keys"
+    )
+    name = models.CharField(max_length=80)
+    #: The public part of the credential (``w360pk_<key_id>_<secret>``).
+    key_id = models.CharField(max_length=16, unique=True)
+    secret_hash = models.CharField(max_length=64)
+    scopes = models.JSONField(default=list)
+    status = models.CharField(
+        max_length=16,
+        choices=[("active", "Active"), ("revoked", "Revoked")],
+        default="active",
+    )
+    created_by = models.ForeignKey(
+        PartnerMember, on_delete=models.PROTECT, related_name="api_keys"
+    )
+    created_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        "identity.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    revoke_reason = models.CharField(max_length=32, blank=True, default="")
+    replaces = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+
+    class Meta:
+        db_table = "partners_api_key"
+        indexes = [
+            models.Index(fields=["partner", "-created_at"], name="ix_apikey_partner"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status="active", revoked_at__isnull=True)
+                | models.Q(status="revoked", revoked_at__isnull=False),
+                name="ck_apikey_revoked_stamped",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"api key {self.key_id} of {self.partner_id} [{self.status}]"
+
+
+class PartnerTranslation(models.Model):
+    """A partner-owned presentation string for one locale.
+
+    The key must be in ``translations.KEYS`` (a closed list of labels and
+    messages a partner's customers see) and the locale in
+    ``translations.LOCALES``; the value is one bounded line of plain text, never
+    markup or template code. Nothing here is read by authorization,
+    entitlement, validation or pricing. A missing row falls back to the
+    platform's wording, then to English (``translations.resolve``).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="translations"
+    )
+    locale = models.CharField(max_length=8)
+    key = models.CharField(max_length=64)
+    value = models.CharField(max_length=500)
+    updated_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "partners_translation"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["partner", "locale", "key"], name="uq_partner_translation"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.partner_id} {self.locale} {self.key}"
+
+
+class PartnerNotificationState(models.Model):
+    """A member's "mark all read" mark: everything in their Notification Center
+    at or before ``read_until`` counts as read. Read-state only - the
+    notifications themselves are entries of the one audit log and are not
+    copied anywhere."""
+
+    member = models.OneToOneField(
+        PartnerMember, primary_key=True, on_delete=models.CASCADE, related_name="+"
+    )
+    read_until = models.DateTimeField()
+
+    class Meta:
+        db_table = "partners_notification_state"
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.member_id} read until {self.read_until}"
+
+
+class PartnerNotificationRead(models.Model):
+    """One member has read one notification.
+
+    A partner's notifications are entries of the one audit log (nothing is
+    copied), so this row holds only the pair "member, event" - the read-state a
+    person keeps for themselves. ``PartnerNotificationState`` covers "mark all
+    read".
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    member = models.ForeignKey(
+        PartnerMember, on_delete=models.CASCADE, related_name="notification_reads"
+    )
+    event_id = models.UUIDField()
+    read_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "partners_notification_read"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["member", "event_id"], name="uq_partner_notification_read"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.member_id} read {self.event_id}"

@@ -360,10 +360,15 @@ def partner_customers_page(
     partner_id: UUID,
     *,
     status: str | None = None,
+    search: str | None = None,
     limit: int = DEFAULT_PAGE,
     cursor: str | None = None,
 ) -> Page:
     """One partner's portfolio: bounded fields, no member data, no PII.
+
+    ``search`` matches the organization name of a *live* relationship only. An
+    ended relationship shows the partner no name, so it must not be findable by
+    one either (a match would confirm what the row hides).
 
     Two queries for any page size: the links with their organizations, then
     the summary projection for exactly those organizations (never a query per
@@ -379,6 +384,11 @@ def partner_customers_page(
     queryset = PartnerOrganizationLink.objects.filter(partner_id=partner_id)
     if status:
         queryset = queryset.filter(status=status)
+    term = (search or "").strip()[:80]
+    if term:
+        queryset = queryset.exclude(status=PartnerLinkStatus.ENDED.value).filter(
+            organization__display_name__icontains=term
+        )
     queryset = queryset.select_related("organization").order_by("-started_at", "-id")
     decoded = decode_cursor(cursor)
     if decoded is not None:
@@ -683,7 +693,15 @@ def active_brand_for_host(hostname: str) -> dict[str, Any] | None:
         "support_email": brand.support_email,
         "support_url": brand.support_url,
         "portal": portal.public_view(brand.portal),
+        "translations": _translations(domain.partner_id),
     }
+
+
+def _translations(partner_id: UUID) -> dict[str, dict[str, str]]:
+    """What the partner itself has worded, by locale (see ``translations``)."""
+    from workeasy360.commercial.partners import translations
+
+    return translations.public_map(partner_id)
 
 
 def brand_for_organization(organization_id: UUID) -> dict[str, Any] | None:
@@ -720,6 +738,7 @@ def brand_for_organization(organization_id: UUID) -> dict[str, Any] | None:
         "support_email": brand.support_email,
         "support_url": brand.support_url,
         "portal": portal.public_view(brand.portal),
+        "translations": _translations(link.partner_id),
     }
 
 

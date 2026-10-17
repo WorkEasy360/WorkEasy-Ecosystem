@@ -636,8 +636,8 @@ const partner = (id: string) => `/api/v1/partner/${encodeURIComponent(id)}`;
 
 export const partnerApi = {
   portal: () => apiFetch<{ partners: PortalPartner[] }>("/api/v1/partner/portal"),
-  customers: (id: string, cursor?: string) =>
-    apiFetch<Page<PartnerCustomerRow>>(`${partner(id)}/customers`, { query: { cursor } }),
+  customers: (id: string, cursor?: string, q?: string) =>
+    apiFetch<Page<PartnerCustomerRow>>(`${partner(id)}/customers`, { query: { cursor, q: q || undefined } }),
   provision: (id: string, organizationName: string, ownerEmail: string, key: string, owner?: { first?: string; last?: string }) =>
     apiFetch<{ organization_id: string; slug: string; replayed: boolean }>(`${partner(id)}/customers`, {
       method: "POST",
@@ -713,11 +713,13 @@ export interface OwnBrand {
   support_url: string;
   logo_url: string | null;
   portal: PublicPortalFields;
+  /** What the partner itself has worded, by locale (ADR-046). */
+  translations?: Record<string, Record<string, string>>;
 }
 
 export const brandingApi = {
   forHost: (host: string) =>
-    apiFetch<{ brand: (Omit<Brand, "logo_file_id" | "version" | "portal"> & { logo_url: string | null; portal: PublicPortalFields }) | null }>(
+    apiFetch<{ brand: (Omit<Brand, "logo_file_id" | "version" | "portal"> & { logo_url: string | null; portal: PublicPortalFields; translations?: Record<string, Record<string, string>> }) | null }>(
       "/api/v1/public/branding",
       { query: { host } },
     ),

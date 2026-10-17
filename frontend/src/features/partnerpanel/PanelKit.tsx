@@ -104,17 +104,34 @@ export function Kpi({
   );
 }
 
-/** Sub-navigation for pages that share a heading (Affiliates, Pricing, Communication). */
-export function SubNav({ items }: { items: { href: string; label: string }[] }) {
+/** The tabs inside a top-level page (Affiliates: Conversions, Payouts, Settings).
+ * They are not sidebar items. A tab the person's permissions cannot read is not
+ * drawn (`show: false`); the server still authorizes each request. */
+export function SubNav({ items }: { items: { href: string; label: string; show?: boolean }[] }) {
   const pathname = usePathname() ?? "";
+  const shown = items.filter((item) => item.show !== false);
+  if (shown.length < 2) return null;
   return (
     <nav aria-label="Sections" className={styles.tabs}>
-      {items.map((item) => (
+      {shown.map((item) => (
         <Link key={item.href} href={item.href} aria-current={pathname === item.href ? "page" : undefined}>
           {item.label}
         </Link>
       ))}
     </nav>
+  );
+}
+
+/** The tabs of the Users page: the customers, and where each one's subscription stands. */
+export function UsersNav() {
+  const { base } = usePanel();
+  return (
+    <SubNav
+      items={[
+        { href: `${base}/users`, label: "Customers" },
+        { href: `${base}/users/subscriptions`, label: "Subscriptions" },
+      ]}
+    />
   );
 }
 

@@ -801,7 +801,9 @@ def remove_member(ctx: TenantContext, partner_id: UUID, *, member_id: UUID) -> A
         partner = _lock_partner(partner_id)
         member = (
             PartnerMember.objects.select_for_update()
-            .filter(id=member_id, partner_id=partner_id, status="active")
+            .filter(
+                id=member_id, partner_id=partner_id, status__in=("active", "suspended")
+            )
             .first()
         )
         if member is None:
@@ -818,8 +820,11 @@ def remove_member(ctx: TenantContext, partner_id: UUID, *, member_id: UUID) -> A
                 )
             # A partner cannot lock itself out. (Staff keep the older, wider
             # power to remove anyone, including the last administrator.)
+            # A suspended administrator holds no access, so removing one cannot
+            # take the last working administrator away.
             if (
-                capabilities.is_admin_role(member.role)
+                member.status == "active"
+                and capabilities.is_admin_role(member.role)
                 and partner.status_enum is PartnerStatus.ACTIVE
                 and not _other_admin_exists(partner_id, member.id)
             ):
@@ -835,6 +840,72 @@ def remove_member(ctx: TenantContext, partner_id: UUID, *, member_id: UUID) -> A
         audit.record(
             ctx,
             "partner.member_removed",
+            resource_type="partners.member",
+            resource_id=member.id,
+            changes={"partner_id": str(partner_id)},
+        )
+    return member
+
+
+@in_scope
+def suspend_member(ctx: TenantContext, partner_id: UUID, *, member_id: UUID) -> Any:
+    """Pause a partner user's access without removing them.
+
+    The membership row stays (so do their role and history) but is no longer
+    ``active``, and every permission check starts from an active row - so access
+    ends on their very next request, exactly as for a removal. Their Workeasy360
+    identity and any customer-organization membership are untouched. The same
+    guards as a removal: not yourself, only an owner pauses an owner, and an
+    active partner keeps one working administrator."""
+    return _set_member_paused(ctx, partner_id, member_id=member_id, pause=True)
+
+
+@in_scope
+def resume_member(ctx: TenantContext, partner_id: UUID, *, member_id: UUID) -> Any:
+    """Give a paused partner user their access back, in the role they held."""
+    return _set_member_paused(ctx, partner_id, member_id=member_id, pause=False)
+
+
+def _set_member_paused(
+    ctx: TenantContext, partner_id: UUID, *, member_id: UUID, pause: bool
+) -> Any:
+    from workeasy360.commercial.partners.models import PartnerMember
+
+    by_partner = _authorize_members(ctx, partner_id)
+    before, after = ("active", "suspended") if pause else ("suspended", "active")
+    with transaction.atomic():
+        partner = _lock_partner(partner_id)
+        member = (
+            PartnerMember.objects.select_for_update()
+            .filter(id=member_id, partner_id=partner_id, status=before)
+            .first()
+        )
+        if member is None:
+            raise PartnerRecordNotFound("No such member.", member_id=str(member_id))
+        if by_partner:
+            if member.user_id == ctx.user_id:
+                raise PartnerValidationError(
+                    "You cannot change your own access.", field="member"
+                )
+            if member.role == "owner" and not _caller_is_owner(ctx):
+                raise PartnerValidationError(
+                    "Only an owner can change an owner access.", field="member"
+                )
+        if (
+            pause
+            and capabilities.is_admin_role(member.role)
+            and partner.status_enum is PartnerStatus.ACTIVE
+            and not _other_admin_exists(partner_id, member.id)
+        ):
+            raise PartnerValidationError(
+                "An active partner needs at least one administrator. Add another first.",
+                field="member",
+            )
+        member.status = after
+        member.save(update_fields=["status"])
+        audit.record(
+            ctx,
+            "partner.member_suspended" if pause else "partner.member_resumed",
             resource_type="partners.member",
             resource_id=member.id,
             changes={"partner_id": str(partner_id)},
@@ -914,6 +985,13 @@ def _invite_member(
             )
         user_id, created = ensure_identity_for_email(address, full_name=person)
         if user_id is None:
+            raise PartnerValidationError("That account cannot be added.", field="email")
+        paused = PartnerMember.objects.filter(
+            partner_id=partner_id, user_id=user_id, status="suspended"
+        ).exists()
+        if paused:
+            # Resume the paused membership instead; a second row would break the
+            # one-active-membership rule. The same uniform refusal as any other.
             raise PartnerValidationError("That account cannot be added.", field="email")
         already = (
             PartnerMember.objects.select_for_update()

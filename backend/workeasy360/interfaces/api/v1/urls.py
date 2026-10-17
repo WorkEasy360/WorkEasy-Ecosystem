@@ -32,6 +32,7 @@ from workeasy360.interfaces.api.v1 import (
     intelligence_views,
     launcher_views,
     mfa_views,
+    partner_api_views,
     partner_panel_views,
     partner_views,
     payment_views,
@@ -1559,6 +1560,61 @@ _partner = [
         partner_panel_views.communication_view,
         name="partner-communication",
     ),
+    path(
+        "partner/<uuid:partner_id>/roles",
+        partner_panel_views.roles_view,
+        name="partner-roles",
+    ),
+    path(
+        "partner/<uuid:partner_id>/members/<uuid:member_id>/suspend",
+        partner_panel_views.member_suspend_view,
+        name="partner-member-suspend",
+    ),
+    path(
+        "partner/<uuid:partner_id>/members/<uuid:member_id>/resume",
+        partner_panel_views.member_resume_view,
+        name="partner-member-resume",
+    ),
+    path(
+        "partner/<uuid:partner_id>/channels",
+        partner_panel_views.channels_view,
+        name="partner-channels",
+    ),
+    path(
+        "partner/<uuid:partner_id>/translations",
+        partner_panel_views.translations_view,
+        name="partner-translations",
+    ),
+    path(
+        "partner/<uuid:partner_id>/api-keys",
+        partner_panel_views.api_keys_view,
+        name="partner-api-keys",
+    ),
+    path(
+        "partner/<uuid:partner_id>/api-keys/<uuid:key_id>/rotate",
+        partner_panel_views.api_key_rotate_view,
+        name="partner-api-key-rotate",
+    ),
+    path(
+        "partner/<uuid:partner_id>/api-keys/<uuid:key_id>/revoke",
+        partner_panel_views.api_key_revoke_view,
+        name="partner-api-key-revoke",
+    ),
+    path(
+        "partner/<uuid:partner_id>/notifications",
+        partner_panel_views.notifications_view,
+        name="partner-notifications",
+    ),
+    path(
+        "partner/<uuid:partner_id>/notifications/read",
+        partner_panel_views.notifications_read_view,
+        name="partner-notifications-read",
+    ),
+    path(
+        "partner/<uuid:partner_id>/support",
+        partner_panel_views.support_view,
+        name="partner-support",
+    ),
 ]
 
 _public = [
@@ -1590,4 +1646,22 @@ _public = [
     ),
 ]
 
-urlpatterns += _admin + _partner + _public
+# ADR-046: the key-authenticated, read-only partner API. The only routes that
+# accept a bearer key (and the only ones that ignore the session entirely).
+_partner_api = [
+    path(
+        "partner-api/account", partner_api_views.account_view, name="partner-api-account"
+    ),
+    path(
+        "partner-api/customers",
+        partner_api_views.customers_view,
+        name="partner-api-customers",
+    ),
+    path(
+        "partner-api/commissions",
+        partner_api_views.commissions_view,
+        name="partner-api-commissions",
+    ),
+]
+
+urlpatterns += _admin + _partner + _public + _partner_api

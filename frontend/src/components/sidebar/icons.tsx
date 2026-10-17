@@ -31,6 +31,8 @@ const PATHS: Record<string, string> = {
   device: "M5 4h14v11H5V4Zm-2 15h18M9 19l1-4h4l1 4",
   history: "M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 7v5l3 3",
   diagnostics: "M3 12h4l3-8 4 16 3-8h4",
+  bell: "M6 16V11a6 6 0 1 1 12 0v5l2 2H4l2-2Zm4 4a2 2 0 0 0 4 0",
+  help: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 13h.01M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5",
 };
 
 export function NavIcon({ name }: { name?: string }) {

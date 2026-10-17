@@ -46,6 +46,11 @@ def test_the_partner_models_are_the_frozen_set_plus_the_declared_additions():
         # and a partner's per-product presentation. Pinned in tests/partner_panel.
         "PartnerHierarchyLink",
         "PartnerProductSetting",
+        # The final partner menu (ADR-046): API keys, translations and read-state.
+        "PartnerApiKey",
+        "PartnerTranslation",
+        "PartnerNotificationRead",
+        "PartnerNotificationState",
     }
 
 

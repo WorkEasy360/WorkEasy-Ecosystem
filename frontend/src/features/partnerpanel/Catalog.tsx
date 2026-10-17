@@ -5,7 +5,8 @@ import { useState } from "react";
 import { LoadGate, MoreButton, Status, Table, money, useAction, useLoad, usePaged, when } from "@/features/controlplane/ui";
 import { partnerApi } from "@/lib/api/controlPlane";
 import { panelApi, type ManagedProduct } from "@/lib/api/partnerPanel";
-import { NotAvailable, PageHeader, SubNav, monogram, usePanel } from "./PanelKit";
+import { PartnerCommissions } from "@/features/controlplane/PartnerScreens";
+import { NotAvailable, PageHeader, SubNav, UsersNav, usePanel } from "./PanelKit";
 import styles from "./PartnerPanel.module.css";
 
 const INTERVALS: Record<string, string> = {
@@ -26,74 +27,57 @@ function firstPrice(p: ManagedProduct, currency: string): string {
   return "Not priced";
 }
 
-// --- products: the cards -------------------------------------------------------------
+// --- partner products: what Workeasy360 has granted ---------------------------------
 
-export function Products() {
-  const { id, can, active } = usePanel();
-  const [load, reload] = useLoad(() => panelApi.products(id), [id]);
-  const { act, busy, feedback } = useAction(reload);
-  const [editing, setEditing] = useState<string | null>(null);
+/** The products granted to this partner, and the catalog beyond them. Read-only:
+ * a partner can never grant a product to itself (Workeasy360 does, in the Super
+ * Admin console), and what it does with a granted product is done where that
+ * belongs - the sale switch in Product Billing, the customer-facing order and
+ * visibility in Product Manager. */
+export function PartnerProducts() {
+  const { id, base } = usePanel();
+  const [load] = useLoad(() => panelApi.products(id), [id]);
   return (
     <div className={styles.page}>
-      <PageHeader title="Products" lead="The products Workeasy360 has approved you to sell. New products appear here when they are added to your account." />
-      {feedback}
+      <PageHeader
+        title="Partner Products"
+        lead="The products Workeasy360 has granted to your account. New products appear here as soon as they are granted; you cannot grant a product to yourself."
+      />
       <LoadGate load={load} what="your products">
         {(d) => (
           <>
-            {d.products.length === 0 ? (
-              <NotAvailable title="No products yet" reasons={["Workeasy360 has not granted you a product to sell. Contact us to set up your programme."]} />
-            ) : (
-              <ul className={styles.cards} aria-label="Your products">
-                {d.products.map((p) => (
-                  <li key={p.code} className={styles.card}>
-                    <div className={styles.cardHead}>
-                      <span className={styles.monogram} aria-hidden="true">
-                        {monogram(p.name)}
-                      </span>
-                      <div>
-                        <h2 className={styles.cardTitle}>{p.name}</h2>
-                        <span className={styles.muted}>{p.tagline || p.category}</span>
-                      </div>
-                    </div>
-                    {p.description && <p className={styles.muted}>{p.description}</p>}
-                    <dl className={styles.facts}>
-                      <dt>For sale</dt>
-                      <dd>
-                        <Status value={p.enabled_for_sale ? "enabled" : "disabled"} />
-                      </dd>
-                      <dt>Visible</dt>
-                      <dd>
-                        {[p.show_in_explore && "Explore", p.show_in_my_products && "My Products"].filter(Boolean).join(", ") || "Hidden"}
-                      </dd>
-                      <dt>Price</dt>
-                      <dd>{firstPrice(p, d.currency)}</dd>
-                      <dt>Trial</dt>
-                      <dd>{!p.trial.offered_by_platform ? "None" : p.trial.allowed_for_partner ? `${p.trial.days} days` : "Turned off for your customers"}</dd>
-                      <dt>Customers</dt>
-                      <dd>{p.customers ?? "—"}</dd>
-                    </dl>
-                    {can("product.manage") && active && (
-                      <div>
-                        <button type="button" className="w360-btn w360-btn-secondary" aria-expanded={editing === p.code} onClick={() => setEditing(editing === p.code ? null : p.code)}>
-                          Edit
-                        </button>
-                      </div>
-                    )}
-                    {editing === p.code && (
-                      <ProductSwitches
-                        product={p}
-                        busy={busy}
-                        onSave={(body) => void act(() => panelApi.updateProduct(id, p.code, body), `${p.name} updated.`)}
-                      />
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
+            <Table
+              caption="Products granted to your account"
+              head={["Product", "Access", "Sell access", "Pricing", "Trial", "Customers"]}
+              isEmpty={d.products.length === 0}
+              empty="Workeasy360 has not granted you a product yet. Contact us to set up your programme."
+            >
+              {d.products.map((p) => (
+                <tr key={p.code}>
+                  <th scope="row">
+                    {p.name}
+                    <div className={styles.muted}>{p.tagline || p.category}</div>
+                  </th>
+                  <td>
+                    <Status value="granted" />
+                  </td>
+                  <td>
+                    <Status value={p.enabled_for_sale ? "enabled" : "disabled"} />
+                  </td>
+                  <td>{firstPrice(p, d.currency)}</td>
+                  <td>{!p.trial.offered_by_platform ? "None" : p.trial.allowed_for_partner ? `${p.trial.days} days` : "Off for your customers"}</td>
+                  <td className={styles.num}>{p.customers ?? "—"}</td>
+                </tr>
+              ))}
+            </Table>
+            <p className={styles.muted}>
+              Turn a product on or off for new sales in <Link href={`${base}/product-billing`}>Product Billing</Link>; arrange what customers see in{" "}
+              <Link href={`${base}/product-manager`}>Product Manager</Link>.
+            </p>
             {d.available.length > 0 && (
               <section className={styles.panel} aria-labelledby="avail">
                 <h2 id="avail">Available from Workeasy360</h2>
-                <p className={styles.muted}>Products in the catalog that your account is not yet approved to sell. Ask Workeasy360 to enable one.</p>
+                <p className={styles.muted}>Products in the catalog that your account is not yet approved to sell. Ask Workeasy360 to grant one.</p>
                 <ul className={styles.list}>
                   {d.available.map((a) => (
                     <li key={a.code} className={styles.listItem}>
@@ -108,51 +92,6 @@ export function Products() {
         )}
       </LoadGate>
     </div>
-  );
-}
-
-function ProductSwitches({
-  product,
-  busy,
-  onSave,
-}: {
-  product: ManagedProduct;
-  busy: boolean;
-  onSave: (body: { enabled_for_sale: boolean; show_in_explore: boolean; show_in_my_products: boolean }) => void;
-}) {
-  const [sale, setSale] = useState(product.enabled_for_sale);
-  const [explore, setExplore] = useState(product.show_in_explore);
-  const [mine, setMine] = useState(product.show_in_my_products);
-  return (
-    <form
-      className={styles.page}
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSave({ enabled_for_sale: sale, show_in_explore: explore, show_in_my_products: mine });
-      }}
-    >
-      <fieldset className={styles.checks}>
-        <legend>{product.name}</legend>
-        <label>
-          <input type="checkbox" checked={sale} onChange={(e) => setSale(e.target.checked)} />
-          <span>Offer for new sales</span>
-        </label>
-        <label>
-          <input type="checkbox" checked={explore} onChange={(e) => setExplore(e.target.checked)} />
-          <span>Show on Explore Products</span>
-        </label>
-        <label>
-          <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} />
-          <span>Show on My Products</span>
-        </label>
-      </fieldset>
-      <p className={styles.muted}>Turning a product off for new sales never ends a customer&apos;s subscription or changes what they can use.</p>
-      <div>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-          Save
-        </button>
-      </div>
-    </form>
   );
 }
 
@@ -253,19 +192,68 @@ function Arrange({
           </button>
         </div>
       )}
+      <section className={styles.panel} aria-labelledby="catalog-preview">
+        <h2 id="catalog-preview">Customer preview</h2>
+        <p className={styles.muted}>The catalog as your customers will see it, in this order. It reflects the switches above before you save the order.</p>
+        <div className={styles.twoCol}>
+          <div>
+            <h3>Explore Products</h3>
+            <PreviewList
+              label="Explore Products preview"
+              items={order.map((c) => byCode.get(c)!).filter((p) => p.enabled_for_sale && p.show_in_explore)}
+              empty="Nothing is offered on Explore."
+            />
+          </div>
+          <div>
+            <h3>My Products</h3>
+            <PreviewList
+              label="My Products preview"
+              items={order.map((c) => byCode.get(c)!).filter((p) => p.show_in_my_products)}
+              empty="Nothing is listed on My Products."
+            />
+          </div>
+        </div>
+      </section>
       <p className={styles.muted}>A customer always sees the products it already holds, wherever they sit in this order. Only white-label customers see your arrangement.</p>
     </>
   );
 }
 
+function PreviewList({ label, items, empty }: { label: string; items: ManagedProduct[]; empty: string }) {
+  if (items.length === 0) return <p className={styles.muted}>{empty}</p>;
+  return (
+    <ol className={styles.list} aria-label={label}>
+      {items.map((p) => (
+        <li key={p.code} className={styles.listItem}>
+          <strong>{p.name}</strong>
+          <span className={styles.muted}>{p.tagline || p.category}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 // --- plans ------------------------------------------------------------------------------------
+
+function PlansNav() {
+  const { base } = usePanel();
+  return (
+    <SubNav
+      items={[
+        { href: `${base}/plans`, label: "Plans" },
+        { href: `${base}/plans/add-ons`, label: "Add-ons" },
+      ]}
+    />
+  );
+}
 
 export function Plans() {
   const { id } = usePanel();
   const [load] = useLoad(() => panelApi.plans(id), [id]);
   return (
     <div className={styles.page}>
-      <PageHeader title="Plans & add-ons" lead="The plans you may sell, at the price your customers pay. Workeasy360 sets the plans and your prices." />
+      <PageHeader title="Plans & Add-ons" lead="The plans you may sell, at the price your customers pay. Workeasy360 sets the plans and your prices." />
+      <PlansNav />
       <LoadGate load={load} what="your plans">
         {(d) => (
           <>
@@ -292,9 +280,23 @@ export function Plans() {
                 )),
               )}
             </Table>
-            <NotAvailable title="Add-ons and creating plans" reasons={[d.not_implemented.add_ons ?? "", "You cannot create a global plan. Workeasy360 creates plans and your prices."].filter(Boolean)} />
+            <NotAvailable title="Creating plans" reasons={["You cannot create a global plan. Workeasy360 creates plans and sets your prices; you see and sell the ones approved for your account."]} />
           </>
         )}
+      </LoadGate>
+    </div>
+  );
+}
+
+export function AddOns() {
+  const { id } = usePanel();
+  const [load] = useLoad(() => panelApi.plans(id), [id]);
+  return (
+    <div className={styles.page}>
+      <PageHeader title="Plans & Add-ons" lead="Extras that can be bought on top of a plan." />
+      <PlansNav />
+      <LoadGate load={load} what="add-ons">
+        {(d) => <NotAvailable title="No add-ons yet" reasons={[d.not_implemented.add_ons ?? ""]} />}
       </LoadGate>
     </div>
   );
@@ -307,9 +309,9 @@ function PricingNav() {
   return (
     <SubNav
       items={[
-        { href: `${base}/pricing/packages`, label: "Packages" },
-        { href: `${base}/pricing/rules`, label: "Rules" },
-        { href: `${base}/pricing/currencies`, label: "Currencies" },
+        { href: `${base}/pricing/currency`, label: "Currency" },
+        { href: `${base}/pricing/packages`, label: "Package & Pricing" },
+        { href: `${base}/pricing/rules`, label: "Pricing Rule" },
       ]}
     />
   );
@@ -320,7 +322,7 @@ export function PricingPackages() {
   const [load] = useLoad(() => panelApi.packages(id), [id]);
   return (
     <div className={styles.page}>
-      <PageHeader title="Pricing" lead="Packages that bundle products. A package is a way to sell plans together; it never grants access by itself." />
+      <PageHeader title="Currency & Pricing" lead="Packages that bundle products. A package is a way to sell plans together; it never grants access by itself." />
       <PricingNav />
       <LoadGate load={load} what="packages">
         {(d) => (
@@ -361,7 +363,7 @@ export function PricingRules() {
   const [load] = useLoad(() => panelApi.priceBook(id), [id]);
   return (
     <div className={styles.page}>
-      <PageHeader title="Pricing" lead="The fixed prices Workeasy360 has set for your account. The server works out what a customer pays; the browser never does." />
+      <PageHeader title="Currency & Pricing" lead="The fixed prices Workeasy360 has set for your account. The server works out what a customer pays; the browser never does." />
       <PricingNav />
       <LoadGate load={load} what="your prices">
         {(d) => (
@@ -385,13 +387,13 @@ export function PricingRules() {
   );
 }
 
-export function Currencies({ withNav = false }: { withNav?: boolean }) {
+export function Currency() {
   const { id } = usePanel();
   const [load] = useLoad(() => panelApi.currencies(id), [id]);
   return (
     <div className={styles.page}>
-      <PageHeader title="Currencies" lead="The currencies Workeasy360 supports. Your payout currency is fixed when your account is created; amounts are never converted between currencies." />
-      {withNav && <PricingNav />}
+      <PageHeader title="Currency & Pricing" lead="The currencies Workeasy360 supports. Your payout currency is fixed when your account is created; amounts are never converted between currencies." />
+      <PricingNav />
       <LoadGate load={load} what="currencies">
         {(d) => (
           <>
@@ -406,7 +408,7 @@ export function Currencies({ withNav = false }: { withNav?: boolean }) {
                 </tr>
               ))}
             </Table>
-            <p className={styles.muted}>There is no exchange-rate service. Two currencies are shown side by side, never added together.</p>
+            <p className={styles.muted}>Only the currencies in this list can be used. There is no exchange-rate service: two currencies are shown side by side, never added together.</p>
           </>
         )}
       </LoadGate>
@@ -480,7 +482,8 @@ export function Subscriptions() {
   const paged = usePaged((cursor) => partnerApi.customers(id, cursor), [id]);
   return (
     <div className={styles.page}>
-      <PageHeader title="Subscriptions" lead="Where each of your customers stands. To sell or change a plan, open the customer." />
+      <PageHeader title="Users" lead="Where each of your customers stands. To sell or change a plan, open the customer." />
+      <UsersNav />
       {paged.state === "loading" && <p aria-live="polite">Loading subscriptions…</p>}
       {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to subscriptions.</p>}
       {paged.state === "error" && <p role="alert">Couldn&apos;t load subscriptions.</p>}
@@ -502,19 +505,34 @@ export function Subscriptions() {
               ))}
           </Table>
           <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
-          <Link href={`${base}/customers`}>Manage customers</Link>
+          <Link href={`${base}/users`}>Manage customers</Link>
         </>
       )}
     </div>
   );
 }
 
+function PaymentsNav() {
+  const { base, can } = usePanel();
+  return (
+    <SubNav
+      items={[
+        { href: `${base}/payments`, label: "Orders", show: can("customer.view") },
+        { href: `${base}/payments/commissions`, label: "Commissions", show: can("commission.view") },
+        { href: `${base}/payments/balance`, label: "Balance", show: can("commission.view") },
+      ]}
+    />
+  );
+}
+
 export function Payments() {
   const { id } = usePanel();
   const paged = usePaged((cursor) => panelApi.orders(id, cursor), [id]);
+  const [features] = useLoad(() => panelApi.features(id), [id]);
   return (
     <div className={styles.page}>
       <PageHeader title="Payments" lead="Orders placed by your customers. Amounts are what the platform recorded; a paid order is confirmed by the payment provider, never by a browser." />
+      <PaymentsNav />
       {paged.state === "loading" && <p aria-live="polite">Loading orders…</p>}
       {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to orders.</p>}
       {paged.state === "error" && <p role="alert">Couldn&apos;t load orders.</p>}
@@ -540,6 +558,27 @@ export function Payments() {
           <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
         </>
       )}
+      <LoadGate load={features} what="what is available">
+        {(f) => (
+          <NotAvailable
+            title="Not offered"
+            reasons={[
+              f.not_implemented.recharge ?? "",
+              f.not_implemented.payment_links ?? "",
+              "No card, CVV or bank details are collected or stored on this platform; payments go through the provider's own checkout.",
+            ].filter(Boolean)}
+          />
+        )}
+      </LoadGate>
+    </div>
+  );
+}
+
+export function PaymentCommissions() {
+  return (
+    <div className={styles.page}>
+      <PaymentsNav />
+      <PartnerCommissions />
     </div>
   );
 }
@@ -549,7 +588,8 @@ export function Balance() {
   const [load] = useLoad(() => panelApi.balance(id), [id]);
   return (
     <div className={styles.page}>
-      <PageHeader title="Partner balance" lead="Your balance is your commission ledger: entries are only ever added, never edited, and the balance is their sum." />
+      <PageHeader title="Payments" lead="Your balance is your commission ledger: entries are only ever added, never edited, and the balance is their sum." />
+      <PaymentsNav />
       <LoadGate load={load} what="your balance">
         {(d) => (
           <>
@@ -579,19 +619,6 @@ export function Balance() {
             <NotAvailable title="Recharging" reasons={[d.not_implemented.recharge ?? ""]} />
           </>
         )}
-      </LoadGate>
-    </div>
-  );
-}
-
-export function PaymentLinks() {
-  const { id } = usePanel();
-  const [load] = useLoad(() => panelApi.features(id), [id]);
-  return (
-    <div className={styles.page}>
-      <PageHeader title="Payment links" lead="Links that collect a payment through an approved provider." />
-      <LoadGate load={load} what="payment links">
-        {(d) => <NotAvailable title="Not available yet" reasons={[d.not_implemented.payment_links ?? "", d.not_implemented.recharge ?? ""]} />}
       </LoadGate>
     </div>
   );
