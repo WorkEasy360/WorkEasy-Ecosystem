@@ -46,6 +46,9 @@ COPY --from=build --chown=root:root /app/package.json /app/package.json
 COPY --from=build --chown=root:root /app/node_modules /app/node_modules
 COPY --from=build --chown=root:root /app/public /app/public
 COPY --from=build --chown=root:root /app/next.config.ts /app/next.config.ts
+# next.config.ts imports the partner menu's LEGACY_REDIRECTS at start-up; without
+# this file `next start` fails with MODULE_NOT_FOUND (release 2026.10.19).
+COPY --from=build --chown=root:root /app/src/features/partnerpanel/menu.ts /app/src/features/partnerpanel/menu.ts
 COPY --from=build --chown=node:node /app/.next /app/.next
 # The image's built-in unprivileged user. .next is the only tree it owns (Next
 # writes its image/fetch cache there); code and dependencies stay root-owned.

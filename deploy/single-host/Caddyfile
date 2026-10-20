@@ -1,0 +1,216 @@
+# Single host (deploy/single-host): deploy/edge/Caddyfile with ONE change -
+# partner.workeasy360.com is served by the separate Partner Panel (project
+# ppanel) at ppanel-web:80 on the ppanel_edge network, not by WorkEasy360.
+# Keep the rest identical to deploy/edge/Caddyfile.
+#
+# Workeasy360 - the edge (Phase 12).
+#
+# TLS termination, HTTP->HTTPS, HSTS, and routing (ADR-043, docs/portals/design.md):
+#   admin. partner. app.   /api/*  -> api:8000 (Django)      everything else -> web:3000 (Next.js)
+#   auth.                   the same, plus the OIDC discovery document and key set
+#   api.                    /api/* only - no web UI
+#   partner domains         the branded landing only (D-035 decision B, ADR-039)
+#
+# Each portal host is its own origin with its own host-only cookies; which
+# experience a host shows is the frontend's choice and which API prefixes a
+# host serves is Django's (PortalSurfaceMiddleware). Neither grants anything:
+# StaffGrant, PartnerMember and Membership are checked on every request.
+#
+# Client addresses. Without a CDN in front: W360_TRUSTED_PROXY_COUNT=1. Caddy
+# *replaces* X-Forwarded-For with the address it received the connection from
+# and sets X-Forwarded-Proto; Django reads exactly one hop
+# (platform/observability/client_ip.py) and nothing a caller wrote.
+# Behind a CDN (Cloudflare fronts workeasy360.com today): list the CDN's
+# published ranges in W360_EDGE_TRUSTED_PROXIES, so Caddy keeps the CDN's
+# X-Forwarded-For and appends the CDN's address, and set
+# W360_TRUSTED_PROXY_COUNT=2. With count 2 and no trusted ranges the chain is
+# one hop short, and every user would share the edge's own address - one
+# rate-limit bucket, and an IP allow-list that sees nobody (final audit).
+#
+# Environment:
+#   W360_ADMIN_ORIGIN, W360_PARTNER_ORIGIN, W360_APP_ORIGIN, W360_AUTH_ORIGIN, W360_API_ORIGIN
+#                                the five https origins (e.g. https://admin.workeasy360.com);
+#                                one ACME certificate each, renewed automatically
+#   W360_EDGE_UPSTREAM_HOST      the API's host name (the host of W360_API_ORIGIN): the Host
+#                                Django sees for the edge's own requests
+#   W360_TLS_ISSUER              acme (default: Let's Encrypt/ZeroSSL) | internal (staging)
+#   W360_EDGE_TRUSTED_PROXIES    CDN ranges, space-separated (default: loopback only)
+
+{
+	servers {
+		trusted_proxies static {$W360_EDGE_TRUSTED_PROXIES:127.0.0.1/32}
+	}
+	# Per-request HTTP metrics (off by default in Caddy): W360High5xxRate reads
+	# caddy_http_request_duration_seconds_count. Without this the page alert
+	# could never fire (final audit, verified on staging).
+	metrics
+
+	# Certificates for partner custom domains are issued on demand - but only
+	# for a name the platform approves (active, verified, partner active, both
+	# white-label capabilities). An arbitrary name pointed at this edge gets
+	# nothing. The question is answered by the API through the internal
+	# listener below.
+	on_demand_tls {
+		ask http://127.0.0.1:8081/tls-allowed
+	}
+}
+
+# Upstream connections are dropped by the edge *before* the upstream drops
+# them: gunicorn and Node both close an idle keep-alive connection after 5 s,
+# and Caddy's default is 2 minutes, so it could send a request down a socket
+# the upstream was already closing. (A second, rarer race - a gunicorn worker
+# recycled after max_requests closing a pooled connection - is not removed by
+# this; see docs/phase-12/07-load-test.md.)
+(upstream) {
+	transport http {
+		keepalive 4s
+	}
+}
+
+# Internal only (bound to loopback inside this container): the on-demand TLS
+# permission check, and edge metrics for the monitoring scraper.
+http://127.0.0.1:8081 {
+	bind 127.0.0.1
+	rewrite * /api/v1/public/edge/tls-allowed?{query}
+	reverse_proxy api:8000 {
+		import upstream
+		header_up Host {$W360_EDGE_UPSTREAM_HOST}
+		header_up X-Forwarded-Proto https
+	}
+}
+
+:9180 {
+	metrics /metrics
+}
+
+# Deferred, so the edge's value *replaces* whatever the upstream sent instead
+# of being emitted twice next to it.
+(security_headers) {
+	header {
+		defer
+		X-Content-Type-Options nosniff
+		-Server
+		-Via
+		-X-Powered-By
+	}
+}
+
+# Internal paths are never served to the internet, on any host. A `handle`,
+# not a bare `respond`: handle blocks are exclusive and tried in order, while a
+# top-level respond would run after a catch-all had already proxied the request.
+(internal_paths) {
+	@internal path /api/v1/public/edge/* /healthz/*
+	handle @internal {
+		respond 404
+	}
+}
+
+(platform_site) {
+	tls {
+		issuer {$W360_TLS_ISSUER:acme}
+	}
+	encode zstd gzip
+	import security_headers
+	header >Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+	import internal_paths
+}
+
+# The separate Partner Panel (its nginx serves the app and proxies /api to its
+# own API). Only the panel's web container is on ppanel_edge.
+{$W360_PARTNER_ORIGIN} {
+	import platform_site
+	reverse_proxy ppanel-web:80 {
+		import upstream
+	}
+}
+
+# The WorkEasy360 portals: the Super Admin and Customer experiences.
+{$W360_ADMIN_ORIGIN}, {$W360_APP_ORIGIN} {
+	import platform_site
+	handle /api/* {
+		reverse_proxy api:8000 {
+			import upstream
+		}
+	}
+	handle {
+		reverse_proxy web:3000 {
+			import upstream
+		}
+	}
+}
+
+# The central sign-in. It is also the OIDC issuer (W360_OIDC_ISSUER): the
+# authorization endpoint needs this host's session, and products fetch the
+# discovery document and the key set from the issuer's root. Found by the
+# staging key-rotation rehearsal: routed to the frontend, no product could
+# ever find a key.
+{$W360_AUTH_ORIGIN} {
+	import platform_site
+	handle /api/* {
+		reverse_proxy api:8000 {
+			import upstream
+		}
+	}
+	@oidc path /.well-known/openid-configuration /.well-known/jwks.json
+	handle @oidc {
+		reverse_proxy api:8000 {
+			import upstream
+		}
+	}
+	handle {
+		reverse_proxy web:3000 {
+			import upstream
+		}
+	}
+}
+
+# The API host: products and providers, server to server. No web UI, and the
+# portals' own API prefixes are refused here by Django (404).
+{$W360_API_ORIGIN} {
+	import platform_site
+	handle /api/* {
+		reverse_proxy api:8000 {
+			import upstream
+		}
+	}
+	handle {
+		respond 404
+	}
+}
+
+# Every other name: a partner's custom domain. The branded landing page and
+# its two public brand lookups, nothing else - no sign-in form, no session
+# cookie, no API (ADR-039). The lookups reach Django with the canonical Host,
+# because the platform refuses to serve its API on a partner hostname.
+https:// {
+	tls {
+		on_demand
+		issuer {$W360_TLS_ISSUER:acme}
+	}
+	encode zstd gzip
+	import security_headers
+	header >Strict-Transport-Security "max-age=31536000"
+
+	@brand path /api/v1/public/branding /api/v1/public/branding/logo
+	handle @brand {
+		reverse_proxy api:8000 {
+			import upstream
+			header_up Host {$W360_EDGE_UPSTREAM_HOST}
+		}
+	}
+	handle /api/* {
+		respond 404
+	}
+	handle /healthz/* {
+		respond 404
+	}
+	handle {
+		reverse_proxy web:3000 {
+			import upstream
+		}
+	}
+}
+
+http:// {
+	redir https://{host}{uri} 308
+}

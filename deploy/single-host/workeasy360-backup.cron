@@ -1,0 +1,5 @@
+# Workeasy360 - nightly backup at 20:15 UTC (01:45 IST). Installed as
+# /etc/cron.d/workeasy360-backup; the job is deploy/single-host/w360-backup.
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+15 20 * * * root /opt/workeasy360/bin/w360-backup >> /var/log/workeasy360-backup.log 2>&1

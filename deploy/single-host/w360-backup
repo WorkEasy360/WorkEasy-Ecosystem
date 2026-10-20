@@ -1,0 +1,16 @@
+#!/bin/sh
+# Workeasy360 on the single host: the nightly logical backup
+# (deploy/scripts/backup.sh - database dump, roles, row counts, the SeaweedFS
+# file store, manifest, checksums), keeping the last 7 days on this disk.
+# Scheduled by /etc/cron.d/workeasy360-backup. Nothing is copied off the host:
+# losing the EBS volume loses the backups too (see the deployment record).
+set -eu
+ROOT="${W360_ROOT:-/opt/workeasy360}"
+cd "$ROOT/current"
+export W360_COMPOSE="$ROOT/bin/w360"
+export W360_ENV_FILE="$ROOT/env/production.env"
+export W360_FILES_VOLUME=w360_seaweed
+W360_RELEASE="$(head -n 1 "$ROOT/current/RELEASE")"
+export W360_RELEASE
+deploy/scripts/backup.sh "$ROOT/backups"
+find "$ROOT/backups" -mindepth 1 -maxdepth 1 -type d -name '20*Z' -mtime +7 -exec rm -rf {} +

@@ -1,0 +1,193 @@
+# Workeasy360 - single small host overlay (AWS t3.micro: 2 vCPU, 1 GiB RAM).
+#
+# Layered on production.yml, which stays the reviewed topology:
+#
+#   docker compose -p w360 -f deploy/compose/production.yml \
+#     -f deploy/single-host/compose.single-host.yml --env-file <production.env> up -d
+#
+# (deploy/single-host/w360 is that command with the paths fixed.)
+#
+# What changes on this host, and why (1 GiB RAM + 2 GiB swap, 20 GB gp3,
+# burstable CPU credits, no paid AWS service):
+# - One Celery worker consumes all three queues with Beat embedded (-B). The
+#   separate pools and the Beat container stay defined behind the "pools"
+#   profile. Cost: a long heavy task can delay critical work by one slot.
+# - gunicorn, Celery, PostgreSQL, Redis and RabbitMQ are sized down, and every
+#   container has a memory ceiling so one runaway process cannot take the
+#   host down with it.
+# - WAL archiving is off: the archive grows ~1.2 GB/day (04-deployment.md §7)
+#   and nothing here ships it off the host. Recovery point = the nightly
+#   logical backup (deploy/scripts/backup.sh, scheduled by cron on the host).
+# - Files: SeaweedFS (S3 API) on the private network with its own access key,
+#   instead of AWS S3 - the same stand-in staging used, pinned and with
+#   authentication on.
+# - RabbitMQ without the management plugin, one scheduler thread and no
+#   busy-waiting (CPU credits); health checks every 30 s instead of 5-10 s.
+# - Logs: Docker's "local" driver, 10 MB x 3 per container.
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-healthcheck-slow: &healthcheck_slow
+  interval: 30s
+  start_interval: 3s
+
+services:
+  postgres:
+    logging: *logging
+    command: >
+      postgres
+      -c max_connections=100
+      -c shared_buffers=64MB
+      -c effective_cache_size=256MB
+      -c work_mem=2MB
+      -c maintenance_work_mem=32MB
+      -c wal_level=replica
+      -c archive_mode=off
+      -c max_wal_size=256MB
+      -c min_wal_size=64MB
+      -c log_min_duration_statement=500
+      -c log_lock_waits=on
+      -c log_temp_files=0
+      -c deadlock_timeout=1s
+    shm_size: 64mb
+    mem_limit: 320m
+    healthcheck:
+      <<: *healthcheck_slow
+      start_period: 120s
+
+  pgbouncer:
+    logging: *logging
+    mem_limit: 32m
+    healthcheck:
+      <<: *healthcheck_slow
+      start_period: 60s
+
+  redis:
+    logging: *logging
+    command: >
+      sh -c 'exec redis-server --requirepass "$$W360_REDIS_PASSWORD" --save ""
+      --appendonly no --maxmemory 48mb --maxmemory-policy allkeys-lru'
+    mem_limit: 96m
+    healthcheck:
+      <<: *healthcheck_slow
+      start_period: 60s
+
+  rabbitmq:
+    image: rabbitmq:3.13.7-alpine
+    logging: *logging
+    environment:
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "+S 1:1 +sbwt none +sbwtdcpu none +sbwtdio none"
+    volumes:
+      - ../single-host/rabbitmq.conf:/etc/rabbitmq/conf.d/90-single-host.conf:ro
+    mem_limit: 256m
+    # rabbitmq-diagnostics boots an Erlang VM per call (~1 s of CPU); the
+    # listener only opens once the node has booted, so a port check is enough.
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5672"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 180s
+      start_interval: 5s
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    logging: *logging
+    # The image drops to uid 1000 (`seaweed`): s3.json on the host must be
+    # readable by that uid (make_env.py leaves it 0600 root; the deploy step
+    # hands it over, mode 0400). -ip names the service, not the container's
+    # address, so a recreated container finds its own raft state again.
+    command:
+      - server
+      - -ip=seaweedfs
+      - -ip.bind=0.0.0.0
+      - -dir=/data
+      - -s3
+      - -s3.port=8333
+      - -s3.config=/etc/seaweedfs/s3.json
+      - -master.volumeSizeLimitMB=64
+      - -volume.max=64
+    environment:
+      # SSE-S3 (the platform always sends AES256) needs a key on the store.
+      WEED_S3_SSE_KEY: ${W360_SEAWEED_SSE_KEY:?W360_SEAWEED_SSE_KEY is required}
+      GOMEMLIMIT: 120MiB
+    volumes:
+      - seaweed:/data
+      - ${W360_SEAWEED_S3_CONFIG:?W360_SEAWEED_S3_CONFIG is required}:/etc/seaweedfs/s3.json:ro
+    security_opt: [no-new-privileges:true]
+    mem_limit: 192m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9333/cluster/status || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+      start_interval: 3s
+    restart: unless-stopped
+    networks: [internal]
+
+  migrate:
+    logging: *logging
+    mem_limit: 448m
+
+  api:
+    logging: *logging
+    mem_limit: 448m
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    healthcheck:
+      interval: 30s
+      start_interval: 5s
+      start_period: 120s
+
+  # The one worker: every queue group, plus Beat.
+  worker-critical:
+    logging: *logging
+    command: ["sh", "-c", "python manage.py w360_startup_gate && exec celery -A config worker -Q critical,default,heavy -n all@%h
+              --concurrency ${W360_WORKER_CONCURRENCY:-2} --prefetch-multiplier 1
+              -O fair --without-gossip --without-mingle
+              --max-memory-per-child 300000
+              -B -s /tmp/celerybeat-schedule"]
+    mem_limit: 640m
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+
+  worker-default:
+    profiles: [pools]
+  worker-heavy:
+    profiles: [pools]
+  beat:
+    profiles: [pools]
+
+  web:
+    logging: *logging
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=192"
+      # The sign-in chooser's "Partner" opens the separate Partner Panel.
+      W360_PARTNER_PANEL_URL: ${W360_PARTNER_PANEL_URL:-}
+    mem_limit: 320m
+
+  # partner.workeasy360.com is served by the separate Partner Panel (project
+  # ppanel, /opt/partner-panel) since 2026-10-20: this host's Caddyfile routes
+  # that name to `ppanel-web:80` on the shared ppanel_edge network. Paths are
+  # relative to deploy/compose/ (the first compose file's directory).
+  edge:
+    logging: *logging
+    mem_limit: 160m
+    volumes:
+      - ../single-host/Caddyfile:/etc/caddy/Caddyfile:ro
+    networks: [internal, public, ppanel_edge]
+
+networks:
+  ppanel_edge:
+    external: true
+    name: ppanel_edge
+
+volumes:
+  seaweed:
