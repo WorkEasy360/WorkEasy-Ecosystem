@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { BrandedLanding } from "@/features/auth/BrandedLanding";
 import { signInHandoffUrl } from "@/features/auth/handoff";
 import { LoginScreen } from "@/features/auth/LoginScreen";
+import { readPartnerPanelUrl } from "@/features/auth/partnerPanel";
 import { portalForHost, readPortalOrigins } from "@/lib/portals";
 
 /**
@@ -33,11 +34,11 @@ export default async function LoginPage() {
     if (portalForHost(requestHost, origins) === null) {
       return <BrandedLanding handoffUrl={signInHandoffUrl(origins.auth, host)} />;
     }
-    return <LoginScreen />;
+    return <LoginScreen partnerPanelUrl={readPartnerPanelUrl(process.env)} />;
   }
   const canonical = (process.env.W360_CANONICAL_HOST ?? "").trim().toLowerCase();
   if (canonical && host && host !== canonical) {
     return <BrandedLanding handoffUrl={signInHandoffUrl(`https://${canonical}`, host)} />;
   }
-  return <LoginScreen />;
+  return <LoginScreen partnerPanelUrl={readPartnerPanelUrl(process.env)} />;
 }

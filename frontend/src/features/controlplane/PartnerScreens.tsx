@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { partnerApi, newKey, type Brand, type Diagnosis } from "@/lib/api/controlPlane";
 import { panelApi } from "@/lib/api/partnerPanel";
 import { portalOwnerInvitationApi } from "@/lib/api/partnerConsole";
@@ -26,7 +27,14 @@ function usePartnerId(): { id: string; has: (c: string) => boolean; active: bool
 // --- portal chooser --------------------------------------------------------------------
 
 export function PortalChooser() {
+  const router = useRouter();
   const [load] = useLoad(() => partnerApi.portal(), []);
+  // A member of one partner account has nothing to choose: go straight to its panel.
+  const only = load.status === "ready" && load.data.partners.length === 1 ? load.data.partners[0].partner_id : null;
+  useEffect(() => {
+    if (only) router.replace(`/partner/${only}`);
+  }, [only, router]);
+  if (only) return <p aria-live="polite">Opening your partner panel…</p>;
   return (
     <div className={styles.stack}>
       <h1>Partner accounts</h1>

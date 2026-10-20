@@ -124,6 +124,19 @@ describe("the mode and the return path", () => {
 // --- the page --------------------------------------------------------------------------------
 
 describe("the sign-in page", () => {
+  it("opens the separate Partner Panel from the Partner choice when one is configured", async () => {
+    mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT] });
+    render(<LoginScreen partnerPanelUrl="http://localhost:5180/login" />);
+    const section = await screen.findByRole("region", { name: "How would you like to sign in?" });
+    const choices = within(section).getAllByRole("link").slice(0, 3);
+    expect(choices.map((a) => [a.getAttribute("aria-label"), a.getAttribute("href")])).toEqual([
+      ["Administrator", "/login?mode=admin"],
+      ["Partner", "http://localhost:5180/login"],
+      ["User", "/login?mode=user"],
+    ]);
+    expect(choices[1]).toHaveAccessibleDescription("Manage your customers, sales and earnings");
+  });
+
   it("first asks how the person wants to sign in, with three keyboard-reachable choices", async () => {
     mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT] });
     const { container } = render(<LoginScreen />);
