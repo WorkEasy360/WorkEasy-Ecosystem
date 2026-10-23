@@ -1,11 +1,8 @@
 "use client";
 
-import { useId, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import { partnerConsoleApi, type OwnerActivation, type PartnerCustomerAdminRow } from "@/lib/api/partnerConsole";
-import { MoreButton, Status, Table, useAction, usePaged, when } from "./ui";
-import { can, useAdmin } from "./ControlShell";
+import { Status, Table, useAction, when } from "./ui";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
 
@@ -166,110 +163,6 @@ export function CustomerTable({
         );
       })}
     </Table>
-  );
-}
-
-const ACTIVATION_FILTER = ["", "pending", "activated", "expired", "revoked", "declined", "not_applicable"];
-const SUBSCRIPTION_FILTER = ["", "active", "trialing", "past_due", "grace", "suspended", "cancelled", "expired", "none"];
-
-/** Partners → Customers: the customers of every partner. */
-export function AllPartnerCustomers() {
-  const { permissions } = useAdmin();
-  const manage = can(permissions, "platform.staff_partner.manage");
-  const params = useSearchParams();
-  const searchId = useId();
-  const [draft, setDraft] = useState("");
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState(params.get("status") ?? "");
-  const initialActivation = params.get("activation") ?? "";
-  const [activation, setActivation] = useState(ACTIVATION_FILTER.includes(initialActivation) ? initialActivation : "");
-  const initialSubscription = params.get("subscription") ?? "";
-  const [subscription, setSubscription] = useState(SUBSCRIPTION_FILTER.includes(initialSubscription) ? initialSubscription : "");
-  const paged = usePaged(
-    (cursor) =>
-      partnerConsoleApi.customers(undefined, {
-        q: query || undefined,
-        status: status || undefined,
-        activation: activation || undefined,
-        subscription: subscription || undefined,
-        cursor,
-      }),
-    [query, status, activation, subscription],
-  );
-  return (
-    <div className={styles.stack}>
-      <h1>Partner customers</h1>
-      <p className={styles.lead}>Customers with a partner relationship, and whether their owner has activated the account.</p>
-      <form
-        className={local.filters}
-        role="search"
-        aria-label="Filter partner customers"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setQuery(draft.trim());
-        }}
-      >
-        <div>
-          <label className="w360-label" htmlFor={searchId}>
-            Search by customer name
-          </label>
-          <input id={searchId} className="w360-input" value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={80} />
-        </div>
-        <div>
-          <label className="w360-label" htmlFor={`${searchId}-status`}>
-            Relationship
-          </label>
-          <select id={`${searchId}-status`} className="w360-input" value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">Any</option>
-            <option value="live">Live (active or suspended)</option>
-            <option value="active">Active</option>
-            <option value="suspended">Suspended</option>
-            <option value="ended">Ended</option>
-          </select>
-        </div>
-        <div>
-          <label className="w360-label" htmlFor={`${searchId}-act`}>
-            Owner activation
-          </label>
-          <select id={`${searchId}-act`} className="w360-input" value={activation} onChange={(e) => setActivation(e.target.value)}>
-            {ACTIVATION_FILTER.map((a) => (
-              <option key={a} value={a}>
-                {a === "" ? "Any" : ACTIVATION_TEXT[a as OwnerActivation["activation"]]}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="w360-label" htmlFor={`${searchId}-sub`}>
-            Subscription
-          </label>
-          <select id={`${searchId}-sub`} className="w360-input" value={subscription} onChange={(e) => setSubscription(e.target.value)}>
-            {SUBSCRIPTION_FILTER.map((s) => (
-              <option key={s} value={s}>
-                {s === "" ? "Any" : s.replace(/_/g, " ")}
-              </option>
-            ))}
-          </select>
-        </div>
-        <button type="submit" className="w360-btn w360-btn-secondary">
-          Search
-        </button>
-      </form>
-      {paged.state === "loading" && <p aria-live="polite">Loading customers…</p>}
-      {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to partner customers.</p>}
-      {paged.state === "error" && <p role="alert">Couldn&apos;t load customers.</p>}
-      {paged.state === "ready" && (
-        <>
-          <CustomerTable
-            rows={paged.rows}
-            showPartner
-            caption="Partner customers"
-            actions={manage ? (row) => <StaffOwnerActions row={row} onDone={paged.reload} /> : undefined}
-          />
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
-        </>
-      )}
-    </div>
   );
 }
 

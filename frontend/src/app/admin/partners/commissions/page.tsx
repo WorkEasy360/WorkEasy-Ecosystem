@@ -1,14 +1,7 @@
-"use client";
+import { redirect } from "next/navigation";
+import { allPartnersHref } from "@/features/controlplane/oldPartnerRoutes";
 
-import { Suspense } from "react";
-import { Commissions } from "@/features/controlplane/AdminMoney";
-
-/** Partners → Commissions: the commission ledger, inside the Partner Control
- * Center. Suspense: the page reads `?unpaid=1` (the dashboard's card). */
-export default function Page() {
-  return (
-    <Suspense fallback={<p aria-live="polite">Loading commissions…</p>}>
-      <Commissions />
-    </Suspense>
-  );
+/** Old address: a partner's commission is on its own page (Partner Detail -> Commission); this opens All Partners (ADR-048). */
+export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  redirect(allPartnersHref(await searchParams));
 }

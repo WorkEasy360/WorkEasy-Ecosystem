@@ -1,12 +1,10 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { useParams } from "next/navigation";
-import { WhiteLabelSetup } from "@/features/controlplane/WhiteLabelSetup";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Partners → White-label → set up one partner (staff): the ten-step wizard,
- * with this partner already chosen, so it opens at the brand identity step. */
-export default function Page() {
-  const { partnerId } = useParams<{ partnerId: string }>();
-  // Keyed by the partner, so moving between two partners never carries a draft over.
-  return <WhiteLabelSetup key={partnerId} partnerId={partnerId} />;
+/** Old address: a partner's white-label setup is part of its Complete Your Profile
+ * (the brand step). Only a well-formed id is put in the new address. */
+export default async function Page({ params }: { params: Promise<{ partnerId: string }> }) {
+  const { partnerId } = await params;
+  redirect(UUID.test(partnerId) ? `/admin/partners/${partnerId}/profile?step=brand` : "/admin/partners/all");
 }

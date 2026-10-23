@@ -1,231 +1,254 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { AddPartner } from "./AddPartner";
-import { AdminContextForTest, expectNoViolations, mockApi, ok, type Reply } from "./testSupport";
+import { AdminContextForTest, expectNoViolations, mockApi, type Call, type Reply } from "./testSupport";
 
 /**
- * Partner Control Center → Add partner. The business purpose is a capability
- * preset selector and nothing else: it is never sent to the server, and the
- * partner created is an ordinary partner holding whichever capabilities were
- * ticked.
+ * Partners → Add Partner (ADR-048): the short form - partner name, admin email,
+ * password and confirmation, partner type, optional country. What these tests
+ * hold on to:
+ *
+ * - it asks for nothing more: no business details, products, prices or
+ *   commission (those are Complete Your Profile's);
+ * - the password is typed into `autocomplete="new-password"` inputs, goes in the
+ *   one create request and nowhere else (no storage, no cookie, no other call),
+ *   and is emptied once the request has been made;
+ * - an address that already has an account is never overwritten - the form
+ *   offers to link it (no password sent) or to cancel;
+ * - the type is sent as `experience` and nothing names a capability;
+ * - after creating, it opens the partner's page with the created flag.
  */
 
 let query = "";
+const push = vi.fn();
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ replace: vi.fn(), push, refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(query),
   usePathname: () => "/admin/partners/new",
 }));
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  push.mockReset();
   query = "";
+  sessionStorage.clear();
+  localStorage.clear();
 });
+afterEach(() => vi.restoreAllMocks());
 
 const MANAGE = ["platform.staff_partner.view", "platform.staff_partner.manage"];
-const AFFILIATE = ["referral.create", "referral.view", "commission.earn", "commission.view", "payout.view"];
+const PASSWORD = "Violet Harbor Lantern 2049";
+const EXISTING = "This email already belongs to an existing Workeasy360 account.";
 
-const CATALOG = {
-  results: [
-    { key: "customer.provision", label: "Create customer organizations", group: "customer_management" },
-    { key: "branding.manage", label: "Configure white-label branding", group: "white_label" },
-    { key: "domain.manage", label: "Register and activate custom domains", group: "white_label" },
-    { key: "commission.earn", label: "Earn commission on attributed sales", group: "commissions" },
-    { key: "commission.view", label: "View earned commission", group: "commissions" },
-    { key: "payout.view", label: "View payouts", group: "payouts" },
-    { key: "referral.create", label: "Create referral codes", group: "referrals" },
-    { key: "referral.view", label: "View referrals and their conversion", group: "referrals" },
-  ],
-  groups: [
-    { key: "customer_management", label: "Customer management", capabilities: ["customer.provision"] },
-    { key: "commissions", label: "Commissions", capabilities: ["commission.earn", "commission.view"] },
-    { key: "payouts", label: "Payouts", capabilities: ["payout.view"] },
-    { key: "white_label", label: "White-label", capabilities: ["branding.manage", "domain.manage"] },
-    { key: "referrals", label: "Referrals", capabilities: ["referral.create", "referral.view"] },
-  ],
-  presets: [
-    { key: "standard_reseller", label: "Standard Reseller", description: "Sell.", capabilities: ["customer.provision"] },
-    { key: "white_label", label: "White-label", description: "Brand and domains.", capabilities: ["branding.manage", "domain.manage"] },
-    { key: "affiliate", label: "Affiliate", description: "Refer customers.", capabilities: AFFILIATE },
-  ],
+const CREATED = {
+  id: "p-new",
+  code: "abc-technologies",
+  display_name: "ABC Technologies",
+  status: "draft",
+  experience: "reseller",
+  default_experience: "reseller",
+  administrator: { email: "admin@abctech.example", account_created: true },
+  capabilities: ["customer.provision"],
+  payout_currency: "INR",
 };
 
-function routes(extra: Record<string, Reply[]> = {}): Record<string, Reply[]> {
-  return {
-    "GET /api/v1/admin/partners/capabilities": [ok(CATALOG)],
-    "GET /api/v1/admin/partners/products": [ok({ results: [{ code: "crm", name: "CRM", status: "available", plans: [] }] })],
-    "POST /api/v1/admin/partners/reseller-review": [
-      ok({
-        ok: true,
-        problems: [],
-        partner: { code: "refer-co", display_name: "Refer Co", legal_name: "", contact_name: "", contact_email: "" },
-        capabilities: AFFILIATE.map((key) => ({ key, label: key })),
-        experience: [{ key: "affiliate", label: "Affiliate" }],
-        profile: { business: {}, contacts: {}, support: {}, payout: {}, has_internal_notes: false },
-        products: [],
-        pricing_mode: "standard",
-        pricing: [],
-        trials: [],
-        white_label: { requested: false, capabilities_added: [] },
-        readiness: { can_activate: true, missing: [] },
-        missing_optional: [],
-        commission: {
-          mode: "default",
-          rate_bp: null,
-          programme_default_bp: 1000,
-          source: "programme_default",
-          product_rates: {},
-          method: "percentage",
-          scope: "all",
-          product_codes: [],
-          effective_from: null,
-          hold_days: 30,
-          example: null,
-        },
-        administrator: null,
-        warnings: [],
-      }),
-    ],
-    ...extra,
-  };
-}
-
-function mount() {
+function mount(permissions = MANAGE) {
   return render(
-    <AdminContextForTest permissions={MANAGE}>
+    <AdminContextForTest permissions={permissions}>
       <AddPartner />
     </AdminContextForTest>,
   );
 }
 
-const next = () => fireEvent.click(screen.getByRole("button", { name: "Save & continue" }));
+const field = (name: RegExp) => screen.getByLabelText(name, { selector: "input, select" }) as HTMLInputElement;
 
-/** Steps 1 and 2 (business details and the primary contact), ending on the capabilities step. */
-async function details(name: string) {
-  fireEvent.change(await screen.findByLabelText(/Company or partner name/), { target: { value: name } });
-  fireEvent.change(screen.getByLabelText(/^Business email/), { target: { value: "hello@example.com" } });
-  fireEvent.change(screen.getByLabelText(/^Country/), { target: { value: "GB" } });
-  next();
-  fireEvent.change(await screen.findByLabelText(/Primary contact name/), { target: { value: "Pat Lee" } });
-  fireEvent.change(screen.getByLabelText(/Primary contact email/), { target: { value: "pat@example.com" } });
-  next();
+function fill({ name = "ABC Technologies", email = "admin@abctech.example", password = PASSWORD, confirm = PASSWORD, type = /^Reseller/ } = {}) {
+  fireEvent.change(field(/^Partner name/), { target: { value: name } });
+  fireEvent.change(field(/^Admin email/), { target: { value: email } });
+  if (password !== null) fireEvent.change(field(/^Password/), { target: { value: password } });
+  if (confirm !== null) fireEvent.change(field(/^Confirm password/), { target: { value: confirm } });
+  if (type) fireEvent.click(screen.getByRole("radio", { name: type }));
 }
 
-describe("choosing a business purpose", () => {
-  it("offers four purposes, each a link that only pre-selects capabilities", async () => {
+const create = () => fireEvent.click(screen.getByRole("button", { name: "Create Partner" }));
+const createCalls = (calls: Call[]) => calls.filter((c) => c.key === "POST /api/v1/admin/partners/create");
+
+describe("the short form", () => {
+  // A large form plus an axe pass: slow in jsdom when the whole suite runs in parallel.
+  it("asks only for the name, the admin email and password, the type and an optional country", async () => {
+    mockApi({});
     const { container } = mount();
-    expect(screen.getByRole("heading", { level: 1, name: "Add partner" })).toBeInTheDocument();
-    const list = screen.getByRole("list", { name: "Business purpose" });
-    expect(
-      within(list)
-        .getAllByRole("link")
-        .map((a) => [a.firstElementChild?.textContent, a.getAttribute("href")]),
-    ).toEqual([
-      ["Reseller", "/admin/partners/new?purpose=reseller"],
-      ["White-label", "/admin/partners/new?purpose=white_label"],
-      ["Affiliate", "/admin/partners/new?purpose=affiliate"],
-      ["Custom", "/admin/partners/new?purpose=custom"],
-    ]);
-    expect(container.textContent).toMatch(/only pre-selects capabilities/);
+    expect(screen.getByRole("heading", { level: 1, name: "Add Partner" })).toBeInTheDocument();
+    expect(field(/^Partner name/)).toBeRequired();
+    expect(field(/^Admin email/)).toBeRequired();
+    expect(field(/^Password/)).toHaveAttribute("type", "password");
+    expect(field(/^Password/)).toHaveAttribute("autocomplete", "new-password");
+    expect(field(/^Confirm password/)).toHaveAttribute("autocomplete", "new-password");
+    expect(screen.getByLabelText(/^Country \(optional\)/)).not.toBeRequired();
+    const types = screen.getAllByRole("radio");
+    expect(types.map((r) => r.getAttribute("value"))).toEqual(["reseller", "white_label", "affiliate"]);
+    expect(screen.getByText("Sell Workeasy360 products and manage customers.")).toBeInTheDocument();
+    expect(screen.getByText("Sell Workeasy360 products using your own brand and domain.")).toBeInTheDocument();
+    expect(screen.getByText("Promote Workeasy360 products and earn commissions.")).toBeInTheDocument();
+    // Nothing about the business, products, prices or commission is asked here.
+    for (const absent of [/business email/i, /products?/i, /price/i, /commission rate/i, /legal/i, /partner code/i]) {
+      expect(screen.queryByLabelText(absent)).not.toBeInTheDocument();
+    }
+    expect(screen.getAllByRole("textbox").length + screen.getAllByRole("combobox").length).toBeLessThanOrEqual(3);
     await expectNoViolations(container);
+  }, 60_000);
+
+  it("preselects the card named in the address without choosing a capability", () => {
+    query = "type=white-label";
+    mockApi({});
+    mount();
+    expect(screen.getByRole("radio", { name: /^White-label/ })).toBeChecked();
   });
 
-  it("treats an unknown purpose as no purpose", () => {
-    query = "purpose=partner_type";
+  it("says what is missing and sends nothing", async () => {
+    const calls = mockApi({});
     mount();
-    expect(screen.getByRole("list", { name: "Business purpose" })).toBeInTheDocument();
+    create();
+    const summary = await screen.findByRole("alert");
+    expect(summary).toHaveTextContent("Enter the partner's name.");
+    expect(summary).toHaveTextContent("Enter the partner administrator's email address.");
+    expect(summary).toHaveTextContent("Enter a password.");
+    expect(summary).toHaveTextContent("Choose the partner type.");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("checks the password length and match before anything is sent", async () => {
+    const calls = mockApi({});
+    mount();
+    // Five characters: under the minimum length.
+    fill({ password: "x".repeat(5), confirm: "y".repeat(5) });
+    create();
+    expect((await screen.findAllByText("The password must be at least 12 characters.")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("The two passwords do not match.").length).toBeGreaterThan(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("is refused to staff who may not manage partners", () => {
+    mockApi({});
+    mount(["platform.staff_partner.view"]);
+    expect(screen.getByRole("alert")).toHaveTextContent(/permission to manage partners/);
+    expect(screen.queryByLabelText(/^Partner name/)).not.toBeInTheDocument();
   });
 });
 
-describe("the flow for a purpose", () => {
-  it("Affiliate starts from the affiliate preset and never sends the purpose", async () => {
-    query = "purpose=affiliate";
-    const calls = mockApi(routes());
+describe("creating", () => {
+  it("sends only the few fields, then opens All Partners with the new row marked", async () => {
+    const calls = mockApi({ "POST /api/v1/admin/partners/create": [{ status: 201, body: CREATED }] });
     mount();
-    expect(screen.getByRole("heading", { level: 1, name: "Add affiliate" })).toBeInTheDocument();
-    await details("Refer Co");
-
-    await screen.findByRole("heading", { name: /Capabilities/ });
-    for (const key of AFFILIATE) {
-      const label = CATALOG.results.find((c) => c.key === key)!.label;
-      expect(screen.getByRole("checkbox", { name: new RegExp(label) })).toBeChecked();
-    }
-    expect(screen.getByRole("checkbox", { name: /Create customer organizations/ })).not.toBeChecked();
-    expect(screen.getByRole("radio", { name: "Affiliate" })).toBeChecked();
-    next();
-    await screen.findByRole("heading", { name: /Step 4 of 9: Products/ });
-    next();
-    await screen.findByRole("heading", { name: /Step 5 of 9: Pricing/ });
-
-    const review = calls.find((c) => c.key === "POST /api/v1/admin/partners/reseller-review")!;
-    expect((review.body as { capabilities: string[] }).capabilities).toEqual(AFFILIATE);
-    for (const call of calls) {
-      expect(JSON.stringify(call.body ?? {})).not.toMatch(/purpose|affiliate_partner|partner_type/);
-      expect(call.url).not.toMatch(/purpose/);
-    }
+    fill({ type: /^Reseller/ });
+    fireEvent.change(screen.getByLabelText(/^Country \(optional\)/), { target: { value: "IN" } });
+    create();
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/partners/all?created=p-new"));
+    const [call] = createCalls(calls);
+    expect(call.body).toEqual({
+      experience: "reseller",
+      partner: { display_name: "ABC Technologies", country: "IN" },
+      administrator: { email: "admin@abctech.example", mode: "create", password: PASSWORD, password_confirm: PASSWORD },
+    });
+    // No other request carried the password, and nothing was stored.
+    expect(calls.filter((c) => JSON.stringify(c.body ?? {}).includes(PASSWORD))).toHaveLength(1);
+    expect(sessionStorage.length + localStorage.length).toBe(0);
+    expect(document.cookie).not.toContain(PASSWORD);
   });
 
-  it("White-label starts from branding and domains", async () => {
-    query = "purpose=white_label";
-    mockApi(routes());
+  it("leaves the country out when none is chosen", async () => {
+    const calls = mockApi({ "POST /api/v1/admin/partners/create": [{ status: 201, body: CREATED }] });
     mount();
-    expect(screen.getByRole("heading", { level: 1, name: "Add white-label partner" })).toBeInTheDocument();
-    await details("Brand Co");
-    await screen.findByRole("heading", { name: /Capabilities/ });
-    expect(screen.getByRole("checkbox", { name: /Configure white-label branding/ })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /Register and activate custom domains/ })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /Create referral codes/ })).not.toBeChecked();
+    fill({ type: /^Affiliate/ });
+    create();
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect((createCalls(calls)[0].body as { partner: unknown }).partner).toEqual({ display_name: "ABC Technologies" });
+    expect((createCalls(calls)[0].body as { experience: string }).experience).toBe("affiliate");
   });
 
-  it("White-label also starts with white-label switched on, on the white-label step", async () => {
-    query = "purpose=white_label";
-    mockApi(routes());
+  it("shows the server's password problems against the field and empties both inputs", async () => {
+    mockApi({
+      "POST /api/v1/admin/partners/create": [
+        {
+          status: 400,
+          body: {
+            code: "partner_invalid",
+            detail: "This password is too common.",
+            problems: [{ field: "administrator.password", message: "This password is too common." }],
+          },
+        },
+      ],
+    });
     mount();
-    await details("Brand Co");
-    await screen.findByRole("heading", { name: /Step 3 of 9: Capabilities/ });
-    for (let n = 4; n <= 8; n++) {
-      next();
-      await screen.findByRole("heading", { name: new RegExp(`^Step ${n} of 9`) });
-    }
-    expect(screen.getByRole("radio", { name: "Yes, configure now" })).toBeChecked();
+    fill();
+    create();
+    expect((await screen.findAllByText("This password is too common.")).length).toBeGreaterThan(0);
+    await waitFor(() => expect(field(/^Password/).value).toBe(""));
+    expect(field(/^Confirm password/).value).toBe("");
+    expect(push).not.toHaveBeenCalled();
   });
 
-  it("Affiliate starts with white-label off", async () => {
-    query = "purpose=affiliate";
-    mockApi(routes());
+  it("asks for the second factor when the server wants one, and creates nothing meanwhile", async () => {
+    const calls = mockApi({
+      "POST /api/v1/admin/partners/create": [{ status: 401, body: { code: "step_up_required", detail: "Verify to continue." } }],
+    });
     mount();
-    await details("Refer Co");
-    await screen.findByRole("heading", { name: /Step 3 of 9: Capabilities/ });
-    for (let n = 4; n <= 8; n++) {
-      next();
-      await screen.findByRole("heading", { name: new RegExp(`^Step ${n} of 9`) });
-    }
-    expect(screen.getByRole("radio", { name: "Not now" })).toBeChecked();
+    fill();
+    create();
+    expect(await screen.findByText(/needs a recent verification/)).toBeInTheDocument();
+    expect(createCalls(calls)).toHaveLength(1);
+    expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe("an email that already has an account", () => {
+  const taken: Reply = {
+    status: 400,
+    body: {
+      code: "partner_invalid",
+      detail: EXISTING,
+      problems: [
+        { field: "administrator.email", message: EXISTING },
+        { field: "administrator.password", message: "This password is too similar to the email address." },
+      ],
+    },
+  };
+
+  it("says so and offers to link or cancel - its password is never sent again", async () => {
+    const calls = mockApi({ "POST /api/v1/admin/partners/create": [taken, { status: 201, body: CREATED }] });
+    const { container } = mount();
+    fill({ email: "someone@customer.example" });
+    create();
+    const panel = await screen.findByText(EXISTING);
+    const box = panel.closest("div")!.parentElement!;
+    expect(within(box).getByRole("button", { name: "Link Existing User as Partner Administrator" })).toBeInTheDocument();
+    expect(within(box).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    // The password problem of a password that will not be used is not shown.
+    expect(screen.queryByText(/too similar/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Password/, { selector: "input" })).not.toBeInTheDocument();
+    await expectNoViolations(container);
+
+    fireEvent.click(screen.getByRole("button", { name: "Link Existing User as Partner Administrator" }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/partners/all?created=p-new"));
+    const linked = createCalls(calls)[1];
+    expect(linked.body).toEqual({
+      experience: "reseller",
+      partner: { display_name: "ABC Technologies" },
+      administrator: { email: "someone@customer.example", mode: "link_existing" },
+    });
   });
 
-  it("Custom starts with nothing ticked and asks for at least one capability", async () => {
-    query = "purpose=custom";
-    mockApi(routes());
+  it("Cancel clears the address and asks for another, with the password inputs back", async () => {
+    mockApi({ "POST /api/v1/admin/partners/create": [taken] });
     mount();
-    expect(screen.getByRole("heading", { level: 1, name: "Add partner" })).toBeInTheDocument();
-    await details("Custom Co");
-    await screen.findByRole("heading", { name: /Capabilities/ });
-    // No preset to start from, and every capability unticked.
-    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
-    for (const box of screen.getAllByRole("checkbox").filter((c) => c.closest("fieldset"))) {
-      expect(box).not.toBeChecked();
-    }
-    next();
-    // The message is in the summary of what to fix and on the step itself.
-    expect((await screen.findAllByText("Choose at least one capability.")).length).toBeGreaterThan(0);
-    expect(screen.getByRole("alert")).toHaveTextContent("Choose at least one capability.");
-  });
-
-  it("offers a way back to the purposes", async () => {
-    query = "purpose=affiliate";
-    mockApi(routes());
-    mount();
-    expect(screen.getByRole("link", { name: "Choose a different purpose" })).toHaveAttribute("href", "/admin/partners/new");
+    fill({ email: "someone@customer.example" });
+    create();
+    await screen.findByText(EXISTING);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(EXISTING)).not.toBeInTheDocument();
+    expect(field(/^Admin email/).value).toBe("");
+    expect(field(/^Password/)).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
   });
 });

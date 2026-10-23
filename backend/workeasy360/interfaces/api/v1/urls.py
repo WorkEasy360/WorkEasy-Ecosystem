@@ -1083,6 +1083,16 @@ _admin = [
         name="admin-partner-referrals",
     ),
     path(
+        "admin/partners/<uuid:partner_id>/referral-codes",
+        admin_views.partner_referral_code_create_view,
+        name="admin-partner-referral-code-create",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/guest-view",
+        admin_views.partner_guest_view_start_view,
+        name="admin-partner-guest-view",
+    ),
+    path(
         "admin/partners/white-label",
         admin_views.partner_white_label_view,
         name="admin-partners-white-label",
@@ -1136,6 +1146,27 @@ _admin = [
         "admin/partners/reseller-review",
         admin_views.reseller_review_view,
         name="admin-reseller-review",
+    ),
+    # ADR-047/048: Add Partner - the credentials check and the one atomic create.
+    path(
+        "admin/partners/credentials-check",
+        admin_views.partner_credentials_check_view,
+        name="admin-partner-credentials-check",
+    ),
+    path(
+        "admin/partners/create",
+        admin_views.partner_create_view,
+        name="admin-partner-create",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/experience",
+        admin_views.partner_experience_view,
+        name="admin-partner-experience",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/members/<uuid:member_id>/password-reset",
+        admin_views.partner_member_password_reset_view,
+        name="admin-partner-member-password-reset",
     ),
     path(
         "admin/partners/<uuid:partner_id>/administrators",
@@ -1315,6 +1346,11 @@ _admin = [
 _partner = [
     path("partner/portal", partner_views.portal_view, name="partner-portal"),
     path(
+        "partner/guest-view/end",
+        partner_views.guest_view_end_view,
+        name="partner-guest-view-end",
+    ),
+    path(
         "partner/<uuid:partner_id>/customers",
         partner_views.customers_view,
         name="partner-customers",
@@ -1429,6 +1465,21 @@ _partner = [
         "partner/<uuid:partner_id>/dashboard",
         partner_panel_views.dashboard_view,
         name="partner-dashboard",
+    ),
+    path(
+        "partner/<uuid:partner_id>/affiliate/overview",
+        partner_panel_views.affiliate_overview_view,
+        name="partner-affiliate-overview",
+    ),
+    path(
+        "partner/<uuid:partner_id>/reports",
+        partner_panel_views.reports_view,
+        name="partner-reports",
+    ),
+    path(
+        "partner/<uuid:partner_id>/white-label/status",
+        partner_panel_views.white_label_status_view,
+        name="partner-white-label-status",
     ),
     path(
         "partner/<uuid:partner_id>/balance",

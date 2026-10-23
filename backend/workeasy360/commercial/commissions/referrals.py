@@ -66,21 +66,63 @@ def _new_code() -> str:
 @in_scope
 def create_referral_code(ctx: TenantContext, *, label: Any = "") -> Any:
     """Mint a public referral code for the acting partner."""
+    authz.require(ctx, CREATE)
+    access.require_transacting(ctx)
+    assert ctx.partner_id is not None  # require_transacting established it
+    return _mint(ctx, ctx.partner_id, label)
+
+
+#: Staff set a partner up (Complete Your Profile, ADR-048): the same mint, on
+#: behalf of a partner that holds the referral capability.
+STAFF_MANAGE: Final = "platform.staff_partner.manage"
+
+
+@in_scope
+def create_referral_code_for_partner(
+    ctx: TenantContext, partner_id: UUID, *, label: Any = ""
+) -> Any:
+    """Mint a referral code **for** a partner, as staff setting it up.
+
+    The code is the partner's exactly as if it had made it: same alphabet, same
+    limit, same audit action (the entry names the partner). Staff may do this
+    only for a partner that holds ``referral.create`` - the capability, not the
+    screen, decides who has codes - and never for a terminated one. A draft
+    partner may be given its code before it is activated; the code captures
+    nothing until the partner is active (``capture_referral``).
+    """
+    authz.require(ctx, STAFF_MANAGE)
+    row = partner_selectors.partner_row(partner_id)
+    if row is None:
+        raise PartnerRecordNotFound("No such partner.", partner_id=str(partner_id))
+    if row.status == PartnerStatus.TERMINATED.value:
+        raise PartnerValidationError(
+            "A terminated partner cannot be given a referral code.", field="partner"
+        )
+    if capabilities.REFERRAL_CREATE not in partner_selectors.active_capabilities(
+        partner_id
+    ):
+        raise PartnerValidationError(
+            "This partner does not hold the referral capability, so it cannot "
+            "have a referral code.",
+            field="partner",
+        )
+    return _mint(ctx, partner_id, label)
+
+
+def _mint(ctx: TenantContext, partner_id: UUID, label: Any) -> Any:
     from workeasy360.commercial.commissions.models import ReferralCode
     from workeasy360.commercial.partners.domain import clean_text
 
-    authz.require(ctx, CREATE)
-    access.require_transacting(ctx)
     text = clean_text(label, field="label", max_length=64, required=False)
 
     with transaction.atomic():
         with connection.cursor() as cur:
             cur.execute(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))",
-                [f"refcodes:{ctx.partner_id}"],
+                [f"refcodes:{partner_id}"],
             )
         live = ReferralCode.objects.filter(
-            partner_id=ctx.partner_id, status=GrantStatus.ACTIVE.value
+            partner_id=partner_id, status=GrantStatus.ACTIVE.value
         ).count()
         if live >= MAX_CODES_PER_PARTNER:
             raise PartnerValidationError(
@@ -91,7 +133,7 @@ def create_referral_code(ctx: TenantContext, *, label: Any = "") -> Any:
             try:
                 with transaction.atomic():
                     code = ReferralCode.objects.create(
-                        partner_id=ctx.partner_id,
+                        partner_id=partner_id,
                         code=_new_code(),
                         label=text,
                         created_by_id=ctx.user_id,
@@ -106,7 +148,7 @@ def create_referral_code(ctx: TenantContext, *, label: Any = "") -> Any:
             "partner.referral_code_created",
             resource_type="commissions.referral_code",
             resource_id=code.id,
-            changes={"label": text},
+            changes={"label": text, "partner_id": str(partner_id)},
         )
     return code
 

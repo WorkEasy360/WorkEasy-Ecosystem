@@ -39,7 +39,7 @@ from workeasy360.commercial.partners import selectors as partner_selectors
 from workeasy360.commercial.payments import selectors as payment_selectors
 from workeasy360.commercial.pricing import selectors as price_selectors
 from workeasy360.commercial.provisioning import selectors as provisioning_selectors
-from workeasy360.contracts.errors import PartnerValidationError
+from workeasy360.contracts.errors import PartnerValidationError, PermissionDenied
 from workeasy360.contracts.values.cursor import Page
 from workeasy360.contracts.values.money import CurrencyCode
 from workeasy360.contracts.values.tenant import TenantContext
@@ -177,6 +177,28 @@ NOT_IMPLEMENTED: Final[dict[str, str]] = {
         "Workeasy360 has no ticket system of its own, so open and resolved "
         "requests are not listed in the portal. Requests are handled in Easy Help "
         "Desk, where their status, priority and history live."
+    ),
+    # ADR-047: the affiliate workspace.
+    "affiliate_signups": (
+        "The platform records a visitor when they follow your link and a conversion "
+        "when their new organization is created. It records no sign-up step in "
+        "between, so Signups would only repeat Conversions and is not shown."
+    ),
+    "marketing_materials": (
+        "There is no shared marketing library yet: nowhere to publish product "
+        "logos, banners or approved descriptions for partners to download. Your "
+        "tracking links work today; ask Workeasy360 for brand assets."
+    ),
+    "promo_discount_codes": (
+        "A referral code identifies you when a visitor signs up. It gives the "
+        "visitor no discount: Workeasy360 has no coupon or promo-code system, and "
+        "one is not invented here."
+    ),
+    "affiliate_promotion_scope": (
+        "The products an affiliate promotes are not a stored list: promoting "
+        "grants no right to sell, so there is no product grant to record. The "
+        "choice scopes the commission rate assigned to the affiliate; with the "
+        "programme's default rate, every product a referred customer buys earns."
     ),
 }
 
@@ -341,6 +363,12 @@ def _charts(series: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+#: The same two sums, for the other workspaces' reports (ADR-047): one place
+#: decides how a day's ledger rows become a currency total and a chart.
+sales_by_currency = _by_currency
+sales_charts = _charts
+
+
 def sub_partner_counts(partner_id: UUID) -> dict[str, int]:
     return panel_selectors.hierarchy_counts(partner_id)
 
@@ -402,8 +430,14 @@ def products(ctx: TenantContext) -> dict[str, Any]:
     rows = catalog.product_facts(codes)
     presentation = catalog.product_presentations(codes)
     plans = catalog.sellable_plans(codes, at=now)
-    price_map = _price_rows(
-        [p["plan_version_id"] for p in plans], partner_id, partner.payout_currency
+    # Prices are the pricing view's: a role (or a partner that no longer sells)
+    # that may see products but not pricing is shown the plans without them.
+    price_map = (
+        _price_rows(
+            [p["plan_version_id"] for p in plans], partner_id, partner.payout_currency
+        )
+        if PRICING_VIEW in permissions
+        else {}
     )
     may_see_customers = CUSTOMER_VIEW in permissions
     live_orgs = panel_selectors.live_organization_ids(partner_id)
@@ -526,6 +560,16 @@ def plans(ctx: TenantContext) -> dict[str, Any]:
                         "interval": interval,
                         "partner_price_minor": slot.get("partner"),
                         "list_price_minor": slot.get("list"),
+                        # List minus the partner's price, in minor units: the
+                        # server's subtraction. It is the only "margin" the
+                        # platform can state - there is no wholesale cost
+                        # (``NOT_IMPLEMENTED["partner_cost"]``) to subtract.
+                        "difference_minor": (
+                            slot["list"] - slot["partner"]
+                            if slot.get("list") is not None
+                            and slot.get("partner") is not None
+                            else None
+                        ),
                         "source": "partner_price_book" if "partner" in slot else "list",
                     }
                     for interval, slot in sorted(by_interval.items())
@@ -539,6 +583,7 @@ def plans(ctx: TenantContext) -> dict[str, Any]:
         "not_implemented": {
             "add_ons": NOT_IMPLEMENTED["add_ons"],
             "pricing_rules": NOT_IMPLEMENTED["pricing_rules"],
+            "partner_cost": NOT_IMPLEMENTED["partner_cost"],
         },
     }
 
@@ -765,6 +810,14 @@ def export_customers(
     from workeasy360.platform.audit import services as audit
 
     authz.require(ctx, "platform.partner_customer.export")
+    if ctx.is_break_glass:
+        # Bulk export is never available under impersonation
+        # (04-identity-authz.md section 6), so not to a staff guest view.
+        raise PermissionDenied(
+            "Export is not available in a guest view.",
+            permission="platform.partner_customer.export",
+            reason="blocked_under_impersonation",
+        )
     partner_id = ctx.partner_id
     assert partner_id is not None
     rows: list[list[str]] = []

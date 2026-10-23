@@ -17,3 +17,20 @@ export function ExperienceLabels({ labels }: { labels: ExperienceLabel[] }) {
     </ul>
   );
 }
+
+/** The partner-type badges of the All Partners table and the partner's header
+ * (ADR-048): one per label the server derived from the grants - a partner that
+ * holds several capabilities shows several badges. Drawn in capitals by CSS; the
+ * text is the label itself. */
+export function TypeBadges({ labels }: { labels: ExperienceLabel[] }) {
+  if (labels.length === 0) return <span className={styles.muted}>No capabilities yet</span>;
+  return (
+    <ul className={local.labels} aria-label="Partner type, from its capabilities">
+      {labels.map((l) => (
+        <li key={l.key} className={`${local.typeBadge} ${local[`type_${l.key}`] ?? ""}`}>
+          {l.label}
+        </li>
+      ))}
+    </ul>
+  );
+}

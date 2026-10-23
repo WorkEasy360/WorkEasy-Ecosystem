@@ -256,6 +256,103 @@ CAPABILITY_PRESETS: Final[tuple[dict[str, object], ...]] = (
 )
 
 
+#: What choosing an experience **at creation** grants (ADR-047). A bundle is only
+#: a list of keys from the registry above: applying it goes through the ordinary
+#: ``grant_capability`` command for each key, so it can never grant more than the
+#: registry defines, and choosing one stores no partner type - the partner wears
+#: the label because, and only while, it holds the grants.
+#:
+#: Team management, reports, support and the profile are not capabilities: the
+#: partner's own account is baseline (``BASELINE_*`` below), held by every member
+#: of an active partner by role. So "reports.view" or "team.manage" has no key to
+#: grant, and no bundle lists one.
+#:
+#: - the **affiliate** bundle holds nothing that reaches a customer, a price or
+#:   a subscription (asserted by a test);
+#: - the **white-label** bundle is the reseller's commercial set *plus* the brand
+#:   and domain pair, without sub-partners (white-label is a label, not a kind
+#:   of account);
+#: - the **reseller** bundle is the standard reseller set plus sub-partners.
+_COMMERCIAL: Final = (
+    CUSTOMER_PROVISION,
+    CUSTOMER_MANAGE,
+    SUBSCRIPTION_SELL,
+    SUBSCRIPTION_MANAGE,
+    PRICING_VIEW,
+    COMMISSION_EARN,
+    COMMISSION_VIEW,
+    PAYOUT_VIEW,
+    SUPPORT_ACCESS,
+)
+
+EXPERIENCE_BUNDLES: Final[dict[str, tuple[str, ...]]] = {
+    RESELLER: (*_COMMERCIAL, SUBPARTNER_MANAGE),
+    WHITE_LABEL: (*_COMMERCIAL, BRANDING_MANAGE, DOMAIN_MANAGE),
+    AFFILIATE: (
+        REFERRAL_CREATE,
+        REFERRAL_VIEW,
+        COMMISSION_EARN,
+        COMMISSION_VIEW,
+        PAYOUT_VIEW,
+    ),
+}
+
+#: One line per experience for the Add Partner type cards. Words only.
+EXPERIENCE_DESCRIPTIONS: Final[dict[str, str]] = {
+    RESELLER: "Sell Workeasy360 products to customers.",
+    WHITE_LABEL: "Sell Workeasy360 products using the partner's own branding.",
+    AFFILIATE: "Promote Workeasy360 products and earn commission from referrals.",
+}
+
+#: An experience whose workspace shows everything another one does, and more. A
+#: partner that wears both labels is offered the larger workspace only: the
+#: white-label menu holds every entry the reseller menu does (each gated by the
+#: same permission), so a separate Reseller workspace would show it nothing new.
+SUBSUMED_BY: Final[dict[str, str]] = {RESELLER: WHITE_LABEL}
+
+
+def require_experience(key: object) -> str:
+    """``key`` if it names an experience, or a 400 - never free text."""
+    if isinstance(key, str) and key in EXPERIENCES:
+        return key
+    raise PartnerValidationError(
+        f"experience must be one of {sorted(EXPERIENCES)}.", field="experience"
+    )
+
+
+def experience_bundle(key: str) -> tuple[str, ...]:
+    """The capability keys choosing ``key`` grants."""
+    return EXPERIENCE_BUNDLES[require_experience(key)]
+
+
+def workspaces(held: frozenset[str] | set[str]) -> list[str]:
+    """The workspaces a partner holding ``held`` can open, in a fixed order: the
+    experience labels its capabilities earn, minus those another earned label
+    subsumes. A pure function of the grants - the same capabilities that decide
+    what the partner may do decide which workspaces exist, so a workspace can
+    never be opened on a preference alone."""
+    earned = [item["key"] for item in experience_labels(held)]
+    return [key for key in earned if SUBSUMED_BY.get(key) not in earned]
+
+
+def resolve_landing(stored: str, held: frozenset[str] | set[str]) -> str | None:
+    """The workspace a partner opens first: the stored preference when its
+    capabilities still allow it, else the workspace that now contains it, else
+    the first workspace there is. ``None`` for a partner that earns no label
+    (the generic portal opens). The preference only ever **selects among**
+    workspaces the grants already allow; it grants nothing and removes
+    nothing."""
+    options = workspaces(held)
+    if not options:
+        return None
+    if stored in options:
+        return stored
+    inside = SUBSUMED_BY.get(stored)
+    if inside is not None and inside in options:
+        return inside
+    return options[0]
+
+
 def experience_keys(label: str) -> frozenset[str]:
     """The capabilities any one of which earns ``label`` (for a SQL filter)."""
     return EXPERIENCES[label][1]

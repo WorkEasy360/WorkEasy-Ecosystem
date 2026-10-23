@@ -280,6 +280,55 @@ def effective_rule(
     }
 
 
+def _rules_in_force(now: datetime) -> Any:
+    from workeasy360.commercial.commissions.models import CommissionRule
+
+    return CommissionRule.objects.filter(effective_from__lte=now).filter(
+        Q(retired_at__isnull=True) | Q(retired_at__gt=now)
+    )
+
+
+def rule_applies_exists(now: datetime, *, outer: str = "pk") -> Any:
+    """An ``Exists`` over an outer *partner* query: some commission rule is in
+    force for it at ``now`` - its own (for any product) or the programme
+    default. The profile-completion filter composes it (``controlplane``); the
+    partner's own rows are never opened here."""
+    from django.db.models import Exists, OuterRef
+
+    return Exists(
+        _rules_in_force(now).filter(
+            Q(partner_id=OuterRef(outer)) | Q(partner__isnull=True)
+        )
+    )
+
+
+def partners_with_applicable_rule(partner_ids: list[UUID], now: datetime) -> set[UUID]:
+    """Which of these partners some commission rule is in force for at ``now``
+    (the same question as :func:`rule_applies_exists`). Two queries at most."""
+    if not partner_ids:
+        return set()
+    rules = _rules_in_force(now)
+    if rules.filter(partner__isnull=True).exists():
+        return set(partner_ids)
+    return set(
+        rules.filter(partner_id__in=partner_ids).values_list("partner_id", flat=True)
+    )
+
+
+def active_referral_code_exists(*, outer: str = "pk") -> Any:
+    """An ``Exists`` over an outer partner query: it holds an active referral code."""
+    from django.db.models import Exists, OuterRef
+
+    from workeasy360.commercial.commissions.models import ReferralCode
+    from workeasy360.contracts.enums import GrantStatus
+
+    return Exists(
+        ReferralCode.objects.filter(
+            partner_id=OuterRef(outer), status=GrantStatus.ACTIVE.value
+        )
+    )
+
+
 def rule_views() -> list[Any]:
     """Every rule, as pure-domain views, for selection. Rules are few."""
     from workeasy360.commercial.commissions.domain import RuleView
@@ -419,6 +468,44 @@ def referral_summary(partner_id: UUID) -> dict[str, Any]:
         .annotate(n=Count("id"))
     }
     return {s.value: counts.get(s.value, 0) for s in ReferralStatus}
+
+
+def referral_activity(partner_id: UUID, start: datetime, end: datetime) -> dict[str, Any]:
+    """The funnel of one partner's referrals followed inside ``[start, end)``: how
+    many visitors followed a link (a *click*: the referral row is made when the
+    code is presented) and how many of those have since become customers (a
+    *conversion*), per code and per day. Two grouped queries.
+
+    A cohort, not two clocks: every figure counts referrals **captured** in the
+    window, so a conversion belongs to the day its visitor first followed the
+    link and the rate can never exceed one. Nothing here identifies a visitor.
+    """
+    from django.db.models.functions import TruncDate
+
+    from workeasy360.commercial.commissions.models import Referral
+
+    window = Referral.objects.filter(
+        partner_id=partner_id, captured_at__gte=start, captured_at__lt=end
+    )
+    converted = Q(status=ReferralStatus.CONVERTED.value)
+    by_code = {
+        str(r["code_id"]): {"clicks": r["clicks"], "conversions": r["converted"]}
+        for r in window.values("code_id").annotate(
+            clicks=Count("id"), converted=Count("id", filter=converted)
+        )
+    }
+    by_day = [
+        {
+            "date": r["day"].isoformat(),
+            "clicks": r["clicks"],
+            "conversions": r["converted"],
+        }
+        for r in window.annotate(day=TruncDate("captured_at"))
+        .values("day")
+        .annotate(clicks=Count("id"), converted=Count("id", filter=converted))
+        .order_by("day")
+    ]
+    return {"by_code": by_code, "by_day": by_day}
 
 
 def referral_codes(partner_id: UUID) -> list[dict[str, Any]]:

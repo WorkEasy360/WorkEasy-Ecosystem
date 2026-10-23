@@ -21,7 +21,7 @@ from django.utils import timezone
 
 from workeasy360.commercial.commissions import selectors as commission_selectors
 from workeasy360.commercial.controlplane import partner_console as console
-from workeasy360.commercial.controlplane import readiness
+from workeasy360.commercial.controlplane import profile_completion
 from workeasy360.commercial.partners import capabilities
 from workeasy360.commercial.partners import console_reads as partner_reads
 from workeasy360.commercial.partners import selectors as partner_selectors
@@ -196,6 +196,15 @@ def summary(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
     business_email = own["profile"]["business_email"]
 
     enabled = bool(held & capabilities.experience_keys(capabilities.WHITE_LABEL))
+    completion = profile_completion.for_partners(
+        [partner_id],
+        now,
+        statuses={partner_id: row.status},
+        held={partner_id: held},
+        referrals={partner_id: facts["referrals"].get(partner_id, console._NO_REFERRALS)},
+        priced={partner_id: has_partner_price},
+        domains={partner_id: domain_state},
+    )[partner_id]
     return {
         "partner": partner_selectors.partner_dict(row),
         "experience": capabilities.experience_labels(held),
@@ -253,16 +262,15 @@ def summary(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
             domain_state,
             business_email,
         ),
-        # The same rule the Add Reseller review applies to a draft, applied to
-        # this saved partner: what is still missing before it can be activated.
-        "activation": readiness.evaluate(
-            contact_name=row.contact_name,
-            contact_email=row.contact_email,
-            business_email=business_email,
-            held=held,
-            product_count=len(products),
-            has_administrator=bool(admins),
-        ),
+        # The profile completion (ADR-048): the sections this partner's
+        # capabilities make it need, and how far each is.
+        "profile_completion": completion,
+        # What is still missing before it can be activated: the required
+        # sections of its profile that are not complete.
+        "activation": {
+            "can_activate": completion["complete"],
+            "missing": completion["missing"],
+        },
     }
 
 
@@ -505,6 +513,8 @@ def activity(
 #: its own code with the punctuation taken out - never blank, never hidden.
 ACTION_LABELS: dict[str, str] = {
     "partner.created": "Partner created",
+    "partner.guest_view_started": "Staff opened a guest view",
+    "partner.guest_view_ended": "Staff ended a guest view",
     "partner.updated": "Partner details changed",
     "partner.profile_updated": "Business details or contacts changed",
     "partner.active": "Partner activated",
@@ -625,10 +635,11 @@ def referrals(
     limit: Any = console.DEFAULT_PAGE,
     cursor: str | None = None,
 ) -> dict[str, Any]:
-    """The Referrals tab (Partner Control Center): the partner's codes, its
-    referrals counted by status, and one page of them - read through the same
-    commission selectors the partner's own portal uses. Staff read; nothing is
-    created here (a code is the partner's to create, through its own command).
+    """The Referrals tab (Partner Control Center): the partner's codes with
+    their links, the attribution window, its referrals counted by status, and
+    one page of them - read through the same commission selectors the partner's
+    own portal uses. Staff may also mint a code for the partner
+    (``referrals.create_referral_code_for_partner``); nothing is created here.
 
     A referral row identifies nothing about the prospect, here as in the portal.
     """
@@ -637,9 +648,20 @@ def referrals(
     page = commission_selectors.referrals_page(
         partner_id, limit=console._limit(limit), cursor=cursor
     )
+    from workeasy360.commercial.commissions.referrals import capture_window
+    from workeasy360.commercial.controlplane.partner_network import referral_url
+
     return {
         "summary": commission_selectors.referral_summary(partner_id),
-        "codes": commission_selectors.referral_codes(partner_id),
+        "codes": [
+            {**c, "url": referral_url(c["code"])}
+            for c in commission_selectors.referral_codes(partner_id)
+        ],
+        # How long a captured visit can still convert: the platform's one
+        # attribution window (first touch, recorded at conversion).
+        "attribution_window_days": capture_window().days,
+        "can_create": capabilities.REFERRAL_CREATE
+        in partner_selectors.active_capabilities(partner_id),
         "results": page.items,
         "next_cursor": page.next_cursor,
         "has_more": page.has_more,

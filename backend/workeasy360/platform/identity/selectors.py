@@ -177,7 +177,7 @@ def user_facts_for_email(email: str) -> dict[str, Any] | None:
 
     row = (
         User.objects.filter(email=normalize_email(email or ""))
-        .values("id", "status", "locked_until", "email_verified_at")
+        .values("id", "status", "locked_until", "email_verified_at", "is_staff")
         .first()
     )
     if row is None:
@@ -191,6 +191,7 @@ def user_facts_for_email(email: str) -> dict[str, Any] | None:
             row["locked_until"] and row["locked_until"] > timezone.now()
         ),
         "email_verified": row["email_verified_at"] is not None,
+        "is_staff": bool(row["is_staff"]),
     }
 
 

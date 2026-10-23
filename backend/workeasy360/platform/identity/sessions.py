@@ -24,6 +24,7 @@ or ``public_id``.
 
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import timedelta
 from typing import Any, Final
@@ -43,6 +44,11 @@ SESSION_DEVICE_KEY: Final = "w360_device"
 #: (ADR-043); kept in the indexed ``sign_in_id`` column so sign-out can end
 #: them all together.
 SESSION_SIGN_IN_ID_KEY: Final = "w360_sign_in_id"
+#: A partner-portal session that exists only for a staff member's guest view
+#: (``commercial.partners.guest``) carries the view's end (epoch seconds) and
+#: ends with it: ``SessionStore.load`` refuses it afterwards, whatever sliding
+#: did to its row's expiry.
+SESSION_GUEST_UNTIL_KEY: Final = "w360_guest_until"
 
 #: ``django.contrib.auth.SESSION_KEY`` - repeated rather than imported so this
 #: module stays importable before the auth app is ready.
@@ -120,6 +126,27 @@ class SessionStore(DatabaseSessionStore):
 
     async def _aget_session_from_db(self):  # type: ignore[no-untyped-def]
         return await sync_to_async(self._get_session_from_db)()
+
+    def load(self) -> dict[str, Any]:
+        data = super().load()
+        until = data.get(SESSION_GUEST_UNTIL_KEY)
+        if until is None:
+            return data
+        try:
+            live = float(until) > time.time()
+        except (TypeError, ValueError):
+            live = False
+        if live:
+            return data
+        # The guest view this session existed for is over: the session ends
+        # too (deleted, so nothing revives it), and this request is anonymous.
+        if self.session_key:
+            self.delete(self.session_key)
+        self._session_key = None
+        return {}
+
+    async def aload(self) -> dict[str, Any]:
+        return await sync_to_async(self.load)()
 
     def create_model_instance(self, data: dict[str, Any]) -> Any:
         now = timezone.now()

@@ -46,11 +46,42 @@ def _limit(limit: Any) -> int:
 # --- partners -------------------------------------------------------------
 
 
+def has_price_book(partner_id: UUID) -> bool:
+    """Whether the partner has a price book of its own (pricing owns the table)."""
+    from workeasy360.commercial.pricing import selectors as price_selectors
+
+    return price_selectors.partner_has_price_book(partner_id)
+
+
+def codes_starting_with(prefix: str) -> set[str]:
+    """The partner codes in use that start with ``prefix`` (Add Partner picks the
+    first free one). One query."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    return set(
+        PartnerAccount.objects.filter(code__startswith=prefix).values_list(
+            "code", flat=True
+        )
+    )
+
+
 def partner_row(partner_id: UUID) -> Any | None:
     """The model row, for the services in this module only."""
     from workeasy360.commercial.partners.models import PartnerAccount
 
     return PartnerAccount.objects.filter(id=partner_id).first()
+
+
+def landing_workspace(partner_id: UUID) -> str | None:
+    """The workspace ``partner_id`` opens first (``capabilities.resolve_landing``
+    over its stored preference and its live grants), or ``None`` - for no such
+    partner, or one whose grants open no workspace. Presentation only."""
+    partner = partner_row(partner_id)
+    if partner is None:
+        return None
+    return capabilities.resolve_landing(
+        partner.default_experience, active_capabilities(partner_id)
+    )
 
 
 def code_taken(code: str) -> bool:
@@ -71,6 +102,8 @@ def partner_dict(row: Any) -> dict[str, Any]:
         "contact_email": row.contact_email,
         "payout_currency": row.payout_currency,
         "status": row.status,
+        # A landing preference, never an authority (ADR-047).
+        "default_experience": row.default_experience,
         "version": row.version,
         "created_at": row.created_at.isoformat(),
         "activated_at": row.activated_at.isoformat() if row.activated_at else None,
@@ -277,27 +310,51 @@ def partners_for_user(user_id: UUID) -> list[dict[str, Any]]:
     )
     if not memberships:
         return []
-    result = []
-    for m in memberships:
-        result.append(
-            {
-                "partner_id": str(m.partner_id),
-                "code": m.partner.code,
-                "display_name": m.partner.display_name,
-                "status": m.partner.status,
-                "role": m.role,
-                "role_label": capabilities.ROLE_PRESETS[m.role].label
-                if m.role in capabilities.ROLE_PRESETS
-                else m.role,
-                "is_admin": capabilities.is_admin_role(m.role),
-                "capabilities": sorted(active_capabilities(m.partner_id)),
-                # What the server will let this person do right now. The
-                # portal's navigation is drawn from it; every request is
-                # still authorized again by the service it reaches.
-                "permissions": sorted(_permissions_of(m)),
-            }
-        )
-    return result
+    return [_portal_entry(m.partner, m.role, _permissions_of(m)) for m in memberships]
+
+
+def guest_portal_entry(ctx: Any) -> dict[str, Any] | None:
+    """The portal entry of a staff guest view (``guest.py``): the partner as a
+    viewer sees it, with the permissions the guest context resolves to."""
+    from workeasy360.commercial.partners import resolver
+    from workeasy360.contracts.enums import PartnerMemberRole
+
+    partner = partner_row(ctx.partner_id) if ctx.partner_id else None
+    if partner is None:
+        return None
+    return _portal_entry(
+        partner, PartnerMemberRole.VIEWER.value, resolver.partner_permissions(ctx)
+    )
+
+
+def _portal_entry(partner: Any, role: str, permissions: frozenset[str]) -> dict[str, Any]:
+    held = active_capabilities(partner.id)
+    return {
+        "partner_id": str(partner.id),
+        "code": partner.code,
+        "display_name": partner.display_name,
+        "status": partner.status,
+        "role": role,
+        "role_label": capabilities.ROLE_PRESETS[role].label
+        if role in capabilities.ROLE_PRESETS
+        else role,
+        "is_admin": capabilities.is_admin_role(role),
+        "capabilities": sorted(held),
+        # The workspaces these grants open and the one to open first
+        # (ADR-047). Derived on every read from the live grants plus the
+        # stored landing preference: the preference selects among the
+        # workspaces the grants allow and can open none of its own.
+        "workspaces": [
+            {"key": key, "label": capabilities.EXPERIENCES[key][0]}
+            for key in capabilities.workspaces(held)
+        ],
+        "default_experience": partner.default_experience,
+        "landing": capabilities.resolve_landing(partner.default_experience, held),
+        # What the server will let this person do right now. The
+        # portal's navigation is drawn from it; every request is
+        # still authorized again by the service it reaches.
+        "permissions": sorted(permissions),
+    }
 
 
 def _permissions_of(member: Any) -> frozenset[str]:

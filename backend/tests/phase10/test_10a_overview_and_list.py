@@ -75,31 +75,34 @@ def _cards(client):
 
 def test_the_overview_states_facts_and_only_facts(console, viewer):
     cards = _cards(viewer)
+    # ADR-048: the dashboard counts partners only; money, customers and domains
+    # are on each partner's page (checked below through its summary).
     assert list(cards) == [
         "total_partners",
         "active_partners",
-        "active_resellers",
-        "white_label_enabled",
-        "active_affiliates",
-        "partner_customers",
-        "active_partner_subscriptions",
-        "pending_commissions",
-        "pending_payouts",
-        "domains_awaiting_verification",
+        "resellers",
+        "white_label",
+        "affiliates",
+        "suspended_partners",
+        "profiles_incomplete",
     ]
     assert cards["total_partners"]["count"] == 3  # ... and the draft
-    assert cards["active_affiliates"]["count"] == 0
+    assert cards["affiliates"]["count"] == 0
     assert cards["active_partners"]["count"] == 2  # the reseller and the white-label
-    assert cards["active_resellers"]["count"] == 1
-    assert cards["white_label_enabled"]["count"] == 1
-    assert cards["partner_customers"]["count"] == 1
-    assert cards["active_partner_subscriptions"]["count"] == 1
-    assert cards["domains_awaiting_verification"]["count"] == 1
+    assert cards["white_label"]["count"] == 1
+    assert cards["suspended_partners"]["count"] == 0
+    # Each label card is the size of the list it opens.
+    listed = _rows(viewer, scope="all", type="reseller", limit=100)["results"]
+    assert cards["resellers"]["count"] == len(listed)
+    incomplete = _rows(viewer, scope="all", profile="incomplete", limit=100)["results"]
+    assert cards["profiles_incomplete"]["count"] == len(incomplete)
     # The one cleared commission is unpaid, in its own currency, unconverted.
-    assert cards["pending_commissions"]["amounts"] == [
-        {"currency": "GBP", "amount_minor": 500, "entries": 1}
+    reseller = _summary(viewer, console["reseller"]["partner"].id)
+    assert [(c["currency"], c["unpaid_minor"]) for c in reseller["commission"]] == [
+        ("GBP", 500)
     ]
-    assert cards["pending_payouts"]["count"] == 0
+    assert reseller["payouts"]["open"] == 0
+    assert reseller["customers"]["live"] == 1 and reseller["active_subscriptions"] == 1
 
 
 def test_the_overview_invents_no_revenue_figure(console, viewer):
@@ -122,11 +125,9 @@ def test_a_payout_moves_commission_from_pending_to_pending_payout(
         period_end=timezone.now().date(),
         idempotency_key="overview-payout",
     )
-    cards = _cards(viewer)
-    assert cards["pending_commissions"]["count"] == 0  # claimed by a payout
-    assert cards["pending_payouts"]["amounts"] == [
-        {"currency": "GBP", "amount_minor": 500, "entries": 1}
-    ]
+    reseller = _summary(viewer, console["reseller"]["partner"].id)
+    assert reseller["payouts"]["open"] == 1  # the commission is now in a payout
+    assert reseller["payouts"]["latest"]["payable_minor"] == 500
 
 
 def test_ending_the_relationship_changes_the_customer_count_and_nothing_else(
@@ -143,11 +144,13 @@ def test_ending_the_relationship_changes_the_customer_count_and_nothing_else(
         target=PartnerLinkStatus.ENDED,
         reason="Relationship ended for the count test",
     )
-    cards = _cards(viewer)
-    assert cards["partner_customers"]["count"] == 0
-    assert cards["active_partner_subscriptions"]["count"] == 0
+    reseller = _summary(viewer, console["reseller"]["partner"].id)
+    assert reseller["customers"]["live"] == 0
+    assert reseller["active_subscriptions"] == 0
     # The commission already earned stays pending: history is not erased.
-    assert cards["pending_commissions"]["count"] == 1
+    assert [(c["currency"], c["unpaid_minor"]) for c in reseller["commission"]] == [
+        ("GBP", 500)
+    ]
 
 
 def test_the_overview_needs_the_permission(staff_client, http_login, user_factory):
@@ -302,3 +305,9 @@ def test_creating_a_partner_is_unchanged_by_the_console(staff_client):
         {"code": "still-works", "display_name": "Still Works", "payout_currency": "GBP"},
     )
     assert response.status_code == 201
+
+
+def _summary(client, partner_id):
+    response = client.get(f"/api/v1/admin/partners/{partner_id}/summary")
+    assert response.status_code == 200, response.content
+    return response.json()

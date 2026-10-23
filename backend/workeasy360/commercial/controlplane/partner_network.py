@@ -179,10 +179,18 @@ def affiliates(ctx: TenantContext) -> dict[str, Any]:
 def conversions(
     ctx: TenantContext, *, limit: Any = 25, cursor: str | None = None
 ) -> Page:
-    """Converted referrals of the caller, with the commission each earned."""
+    """Converted referrals of the caller, with the commission each earned (shown
+    only to a role that may see commission)."""
     authz.require(ctx, REFERRAL_VIEW)
-    return commission_selectors.partner_conversions_page(
+    page = commission_selectors.partner_conversions_page(
         ctx.partner_id, limit=limit, cursor=cursor
+    )
+    if COMMISSION_VIEW in authz.effective_permissions(ctx):
+        return page
+    return Page(
+        items=[{**row, "commission_minor": None, "currency": ""} for row in page.items],
+        next_cursor=page.next_cursor,
+        has_more=page.has_more,
     )
 
 

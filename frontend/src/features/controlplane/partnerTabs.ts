@@ -3,64 +3,59 @@ import type { PartnerSummaryView } from "@/lib/api/partnerConsole";
 import type { Load } from "./ui";
 
 /**
- * The sections of one partner's page, shared by the page (which lays the tabs
- * out) and the tabs themselves (which link to one another: a setup step that is
- * not finished points at the tab that finishes it).
+ * The sections of one partner's page (ADR-048), shared by the page (which lays
+ * the tabs out) and the tabs themselves (which link to one another).
+ *
+ * Overview, Profile, Products, Users & Permissions and Activity are every
+ * partner's; the others appear for the partners whose capabilities they belong
+ * to (Pricing and Customers for a partner that sells, Commission for one that
+ * earns, Branding and Domains for white-label, Referrals for an affiliate).
  */
 
 export type TabKey =
   | "overview"
-  | "business"
-  | "contacts"
-  | "customers"
+  | "profile"
   | "products"
-  | "subscriptions"
-  | "commissions"
-  | "payouts"
+  | "pricing"
+  | "commission"
+  | "customers"
   | "branding"
   | "domains"
-  | "users"
   | "referrals"
+  | "payouts"
+  | "users"
   | "activity";
 
 export const TAB_LABELS: Record<TabKey, string> = {
   overview: "Overview",
-  business: "Business Details",
-  contacts: "Contacts",
+  profile: "Profile",
+  products: "Products",
+  pricing: "Pricing",
+  commission: "Commission",
   customers: "Customers",
-  products: "Products & Pricing",
-  subscriptions: "Subscriptions",
-  commissions: "Commissions",
-  payouts: "Payouts",
   branding: "Branding",
   domains: "Domains",
-  users: "Users & Permissions",
   referrals: "Referrals",
+  payouts: "Payouts",
+  users: "Users & Permissions",
   activity: "Activity",
 };
 
 export const TAB_ORDER = Object.keys(TAB_LABELS) as TabKey[];
 
-/** Which tab finishes each step of the server's setup progress. */
-export const STEP_TAB: Record<string, TabKey> = {
-  profile: "business",
-  capabilities: "users",
-  administrator: "users",
-  products: "products",
-  pricing: "products",
-  commission: "products",
-  branding: "branding",
-  domain: "domains",
+/** Old `?tab=` values, from links made before the page was simplified. */
+export const TAB_ALIASES: Record<string, TabKey> = {
+  business: "profile",
+  contacts: "profile",
+  commissions: "commission",
+  subscriptions: "customers",
 };
 
-/** Which tab supplies each thing the server says is missing before activation. */
-export const MISSING_TAB: Record<string, TabKey> = {
-  primary_contact: "contacts",
-  business_email: "business",
-  capabilities: "users",
-  products: "products",
-  administrator: "users",
-};
+export function tabFromParam(raw: string | null): TabKey | null {
+  if (!raw) return null;
+  if (TAB_ORDER.includes(raw as TabKey)) return raw as TabKey;
+  return TAB_ALIASES[raw] ?? null;
+}
 
 export interface TabProps {
   partnerId: string;

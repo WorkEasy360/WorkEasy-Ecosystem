@@ -25,6 +25,7 @@ from workeasy360.commercial.partners.domain import clean_text
 from workeasy360.commercial.partners.inputs import Problems
 from workeasy360.contracts.enums import PartnerContactKind, PayoutFrequency
 from workeasy360.contracts.errors import PartnerRecordNotFound, PartnerValidationError
+from workeasy360.contracts.values.money import CurrencyCode
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.audit import services as audit
 from workeasy360.platform.authz import services as authz
@@ -49,7 +50,7 @@ BUSINESS_KEYS: Final = (
 )
 CONTACT_KEYS: Final = ("name", "job_title", "email", "phone", "same_as_primary")
 SUPPORT_KEYS: Final = ("email", "phone", "url")
-PAYOUT_KEYS: Final = ("frequency", "contact_email")
+PAYOUT_KEYS: Final = ("frequency", "contact_email", "currency")
 SECTIONS: Final = ("business", "contacts", "support", "payout", "internal_notes")
 
 MAX_NOTES: Final = 2000
@@ -238,6 +239,15 @@ def _payout(raw: dict[str, Any], out: Parsed) -> None:
         )
         if value is not None:
             out.payout["contact_email"] = value
+    if "currency" in raw:
+        allowed_currencies = sorted(c.value for c in CurrencyCode)
+        if raw["currency"] not in allowed_currencies:
+            p.add(
+                "payout.currency",
+                f"currency must be one of {allowed_currencies}.",
+            )
+        else:
+            out.payout["currency"] = raw["currency"]
 
 
 # --- reading ------------------------------------------------------------------
@@ -380,10 +390,16 @@ def _apply_profile(
                     setattr(partner, column, primary[source])
                     account_fields.append(column)
 
+        currency = parsed.payout.get("currency")
+        if currency is not None and currency != partner.payout_currency:
+            _check_currency_change(partner)
+            partner.payout_currency = currency
+            account_fields.append("payout_currency")
+
         profile_fields = {
             **{k: v for k, v in parsed.business.items() if k not in _ACCOUNT_KEYS},
             **{f"support_{k}": v for k, v in parsed.support.items()},
-            **{f"payout_{k}": v for k, v in parsed.payout.items()},
+            **{f"payout_{k}": v for k, v in parsed.payout.items() if k != "currency"},
         }
         if parsed.internal_notes is not None:
             profile_fields["internal_notes"] = parsed.internal_notes
@@ -428,6 +444,26 @@ def _apply_profile(
     view = profile_view(partner_id)
     assert view is not None
     return view
+
+
+def _check_currency_change(partner: Any) -> None:
+    """The preferred (payout) currency is what the partner's prices, ledger and
+    payouts are kept in, so it may change only while nothing is kept in it yet:
+    the partner is still a draft (it has sold nothing, earned nothing and been
+    paid nothing) and has no price book of its own (ADR-048)."""
+    from workeasy360.contracts.enums import PartnerStatus
+
+    if partner.status != PartnerStatus.DRAFT.value:
+        raise PartnerValidationError(
+            "The preferred currency can only be changed before the partner is activated.",
+            field="payout.currency",
+        )
+    if selectors.has_price_book(partner.id):
+        raise PartnerValidationError(
+            "This partner already has prices in its current currency. The "
+            "preferred currency cannot be changed.",
+            field="payout.currency",
+        )
 
 
 # --- the partner's own view and edit (ADR-045) -----------------------------------

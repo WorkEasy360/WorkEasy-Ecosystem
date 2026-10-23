@@ -5,7 +5,7 @@ import { PartnerShell } from "@/features/controlplane/ControlShell";
 import { expectNoViolations, mockApi, ok, SIGNED_IN, type Reply } from "@/features/controlplane/testSupport";
 import { Roles } from "./Access";
 import { Team, Users } from "./Network";
-import { AddOns, Payments, ProductManager } from "./Catalog";
+import { AddOns, Payments, Plans, ProductManager } from "./Catalog";
 import { Appearance, AuthConfiguration, contrastRatio } from "./Account";
 import { ApiKeys, ChannelManager, Translations } from "./Tools";
 import { Notifications, Support } from "./Help";
@@ -383,6 +383,46 @@ describe("plans & add-ons and payments", () => {
     shell(<AddOns />);
     expect(await screen.findByText("The catalog has no purchasable add-on.")).toBeInTheDocument();
     expect(within(screen.getByRole("main")).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("shows the difference from list as the server's own subtraction, and a dash where there is none", async () => {
+    mockApi({
+      ...BASE,
+      [`GET ${API}/plans`]: [
+        ok({
+          currency: "GBP",
+          can_create_plan: false,
+          not_implemented: {},
+          plans: [
+            {
+              plan_version_id: "v1",
+              plan_code: "standard",
+              plan_name: "Standard",
+              product_code: "crm",
+              product_name: "Easy CRM",
+              included_seats: 5,
+              trial_days: 0,
+              currency: "GBP",
+              enabled_for_sale: true,
+              prices: [
+                { interval: "monthly", partner_price_minor: 1199, list_price_minor: 1499, difference_minor: 300, source: "partner_price_book" },
+                { interval: "yearly", partner_price_minor: null, list_price_minor: 14990, difference_minor: null, source: "list" },
+              ],
+            },
+          ],
+        }),
+      ],
+    });
+    shell(<Plans />);
+    const table = await screen.findByRole("table", { name: "Plans you can sell" });
+    expect(within(table).getByRole("columnheader", { name: "Difference from list" })).toBeInTheDocument();
+    const [monthly, yearly] = within(table).getAllByRole("row").slice(1);
+    // 14.99 list, 11.99 the partner's price: the 3.00 comes from the server, not from the browser.
+    expect(within(monthly).getByText("£3.00")).toBeInTheDocument();
+    expect(within(monthly).getByText("£11.99")).toBeInTheDocument();
+    // No partner price: the list price is shown as such and there is no difference to show.
+    expect(within(yearly).getByText("£149.90 (list)")).toBeInTheDocument();
+    expect(within(yearly).getAllByText("—").length).toBeGreaterThanOrEqual(1);
   });
 
   it("tabs Payments by what the person may read", async () => {

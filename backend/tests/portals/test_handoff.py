@@ -383,3 +383,151 @@ def test_signing_out_ends_only_that_sign_in(sign_in, hand_off, customer):
     app_one.post("/api/v1/auth/logout")
     assert app_two.get("/api/v1/auth/session").json()["authenticated"] is True
     assert second.get("/api/v1/auth/session").json()["authenticated"] is True
+
+
+# --- Guest login across hosts (Super Admin -> a partner's portal) ---------------------
+
+
+def _guest_staff(staff_user):
+    return staff_user("platform.staff_partner.manage", "platform.staff_partner.view")
+
+
+def test_guest_login_reaches_the_partner_portal_without_a_partner_membership(
+    sign_in, hand_off, staff_user, partner_member
+):
+    """The Super Admin starts a guest view on admin., and the same sign-in is
+    then handed to partner. - although the staff member belongs to no partner.
+    Before the guest view (and after it ends) the hand-off is refused."""
+    partner_id = str(partner_member["partner"].id)
+    auth = sign_in(_guest_staff(staff_user), aal2=True)
+    _, refused, _ = hand_off(auth, "partner")
+    assert refused.json() == {"code": "portal_access_denied"}
+
+    admin, _, _ = hand_off(auth, "admin")
+    started = admin.post(
+        f"/api/v1/admin/partners/{partner_id}/guest-view",
+        {"reason": "Checking the partner's setup for support"},
+    )
+    assert started.status_code == 201, started.content
+    assert started.json()["portal_path"].startswith("/partner/")
+
+    partner, issued, redeemed = hand_off(
+        auth, "partner", next_path=started.json()["portal_path"]
+    )
+    assert issued.status_code == 200, issued.content
+    assert redeemed.json() == {"next": started.json()["portal_path"]}
+    entries = partner.get("/api/v1/partner/portal").json()["partners"]
+    assert [(e["partner_id"], e["role"]) for e in entries] == [(partner_id, "viewer")]
+    assert entries[0]["guest"]["reason"] == "Checking the partner's setup for support"
+    write = partner.post(f"/api/v1/partner/{partner_id}/customers", {"name": "Acme"})
+    assert write.status_code == 403
+    assert write.json()["reason"] == "guest_read_only"
+
+    # Exit Guest Session on partner.: the guest view and that session end;
+    # the Super Admin's own sessions stay.
+    exited = partner.post("/api/v1/partner/guest-view/end")
+    assert exited.json() == {"ended": True}
+    assert partner.get("/api/v1/auth/session").json()["authenticated"] is False
+    assert admin.get("/api/v1/admin/session").status_code == 200
+    _, again, _ = hand_off(auth, "partner")
+    assert again.json() == {"code": "portal_access_denied"}
+
+
+def test_a_guest_view_of_another_sign_in_opens_nothing(
+    sign_in, hand_off, staff_user, partner_member
+):
+    """The grant belongs to one sign-in: the same staff member signed in a
+    second time (another browser) is still refused the partner portal."""
+    user = _guest_staff(staff_user)
+    first = sign_in(user, aal2=True)
+    admin, _, _ = hand_off(first, "admin")
+    started = admin.post(
+        f"/api/v1/admin/partners/{partner_member['partner'].id}/guest-view",
+        {"reason": "Checking the partner's setup for support"},
+    )
+    assert started.status_code == 201, started.content
+    second = sign_in(user, aal2=True)
+    _, refused, _ = hand_off(second, "partner")
+    assert refused.json() == {"code": "portal_access_denied"}
+
+
+def _guest_session(sign_in, hand_off, staff_user, partner_member):
+    """A staff member's guest view started on admin., then the hand-off to partner."""
+    user = _guest_staff(staff_user)
+    auth = sign_in(user, aal2=True)
+    admin, _, _ = hand_off(auth, "admin")
+    started = admin.post(
+        f"/api/v1/admin/partners/{partner_member['partner'].id}/guest-view",
+        {"reason": "Checking the partner's setup for support"},
+    )
+    assert started.status_code == 201, started.content
+    return user, auth, admin
+
+
+def test_a_guest_only_partner_session_is_never_elevated(
+    sign_in, hand_off, staff_user, partner_member
+):
+    """AAL 1 and no step-up time on partner.: a dangerous self-service action
+    there asks for the second factor again (audit P2, 2026-10-23)."""
+    from workeasy360.platform.identity.sessions import SESSION_GUEST_UNTIL_KEY
+    from workeasy360.platform.tenancy.resolution import (
+        SESSION_AAL_KEY,
+        SESSION_STEP_UP_AT_KEY,
+    )
+
+    _user, auth, _admin = _guest_session(sign_in, hand_off, staff_user, partner_member)
+    assert auth.session[SESSION_AAL_KEY] == 2
+    partner, _, redeemed = hand_off(auth, "partner")
+    assert redeemed.status_code == 200, redeemed.content
+    session = partner.session
+    assert session[SESSION_AAL_KEY] == 1
+    assert SESSION_STEP_UP_AT_KEY not in session
+    assert session[SESSION_GUEST_UNTIL_KEY] > time.time()
+
+
+def test_a_guest_only_partner_session_ends_with_the_guest_view(
+    sign_in, hand_off, staff_user, partner_member
+):
+    from workeasy360.platform.identity.sessions import SESSION_GUEST_UNTIL_KEY
+
+    _user, auth, admin = _guest_session(sign_in, hand_off, staff_user, partner_member)
+    partner, _, _ = hand_off(auth, "partner")
+    assert partner.get("/api/v1/auth/session").json()["authenticated"] is True
+    session = partner.session
+    session[SESSION_GUEST_UNTIL_KEY] = int(time.time()) - 1
+    session.save()
+    assert partner.get("/api/v1/auth/session").json()["authenticated"] is False
+    # The session row is gone, not merely refused; the other hosts stay.
+    assert partner.get("/api/v1/auth/session").json()["authenticated"] is False
+    assert admin.get("/api/v1/admin/session").status_code == 200
+
+
+def test_losing_the_staff_view_grant_refuses_the_guest_hand_off(
+    sign_in, hand_off, staff_user, partner_member
+):
+    from workeasy360.platform.authz import staff
+    from workeasy360.platform.authz.models import StaffGrant
+
+    user, auth, _admin = _guest_session(sign_in, hand_off, staff_user, partner_member)
+    for grant in StaffGrant.objects.filter(user_id=user.id, revoked_at__isnull=True):
+        staff.end_grant(
+            grant_id=grant.id, revoked_by_id=user.id, reason="Test revokes the grant"
+        )
+    _, refused, _ = hand_off(auth, "partner")
+    assert refused.json() == {"code": "portal_access_denied"}
+
+
+def test_signing_out_ends_the_guest_view_and_records_it(
+    sign_in, hand_off, staff_user, partner_member
+):
+    from workeasy360.commercial.partners import guest
+    from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
+
+    user, auth, admin = _guest_session(sign_in, hand_off, staff_user, partner_member)
+    sign_in_id = auth.session[SESSION_SIGN_IN_ID_KEY]
+    assert guest.current(user.id, sign_in_id) is not None
+    assert admin.post("/api/v1/auth/logout").status_code == 200
+    assert guest.current(user.id, sign_in_id) is None
+    from tests.partner_management.test_guest_view import audit_rows
+
+    assert len(audit_rows("partner.guest_view_ended")) == 1

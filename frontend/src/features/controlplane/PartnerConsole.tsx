@@ -2,32 +2,34 @@
 
 import { useId, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { adminApi } from "@/lib/api/controlPlane";
 import {
   partnerConsoleApi,
-  type ExperienceLabel,
+  type ListCompletion,
   type OverviewCard,
   type ResellerCommission,
-  type ResellerPaid,
   type ResellerRow,
+  type SetupStatus,
 } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
-import { ExperienceLabels } from "./labels";
-import { QuickActions, RecentActivity } from "./PartnerActivity";
-import { LoadGate, MoreButton, Status, Table, money, useLoad, usePaged, when } from "./ui";
+import { ExperienceLabels, TypeBadges } from "./labels";
+import { LoadGate, MoreButton, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
+import { NavIcon } from "@/components/sidebar/icons";
+import { usePortals } from "@/lib/portalContext";
+import { portalHref } from "@/lib/portals";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
 
 /**
- * The Partner Control Center's dashboard and its partner lists (Phase 10a,
- * reorganized for the Control Center).
+ * The Partners area (ADR-048): the Dashboard and All Partners.
  *
- * Nothing here decides what a partner "is": the labels come from the server,
- * computed from the capabilities the partner holds, and the console only
- * renders them. All Partners, Resellers and Affiliates are one list over the
- * same partner accounts with a different server-side `scope` - three views,
- * never three kinds of record. Nothing here computes money either - every
- * amount is a figure the server summed, formatted for display.
+ * Nothing here decides what a partner "is": the type badges come from the
+ * server, computed from the capabilities the partner holds, and a partner
+ * holding several shows several. The Partner type filter is a server-side filter
+ * on those same grants, so a combined partner is in every view it belongs to.
+ * Nothing here computes money or completion either - every figure is the
+ * server's.
  */
 
 // --- shared bits ----------------------------------------------------------------------
@@ -49,279 +51,319 @@ export function CommissionSummary({ rows }: { rows: ResellerCommission[] }) {
   );
 }
 
-function PaidSummary({ rows }: { rows: ResellerPaid[] }) {
-  if (rows.length === 0) return <span className={styles.muted}>Nothing paid yet</span>;
+const SETUP_TEXT: Record<SetupStatus, string> = {
+  setup_required: "Setup required",
+  ready: "Ready",
+  active: "Active",
+  suspended: "Suspended",
+  terminated: "Terminated",
+};
+
+const SETUP_BADGE: Partial<Record<SetupStatus, string>> = {
+  setup_required: "w360-badge w360-badge-warning",
+  ready: "w360-badge w360-badge-info",
+};
+
+/** A partner's state as the console names it: a draft is "Setup required" until
+ * its profile is complete, then "Ready" (for staff to activate). */
+export function SetupStatusBadge({ value }: { value: SetupStatus }) {
+  const badge = SETUP_BADGE[value];
+  if (!badge) return <Status value={value} />;
+  return <span className={badge}>{SETUP_TEXT[value]}</span>;
+}
+
+/** The profile completion as words first ("35% · Incomplete") with a bar that
+ * only reinforces them. */
+export function CompletionMeter({ value, label }: { value: Pick<ListCompletion, "percent" | "complete">; label?: string }) {
   return (
-    <div className={local.stackTight}>
-      {rows.map((r) => (
-        <span key={r.currency}>
-          {money(r.amount_minor, r.currency)}
-          <span className={styles.muted}>
-            {" "}
-            · {r.payouts} {r.payouts === 1 ? "payout" : "payouts"}
-          </span>
-        </span>
-      ))}
+    <div className={local.meter}>
+      <span>
+        {value.percent}% <span className={styles.muted}>· {value.complete ? "Complete" : "Incomplete"}</span>
+        {label && <span className="w360-visually-hidden"> {label}</span>}
+      </span>
+      <span className={local.meterTrack} aria-hidden="true">
+        <span className={`${value.complete ? local.meterDone : local.meterFill} ${local[`w${Math.round(Math.max(0, Math.min(100, value.percent)) / 10) * 10}`]}`} />
+      </span>
     </div>
   );
 }
 
-/** Whether a partner wears the White-label label - read from the server's labels. */
-const wearsWhiteLabel = (labels: ExperienceLabel[]) => labels.some((l) => l.key === "white_label");
-
 // --- the dashboard -----------------------------------------------------------------------
 
-/** Where each card's number can be inspected. Presentation only: the list it
- * opens re-asks the server, which re-checks the caller's permission. */
+/** Where each card's number can be inspected: All Partners, filtered. */
 const CARD_LINKS: Record<string, string> = {
   total_partners: "/admin/partners/all",
   active_partners: "/admin/partners/all?status=active",
-  active_resellers: "/admin/partners/resellers?status=active",
-  white_label_enabled: "/admin/partners/white-label",
-  active_affiliates: "/admin/partners/affiliates?status=active",
-  partner_customers: "/admin/partners/customers",
-  active_partner_subscriptions: "/admin/partners/customers?subscription=active",
-  pending_commissions: "/admin/partners/commissions?unpaid=1",
-  pending_payouts: "/admin/partners/payouts?status=open",
-  domains_awaiting_verification: "/admin/partners/white-label?domain_status=awaiting",
+  resellers: "/admin/partners/all?type=reseller",
+  white_label: "/admin/partners/all?type=white_label",
+  affiliates: "/admin/partners/all?type=affiliate",
+  suspended_partners: "/admin/partners/all?status=suspended",
+  profiles_incomplete: "/admin/partners/all?profile=incomplete",
 };
 
 const CARD_NOTES: Record<string, string> = {
   total_partners: "Every partner account, in any state.",
   active_partners: "Partners in the active state.",
-  active_resellers: "Active partners that can sell.",
-  white_label_enabled: "Active partners that can set a brand or a domain.",
-  active_affiliates: "Active partners that can refer customers.",
-  partner_customers: "Customers with a live partner relationship.",
-  active_partner_subscriptions: "Active subscriptions of those customers - what partners have sold and is live.",
-  pending_commissions: "Ledger entries not yet in a payout.",
-  pending_payouts: "Payouts awaiting a decision or a payment.",
-  domains_awaiting_verification: "Requested, but no DNS proof seen yet.",
+  resellers: "Partners that can sell and manage customers, in any state.",
+  white_label: "Partners that can use their own brand and domain, in any state.",
+  affiliates: "Partners that can refer customers, in any state.",
+  suspended_partners: "Partners paused by Workeasy360.",
+  profiles_incomplete: "Partners, not terminated, whose profile still needs something.",
 };
 
 function OverviewCardView({ card }: { card: OverviewCard }) {
-  const href = CARD_LINKS[card.key] ?? "/admin/partners";
+  const href = CARD_LINKS[card.key] ?? "/admin/partners/all";
   return (
     <Link href={href} className={`w360-card ${local.card}`} aria-label={`${card.label}: ${card.count}. Open the list.`}>
       <span className={local.cardLabel}>{card.label}</span>
       <span className={local.cardCount}>{card.count}</span>
-      {card.amounts && card.amounts.length > 0 && (
-        <span className={local.cardNote}>
-          {card.amounts.map((a) => `${money(a.amount_minor, a.currency)} (${a.entries})`).join(" · ")}
-        </span>
-      )}
       <span className={local.cardNote}>{CARD_NOTES[card.key]}</span>
     </Link>
   );
 }
 
-/** Partners → Dashboard: quick actions, the factual counts, and what changed lately. */
-export function PartnersOverview() {
+function AddPartnerButton() {
   const { permissions } = useAdmin();
+  if (!can(permissions, "platform.staff_partner.manage")) return null;
+  return (
+    <Link className="w360-btn w360-btn-primary" href="/admin/partners/new">
+      + Add Partner
+    </Link>
+  );
+}
+
+/** Partners → Dashboard: factual counts and the newest partners. */
+export function PartnersOverview() {
   const [load] = useLoad(() => partnerConsoleApi.overview(), []);
 
   return (
     <div className={styles.stack}>
       <div className={local.headerRow}>
         <h1>Partners</h1>
-        <QuickActions permissions={permissions} />
+        <AddPartnerButton />
       </div>
       <p className={styles.lead}>
-        Counts of what exists right now. Revenue, growth and recurring-revenue figures are not shown: they would need currency
+        Counts of what exists right now. Revenue, recurring-revenue and growth figures are not shown: they would need currency
         conversion this platform does not perform.
       </p>
-      <LoadGate load={load} what="the partner overview">
+      <LoadGate load={load} what="the partner dashboard">
         {(d) => (
-          <section aria-labelledby="partner-kpis" className={styles.stack}>
-            <h2 id="partner-kpis" className="w360-visually-hidden">
-              Key figures
-            </h2>
-            <div className={local.cards}>
-              {d.cards.map((card) => (
-                <OverviewCardView key={card.key} card={card} />
-              ))}
-            </div>
-            <p className={styles.muted}>As of {when(d.as_of)}.</p>
-          </section>
+          <>
+            <section aria-labelledby="partner-kpis" className={styles.stack}>
+              <h2 id="partner-kpis" className="w360-visually-hidden">
+                Key figures
+              </h2>
+              <div className={local.cards}>
+                {d.cards.map((card) => (
+                  <OverviewCardView key={card.key} card={card} />
+                ))}
+              </div>
+            </section>
+            <section aria-labelledby="recent-partners" className={styles.stack}>
+              <div className={local.headerRow}>
+                <h2 id="recent-partners">Recent partners</h2>
+                <Link href="/admin/partners/all">View all partners</Link>
+              </div>
+              <Table
+                caption="Recent partners"
+                head={["Partner", "Type", "Profile", "Status", "Created"]}
+                isEmpty={d.recent_partners.length === 0}
+                empty="No partners yet. Add the first one with + Add Partner."
+              >
+                {d.recent_partners.map((p) => (
+                  <tr key={p.id}>
+                    <th scope="row">
+                      <Link href={`/admin/partners/${p.id}`}>{p.display_name}</Link>
+                    </th>
+                    <td>
+                      <TypeBadges labels={p.experience} />
+                    </td>
+                    <td>
+                      <CompletionMeter value={p.profile_completion} label={`profile of ${p.display_name}`} />
+                    </td>
+                    <td>
+                      <SetupStatusBadge value={p.profile_completion.setup_status} />
+                    </td>
+                    <td>{when(p.created_at)}</td>
+                  </tr>
+                ))}
+              </Table>
+              <p className={styles.muted}>As of {when(d.as_of)}.</p>
+            </section>
+          </>
         )}
       </LoadGate>
-      {can(permissions, "platform.staff_partner.view") && <RecentActivity />}
     </div>
   );
 }
 
-// --- the partner lists ------------------------------------------------------------------------
+// --- All Partners ------------------------------------------------------------------------------
 
-const STATUSES = ["draft", "active", "suspended", "terminated"];
+const TYPE_OPTIONS = [
+  { value: "", label: "All Partners" },
+  { value: "reseller", label: "Reseller" },
+  { value: "white_label", label: "White-label" },
+  { value: "affiliate", label: "Affiliate" },
+];
+const STATUS_OPTIONS = [
+  { value: "", label: "All" },
+  { value: "active", label: "Active" },
+  { value: "suspended", label: "Suspended" },
+  { value: "draft", label: "Draft" },
+  { value: "terminated", label: "Terminated" },
+];
+const PROFILE_OPTIONS = [
+  { value: "", label: "All" },
+  { value: "complete", label: "Complete" },
+  { value: "incomplete", label: "Incomplete" },
+];
 
-export type ListScope = "all" | "resellers" | "affiliates";
+const pick = (raw: string | null, options: { value: string }[]) => (options.some((o) => o.value === raw) ? (raw as string) : "");
 
-const SCOPE_TEXT: Record<
-  ListScope,
-  { heading: string; caption: string; lead: string; empty: string; loading: string; add: { label: string; href: string } }
-> = {
-  all: {
-    heading: "All partners",
-    caption: "Partner accounts",
-    lead: "Every partner account, whatever it can do. The labels next to a name are derived from the capabilities it holds - one account can wear several.",
-    empty: "No partners match.",
-    loading: "Loading partners…",
-    add: { label: "Add partner", href: "/admin/partners/new" },
-  },
-  resellers: {
-    heading: "Resellers",
-    caption: "Resellers",
-    lead: "Partners that hold a selling or customer-management capability.",
-    empty: "No resellers match. Try All partners, or add one.",
-    loading: "Loading resellers…",
-    add: { label: "Add reseller", href: "/admin/partners/resellers/new" },
-  },
-  affiliates: {
-    heading: "Affiliates",
-    caption: "Affiliates",
-    lead: "Partners that hold a referral capability. Referral figures are counts only: nothing identifies who was referred.",
-    empty: "No affiliates match. Create one from Add partner.",
-    loading: "Loading affiliates…",
-    add: { label: "Add affiliate", href: "/admin/partners/new?purpose=affiliate" },
-  },
-};
-
-const HEADS: Record<ListScope, string[]> = {
-  all: ["Partner", "Labels", "Status", "Customers", "Products", "Subscriptions", "Commission", "White-label", "Created", "Last activity"],
-  resellers: [
-    "Reseller",
-    "Status",
-    "Customers",
-    "Products allowed",
-    "Active subscriptions",
-    "Commission",
-    "Payouts",
-    "White-label",
-    "Last activity",
-    "Actions",
-  ],
-  affiliates: ["Affiliate", "Status", "Referral codes", "Conversions", "Commission", "Pending payout", "Paid", "Last activity"],
-};
-
-/** All Partners, Resellers or Affiliates: the same partner accounts, filtered by
- * the server on the capabilities they hold (`scope`). */
-export function PartnerList({ scope }: { scope: ListScope }) {
+/** Partners → All Partners: one table, filtered by the server (search, partner
+ * type, status, profile). The filters are kept in the address so a filtered
+ * view can be linked to and survives a reload. */
+export function AllPartnersList() {
   const { permissions } = useAdmin();
   const params = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname() ?? "/admin/partners/all";
   const searchId = useId();
   const [draft, setDraft] = useState(params.get("q") ?? "");
-  // The search is applied on submit, not per keystroke: one bounded request per search.
-  const [query, setQuery] = useState(params.get("q") ?? "");
-  const [status, setStatus] = useState(params.get("status") ?? "");
-  const [product, setProduct] = useState(params.get("product") ?? "");
-  const [capability, setCapability] = useState(params.get("capability") ?? "");
+  const [filters, setFilters] = useState({
+    q: (params.get("q") ?? "").slice(0, 80),
+    type: pick(params.get("type"), TYPE_OPTIONS),
+    status: pick(params.get("status"), STATUS_OPTIONS),
+    profile: pick(params.get("profile"), PROFILE_OPTIONS),
+  });
   const manage = can(permissions, "platform.staff_partner.manage");
-  const text = SCOPE_TEXT[scope];
+  const portals = usePortals();
+  // Add Partner lands here with the new partner's id: the row is marked and
+  // the banner says where its setup continues.
+  const createdParam = params.get("created") ?? "";
+  const [created] = useState(UUID_RE.test(createdParam) ? createdParam : "");
 
   const paged = usePaged(
     (cursor) =>
       partnerConsoleApi.resellers({
-        q: query || undefined,
-        status: status || undefined,
-        product: product || undefined,
-        capability: capability || undefined,
-        scope,
+        scope: "all",
+        q: filters.q || undefined,
+        type: filters.type || undefined,
+        status: filters.status || undefined,
+        profile: filters.profile || undefined,
         cursor,
       }),
-    [query, status, product, capability, scope],
+    [filters.q, filters.type, filters.status, filters.profile],
   );
-  // The filter choices are read from the server. A failure just leaves the
-  // menus empty - the list itself does not depend on them.
-  const [products] = useLoad(() => partnerConsoleApi.products().catch(() => ({ results: [] })), []);
-  const [catalog] = useLoad(() => partnerConsoleApi.capabilityCatalog().catch(() => null), []);
+  const { act, busy, feedback } = useAction(() => paged.reload());
+
+  function apply(next: typeof filters) {
+    setFilters(next);
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(next)) if (value) query.set(key, value);
+    const text = query.toString();
+    router.replace(text ? `${pathname}?${text}` : pathname, { scroll: false });
+  }
+
+  const select = (key: "type" | "status" | "profile", label: string, options: { value: string; label: string }[]) => (
+    <div>
+      <label className="w360-label" htmlFor={`${searchId}-${key}`}>
+        {label}
+      </label>
+      <select id={`${searchId}-${key}`} className="w360-input" value={filters[key]} onChange={(e) => apply({ ...filters, [key]: e.target.value })}>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
 
   return (
     <div className={styles.stack}>
       <div className={local.headerRow}>
-        <h1>{text.heading}</h1>
-        {manage && (
-          <Link className="w360-btn w360-btn-primary" href={text.add.href}>
-            {text.add.label}
-          </Link>
-        )}
+        <h1>All Partners</h1>
+        <AddPartnerButton />
       </div>
-      <p className={styles.lead}>{text.lead}</p>
       <form
         className={local.filters}
         role="search"
-        aria-label={`Filter ${text.heading.toLowerCase()}`}
+        aria-label="Filter partners"
         onSubmit={(e) => {
           e.preventDefault();
-          setQuery(draft.trim());
+          apply({ ...filters, q: draft.trim().slice(0, 80) });
         }}
       >
-        <div>
+        <div className={local.searchField}>
           <label className="w360-label" htmlFor={searchId}>
-            Search by name or code
+            Search by partner name or email
           </label>
-          <input id={searchId} className="w360-input" value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={80} />
+          <input id={searchId} type="search" className="w360-input" value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={80} />
         </div>
-        <div>
-          <label className="w360-label" htmlFor={`${searchId}-status`}>
-            Status
-          </label>
-          <select id={`${searchId}-status`} className="w360-input" value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">Any</option>
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s[0].toUpperCase() + s.slice(1)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="w360-label" htmlFor={`${searchId}-product`}>
-            Product
-          </label>
-          <select id={`${searchId}-product`} className="w360-input" value={product} onChange={(e) => setProduct(e.target.value)}>
-            <option value="">Any</option>
-            {products.status === "ready" &&
-              products.data.results.map((p) => (
-                <option key={p.code} value={p.code}>
-                  {p.name}
-                </option>
-              ))}
-          </select>
-        </div>
-        <div>
-          <label className="w360-label" htmlFor={`${searchId}-cap`}>
-            Capability
-          </label>
-          <select id={`${searchId}-cap`} className="w360-input" value={capability} onChange={(e) => setCapability(e.target.value)}>
-            <option value="">Any</option>
-            {catalog.status === "ready" &&
-              catalog.data?.results.map((c) => (
-                <option key={c.key} value={c.key}>
-                  {c.label}
-                </option>
-              ))}
-          </select>
-        </div>
+        {select("type", "Partner type", TYPE_OPTIONS)}
+        {select("status", "Status", STATUS_OPTIONS)}
+        {select("profile", "Profile", PROFILE_OPTIONS)}
         <button type="submit" className="w360-btn w360-btn-secondary">
           Search
         </button>
       </form>
+      {created && (
+        <div className={local.createdBanner} role="status">
+          <p>
+            <strong>Partner created successfully.</strong> Its profile is incomplete: use{" "}
+            <Link href={`/admin/partners/${created}/profile`}>Complete setup</Link> (the gear in its row) to finish it,
+            then activate it from its page.
+          </p>
+        </div>
+      )}
+      {feedback}
 
-      {paged.state === "loading" && <p aria-live="polite">{text.loading}</p>}
+      {paged.state === "loading" && <p aria-live="polite">Loading partners…</p>}
       {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to partners.</p>}
-      {paged.state === "error" && <p role="alert">Couldn&apos;t load {text.heading.toLowerCase()}.</p>}
+      {paged.state === "error" && <p role="alert">Couldn&apos;t load partners.</p>}
       {paged.state === "ready" && (
         <>
-          <Table caption={text.caption} head={HEADS[scope]} isEmpty={paged.rows.length === 0} empty={text.empty}>
-            {paged.rows.map((r) =>
-              scope === "affiliates" ? (
-                <AffiliateTableRow key={r.id} row={r} />
-              ) : scope === "all" ? (
-                <AllPartnersTableRow key={r.id} row={r} />
-              ) : (
-                <ResellerTableRow key={r.id} row={r} />
-              ),
-            )}
+          <Table
+            caption="Partners"
+            head={[
+              "Status",
+              "Action",
+              "Panel",
+              "Partner ID",
+              "Name",
+              "Email",
+              "Phone",
+              "Country",
+              "Currency",
+              "Wallet",
+              "Last Login",
+              "Joining Date",
+            ]}
+            isEmpty={paged.rows.length === 0}
+            empty="No partners match these filters."
+          >
+            {paged.rows.map((r) => (
+              <PartnerRow
+                key={r.id}
+                row={r}
+                manage={manage}
+                busy={busy}
+                highlighted={r.id === created}
+                onStatus={(target, reason) =>
+                  act(
+                    () => adminApi.setPartnerStatus(r.id, target, reason, r.version),
+                    target === "suspended" ? `${r.display_name} suspended.` : `${r.display_name} reactivated.`,
+                  )
+                }
+                onGuest={(reason) =>
+                  act(async () => {
+                    const view = await adminApi.startGuestView(r.id, reason);
+                    window.location.assign(portalHref(portals, "partner", view.portal_path));
+                  }, `Opening the portal of ${r.display_name} as a guest…`)
+                }
+              />
+            ))}
           </Table>
           <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
         </>
@@ -330,158 +372,215 @@ export function PartnerList({ scope }: { scope: ListScope }) {
   );
 }
 
-export function ResellerList() {
-  return <PartnerList scope="resellers" />;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The partner's balance: its commission ledger per currency, as the server
+ * summed it (never added across currencies). */
+function wallet(r: ResellerRow) {
+  if (r.commission.length === 0) return money(0, r.payout_currency);
+  return r.commission.map((c) => money(c.balance_minor, c.currency)).join(" · ");
 }
 
-export function AllPartnersList() {
-  return <PartnerList scope="all" />;
+function countryName(code: string): string {
+  try {
+    return new Intl.DisplayNames(undefined, { type: "region" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
 }
 
-export function AffiliateList() {
-  return <PartnerList scope="affiliates" />;
-}
-
-function products(r: ResellerRow) {
-  if (r.products.length === 0) return <span className={styles.muted}>None</span>;
-  return r.products.map((p) => (p.plan_code ? `${p.product_code} (${p.plan_code})` : p.product_code)).join(", ");
-}
-
-function WhiteLabelCell({ row }: { row: ResellerRow }) {
-  return wearsWhiteLabel(row.experience) ? (
-    <span className="w360-badge w360-badge-success">Enabled</span>
-  ) : (
-    <span className={styles.muted}>Not enabled</span>
+/** A value with a copy button, as the list shows a panel link, an id or an email. */
+function Copyable({ value, shown, what }: { value: string; shown?: string; what: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <span className={local.copyCell}>
+      <span className={local.copyText} title={value}>
+        {shown ?? value}
+      </span>
+      <button
+        type="button"
+        className={local.iconButton}
+        aria-label={copied ? `Copied ${what}` : `Copy ${what}`}
+        title={copied ? "Copied" : "Copy"}
+        onClick={() =>
+          void navigator.clipboard?.writeText(value).then(
+            () => setCopied(true),
+            () => setCopied(false),
+          )
+        }
+      >
+        <NavIcon name="copy" />
+      </button>
+    </span>
   );
 }
 
-function PartnerName({ row, labels = false }: { row: ResellerRow; labels?: boolean }) {
-  return (
-    <th scope="row">
-      <Link href={`/admin/partners/${row.id}`}>{row.display_name}</Link>
-      <div className={`${styles.muted} ${styles.mono}`}>{row.code}</div>
-      {labels && <ExperienceLabels labels={row.experience} />}
-    </th>
-  );
-}
+type Prompt = null | "status" | "guest";
 
-function ResellerTableRow({ row: r }: { row: ResellerRow }) {
+function PartnerRow({
+  row: r,
+  manage,
+  busy,
+  highlighted,
+  onStatus,
+  onGuest,
+}: {
+  row: ResellerRow;
+  manage: boolean;
+  busy: boolean;
+  highlighted: boolean;
+  onStatus: (target: "active" | "suspended", reason: string) => void;
+  onGuest: (reason: string) => void;
+}) {
+  const portals = usePortals();
+  const reasonId = useId();
+  const [prompt, setPrompt] = useState<Prompt>(null);
+  const [reason, setReason] = useState("");
+  const href = `/admin/partners/${r.id}`;
+  const setupHref = `/admin/partners/${r.id}/profile`;
+  const panelPath = `/partner/${r.id}`;
+  const panelUrl = portals ? portalHref(portals, "partner", panelPath) : `${window.location.origin}${panelPath}`;
+  const on = r.status === "active";
+  const canToggle = manage && (r.status === "active" || r.status === "suspended");
+  const toggleNote =
+    r.status === "draft"
+      ? "A draft is activated from its page once the profile is complete."
+      : r.status === "terminated"
+        ? "A terminated partner cannot be reactivated."
+        : !manage
+          ? "You may not change a partner's status."
+          : on
+            ? "Suspend this partner"
+            : "Reactivate this partner";
+  const complete = r.profile_completion.complete;
+  const target = on ? "suspended" : "active";
+  const minLength = prompt === "guest" ? 3 : 10;
+
+  function open(next: Prompt) {
+    setPrompt((current) => (current === next ? null : next));
+    setReason("");
+  }
+
   return (
-    <tr>
-      <PartnerName row={r} labels />
-      <td>
-        <Status value={r.status} />
-      </td>
-      <td className={styles.num}>{r.customers}</td>
-      <td>{products(r)}</td>
-      <td className={styles.num}>{r.active_subscriptions}</td>
-      <td>
-        <CommissionSummary rows={r.commission} />
-      </td>
-      <td>
-        {r.payouts.latest ? (
-          <div className={local.stackTight}>
-            <Status value={r.payouts.latest.status} />
-            {r.payouts.open > 0 && <span className={styles.muted}>{r.payouts.open} open</span>}
+    <>
+      <tr className={highlighted ? local.highlightRow : undefined}>
+        <td>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={on}
+            aria-label={`${r.display_name} active`}
+            aria-expanded={prompt === "status"}
+            title={toggleNote}
+            className={local.switch}
+            disabled={!canToggle || busy}
+            onClick={() => open("status")}
+          >
+            <span className={local.switchKnob} />
+          </button>
+        </td>
+        <td>
+          <div className={local.iconRow}>
+            <Link
+              href={setupHref}
+              className={local.iconButton}
+              aria-label={`${complete ? "Edit setup of" : "Complete setup of"} ${r.display_name}`}
+              title={complete ? "Edit setup" : "Complete setup"}
+            >
+              <NavIcon name="settings" />
+            </Link>
+            {manage && (
+              <button
+                type="button"
+                className={local.iconButton}
+                aria-label={`Guest login to ${r.display_name}`}
+                aria-expanded={prompt === "guest"}
+                title="Guest login (read-only)"
+                disabled={busy}
+                onClick={() => open("guest")}
+              >
+                <NavIcon name="login" />
+              </button>
+            )}
           </div>
-        ) : (
-          <span className={styles.muted}>None</span>
-        )}
-      </td>
-      <td>
-        <WhiteLabelCell row={r} />
-      </td>
-      <td>{when(r.last_activity_at)}</td>
-      <td>
-        <div className={local.stackTight}>
-          <Link href={`/admin/partners/${r.id}`} aria-label={`Manage ${r.display_name}`}>
-            Manage
-          </Link>
-          <Link href={`/admin/partners/${r.id}?tab=customers`} aria-label={`Customers of ${r.display_name}`}>
-            Customers
-          </Link>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function AllPartnersTableRow({ row: r }: { row: ResellerRow }) {
-  return (
-    <tr>
-      <PartnerName row={r} />
-      <td>
-        <ExperienceLabels labels={r.experience} />
-      </td>
-      <td>
-        <Status value={r.status} />
-      </td>
-      <td className={styles.num}>{r.customers}</td>
-      <td>{products(r)}</td>
-      <td className={styles.num}>{r.active_subscriptions}</td>
-      <td>
-        <CommissionSummary rows={r.commission} />
-      </td>
-      <td>
-        <WhiteLabelCell row={r} />
-      </td>
-      <td>{when(r.created_at)}</td>
-      <td>{when(r.last_activity_at)}</td>
-    </tr>
-  );
-}
-
-function AffiliateTableRow({ row: r }: { row: ResellerRow }) {
-  const { codes, active_codes: activeCodes, captured, converted } = r.referrals;
-  const more = activeCodes - codes.length;
-  return (
-    <tr>
-      <PartnerName row={r} labels />
-      <td>
-        <Status value={r.status} />
-      </td>
-      <td>
-        {codes.length === 0 ? (
-          <span className={styles.muted}>No active code</span>
-        ) : (
-          <div className={local.stackTight}>
-            {codes.map((c) => (
-              <span key={c} className={styles.mono}>
-                {c}
-              </span>
-            ))}
-            {more > 0 && <span className={styles.muted}>and {more} more</span>}
+        </td>
+        <td>
+          <Copyable value={panelUrl} what={`panel link of ${r.display_name}`} />
+        </td>
+        <td>
+          <Copyable value={r.id} shown={r.id.slice(0, 8)} what={`partner ID of ${r.display_name}`} />
+        </td>
+        <th scope="row">
+          <Link href={href}>{r.display_name}</Link>
+          <div className={local.nameMeta}>
+            <TypeBadges labels={r.experience} />
+            <SetupStatusBadge value={r.profile_completion.setup_status} />
           </div>
-        )}
-      </td>
-      <td>
-        <span className={styles.num}>{converted}</span>
-        <span className={styles.muted}> of {captured} referrals</span>
-      </td>
-      <td>
-        {r.commission.length === 0 ? (
-          <span className={styles.muted}>No commission yet</span>
-        ) : (
-          <div className={local.stackTight}>
-            {r.commission.map((c) => (
-              <span key={c.currency}>{money(c.balance_minor, c.currency)}</span>
-            ))}
-          </div>
-        )}
-      </td>
-      <td>
-        <div className={local.stackTight}>
-          {r.commission.filter((c) => c.unpaid_minor !== 0).map((c) => (
-            <span key={c.currency}>{money(c.unpaid_minor, c.currency)} unpaid</span>
-          ))}
-          {r.payouts.open > 0 && <span className={styles.muted}>{r.payouts.open} open payout{r.payouts.open === 1 ? "" : "s"}</span>}
-          {r.payouts.open === 0 && r.commission.every((c) => c.unpaid_minor === 0) && <span className={styles.muted}>None</span>}
-        </div>
-      </td>
-      <td>
-        <PaidSummary rows={r.payouts.paid} />
-      </td>
-      <td>{when(r.last_activity_at)}</td>
-    </tr>
+        </th>
+        <td>
+          {r.administrator?.email ? (
+            <Copyable value={r.administrator.email} what={`email of ${r.display_name}`} />
+          ) : (
+            <span className={styles.muted}>No administrator</span>
+          )}
+        </td>
+        <td>{r.phone ? <Copyable value={r.phone} what={`phone of ${r.display_name}`} /> : <span className={styles.muted}>—</span>}</td>
+        <td>{r.country ? <abbr title={countryName(r.country)}>{r.country}</abbr> : <span className={styles.muted}>—</span>}</td>
+        <td>{r.payout_currency}</td>
+        <td className={styles.num}>{wallet(r)}</td>
+        <td>{r.administrator?.last_login_at ? when(r.administrator.last_login_at) : <span className={styles.muted}>Never</span>}</td>
+        <td>{when(r.created_at)}</td>
+      </tr>
+      {prompt !== null && (
+        <tr className={local.promptRow}>
+          <td colSpan={12}>
+            <form
+              className={local.promptForm}
+              onSubmit={(e) => {
+                e.preventDefault();
+                const text = reason.trim();
+                setPrompt(null);
+                setReason("");
+                if (prompt === "guest") onGuest(text);
+                else onStatus(target, text);
+              }}
+            >
+              <label className="w360-label" htmlFor={reasonId}>
+                {prompt === "guest"
+                  ? `Why are you opening the portal of ${r.display_name}? (recorded, and shown in the partner's activity)`
+                  : `Reason to ${on ? "suspend" : "reactivate"} ${r.display_name} (recorded in the audit log)`}
+              </label>
+              <input
+                id={reasonId}
+                className="w360-input"
+                autoFocus
+                required
+                minLength={minLength}
+                maxLength={200}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+              />
+              {prompt === "guest" && (
+                <p className={styles.muted}>
+                  Read-only: you see the portal as the partner does but cannot change anything. It ends after 30 minutes.
+                </p>
+              )}
+              <div className={styles.row}>
+                <button
+                  type="submit"
+                  className={`w360-btn ${prompt === "status" && on ? "w360-btn-danger" : "w360-btn-primary"}`}
+                  disabled={busy || reason.trim().length < minLength}
+                >
+                  {prompt === "guest" ? "Open guest view" : on ? "Suspend" : "Reactivate"}
+                </button>
+                <button type="button" className="w360-btn w360-btn-secondary" onClick={() => open(null)}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

@@ -184,9 +184,15 @@ describe("the partner routes", () => {
 
   it("are served as permanent redirects by the app, from the same list", async () => {
     const rules = await nextConfig.redirects!();
-    expect(rules).toHaveLength(LEGACY_REDIRECTS.length);
+    // The legacy rules apply to a partner *id* (a UUID), never to a workspace address.
+    const legacy = rules.filter((r) => r.permanent);
+    expect(legacy).toHaveLength(LEGACY_REDIRECTS.length);
     for (const { from, to } of LEGACY_REDIRECTS) {
-      expect(rules).toContainEqual({ source: `/partner/:partnerId${from}`, destination: `/partner/:partnerId${to}`, permanent: true });
+      expect(legacy).toContainEqual({
+        source: `/partner/:partnerId([0-9a-fA-F-]{36})${from}`,
+        destination: `/partner/:partnerId${to}`,
+        permanent: true,
+      });
     }
   });
 });

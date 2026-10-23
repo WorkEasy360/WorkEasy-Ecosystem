@@ -10,6 +10,7 @@ import { usePartner } from "./ControlShell";
 import { ActivationBadge, OwnerInvitationActions } from "./PartnerCustomers";
 import { DiagnosticResult } from "./AdminScreens";
 import { applyAccent, safeColor } from "./useBranding";
+import { isExperienceKey, workspaceHome } from "@/features/partnerpanel/experiences";
 import { LoadGate, MoreButton, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
@@ -26,13 +27,35 @@ function usePartnerId(): { id: string; has: (c: string) => boolean; active: bool
 
 // --- portal chooser --------------------------------------------------------------------
 
+interface Opening {
+  partner_id: string;
+  landing?: string | null;
+  workspaces?: { key: string }[];
+}
+
+/** Where a partner account opens: the workspace the **server** resolved for it
+ * (its grants, and the landing preference among them), else the generic panel.
+ * Nothing in the address, the browser's storage or a cookie chose this.
+ *
+ * A workspace address names no partner, so it is used only when exactly one of
+ * the person's accounts holds that workspace; with two of the same kind the
+ * address would silently open the wrong one, so each opens its own panel, which
+ * carries the partner in the address. */
+export function openingPath(p: Opening, all: Opening[] = [p]): string {
+  if (!isExperienceKey(p.landing)) return `/partner/${p.partner_id}`;
+  const landing = p.landing;
+  const holders = all.filter((q) => (q.workspaces ? q.workspaces.some((w) => w.key === landing) : q.partner_id === p.partner_id));
+  return holders.length > 1 ? `/partner/${p.partner_id}` : workspaceHome(landing);
+}
+
 export function PortalChooser() {
   const router = useRouter();
   const [load] = useLoad(() => partnerApi.portal(), []);
-  // A member of one partner account has nothing to choose: go straight to its panel.
-  const only = load.status === "ready" && load.data.partners.length === 1 ? load.data.partners[0].partner_id : null;
+  // A member of one partner account has nothing to choose: go straight to where
+  // the server says it opens (its workspace, or the generic panel).
+  const only = load.status === "ready" && load.data.partners.length === 1 ? openingPath(load.data.partners[0], load.data.partners) : null;
   useEffect(() => {
-    if (only) router.replace(`/partner/${only}`);
+    if (only) router.replace(only);
   }, [only, router]);
   if (only) return <p aria-live="polite">Opening your partner panel…</p>;
   return (
@@ -46,7 +69,7 @@ export function PortalChooser() {
             <ul className={styles.chain}>
               {partners.map((p) => (
                 <li key={p.partner_id} className={styles.chainItem}>
-                  <Link href={`/partner/${p.partner_id}`}>{p.display_name}</Link>
+                  <Link href={openingPath(p, partners)}>{p.display_name}</Link>
                   <Status value={p.status} />
                 </li>
               ))}

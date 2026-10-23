@@ -21,6 +21,7 @@ from typing import Any
 from uuid import UUID
 
 from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.views.decorators.debug import sensitive_variables
 
 from workeasy360.commercial.commissions import ledger, payouts, rules
 from workeasy360.commercial.commissions import selectors as commission_selectors
@@ -30,6 +31,7 @@ from workeasy360.commercial.controlplane import diagnostics as cp_diagnostics
 from workeasy360.commercial.controlplane import (
     partner_console,
     partner_detail,
+    partner_onboarding,
     reseller_setup,
     white_label_setup,
 )
@@ -39,6 +41,7 @@ from workeasy360.commercial.controlplane import subscriptions as cp_subscription
 from workeasy360.commercial.partners import activation
 from workeasy360.commercial.partners import branding as partner_branding
 from workeasy360.commercial.partners import domains as partner_domains
+from workeasy360.commercial.partners import experience as partner_experience
 from workeasy360.commercial.partners import profile as partner_profile
 from workeasy360.commercial.partners import selectors as partner_selectors
 from workeasy360.commercial.partners import services as partner_services
@@ -445,6 +448,8 @@ def partner_resellers_view(request: HttpRequest, ctx: TenantContext) -> JsonResp
             product=request.GET.get("product") or None,
             capability=request.GET.get("capability") or None,
             scope=request.GET.get("scope") or None,
+            label=request.GET.get("type") or None,
+            profile=request.GET.get("profile") or None,
             **query_page_args(request),
         )
     )
@@ -520,9 +525,53 @@ def partner_activity_view(
 def partner_referrals_view(
     request: HttpRequest, ctx: TenantContext, partner_id: UUID
 ) -> JsonResponse:
-    """One partner's referral codes and referrals, read-only, for staff."""
+    """One partner's referral codes and referrals, for staff."""
     return JsonResponse(
         partner_detail.referrals(ctx, partner_id, **query_page_args(request))
+    )
+
+
+@staff_view(["POST"])
+def partner_referral_code_create_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID
+) -> JsonResponse:
+    """Staff mint a referral code for a partner that holds the referral
+    capability (Complete Your Profile). The code is the partner's own."""
+    from workeasy360.commercial.commissions import referrals as referral_services
+
+    code = referral_services.create_referral_code_for_partner(
+        ctx, partner_id, label=_body(request).get("label", "")
+    )
+    return JsonResponse(
+        {
+            "id": str(code.id),
+            "code": code.code,
+            "label": code.label,
+            "status": code.status,
+            "created_at": code.created_at.isoformat(),
+        },
+        status=201,
+    )
+
+
+@staff_view(["POST"])
+def partner_guest_view_start_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID
+) -> JsonResponse:
+    """All Partners → Guest login: open this partner's portal read-only, for a
+    reason, for a limited time (``commercial.partners.guest``)."""
+    from workeasy360.commercial.partners import guest
+    from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
+
+    view = guest.start(
+        ctx,
+        partner_id,
+        reason=_body(request).get("reason", ""),
+        sign_in_id=request.session.get(SESSION_SIGN_IN_ID_KEY),
+    )
+    return JsonResponse(
+        {**view.as_json(), "portal_path": guest.portal_path(view.partner_id)},
+        status=201,
     )
 
 
@@ -862,6 +911,126 @@ def reseller_review_view(request, ctx) -> JsonResponse:
     """The Add Reseller review: validates the whole draft and computes every
     financial figure on the server. Writes nothing."""
     return JsonResponse(reseller_setup.review(ctx, _body(request)))
+
+
+# --- Add Partner with a login (ADR-047) -----------------------------------------
+
+
+def _no_store(response: JsonResponse) -> JsonResponse:
+    """Nothing about creating a login is kept by a browser or a proxy."""
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@staff_view(["POST"])
+@sensitive_variables()
+def partner_credentials_check_view(request, ctx) -> JsonResponse:
+    """Can this email and password be used? Writes nothing, echoes no password,
+    and says only whether the address already has an account."""
+    blocked = limited(request, "partner_onboard", user=request.user)
+    if blocked is not None:
+        return blocked
+    return _no_store(
+        JsonResponse(partner_onboarding.credentials_check(ctx, _body(request)))
+    )
+
+
+@staff_view(["POST"])
+@sensitive_variables()
+def partner_create_view(request, ctx) -> JsonResponse:
+    """Create the partner (a draft) and its administrator's login in one
+    transaction. The answer names the partner, the type and the administrator's
+    email - never a password."""
+    blocked = limited(request, "partner_onboard", user=request.user)
+    if blocked is not None:
+        return blocked
+    created = partner_onboarding.create(ctx, _body(request))
+    return _no_store(
+        JsonResponse(
+            {
+                "id": str(created.partner_id),
+                "code": created.code,
+                "display_name": created.display_name,
+                "status": created.status,
+                "experience": created.experience,
+                "default_experience": created.default_experience,
+                "administrator": {
+                    "email": created.administrator_email,
+                    "account_created": created.account_created,
+                },
+                "capabilities": created.capabilities,
+                "payout_currency": created.payout_currency,
+            },
+            status=201,
+        )
+    )
+
+
+@staff_view(["POST"])
+def partner_experience_view(request, ctx, partner_id: UUID) -> JsonResponse:
+    """Change a partner's experience after creation: ``grant`` (add one),
+    ``retire`` (withdraw what only that one needs), ``transition`` (move to one,
+    optionally retiring another) or ``default`` (choose the landing workspace).
+    Additive by default; no history is deleted."""
+    body = _body(request)
+    action = body.get("action")
+    reason = body.get("reason")
+    if action == "default":
+        partner = partner_experience.set_default_experience(
+            ctx, partner_id, experience=body.get("experience"), reason=reason
+        )
+        return JsonResponse({"default_experience": partner.default_experience})
+    if action == "grant":
+        result = partner_experience.grant_experience(
+            ctx,
+            partner_id,
+            experience=body.get("experience"),
+            reason=reason,
+            make_default=_flag(body, "make_default"),
+            products=body.get("products") or (),
+        )
+    elif action == "retire":
+        result = partner_experience.retire_experience(
+            ctx, partner_id, experience=body.get("experience"), reason=reason
+        )
+    elif action == "transition":
+        result = partner_experience.transition_experience(
+            ctx,
+            partner_id,
+            to=body.get("experience"),
+            retire=body.get("retire") or None,
+            products=body.get("products") or (),
+            reason=reason,
+        )
+    else:
+        raise CatalogValidationError(
+            "action must be grant, retire, transition or default.", field="action"
+        )
+    return JsonResponse(
+        {
+            "experience": result.experience,
+            "capabilities_granted": result.capabilities_granted,
+            "capabilities_revoked": result.capabilities_revoked,
+            "products_granted": result.products_granted,
+            "products_revoked": result.products_revoked,
+            "default_experience": result.default_experience,
+        }
+    )
+
+
+@staff_view(["POST"])
+def partner_member_password_reset_view(
+    request, ctx, partner_id: UUID, member_id: UUID
+) -> JsonResponse:
+    """Send a partner's person the ordinary forgotten-password link. The current
+    password is never read or shown, and none is set by this action."""
+    blocked = limited(request, "partner_password_reset", user=request.user)
+    if blocked is not None:
+        return blocked
+    sent = partner_services.send_member_password_reset(
+        ctx, partner_id, member_id=member_id
+    )
+    return JsonResponse({"sent": sent})
 
 
 @staff_view(["GET", "POST"])

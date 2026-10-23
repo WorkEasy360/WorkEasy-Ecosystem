@@ -169,25 +169,15 @@ services:
     logging: *logging
     environment:
       NODE_OPTIONS: "--max-old-space-size=192"
-      # The sign-in chooser's "Partner" opens the separate Partner Panel.
-      W360_PARTNER_PANEL_URL: ${W360_PARTNER_PANEL_URL:-}
     mem_limit: 320m
 
-  # partner.workeasy360.com is served by the separate Partner Panel (project
-  # ppanel, /opt/partner-panel) since 2026-10-20: this host's Caddyfile routes
-  # that name to `ppanel-web:80` on the shared ppanel_edge network. Paths are
-  # relative to deploy/compose/ (the first compose file's directory).
+  # The reviewed deploy/edge/Caddyfile, unchanged: partner.workeasy360.com is
+  # the WorkEasy360 partner portal again (2026-10-23), served by `web` and `api`
+  # like admin. and app. - the separate Partner Panel (project ppanel) no
+  # longer owns that name, and the edge no longer joins its network.
   edge:
     logging: *logging
     mem_limit: 160m
-    volumes:
-      - ../single-host/Caddyfile:/etc/caddy/Caddyfile:ro
-    networks: [internal, public, ppanel_edge]
-
-networks:
-  ppanel_edge:
-    external: true
-    name: ppanel_edge
 
 volumes:
   seaweed:

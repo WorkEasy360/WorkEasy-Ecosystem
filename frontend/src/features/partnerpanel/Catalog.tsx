@@ -267,7 +267,7 @@ export function Plans() {
           <>
             <Table
               caption="Plans you can sell"
-              head={["Plan", "Product", "Billing", "Your price", "List price", "Seats", "Trial", "For sale"]}
+              head={["Plan", "Product", "Billing", "Your price", "List price", "Difference from list", "Seats", "Trial", "For sale"]}
               isEmpty={d.plans.length === 0}
               empty="Nothing has been approved for your account yet."
             >
@@ -279,6 +279,7 @@ export function Plans() {
                     <td>{price ? (INTERVALS[price.interval] ?? price.interval) : "—"}</td>
                     <td className={styles.num}>{price ? (price.partner_price_minor != null ? money(price.partner_price_minor, p.currency) : price.list_price_minor != null ? `${money(price.list_price_minor, p.currency)} (list)` : "—") : "Not priced"}</td>
                     <td className={styles.num}>{price?.list_price_minor != null ? money(price.list_price_minor, p.currency) : "—"}</td>
+                    <td className={styles.num}>{price?.difference_minor != null ? money(price.difference_minor, p.currency) : "—"}</td>
                     <td className={styles.num}>{p.included_seats}</td>
                     <td>{p.trial_days ? `${p.trial_days} days` : "—"}</td>
                     <td>
@@ -289,6 +290,7 @@ export function Plans() {
               )}
             </Table>
             <NotAvailable title="Creating plans" reasons={["You cannot create a global plan. Workeasy360 creates plans and sets your prices; you see and sell the ones approved for your account."]} />
+            {d.not_implemented.partner_cost && <NotAvailable title="Margin over cost" reasons={[d.not_implemented.partner_cost]} />}
           </>
         )}
       </LoadGate>

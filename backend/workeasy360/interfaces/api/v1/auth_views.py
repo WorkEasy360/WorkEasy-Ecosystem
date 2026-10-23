@@ -262,8 +262,26 @@ def sign_out(request: HttpRequest) -> None:
             )
 
             record_staff_session(user, signed_in=False, where=connection_facts(request))
+            _end_guest_view(request, user)
         handoff.end_sign_in(user.id, request.session.get(SESSION_SIGN_IN_ID_KEY))
     django_logout(request)
+
+
+def _end_guest_view(request: HttpRequest, user: Any) -> None:
+    """Signing out ends a guest view of the sign-in, recorded like "Exit guest
+    session" (the partner's Activity shows it ended). Never blocks sign-out."""
+    from workeasy360.commercial.partners import guest
+    from workeasy360.platform.authz.control_plane import platform_context
+    from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
+    from workeasy360.platform.tenancy.resolution import session_aal
+
+    try:
+        guest.end(
+            platform_context(user_id=user.id, aal=session_aal(request.session)),
+            request.session.get(SESSION_SIGN_IN_ID_KEY),
+        )
+    except Exception:  # the sign-out itself must still happen
+        logger.warning("identity.sign_out.guest_view_end_failed", exc_info=True)
 
 
 def _handed_off_keys() -> tuple[str, ...]:
@@ -292,6 +310,28 @@ def _refused(code: str, status: int) -> JsonResponse:
     return JsonResponse({"code": code}, status=status)
 
 
+def _guest_hand_off(request: HttpRequest) -> int | None:
+    """When this sign-in's guest view ends (epoch seconds), if the staff member
+    may still hold it: a live guest view, the staff partner view grant in
+    force and a verified second factor. ``None`` otherwise."""
+    from workeasy360.commercial.partners import guest
+    from workeasy360.contracts.errors import AccessPolicyDenied, PermissionDenied
+    from workeasy360.interfaces.api.v1.control_plane_http import (
+        live_guest_view,
+        staff_context,
+    )
+    from workeasy360.platform.authz import services as authz
+
+    view = live_guest_view(request)
+    if view is None:
+        return None
+    try:
+        authz.require(staff_context(request), guest.STAFF_VIEW)
+    except (PermissionDenied, AccessPolicyDenied):
+        return None
+    return int(view.expires_at.timestamp())
+
+
 @require_http_methods(["POST"])
 def handoff_view(request: HttpRequest) -> JsonResponse:
     """Hand this sign-in to one portal (ADR-043): ``{mode, next, state}`` ->
@@ -301,8 +341,12 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
     ``mode`` is the sign-in page's navigation intent and grants nothing: the
     account must be allowed into that portal - **live** StaffGrants for the
     Super Admin portal (and a verified factor when one is enrolled), an
-    active partner membership for the Partner portal - and the portal checks
-    again on every request. ``next`` is only a path, validated against that
+    active partner membership for the Partner portal, or, for a staff member
+    without one, a live guest view of this sign-in (Guest login) with the
+    staff partner view grant and a verified factor - and the portal checks
+    again on every request. A guest-only partner session is weaker than the
+    sign-in it came from: AAL 1, no step-up time, and it ends when the guest
+    view does (``SESSION_GUEST_UNTIL_KEY``). ``next`` is only a path, validated against that
     portal's allowlist; the origin always comes from configuration.
     """
     from workeasy360.contracts.values import portals
@@ -333,8 +377,17 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
             # Verify the factor here, on the sign-in host; the portal session
             # then starts at the same level, with the same expiry.
             return _refused("mfa_required", 403)
-    elif portal == portals.PARTNER and not consoles["partner"]:
-        return _refused("portal_access_denied", 403)
+    guest_until: int | None = None
+    if portal == portals.PARTNER and not consoles["partner"]:
+        # A staff member's Guest login (commercial.partners.guest) is the
+        # other way in: a live guest view of *this* sign-in, which only a
+        # staff member with the manage grant, a recent second factor and a
+        # reason could start - and the staff view grant and the verified
+        # factor are checked again now. It opens a session and nothing else:
+        # every partner request is authorized again, read-only (guest_context).
+        guest_until = _guest_hand_off(request)
+        if guest_until is None:
+            return _refused("portal_access_denied", 403)
 
     source = session_public_id(request.session)
     if source is None:
@@ -349,6 +402,19 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
         request.session[SESSION_SIGN_IN_ID_KEY] = uuid.uuid4().hex
     origin = settings.W360_PORTAL_ORIGINS[portal]
     keys = _handed_off_keys()
+    auth_state = {k: request.session[k] for k in keys if k in request.session}
+    if guest_until is not None:
+        from workeasy360.platform.identity.sessions import SESSION_GUEST_UNTIL_KEY
+        from workeasy360.platform.tenancy.resolution import (
+            SESSION_AAL_KEY,
+            SESSION_STEP_UP_AT_KEY,
+        )
+
+        # Never elevated on the partner host: a dangerous action there (a
+        # password or factor change) asks for the second factor again.
+        auth_state.pop(SESSION_STEP_UP_AT_KEY, None)
+        auth_state[SESSION_AAL_KEY] = min(int(auth_state.get(SESSION_AAL_KEY) or 1), 1)
+        auth_state[SESSION_GUEST_UNTIL_KEY] = guest_until
     code = handoff.issue(
         user=user,
         portal=portal,
@@ -356,7 +422,7 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
         next_path=portals.safe_next(portal, body.get("next")),
         state=str(state),
         source_session=source,
-        auth_state={k: request.session[k] for k in keys if k in request.session},
+        auth_state=auth_state,
     )
     metrics.increment("identity_portal_handoffs_total", portal=portal, result="issued")
     response = JsonResponse({"redirect_url": f"{origin}/auth/continue#code={code}"})
@@ -416,14 +482,18 @@ def handoff_redeem_view(request: HttpRequest) -> JsonResponse:
     django_login(request, user, backend="django.contrib.auth.backends.ModelBackend")
     request.session[SESSION_EPOCH_KEY] = user.session_epoch
     reset_session_aal(request.session)
-    allowed = set(_handed_off_keys())
+    from workeasy360.platform.identity.sessions import SESSION_GUEST_UNTIL_KEY
+
+    allowed = {*_handed_off_keys(), SESSION_GUEST_UNTIL_KEY}
     for key, value in redemption.auth_state.items():
         if key in allowed:
             request.session[key] = value
     where = connection_facts(request)
     request.session[SESSION_IP_PREFIX_KEY] = where["ip_prefix"]
     request.session[SESSION_DEVICE_KEY] = where["device_label"]
-    if redemption.portal == portals.ADMIN and user.is_staff:
+    # The staff session trail records each console session it opens - and a
+    # partner-portal session a guest view opened.
+    if redemption.portal in (portals.ADMIN, portals.PARTNER) and user.is_staff:
         # The staff session trail records each console session it opens.
         from workeasy360.platform.administration.staff_users import record_staff_session
 

@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { SHORT_ADDRESSES } from "./src/features/partnerpanel/experiences";
 import { LEGACY_REDIRECTS } from "./src/features/partnerpanel/menu";
 
 // The Django platform API. Same-origin from the browser's point of view -
@@ -17,11 +18,20 @@ const nextConfig: NextConfig = {
   // answers with a permanent redirect to the page that now holds the feature,
   // listed once in features/partnerpanel/menu.ts. Query strings pass through.
   async redirects() {
-    return LEGACY_REDIRECTS.map(({ from, to }) => ({
-      source: `/partner/:partnerId${from}`,
-      destination: `/partner/:partnerId${to}`,
-      permanent: true,
-    }));
+    return [
+      // `:partnerId` is a UUID. A workspace address (`/partner/reseller/...`,
+      // ADR-047) is not one, so the old menu's redirects never touch a workspace's
+      // own pages.
+      ...LEGACY_REDIRECTS.map(({ from, to }) => ({
+        source: `/partner/:partnerId([0-9a-fA-F-]{36})${from}`,
+        destination: `/partner/:partnerId${to}`,
+        permanent: true,
+      })),
+      // The address a person would guess: /reseller/dashboard, /affiliate/leads.
+      // A plain (temporary) redirect to a page that checks the session and the
+      // account's grants like any other; the short address opens nothing itself.
+      ...SHORT_ADDRESSES.map(({ from, to }) => ({ source: from, destination: to, permanent: false })),
+    ];
   },
   async rewrites() {
     return [

@@ -74,6 +74,119 @@ export interface Dashboard {
   not_implemented: NotImplemented;
 }
 
+// --- the workspaces (ADR-047) ------------------------------------------------------
+
+/** One tracking link: a referral code, with the campaign it is filed under (its
+ * label - tracking metadata only), its address and how it did in the period. */
+export interface AffiliateLink {
+  id: string;
+  code: string;
+  label: string;
+  status: string;
+  created_at: string;
+  campaign: string;
+  /** The address to share; null once the link has been switched off. */
+  url: string | null;
+  clicks: number;
+  conversions: number;
+}
+
+export interface AffiliateCampaign {
+  campaign: string;
+  links: number;
+  clicks: number;
+  conversions: number;
+  /** Whole basis points, rounded half up; null when the campaign had no clicks. */
+  conversion_rate_bp: number | null;
+}
+
+export interface FunnelDay {
+  date: string;
+  clicks: number;
+  conversions: number;
+}
+
+export interface AffiliateConversionRow {
+  id: string;
+  code: string;
+  code_label: string;
+  captured_at: string;
+  converted_at: string | null;
+  /** Null for a role that may see referrals but not commission. */
+  commission_minor: number | null;
+  currency: string;
+}
+
+export interface AffiliateOverview {
+  partner: { id: string; name: string; currency: string; status: string };
+  range: { key: RangeKey; from: string; to: string };
+  kpis: {
+    clicks: number;
+    /** Not recorded as a step of its own (see `not_implemented.affiliate_signups`). */
+    signups: null;
+    conversions: number;
+    /** Whole basis points, rounded half up; null when there were no clicks. */
+    conversion_rate_bp: number | null;
+  };
+  primary_link: AffiliateLink | null;
+  links: AffiliateLink[];
+  campaigns: AffiliateCampaign[];
+  campaign_presets: string[];
+  series: FunnelDay[];
+  money: {
+    earned: CurrencyAmount[];
+    pending: CurrencyAmount[];
+    available: CurrencyAmount[];
+    paid: CurrencyAmount[];
+    balances: MoneyBalance[];
+  } | null;
+  recent: {
+    conversions: AffiliateConversionRow[];
+    payouts: { id: string; status: string; payable_minor: number; currency: string; created_at: string }[] | null;
+  };
+  not_implemented: NotImplemented;
+}
+
+export interface ProductPerformance {
+  product_code: string;
+  product_name: string;
+  customers_holding: number;
+  active_subscriptions: number;
+}
+
+export interface PartnerReports {
+  partner: { id: string; name: string; currency: string; status: string };
+  range: { key: RangeKey; from: string; to: string };
+  customers: {
+    total: number;
+    active: number;
+    suspended: number;
+    ended: number;
+    active_subscriptions: number;
+  } | null;
+  products: ProductPerformance[] | null;
+  sales: {
+    transactions: number;
+    gross: CurrencyAmount[];
+    commission_earned: CurrencyAmount[];
+    charts: Dashboard["charts"];
+    source: string;
+  } | null;
+  referrals: {
+    clicks: number;
+    conversions: number;
+    conversion_rate_bp: number | null;
+    by_campaign: { campaign: string; clicks: number; conversions: number; conversion_rate_bp: number | null }[];
+    series: FunnelDay[];
+  } | null;
+  not_implemented: NotImplemented;
+}
+
+export interface WhiteLabelStatus {
+  brand: { state: "not_started" | "in_progress" | "complete"; name: string; logo: boolean } | null;
+  domain: { state: string; hostname: string } | null;
+}
+
 export interface Balance {
   balances: MoneyBalance[];
   entries: { id: string; kind: string; amount_minor: number; currency: string; event_at: string; clears_at: string }[];
@@ -137,6 +250,8 @@ export interface PlanRow {
     interval: string;
     partner_price_minor: number | null;
     list_price_minor: number | null;
+    /** List minus the partner's price, in minor units (the server's subtraction). */
+    difference_minor: number | null;
     source: "partner_price_book" | "list";
   }[];
 }
@@ -443,6 +558,22 @@ export const panelApi = {
   dashboard: (id: string, range: RangeKey, from?: string, to?: string) =>
     apiFetch<Dashboard>(`${partner(id)}/dashboard`, { query: { range, from, to } }),
   balance: (id: string) => apiFetch<Balance>(`${partner(id)}/balance`),
+  affiliateOverview: (id: string, range: RangeKey, from?: string, to?: string) =>
+    apiFetch<AffiliateOverview>(`${partner(id)}/affiliate/overview`, { query: { range, from, to } }),
+  reports: (id: string, range: RangeKey, from?: string, to?: string) =>
+    apiFetch<PartnerReports>(`${partner(id)}/reports`, { query: { range, from, to } }),
+  whiteLabelStatus: (id: string) => apiFetch<WhiteLabelStatus>(`${partner(id)}/white-label/status`),
+  /** A new tracking link: a referral code filed under a campaign name. */
+  createTrackingLink: (id: string, campaign: string) =>
+    apiFetch<{ id: string; code: string; label: string }>(`${partner(id)}/referrals`, {
+      method: "POST",
+      body: json({ label: campaign }),
+    }),
+  disableTrackingLink: (id: string, codeId: string) =>
+    apiFetch<{ id: string; status: string }>(`${partner(id)}/referral-codes/${encodeURIComponent(codeId)}/disable`, {
+      method: "POST",
+      body: json({}),
+    }),
   features: (id: string) => apiFetch<Features>(`${partner(id)}/features`),
   orders: (id: string, cursor?: string) => apiFetch<Page<OrderRow>>(`${partner(id)}/orders`, { query: { cursor } }),
   activity: (id: string, cursor?: string) => apiFetch<Page<ActivityRow>>(`${partner(id)}/activity`, { query: { cursor } }),

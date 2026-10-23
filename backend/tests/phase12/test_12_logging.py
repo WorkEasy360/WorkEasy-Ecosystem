@@ -42,6 +42,42 @@ def json_logs(settings):
     root.setLevel(level)
 
 
+@pytest.fixture
+def console_logs(settings):
+    """What the development handler would write, as one string."""
+    settings.LOG_FORMAT = "console"
+    settings.LOG_LEVEL = "INFO"
+    root = logging.getLogger()
+    saved = list(root.handlers), root.level
+    configure_logging()
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(root.handlers[0].formatter)
+    root.addHandler(handler)
+    yield stream.getvalue
+    root.handlers, level = saved
+    root.setLevel(level)
+
+
+def test_the_console_format_prints_where_an_error_was_never_what_was_in_it(console_logs):
+    """The development format used to hand exceptions to Rich, which prints every
+    frame's local variables - a password argument included. It prints a plain
+    traceback now, as production does."""
+    typed = "Violet Harbor Lantern 2049"
+
+    def check_password(password):
+        copy = password.upper()
+        raise ValueError(f"refused {len(copy)}")
+
+    try:
+        check_password(typed)
+    except ValueError:
+        get_logger("workeasy360.test").exception("password.check.failed")
+    output = console_logs()
+    assert "password.check.failed" in output and "ValueError" in output
+    assert typed not in output and typed.upper() not in output
+
+
 def test_a_stdlib_record_is_json_with_its_extra_fields_and_redacted(json_logs):
     logging.getLogger("workeasy360.platform.tenancy.unscoped").warning(
         "tenancy.unscoped_access.opened",

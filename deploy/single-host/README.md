@@ -46,6 +46,10 @@ Take WorkEasy360 off the host, data kept: `sudo /opt/workeasy360/bin/w360 down` 
 
 Restore test: `cd /opt/workeasy360/current && W360_BACKEND_IMAGE=workeasy360-backend:<tag> W360_ENV_FILE=/opt/workeasy360/env/production.env deploy/scripts/restore_verify.sh /opt/workeasy360/backups/<stamp> </dev/null`
 
+## partner.workeasy360.com
+
+Since 2026-10-23 the edge uses the reviewed `deploy/edge/Caddyfile` unchanged, so `partner.workeasy360.com` is the WorkEasy360 partner portal (central sign-in on `auth.`, the Reseller / White-label / Affiliate workspaces). From 2026-10-20 to 2026-10-23 this overlay routed it to the separate Partner Panel (`/opt/partner-panel`, compose project `ppanel`). That panel is stopped, not removed: its database volume, its nightly dump in `/opt/partner-panel/backups/` and its images remain. To bring it back temporarily, the previous release (`2026.10.19-5f01823-web1-pp`) still has the overlay and Caddyfile that route to it - see `docs/partner-portal-unification/status.md` (rollback).
+
 ## Known limits of this host size
 
 - 1 GiB RAM: ~560 MiB of idle pages live in swap; one gunicorn worker (4 threads), one Celery worker (2 slots, all queues, Beat embedded), one password hash at a time.

@@ -76,6 +76,18 @@ class PartnerAccount(models.Model):
         choices=_choices(PartnerStatus),
         default=PartnerStatus.DRAFT.value,
     )
+    #: Which workspace this partner's portal opens first - ``reseller``,
+    #: ``white_label`` or ``affiliate`` (``capabilities.EXPERIENCES``), or empty
+    #: for "whichever its grants earn first". **A presentation preference and
+    #: nothing else** (ADR-047): the Add Partner type card sets it, and no
+    #: permission, price, commission or entitlement ever reads it - what a
+    #: partner may do comes from its capability grants alone, so setting this to
+    #: an experience the grants do not earn opens nothing (``capabilities.
+    #: resolve_landing`` intersects it with what the grants allow). It is not a
+    #: partner type: it can change at any time and removes no history.
+    default_experience = models.CharField(
+        max_length=16, blank=True, default="", db_default=""
+    )
     #: Optimistic concurrency token. Two staff members editing one partner
     #: must not silently overwrite each other.
     version = models.IntegerField(default=0)
@@ -96,6 +108,16 @@ class PartnerAccount(models.Model):
             models.Index(fields=["status", "created_at"], name="ix_partner_status"),
             # The staff partner list pages newest-first with a keyset cursor.
             models.Index(fields=["-created_at", "-id"], name="ix_partner_created_id"),
+        ]
+        constraints = [
+            # A closed set, held by the database as well as the service: the
+            # preference is never free text.
+            models.CheckConstraint(
+                condition=models.Q(
+                    default_experience__in=["", "reseller", "white_label", "affiliate"]
+                ),
+                name="ck_partner_default_experience_known",
+            ),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - display only

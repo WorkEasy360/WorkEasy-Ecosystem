@@ -5,9 +5,10 @@ import { PartnerDetailScreen } from "./AdminPartners";
 import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call, type Reply } from "./testSupport";
 
 /**
- * The partner detail page, "complete setup": the Business Details and Contacts
- * tabs, the Overview's setup progress and activation guidance, the per-product
- * trial and portal choices, the people table and the Activity columns. What the
+ * The partner detail page, "complete setup" (simplified by ADR-048): the Profile
+ * tab (business details and contacts together), the Overview's profile
+ * completion and the header's activation guidance, the per-product trial and
+ * portal choices, the people table and the Activity columns. What the
  * backend cannot enforce for the browser: each tab sends only its own parts, a
  * save carries the version it was read at, a problem lands on the field it
  * names, guidance never replaces the server's decision, and nothing is drawn
@@ -66,9 +67,33 @@ const DETAIL = {
   ],
 };
 
+/** The profile completion the server computed: an active partner still waiting
+ * for its domain. */
+const COMPLETION = {
+  percent: 86,
+  complete: false,
+  required: 7,
+  done: 6,
+  sections: [
+    { key: "business", label: "Business details", state: "complete", required: true, detail: "" },
+    { key: "capabilities", label: "Capabilities", state: "complete", required: true, detail: "" },
+    { key: "products", label: "Products", state: "complete", required: true, detail: "" },
+    { key: "pricing", label: "Pricing", state: "optional", required: false, detail: "Customers pay the list price." },
+    { key: "commission", label: "Commission", state: "complete", required: true, detail: "programme default" },
+    { key: "administrator", label: "Administrator", state: "complete", required: true, detail: "" },
+    { key: "brand", label: "Brand", state: "complete", required: true, detail: "" },
+    { key: "domain", label: "Domain", state: "pending", required: true, detail: "requested" },
+  ],
+  missing: [{ key: "domain", label: "Domain", detail: "requested" }],
+  setup_status: "active",
+};
+
 const SUMMARY = {
   partner: { ...DETAIL },
-  experience: [{ key: "reseller", label: "Reseller" }],
+  experience: [
+    { key: "reseller", label: "Reseller" },
+    { key: "white_label", label: "White-label" },
+  ],
   capabilities: [{ key: "customer.provision", label: "Create customer organizations", group: "customer_management", granted_at: "2026-01-02T00:00:00Z", expires_at: null }],
   customers: { live: 2, active: 2, suspended: 0, ended: 1, owner_activation_pending: 1 },
   products: [
@@ -81,38 +106,54 @@ const SUMMARY = {
   payouts: { open: 1, by_status: { draft: 1 }, latest: null },
   white_label: { enabled: true, brand_configured: false, domain_status: "requested", domains: { active: 0, verified: 0, awaiting: 1 } },
   referrals: { codes: [], active_codes: 0, captured: 0, converted: 0 },
-  setup_progress: [
-    { key: "profile", label: "Business profile", state: "complete", detail: "" },
-    { key: "capabilities", label: "Capabilities", state: "complete", detail: "" },
-    { key: "products", label: "Products", state: "complete", detail: "" },
-    { key: "pricing", label: "Pricing", state: "incomplete", detail: "Customers pay the list price." },
-    { key: "commission", label: "Commission", state: "complete", detail: "programme default" },
-    { key: "administrator", label: "Admin user", state: "pending", detail: "Waiting for them to choose a password." },
-    { key: "branding", label: "White-label", state: "optional", detail: "" },
-    { key: "domain", label: "Domain", state: "pending", detail: "requested" },
-  ],
-  activation: { can_activate: true, missing: [] },
+  setup_progress: [],
+  profile_completion: COMPLETION,
+  activation: { can_activate: false, missing: COMPLETION.missing },
 };
 
+/** A draft whose profile lacks its business email and an administrator. */
+const DRAFT_MISSING = [
+  { key: "business", label: "Business details", detail: "Add the company's business email." },
+  { key: "capabilities", label: "Capabilities", detail: "Grant at least one capability." },
+  { key: "administrator", label: "Partner administrator", detail: "Name the person who will run the account." },
+];
 const DRAFT_INCOMPLETE = {
   ...SUMMARY,
-  setup_progress: [
-    { key: "profile", label: "Business profile", state: "incomplete", detail: "Add a business email." },
-    { key: "capabilities", label: "Capabilities", state: "complete", detail: "" },
-    { key: "products", label: "Products", state: "complete", detail: "" },
-    { key: "pricing", label: "Pricing", state: "incomplete", detail: "Customers pay the list price." },
-    { key: "commission", label: "Commission", state: "incomplete", detail: "No rule applies: it would earn nothing." },
-    { key: "administrator", label: "Admin user", state: "incomplete", detail: "Nobody can act for this partner yet." },
-    { key: "branding", label: "White-label", state: "optional", detail: "" },
-    { key: "domain", label: "Domain", state: "optional", detail: "" },
-  ],
-  activation: {
-    can_activate: false,
-    missing: [
-      { key: "business_email", label: "Business email", detail: "Add the company's business email." },
-      { key: "administrator", label: "Partner administrator", detail: "Name the person who will run the account." },
+  partner: { ...SUMMARY.partner, status: "draft" },
+  profile_completion: {
+    percent: 43,
+    complete: false,
+    required: 7,
+    done: 3,
+    sections: [
+      { key: "business", label: "Business details", state: "incomplete", required: true, detail: "Add the company's business email." },
+      { key: "capabilities", label: "Capabilities", state: "incomplete", required: true, detail: "Grant at least one capability." },
+      { key: "products", label: "Products", state: "complete", required: true, detail: "" },
+      { key: "pricing", label: "Pricing", state: "optional", required: false, detail: "Customers pay the list price." },
+      { key: "commission", label: "Commission", state: "complete", required: true, detail: "" },
+      { key: "administrator", label: "Partner administrator", state: "incomplete", required: true, detail: "Name the person who will run the account." },
+      { key: "brand", label: "Brand", state: "complete", required: true, detail: "" },
     ],
+    missing: DRAFT_MISSING,
+    setup_status: "setup_required",
   },
+  activation: { can_activate: false, missing: DRAFT_MISSING },
+};
+
+/** A draft whose profile is complete: ready for staff to activate. */
+const DRAFT_READY = {
+  ...SUMMARY,
+  partner: { ...SUMMARY.partner, status: "draft" },
+  profile_completion: {
+    ...COMPLETION,
+    percent: 100,
+    complete: true,
+    done: 7,
+    sections: COMPLETION.sections.map((x) => (x.required ? { ...x, state: "complete", detail: "" } : x)),
+    missing: [],
+    setup_status: "ready",
+  },
+  activation: { can_activate: true, missing: [] },
 };
 
 const PROFILE = {
@@ -128,6 +169,7 @@ const PROFILE = {
     registration_number: "12345678",
     tax_number: "GB123456789",
     country: "GB",
+    timezone: "Europe/London",
     address: { line1: "1 High Street", line2: "", city: "London", region: "", postal_code: "N1 1AA" },
   },
   contacts: {
@@ -199,22 +241,21 @@ beforeEach(() => {
 // --- the tabs ---------------------------------------------------------------------------------
 
 describe("the tabs", () => {
-  it("lists Business Details and Contacts after Overview, and keeps the relevance rules", async () => {
+  it("lists Profile after Overview, and keeps the relevance rules", async () => {
     mockApi(routes());
     mount();
     await screen.findByRole("heading", { level: 1, name: "Acme Partners" });
     const tabs = within(screen.getByRole("tablist", { name: "Partner sections" })).getAllByRole("tab");
     expect(tabs.map((t) => t.textContent)).toEqual([
       "Overview",
-      "Business Details",
-      "Contacts",
+      "Profile",
+      "Products",
+      "Pricing",
+      "Commission",
       "Customers",
-      "Products & Pricing",
-      "Subscriptions",
-      "Commissions",
-      "Payouts",
       "Branding",
       "Domains",
+      "Payouts",
       "Users & Permissions",
       "Activity",
     ]);
@@ -229,40 +270,52 @@ describe("the tabs", () => {
     );
     mount();
     await screen.findByRole("heading", { level: 1, name: "Acme Partners" });
+    await waitFor(() => expect(screen.getAllByRole("tab").map((t) => t.textContent)).toContain("Referrals"));
     const labels = screen.getAllByRole("tab").map((t) => t.textContent);
-    expect(labels).toContain("Business Details");
-    expect(labels).toContain("Contacts");
-    expect(labels).toContain("Referrals");
+    expect(labels).toContain("Profile");
     expect(labels).not.toContain("Branding");
     expect(labels).not.toContain("Domains");
   });
 
-  it("opens on a deep link to either new tab, and a view-only staff member still sees both", async () => {
+  it("opens Profile - business details and contacts together - from either old deep link, and a view-only staff member still sees it", async () => {
     mockApi(routes());
     const { unmount } = mount("business", VIEW_ONLY);
-    expect(await screen.findByRole("tab", { name: "Business Details" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("tab", { name: "Profile" })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByText("hello@acme.example")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Billing contact" })).toBeInTheDocument();
     unmount();
     mockApi(routes());
     mount("contacts", VIEW_ONLY);
-    expect(await screen.findByRole("tab", { name: "Contacts" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).not.toContain("Commissions");
+    expect(await screen.findByRole("tab", { name: "Profile" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("hello@acme.example")).toBeInTheDocument();
+    const labels = screen.getAllByRole("tab").map((t) => t.textContent);
+    expect(labels).not.toContain("Payouts");
+    expect(labels).not.toContain("Activity");
   });
 
-  it("moves between the new tabs with the arrow keys", async () => {
+  it("shows the business details before the contacts on the Profile tab", async () => {
+    mockApi(routes());
+    mount("profile");
+    const business = await screen.findByRole("form", { name: "Business details" });
+    const contacts = await screen.findByRole("form", { name: "Contacts" });
+    expect(business.compareDocumentPosition(contacts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("moves between the tabs with the arrow keys", async () => {
     mockApi(routes());
     mount();
     const overview = await screen.findByRole("tab", { name: "Overview" });
     fireEvent.keyDown(overview, { key: "ArrowRight" });
-    expect(screen.getByRole("tab", { name: "Business Details" })).toHaveAttribute("aria-selected", "true");
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Business Details" }), { key: "ArrowRight" });
-    expect(screen.getByRole("tab", { name: "Contacts" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Profile" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Profile" }), { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "Products" })).toHaveAttribute("aria-selected", "true");
   });
 });
 
 // --- Business Details -------------------------------------------------------------------------
 
 describe("Business Details", () => {
+  // A large form plus an axe pass: slow in jsdom when the whole suite runs in parallel.
   it("shows what is saved, marks business email and country as required, and shows the currency as a fact", async () => {
     mockApi(routes());
     const { container } = mount("business");
@@ -275,6 +328,8 @@ describe("Business Details", () => {
     expect(screen.getByLabelText("Support email")).toHaveValue("help@acme.example");
     expect(screen.getByLabelText(/^Internal notes/)).toHaveValue("Prefers email.");
     expect(screen.getByLabelText(/^Payout frequency/)).toHaveValue("monthly");
+    expect(screen.getByLabelText("Time zone (optional)")).toHaveValue("Europe/London");
+    expect(screen.getByLabelText("Time zone (optional)")).not.toBeRequired();
 
     for (const required of [/^Business email/, /^Country/]) {
       const input = screen.getByLabelText(required);
@@ -284,13 +339,13 @@ describe("Business Details", () => {
     for (const optional of [/^Website/, /^Business phone/, /^Legal business name/, /^Alternative email/, "Support email"]) {
       expect(screen.getByLabelText(optional)).not.toBeRequired();
     }
-    // The currency is a fact, not a field.
-    expect(screen.getByText("GBP")).toBeInTheDocument();
+    // Once the partner is active the currency is a fact, not a field.
+    expect(screen.getByText("GBP").closest("p")).toHaveTextContent(/^Paid in GBP\./);
     expect(screen.queryByLabelText(/currency/i)).not.toBeInTheDocument();
     // The promise about what editing does not touch.
     expect(screen.getByText(/never rewrites sales, subscriptions, commissions or payouts/)).toBeInTheDocument();
     await expectNoViolations(container);
-  });
+  }, 60_000);
 
   it("sends only the business, support, payout and notes parts, at the version it read, and shows the saved values", async () => {
     const saved = { ...PROFILE, version: 4, business: { ...PROFILE.business, website: "https://www.acme.example" } };
@@ -304,7 +359,7 @@ describe("Business Details", () => {
     expect(screen.queryByRole("button", { name: "Save business details" })).not.toBeInTheDocument();
     await screen.findByLabelText(/^Website/);
     expect(screen.getByRole("button", { name: "Save business details" })).toBeDisabled();
-    expect(screen.getByText("No changes to save.")).toBeInTheDocument();
+    expect(within(screen.getByRole("form", { name: "Business details" })).getByText("No changes to save.")).toBeInTheDocument();
 
     change(/^Website/, "  https://www.acme.example ");
     fireEvent.click(screen.getByRole("button", { name: "Save business details" }));
@@ -320,9 +375,12 @@ describe("Business Details", () => {
     expect(body.business?.website).toBe("https://www.acme.example");
     expect(body.business?.country).toBe("GB");
     expect(body.business?.address).toEqual({ line1: "1 High Street", line2: "", city: "London", region: "", postal_code: "N1 1AA" });
+    expect(body.business?.timezone).toBe("Europe/London");
+    // The currency sent is the one already stored - an active partner's is not
+    // offered for editing - and the server treats the same value as no change.
     expect(body.payout).toEqual({ frequency: "monthly", contact_email: "finance@acme.example" });
-    // Neither the code, the currency nor anything commercial is in the request.
-    expect(JSON.stringify(body)).not.toMatch(/currency|"code"|capabilit|price|commission/);
+    // Neither the code nor anything commercial is in the request.
+    expect(JSON.stringify(body)).not.toMatch(/"code"|capabilit|price|commission/);
     // The tab re-read the profile and shows the new value.
     await waitFor(() => expect(screen.getByLabelText(/^Website/)).toHaveValue("https://www.acme.example"));
     // The page re-read the partner too, so the next status change uses the new version.
@@ -343,6 +401,36 @@ describe("Business Details", () => {
     expect(body.business?.website).toBe("");
     expect(body.internal_notes).toBe("Call first.");
     expect(body.payout).toEqual({ frequency: "quarterly", contact_email: "" });
+  });
+
+  it("sends a chosen time zone", async () => {
+    const calls = mockApi(routes({ [`PUT ${BASE}/profile`]: [ok(PROFILE)] }));
+    mount("business");
+    await screen.findByLabelText(/^Website/);
+    const zone = screen.getByLabelText("Time zone (optional)");
+    expect(within(zone).getByRole("option", { name: "Not set" })).toHaveValue("");
+    change("Time zone (optional)", "Asia/Kolkata");
+    fireEvent.click(screen.getByRole("button", { name: "Save business details" }));
+    await screen.findByText("Business details saved.");
+    expect((putCalls(calls)[0].body as ProfileBody).business?.timezone).toBe("Asia/Kolkata");
+  });
+
+  it("offers the preferred currency while the partner is a draft, and sends the one chosen", async () => {
+    const calls = mockApi(
+      routes({
+        [`GET ${BASE}`]: [ok({ ...DETAIL, status: "draft" })],
+        [`GET ${BASE}/summary`]: [ok(DRAFT_READY)],
+        [`PUT ${BASE}/profile`]: [ok(PROFILE)],
+      }),
+    );
+    mount("business");
+    const currency = await screen.findByLabelText("Preferred currency");
+    expect(currency).toHaveValue("GBP");
+    expect(screen.queryByText(/^Paid in/)).not.toBeInTheDocument();
+    change("Preferred currency", "EUR");
+    fireEvent.click(screen.getByRole("button", { name: "Save business details" }));
+    await screen.findByText("Business details saved.");
+    expect((putCalls(calls)[0].body as ProfileBody).payout).toEqual({ frequency: "monthly", contact_email: "finance@acme.example", currency: "EUR" });
   });
 
   it("will not send a form with the required details missing, and says which", async () => {
@@ -403,7 +491,8 @@ describe("Business Details", () => {
     const newer = { ...PROFILE, version: 4, business: { ...PROFILE.business, phone: "+44 20 7946 9999" } };
     const calls = mockApi(
       routes({
-        [`GET ${BASE}/profile`]: [ok(PROFILE), ok(newer)],
+        // The Profile tab's two editors each read the profile; both re-read it on Reload.
+        [`GET ${BASE}/profile`]: [ok(PROFILE), ok(PROFILE), ok(newer)],
         [`PUT ${BASE}/profile`]: [{ status: 409, body: { code: "concurrent_modification", detail: "Partner was at version 4, not 3. Re-read it and retry." } }],
       }),
     );
@@ -423,7 +512,7 @@ describe("Business Details", () => {
     // The unsaved edit was replaced by what is saved, and the Reload button is gone.
     expect(screen.getByLabelText(/^Website/)).toHaveValue("https://acme.example");
     expect(screen.queryByRole("button", { name: "Reload" })).not.toBeInTheDocument();
-    expect(calls.filter((c) => c.key === `GET ${BASE}/profile`)).toHaveLength(2);
+    expect(calls.filter((c) => c.key === `GET ${BASE}/profile`)).toHaveLength(4);
   });
 
   it("resumes the same save after a second-factor prompt", async () => {
@@ -456,7 +545,8 @@ describe("Business Details", () => {
     expect(screen.getByText("1 High Street, London, N1 1AA")).toBeInTheDocument();
     expect(screen.getByText("Prefers email.")).toBeInTheDocument();
     expect(screen.getByText("Monthly")).toBeInTheDocument();
-    expect(screen.getByText(/needs the platform\.staff_partner\.manage permission/)).toBeInTheDocument();
+    // Business details and contacts each say why they cannot be changed.
+    expect(screen.getAllByText(/needs the platform\.staff_partner\.manage permission/)).toHaveLength(2);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Save/ })).not.toBeInTheDocument();
@@ -621,6 +711,22 @@ describe("Contacts", () => {
 // --- Overview ------------------------------------------------------------------------------------
 
 describe("Overview", () => {
+  /** The Overview's completion list (the header's banner has no list). */
+  async function completionList() {
+    return (await screen.findByRole("heading", { name: "Profile completion" })).closest("section")!;
+  }
+  function rowOf(section: HTMLElement, label: string) {
+    const row = within(section)
+      .getAllByRole("listitem")
+      .find((li) => li.querySelector("strong")?.firstChild?.textContent === label);
+    if (!row) throw new Error(`no completion row ${label}`);
+    return row;
+  }
+  /** The header's completion banner. */
+  async function banner(title: "Profile incomplete" | "Profile complete") {
+    return (await screen.findByText(title)).closest("section")!;
+  }
+
   it("shows the derived figures as cards", async () => {
     mockApi(routes());
     const { container } = mount();
@@ -636,93 +742,103 @@ describe("Overview", () => {
     await expectNoViolations(container);
   });
 
-  it("lists the setup progress in the server's words, each unfinished step leading to the tab that fixes it", async () => {
+  it("lists the profile completion in the server's words, each unfinished section leading to where it is filled in", async () => {
     mockApi(routes({ [`GET ${BASE}/summary`]: [ok(DRAFT_INCOMPLETE)], [`GET ${BASE}`]: [ok({ ...DETAIL, status: "draft" })] }));
     mount();
-    const progress = await screen.findByRole("region", { name: "Setup progress" });
-    const row = (label: string) => within(progress).getByText(label).closest("li")!;
-    expect(row("Business profile")).toHaveTextContent("Needs attention");
-    expect(row("Business profile")).toHaveTextContent("Add a business email.");
-    expect(row("Admin user")).toHaveTextContent("Nobody can act for this partner yet.");
-    expect(row("Capabilities")).toHaveTextContent("Complete");
-    expect(within(row("Capabilities")).queryByRole("button")).not.toBeInTheDocument();
-    // Optional steps are not nagging.
-    expect(within(row("White-label")).queryByRole("button")).not.toBeInTheDocument();
-    expect(row("White-label")).toHaveTextContent("Optional");
+    const section = await completionList();
+    expect(section).toHaveTextContent("43% complete");
+    expect(section).toHaveTextContent("3 of 7 required sections");
 
-    const target = (label: string) => within(row(label)).getByRole("button").textContent;
-    expect(target("Business profile")).toMatch(/^Open Business Details/);
-    expect(target("Admin user")).toMatch(/^Open Users & Permissions/);
-    expect(target("Pricing")).toMatch(/^Open Products & Pricing/);
-    expect(target("Commission")).toMatch(/^Open Products & Pricing/);
+    const business = rowOf(section, "Business details");
+    expect(business).toHaveTextContent("Incomplete");
+    expect(business).toHaveTextContent("Add the company's business email.");
+    // jsdom drops the space before a visually hidden suffix, so the name is matched loosely.
+    expect(within(business).getByRole("link", { name: /^Complete ?Business details$/ })).toHaveAttribute("href", `/admin/partners/${ID}/profile?step=business`);
 
-    fireEvent.click(within(row("Business profile")).getByRole("button"));
-    expect(screen.getByRole("tab", { name: "Business Details" })).toHaveAttribute("aria-selected", "true");
+    const products = rowOf(section, "Products");
+    expect(products).toHaveTextContent("Complete");
+    expect(within(products).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(products).queryByRole("button")).not.toBeInTheDocument();
+
+    // Optional sections are listed, marked, and never counted.
+    const pricing = rowOf(section, "Pricing");
+    expect(pricing).toHaveTextContent("Not required");
+    expect(pricing).toHaveTextContent("(optional)");
+
+    // Capabilities and the administrator are dealt with on Users & Permissions.
+    const admin = rowOf(section, "Partner administrator");
+    expect(within(admin).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(admin).getByRole("button").textContent).toMatch(/^Open Users & Permissions/);
+    fireEvent.click(within(rowOf(section, "Capabilities")).getByRole("button"));
+    expect(screen.getByRole("tab", { name: "Users & Permissions" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("leads a waiting domain to Domains, and links no tab that is not on the page", async () => {
-    const waiting = { ...SUMMARY };
-    mockApi(routes({ [`GET ${BASE}/summary`]: [ok(waiting)] }));
+  it("leads a waiting domain to the domain step, and links no tab that is not on the page", async () => {
+    mockApi(routes());
     const first = mount();
-    const progress = await screen.findByRole("region", { name: "Setup progress" });
-    const domain = within(progress).getByText("Domain").closest("li")!;
-    fireEvent.click(within(domain).getByRole("button"));
-    expect(screen.getByRole("tab", { name: "Domains" })).toHaveAttribute("aria-selected", "true");
+    const section = await completionList();
+    const domain = rowOf(section, "Domain");
+    expect(domain).toHaveTextContent("Waiting");
+    expect(within(domain).getByRole("link", { name: /^Complete ?Domain$/ })).toHaveAttribute("href", `/admin/partners/${ID}/profile?step=domain`);
+    fireEvent.click(screen.getByRole("button", { name: "Open payouts" }));
+    expect(screen.getByRole("tab", { name: "Payouts" })).toHaveAttribute("aria-selected", "true");
     first.unmount();
 
-    // A partner that is not white-label has no Domains tab, so no link to it.
-    mockApi(
-      routes({
-        [`GET ${BASE}`]: [ok({ ...DETAIL, experience: [{ key: "reseller", label: "Reseller" }] })],
-        [`GET ${BASE}/summary`]: [ok(waiting)],
-      }),
-    );
-    mount();
-    const again = await screen.findByRole("region", { name: "Setup progress" });
-    expect(within(within(again).getByText("Domain").closest("li")!).queryByRole("button")).not.toBeInTheDocument();
+    // Staff who may not read commission have no Payouts tab, so no button to it -
+    // and no profile step to complete.
+    mockApi(routes());
+    mount("overview", VIEW_ONLY);
+    const again = await completionList();
+    expect(within(rowOf(again, "Domain")).queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open payouts" })).not.toBeInTheDocument();
   });
 
   it("tells a draft partner what stands in the way of activation, and disables Activate with the reason", async () => {
     const calls = mockApi(routes({ [`GET ${BASE}/summary`]: [ok(DRAFT_INCOMPLETE)], [`GET ${BASE}`]: [ok({ ...DETAIL, status: "draft" })] }));
     const { container } = mount();
-    const notice = await screen.findByRole("region", { name: "Setup incomplete" });
-    expect(within(notice).getByText("Business email")).toBeInTheDocument();
-    expect(within(notice).getByText("Add the company's business email.")).toBeInTheDocument();
-    expect(within(notice).getByText("Partner administrator")).toBeInTheDocument();
-    expect(within(notice).getByText("Name the person who will run the account.")).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Ready to activate" })).not.toBeInTheDocument();
+    const notice = await banner("Profile incomplete");
+    expect(notice).toHaveTextContent("43%");
+    expect(within(notice).getByText(/Still needed: Business details, Capabilities, Partner administrator\./)).toBeInTheDocument();
+    expect(notice).toHaveTextContent(/stays a draft - it can do nothing - until its profile is complete and it is activated/);
+    expect(screen.queryByText("Profile complete")).not.toBeInTheDocument();
+    expect(screen.getByText("Setup required")).toBeInTheDocument();
 
-    const activate = screen.getByRole("button", { name: "Activate" });
-    expect(activate).toBeDisabled();
-    // The reason is on the page and tied to the button - a disabled button cannot be focused.
-    expect(activate).toHaveAccessibleDescription(/Still missing: Business email, Partner administrator\./);
+    const activate = await screen.findByRole("button", { name: "Activate" });
+    await waitFor(() => expect(activate).toBeDisabled());
+    // The reason is on the page beside the button - a disabled button cannot be focused.
+    expect(screen.getByText(/^The profile is incomplete, so this partner cannot be activated yet. Still needed:/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Activate" })).toHaveAccessibleDescription(/cannot be activated yet/);
     expect(writes(calls)).toEqual([]);
 
-    // Each missing item leads to where it is supplied.
-    fireEvent.click(within(notice).getByRole("button", { name: /Open Business Details/ }));
-    expect(screen.getByRole("tab", { name: "Business Details" })).toHaveAttribute("aria-selected", "true");
+    // Everything missing is supplied through Complete Your Profile.
+    expect(within(notice).getByRole("link", { name: "Complete Your Profile" })).toHaveAttribute("href", `/admin/partners/${ID}/profile`);
     await expectNoViolations(container);
   });
 
-  it("leads a missing primary contact to Contacts", async () => {
-    const missing = { ...DRAFT_INCOMPLETE, activation: { can_activate: false, missing: [{ key: "primary_contact", label: "Primary contact", detail: "Add the primary contact's name and email." }] } };
-    mockApi(routes({ [`GET ${BASE}/summary`]: [ok(missing)], [`GET ${BASE}`]: [ok({ ...DETAIL, status: "draft" })] }));
+  it("names a missing primary contact among what is still needed", async () => {
+    const missing = [{ key: "primary_contact", label: "Primary contact", detail: "Add the primary contact's name and email." }];
+    const summary = { ...DRAFT_INCOMPLETE, profile_completion: { ...DRAFT_INCOMPLETE.profile_completion, missing }, activation: { can_activate: false, missing } };
+    mockApi(routes({ [`GET ${BASE}/summary`]: [ok(summary)], [`GET ${BASE}`]: [ok({ ...DETAIL, status: "draft" })] }));
     mount();
-    const notice = await screen.findByRole("region", { name: "Setup incomplete" });
-    fireEvent.click(within(notice).getByRole("button", { name: /Open Contacts/ }));
-    expect(screen.getByRole("tab", { name: "Contacts" })).toHaveAttribute("aria-selected", "true");
+    const notice = await banner("Profile incomplete");
+    expect(within(notice).getByText(/Still needed: Primary contact\./)).toBeInTheDocument();
+    expect(within(notice).getByRole("link", { name: "Complete Your Profile" })).toBeInTheDocument();
   });
 
   it("says a ready draft can be activated, and activation still goes to the server with its reason and version", async () => {
     const calls = mockApi(
       routes({
         [`GET ${BASE}`]: [ok({ ...DETAIL, status: "draft" })],
+        [`GET ${BASE}/summary`]: [ok(DRAFT_READY)],
         [`POST ${BASE}/status`]: [ok({ id: ID, status: "active" })],
       }),
     );
     mount();
-    expect(await screen.findByRole("region", { name: "Ready to activate" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Setup incomplete" })).not.toBeInTheDocument();
+    const notice = await banner("Profile complete");
+    expect(notice).toHaveTextContent(/Everything required is in place\. Activate the partner when you are ready/);
+    expect(within(notice).getByRole("link", { name: "Edit profile" })).toHaveAttribute("href", `/admin/partners/${ID}/profile`);
+    expect(screen.queryByText("Profile incomplete")).not.toBeInTheDocument();
+    expect(screen.getByText("Ready")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "Activate" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Activate" }));
     fireEvent.change(screen.getByLabelText(/Reason for/), { target: { value: "Setup reviewed and complete" } });
@@ -731,15 +847,15 @@ describe("Overview", () => {
     expect(calls.find((c) => c.key === `POST ${BASE}/status`)!.body).toEqual({ status: "active", reason: "Setup reviewed and complete", expected_version: 3 });
   });
 
-  it("does not point staff who may not manage partners at an Activate button they do not have", async () => {
-    mockApi(routes({ [`GET ${BASE}`]: [ok({ ...DETAIL, status: "draft" })] }));
+  it("does not point staff who may not manage partners at an Activate button or an editor they do not have", async () => {
+    mockApi(routes({ [`GET ${BASE}`]: [ok({ ...DETAIL, status: "draft" })], [`GET ${BASE}/summary`]: [ok(DRAFT_READY)] }));
     mount("overview", VIEW_ONLY);
-    const ready = await screen.findByRole("region", { name: "Ready to activate" });
-    expect(ready).toHaveTextContent("Someone who may manage partners can activate it.");
+    const notice = await banner("Profile complete");
+    expect(within(notice).queryByRole("link")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Activate" })).not.toBeInTheDocument();
   });
 
-  it("offers Activate when the readiness answer cannot be read - the server decides", async () => {
+  it("does not offer Activate when the completion answer cannot be read, and says why", async () => {
     mockApi(
       routes({
         [`GET ${BASE}`]: [ok({ ...DETAIL, status: "draft" })],
@@ -747,33 +863,40 @@ describe("Overview", () => {
       }),
     );
     mount();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Activate" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "Activate" })).toHaveAccessibleDescription(/could not be checked/);
   });
 
   it("shows no activation guidance for a partner that is already active", async () => {
-    mockApi(routes({ [`GET ${BASE}/summary`]: [ok(DRAFT_INCOMPLETE)] }));
+    mockApi(routes());
     mount();
-    await screen.findByRole("region", { name: "Setup progress" });
-    expect(screen.queryByRole("region", { name: "Setup incomplete" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Ready to activate" })).not.toBeInTheDocument();
+    const notice = await banner("Profile incomplete");
+    expect(within(notice).getByText(/Still needed: Domain\./)).toBeInTheDocument();
+    expect(notice).not.toHaveTextContent(/stays a draft/);
     expect(screen.queryByRole("button", { name: "Activate" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/cannot be activated yet/)).not.toBeInTheDocument();
   });
 
-  it("keeps the link that enables white-label, pointing at the white-label setup", async () => {
+  it("says how white-label is added to a partner that is not white-label", async () => {
     mockApi(
       routes({
         [`GET ${BASE}`]: [ok({ ...DETAIL, experience: [{ key: "reseller", label: "Reseller" }] })],
-        [`GET ${BASE}/summary`]: [ok({ ...SUMMARY, white_label: { enabled: false, brand_configured: false, domain_status: "none", domains: { active: 0, verified: 0, awaiting: 0 } } })],
+        [`GET ${BASE}/summary`]: [
+          ok({ ...SUMMARY, experience: [{ key: "reseller", label: "Reseller" }], white_label: { enabled: false, brand_configured: false, domain_status: "none", domains: { active: 0, verified: 0, awaiting: 0 } } }),
+        ],
       }),
     );
     mount();
-    expect(await screen.findByRole("link", { name: "Enable white-label" })).toHaveAttribute("href", `/admin/partners/white-label/${ID}`);
+    const section = (await screen.findByRole("heading", { name: "White-label" })).closest("section")!;
+    expect(section).toHaveTextContent("Not a white-label partner. Add the White-label experience under Users & Permissions to give it a brand and a domain.");
+    expect(within(section).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /white-label/i })).not.toBeInTheDocument();
   });
 });
 
-// --- Products & Pricing: the two per-grant choices ------------------------------------------------------
+// --- Products: the two per-grant choices ------------------------------------------------------
 
-describe("Products & Pricing: product options", () => {
+describe("Products: product options", () => {
   const productGroup = (name: string) => screen.getByRole("group", { name });
 
   it("shows each product's two choices and what the platform's trial is", async () => {
@@ -790,9 +913,10 @@ describe("Products & Pricing: product options", () => {
     // What the choices do and do not do.
     expect(screen.getByText(/can only narrow the platform's free trial/)).toBeInTheDocument();
     expect(screen.getByText(/never grants or removes access/)).toBeInTheDocument();
-    // The existing price and commission sections are still there.
-    expect(screen.getByRole("heading", { name: "Prices" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Commission" })).toBeInTheDocument();
+    // Prices and commission have tabs of their own now.
+    expect(screen.queryByRole("heading", { name: "Prices" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Pricing" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Commission" })).toBeInTheDocument();
     await expectNoViolations(container);
   });
 

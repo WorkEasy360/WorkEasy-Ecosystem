@@ -12,12 +12,14 @@ import styles from "./PartnerPanel.module.css";
 /** The signed-in partner and what the server says this person may do. Every
  * check here only decides what to draw; the API authorizes each request again. */
 export function usePanel() {
-  const { partner } = usePartner();
+  const { partner, base: workspaceBase } = usePartner();
   const held = new Set(partner?.permissions ?? []);
   return {
     id: partner?.partner_id ?? "",
     partner,
-    base: `/partner/${partner?.partner_id ?? ""}`,
+    // Inside a workspace (`/partner/reseller`) every link a screen builds stays
+    // in it; the generic panel is `/partner/<id>`.
+    base: workspaceBase ?? `/partner/${partner?.partner_id ?? ""}`,
     active: partner?.status === "active",
     can: (...keys: string[]) => keys.some((k) => held.has(`platform.partner_${k}`)),
   };

@@ -15,10 +15,16 @@ import {
 } from "./model";
 import css from "../WhiteLabelSetup.module.css";
 
-/** What a step needs from the wizard around it. */
+/** What a step needs from the wizard around it. The white-label steps also run
+ * inside a partner's Complete Your Profile (ADR-048), whose steps are different:
+ * `order` and `labelOf` then name that wizard's steps, and `go` moves within it. */
 export interface Nav {
-  step: StepKey;
-  go: (step: StepKey) => void;
+  step: string;
+  go: (step: string) => void;
+  /** The steps of the wizard this step is in, in order (default: the ten white-label steps). */
+  order?: readonly string[];
+  /** The visible name of a step (default: the white-label step names). */
+  labelOf?: (step: string) => string;
   /** Said to assistive technology (and shown) after the step it came from is gone. */
   announce: (message: string) => void;
   /** True once the person has moved: the new step's heading takes focus. Never on first load. */
@@ -73,7 +79,7 @@ export function StepFrame({
   last = false,
   extraActions,
 }: {
-  step: StepKey;
+  step: string;
   nav: Nav;
   action: ActionHandle;
   intro?: React.ReactNode;
@@ -93,7 +99,9 @@ export function StepFrame({
   last?: boolean;
   extraActions?: React.ReactNode;
 }) {
-  const index = STEPS.indexOf(step);
+  const order: readonly string[] = nav.order ?? STEPS;
+  const index = order.indexOf(step);
+  const title = nav.labelOf?.(step) ?? STEP_LABELS[step as StepKey] ?? step;
   const heading = useRef<HTMLHeadingElement | null>(null);
   const summary = useRef<HTMLDivElement | null>(null);
   const [listed, setListed] = useState<string[]>([]);
@@ -116,7 +124,7 @@ export function StepFrame({
   }
 
   function onContinue() {
-    const next = STEPS[index + 1];
+    const next = order[index + 1];
     // Only what is about to be saved is checked: a step left as it was saved is not held up.
     if (save && dirty) {
       if (!check()) return;
@@ -142,7 +150,7 @@ export function StepFrame({
   return (
     <section className={css.step} aria-labelledby={`wl-step-${step}`}>
       <h2 id={`wl-step-${step}`} ref={heading} tabIndex={-1} className={css.stepTitle}>
-        Step {index + 1} of {STEPS.length}: {STEP_LABELS[step]}
+        Step {index + 1} of {order.length}: {title}
       </h2>
       <ErrorSummary errors={listed} focusRef={summary} />
       {feedback}
@@ -150,11 +158,11 @@ export function StepFrame({
       {blocked ?? children}
       <div className={css.nav}>
         {index > 0 && (
-          <button type="button" className="w360-btn w360-btn-secondary" disabled={busy} onClick={() => nav.go(STEPS[index - 1])}>
+          <button type="button" className="w360-btn w360-btn-secondary" disabled={busy} onClick={() => nav.go(order[index - 1])}>
             Back
           </button>
         )}
-        {!last && (
+        {!last && index < order.length - 1 && (
           <button type="button" className="w360-btn w360-btn-primary" disabled={busy || blocked !== undefined || !canContinue} onClick={onContinue}>
             {save ? "Save & continue" : "Continue"}
           </button>

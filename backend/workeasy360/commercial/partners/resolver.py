@@ -35,7 +35,13 @@ def partner_permissions(ctx: TenantContext) -> frozenset[str]:
     if partner is None:
         return frozenset()
     member = selectors.member_of(ctx.partner_id, ctx.user_id)
-    if member is None:
+    if member is not None:
+        role = member.role
+    elif ctx.is_break_glass:
+        # A staff guest view (``guest.py``): what a viewer of this partner
+        # sees, nothing more. The adapter has already checked the grant.
+        role = PartnerMemberRole.VIEWER.value
+    else:
         return frozenset()
 
     status = partner.status_enum
@@ -45,16 +51,16 @@ def partner_permissions(ctx: TenantContext) -> frozenset[str]:
     held = selectors.active_capabilities(ctx.partner_id)
 
     if status is PartnerStatus.ACTIVE:
-        keys = capabilities.permissions_for_role(held, role=member.role)
+        keys = capabilities.permissions_for_role(held, role=role)
     elif status is PartnerStatus.SUSPENDED:
         # History stays visible; nothing new can be done. The read tier of the
         # capabilities the member's role may exercise, and the baseline views.
         keys = capabilities.permissions_for_role(
             held, role=PartnerMemberRole.VIEWER.value
-        ) & capabilities.permissions_for_role(held, role=member.role)
+        ) & capabilities.permissions_for_role(held, role=role)
     else:  # terminated
         keys = (
-            capabilities.permissions_for_role(held, role=member.role)
+            capabilities.permissions_for_role(held, role=role)
             & capabilities.permissions_for(held, admin=False)
             & capabilities.HISTORY_ONLY_PERMISSIONS
         )

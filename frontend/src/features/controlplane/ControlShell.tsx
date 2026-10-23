@@ -24,7 +24,7 @@ import { ForcedPasswordChange } from "./ForcedPasswordChange";
 import { StaffMfaGate } from "./StaffMfaGate";
 import { usePortalRouter } from "@/lib/portalRouter";
 
-function useSignOut() {
+export function useSignOut() {
   const router = usePortalRouter();
   // A failed sign-out must not look like a successful one: navigating to
   // /login anyway would resume the still-live session for whoever sits down
@@ -270,7 +270,15 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
 // --- Partner portal --------------------------------------------------------------
 
-const PartnerContext = createContext<{ partner: PortalPartner | null }>({ partner: null });
+/** The signed-in partner and, inside a workspace (ADR-047), the address prefix its
+ * pages live under (`/partner/reseller`). Without `base` the generic panel's
+ * `/partner/<id>` applies. Display only: it decides no permission. */
+export interface PartnerContextValue {
+  partner: PortalPartner | null;
+  base?: string;
+}
+
+export const PartnerContext = createContext<PartnerContextValue>({ partner: null });
 export const usePartner = () => useContext(PartnerContext);
 
 export function partnerNav(partner: PortalPartner): SidebarGroup[] {
@@ -308,6 +316,43 @@ const STATUS_NOTICE: Record<string, string> = {
 
 /** The portal layout for one partner. Navigation comes from the partner's
  * **capabilities** - there is no partner type anywhere in this file. */
+/** A staff member viewing a partner's portal as a guest (All Partners → Guest
+ * login): said on every page, with the way out. The server makes it read-only
+ * and ends it by itself; this only explains it. Exiting ends the guest view
+ * (and this portal's session) on the server, then returns to the partner's
+ * page in the Super Admin console. */
+export function GuestViewBanner({ partner, guest }: { partner: PortalPartner; guest: NonNullable<PortalPartner["guest"]> }) {
+  const portals = usePortals();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const ends = new Date(guest.expires_at);
+  async function exit() {
+    setBusy(true);
+    setFailed(false);
+    try {
+      await partnerApi.endGuestView();
+    } catch {
+      // Not ended: stay here and say so, rather than leave the view running
+      // behind a page that looks like it was left.
+      setBusy(false);
+      setFailed(true);
+      return;
+    }
+    window.location.assign(portalHref(portals, "admin", `/admin/partners/${encodeURIComponent(partner.partner_id)}`));
+  }
+  return (
+    <div role="status" className={`w360-badge w360-badge-info ${consoleStyles.banner} ${consoleStyles.notice}`}>
+      Viewing Partner Portal as {partner.display_name}. Read-only
+      {Number.isNaN(ends.getTime()) ? "" : `, ends at ${ends.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}: you cannot change
+      anything here.{" "}
+      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => void exit()} disabled={busy}>
+        Exit Guest Session
+      </button>
+      {failed && <span role="alert"> The guest session could not be ended. Try again.</span>}
+    </div>
+  );
+}
+
 export function PartnerShell({ partnerId, children }: { partnerId: string; children: React.ReactNode }) {
   const router = usePortalRouter();
   const portals = usePortals();
@@ -370,8 +415,9 @@ export function PartnerShell({ partnerId, children }: { partnerId: string; child
         banner={
           <>
             {banner}
+            {partner.guest && <GuestViewBanner partner={partner} guest={partner.guest} />}
             {partner.status !== "active" && (
-              <p role="status" className={`w360-badge w360-badge-warning ${consoleStyles.banner}`}>
+              <p role="status" className={`w360-badge w360-badge-warning ${consoleStyles.banner} ${consoleStyles.notice}`}>
                 {STATUS_NOTICE[partner.status] ?? `This partner account is ${partner.status}.`}
               </p>
             )}

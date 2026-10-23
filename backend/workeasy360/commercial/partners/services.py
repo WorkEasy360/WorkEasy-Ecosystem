@@ -44,6 +44,7 @@ from workeasy360.contracts.enums import (
     PartnerStatus,
     PriceBookChannel,
     PrincipalKind,
+    UserStatus,
 )
 from workeasy360.contracts.errors import (
     CommercialError,
@@ -749,7 +750,6 @@ def add_member(ctx: TenantContext, partner_id: UUID, *, email: Any, role: Any) -
     "disabled" and "already a member", so the endpoint is not an account
     directory.
     """
-    from workeasy360.commercial.partners.models import PartnerMember
     from workeasy360.platform.identity.selectors import active_user_id_for_email
 
     authz.require(ctx, MANAGE)
@@ -765,27 +765,62 @@ def add_member(ctx: TenantContext, partner_id: UUID, *, email: Any, role: Any) -
         user_id = active_user_id_for_email(address)
         if user_id is None:
             raise PartnerValidationError("That account cannot be added.", field="email")
-        try:
-            with transaction.atomic():
-                member = PartnerMember.objects.create(
-                    partner_id=partner_id,
-                    user_id=user_id,
-                    role=member_role.value,
-                    added_by_id=ctx.user_id,
-                    added_at=timezone.now(),
-                )
-        except IntegrityError as exc:
-            raise PartnerValidationError(
-                "That account cannot be added.", field="email"
-            ) from exc
-        audit.record(
-            ctx,
-            "partner.member_added",
-            resource_type="partners.member",
-            resource_id=member.id,
-            changes={"partner_id": str(partner_id), "role": member.role},
-        )
+        return _attach_member(ctx, partner_id, user_id, member_role)
+
+
+def _attach_member(
+    ctx: TenantContext, partner_id: UUID, user_id: UUID, member_role: Any
+) -> Any:
+    """The one place a ``PartnerMember`` row for an *existing* identity is made
+    (``add_member``, and ``attach_user_as_member`` for a caller that has just
+    made or looked up the account itself). Runs inside the caller's transaction;
+    one uniform refusal for "already a member"."""
+    from workeasy360.commercial.partners.models import PartnerMember
+
+    try:
+        with transaction.atomic():
+            member = PartnerMember.objects.create(
+                partner_id=partner_id,
+                user_id=user_id,
+                role=member_role.value,
+                added_by_id=ctx.user_id,
+                added_at=timezone.now(),
+            )
+    except IntegrityError as exc:
+        raise PartnerValidationError(
+            "That account cannot be added.", field="email"
+        ) from exc
+    audit.record(
+        ctx,
+        "partner.member_added",
+        resource_type="partners.member",
+        resource_id=member.id,
+        changes={"partner_id": str(partner_id), "role": member.role},
+    )
     return member
+
+
+@in_scope
+def attach_user_as_member(
+    ctx: TenantContext, partner_id: UUID, *, user_id: UUID, role: Any
+) -> Any:
+    """Make an identity the caller already holds - one it created a moment ago,
+    or looked up and checked itself - a member of a partner (staff).
+
+    ``add_member`` finds the identity by address; this takes the id, so the
+    Add Partner command can create the administrator's account and attach it in
+    one transaction. It trusts nothing about the id beyond that it names a user:
+    the caller checked who the user is.
+    """
+    authz.require(ctx, MANAGE)
+    member_role = _parse_role(role)
+    with transaction.atomic():
+        partner = _lock_partner(partner_id)
+        if partner.status_enum is PartnerStatus.TERMINATED:
+            raise PartnerValidationError(
+                "A terminated partner cannot take on members.", field="partner_id"
+            )
+        return _attach_member(ctx, partner_id, user_id, member_role)
 
 
 @in_scope
@@ -1074,6 +1109,53 @@ def resend_member_setup(ctx: TenantContext, partner_id: UUID, *, member_id: UUID
             changes={"partner_id": str(partner_id), "setup_link_sent": sent},
         )
     return sent
+
+
+@in_scope
+def send_member_password_reset(
+    ctx: TenantContext, partner_id: UUID, *, member_id: UUID
+) -> bool:
+    """Send one of this partner's people the ordinary forgotten-password link
+    (staff only).
+
+    This is the identity system's own reset - the link proves the mailbox, the
+    person chooses the new password, and every session of theirs ends - so a
+    password Workeasy360 staff typed once is never the only way back in. The
+    current password is neither read nor shown, and this sets none. ``False``
+    (nothing sent) when the account may not use a reset link."""
+    from workeasy360.commercial.partners.models import PartnerMember
+    from workeasy360.platform.administration import self_service
+    from workeasy360.platform.identity import selectors as identity
+
+    authz.require(ctx, MANAGE)
+    with transaction.atomic():
+        member = (
+            PartnerMember.objects.select_for_update()
+            .filter(id=member_id, partner_id=partner_id, status="active")
+            .first()
+        )
+        if member is None:
+            raise PartnerRecordNotFound("No such member.", member_id=str(member_id))
+        address = identity.contact_address(member.user_id)
+        # The ordinary reset mails only an active or pending account and stays
+        # silent otherwise (so it can never be used to probe addresses). This
+        # staff action is allowed to know: it reports "sent" only when it can have.
+        facts = identity.user_facts_for_email(address) if address else None
+        usable = facts is not None and facts["status"] in (
+            UserStatus.ACTIVE.value,
+            UserStatus.PENDING.value,
+        )
+        if usable:
+            self_service.request_password_reset(address)
+        audit.record(
+            ctx,
+            "partner.member_password_reset_sent",
+            resource_type="partners.member",
+            resource_id=member.id,
+            # Who it was for and whether it went; never the address or any link.
+            changes={"partner_id": str(partner_id), "sent": usable},
+        )
+    return usable
 
 
 def _has_password(user_id: UUID) -> bool:
@@ -1379,6 +1461,19 @@ def capability_presentation(ctx: TenantContext) -> dict[str, Any]:
                 "capabilities": list(preset["capabilities"]),  # type: ignore[call-overload]
             }
             for preset in capabilities.CAPABILITY_PRESETS
+        ],
+        # The creation presets of the three experiences (ADR-047): what choosing
+        # a type card on Add Partner grants. The form draws its cards and its
+        # review from this, so what it shows is what the server will grant.
+        "experiences": [
+            {
+                "key": key,
+                "label": capabilities.EXPERIENCES[key][0],
+                "description": capabilities.EXPERIENCE_DESCRIPTIONS[key],
+                "capabilities": list(capabilities.EXPERIENCE_BUNDLES[key]),
+                "sells": key in (capabilities.RESELLER, capabilities.WHITE_LABEL),
+            }
+            for key in capabilities.EXPERIENCES
         ],
     }
 

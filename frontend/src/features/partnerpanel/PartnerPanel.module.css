@@ -581,3 +581,102 @@
   flex-wrap: wrap;
   gap: var(--w360-space-2);
 }
+
+/* --- the workspaces (ADR-047) ------------------------------------------------------ */
+
+/* A copy button and the words that say whether it worked. */
+.copy {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+}
+
+/* The affiliate's link, as the page's first and largest thing. */
+.linkBox {
+  display: grid;
+  gap: var(--w360-space-2);
+  min-width: 0;
+  padding: var(--w360-space-4);
+  border: 2px solid var(--w360-brand);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-brand-soft);
+}
+
+.linkBox h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.linkBox p {
+  margin: 0;
+}
+
+.linkRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.linkRow input {
+  flex: 1 1 18rem;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* The workspace switcher: a row of links, the current one marked by weight and
+   an underline - not by colour alone. */
+.switcher {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  margin: 0 0 var(--w360-space-3);
+}
+
+.switcher a {
+  padding: 2px 12px;
+  border: 1px solid var(--w360-border-strong);
+  border-radius: 999px;
+  color: var(--w360-text);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.switcher a[aria-current="page"] {
+  border-color: var(--w360-brand);
+  border-width: 2px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.switcher a:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+.statusStrip {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.denied {
+  display: grid;
+  gap: var(--w360-space-3);
+  max-width: 640px;
+  padding: var(--w360-space-5);
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+}
+
+.denied h1,
+.denied p {
+  margin: 0;
+}

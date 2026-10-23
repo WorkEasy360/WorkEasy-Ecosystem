@@ -16,7 +16,9 @@ const RANGES: { key: RangeKey; label: string }[] = [
 
 type Metric = "gross" | "commission" | "transactions";
 
-export function PartnerDashboard() {
+/** `extra` is a workspace's own section (the white-label status), drawn right
+ * after the key figures; the page is otherwise the same in every workspace. */
+export function PartnerDashboard({ extra }: { extra?: React.ReactNode } = {}) {
   const { id, partner, can, base } = usePanel();
   const [range, setRange] = useState<RangeKey>("30d");
   const [from, setFrom] = useState("");
@@ -85,6 +87,7 @@ export function PartnerDashboard() {
         {(d) => (
           <>
             <Kpis d={d} />
+            {extra}
             {d.charts && <SalesOverview d={d} />}
             <div className={styles.twoCol}>
               <QuickLinks base={base} can={can} />

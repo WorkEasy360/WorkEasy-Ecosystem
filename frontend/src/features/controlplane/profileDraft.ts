@@ -41,6 +41,7 @@ export interface ProfileDraft {
   registrationNumber: string;
   taxNumber: string;
   country: string;
+  timezone: string;
   address: { line1: string; line2: string; city: string; region: string; postalCode: string };
   contacts: Record<ContactKind, ContactDraft>;
   /** A billing, technical or support contact that is the primary one: stores no row. */
@@ -50,6 +51,8 @@ export interface ProfileDraft {
   supportUrl: string;
   payoutFrequency: PayoutFrequency;
   payoutContactEmail: string;
+  /** The preferred (payout) currency. Changeable only while the partner is a draft. */
+  payoutCurrency: string;
   internalNotes: string;
 }
 
@@ -66,6 +69,7 @@ export function emptyProfile(): ProfileDraft {
     registrationNumber: "",
     taxNumber: "",
     country: "",
+    timezone: "",
     address: { line1: "", line2: "", city: "", region: "", postalCode: "" },
     contacts: { primary: emptyContact(), billing: emptyContact(), technical: emptyContact(), support: emptyContact() },
     sameAsPrimary: { billing: true, technical: true, support: true },
@@ -74,6 +78,7 @@ export function emptyProfile(): ProfileDraft {
     supportUrl: "",
     payoutFrequency: "manual",
     payoutContactEmail: "",
+    payoutCurrency: "",
     internalNotes: "",
   };
 }
@@ -98,6 +103,7 @@ export function profileDraftFrom(view: PartnerProfile): ProfileDraft {
     registrationNumber: b.registration_number,
     taxNumber: b.tax_number,
     country: b.country,
+    timezone: b.timezone ?? "",
     address: {
       line1: b.address.line1,
       line2: b.address.line2,
@@ -121,6 +127,9 @@ export function profileDraftFrom(view: PartnerProfile): ProfileDraft {
     supportUrl: view.support.url,
     payoutFrequency: view.payout.frequency,
     payoutContactEmail: view.payout.contact_email,
+    // Empty until someone chooses one: the form shows the stored currency, and a
+    // save that did not touch it sends none.
+    payoutCurrency: "",
     internalNotes: view.internal_notes,
   };
 }
@@ -147,6 +156,7 @@ export function toProfileInput(d: ProfileDraft, parts: ProfileParts = ["business
       registration_number: d.registrationNumber.trim(),
       tax_number: d.taxNumber.trim(),
       country: d.country,
+      timezone: d.timezone,
       address: {
         line1: d.address.line1.trim(),
         line2: d.address.line2.trim(),
@@ -167,6 +177,9 @@ export function toProfileInput(d: ProfileDraft, parts: ProfileParts = ["business
   }
   if (parts.includes("payout")) {
     out.payout = { frequency: d.payoutFrequency, contact_email: d.payoutContactEmail.trim() };
+    // Sent only when chosen: the same currency is no change, and a partner past
+    // its draft refuses any change, so an untouched form never sends one.
+    if (d.payoutCurrency) out.payout.currency = d.payoutCurrency;
   }
   if (parts.includes("notes")) out.internal_notes = d.internalNotes.trim();
   return out;

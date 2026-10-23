@@ -418,11 +418,16 @@ export function AffiliateConversions() {
                 <td>{c.code_label || "—"}</td>
                 <td>{when(c.captured_at)}</td>
                 <td>{when(c.converted_at)}</td>
-                <td className={styles.num}>{c.currency ? money(c.commission_minor, c.currency) : "—"}</td>
+                <td className={styles.num}>{c.currency && c.commission_minor !== null ? money(c.commission_minor, c.currency) : "—"}</td>
               </tr>
             ))}
           </Table>
           <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+          <p className={styles.muted}>
+            Each row is the link, the campaign, the two dates and the commission the customer has earned you so far. The product and
+            plan are not recorded against a referral, so they are not listed here; the commission ledger under Commissions shows what
+            was earned and when it clears.
+          </p>
         </>
       )}
     </div>

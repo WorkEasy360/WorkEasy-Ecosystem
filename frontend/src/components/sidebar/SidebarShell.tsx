@@ -19,6 +19,9 @@ export interface SidebarItem {
   /** The URL prefix this entry is current under, when it differs from `href`
    * (a section entry whose link opens one of several pages beneath it). */
   match?: string;
+  /** More prefixes the entry is current under (the pages of its section that
+   * live elsewhere in the address space). */
+  alsoMatch?: string[];
   children?: SidebarItem[];
 }
 
@@ -30,8 +33,9 @@ export interface SidebarGroup {
 
 function isActive(pathname: string, item: SidebarItem): boolean {
   if (item.exact) return pathname === item.href;
-  const prefix = item.match ?? item.href;
-  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+  return [item.match ?? item.href, ...(item.alsoMatch ?? [])].some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
 }
 
 const visible = (items: SidebarItem[]) => items.filter((i) => i.when !== false);

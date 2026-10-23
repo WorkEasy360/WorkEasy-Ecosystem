@@ -38,13 +38,14 @@ def missing(body):
 def test_a_bare_draft_lists_exactly_what_is_missing(manager, draft_partner):
     body = summary(manager, draft_partner.id)
     assert body["activation"]["can_activate"] is False
-    assert missing(body) == {
-        "primary_contact",
-        "business_email",
-        "capabilities",
-        "administrator",
-    }
+    # ADR-048: what is missing before activation is the profile completion's
+    # required sections - the contact and business email are "business".
+    assert missing(body) == {"business", "capabilities", "administrator"}
     assert all(m["label"] and m["detail"] for m in body["activation"]["missing"])
+    business = next(m for m in body["activation"]["missing"] if m["key"] == "business")
+    assert (
+        "primary contact" in business["detail"] and "business email" in business["detail"]
+    )
 
 
 def test_saving_the_profile_removes_the_profile_gaps(manager, draft_partner):
@@ -54,7 +55,7 @@ def test_saving_the_profile_removes_the_profile_gaps(manager, draft_partner):
         {**READY_PROFILE, "expected_version": draft_partner.version},
     )
     body = summary(manager, draft_partner.id)
-    assert {"primary_contact", "business_email"}.isdisjoint(missing(body))
+    assert "business" not in missing(body)
     assert steps(body)["profile"]["state"] == "complete"
     assert steps(body)["profile"]["label"] == "Business profile"
 
@@ -73,7 +74,9 @@ def test_the_profile_step_says_which_part_is_missing(manager, draft_partner, con
 
 
 def test_a_complete_partner_can_be_activated(manager, console, partner_factory):
-    ready = partner_factory("customer.provision", "subscription.sell")
+    # A seller also needs a commission configuration (ADR-048): it earns, and
+    # the programme's rule applies to it.
+    ready = partner_factory("customer.provision", "subscription.sell", "commission.earn")
     services.grant_product(ready["staff_ctx"], ready["partner"].id, product_code="crm")
     put(
         manager,
@@ -93,7 +96,8 @@ def test_a_seller_with_no_product_is_not_ready_but_a_viewer_of_commission_is(
         profile_url(seller["partner"].id),
         {**READY_PROFILE, "expected_version": seller["partner"].version},
     )
-    assert missing(summary(manager, seller["partner"].id)) == {"products"}
+    # Selling without a product, and without earning commission, are both gaps.
+    assert missing(summary(manager, seller["partner"].id)) == {"products", "commission"}
     watcher = partner_factory("commission.view")
     put(
         manager,

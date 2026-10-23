@@ -21,6 +21,7 @@ from workeasy360.commercial.controlplane import (
     partner_help,
     partner_network,
     partner_portal,
+    partner_workspaces,
 )
 from workeasy360.commercial.partners import (
     api_keys,
@@ -57,6 +58,39 @@ def dashboard_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             date_to=request.GET.get("to"),
         )
     )
+
+
+@partner_view(["GET"])
+def affiliate_overview_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """The affiliate workspace's dashboard (ADR-047). Needs the referral view."""
+    return JsonResponse(
+        partner_workspaces.affiliate_overview(
+            ctx,
+            range_key=request.GET.get("range"),
+            date_from=request.GET.get("from"),
+            date_to=request.GET.get("to"),
+        )
+    )
+
+
+@partner_view(["GET"])
+def reports_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """Reports & Analytics: factual counts and ledger sums, each section only
+    for the caller who may see it (ADR-047)."""
+    return JsonResponse(
+        partner_workspaces.reports(
+            ctx,
+            range_key=request.GET.get("range"),
+            date_from=request.GET.get("from"),
+            date_to=request.GET.get("to"),
+        )
+    )
+
+
+@partner_view(["GET"])
+def white_label_status_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """Where the brand setup and the custom domain stand (ADR-047)."""
+    return JsonResponse(partner_workspaces.white_label_status(ctx))
 
 
 @partner_view(["GET"])

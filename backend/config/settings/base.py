@@ -927,6 +927,17 @@ CONTROL_PLANE_RATE_LIMITS = {
     "partner_api_fail_ip": (env.int("W360_RL_PARTNER_API_FAIL_IP", 20), 60),
     "partner_translation_user": (env.int("W360_RL_PARTNER_TRANSLATION_USER", 30), 60),
     "partner_translation_ip": (env.int("W360_RL_PARTNER_TRANSLATION_IP", 60), 60),
+    # ADR-047: Add Partner with a login. The credentials check answers whether an
+    # email already has an account and judges a typed password, so it is limited
+    # tightly (a staff member, second factor and partner.manage are needed first);
+    # a password-reset link for a partner's person is an email, limited likewise.
+    "partner_onboard_user": (env.int("W360_RL_PARTNER_ONBOARD_USER", 30), 60),
+    "partner_onboard_ip": (env.int("W360_RL_PARTNER_ONBOARD_IP", 60), 60),
+    "partner_password_reset_user": (
+        env.int("W360_RL_PARTNER_PASSWORD_RESET_USER", 10),
+        60,
+    ),
+    "partner_password_reset_ip": (env.int("W360_RL_PARTNER_PASSWORD_RESET_IP", 30), 60),
 }
 
 #: Per-key ceiling of the partner API (requests per minute), enforced by the view.

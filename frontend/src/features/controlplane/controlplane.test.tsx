@@ -4,7 +4,7 @@ import axe, { type Result } from "axe-core";
 
 import { AdminContext, AdminShell, PartnerShell } from "./ControlShell";
 import { Customers, Dashboard } from "./AdminScreens";
-import { Payouts } from "./AdminMoney";
+import { PayoutsTab, type TabProps } from "./ResellerTabs";
 import { PartnerBranding, PartnerCustomers, PartnerDomains } from "./PartnerScreens";
 import { applyAccent, contrastOn, safeColor } from "./useBranding";
 
@@ -229,6 +229,19 @@ describe("the Super Admin shell", () => {
   });
 });
 
+/** A partner's Payouts tab (ADR-048: the stand-alone payouts page is gone; the
+ * payout lifecycle controls now live on the partner's own page). */
+function PayoutsFor({ partnerId = PARTNER }: { partnerId?: string }) {
+  const props = {
+    partnerId,
+    partner: { id: partnerId } as unknown as TabProps["partner"],
+    summary: { status: "loading" },
+    rev: 0,
+    bump: () => {},
+  } satisfies TabProps;
+  return <PayoutsTab {...props} />;
+}
+
 describe("Super Admin screens", () => {
   it("the customer directory has no axe violations and labels its controls", async () => {
     mockApi({
@@ -315,16 +328,19 @@ describe("Super Admin screens", () => {
     });
     render(
       <AdminContextForTest permissions={["platform.staff_payout.manage", "platform.staff_commission.view"]}>
-        <Payouts />
+        <PayoutsFor />
       </AdminContextForTest>,
     );
     await screen.findByText("No payouts.");
-    fireEvent.change(screen.getByLabelText("Partner id"), { target: { value: PARTNER } });
+    // The partner is the page's own: there is no partner field to type into.
+    expect(screen.queryByLabelText(/Partner id/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Prepare payout" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Include everything cleared by"), { target: { value: "2026-06-30" } });
     fireEvent.click(screen.getByRole("button", { name: "Prepare payout" }));
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/payouts")).toBe(true));
     const post = calls.find((c) => c.key === "POST /api/v1/admin/payouts")!;
     expect(Object.keys(post.body as object).sort()).toEqual(["partner_id", "period_end"]);
+    expect(post.body).toEqual({ partner_id: PARTNER, period_end: "2026-06-30" });
     expect(post.headers["idempotency-key"]).toBeTruthy();
   });
 
@@ -343,7 +359,7 @@ describe("Super Admin screens", () => {
     mockApi({ "GET /api/v1/admin/payouts": [{ status: 200, body: { results: [ready], next_cursor: null, has_more: false } }] });
     const { unmount } = render(
       <AdminContextForTest permissions={["platform.staff_payout.manage"]}>
-        <Payouts />
+        <PayoutsFor />
       </AdminContextForTest>,
     );
     await screen.findByRole("table");
@@ -353,7 +369,7 @@ describe("Super Admin screens", () => {
     mockApi({ "GET /api/v1/admin/payouts": [{ status: 200, body: { results: [ready], next_cursor: null, has_more: false } }] });
     render(
       <AdminContextForTest permissions={["platform.staff_payout.approve"]}>
-        <Payouts />
+        <PayoutsFor />
       </AdminContextForTest>,
     );
     expect(await screen.findByRole("button", { name: "Approve" })).toBeInTheDocument();
@@ -374,7 +390,7 @@ describe("Super Admin screens", () => {
     mockApi({ "GET /api/v1/admin/payouts": [{ status: 200, body: { results: [ready], next_cursor: null, has_more: false } }] });
     render(
       <AdminContextForTest permissions={["platform.staff_payout.approve"]}>
-        <Payouts />
+        <PayoutsFor />
       </AdminContextForTest>,
     );
     fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
@@ -404,7 +420,7 @@ describe("Super Admin screens", () => {
     });
     render(
       <AdminContextForTest permissions={["platform.staff_payout.approve"]}>
-        <Payouts />
+        <PayoutsFor />
       </AdminContextForTest>,
     );
     fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
@@ -432,6 +448,33 @@ describe("the partner shell", () => {
     for (const absent of ["Users", "Agency", "Plans & Add-ons", "Brand Settings", "Currency & Pricing"]) {
       expect(labels).not.toContain(absent);
     }
+  });
+
+  it("a staff guest view says it is read-only on every page and offers the way out", async () => {
+    pathname = `/partner/${PARTNER}`;
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    const reply = portal(["customer.provision"], "active", "viewer");
+    const body = reply.body as { partners: Record<string, unknown>[] };
+    body.partners[0].guest = { partner_id: PARTNER, reason: "Support ticket 42", expires_at: "2026-03-01T10:30:00Z" };
+    const calls = mockApi({
+      "GET /api/v1/auth/session": [SIGNED_IN],
+      "GET /api/v1/partner/portal": [reply],
+      "POST /api/v1/partner/guest-view/end": [{ status: 200, body: { ended: true } }],
+    });
+    const { container } = render(
+      <PartnerShell partnerId={PARTNER}>
+        <h1>Page</h1>
+      </PartnerShell>,
+    );
+    await screen.findByRole("heading", { name: "Page" });
+    const banner = screen.getByText(/Viewing Partner Portal as Acme Partners\./);
+    expect(banner).toHaveTextContent("you cannot change anything here.");
+    await expectNoViolations(container);
+    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Session" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(`/admin/partners/${PARTNER}`));
+    expect(calls.some((c) => c.key === "POST /api/v1/partner/guest-view/end")).toBe(true);
+    vi.unstubAllGlobals();
   });
 
   it("a reseller-like and an affiliate-like partner differ only by what they were granted", async () => {
@@ -715,7 +758,7 @@ describe("hostile text is rendered as text (XSS)", () => {
     expect(container.textContent).toContain("<img");
   }
 
-  it("a partner name in the staff reseller list", async () => {
+  it("a partner name in the staff partner list", async () => {
     mockApi({
       "GET /api/v1/admin/partners/resellers": [
         {
@@ -726,16 +769,22 @@ describe("hostile text is rendered as text (XSS)", () => {
                 id: "p1",
                 code: "evil",
                 display_name: EVIL,
+                version: 1,
                 payout_currency: "GBP",
                 status: "active",
                 created_at: "2026-01-01T00:00:00Z",
                 experience: [{ key: "reseller", label: EVIL }],
+                primary_experience: "reseller",
                 capability_count: 1,
+                capabilities: ["customer.provision"],
+                administrator: { email: EVIL, name: EVIL, role: "admin", last_login_at: null },
                 customers: 0,
                 products: [{ product_code: EVIL, plan_code: null }],
                 active_subscriptions: 0,
                 commission: [],
                 payouts: { open: 0, latest: null },
+                referrals: { codes: [], active_codes: 0, captured: 0, converted: 0 },
+                profile_completion: { percent: 100, complete: true, setup_status: "active" },
                 last_activity_at: "2026-01-01T00:00:00Z",
               },
             ],
@@ -744,16 +793,15 @@ describe("hostile text is rendered as text (XSS)", () => {
           },
         },
       ],
-      "GET /api/v1/admin/partners/products": [{ status: 200, body: { results: [] } }],
-      "GET /api/v1/admin/partners/capabilities": [{ status: 200, body: { results: [], groups: [], presets: [] } }],
     });
-    const { ResellerList } = await import("./PartnerConsole");
+    const { AllPartnersList } = await import("./PartnerConsole");
     const { container } = render(
       <AdminContextForTest permissions={["platform.staff_partner.view"]}>
-        <ResellerList />
+        <AllPartnersList />
       </AdminContextForTest>,
     );
-    await screen.findByRole("table", { name: "Resellers" });
+    const table = await screen.findByRole("table", { name: "Partners" });
+    expect(within(table).getAllByText(EVIL).length).toBeGreaterThan(0);
     expectInert(container);
   });
 
