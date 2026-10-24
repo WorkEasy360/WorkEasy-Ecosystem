@@ -350,6 +350,13 @@ def test_users_are_segmented_by_what_their_organizations_hold(population, staff_
     assert population["trial"]["owner"].email in trials
     assert population["customer"]["owner"].email in customers
     assert population["customer"]["owner"].email not in explorers
+    # Free tier: everyone active who pays for nothing - trials and explorers.
+    free = _segment(staff_client, "free")
+    assert population["explorer"]["owner"].email in free
+    assert population["trial"]["owner"].email in free
+    assert population["customer"]["owner"].email not in free
+    assert "pending@example.com" not in free
+    assert "disabled@example.com" not in free
     row = customers[population["customer"]["owner"].email]
     assert (row["lifecycle"], row["products"], row["subscription_status"]) == (
         "customer",

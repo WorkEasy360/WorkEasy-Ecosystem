@@ -8,7 +8,7 @@ from __future__ import annotations
 from django.urls import include, path
 
 from workeasy360.interfaces.api.v1 import ecosystem_views
-from workeasy360.interfaces.api.v1.control_plane_http import hidden_unless_verified_staff
+from workeasy360.interfaces.api.v1.control_plane_http import hidden_unless_staff
 from workeasy360.platform.observability import health
 
 urlpatterns = [
@@ -18,8 +18,8 @@ urlpatterns = [
     path("healthz/live", health.liveness, name="healthz-live"),
     path("healthz/ready", health.readiness, name="healthz-ready"),
     path("healthz/startup", health.startup, name="healthz-startup"),
-    # Staff-only diagnostics need a verified second factor too (D-037).
-    path("healthz/deep", hidden_unless_verified_staff(health.deep), name="healthz-deep"),
+    # Staff-only diagnostics.
+    path("healthz/deep", hidden_unless_staff(health.deep), name="healthz-deep"),
     path("healthz/metrics", health.metrics_view, name="healthz-metrics"),
     # OpenID Connect discovery and the key set live at the issuer root, not
     # under /api/v1/. That is not a style choice: OpenID Connect Discovery

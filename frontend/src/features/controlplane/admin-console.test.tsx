@@ -118,7 +118,6 @@ describe("the Super Admin navigation", () => {
     expect(navLabels()).toEqual([
       "Dashboard",
       "Users",
-      "Customers",
       "Orders",
       "Subscriptions",
       "Entitlements",
@@ -143,7 +142,7 @@ describe("the Super Admin navigation", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(navLabels()).toEqual(["Dashboard", "Customers", "Subscriptions", "Entitlements"]);
+    expect(navLabels()).toEqual(["Dashboard", "Subscriptions", "Entitlements"]);
   });
 });
 
@@ -1168,6 +1167,32 @@ describe("users by lifecycle", () => {
     fireEvent.click(screen.getByRole("button", { name: "Explorers" }));
     await waitFor(() => expect(calls.some((c) => c.url.includes("segment=explorers"))).toBe(true));
     expect(screen.getByRole("button", { name: "Explorers" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("filters paying customers apart from the free tier", async () => {
+    const calls = mockApi({
+      "GET /api/v1/admin/users": [
+        { status: 200, body: { results: [userDetail("u2")], next_cursor: null, has_more: false } },
+      ],
+    });
+    asStaff(["platform.staff_user.view"], <Users />);
+    await screen.findByRole("table", { name: "User accounts" });
+    const segments = within(screen.getByRole("group", { name: "Segment" }));
+    expect(segments.getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "All users",
+      "Subscribed",
+      "Free tier",
+      "Trial",
+      "Explorers",
+      "Unverified",
+      "Suspended",
+      "Deactivated",
+    ]);
+    fireEvent.click(segments.getByRole("button", { name: "Subscribed" }));
+    await waitFor(() => expect(calls.some((c) => c.url.includes("segment=customers"))).toBe(true));
+    fireEvent.click(segments.getByRole("button", { name: "Free tier" }));
+    await waitFor(() => expect(calls.some((c) => c.url.includes("segment=free"))).toBe(true));
+    expect(segments.getByRole("button", { name: "Free tier" })).toHaveAttribute("aria-pressed", "true");
   });
 });
 

@@ -1,7 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useId, useState } from "react";
-import Link from "next/link";
+import { Suspense, useEffect, useState } from "react";
 import { Logo } from "@/components/brand/Logo";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/auth/useSession";
@@ -28,17 +27,19 @@ export function brandHostParam(raw: string | null): string | undefined {
     : undefined;
 }
 
-/**
- * Which mode the page is in. A product sign-in (`?resume=`) and a partner's
- * branded sign-in (`?brand=`) are always the User mode: the visitor is on
- * their way to a product or a partner's customer workspace, never the
- * platform's console, so the choice is not offered there.
- */
 /** A product asked for the password again (`prompt=login`, ADR-044). */
 export function reauthenticating(params: URLSearchParams): boolean {
   return Boolean(params.get("resume")) && params.get("reauth") === "1";
 }
 
+/**
+ * Which mode the page is in, as the address names it. A product sign-in
+ * (`?resume=`) and a partner's branded sign-in (`?brand=`) are always the User
+ * mode: the visitor is on their way to a product or a partner's customer
+ * workspace, never the platform's console. Null when nothing names a mode -
+ * the page then signs in as a User (there is no chooser: each portal's own
+ * address names its mode).
+ */
 export function effectiveMode(params: URLSearchParams): SignInMode | null {
   if (params.get("resume") || brandHostParam(params.get("brand"))) return "user";
   return parseMode(params.get("mode"));
@@ -88,10 +89,9 @@ function BrandScope({ children }: { children: (brand: HostBrand | null) => React
 
 function Heading({ brand }: { brand: HostBrand | null }) {
   const searchParams = useSearchParams();
-  const choosing = effectiveMode(searchParams) === null;
   // The partner's own welcome message replaces the platform's tagline when it
   // chose to show one on the sign-in page; otherwise the tagline stays.
-  const welcome = !choosing && brand?.portal.login_show_welcome && brand.portal.welcome_message.trim();
+  const welcome = brand?.portal.login_show_welcome && brand.portal.welcome_message.trim();
   // The WorkEasy360 logo on the platform's own sign-in only. A partner-branded
   // sign-in never shows it - not even while that partner's brand is loading.
   const platform = !brand && !brandHostParam(searchParams.get("brand"));
@@ -106,99 +106,9 @@ function Heading({ brand }: { brand: HostBrand | null }) {
         // eslint-disable-next-line @next/next/no-img-element -- same-origin, scanned PNG/JPEG
         <img src={brand.logo_url} alt="" className={brandStyles.logo} />
       )}
-      <h1 className={styles.title}>{choosing ? "Welcome to Workeasy360" : (brand?.brand_name ?? "Workeasy360")}</h1>
+      <h1 className={styles.title}>{brand?.brand_name ?? "Workeasy360"}</h1>
       {welcome ? <p className={styles.tagline}>{welcome}</p> : <p className={styles.tagline}>One ecosystem to run your entire business.</p>}
     </div>
-  );
-}
-
-const MODES: { mode: SignInMode; label: string; description: string }[] = [
-  { mode: "admin", label: "Administrator", description: "Manage the Workeasy360 platform" },
-  { mode: "partner", label: "Partner", description: "Manage your customers, sales and earnings" },
-  { mode: "user", label: "User", description: "Access your organization and products" },
-];
-
-/** The ways in. Each is an ordinary link (keyboard, middle-click and
- * back-button behave as everywhere else); choosing one only changes the
- * address to `?mode=...` - except "Partner" when a separate Partner Panel is
- * configured (`W360_PARTNER_PANEL_URL`), which then opens that app. */
-function ModeChooser({ partnerPanelUrl }: { partnerPanelUrl?: string }) {
-  const headingId = useId();
-  return (
-    <section aria-labelledby={headingId}>
-      <h2 id={headingId} className={styles.cardTitle}>
-        How would you like to sign in?
-      </h2>
-      <ul className={styles.modes}>
-        {MODES.map((m) => (
-          <ModeOption key={m.mode} {...m} href={m.mode === "partner" && partnerPanelUrl ? partnerPanelUrl : undefined} />
-        ))}
-      </ul>
-      <p className="w360-hint">
-        <Link href="/forgot-password">Forgotten your password?</Link> · <Link href="/signup">Create an account</Link>
-      </p>
-    </section>
-  );
-}
-
-function ModeOption({ mode, label, description, href }: { mode: SignInMode; label: string; description: string; href?: string }) {
-  const descriptionId = useId();
-  const content = (
-    <>
-      <span className={styles.modeIcon} aria-hidden="true">
-        {mode === "admin" ? <ShieldIcon /> : mode === "partner" ? <PartnerIcon /> : <PersonIcon />}
-      </span>
-      <span className={styles.modeText}>
-        <span className={styles.modeLabel}>{label}</span>
-        <span id={descriptionId} className={styles.modeDescription}>
-          {description}
-        </span>
-      </span>
-      <span className={styles.modeArrow} aria-hidden="true">
-        ›
-      </span>
-    </>
-  );
-  // Another app: a plain link, so the browser does a full navigation.
-  if (href) {
-    return (
-      <li>
-        <a href={href} className={styles.mode} aria-label={label} aria-describedby={descriptionId}>
-          {content}
-        </a>
-      </li>
-    );
-  }
-  return (
-    <li>
-      <Link href={`/login?mode=${mode}`} className={styles.mode} aria-label={label} aria-describedby={descriptionId}>
-        {content}
-      </Link>
-    </li>
-  );
-}
-
-function ShieldIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" focusable="false">
-      <path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6l-7-3Zm-3 9 2 2 4-4" />
-    </svg>
-  );
-}
-
-function PartnerIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" focusable="false">
-      <path d="M16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 20v-1a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v1M14 15h4a4 4 0 0 1 4 4v1" />
-    </svg>
-  );
-}
-
-function PersonIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" focusable="false">
-      <path d="M20 21v-1a5 5 0 0 0-5-5H9a5 5 0 0 0-5 5v1M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
-    </svg>
   );
 }
 
@@ -208,13 +118,12 @@ const SIGN_IN_TITLE: Record<SignInMode, string> = {
   user: "Sign in as User",
 };
 
-function SignInCard({ partnerPanelUrl }: { partnerPanelUrl?: string }) {
+function SignInCard() {
   const searchParams = useSearchParams();
   const portals = usePortals();
   const session = useSession();
   const [signedInHere, setSignedInHere] = useState(false);
-  const mode = effectiveMode(searchParams);
-  if (mode === null) return <ModeChooser partnerPanelUrl={partnerPanelUrl} />;
+  const mode = effectiveMode(searchParams) ?? "user";
   // The central sign-in (ADR-043): once signed in here, hand the sign-in to
   // the chosen portal. A product sign-in (`resume`) completes here instead.
   const signedIn = signedInHere || (session.status === "ready" && session.session.authenticated);
@@ -222,19 +131,18 @@ function SignInCard({ partnerPanelUrl }: { partnerPanelUrl?: string }) {
     return <PortalHandoff origins={portals} mode={mode} next={searchParams.get("next")} state={searchParams.get("state")} />;
   }
   if (portals && session.status === "loading") return <p>Loading…</p>;
-  // The mode chooser is only offered where both destinations make sense.
-  const changeable = !searchParams.get("resume") && !brandHostParam(searchParams.get("brand"));
+  // The platform's own sign-in names its portal; a product's or a partner's says "Sign in".
+  const platform = !searchParams.get("resume") && !brandHostParam(searchParams.get("brand"));
   return (
     <>
       <div className={styles.formHeader}>
         <h2 className={styles.cardTitle}>
-          {reauthenticating(searchParams) ? "Confirm it's you" : changeable || mode === "admin" ? SIGN_IN_TITLE[mode] : "Sign in"}
+          {reauthenticating(searchParams) ? "Confirm it's you" : platform || mode === "admin" ? SIGN_IN_TITLE[mode] : "Sign in"}
         </h2>
       </div>
       {mode === "admin" && (
         <p className={styles.note}>
-          After your password, Workeasy360 staff verify a code from their authenticator. Access to the Admin Console is checked
-          for your account after you sign in.
+          Access to the Admin Console is checked for your account after you sign in.
         </p>
       )}
       {reauthenticating(searchParams) && (
@@ -248,10 +156,7 @@ function SignInCard({ partnerPanelUrl }: { partnerPanelUrl?: string }) {
   );
 }
 
-/** `partnerPanelUrl`: the separate Partner Panel the "Partner" choice opens
- * (from `W360_PARTNER_PANEL_URL`, read by the server page); omitted, "Partner"
- * signs in here as before. */
-export function LoginScreen({ partnerPanelUrl }: { partnerPanelUrl?: string } = {}) {
+export function LoginScreen() {
   return (
     <main id="w360-main" className={`w360-container ${styles.main}`}>
       <Suspense fallback={null}>
@@ -276,7 +181,7 @@ export function LoginScreen({ partnerPanelUrl }: { partnerPanelUrl?: string } = 
                 <Heading brand={brand} />
                 <div className={`w360-card ${styles.card}`}>
                   <Suspense fallback={<p>Loading…</p>}>
-                    <SignInCard partnerPanelUrl={partnerPanelUrl} />
+                    <SignInCard />
                   </Suspense>
                 </div>
                 {/* Support details when the partner chose to show them, and its website. */}

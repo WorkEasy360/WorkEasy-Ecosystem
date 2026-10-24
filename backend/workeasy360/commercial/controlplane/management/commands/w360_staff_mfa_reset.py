@@ -1,9 +1,9 @@
 """Break glass: a staff member lost their authenticator *and* recovery codes
 (Phase 12, D-037 residual).
 
-Since D-037 every control-plane request needs a session that verified a second
-factor, so a lost factor locks a staff member out, and nothing in the
-application can remove it (removing a factor needs a verified session).
+Dangerous control-plane actions need a step-up with a second factor, so a lost
+factor leaves a staff member unable to act, and nothing in the application can
+remove it (removing a factor needs a verified session).
 
 This command, run by an operator from a terminal:
 

@@ -100,26 +100,33 @@ def test_staff_without_a_grant_in_force_are_refused_the_admin_portal(
     assert refused.json() == {"code": "portal_access_denied"}
 
 
-def test_an_enrolled_administrator_verifies_the_factor_before_the_hand_off(
+def test_an_enrolled_administrator_is_handed_off_with_a_password_sign_in(
     sign_in, hand_off, staff_user
 ):
-    user = staff_user()
-    auth = sign_in(user)
-    _, needs_mfa, _ = hand_off(auth, "admin")
-    assert needs_mfa.status_code == 403
-    assert needs_mfa.json() == {"code": "mfa_required"}
-
-    from workeasy360.platform.tenancy.resolution import record_step_up
-
-    session = auth.session
-    record_step_up(session)
-    session.save()
-    admin, issued, redeemed = hand_off(auth, "admin", next_path="/admin/customers")
+    """Owner decision 2026-10-24: no sign-in code before the admin portal. The
+    portal session starts at AAL 1; dangerous actions there still step up."""
+    admin, issued, redeemed = hand_off(
+        sign_in(staff_user()), "admin", next_path="/admin/customers"
+    )
     assert issued.json()["redirect_url"].startswith("https://admin.workeasy360.com/")
     assert redeemed.json() == {"next": "/admin/customers"}
     response = admin.get("/api/v1/admin/session")
     assert response.status_code == 200, response.content
-    assert response.json()["aal"] == 2
+    assert response.json()["aal"] == 1
+
+
+def test_a_step_up_on_the_sign_in_host_carries_into_the_admin_portal(
+    sign_in, hand_off, staff_user
+):
+    from workeasy360.platform.tenancy.resolution import record_step_up
+
+    auth = sign_in(staff_user())
+    session = auth.session
+    record_step_up(session)
+    session.save()
+    admin, _, redeemed = hand_off(auth, "admin")
+    assert redeemed.status_code == 200
+    assert admin.get("/api/v1/admin/session").json()["aal"] == 2
 
 
 def test_the_hand_off_never_extends_elevation(sign_in, hand_off, staff_user):
@@ -141,16 +148,14 @@ def test_the_hand_off_never_extends_elevation(sign_in, hand_off, staff_user):
     assert admin.session[SESSION_STEP_UP_AT_KEY] == stepped_up_at
 
 
-def test_an_administrator_without_a_factor_reaches_the_console_gate_at_aal1(
+def test_an_administrator_without_a_factor_reaches_the_console_at_aal1(
     sign_in, hand_off, staff_user
 ):
-    """No factor enrolled: the hand-off happens at AAL 1 and the console's own
-    gate (D-037) refuses everything until a factor is enrolled and verified."""
     admin, issued, redeemed = hand_off(sign_in(staff_user(mfa=False)), "admin")
     assert issued.status_code == 200 and redeemed.status_code == 200
     response = admin.get("/api/v1/admin/session")
-    assert response.status_code == 403
-    assert response.json()["code"] == "mfa_required"
+    assert response.status_code == 200, response.content
+    assert response.json()["aal"] == 1
 
 
 # --- the Partner portal --------------------------------------------------------------

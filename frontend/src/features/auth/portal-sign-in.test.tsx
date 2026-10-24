@@ -10,7 +10,7 @@ import type { PortalOrigins } from "@/lib/portals";
 /**
  * The central sign-in and the hand-off to a portal (ADR-043). The mode only
  * says where to go: the server answers whether this account may enter, and
- * the page shows that answer - go, verify a factor, or no access.
+ * the page shows that answer - go, or no access.
  */
 
 let query = "";
@@ -133,22 +133,6 @@ describe("the central sign-in", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue as User" }));
     expect(assign).toHaveBeenCalledWith(`${ORIGINS.app}/login`);
     await expectNoViolations(container);
-  });
-
-  it("an administrator verifies the factor here, then goes on", async () => {
-    query = `mode=admin&state=${STATE}`;
-    mockApi({
-      "GET /api/v1/auth/session": [SIGNED_IN_SESSION],
-      "POST /api/v1/auth/handoff": [
-        { status: 403, body: { code: "mfa_required" } },
-        { status: 200, body: { redirect_url: `${ORIGINS.admin}/auth/continue#code=c0de` } },
-      ],
-      "POST /api/v1/auth/mfa/step-up": [{ status: 200, body: { aal: 2 } }],
-    });
-    renderPortal(<LoginScreen />);
-    fireEvent.change(await screen.findByLabelText(/code from your authenticator/), { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: /Verify/ }));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith(`${ORIGINS.admin}/auth/continue#code=c0de`));
   });
 });
 

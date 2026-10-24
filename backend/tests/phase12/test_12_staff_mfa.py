@@ -1,10 +1,10 @@
-"""Phase 12, D-037: a password alone never opens the control plane.
+"""Staff sign-in without a code (owner decision 2026-10-24, withdrawing the
+sign-in half of Phase 12's D-037).
 
-Staff *view* permissions are not ``dangerous`` (they need no recent step-up),
-yet the customer directory, orders and payment events they open read across
-every tenant. So every staff request also needs a session that has verified a
-second factor - once per sign-in; ``dangerous`` permissions still need a
-recent step-up on top.
+A password sign-in opens the control plane. What stays: every ``dangerous``
+staff permission still needs a recent step-up (AAL 2) with a second factor,
+and no staff route ever answers ``mfa_required`` any more - the admin shell no
+longer has a "verify a code" gate to show.
 """
 
 from __future__ import annotations
@@ -24,58 +24,20 @@ pytestmark = pytest.mark.django_db
 VIEW = "platform.staff_customer.view"
 
 
-def _enroll(user) -> list[str]:
-    """A confirmed TOTP factor for ``user``; its recovery codes."""
-    from workeasy360.platform.identity import mfa
-    from workeasy360.platform.identity.models import AuthFactor
-    from workeasy360.platform.identity.services import (
-        begin_totp_enrollment,
-        confirm_totp_enrollment,
-    )
-
-    start = begin_totp_enrollment(user.id)
-    secret = mfa.decrypt_totp_secret(
-        AuthFactor.objects.get(id=start.factor_id).secret_ref
-    )
-    return confirm_totp_enrollment(user.id, start.factor_id, mfa.current_totp(secret))
-
-
-def test_a_password_only_staff_session_is_refused_with_mfa_required(staff_client):
+def test_a_password_only_staff_session_opens_the_control_plane(staff_client):
     client, _ = staff_client(VIEW, aal2=False, mfa_verified=False)
 
-    for path in ("/api/v1/admin/session", "/api/v1/admin/customers"):
-        response = client.get(path)
-        assert response.status_code == 403, (path, response.content)
-        assert response.json()["code"] == "mfa_required"
-
-
-def test_verifying_a_code_opens_the_control_plane_for_the_session(staff_client):
-    client, user = staff_client(VIEW, aal2=False, mfa_verified=False)
-    recovery = _enroll(user)
-    assert client.get("/api/v1/admin/session").status_code == 403
-
-    verified = client.post(
-        "/api/v1/auth/mfa/step-up", {"code": recovery[0]}, content_type="application/json"
-    )
-    assert verified.status_code == 200, verified.content
-
     session = client.get("/api/v1/admin/session")
-    assert session.status_code == 200
+    assert session.status_code == 200, session.content
+    assert session.json()["aal"] == 1
     assert VIEW in session.json()["permissions"]
     assert client.get("/api/v1/admin/customers").status_code == 200
 
 
-def test_the_verification_does_not_lapse_but_dangerous_actions_still_need_a_fresh_step_up(
-    staff_client,
-):
-    """Verified earlier, step-up window over: reads work, and a dangerous
-    permission is still refused with ``step_up_required`` (unchanged)."""
-    client, _ = staff_client(VIEW, "platform.staff_partner.manage", aal2=False)
-
-    session = client.get("/api/v1/admin/session")
-    assert session.status_code == 200
-    assert session.json()["aal"] == 1
-    assert client.get("/api/v1/admin/customers").status_code == 200
+def test_dangerous_actions_still_need_a_fresh_step_up(staff_client):
+    client, _ = staff_client(
+        VIEW, "platform.staff_partner.manage", aal2=False, mfa_verified=False
+    )
 
     created = client.post(
         "/api/v1/admin/partners",
@@ -91,21 +53,6 @@ def test_the_verification_does_not_lapse_but_dangerous_actions_still_need_a_fres
     )
     assert created.status_code == 401
     assert created.json()["code"] == "step_up_required"
-
-
-def test_a_new_sign_in_needs_a_new_verification(staff_client):
-    client, user = staff_client(VIEW)  # verified (AAL 2)
-    assert client.get("/api/v1/admin/session").status_code == 200
-
-    again = client.post(
-        "/api/v1/auth/login",
-        {"email": user.email, "password": PASSWORD},
-        content_type="application/json",
-    )
-    assert again.status_code == 200
-    refused = client.get("/api/v1/admin/session")
-    assert refused.status_code == 403
-    assert refused.json()["code"] == "mfa_required"
 
 
 def test_a_non_staff_user_still_gets_the_plain_refusal(http_login, user_factory):
@@ -167,10 +114,10 @@ def _staff_routes() -> list[str]:
     return found
 
 
-def test_every_staff_endpoint_refuses_a_password_only_session(staff_client):
+def test_no_staff_endpoint_asks_a_password_only_session_for_a_code(staff_client):
     """Structural: each view decorated with ``staff_view`` - found by the
-    wrapper it runs, not by URL prefix - refuses before doing anything."""
-    # No grants needed: the refusal comes before any permission is judged.
+    wrapper it runs, not by URL prefix - judges the request on grants, never
+    on a sign-in code."""
     client, _ = staff_client(aal2=False, mfa_verified=False)
 
     routes = _staff_routes()
@@ -182,46 +129,35 @@ def test_every_staff_endpoint_refuses_a_password_only_session(staff_client):
         # strict (test) ceiling allows in one process; this test is not about
         # metrics (test_12_metric_cardinality.py is).
         metrics.reset()
-        answers = {}
         for method in ("get", "post", "patch", "put", "delete"):
             response = getattr(client, method)(path, content_type="application/json")
-            answers[method] = response.status_code
-            if response.status_code == 405:
+            if response.status_code == 405 or not response.content:
                 continue
-            assert response.status_code == 403, (path, method, response.content)
-            assert response.json()["code"] == "mfa_required", (path, method)
-        assert any(status == 403 for status in answers.values()), (path, answers)
+            body = (
+                response.json()
+                if response["Content-Type"].startswith("application/json")
+                else {}
+            )
+            assert body.get("code") != "mfa_required", (path, method)
 
 
 # --- staff routes outside ``staff_view`` (final audit) --------------------------
 
 
-def test_the_org_scoped_integration_registry_needs_the_second_factor_too(
+def test_the_org_scoped_integration_registry_asks_no_sign_in_code(
     http_login, user_factory, organization_factory
 ):
-    """Control-plane only (``require_platform_staff``) but routed under an
-    organization, so not a ``staff_view``: a staff member who also owns an
-    organization must not reach it with a password alone."""
     staff = user_factory(is_staff=True, password=PASSWORD)
     org, _membership, _owner = organization_factory(owner=staff)
     client = http_login(staff, aal2=False, mfa_verified=False)
 
     response = client.get(f"/api/v1/orgs/{org.slug}/integrations")
-    assert response.status_code == 403
-    assert response.json()["code"] == "mfa_required"
-
-    verified = http_login(staff, aal2=False)  # verified earlier in the sign-in
-    assert verified.get(f"/api/v1/orgs/{org.slug}/integrations").json().get("code") != (
-        "mfa_required"
-    )
+    assert response.json().get("code") != "mfa_required"
 
 
-def test_the_deep_health_view_is_not_found_without_the_second_factor(
+def test_the_deep_health_view_opens_to_a_password_only_staff_session(
     http_login, user_factory
 ):
     staff = user_factory(is_staff=True, password=PASSWORD)
     unverified = http_login(staff, aal2=False, mfa_verified=False)
-    assert unverified.get("/healthz/deep").status_code == 404
-
-    verified = http_login(staff, aal2=False)
-    assert verified.get("/healthz/deep").status_code in (200, 503)
+    assert unverified.get("/healthz/deep").status_code in (200, 503)

@@ -5,8 +5,8 @@ rate limit, parse a bounded body. **No authorization decision lives here.** The
 decorators establish *who is acting*; whether that actor may do the thing is
 decided, again, inside the application service by the one decision function.
 Hiding a route in the frontend is a convenience; every request is re-checked
-server-side for staff status, a verified second factor (Phase 12, D-037),
-the explicit permission and AAL 2 where the permission is dangerous (Task 77).
+server-side for staff status, the explicit permission and AAL 2 where the
+permission is dangerous (Task 77).
 
 Cookie-authenticated mutations go through Django's CSRF middleware like every
 other unsafe request; nothing here is exempt.
@@ -25,19 +25,17 @@ from django.views.decorators.http import require_http_methods
 
 from workeasy360.commercial.partners import access
 from workeasy360.contracts.errors import (
-    AccessPolicyDenied,
     AuthenticationRequired,
     PartnerRecordNotFound,
     PermissionDenied,
 )
-from workeasy360.contracts.values.access_policy import MFA_REQUIRED
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.authz.control_plane import platform_context
 from workeasy360.platform.observability import throttle
 from workeasy360.platform.observability.client_ip import client_ip, rate_limit_identity
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import metrics
-from workeasy360.platform.tenancy.resolution import session_aal, session_mfa_verified
+from workeasy360.platform.tenancy.resolution import session_aal
 
 logger = get_logger(__name__)
 
@@ -58,13 +56,9 @@ def staff_context(request: HttpRequest) -> TenantContext:
     Workeasy360 staff" and unlocks nothing by itself. Django's ``is_superuser``
     is never read.
 
-    A staff session must also have verified a second factor (Phase 12, D-037):
-    even a *view* permission reads across every tenant, so a password alone
-    never opens the control plane. The answer is the organization policy's
-    ``mfa_required``, which the admin shell turns into "verify a code" (or
-    "set up an authenticator" first). This is the sign-in's verification, not
-    AAL 2: it does not lapse, while ``dangerous`` permissions still demand a
-    recent step-up in ``authz.check``.
+    A password sign-in opens the control plane (owner decision 2026-10-24,
+    withdrawing D-037's sign-in code); ``dangerous`` permissions still demand
+    a recent step-up (AAL 2) in ``authz.check``.
     """
     user = authenticated_user(request)
     if not user.is_staff:
@@ -73,40 +67,14 @@ def staff_context(request: HttpRequest) -> TenantContext:
             "Not permitted.", permission="platform.staff", reason="not_platform_staff"
         )
     session = getattr(request, "session", None)
-    if not session_mfa_verified(session):
-        metrics.increment("staff_endpoint_denials_total", reason="mfa_required")
-        raise AccessPolicyDenied(
-            MFA_REQUIRED,
-            "Workeasy360 staff access needs two-step verification in this session.",
-        )
     return platform_context(user_id=user.id, aal=session_aal(session))
 
 
-def require_staff_second_factor(request: HttpRequest) -> None:
-    """D-037 for staff routes that are not ``staff_view`` (the org-scoped
-    integration registry): a *staff* session must have verified a factor.
-    Anyone else is left to the route's own refusal - these routes are
-    control-plane only, so a customer is refused by the service anyway.
-    """
-    user = getattr(request, "user", None)
-    if (
-        user is not None
-        and getattr(user, "is_authenticated", False)
-        and user.is_staff
-        and not session_mfa_verified(getattr(request, "session", None))
-    ):
-        metrics.increment("staff_endpoint_denials_total", reason="mfa_required")
-        raise AccessPolicyDenied(
-            MFA_REQUIRED,
-            "Workeasy360 staff access needs two-step verification in this session.",
-        )
-
-
-def hidden_unless_verified_staff(
+def hidden_unless_staff(
     view: Callable[..., HttpResponse],
 ) -> Callable[..., HttpResponse]:
     """A staff-only diagnostic (``/healthz/deep``) answers 404 - as it does for
-    everyone else - unless the session is staff *and* verified (D-037)."""
+    everyone else - unless the session is staff."""
 
     @functools.wraps(view)
     def wrapper(request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponse:
@@ -115,7 +83,6 @@ def hidden_unless_verified_staff(
             user is not None
             and getattr(user, "is_authenticated", False)
             and user.is_staff
-            and session_mfa_verified(getattr(request, "session", None))
         ):
             return JsonResponse({"code": "not_found", "detail": "Not found."}, status=404)
         return view(request, *args, **kwargs)

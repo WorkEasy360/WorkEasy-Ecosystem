@@ -68,6 +68,7 @@ SEGMENTS = (
     "explorers",
     "trial",
     "customers",
+    "free",
     "unverified",
     "suspended",
     "deactivated",
@@ -83,6 +84,7 @@ def _segment_filter(
     - explorers: an active account whose organizations hold nothing
     - trial: an active account with a trial somewhere, and nothing paid
     - customers: an active account in at least one customer organization
+    - free: an active account in no customer organization (trial + explorers)
     - unverified: a signup that never verified its address
     - suspended: temporarily locked out (failed sign-ins or codes)
     - deactivated: disabled by Workeasy360 staff
@@ -109,6 +111,8 @@ def _segment_filter(
         raise ValueError("Lifecycle segments need the organizations' access classes.")
     if segment == "customers":
         return active & Q(id__in=members_of(customer_orgs))
+    if segment == "free":
+        return active & ~Q(id__in=members_of(customer_orgs))
     if segment == "trial":
         return (
             active

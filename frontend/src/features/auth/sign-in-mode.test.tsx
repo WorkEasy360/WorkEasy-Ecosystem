@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import axe, { type Result } from "axe-core";
 
 import { LoginScreen } from "./LoginScreen";
@@ -124,41 +124,23 @@ describe("the mode and the return path", () => {
 // --- the page --------------------------------------------------------------------------------
 
 describe("the sign-in page", () => {
-  it("opens the separate Partner Panel from the Partner choice when one is configured", async () => {
-    mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT] });
-    render(<LoginScreen partnerPanelUrl="http://localhost:5180/login" />);
-    const section = await screen.findByRole("region", { name: "How would you like to sign in?" });
-    const choices = within(section).getAllByRole("link").slice(0, 3);
-    expect(choices.map((a) => [a.getAttribute("aria-label"), a.getAttribute("href")])).toEqual([
-      ["Administrator", "/login?mode=admin"],
-      ["Partner", "http://localhost:5180/login"],
-      ["User", "/login?mode=user"],
-    ]);
-    expect(choices[1]).toHaveAccessibleDescription("Manage your customers, sales and earnings");
-  });
-
-  it("first asks how the person wants to sign in, with three keyboard-reachable choices", async () => {
+  it("with no mode named, signs in as a User straight away - there is no chooser", async () => {
     mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT] });
     const { container } = render(<LoginScreen />);
-    expect(await screen.findByRole("heading", { level: 1, name: "Welcome to Workeasy360" })).toBeInTheDocument();
-    const section = screen.getByRole("region", { name: "How would you like to sign in?" });
-    const choices = within(section).getAllByRole("link").slice(0, 3);
-    expect(choices.map((a) => [a.getAttribute("aria-label"), a.getAttribute("href")])).toEqual([
-      ["Administrator", "/login?mode=admin"],
-      ["Partner", "/login?mode=partner"],
-      ["User", "/login?mode=user"],
-    ]);
-    expect(choices[0]).toHaveAccessibleDescription("Manage the Workeasy360 platform");
-    expect(choices[1]).toHaveAccessibleDescription("Manage your customers, sales and earnings");
-    expect(choices[2]).toHaveAccessibleDescription("Access your organization and products");
-    // Real links: in the tab order, activated by Enter, no custom key handling.
-    for (const link of choices) {
-      expect(link.tagName).toBe("A");
-      expect(link).not.toHaveAttribute("tabindex", "-1");
-    }
-    // No form yet: nothing to type into until a way in is chosen.
-    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sign in as User" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Password")).toBeInTheDocument();
+    expect(screen.queryByText("How would you like to sign in?")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Administrator" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Partner" })).not.toBeInTheDocument();
     await expectNoViolations(container);
+  });
+
+  it("Administrator: no authenticator code is promised after the password", async () => {
+    query = "mode=admin";
+    mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT] });
+    render(<LoginScreen />);
+    expect(await screen.findByRole("heading", { name: "Sign in as Administrator" })).toBeInTheDocument();
+    expect(screen.queryByText(/authenticator/)).not.toBeInTheDocument();
   });
 
   it("Administrator: the same form and request, then the Admin Console decides", async () => {
