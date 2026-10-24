@@ -124,7 +124,7 @@ describe("the Super Admin shell", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(navLabels()).toEqual(["Dashboard", "Customers", "Subscriptions", "Entitlements", "Audit"]);
+    expect(navLabels()).toEqual(["Dashboard", "Subscriptions", "Entitlements", "Audit"]);
   });
 
   it("says plainly that the account has no administrator access when the backend refuses, and offers the User way in", async () => {
@@ -167,47 +167,20 @@ describe("the Super Admin shell", () => {
     pathname = "/admin";
   });
 
-  it("asks for a code before the control plane opens, then loads it (D-037)", async () => {
-    const calls = mockApi({
+  it("opens the control plane after a password sign-in, with no code to enter", async () => {
+    mockApi({
       "GET /api/v1/auth/session": [{ status: 200, body: { ...(SIGNED_IN.body as object), mfa_enrolled: true } }],
       "GET /api/v1/admin/session": [
-        { status: 403, body: { code: "mfa_required" } },
-        { status: 200, body: { is_staff: true, aal: 2, permissions: ["platform.staff_customer.view"] } },
+        { status: 200, body: { is_staff: true, aal: 1, permissions: ["platform.staff_customer.view"] } },
       ],
-      "POST /api/v1/auth/mfa/step-up": [{ status: 200, body: { aal: 2 } }],
     });
-    const { container } = render(
+    render(
       <AdminShell>
         <h1>Page</h1>
       </AdminShell>,
     );
-    await screen.findByRole("heading", { name: "Two-step verification is required" });
-    expect(screen.queryByRole("heading", { name: "Page" })).not.toBeInTheDocument();
-    await expectNoViolations(container);
-    fireEvent.change(screen.getByLabelText(/recovery code/), { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
     await screen.findByRole("heading", { name: "Page" });
-    expect(calls.filter((c) => c.key === "POST /api/v1/auth/mfa/step-up")[0].body).toEqual({ code: "123456" });
-    expect(calls.filter((c) => c.key === "GET /api/v1/admin/session")).toHaveLength(2);
-  });
-
-  it("offers setting up an authenticator when the staff member has none (D-037)", async () => {
-    mockApi({
-      "GET /api/v1/auth/session": [{ status: 200, body: { ...(SIGNED_IN.body as object), mfa_enrolled: false } }],
-      "GET /api/v1/admin/session": [{ status: 403, body: { code: "mfa_required" } }],
-      "GET /api/v1/auth/mfa/factors": [{ status: 200, body: { factors: [] } }],
-    });
-    const { container } = render(
-      <AdminShell>
-        <h1>Secret</h1>
-      </AdminShell>,
-    );
-    await screen.findByText(/Set up an authenticator app first/);
-    expect(screen.queryByRole("heading", { name: "Secret" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/for Workeasy360 staff\.$/)).not.toBeInTheDocument();
-    await expectNoViolations(container);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    await screen.findByLabelText(/recovery code/);
+    expect(screen.queryByRole("heading", { name: "Two-step verification is required" })).not.toBeInTheDocument();
   });
 
   it("says so when signing out fails, instead of pretending it worked", async () => {

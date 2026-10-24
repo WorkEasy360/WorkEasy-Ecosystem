@@ -114,23 +114,14 @@ def test_an_administrator_choosing_administrator_gets_the_console(
     assert client.get("/api/v1/auth/session").json()["consoles"]["staff"] is True
 
 
-def test_an_administrator_must_verify_a_second_factor_first(http_login, user_factory):
+def test_a_password_sign_in_opens_the_console(http_login, user_factory):
+    """Owner decision 2026-10-24: no sign-in code for the admin console."""
     user, _g, _r = _staff_user(user_factory, VIEW)
     client = http_login(user, aal2=False, mfa_verified=False)
     response = client.get(SESSION)
-    assert response.status_code == 403
-    assert response.json()["code"] == "mfa_required"
-
-
-def test_the_second_factor_is_asked_before_grants_are_judged(http_login, user_factory):
-    """A staff identity with no grant and no verified factor is asked for the
-    factor - the same answer as a staff member with grants - so the refusal
-    order leaks nothing about which staff identities hold grants."""
-    no_grants = user_factory(is_staff=True, password=PASSWORD)
-    with_grants, _g, _r = _staff_user(user_factory, VIEW)
-    for user in (no_grants, with_grants):
-        client = http_login(user, aal2=False, mfa_verified=False)
-        assert client.get(SESSION).json()["code"] == "mfa_required"
+    assert response.status_code == 200
+    assert response.json()["aal"] == 1
+    assert VIEW in response.json()["permissions"]
 
 
 # --- what an administrator is --------------------------------------------------------------

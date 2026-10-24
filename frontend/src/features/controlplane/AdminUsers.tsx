@@ -43,8 +43,8 @@ export function Users() {
       <div>
         <h1>Users</h1>
         <p className={cp.lead}>
-          Every account on the platform, by lifecycle - Explorers have no product yet, Customers do - and by account
-          state.
+          Every account on the platform, with their organizations and subscriptions. Subscribed people pay for a
+          product; the free tier is everyone else - on a trial (Trial) or with no product yet (Explorers).
         </p>
       </div>
       <div className={cp.row} role="group" aria-label="Segment">

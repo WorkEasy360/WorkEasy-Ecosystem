@@ -340,10 +340,9 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
 
     ``mode`` is the sign-in page's navigation intent and grants nothing: the
     account must be allowed into that portal - **live** StaffGrants for the
-    Super Admin portal (and a verified factor when one is enrolled), an
-    active partner membership for the Partner portal, or, for a staff member
+    Super Admin portal, an active partner membership for the Partner portal, or, for a staff member
     without one, a live guest view of this sign-in (Guest login) with the
-    staff partner view grant and a verified factor - and the portal checks
+    staff partner view grant - and the portal checks
     again on every request. A guest-only partner session is weaker than the
     sign-in it came from: AAL 1, no step-up time, and it ends when the guest
     view does (``SESSION_GUEST_UNTIL_KEY``). ``next`` is only a path, validated against that
@@ -352,7 +351,6 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
     from workeasy360.contracts.values import portals
     from workeasy360.platform.identity import handoff
     from workeasy360.platform.identity.sessions import session_public_id
-    from workeasy360.platform.tenancy.resolution import session_aal
 
     if not settings.PORTALS_ENABLED:
         return _refused("not_found", 404)
@@ -370,13 +368,10 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
         return _refused("handoff_invalid", 400)
 
     consoles = _consoles(user)
-    if portal == portals.ADMIN:
-        if not consoles["staff"]:
-            return _refused("portal_access_denied", 403)
-        if user.has_mfa and session_aal(request.session) < 2:
-            # Verify the factor here, on the sign-in host; the portal session
-            # then starts at the same level, with the same expiry.
-            return _refused("mfa_required", 403)
+    if portal == portals.ADMIN and not consoles["staff"]:
+        # A password sign-in opens the admin portal (owner decision
+        # 2026-10-24); dangerous actions there still ask for a step-up.
+        return _refused("portal_access_denied", 403)
     guest_until: int | None = None
     if portal == portals.PARTNER and not consoles["partner"]:
         # A staff member's Guest login (commercial.partners.guest) is the

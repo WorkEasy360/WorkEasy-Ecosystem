@@ -110,10 +110,7 @@ def test_deep_health_requires_staff(client, user_factory, signed_in):
     assert client.get("/healthz/deep").status_code == 404
 
     staff = user_factory(is_staff=True)
-    # Phase 12 (D-037): staff need a verified second factor here too.
     signed_in(staff, aal=1, mfa_verified=False)
-    assert client.get("/healthz/deep").status_code == 404
-    signed_in(staff, aal=2)
     assert client.get("/healthz/deep").status_code == 200
 
 

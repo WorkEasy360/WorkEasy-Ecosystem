@@ -21,7 +21,6 @@ import loginStyles from "@/features/auth/LoginScreen.module.css";
 import { PARTNER_MENU, type Can } from "@/features/partnerpanel/menu";
 import { centerItems } from "./partnerCenterNav";
 import { ForcedPasswordChange } from "./ForcedPasswordChange";
-import { StaffMfaGate } from "./StaffMfaGate";
 import { usePortalRouter } from "@/lib/portalRouter";
 
 export function useSignOut() {
@@ -54,7 +53,6 @@ export const can = (permissions: string[], key: string) => permissions.includes(
 
 type AdminState =
   | { status: "loading" }
-  | { status: "verify" }
   | { status: "denied" }
   | { status: "error" }
   | { status: "ready"; permissions: string[] };
@@ -69,7 +67,6 @@ export function adminNav(p: string[]): SidebarGroup[] {
       title: "Audience",
       items: [
         { href: "/admin/users", label: "Users", icon: "users", when: can(p, "platform.staff_user.view") },
-        { href: "/admin/customers", label: "Customers", icon: "building", when: can(p, "platform.staff_customer.view") },
         {
           // One "Partners" entry opens the Partner Control Center, whose own
           // navigation holds the dashboard, the partner views (All, Resellers,
@@ -195,8 +192,6 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const session = useSession();
   const [state, setState] = useState<AdminState>({ status: "loading" });
-  // Bumped after a successful verification to ask the backend again.
-  const [attempt, setAttempt] = useState(0);
   const { signOut, banner } = useSignOut();
 
   useEffect(() => {
@@ -212,27 +207,12 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       .session()
       .then((s) => setState({ status: "ready", permissions: s.permissions }))
       .catch((err: unknown) => {
-        if (err instanceof ApiError && err.code === "mfa_required") {
-          setState({ status: "verify" });
-          return;
-        }
         setState({ status: err instanceof ApiError && (err.status === 403 || err.status === 401) ? "denied" : "error" });
       });
-  }, [session, router, attempt, pathname]);
+  }, [session, router, pathname]);
 
   if (session.status === "loading" || state.status === "loading") {
     return <StatusScreen>Loading the control plane…</StatusScreen>;
-  }
-  if (state.status === "verify") {
-    return (
-      <StaffMfaGate
-        mfaEnrolled={session.status === "ready" && Boolean(session.session.mfa_enrolled)}
-        onVerified={() => {
-          setState({ status: "loading" });
-          setAttempt((n) => n + 1);
-        }}
-      />
-    );
   }
   if (state.status === "denied") {
     // Signed in, but the server says this account may not use the console.

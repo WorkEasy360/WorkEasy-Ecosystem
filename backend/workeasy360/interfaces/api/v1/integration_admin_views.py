@@ -31,16 +31,12 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_http_methods
 
 from workeasy360.contracts.values import json_input
-from workeasy360.interfaces.api.v1.control_plane_http import (
-    require_staff_second_factor,
-)
 from workeasy360.platform.ecosystem import selectors, services
 
 
 @require_http_methods(["GET", "POST"])
 def integrations_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     """List registrations, or register a new one from a submitted manifest."""
-    require_staff_second_factor(request)  # D-037
     ctx = request.tenant_context  # type: ignore[attr-defined]
 
     if request.method == "GET":
@@ -64,7 +60,6 @@ def integration_detail_view(
     request: HttpRequest, org_slug: str, client_id: str
 ) -> JsonResponse:
     """Read one registration, or replace its manifest."""
-    require_staff_second_factor(request)  # D-037
     ctx = request.tenant_context  # type: ignore[attr-defined]
 
     if request.method == "GET":
@@ -96,7 +91,6 @@ def integration_status_view(
     another module's model file, and it would put validation in a view where
     the task path and every internal caller bypass it (F-7).
     """
-    require_staff_second_factor(request)  # D-037
     ctx = request.tenant_context  # type: ignore[attr-defined]
     body = _body(request)
 
@@ -119,7 +113,6 @@ def credentials_view(request: HttpRequest, org_slug: str, client_id: str) -> Jso
     the caller's own request: nothing stores it and no read path can produce
     it (services.IssuedCredential).
     """
-    require_staff_second_factor(request)  # D-037
     ctx = request.tenant_context  # type: ignore[attr-defined]
 
     if request.method == "GET":
@@ -161,7 +154,6 @@ def credential_detail_view(
     request: HttpRequest, org_slug: str, client_id: str, credential_id: str
 ) -> JsonResponse:
     """Revoke a credential. Effective on the next request, with no delay."""
-    require_staff_second_factor(request)  # D-037
     ctx = request.tenant_context  # type: ignore[attr-defined]
     reason = request.GET.get("reason", "")
     credential = services.revoke_credential(

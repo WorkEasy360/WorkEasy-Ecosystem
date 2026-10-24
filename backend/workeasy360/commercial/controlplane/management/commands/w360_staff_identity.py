@@ -89,8 +89,8 @@ class Command(BaseCommand):
             )
             return
         if enable:
-            # Phase 12 (D-037): a staff session needs a verified second factor,
-            # and the *first* factor of an account needs only its password to
+            # Phase 12 (D-037): dangerous staff actions need a step-up with a
+            # second factor, and the *first* factor of an account needs only its password to
             # enrol. So the factor must exist before the account is staff - and
             # the operator confirms it is the person's - or a phished password
             # of a newly designated account could still enrol the attacker's.

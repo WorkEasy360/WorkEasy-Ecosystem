@@ -225,9 +225,10 @@ export type Lifecycle = "explorer" | "trial" | "customer" | "unverified";
 /** The directory's segments; "all" is no segment. */
 export const USER_SEGMENTS = [
   { key: "", label: "All users" },
-  { key: "explorers", label: "Explorers" },
-  { key: "customers", label: "Customers" },
+  { key: "customers", label: "Subscribed" },
+  { key: "free", label: "Free tier" },
   { key: "trial", label: "Trial" },
+  { key: "explorers", label: "Explorers" },
   { key: "unverified", label: "Unverified" },
   { key: "suspended", label: "Suspended" },
   { key: "deactivated", label: "Deactivated" },
