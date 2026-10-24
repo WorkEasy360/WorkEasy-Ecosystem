@@ -51,13 +51,25 @@ COMMISSION_VIEW = "platform.staff_commission.view"
 DEFAULT_PAGE = 25
 MAX_PAGE = 100
 
-SCOPES = ("resellers", "affiliates", "all")
+SCOPES = ("resellers", "white_label", "affiliates", "all")
 
 #: Which derived label each list scope filters on. ``all`` filters on none.
 _SCOPE_LABEL = {
     "resellers": capabilities.RESELLER,
+    "white_label": capabilities.WHITE_LABEL,
     "affiliates": capabilities.AFFILIATE,
 }
+
+#: The All Partners "Partner type" filter (ADR-048), by label: a filter over
+#: the capability grants - a partner holding several is in every one of them.
+LABEL_FILTERS = {
+    capabilities.RESELLER: "resellers",
+    capabilities.WHITE_LABEL: "white_label",
+    capabilities.AFFILIATE: "affiliates",
+}
+
+#: Partners on the dashboard's "Recent partners".
+RECENT_PARTNERS = 5
 
 #: Rows per section of the recent-activity panel.
 RECENT = 5
@@ -113,13 +125,16 @@ def _clean_query(value: str | None) -> str | None:
 
 
 def overview(ctx: TenantContext) -> dict[str, Any]:
-    """Factual counts, each answering one question a staff member asks first.
+    """The Partners dashboard (ADR-048): factual counts, each answering one
+    question a staff member asks first, and the newest partners with how far
+    their profile is.
 
     Deliberately absent: MRR, ARR, growth and revenue. A partner's sales are
     priced in several currencies and intervals with no conversion in this
-    platform, so any single figure would be invented. Money appears only where
-    it is well defined - a per-currency sum of ledger rows or payouts.
+    platform, so any single figure would be invented.
     """
+    from workeasy360.commercial.controlplane import profile_completion
+
     authz.require(ctx, PARTNER_VIEW)
     now = timezone.now()
     counts = partner_reads.overview_counts(
@@ -127,65 +142,40 @@ def overview(ctx: TenantContext) -> dict[str, Any]:
         reseller_keys=capabilities.experience_keys(capabilities.RESELLER),
         white_label_keys=capabilities.experience_keys(capabilities.WHITE_LABEL),
         affiliate_keys=capabilities.experience_keys(capabilities.AFFILIATE),
+        incomplete=profile_completion.incomplete_q(now),
     )
-    pending_commission = commission_selectors.unpaid_by_currency()
-    pending_payouts = commission_selectors.open_payouts_by_currency()
-
+    cards = [
+        ("total_partners", "Total partners"),
+        ("active_partners", "Active partners"),
+        ("resellers", "Resellers"),
+        ("white_label", "White-label partners"),
+        ("affiliates", "Affiliates"),
+        ("suspended_partners", "Suspended partners"),
+        ("profiles_incomplete", "Profiles incomplete"),
+    ]
+    recent = partner_reads.recent_partners(RECENT_PARTNERS)
+    ids = [p.id for p in recent]
+    held = partner_reads.held_capabilities(ids, now)
+    completion = profile_completion.for_partners(
+        ids, now, statuses={p.id: p.status for p in recent}, held=held
+    )
     return {
         "as_of": now.isoformat(),
         "cards": [
+            {"key": key, "label": label, "count": counts[key]} for key, label in cards
+        ],
+        "recent_partners": [
             {
-                "key": "total_partners",
-                "label": "Total partners",
-                "count": counts["total_partners"],
-            },
-            {
-                "key": "active_partners",
-                "label": "Active partners",
-                "count": counts["active_partners"],
-            },
-            {
-                "key": "active_resellers",
-                "label": "Active resellers",
-                "count": counts["active_resellers"],
-            },
-            {
-                "key": "white_label_enabled",
-                "label": "White-label enabled",
-                "count": counts["white_label_enabled"],
-            },
-            {
-                "key": "active_affiliates",
-                "label": "Active affiliates",
-                "count": counts["active_affiliates"],
-            },
-            {
-                "key": "partner_customers",
-                "label": "Partner customers",
-                "count": counts["partner_customers"],
-            },
-            {
-                "key": "active_partner_subscriptions",
-                "label": "Active partner subscriptions",
-                "count": counts["active_partner_subscriptions"],
-            },
-            {
-                "key": "pending_commissions",
-                "label": "Pending commissions",
-                "count": sum(a["entries"] for a in pending_commission),
-                "amounts": pending_commission,
-            },
-            {
-                "key": "pending_payouts",
-                "label": "Pending payouts",
-                "count": sum(a["entries"] for a in pending_payouts),
-                "amounts": pending_payouts,
-            },
-            {
-                "key": "domains_awaiting_verification",
-                "label": "Domains awaiting verification",
-                "count": counts["domains_awaiting_verification"],
-            },
+                "id": str(p.id),
+                "code": p.code,
+                "display_name": p.display_name,
+                "status": p.status,
+                "created_at": p.created_at.isoformat(),
+                "experience": capabilities.experience_labels(held.get(p.id, set())),
+                "profile_completion": profile_completion.summary_line(completion[p.id]),
+            }
+            for p in recent
+            if p.id in completion
         ],
     }
 
@@ -201,25 +191,38 @@ def resellers_page(
     product: str | None = None,
     capability: str | None = None,
     scope: str | None = None,
+    label: str | None = None,
+    profile: str | None = None,
     limit: Any = DEFAULT_PAGE,
     cursor: str | None = None,
 ) -> Page:
-    """One page of partners with the aggregates the reseller list shows.
+    """One page of partners with the aggregates the partner lists show.
 
     ``scope=resellers`` (the default) lists partners that wear the Reseller
-    label, ``scope=affiliates`` those that wear the Affiliate label, and
-    ``scope=all`` every partner, so an account created but not yet given
-    capabilities is never invisible. All three are the same query - a label is
-    a filter over grants, not a table - and the same row shape.
+    label, ``scope=white_label`` and ``scope=affiliates`` those that wear those
+    labels, and ``scope=all`` every partner, so an account created but not yet
+    given capabilities is never invisible. ``label`` (All Partners'
+    "Partner type": ``reseller``, ``white_label`` or ``affiliate``) is the same
+    label filter by its name, and wins over ``scope``. ``profile`` is
+    ``complete`` or ``incomplete`` (``controlplane.profile_completion``). Every
+    filter is applied by the database - a label is a filter over grants, not a
+    table - and every variant has the same row shape.
     """
+    from workeasy360.commercial.controlplane import profile_completion
+
     authz.require(ctx, PARTNER_VIEW)
     page_size = _limit(limit)
     state = _clean_status(status)
     which = _clean_scope(scope)
+    if label:
+        if label not in LABEL_FILTERS:
+            raise PartnerValidationError("Unknown partner type filter.", field="type")
+        which = LABEL_FILTERS[label]
     needle = _clean_query(query)
     wanted_capability = _clean_capability(capability)
     wanted_product = _clean_product(product)
     now = timezone.now()
+    wanted_profile = profile_completion.profile_filter(profile, now)
 
     rows, has_more = partner_reads.partner_rows(
         now,
@@ -234,8 +237,16 @@ def resellers_page(
         capability=wanted_capability,
         cursor=cursor,
         page_size=page_size,
+        extra=wanted_profile,
     )
     facts = _aggregates([r.id for r in rows], now)
+    completion = profile_completion.for_partners(
+        [r.id for r in rows],
+        now,
+        statuses={r.id: r.status for r in rows},
+        held=facts["capabilities"],
+        referrals=facts["referrals"],
+    )
 
     items = []
     for row in rows:
@@ -255,10 +266,22 @@ def resellers_page(
                 "code": row.code,
                 "display_name": row.display_name,
                 "status": row.status,
+                "version": row.version,
                 "payout_currency": row.payout_currency,
                 "created_at": row.created_at.isoformat(),
                 "experience": capabilities.experience_labels(held),
+                "profile_completion": profile_completion.summary_line(completion[row.id]),
+                # The workspace its portal opens first - derived from the grants
+                # and the stored preference, a landing and never an authority.
+                "primary_experience": capabilities.resolve_landing(
+                    row.default_experience, held
+                ),
                 "capability_count": len(held),
+                "capabilities": sorted(held),
+                "administrator": facts["administrators"].get(row.id),
+                # Profile phone and country (ISO 3166-1 alpha-2), empty when unset.
+                "phone": facts["reach"].get(row.id, {}).get("phone", ""),
+                "country": facts["reach"].get(row.id, {}).get("country", ""),
                 "customers": facts["customers"].get(row.id, 0),
                 "products": facts["products"].get(row.id, []),
                 "active_subscriptions": facts["subscriptions"].get(row.id, 0),

@@ -203,6 +203,9 @@ MIDDLEWARE = [
     # Immediately after: every view downstream must see a revoked session as
     # logged out, not merely be able to check for it (Phase 4, Task 33).
     "workeasy360.platform.identity.middleware.SessionEpochMiddleware",
+    # Directly after: a session whose password was chosen by someone else (a
+    # temporary one) is served only the calls that let its owner replace it.
+    "workeasy360.platform.identity.middleware.PasswordChangeRequiredMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "workeasy360.platform.observability.middleware.RequestLogMiddleware",
@@ -904,6 +907,9 @@ CONTROL_PLANE_RATE_LIMITS = {
     "payment_webhook_ip": (env.int("W360_RL_PAYMENT_WEBHOOK_IP", 600), 60),
     "partner_provision_user": (env.int("W360_RL_PARTNER_PROVISION_USER", 20), 60),
     "partner_provision_ip": (env.int("W360_RL_PARTNER_PROVISION_IP", 60), 60),
+    # ADR-045: the customer export, a bounded read that still copies data out.
+    "partner_export_user": (env.int("W360_RL_PARTNER_EXPORT_USER", 5), 60),
+    "partner_export_ip": (env.int("W360_RL_PARTNER_EXPORT_IP", 20), 60),
     "domain_verify_user": (env.int("W360_RL_DOMAIN_VERIFY_USER", 10), 60),
     "domain_verify_ip": (env.int("W360_RL_DOMAIN_VERIFY_IP", 30), 60),
     "diagnose_user": (env.int("W360_RL_DIAGNOSE_USER", 30), 60),
@@ -911,7 +917,40 @@ CONTROL_PLANE_RATE_LIMITS = {
     "public_branding_ip": (env.int("W360_RL_PUBLIC_BRANDING_IP", 120), 60),
     "public_referral_ip": (env.int("W360_RL_PUBLIC_REFERRAL_IP", 20), 60),
     "referral_convert_user": (env.int("W360_RL_REFERRAL_CONVERT_USER", 10), 60),
+    # ADR-046: partner API keys. Managing them (create / rotate / revoke) is a
+    # dangerous action and is limited tightly; the key-authenticated read API has
+    # a per-address ceiling here and a per-key one in the view.
+    "partner_apikey_user": (env.int("W360_RL_PARTNER_APIKEY_USER", 10), 60),
+    "partner_apikey_ip": (env.int("W360_RL_PARTNER_APIKEY_IP", 30), 60),
+    "partner_api_ip": (env.int("W360_RL_PARTNER_API_IP", 600), 60),
+    #: Counted only for a presented credential that was refused.
+    "partner_api_fail_ip": (env.int("W360_RL_PARTNER_API_FAIL_IP", 20), 60),
+    "partner_translation_user": (env.int("W360_RL_PARTNER_TRANSLATION_USER", 30), 60),
+    "partner_translation_ip": (env.int("W360_RL_PARTNER_TRANSLATION_IP", 60), 60),
+    # ADR-047: Add Partner with a login. The credentials check answers whether an
+    # email already has an account and judges a typed password, so it is limited
+    # tightly (a staff member, second factor and partner.manage are needed first);
+    # a password-reset link for a partner's person is an email, limited likewise.
+    "partner_onboard_user": (env.int("W360_RL_PARTNER_ONBOARD_USER", 30), 60),
+    "partner_onboard_ip": (env.int("W360_RL_PARTNER_ONBOARD_IP", 60), 60),
+    "partner_password_reset_user": (
+        env.int("W360_RL_PARTNER_PASSWORD_RESET_USER", 10),
+        60,
+    ),
+    "partner_password_reset_ip": (env.int("W360_RL_PARTNER_PASSWORD_RESET_IP", 30), 60),
 }
+
+#: Per-key ceiling of the partner API (requests per minute), enforced by the view.
+PARTNER_API_RATE_PER_KEY = env.int("W360_PARTNER_API_RATE_PER_KEY", 120)
+
+#: Where a partner is pointed for help (shown in the Support Manager). Empty means
+#: no address is offered; Easy Help Desk is found from the product registry.
+W360_PARTNER_SUPPORT_EMAIL = env.str("W360_PARTNER_SUPPORT_EMAIL", "")
+#: The registered product whose launch address the Support Manager offers as the
+#: help desk. A setting, not a code constant: the platform names no product.
+W360_PARTNER_HELP_DESK_PRODUCT = env.str(
+    "W360_PARTNER_HELP_DESK_PRODUCT", "easy_helpdesk"
+)
 
 # Phase 7. Custom-domain verification and commission timing.
 #: Hostnames the platform itself serves; a partner may never claim them or a

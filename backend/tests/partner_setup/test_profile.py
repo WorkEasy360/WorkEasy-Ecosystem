@@ -126,7 +126,7 @@ def test_only_what_is_sent_is_returned():
     [
         {"business": {"code": "stolen"}},
         {"business": {"payout_currency": "USD"}},
-        {"payout": {"currency": "USD"}},
+        {"payout": {"currency": "XYZ"}},
         {"contacts": {"owner": {"name": "x"}}},
         {"contacts": {"billing": {"is_admin": True}}},
         {"status": "active"},
@@ -332,15 +332,30 @@ def test_an_unknown_partner_is_a_404(manager):
     assert response.status_code == 404
 
 
-def test_the_currency_and_the_code_cannot_be_changed_here(manager, draft_partner):
-    for body in (
-        {"payout": {"currency": "USD"}},
-        {"code": "other"},
-        {"business": {"code": "other"}},
-    ):
+def test_the_code_cannot_be_changed_here_and_the_currency_only_while_draft(
+    manager, draft_partner, console
+):
+    for body in ({"code": "other"}, {"business": {"code": "other"}}):
         assert save(manager, draft_partner, body).status_code == 400
     row = selectors.partner_row(draft_partner.id)
     assert (row.payout_currency, row.code) == ("GBP", "draft-console")
+    # ADR-048: a draft's preferred currency can still be chosen (it has no
+    # prices, ledger or payouts yet); an active partner's is fixed.
+    assert (
+        save(manager, draft_partner, {"payout": {"currency": "USD"}}).status_code == 200
+    )
+    assert selectors.partner_row(draft_partner.id).payout_currency == "USD"
+    active = console["reseller"]["partner"]
+    before = selectors.partner_row(active.id).payout_currency
+    other = "EUR" if before != "EUR" else "USD"
+    current = selectors.partner_row(active.id).version
+    assert (
+        save(
+            manager, active, {"payout": {"currency": other}}, version=current
+        ).status_code
+        == 400
+    )
+    assert selectors.partner_row(active.id).payout_currency == before
 
 
 # --- what editing a profile must never touch ---------------------------------------------------------

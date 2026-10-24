@@ -183,10 +183,16 @@ def configure_logging() -> None:
     log_format = getattr(settings, "LOG_FORMAT", "json")
     log_level = getattr(settings, "LOG_LEVEL", "INFO")
 
+    # The console renderer's default exception formatter is the Rich one when Rich
+    # is installed, and it prints every frame's local variables - a password
+    # argument, a request body - into the log. A plain traceback is what the JSON
+    # format (production) records too: where the error was, never what was in it.
     renderer = (
         structlog.processors.JSONRenderer()
         if log_format == "json"
-        else structlog.dev.ConsoleRenderer(colors=False)
+        else structlog.dev.ConsoleRenderer(
+            colors=False, exception_formatter=structlog.dev.plain_traceback
+        )
     )
 
     # The console renderer formats exceptions itself (and warns when

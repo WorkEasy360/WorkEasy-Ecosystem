@@ -107,3 +107,29 @@ def organization_ids_with_any(*, subscription: bool = False, access: bool = Fals
     if access:
         rows = rows.exclude(access_class="")
     return rows.values("organization_id")
+
+
+# --- the partner panel's customer counts (ADR-045) -----------------------------------
+
+ACTIVE_STATES = ("active", "trialing")
+
+
+def active_subscription_count(organization_ids: Any) -> int:
+    """How many of these organizations (a queryset of ids, or a list) hold an
+    active or trialling subscription. One query."""
+    from workeasy360.commercial.provisioning.models import CustomerSummary
+
+    return CustomerSummary.objects.filter(
+        subscription_status__in=ACTIVE_STATES, organization_id__in=organization_ids
+    ).count()
+
+
+def product_holders(organization_ids: Any, product_code: str) -> tuple[int, int]:
+    """``(organizations that hold the product, those with an active subscription)``
+    among these organizations. Two queries."""
+    from workeasy360.commercial.provisioning.models import CustomerSummary
+
+    held = CustomerSummary.objects.filter(
+        organization_id__in=organization_ids, product_codes__contains=[product_code]
+    )
+    return held.count(), held.filter(subscription_status__in=ACTIVE_STATES).count()

@@ -38,6 +38,7 @@ from workeasy360.contracts.enums import (
     DomainStatus,
     GrantStatus,
     PartnerContactKind,
+    PartnerHierarchyStatus,
     PartnerLinkStatus,
     PartnerMemberRole,
     PartnerStatus,
@@ -75,6 +76,18 @@ class PartnerAccount(models.Model):
         choices=_choices(PartnerStatus),
         default=PartnerStatus.DRAFT.value,
     )
+    #: Which workspace this partner's portal opens first - ``reseller``,
+    #: ``white_label`` or ``affiliate`` (``capabilities.EXPERIENCES``), or empty
+    #: for "whichever its grants earn first". **A presentation preference and
+    #: nothing else** (ADR-047): the Add Partner type card sets it, and no
+    #: permission, price, commission or entitlement ever reads it - what a
+    #: partner may do comes from its capability grants alone, so setting this to
+    #: an experience the grants do not earn opens nothing (``capabilities.
+    #: resolve_landing`` intersects it with what the grants allow). It is not a
+    #: partner type: it can change at any time and removes no history.
+    default_experience = models.CharField(
+        max_length=16, blank=True, default="", db_default=""
+    )
     #: Optimistic concurrency token. Two staff members editing one partner
     #: must not silently overwrite each other.
     version = models.IntegerField(default=0)
@@ -95,6 +108,16 @@ class PartnerAccount(models.Model):
             models.Index(fields=["status", "created_at"], name="ix_partner_status"),
             # The staff partner list pages newest-first with a keyset cursor.
             models.Index(fields=["-created_at", "-id"], name="ix_partner_created_id"),
+        ]
+        constraints = [
+            # A closed set, held by the database as well as the service: the
+            # preference is never free text.
+            models.CheckConstraint(
+                condition=models.Q(
+                    default_experience__in=["", "reseller", "white_label", "affiliate"]
+                ),
+                name="ck_partner_default_experience_known",
+            ),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - display only
@@ -137,6 +160,10 @@ class PartnerProfile(models.Model):
     tax_number = models.CharField(max_length=64, blank=True, default="")
     #: ISO 3166-1 alpha-2 (``contracts.values.countries``), or empty.
     country = models.CharField(max_length=2, blank=True, default="")
+    #: An IANA zone name (``Asia/Kolkata``) validated against the platform's
+    #: zone database on write, or empty. Presentation only: it decides how this
+    #: partner's own screens write a time, never when anything happens.
+    timezone = models.CharField(max_length=64, blank=True, default="", db_default="")
     #: ``{line1, line2, city, region, postal_code}`` - a closed key set.
     address = models.JSONField(default=dict)
 
@@ -295,7 +322,11 @@ class PartnerMember(models.Model):
     )
     status = models.CharField(
         max_length=16,
-        choices=[("active", "Active"), ("removed", "Removed")],
+        choices=[
+            ("active", "Active"),
+            ("suspended", "Suspended"),
+            ("removed", "Removed"),
+        ],
         default="active",
     )
     added_by = models.ForeignKey(
@@ -498,6 +529,132 @@ class PartnerProductGrant(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.partner_id} may sell {self.product_id}"
+
+
+class PartnerHierarchyLink(models.Model):
+    """One partner (the parent) delegating to another (the sub-partner).
+
+    **Architecture-neutral on purpose.** This is the one table the sub-partner
+    relationship needs: a parent ``PartnerAccount`` points at a child
+    ``PartnerAccount``. There is no agency, sub-agency or sub-partner model - a
+    sub-partner is an ordinary partner account that happens to have a live row
+    here as ``child`` - and the depth rule lives in ``hierarchy.py`` (today one
+    level), not in the schema, so a deeper chain is a policy change and never a
+    migration.
+
+    **Never inferred and never a permission.** The row grants the *parent* the
+    right to see the child's status and counts and to suspend it; it grants the
+    child nothing and the parent nothing of the child's customers, profile,
+    payout details or secrets. Every access decision still comes from the
+    child's own capability grants.
+
+    **Invariants held by the database**, not only the service:
+
+    - a partner is never its own parent (``ck_hierarchy_not_self``);
+    - a partner has at most one *live* parent (``uq_one_live_parent_per_child``),
+      so two parents can never both believe they own a sub-partner;
+    - an ended row is stamped (``ck_hierarchy_end_stamped``).
+
+    Cycles are refused by the service under a lock on the child.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    parent = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="child_links"
+    )
+    child = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="parent_links"
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=_choices(PartnerHierarchyStatus),
+        default=PartnerHierarchyStatus.ACTIVE.value,
+    )
+    created_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    created_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    ended_by = models.ForeignKey(
+        "identity.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    end_reason = models.CharField(max_length=64, blank=True, default="")
+    version = models.IntegerField(default=0)
+
+    class Meta:
+        db_table = "partners_hierarchy_link"
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(parent=models.F("child")),
+                name="ck_hierarchy_not_self",
+            ),
+            models.UniqueConstraint(
+                fields=["child"],
+                condition=~models.Q(status="ended"),
+                name="uq_one_live_parent_per_child",
+            ),
+            models.CheckConstraint(
+                condition=(~models.Q(status="ended") & models.Q(ended_at__isnull=True))
+                | models.Q(status="ended", ended_at__isnull=False),
+                name="ck_hierarchy_end_stamped",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["parent", "status", "-created_at", "-id"],
+                name="ix_hierarchy_parent",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.parent_id} -> {self.child_id} [{self.status}]"
+
+
+class PartnerProductSetting(models.Model):
+    """How one partner presents and offers a product it was granted.
+
+    **Presentation and a sale switch - never an entitlement.** A row exists only
+    once a partner has changed something; no row means the defaults (offered,
+    visible, catalog order). It is read in exactly two places: the partner's
+    own sell path (``enabled_for_sale`` can only *narrow* what the grant
+    allows - a partner cannot enable a product it holds no ``PartnerProductGrant``
+    for, because the grant is checked first and separately) and the display of
+    its customers' portal (order and visibility). Nothing here reaches
+    authorization, entitlement, pricing or tenant resolution, and turning a
+    product off for new sales ends nobody's subscription.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="product_settings"
+    )
+    product = models.ForeignKey(
+        "catalog.Product", on_delete=models.PROTECT, related_name="+"
+    )
+    enabled_for_sale = models.BooleanField(default=True, db_default=True)
+    #: Lower sorts first; ties fall back to the catalog's own order.
+    display_order = models.PositiveSmallIntegerField(default=0, db_default=0)
+    show_in_explore = models.BooleanField(default=True, db_default=True)
+    show_in_my_products = models.BooleanField(default=True, db_default=True)
+    updated_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "partners_product_setting"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["partner", "product"], name="uq_partner_product_setting"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"settings of {self.partner_id} for {self.product_id}"
 
 
 class PartnerBrand(models.Model):
@@ -750,3 +907,153 @@ class PartnerLogoUpload(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"logo {self.file_id} of {self.partner_id}"
+
+
+class PartnerApiKey(models.Model):
+    """A scoped credential a partner's own systems present to the partner API.
+
+    **Only a hash is stored.** The secret is 256 random bits shown once, at
+    creation or rotation; what is kept is its SHA-256 (enough for a
+    high-entropy random value, and what the platform already does for every
+    other bearer secret) and a short public ``key_id`` that names the row. The
+    secret is never returned again, never logged and never audited.
+
+    A key is bound to the **partner** (its data is the only data it can reach),
+    to a closed set of **scopes** from ``api_keys.SCOPES`` (never free text),
+    and to the **member who created it**: it works only while that member is
+    still an active member of the partner, so removing or pausing a person
+    ends their keys with their access. It always expires.
+
+    Rotation never edits a secret in place: the old row is revoked and a new
+    row (``replaces`` -> the old one) carries the new secret.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="api_keys"
+    )
+    name = models.CharField(max_length=80)
+    #: The public part of the credential (``w360pk_<key_id>_<secret>``).
+    key_id = models.CharField(max_length=16, unique=True)
+    secret_hash = models.CharField(max_length=64)
+    scopes = models.JSONField(default=list)
+    status = models.CharField(
+        max_length=16,
+        choices=[("active", "Active"), ("revoked", "Revoked")],
+        default="active",
+    )
+    created_by = models.ForeignKey(
+        PartnerMember, on_delete=models.PROTECT, related_name="api_keys"
+    )
+    created_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        "identity.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    revoke_reason = models.CharField(max_length=32, blank=True, default="")
+    replaces = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+
+    class Meta:
+        db_table = "partners_api_key"
+        indexes = [
+            models.Index(fields=["partner", "-created_at"], name="ix_apikey_partner"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status="active", revoked_at__isnull=True)
+                | models.Q(status="revoked", revoked_at__isnull=False),
+                name="ck_apikey_revoked_stamped",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"api key {self.key_id} of {self.partner_id} [{self.status}]"
+
+
+class PartnerTranslation(models.Model):
+    """A partner-owned presentation string for one locale.
+
+    The key must be in ``translations.KEYS`` (a closed list of labels and
+    messages a partner's customers see) and the locale in
+    ``translations.LOCALES``; the value is one bounded line of plain text, never
+    markup or template code. Nothing here is read by authorization,
+    entitlement, validation or pricing. A missing row falls back to the
+    platform's wording, then to English (``translations.resolve``).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="translations"
+    )
+    locale = models.CharField(max_length=8)
+    key = models.CharField(max_length=64)
+    value = models.CharField(max_length=500)
+    updated_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "partners_translation"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["partner", "locale", "key"], name="uq_partner_translation"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.partner_id} {self.locale} {self.key}"
+
+
+class PartnerNotificationState(models.Model):
+    """A member's "mark all read" mark: everything in their Notification Center
+    at or before ``read_until`` counts as read. Read-state only - the
+    notifications themselves are entries of the one audit log and are not
+    copied anywhere."""
+
+    member = models.OneToOneField(
+        PartnerMember, primary_key=True, on_delete=models.CASCADE, related_name="+"
+    )
+    read_until = models.DateTimeField()
+
+    class Meta:
+        db_table = "partners_notification_state"
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.member_id} read until {self.read_until}"
+
+
+class PartnerNotificationRead(models.Model):
+    """One member has read one notification.
+
+    A partner's notifications are entries of the one audit log (nothing is
+    copied), so this row holds only the pair "member, event" - the read-state a
+    person keeps for themselves. ``PartnerNotificationState`` covers "mark all
+    read".
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    member = models.ForeignKey(
+        PartnerMember, on_delete=models.CASCADE, related_name="notification_reads"
+    )
+    event_id = models.UUIDField()
+    read_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "partners_notification_read"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["member", "event_id"], name="uq_partner_notification_read"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.member_id} read {self.event_id}"

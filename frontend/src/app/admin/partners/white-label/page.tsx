@@ -1,13 +1,7 @@
-"use client";
+import { redirect } from "next/navigation";
+import { allPartnersHref } from "@/features/controlplane/oldPartnerRoutes";
 
-import { Suspense } from "react";
-import { WhiteLabelList } from "@/features/controlplane/WhiteLabelList";
-
-/** Partners → White-label. Suspense: the page reads its filters from the query. */
-export default function Page() {
-  return (
-    <Suspense fallback={<p aria-live="polite">Loading white-label partners…</p>}>
-      <WhiteLabelList />
-    </Suspense>
-  );
+/** Old address: White-label is now All Partners filtered on the White-label type (ADR-048). */
+export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  redirect(allPartnersHref(await searchParams, "white_label"));
 }

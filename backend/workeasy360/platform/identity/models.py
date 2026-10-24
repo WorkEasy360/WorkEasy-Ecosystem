@@ -145,6 +145,11 @@ class User(AbstractBaseUser):
     )
 
     last_login_at = models.DateTimeField(null=True, blank=True)
+    #: Set when someone other than the owner chose this password (a temporary
+    #: password shown once to an operator). Until the owner changes it, every
+    #: API call but the ones that let them do so is refused
+    #: (``PasswordChangeRequiredMiddleware``); changing the password clears it.
+    password_change_required = models.BooleanField(default=False, db_default=False)
     #: Counted for throttling. Lockout is time-boxed with jitter rather than
     #: permanent, so an attacker cannot lock a victim out at will.
     failed_login_count = models.PositiveIntegerField(default=0)

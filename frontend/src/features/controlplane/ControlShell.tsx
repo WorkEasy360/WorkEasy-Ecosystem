@@ -18,11 +18,13 @@ import { portalHref } from "@/lib/portals";
 import consoleStyles from "@/features/console/Console.module.css";
 import { adminSignInUrl } from "@/features/auth/signInMode";
 import loginStyles from "@/features/auth/LoginScreen.module.css";
+import { PARTNER_MENU, type Can } from "@/features/partnerpanel/menu";
 import { centerItems } from "./partnerCenterNav";
+import { ForcedPasswordChange } from "./ForcedPasswordChange";
 import { StaffMfaGate } from "./StaffMfaGate";
 import { usePortalRouter } from "@/lib/portalRouter";
 
-function useSignOut() {
+export function useSignOut() {
   const router = usePortalRouter();
   // A failed sign-out must not look like a successful one: navigating to
   // /login anyway would resume the still-live session for whoever sits down
@@ -268,56 +270,40 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
 // --- Partner portal --------------------------------------------------------------
 
-const PartnerContext = createContext<{ partner: PortalPartner | null }>({ partner: null });
+/** The signed-in partner and, inside a workspace (ADR-047), the address prefix its
+ * pages live under (`/partner/reseller`). Without `base` the generic panel's
+ * `/partner/<id>` applies. Display only: it decides no permission. */
+export interface PartnerContextValue {
+  partner: PortalPartner | null;
+  base?: string;
+}
+
+export const PartnerContext = createContext<PartnerContextValue>({ partner: null });
 export const usePartner = () => useContext(PartnerContext);
 
 export function partnerNav(partner: PortalPartner): SidebarGroup[] {
-  // What the server will answer, by status (partners/resolver.py): an ended
-  // partner can still read the money it is owed and nothing else, and one that
-  // was never activated can do nothing. Offering a page that can only refuse is
-  // not a courtesy.
-  const ended = partner.status === "terminated";
-  const inactive = partner.status === "draft";
-  const grants = (capability: string) => partner.capabilities.includes(capability);
-  const has = (capability: string) => grants(capability) && !ended && !inactive;
-  const money = (capability: string) => grants(capability) && !inactive;
+  // The server resolves what this person may do (their role over the partner's
+  // capability grants, by the partner's status: partners/resolver.py) and sends
+  // it as ``permissions``. A page that could only refuse is not offered; an
+  // ended partner reads its money and nothing else, a draft nothing at all.
+  // The menu itself - the approved set of top-level entries and the permission
+  // each needs - is the one list in ``partnerpanel/menu.ts`` (ADR-046).
+  // Navigation convenience only: every request is authorized again.
+  const held = new Set(partner.permissions ?? []);
+  const can: Can = (...keys) => keys.some((k) => held.has(`platform.partner_${k}`));
   const base = `/partner/${partner.partner_id}`;
-  return [
-    { items: [{ href: base, label: "Overview", icon: "dashboard", exact: true }] },
-    {
-      title: "Customers",
-      items: [
-        {
-          href: `${base}/customers`,
-          label: "Customers",
-          icon: "building",
-          when: has("customer.provision") || has("customer.manage") || has("subscription.sell") || has("subscription.manage"),
-        },
-        { href: `${base}/products`, label: "Products & plans", icon: "tag", when: has("pricing.view") || has("subscription.sell") },
-      ],
-    },
-    {
-      title: "Earnings",
-      items: [
-        { href: `${base}/referrals`, label: "Referrals", icon: "gift", when: has("referral.create") || has("referral.view") },
-        { href: `${base}/commissions`, label: "Commissions", icon: "currency", when: money("commission.view") },
-        { href: `${base}/payouts`, label: "Payouts", icon: "receipt", when: money("payout.view") },
-      ],
-    },
-    {
-      title: "Brand",
-      items: [
-        {
-          href: `${base}/white-label`,
-          label: "Set up white-label",
-          icon: "palette",
-          when: has("branding.manage") && has("domain.manage"),
-        },
-        { href: `${base}/branding`, label: "Branding", icon: "palette", when: has("branding.manage") },
-        { href: `${base}/domains`, label: "Domains", icon: "network", when: has("domain.manage") },
-      ],
-    },
-  ];
+  return PARTNER_MENU.map((group) => ({
+    title: group.title,
+    items: group.entries.map((entry) => ({
+      href: `${base}${entry.landing?.(can) ?? entry.path}`,
+      label: entry.label,
+      icon: entry.icon,
+      exact: entry.path === "" || undefined,
+      // Current under the entry's whole section, not just the page its link opens.
+      match: entry.path === "" ? undefined : `${base}${entry.match ?? entry.path}`,
+      when: entry.needs(can),
+    })),
+  }));
 }
 
 /** What each non-active status means for the person signed in (see partners/resolver.py). */
@@ -330,6 +316,43 @@ const STATUS_NOTICE: Record<string, string> = {
 
 /** The portal layout for one partner. Navigation comes from the partner's
  * **capabilities** - there is no partner type anywhere in this file. */
+/** A staff member viewing a partner's portal as a guest (All Partners → Guest
+ * login): said on every page, with the way out. The server makes it read-only
+ * and ends it by itself; this only explains it. Exiting ends the guest view
+ * (and this portal's session) on the server, then returns to the partner's
+ * page in the Super Admin console. */
+export function GuestViewBanner({ partner, guest }: { partner: PortalPartner; guest: NonNullable<PortalPartner["guest"]> }) {
+  const portals = usePortals();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const ends = new Date(guest.expires_at);
+  async function exit() {
+    setBusy(true);
+    setFailed(false);
+    try {
+      await partnerApi.endGuestView();
+    } catch {
+      // Not ended: stay here and say so, rather than leave the view running
+      // behind a page that looks like it was left.
+      setBusy(false);
+      setFailed(true);
+      return;
+    }
+    window.location.assign(portalHref(portals, "admin", `/admin/partners/${encodeURIComponent(partner.partner_id)}`));
+  }
+  return (
+    <div role="status" className={`w360-badge w360-badge-info ${consoleStyles.banner} ${consoleStyles.notice}`}>
+      Viewing Partner Portal as {partner.display_name}. Read-only
+      {Number.isNaN(ends.getTime()) ? "" : `, ends at ${ends.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}: you cannot change
+      anything here.{" "}
+      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => void exit()} disabled={busy}>
+        Exit Guest Session
+      </button>
+      {failed && <span role="alert"> The guest session could not be ended. Try again.</span>}
+    </div>
+  );
+}
+
 export function PartnerShell({ partnerId, children }: { partnerId: string; children: React.ReactNode }) {
   const router = usePortalRouter();
   const portals = usePortals();
@@ -356,6 +379,9 @@ export function PartnerShell({ partnerId, children }: { partnerId: string; child
 
   if (session.status === "loading" || state.status === "loading") {
     return <StatusScreen>Loading the partner portal…</StatusScreen>;
+  }
+  if (session.status === "ready" && session.session.password_change_required) {
+    return <ForcedPasswordChange />;
   }
   if (state.status === "missing") {
     return (
@@ -389,8 +415,9 @@ export function PartnerShell({ partnerId, children }: { partnerId: string; child
         banner={
           <>
             {banner}
+            {partner.guest && <GuestViewBanner partner={partner} guest={partner.guest} />}
             {partner.status !== "active" && (
-              <p role="status" className={`w360-badge w360-badge-warning ${consoleStyles.banner}`}>
+              <p role="status" className={`w360-badge w360-badge-warning ${consoleStyles.banner} ${consoleStyles.notice}`}>
                 {STATUS_NOTICE[partner.status] ?? `This partner account is ${partner.status}.`}
               </p>
             )}

@@ -118,6 +118,53 @@ PARTNER_PERMISSIONS: Final = (
         "Create referral codes",
         implies=("platform.partner_referral.view",),
     ),
+    # The partner's own account (ADR-045). The first four are held by every
+    # member of an active partner and the last by its administrators
+    # (``capabilities.BASELINE_*``); none reaches a customer's data.
+    _d("platform.partner_dashboard.view", "See the partner dashboard"),
+    _d("platform.partner_profile.view", "See the partner's business profile"),
+    _d(
+        "platform.partner_profile.manage",
+        "Change the partner's business profile",
+        implies=("platform.partner_profile.view",),
+    ),
+    _d("platform.partner_member.view", "See who works for the partner"),
+    _d(
+        "platform.partner_member.manage",
+        "Invite, re-role and remove the partner's own users",
+        implies=("platform.partner_member.view",),
+        dangerous=True,
+    ),
+    _d("platform.partner_product.view", "See the products the partner may sell"),
+    _d(
+        "platform.partner_product.manage",
+        "Arrange and enable the partner's granted products for sale",
+        implies=("platform.partner_product.view",),
+    ),
+    _d("platform.partner_activity.view", "See the partner's activity trail"),
+    _d(
+        "platform.partner_customer.export",
+        "Export the partner's customer list",
+        implies=("platform.partner_customer.view",),
+    ),
+    # Partner API keys (ADR-046): administrators only - a key reads the
+    # partner's data from outside the portal, so who may mint one is as
+    # sensitive as who may be on the team. Creating, rotating and revoking are
+    # dangerous (AAL 2).
+    _d("platform.partner_apikey.view", "See the partner's API keys (never a secret)"),
+    _d(
+        "platform.partner_apikey.manage",
+        "Create, rotate and revoke the partner's API keys",
+        implies=("platform.partner_apikey.view",),
+        dangerous=True,
+    ),
+    _d("platform.partner_subpartner.view", "See the partner's sub-partners"),
+    _d(
+        "platform.partner_subpartner.manage",
+        "Create, activate, suspend and equip sub-partners",
+        implies=("platform.partner_subpartner.view",),
+        dangerous=True,
+    ),
 )
 
 permission_registry.register_all(PARTNER_PERMISSIONS)

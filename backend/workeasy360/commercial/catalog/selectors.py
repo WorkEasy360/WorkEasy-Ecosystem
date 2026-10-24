@@ -757,3 +757,26 @@ def public_products() -> list[dict[str, Any]]:
         }
         for p in rows
     ]
+
+
+def product_facts(codes: list[str]) -> dict[str, dict[str, Any]]:
+    """``{code: {name, description, status, trial}}`` for these products, where
+    ``trial`` is ``{"enabled", "days"}`` or ``None``. Two queries at most."""
+    from workeasy360.commercial.catalog.models import Product
+
+    if not codes:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for p in Product.objects.filter(code__in=set(codes)).select_related("trial_config"):
+        config = getattr(p, "trial_config", None)
+        out[p.code] = {
+            "name": p.name,
+            "description": p.description,
+            "status": p.status,
+            "trial": (
+                {"enabled": config.enabled, "days": config.duration_days}
+                if config is not None
+                else None
+            ),
+        }
+    return out

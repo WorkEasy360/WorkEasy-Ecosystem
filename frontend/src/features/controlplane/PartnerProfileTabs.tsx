@@ -215,6 +215,7 @@ function BusinessReadOnly({ profile: p }: { profile: PartnerProfile }) {
           <Fact label="Tax, GST or VAT number">{b.tax_number}</Fact>
           <Fact label="Address">{address}</Fact>
           <Fact label="Country">{b.country ? countryName(b.country) : ""}</Fact>
+          <Fact label="Time zone">{(b.timezone ?? "").replace(/_/g, " ")}</Fact>
         </dl>
       </Section>
       <Section title="Support and notes">
@@ -256,7 +257,7 @@ function ContactReadOnly({ kind, contact }: { kind: ContactKind; contact: Partne
 
 // --- Business Details ------------------------------------------------------------------------
 
-export function BusinessDetailsTab({ partnerId, rev, bump }: TabProps) {
+export function BusinessDetailsTab({ partnerId, partner, rev, bump }: TabProps) {
   const { permissions } = useAdmin();
   const manage = can(permissions, MANAGE);
   const [load] = useLoad(() => partnerConsoleApi.profile(partnerId), [partnerId, rev]);
@@ -270,13 +271,19 @@ export function BusinessDetailsTab({ partnerId, rev, bump }: TabProps) {
       {saver.feedback}
       <ConflictReload saver={saver} />
       <LoadGate load={load} what="the business details">
-        {(profile) => (manage ? <BusinessEditor profile={profile} saver={saver} /> : <BusinessReadOnly profile={profile} />)}
+        {(profile) =>
+          manage ? (
+            <BusinessEditor profile={profile} saver={saver} currencyEditable={partner.status === "draft"} />
+          ) : (
+            <BusinessReadOnly profile={profile} />
+          )
+        }
       </LoadGate>
     </div>
   );
 }
 
-function BusinessEditor({ profile, saver }: { profile: PartnerProfile; saver: Saver }) {
+function BusinessEditor({ profile, saver, currencyEditable }: { profile: PartnerProfile; saver: Saver; currencyEditable: boolean }) {
   const baseline = useMemo(() => profileDraftFrom(profile), [profile]);
   const [draft, setDraft] = useState<ProfileDraft>(baseline);
   const [local, setLocal] = useState<FieldErrors>({});
@@ -311,8 +318,16 @@ function BusinessEditor({ profile, saver }: { profile: PartnerProfile; saver: Sa
       </Section>
       <Section title="Payout preferences">
         <div className={ps.sectionFields}>
-          <p className={styles.muted}>The payout currency is fixed when a partner is created and never changes, so it is shown here and not offered for editing.</p>
-          <PayoutPrefsForm value={draft} onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))} errors={errors} currency={profile.payout.currency} />
+          {!currencyEditable && (
+            <p className={styles.muted}>The preferred currency is fixed once the partner is activated, so it is shown here and not offered for editing.</p>
+          )}
+          <PayoutPrefsForm
+            value={draft}
+            onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+            errors={errors}
+            currency={profile.payout.currency}
+            currencyEditable={currencyEditable}
+          />
         </div>
       </Section>
       <div className={ps.actionsRow}>
@@ -408,6 +423,72 @@ function ContactsEditor({ profile, saver }: { profile: PartnerProfile; saver: Sa
       <div className={ps.actionsRow}>
         <button type="submit" className="w360-btn w360-btn-primary" disabled={saver.busy || !dirty}>
           Save contacts
+        </button>
+        {!dirty && <span className={styles.muted}>No changes to save.</span>}
+      </div>
+    </form>
+  );
+}
+
+// --- Payout preferences (the affiliate's Payout Settings step) --------------------------------
+
+const PAYOUT_PARTS: ProfileParts = ["payout"];
+
+/** Where commission goes and how often - preferences for whoever prepares a
+ * payout - and, while the partner is a draft, its preferred currency. No bank or
+ * card details: Workeasy360 moves no money and collects none. */
+export function PayoutPreferencesTab({ partnerId, partner, rev, bump }: TabProps) {
+  const [load] = useLoad(() => partnerConsoleApi.profile(partnerId), [partnerId, rev]);
+  const saver = useProfileSaver(bump);
+  return (
+    <div className={styles.stack}>
+      {saver.feedback}
+      <ConflictReload saver={saver} />
+      <LoadGate load={load} what="the payout preferences">
+        {(profile) => <PayoutEditor profile={profile} saver={saver} currencyEditable={partner.status === "draft"} />}
+      </LoadGate>
+    </div>
+  );
+}
+
+function PayoutEditor({ profile, saver, currencyEditable }: { profile: PartnerProfile; saver: Saver; currencyEditable: boolean }) {
+  const baseline = useMemo(() => profileDraftFrom(profile), [profile]);
+  const [draft, setDraft] = useState<ProfileDraft>(baseline);
+  const [local, setLocal] = useState<FieldErrors>({});
+  const summary = useRef<HTMLDivElement | null>(null);
+  const errors = { ...local, ...saver.serverErrors };
+  const dirty = differs(draft, baseline, PAYOUT_PARTS);
+
+  useEffect(() => {
+    if (Object.keys(local).length > 0 || Object.keys(saver.serverErrors).length > 0) summary.current?.focus();
+  }, [local, saver.serverErrors]);
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const problems = localProblems(draft, PAYOUT_PARTS);
+    setLocal(problems);
+    if (Object.keys(problems).length > 0) return;
+    void saver.save(profile, toProfileInput(draft, PAYOUT_PARTS), "Payout preferences saved.");
+  }
+
+  return (
+    <form className={ps.formStack} noValidate aria-label="Payout preferences" onSubmit={submit}>
+      <ErrorSummary errors={summaryLines(errors)} focusRef={summary} />
+      <Section title="Payout preferences">
+        <div className={ps.sectionFields}>
+          <PayoutPrefsForm
+            value={draft}
+            onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+            errors={errors}
+            currency={profile.payout.currency}
+            currencyEditable={currencyEditable}
+          />
+          <p className={styles.muted}>A minimum payout threshold is not part of the payout model: staff decide when to prepare a payout.</p>
+        </div>
+      </Section>
+      <div className={ps.actionsRow}>
+        <button type="submit" className="w360-btn w360-btn-primary" disabled={saver.busy || !dirty}>
+          Save payout preferences
         </button>
         {!dirty && <span className={styles.muted}>No changes to save.</span>}
       </div>

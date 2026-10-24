@@ -50,9 +50,55 @@ export interface OverviewCard {
   amounts?: OverviewAmount[];
 }
 
+/** A partner on the dashboard's "Recent partners", with how far its profile is. */
+export interface OverviewRecentPartner {
+  id: string;
+  code: string;
+  display_name: string;
+  status: "draft" | "active" | "suspended" | "terminated";
+  created_at: string;
+  experience: ExperienceLabel[];
+  profile_completion: ListCompletion;
+}
+
 export interface PartnersOverview {
   as_of: string;
   cards: OverviewCard[];
+  recent_partners: OverviewRecentPartner[];
+}
+
+// --- profile completion (ADR-048) ------------------------------------------------------
+
+/** The console's name for a partner's state: a draft is "setup_required" until
+ * its profile is complete, then "ready"; any other status is its own name. */
+export type SetupStatus = "setup_required" | "ready" | "active" | "suspended" | "terminated";
+
+/** What a list row shows about a partner's profile, computed by the server. */
+export interface ListCompletion {
+  percent: number;
+  complete: boolean;
+  setup_status: SetupStatus;
+}
+
+export interface CompletionSection {
+  key: string;
+  label: string;
+  state: "complete" | "incomplete" | "pending" | "optional";
+  /** Optional sections are shown, never counted. */
+  required: boolean;
+  detail: string;
+}
+
+/** One partner's profile completion: the sections its capabilities make it
+ * need, the percentage (required sections only) and what is still missing. */
+export interface ProfileCompletion {
+  percent: number;
+  complete: boolean;
+  required: number;
+  done: number;
+  sections: CompletionSection[];
+  missing: ReadinessItem[];
+  setup_status: SetupStatus;
 }
 
 // --- the reseller list ----------------------------------------------------------------
@@ -90,21 +136,42 @@ export interface ResellerReferrals {
   converted: number;
 }
 
+/** The person who runs a partner: its owner (else its earliest administrator),
+ * with the address they sign in with and when they last did. */
+export interface ListAdministrator {
+  email: string;
+  name: string;
+  role: string;
+  last_login_at: string | null;
+}
+
 export interface ResellerRow {
   id: string;
   code: string;
   display_name: string;
   status: "draft" | "active" | "suspended" | "terminated";
+  /** For a lifecycle action taken from the list (Suspend / Reactivate). */
+  version: number;
   payout_currency: string;
   created_at: string;
   experience: ExperienceLabel[];
+  /** The workspace this partner's portal opens first: derived from its grants
+   * and the stored preference. A landing, never an authority. */
+  primary_experience: string | null;
   capability_count: number;
+  capabilities: string[];
+  administrator: ListAdministrator | null;
+  /** From the partner's profile; empty when unset. */
+  phone: string;
+  /** ISO 3166-1 alpha-2, or empty. */
+  country: string;
   customers: number;
   products: ResellerProduct[];
   active_subscriptions: number;
   commission: ResellerCommission[];
   payouts: ResellerPayouts;
   referrals: ResellerReferrals;
+  profile_completion: ListCompletion;
   last_activity_at: string;
 }
 
@@ -178,6 +245,17 @@ export interface ReferralCodeRow {
   label: string;
   status: string;
   created_at: string;
+  /** The public sign-up link that carries this code. */
+  url: string;
+}
+
+/** What creating a referral code for a partner answers (staff). */
+export interface CreatedReferralCode {
+  id: string;
+  code: string;
+  label: string;
+  status: string;
+  created_at: string;
 }
 
 export interface ReferralRow {
@@ -192,6 +270,10 @@ export interface ReferralRow {
 export interface PartnerReferrals {
   summary: Record<string, number>;
   codes: ReferralCodeRow[];
+  /** How long a captured visit can still convert (the platform's one window). */
+  attribution_window_days: number;
+  /** Whether the partner holds the referral capability (so a code can be made for it). */
+  can_create: boolean;
   results: ReferralRow[];
   next_cursor: string | null;
   has_more: boolean;
@@ -203,6 +285,10 @@ export interface ResellerFilters {
   product?: string;
   capability?: string;
   scope?: string;
+  /** All Partners' "Partner type": a label, i.e. a filter over the grants. */
+  type?: string;
+  /** "complete" or "incomplete". */
+  profile?: string;
   cursor?: string;
 }
 
@@ -221,10 +307,22 @@ export interface CapabilityPreset {
   capabilities: string[];
 }
 
+/** What choosing a type card on Add Partner grants: the server's own list, so
+ * the form shows exactly what will be granted. */
+export interface CapabilityExperience {
+  key: string;
+  label: string;
+  description: string;
+  capabilities: string[];
+  /** Whether the products chosen are products to sell (otherwise: to promote). */
+  sells: boolean;
+}
+
 export interface CapabilityCatalog {
   results: CapabilityInfo[];
   groups: CapabilityGroup[];
   presets: CapabilityPreset[];
+  experiences: CapabilityExperience[];
 }
 
 // --- the catalog the console sells from ------------------------------------------------------
@@ -421,11 +519,13 @@ export type ProfileInput = {
     registration_number?: string;
     tax_number?: string;
     country?: string;
+    timezone?: string;
     address?: AddressInput;
   };
   contacts?: Partial<Record<ContactKind, ContactInput>>;
   support?: { email?: string; phone?: string; url?: string };
-  payout?: { frequency?: PayoutFrequency; contact_email?: string };
+  /** `currency` (the preferred currency) is accepted only while the partner is a draft. */
+  payout?: { frequency?: PayoutFrequency; contact_email?: string; currency?: string };
   internal_notes?: string;
 };
 
@@ -456,6 +556,73 @@ export interface ResellerDraftBody {
   };
 }
 
+// --- Add Partner with a login (ADR-047) ----------------------------------------------------------------
+
+export type ExperienceKey = "reseller" | "white_label" | "affiliate";
+export type AdministratorMode = "create" | "link_existing";
+
+/** The administrator as typed on the form. `password` and `password_confirm`
+ * exist only on the credentials check and on the create request: they are
+ * never in a response and never kept anywhere. */
+export interface OnboardingAdministratorInput {
+  email: string;
+  mode: AdministratorMode;
+  password?: string;
+  password_confirm?: string;
+}
+
+/** The Add Partner form (ADR-048): only what the account needs. Everything else
+ * is set afterwards in the partner's Complete Your Profile. */
+export interface OnboardingBody {
+  experience: ExperienceKey;
+  partner: {
+    display_name: string;
+    country?: string;
+  };
+  administrator: OnboardingAdministratorInput;
+}
+
+export interface CredentialsCheck {
+  email_status: "available" | "existing_account" | "unavailable";
+  problems: ReviewProblem[];
+  policy: PasswordPolicy;
+}
+
+export interface PasswordPolicy {
+  min_length: number;
+}
+
+export interface CreatedAdministrator {
+  email: string;
+  account_created: boolean;
+}
+
+/** The answer to creating a partner: ids and facts, never a password. */
+export interface CreatedPartner {
+  id: string;
+  code: string;
+  display_name: string;
+  status: string;
+  experience: string;
+  default_experience: string;
+  administrator: CreatedAdministrator;
+  capabilities: string[];
+  /** The preferred currency it starts with (from the country, if given). */
+  payout_currency: string;
+}
+
+export type ExperienceAction = "grant" | "retire" | "transition" | "default";
+
+export interface ExperienceChange {
+  experience: string;
+  capabilities_granted: string[];
+  capabilities_revoked: string[];
+  products_granted: string[];
+  /** Product grants ended because no selling experience is left (kept, stamped revoked). */
+  products_revoked: string[];
+  default_experience: string;
+}
+
 // --- a partner's business profile and contacts (staff only) ---------------------------------------
 
 export interface PartnerAddress {
@@ -476,6 +643,8 @@ export interface PartnerBusiness {
   registration_number: string;
   tax_number: string;
   country: string;
+  /** An IANA time zone name, or empty. */
+  timezone: string;
   address: PartnerAddress;
 }
 
@@ -611,7 +780,10 @@ export interface PartnerSummaryView {
   white_label: SummaryWhiteLabel;
   referrals: ResellerReferrals;
   setup_progress: SetupStep[];
-  /** The same readiness rule the Add Reseller review applies to a draft. */
+  /** The profile completion the server computed (ADR-048). */
+  profile_completion: ProfileCompletion;
+  /** What is still missing before activation: the profile's required sections
+   * that are not complete. */
   activation: ActivationReadiness;
 }
 
@@ -881,12 +1053,51 @@ export const partnerConsoleApi = {
   recent: () => apiFetch<PartnersRecent>(`${admin}/partners/recent`),
   referrals: (partnerId: string, cursor?: string) =>
     apiFetch<PartnerReferrals>(`${admin}/partners/${partnerId}/referrals`, { query: { cursor } }),
+  /** Mint a referral code for a partner that holds the referral capability. */
+  createReferralCode: (partnerId: string, label: string) =>
+    apiFetch<CreatedReferralCode>(`${admin}/partners/${partnerId}/referral-codes`, {
+      method: "POST",
+      body: json({ label }),
+    }),
   resellers: (q: ResellerFilters) => apiFetch<Page<ResellerRow>>(`${admin}/partners/resellers`, { query: { ...q } }),
   capabilityCatalog: () => apiFetch<CapabilityCatalog>(`${admin}/partners/capabilities`),
   products: () => apiFetch<{ results: ConsoleProduct[] }>(`${admin}/partners/products`),
 
   review: (body: ResellerDraftBody) =>
     apiFetch<ResellerReview>(`${admin}/partners/reseller-review`, { method: "POST", body: json(body) }),
+
+  // Add Partner with a login (ADR-047).
+  /** Can this email and password be used? Writes nothing; the password goes to
+   * this one call and the create call, and nowhere else. */
+  credentialsCheck: (administrator: OnboardingAdministratorInput) =>
+    apiFetch<CredentialsCheck>(`${admin}/partners/credentials-check`, {
+      method: "POST",
+      body: json({ administrator }),
+    }),
+  /** Create the partner (a draft) and its administrator's login, atomically. */
+  createWithLogin: (body: OnboardingBody) =>
+    apiFetch<CreatedPartner>(`${admin}/partners/create`, { method: "POST", body: json(body) }),
+  changeExperience: (
+    partnerId: string,
+    body: {
+      action: ExperienceAction;
+      experience?: string;
+      retire?: string;
+      products?: string[];
+      make_default?: boolean;
+      reason: string;
+    },
+  ) =>
+    apiFetch<ExperienceChange | { default_experience: string }>(`${admin}/partners/${partnerId}/experience`, {
+      method: "POST",
+      body: json(body),
+    }),
+  /** Send the ordinary forgotten-password link. The current password is never read or shown. */
+  sendPasswordReset: (partnerId: string, memberId: string) =>
+    apiFetch<{ sent: boolean }>(`${admin}/partners/${partnerId}/members/${memberId}/password-reset`, {
+      method: "POST",
+      body: json({}),
+    }),
   commission: (partnerId: string) => apiFetch<PartnerCommissionState>(`${admin}/partners/${partnerId}/commission`),
   assignCommission: (
     partnerId: string,

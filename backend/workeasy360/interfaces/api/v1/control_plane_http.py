@@ -27,6 +27,7 @@ from workeasy360.commercial.partners import access
 from workeasy360.contracts.errors import (
     AccessPolicyDenied,
     AuthenticationRequired,
+    PartnerRecordNotFound,
     PermissionDenied,
 )
 from workeasy360.contracts.values.access_policy import MFA_REQUIRED
@@ -156,16 +157,95 @@ def partner_view(
             request: HttpRequest, *args: Any, partner_id: UUID, **kwargs: Any
         ) -> HttpResponse:
             user = authenticated_user(request)
-            ctx = access.partner_actor(
-                user_id=user.id,
-                partner_id=partner_id,
-                aal=session_aal(getattr(request, "session", None)),
-            )
+            try:
+                ctx = access.partner_actor(
+                    user_id=user.id,
+                    partner_id=partner_id,
+                    aal=session_aal(getattr(request, "session", None)),
+                )
+            except PartnerRecordNotFound:
+                ctx = guest_context(request, partner_id)
+                if ctx is None:
+                    raise
             return view(request, ctx, *args, **kwargs)
 
         return wrapper
 
     return decorate
+
+
+def guest_context(request: HttpRequest, partner_id: UUID) -> TenantContext | None:
+    """A staff member's read-only guest view of this partner, or ``None``.
+
+    Only for a verified staff session that still holds the staff partner view
+    permission and whose sign-in has a live guest grant for exactly this
+    partner (``commercial.partners.guest``). A guest reads; every unsafe
+    method is refused here, before any view runs.
+    """
+    from workeasy360.commercial.partners import guest
+    from workeasy360.platform.authz import services as authz
+    from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
+
+    user = getattr(request, "user", None)
+    session = getattr(request, "session", None)
+    if user is None or not getattr(user, "is_staff", False) or session is None:
+        return None
+    view = guest.current(user.id, session.get(SESSION_SIGN_IN_ID_KEY))
+    if view is None or view.partner_id != partner_id:
+        return None
+    authz.require(staff_context(request), guest.STAFF_VIEW)
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        raise PermissionDenied(
+            "Guest view is read-only.",
+            permission="partner.guest",
+            reason="guest_read_only",
+        )
+    return access.guest_actor(
+        user_id=user.id,
+        partner_id=partner_id,
+        aal=session_aal(session),
+        reason=view.reason,
+    )
+
+
+def live_guest_view(request: HttpRequest) -> Any | None:
+    """This session's live guest view (``commercial.partners.guest``), or
+    ``None``. Never for a session that is not staff: only staff can start one,
+    and the staff check stays here, with the other readers of the flag."""
+    from workeasy360.commercial.partners import guest
+    from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
+
+    user = getattr(request, "user", None)
+    session = getattr(request, "session", None)
+    if user is None or not getattr(user, "is_staff", False) or session is None:
+        return None
+    return guest.current(user.id, session.get(SESSION_SIGN_IN_ID_KEY))
+
+
+def end_guest_view(request: HttpRequest) -> bool:
+    """ "Exit guest session": end this sign-in's guest view; whether there was one.
+
+    On its own portal host (multi-portal mode) the staff member's partner-portal
+    session existed only for the guest view, so it ends too - nothing of the
+    guest view stays signed in on the partner origin. The Super Admin and
+    central sign-in sessions are other rows on other hosts and are untouched.
+    A staff member who is also a partner member keeps the session.
+    """
+    from workeasy360.commercial.partners import guest
+    from workeasy360.commercial.partners import selectors as partner_selectors
+    from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
+
+    user = authenticated_user(request)
+    if not user.is_staff:
+        return False
+    session = request.session
+    ctx = platform_context(user_id=user.id, aal=session_aal(session))
+    ended = guest.end(ctx, session.get(SESSION_SIGN_IN_ID_KEY))
+    if getattr(settings, "PORTALS_ENABLED", False) and not (
+        partner_selectors.partners_for_user(user.id)
+    ):
+        session.flush()
+    return ended
 
 
 def limited(

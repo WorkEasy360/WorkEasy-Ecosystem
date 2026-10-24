@@ -11,6 +11,8 @@
   grid-template-areas:
     "top top"
     "side main";
+  /* The console canvas: a very light mint, so white cards read as cards. */
+  background: var(--w360-bg-soft);
 }
 
 .topbar {
@@ -27,11 +29,12 @@
   min-width: 0;
 }
 
+/* The official logo (components/brand/Logo), with clear space on each side. */
 .brand {
-  font-weight: 800;
-  font-size: 17px;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  padding-inline: var(--w360-space-1);
+  flex: none;
 }
 
 /* Phase 11, Step 30: a white-label customer's own brand, in place of the
@@ -80,6 +83,11 @@
   padding: 6px 10px;
   font-weight: 600;
   font-size: 14px;
+  color: var(--w360-text-secondary);
+}
+
+.menuButton:hover {
+  background: var(--w360-bg-soft);
 }
 
 .menuGlyph {
@@ -136,24 +144,35 @@
   border-left: 3px solid transparent;
   border-radius: var(--w360-radius-sm);
   background: none;
-  color: var(--w360-text-muted);
+  color: var(--w360-text-secondary);
   font-size: 14px;
   font-weight: 600;
   text-align: left;
   text-decoration: none;
 }
 
+.link svg {
+  color: var(--w360-text-muted);
+  flex: none;
+}
+
 .link:hover {
-  background: var(--w360-neutral-bg);
+  background: var(--w360-bg-soft);
   color: var(--w360-text);
 }
 
-/* Not colour alone (WCAG 1.4.1): the current page also has a left bar and
-   bold text; assistive technology gets aria-current="page". */
+/* Not colour alone (WCAG 1.4.1): the current page also has a green left bar
+   and bolder text; assistive technology gets aria-current="page". Mint
+   background, deep-green text (>= 4.5:1 on the mint), brand-green icon. */
 .link[data-active] {
-  background: var(--w360-neutral-bg);
-  color: var(--w360-text);
-  border-left-color: var(--w360-brand);
+  background: var(--w360-brand-soft);
+  color: var(--w360-brand);
+  font-weight: 700;
+  border-left-color: var(--w360-indicator);
+}
+
+.link[data-active] svg {
+  color: var(--w360-accent);
 }
 
 .link[data-contains-current] {
@@ -192,15 +211,20 @@
   flex-shrink: 0;
 }
 
+/* Account controls stay neutral; green is kept for actions and the current page. */
 .avatar {
   width: 36px;
   height: 36px;
   border-radius: 999px;
-  background: var(--w360-brand);
-  color: var(--w360-brand-contrast);
-  border: none;
+  background: var(--w360-neutral-bg);
+  color: var(--w360-text);
+  border: 1px solid var(--w360-border-strong);
   font-weight: 700;
   font-size: 13px;
+}
+
+.avatar:hover {
+  border-color: var(--w360-brand);
 }
 
 .menu {
@@ -232,7 +256,7 @@
 }
 
 .menuItem:hover {
-  background: var(--w360-neutral-bg);
+  background: var(--w360-brand-soft);
 }
 
 
@@ -277,7 +301,7 @@
     inset: 56px 0 0 0;
     z-index: 24;
     border: none;
-    background: rgba(15, 17, 21, 0.45);
+    background: color-mix(in srgb, var(--w360-navy) 45%, transparent);
   }
 
   .main {
@@ -288,10 +312,6 @@
 @media (max-width: 480px) {
   .menuLabel {
     display: none;
-  }
-
-  .brand {
-    font-size: 15px;
   }
 }
 

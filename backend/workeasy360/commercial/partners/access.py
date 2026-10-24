@@ -52,6 +52,27 @@ def partner_actor(*, user_id: UUID, partner_id: UUID, aal: int) -> TenantContext
     )
 
 
+def guest_actor(
+    *, user_id: UUID, partner_id: UUID, aal: int, reason: str
+) -> TenantContext:
+    """A staff member's read-only *guest view* of ``partner_id`` (``guest.py``).
+
+    A ``PARTNER`` context whose user is the staff member, marked break-glass
+    with the reason they gave: the resolver gives it the viewer tier of the
+    partner's capabilities, ``dangerous`` permissions are refused under it, and
+    every audit entry records the staff member and the reason. Only the portal
+    adapter builds one, after checking the live guest grant of this sign-in.
+    """
+    from dataclasses import replace
+
+    if selectors.partner_row(partner_id) is None:
+        raise PartnerRecordNotFound("No such partner.", partner_id=str(partner_id))
+    ctx = platform_context(
+        user_id=user_id, aal=aal, principal=PrincipalKind.PARTNER, partner_id=partner_id
+    )
+    return replace(ctx, is_break_glass=True, reason=reason)
+
+
 def require_transacting(actor: TenantContext) -> None:
     """New commercial actions need an *active* partner (Task 62).
 

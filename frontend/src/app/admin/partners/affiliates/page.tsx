@@ -1,14 +1,7 @@
-"use client";
+import { redirect } from "next/navigation";
+import { allPartnersHref } from "@/features/controlplane/oldPartnerRoutes";
 
-import { Suspense } from "react";
-import { AffiliateList } from "@/features/controlplane/PartnerConsole";
-
-/** Partners → Affiliates: partners holding a referral capability (a filter, not
- * a kind of account). Suspense: the page reads its filters from the query. */
-export default function Page() {
-  return (
-    <Suspense fallback={<p aria-live="polite">Loading affiliates…</p>}>
-      <AffiliateList />
-    </Suspense>
-  );
+/** Old address: Affiliates is now All Partners filtered on the Affiliate type (ADR-048). */
+export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  redirect(allPartnersHref(await searchParams, "affiliate"));
 }

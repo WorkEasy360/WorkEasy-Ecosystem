@@ -26,7 +26,6 @@ from workeasy360.contracts.enums import (
     DomainStatus,
     GrantStatus,
     PartnerLinkStatus,
-    PartnerMemberRole,
     PartnerStatus,
 )
 from workeasy360.contracts.values.cursor import (
@@ -47,11 +46,42 @@ def _limit(limit: Any) -> int:
 # --- partners -------------------------------------------------------------
 
 
+def has_price_book(partner_id: UUID) -> bool:
+    """Whether the partner has a price book of its own (pricing owns the table)."""
+    from workeasy360.commercial.pricing import selectors as price_selectors
+
+    return price_selectors.partner_has_price_book(partner_id)
+
+
+def codes_starting_with(prefix: str) -> set[str]:
+    """The partner codes in use that start with ``prefix`` (Add Partner picks the
+    first free one). One query."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    return set(
+        PartnerAccount.objects.filter(code__startswith=prefix).values_list(
+            "code", flat=True
+        )
+    )
+
+
 def partner_row(partner_id: UUID) -> Any | None:
     """The model row, for the services in this module only."""
     from workeasy360.commercial.partners.models import PartnerAccount
 
     return PartnerAccount.objects.filter(id=partner_id).first()
+
+
+def landing_workspace(partner_id: UUID) -> str | None:
+    """The workspace ``partner_id`` opens first (``capabilities.resolve_landing``
+    over its stored preference and its live grants), or ``None`` - for no such
+    partner, or one whose grants open no workspace. Presentation only."""
+    partner = partner_row(partner_id)
+    if partner is None:
+        return None
+    return capabilities.resolve_landing(
+        partner.default_experience, active_capabilities(partner_id)
+    )
 
 
 def code_taken(code: str) -> bool:
@@ -72,6 +102,8 @@ def partner_dict(row: Any) -> dict[str, Any]:
         "contact_email": row.contact_email,
         "payout_currency": row.payout_currency,
         "status": row.status,
+        # A landing preference, never an authority (ADR-047).
+        "default_experience": row.default_experience,
         "version": row.version,
         "created_at": row.created_at.isoformat(),
         "activated_at": row.activated_at.isoformat() if row.activated_at else None,
@@ -278,20 +310,66 @@ def partners_for_user(user_id: UUID) -> list[dict[str, Any]]:
     )
     if not memberships:
         return []
-    result = []
-    for m in memberships:
-        result.append(
-            {
-                "partner_id": str(m.partner_id),
-                "code": m.partner.code,
-                "display_name": m.partner.display_name,
-                "status": m.partner.status,
-                "role": m.role,
-                "is_admin": m.role == PartnerMemberRole.ADMIN.value,
-                "capabilities": sorted(active_capabilities(m.partner_id)),
-            }
-        )
-    return result
+    return [_portal_entry(m.partner, m.role, _permissions_of(m)) for m in memberships]
+
+
+def guest_portal_entry(ctx: Any) -> dict[str, Any] | None:
+    """The portal entry of a staff guest view (``guest.py``): the partner as a
+    viewer sees it, with the permissions the guest context resolves to."""
+    from workeasy360.commercial.partners import resolver
+    from workeasy360.contracts.enums import PartnerMemberRole
+
+    partner = partner_row(ctx.partner_id) if ctx.partner_id else None
+    if partner is None:
+        return None
+    return _portal_entry(
+        partner, PartnerMemberRole.VIEWER.value, resolver.partner_permissions(ctx)
+    )
+
+
+def _portal_entry(partner: Any, role: str, permissions: frozenset[str]) -> dict[str, Any]:
+    held = active_capabilities(partner.id)
+    return {
+        "partner_id": str(partner.id),
+        "code": partner.code,
+        "display_name": partner.display_name,
+        "status": partner.status,
+        "role": role,
+        "role_label": capabilities.ROLE_PRESETS[role].label
+        if role in capabilities.ROLE_PRESETS
+        else role,
+        "is_admin": capabilities.is_admin_role(role),
+        "capabilities": sorted(held),
+        # The workspaces these grants open and the one to open first
+        # (ADR-047). Derived on every read from the live grants plus the
+        # stored landing preference: the preference selects among the
+        # workspaces the grants allow and can open none of its own.
+        "workspaces": [
+            {"key": key, "label": capabilities.EXPERIENCES[key][0]}
+            for key in capabilities.workspaces(held)
+        ],
+        "default_experience": partner.default_experience,
+        "landing": capabilities.resolve_landing(partner.default_experience, held),
+        # What the server will let this person do right now. The
+        # portal's navigation is drawn from it; every request is
+        # still authorized again by the service it reaches.
+        "permissions": sorted(permissions),
+    }
+
+
+def _permissions_of(member: Any) -> frozenset[str]:
+    """The resolved permission set of one membership (a read, for navigation)."""
+    from workeasy360.commercial.partners import resolver
+    from workeasy360.contracts.enums import PrincipalKind
+    from workeasy360.platform.authz.control_plane import platform_context
+
+    ctx = platform_context(
+        user_id=member.user_id,
+        aal=1,
+        principal=PrincipalKind.PARTNER,
+        partner_id=member.partner_id,
+    )
+    return resolver.partner_permissions(ctx)
 
 
 # --- relationships --------------------------------------------------------
@@ -339,10 +417,15 @@ def partner_customers_page(
     partner_id: UUID,
     *,
     status: str | None = None,
+    search: str | None = None,
     limit: int = DEFAULT_PAGE,
     cursor: str | None = None,
 ) -> Page:
     """One partner's portfolio: bounded fields, no member data, no PII.
+
+    ``search`` matches the organization name of a *live* relationship only. An
+    ended relationship shows the partner no name, so it must not be findable by
+    one either (a match would confirm what the row hides).
 
     Two queries for any page size: the links with their organizations, then
     the summary projection for exactly those organizations (never a query per
@@ -358,6 +441,11 @@ def partner_customers_page(
     queryset = PartnerOrganizationLink.objects.filter(partner_id=partner_id)
     if status:
         queryset = queryset.filter(status=status)
+    term = (search or "").strip()[:80]
+    if term:
+        queryset = queryset.exclude(status=PartnerLinkStatus.ENDED.value).filter(
+            organization__display_name__icontains=term
+        )
     queryset = queryset.select_related("organization").order_by("-started_at", "-id")
     decoded = decode_cursor(cursor)
     if decoded is not None:
@@ -389,6 +477,9 @@ def partner_customers_page(
                 "started_at": link.started_at.isoformat(),
                 "ended_at": link.ended_at.isoformat() if link.ended_at else None,
                 "subscription_status": summary.subscription_status if summary else "",
+                #: ``customer`` (a paid or granted product is live), ``trial``
+                #: (only trials) or empty (nothing yet).
+                "access_class": summary.access_class if summary else "",
                 "products": list(summary.product_codes) if summary else [],
                 "owner_activation": _activation_of(invites.get(link.organization_id)),
             }
@@ -438,7 +529,26 @@ def _activation_of(invite: Any) -> dict[str, Any]:
 
 
 def may_sell(partner_id: UUID, *, product_code: str, plan_code: str) -> bool:
-    """Whether an active grant covers this product (and plan)."""
+    """Whether an active grant covers this product (and plan) and the partner has
+    not turned the product off for new sales."""
+    from workeasy360.commercial.partners.models import PartnerProductSetting
+
+    if not may_sell_ignoring_switch(
+        partner_id, product_code=product_code, plan_code=plan_code
+    ):
+        return False
+    # The partner's own "disable for new sales" switch can only narrow a grant.
+    return not PartnerProductSetting.objects.filter(
+        partner_id=partner_id, product__code=product_code, enabled_for_sale=False
+    ).exists()
+
+
+def may_sell_ignoring_switch(
+    partner_id: UUID, *, product_code: str, plan_code: str
+) -> bool:
+    """Whether an active grant covers this product (and plan) - the authority.
+    A screen listing what the partner holds uses this so a switched-off product
+    still appears (as off); every sale uses :func:`may_sell`."""
     from workeasy360.commercial.partners.models import PartnerProductGrant
 
     return (
@@ -504,6 +614,34 @@ def trial_blocked_for_organization(organization_id: UUID, product_code: str) -> 
     no grant for, is never blocked here."""
     entry = product_choices_for_organization(organization_id).get(str(product_code))
     return entry is not None and not entry["trial_allowed"]
+
+
+def portal_presentation_for_organization(
+    organization_id: UUID,
+) -> dict[str, dict[str, Any]]:
+    """How the white-label partner of this customer presents each product:
+    ``{product_code: {display_order, show_in_explore, show_in_my_products,
+    enabled_for_sale}}``. Empty for a direct customer or a partner that is not
+    white-label, so nothing changes for anyone else. Presentation only - nothing
+    here reads or changes an entitlement. Three small queries."""
+    from workeasy360.commercial.partners.models import PartnerProductSetting
+
+    if brand_for_organization(organization_id) is None:
+        return {}
+    link = live_link_for_organization(organization_id)
+    if link is None:
+        return {}
+    return {
+        row.product.code: {
+            "display_order": row.display_order,
+            "show_in_explore": row.show_in_explore,
+            "show_in_my_products": row.show_in_my_products,
+            "enabled_for_sale": row.enabled_for_sale,
+        }
+        for row in PartnerProductSetting.objects.filter(
+            partner_id=link.partner_id
+        ).select_related("product")
+    }
 
 
 def hidden_product_codes_for_organization(organization_id: UUID) -> frozenset[str]:
@@ -612,7 +750,15 @@ def active_brand_for_host(hostname: str) -> dict[str, Any] | None:
         "support_email": brand.support_email,
         "support_url": brand.support_url,
         "portal": portal.public_view(brand.portal),
+        "translations": _translations(domain.partner_id),
     }
+
+
+def _translations(partner_id: UUID) -> dict[str, dict[str, str]]:
+    """What the partner itself has worded, by locale (see ``translations``)."""
+    from workeasy360.commercial.partners import translations
+
+    return translations.public_map(partner_id)
 
 
 def brand_for_organization(organization_id: UUID) -> dict[str, Any] | None:
@@ -649,6 +795,7 @@ def brand_for_organization(organization_id: UUID) -> dict[str, Any] | None:
         "support_email": brand.support_email,
         "support_url": brand.support_url,
         "portal": portal.public_view(brand.portal),
+        "translations": _translations(link.partner_id),
     }
 
 

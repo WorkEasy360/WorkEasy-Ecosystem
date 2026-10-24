@@ -2,14 +2,18 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { partnerApi, newKey, type Brand, type Diagnosis } from "@/lib/api/controlPlane";
+import { panelApi } from "@/lib/api/partnerPanel";
 import { portalOwnerInvitationApi } from "@/lib/api/partnerConsole";
 import { usePartner } from "./ControlShell";
 import { ActivationBadge, OwnerInvitationActions } from "./PartnerCustomers";
 import { DiagnosticResult } from "./AdminScreens";
 import { applyAccent, safeColor } from "./useBranding";
+import { isExperienceKey, workspaceHome } from "@/features/partnerpanel/experiences";
 import { LoadGate, MoreButton, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
 import styles from "./ControlPlane.module.css";
+import local from "./PartnerConsole.module.css";
 
 function usePartnerId(): { id: string; has: (c: string) => boolean; active: boolean; isAdmin: boolean } {
   const { partner } = usePartner();
@@ -23,8 +27,37 @@ function usePartnerId(): { id: string; has: (c: string) => boolean; active: bool
 
 // --- portal chooser --------------------------------------------------------------------
 
+interface Opening {
+  partner_id: string;
+  landing?: string | null;
+  workspaces?: { key: string }[];
+}
+
+/** Where a partner account opens: the workspace the **server** resolved for it
+ * (its grants, and the landing preference among them), else the generic panel.
+ * Nothing in the address, the browser's storage or a cookie chose this.
+ *
+ * A workspace address names no partner, so it is used only when exactly one of
+ * the person's accounts holds that workspace; with two of the same kind the
+ * address would silently open the wrong one, so each opens its own panel, which
+ * carries the partner in the address. */
+export function openingPath(p: Opening, all: Opening[] = [p]): string {
+  if (!isExperienceKey(p.landing)) return `/partner/${p.partner_id}`;
+  const landing = p.landing;
+  const holders = all.filter((q) => (q.workspaces ? q.workspaces.some((w) => w.key === landing) : q.partner_id === p.partner_id));
+  return holders.length > 1 ? `/partner/${p.partner_id}` : workspaceHome(landing);
+}
+
 export function PortalChooser() {
+  const router = useRouter();
   const [load] = useLoad(() => partnerApi.portal(), []);
+  // A member of one partner account has nothing to choose: go straight to where
+  // the server says it opens (its workspace, or the generic panel).
+  const only = load.status === "ready" && load.data.partners.length === 1 ? openingPath(load.data.partners[0], load.data.partners) : null;
+  useEffect(() => {
+    if (only) router.replace(only);
+  }, [only, router]);
+  if (only) return <p aria-live="polite">Opening your partner panel…</p>;
   return (
     <div className={styles.stack}>
       <h1>Partner accounts</h1>
@@ -36,7 +69,7 @@ export function PortalChooser() {
             <ul className={styles.chain}>
               {partners.map((p) => (
                 <li key={p.partner_id} className={styles.chainItem}>
-                  <Link href={`/partner/${p.partner_id}`}>{p.display_name}</Link>
+                  <Link href={openingPath(p, partners)}>{p.display_name}</Link>
                   <Status value={p.status} />
                 </li>
               ))}
@@ -48,48 +81,25 @@ export function PortalChooser() {
   );
 }
 
-// --- overview ------------------------------------------------------------------------------
-
-export function PartnerHome() {
-  const { id, has } = usePartnerId();
-  const { partner } = usePartner();
-  return (
-    <div className={styles.stack}>
-      <h1>{partner?.display_name}</h1>
-      <p className={styles.lead}>
-        What you can do here depends on the capabilities Workeasy360 has enabled for your account.
-      </p>
-      <section className={`w360-card ${styles.card}`} aria-labelledby="caps">
-        <h2 id="caps" className={styles.cardTitle}>
-          Your capabilities
-        </h2>
-        {partner && partner.capabilities.length > 0 ? (
-          <ul>
-            {partner.capabilities.map((c) => (
-              <li key={c} className={styles.mono}>
-                {c}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className={styles.muted}>None are enabled yet. Contact Workeasy360 to set up your programme.</p>
-        )}
-        {has("commission.view") && <Link href={`/partner/${id}/commissions`}>View your commission</Link>}
-      </section>
-    </div>
-  );
-}
-
 // --- customers ---------------------------------------------------------------------------------
 
 export function PartnerCustomers() {
   const { id, has, active } = usePartnerId();
-  const paged = usePaged((cursor) => partnerApi.customers(id, cursor), [id]);
+  // Searching is the server's: it matches the name of a live customer and
+  // never reaches a former one (whose name is not shown to the partner).
+  const [search, setSearch] = useState("");
+  const [applied, setApplied] = useState("");
+  const searchId = useId();
+  const paged = usePaged((cursor) => partnerApi.customers(id, cursor, applied), [id, applied]);
   const { act, busy, feedback } = useAction(paged.reload);
   const nameId = useId();
   const emailId = useId();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [first, setFirst] = useState("");
+  const [last, setLast] = useState("");
+  const firstId = useId();
+  const lastId = useId();
   // One command id per *attempt*: a double click or a retry after a network
   // failure replays the same provisioning instead of creating a second customer.
   const key = useRef(newKey());
@@ -97,14 +107,68 @@ export function PartnerCustomers() {
 
   return (
     <div className={styles.stack}>
-      <h1>Customers</h1>
+      <h1>Users</h1>
+      <p className={styles.lead}>
+        The customer organizations you serve and who has access to what. Each customer stays its own organization with its own people: you manage the relationship and the subscriptions, never their data.
+      </p>
+      <form
+        className={styles.row}
+        role="search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setApplied(search.trim());
+        }}
+      >
+        <label className="w360-label" htmlFor={searchId}>
+          Search customers
+        </label>
+        <input id={searchId} className="w360-input" type="search" maxLength={80} value={search} onChange={(e) => setSearch(e.target.value)} />
+        <button type="submit" className="w360-btn w360-btn-secondary">
+          Search
+        </button>
+        {applied && (
+          <button
+            type="button"
+            className="w360-btn w360-btn-secondary"
+            onClick={() => {
+              setSearch("");
+              setApplied("");
+            }}
+          >
+            Clear
+          </button>
+        )}
+      </form>
+      {has("customer.provision") || has("customer.manage") ? (
+        <div className={styles.row}>
+          <button
+            type="button"
+            className="w360-btn w360-btn-secondary"
+            disabled={busy}
+            onClick={() =>
+              void act(async () => {
+                const { blob, truncated } = await panelApi.exportCustomers(id);
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = "customers.csv";
+                link.click();
+                URL.revokeObjectURL(url);
+                if (truncated) throw new Error("The export was cut at 5,000 customers.");
+              }, "Your customer list was downloaded.")
+            }
+          >
+            Export customers (CSV)
+          </button>
+        </div>
+      ) : null}
       {feedback}
       {paged.state === "loading" && <p aria-live="polite">Loading customers…</p>}
       {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to customers.</p>}
       {paged.state === "error" && <p role="alert">Couldn&apos;t load customers.</p>}
       {paged.state === "ready" && (
         <>
-          <Table caption="Your customers" head={["Customer", "Relationship", "Owner", "Subscription", "Products", "Since", ""]} isEmpty={paged.rows.length === 0} empty="No customers yet.">
+          <Table caption="Your customers" head={["Customer", "Relationship", "Owner", "Subscription", "Products", "Joined", ""]} isEmpty={paged.rows.length === 0} empty={applied ? "No customer matches that search." : "No customers yet."}>
             {paged.rows.map((c) => {
               // An ended relationship is history: the server returns none of the
               // customer's current details for it, so there is nothing to show or act on.
@@ -128,7 +192,16 @@ export function PartnerCustomers() {
                       </div>
                     )}
                   </td>
-                  <td>{ended ? "—" : <Status value={c.subscription_status} />}</td>
+                  <td>
+                    {ended ? (
+                      "—"
+                    ) : (
+                      <>
+                        <Status value={c.subscription_status} />
+                        {c.access_class === "trial" && <span className={styles.muted}> trial</span>}
+                      </>
+                    )}
+                  </td>
                   <td>{c.products.join(", ") || "—"}</td>
                   <td>{when(c.started_at)}</td>
                   <td>
@@ -163,14 +236,17 @@ export function PartnerCustomers() {
       )}
       {has("customer.provision") && active && (
         <form
+          id="add-customer"
           className={`w360-card ${styles.card} ${styles.form}`}
           onSubmit={(e) => {
             e.preventDefault();
             void act(async () => {
-              await partnerApi.provision(id, name.trim(), email.trim(), key.current);
+              await partnerApi.provision(id, name.trim(), email.trim(), key.current, { first: first.trim(), last: last.trim() });
               key.current = newKey();
               setName("");
               setEmail("");
+              setFirst("");
+              setLast("");
             }, "Customer created. Their owner has been emailed a one-time link to activate the account; until they do, the customer shows as awaiting activation.");
           }}
         >
@@ -180,6 +256,18 @@ export function PartnerCustomers() {
               Organization name
             </label>
             <input id={nameId} className="w360-input" required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className={styles.field}>
+            <label className="w360-label" htmlFor={firstId}>
+              Owner&apos;s first name
+            </label>
+            <input id={firstId} className="w360-input" maxLength={100} value={first} onChange={(e) => setFirst(e.target.value)} />
+          </div>
+          <div className={styles.field}>
+            <label className="w360-label" htmlFor={lastId}>
+              Owner&apos;s last name
+            </label>
+            <input id={lastId} className="w360-input" maxLength={100} value={last} onChange={(e) => setLast(e.target.value)} />
           </div>
           <div className={styles.field}>
             <label className="w360-label" htmlFor={emailId}>
@@ -300,102 +388,6 @@ function PartnerDiagnose({ partnerId, organizationId }: { partnerId: string; org
   );
 }
 
-// --- products --------------------------------------------------------------------------------------
-
-export function PartnerProducts() {
-  const { id } = usePartnerId();
-  const [load] = useLoad(() => partnerApi.catalog(id), [id]);
-  return (
-    <div className={styles.stack}>
-      <h1>Products you can sell</h1>
-      <p className={styles.lead}>Only the plans Workeasy360 has approved for your account, at your price.</p>
-      <LoadGate load={load} what="the catalog">
-        {(d) => (
-          <Table caption="Approved plans" head={["Product", "Plan", "Included seats", "Trial", "Price"]} isEmpty={d.results.length === 0} empty="Nothing has been approved for your account yet.">
-            {d.results.map((p) => (
-              <tr key={p.plan_version_id}>
-                <th scope="row">{p.product_name}</th>
-                <td>{p.plan_name}</td>
-                <td className={styles.num}>{p.included_seats}</td>
-                <td>{p.trial_days ? `${p.trial_days} days` : "—"}</td>
-                <td className={styles.num}>{p.price ? `${money(p.price.total_amount_minor, p.price.currency)} / ${p.price.interval}` : "Not priced"}</td>
-              </tr>
-            ))}
-          </Table>
-        )}
-      </LoadGate>
-    </div>
-  );
-}
-
-// --- referrals ---------------------------------------------------------------------------------------
-
-export function PartnerReferrals() {
-  const { id, has, active } = usePartnerId();
-  const [load, reload] = useLoad(() => partnerApi.referrals(id), [id]);
-  const { act, busy, feedback } = useAction(reload);
-  const labelId = useId();
-  const [label, setLabel] = useState("");
-  return (
-    <div className={styles.stack}>
-      <h1>Referrals</h1>
-      <p className={styles.lead}>The first partner a visitor arrives through is credited. Later links don&apos;t replace it.</p>
-      {feedback}
-      <LoadGate load={load} what="referrals">
-        {(d) => (
-          <>
-            <ul className={styles.row}>
-              {Object.entries(d.counts).map(([k, v]) => (
-                <li key={k} className="w360-card">
-                  <span className={styles.statValue}>{v}</span> {k.replace(/_/g, " ")}
-                </li>
-              ))}
-            </ul>
-            <Table caption="Referral codes" head={["Code", "Label", "Status"]} isEmpty={d.codes.length === 0} empty="No codes yet.">
-              {d.codes.map((c) => (
-                <tr key={c.id}>
-                  <th scope="row" className={styles.mono}>
-                    {c.code}
-                  </th>
-                  <td>{c.label}</td>
-                  <td>
-                    <Status value={c.status} />
-                  </td>
-                </tr>
-              ))}
-            </Table>
-          </>
-        )}
-      </LoadGate>
-      {has("referral.create") && active && (
-        <form
-          className={`w360-card ${styles.card} ${styles.form}`}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(async () => {
-              await partnerApi.createReferralCode(id, label.trim());
-              setLabel("");
-            }, "Referral code created.");
-          }}
-        >
-          <h2 className={styles.cardTitle}>Create a code</h2>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={labelId}>
-              Label (only you see this)
-            </label>
-            <input id={labelId} className="w360-input" required maxLength={80} value={label} onChange={(e) => setLabel(e.target.value)} />
-          </div>
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !label.trim()}>
-              Create code
-            </button>
-          </div>
-        </form>
-      )}
-    </div>
-  );
-}
-
 // --- commissions & payouts ----------------------------------------------------------------------------
 
 export function PartnerCommissions() {
@@ -493,9 +485,50 @@ export function PartnerBranding() {
         Your name, accent colour and logo are shown to your customers on your domain. The layout, and every security
         prompt, stay Workeasy360&apos;s.
       </p>
+      <BrandScope />
       <LoadGate load={load} what="your branding">
         {({ brand }) => <BrandForm partnerId={id} brand={brand} disabled={!active} onSaved={reload} />}
       </LoadGate>
+    </div>
+  );
+}
+
+/** Which brand is which: the WorkEasy360 platform brand (this panel, every
+ * security prompt - never changed here) and the partner's own white-label
+ * brand (what their customers see - edited below). */
+function BrandScope() {
+  return (
+    <div className={styles.brandScope}>
+      <section className={styles.scopeCard} aria-labelledby="scope-platform">
+        <p className={styles.scopeTag}>Fixed</p>
+        <h2 id="scope-platform" className={styles.cardTitle}>
+          WorkEasy360 platform brand
+        </h2>
+        <p className={styles.muted}>
+          This partner panel, the sign-in security prompts and Workeasy360&apos;s own messages always use the WorkEasy360
+          look. It is not changed by your branding.
+        </p>
+        <ul className={styles.platformSwatches} aria-label="WorkEasy360 colours">
+          <li>
+            <span className={`${styles.platformSwatch} ${styles.swatchGreen}`} aria-hidden="true" />
+            WorkEasy360 green
+          </li>
+          <li>
+            <span className={`${styles.platformSwatch} ${styles.swatchInk}`} aria-hidden="true" />
+            Deep navy
+          </li>
+        </ul>
+      </section>
+      <section className={`${styles.scopeCard} ${styles.scopeCardPartner}`} aria-labelledby="scope-partner">
+        <p className={styles.scopeTag}>Yours to edit</p>
+        <h2 id="scope-partner" className={styles.cardTitle}>
+          Your white-label brand
+        </h2>
+        <p className={styles.muted}>
+          What your customers see on your domain: your brand name, accent colour and logo. Change it below; the live
+          preview shows your colours as you type.
+        </p>
+      </section>
     </div>
   );
 }
@@ -618,17 +651,33 @@ function BrandForm({ partnerId, brand, disabled, onSaved }: { partnerId: string;
         </div>
       </form>
 
+      {/* The partner's colours apply inside this section only (applyAccent on
+          its own element); the panel around it stays WorkEasy360's. */}
       <section aria-labelledby="preview-h" className={styles.preview} ref={preview}>
         <h2 id="preview-h" className={styles.cardTitle}>
-          Preview
+          Your white-label brand: live preview
         </h2>
-        <p>
-          <span className={styles.previewMark} aria-hidden="true" />
-          <strong>{name || "Your brand"}</strong>
+        <p className={styles.muted}>
+          Customers see this beside the standard Workeasy360 sign-in.{" "}
+          {safeColor(color) ? `Accent ${color}.` : "The default accent until you choose one."}
         </p>
-        {/* eslint-disable-next-line @next/next/no-img-element -- a data: URL of a local, validated file */}
-        {logoPreview && <img className={styles.logo} src={logoPreview} alt={`${name || "Your"} logo preview`} />}
-        <p className={styles.muted}>Customers see this beside the standard Workeasy360 sign-in.</p>
+        <div className={local.simulated}>
+          <div className={local.simHeader}>
+            {logoPreview ? (
+              // eslint-disable-next-line @next/next/no-img-element -- a data: URL of a local, validated file
+              <img className={styles.logo} src={logoPreview} alt={`${name || "Your"} logo preview`} />
+            ) : (
+              <span className={styles.previewMark} aria-hidden="true" />
+            )}
+            <strong>{name || "Your brand"}</strong>
+          </div>
+          <div className={styles.previewSignIn} aria-hidden="true">
+            <p>Sign in to {name || "your brand"}</p>
+            <div className={local.simTile}>Email</div>
+            <div className={local.simTile}>Password</div>
+            <span className={styles.previewButton}>Sign in</span>
+          </div>
+        </div>
       </section>
     </div>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { useId } from "react";
-import { PortalPreview, type PreviewData } from "../BrandPreview";
+import type { PreviewData } from "../BrandPreview";
 import { useAction } from "../ui";
 import { TextField } from "../widgets";
 import { safeColor } from "../useBranding";
@@ -195,32 +195,5 @@ function LogoField({ ctx }: { ctx: Ctx }) {
         <img className={css.logoThumb} src={ctx.logoSrc} alt="" />
       )}
     </div>
-  );
-}
-
-// --- step 3: portal appearance ----------------------------------------------------------------------
-
-export function AppearanceStep({ ctx }: { ctx: Ctx }) {
-  const action = useAction();
-  const unsaved = ctx.dirty("identity") || ctx.dirty("portal") || ctx.dirty("login") || ctx.logo !== null;
-  return (
-    <StepFrame
-      step="appearance"
-      nav={ctx.nav}
-      action={action}
-      intro={
-        <p className={css.lead}>
-          See the portal the way customers will, in four places. Switch between them with the tabs; the arrow keys move between tabs.
-        </p>
-      }
-    >
-      <PortalPreview data={previewData(ctx)} />
-      <div className={css.callout}>
-        <p>
-          The layout and every security prompt stay Workeasy360&apos;s: you choose the name, colour, logo and words, not the page itself.
-        </p>
-        {unsaved && <p>The preview shows changes that are not saved yet. Save them on the step that edits them, or with Save draft on the last step.</p>}
-      </div>
-    </StepFrame>
   );
 }

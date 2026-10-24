@@ -8,6 +8,9 @@ export interface SessionState {
   name?: string;
   /** Phase 8 extension: whether an organization's "require MFA" can be met. */
   mfa_enrolled?: boolean;
+  /** True while the password is a temporary one someone else chose: the shell
+   * asks for a new one before anything else (the server refuses the rest). */
+  password_change_required?: boolean;
   /** Which consoles the shell may offer. Navigation only - every request is
    * authorized again by the backend. */
   consoles?: { staff: boolean; partner: boolean };

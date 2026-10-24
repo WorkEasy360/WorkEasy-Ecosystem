@@ -44,9 +44,16 @@ def partner(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
         raise PartnerRecordNotFound("No such partner.")
     # The badges in the partner's header (Partner Control Center): computed by
     # the one labelling function from the grants in force, never stored.
-    detail["experience"] = capabilities.experience_labels(
-        {c["capability"] for c in detail["capabilities"] if c["is_effective"]}
-    )
+    held = {c["capability"] for c in detail["capabilities"] if c["is_effective"]}
+    detail["experience"] = capabilities.experience_labels(held)
+    # The workspaces the grants open and the one the portal lands on (ADR-047):
+    # for the "Change experience" action. A landing is a preference; nothing
+    # here grants anything.
+    detail["workspaces"] = [
+        {"key": key, "label": capabilities.EXPERIENCES[key][0]}
+        for key in capabilities.workspaces(held)
+    ]
+    detail["landing"] = capabilities.resolve_landing(detail["default_experience"], held)
     return detail
 
 

@@ -1,64 +1,11 @@
 "use client";
 
 import { useId } from "react";
-import { PortalPreview } from "../BrandPreview";
 import { useAction } from "../ui";
-import { TextAreaField, TextField } from "../widgets";
+import { TextField } from "../widgets";
 import { validateGroup } from "./model";
-import { AuthenticationBox, StepFrame, brandFirst, type Ctx } from "./shared";
-import { previewData } from "./BrandSteps";
+import { StepFrame, brandFirst, type Ctx } from "./shared";
 import css from "../WhiteLabelSetup.module.css";
-
-// --- step 5: the customer portal ----------------------------------------------------------------------
-
-export function CustomerPortalStep({ ctx }: { ctx: Ctx }) {
-  const action = useAction();
-  const { draft, patch, errors, setup } = ctx;
-  const portalName = setup.brand?.brand_name ?? draft.brandName;
-  return (
-    <StepFrame
-      step="portal"
-      nav={ctx.nav}
-      action={action}
-      intro={
-        <p className={css.lead}>
-          The words customers read in the portal. Both are optional.
-        </p>
-      }
-      blocked={brandFirst(ctx)}
-      validate={() => validateGroup(ctx.draft, "portal")}
-      onErrors={ctx.setErrors}
-      save={() => ctx.saveBrand(["portal"])}
-      dirty={ctx.dirty("portal")}
-      saveMessage="Customer portal saved."
-    >
-      <p>
-        <strong>Portal name:</strong> {portalName}. The portal name is the brand name; change it on the Brand identity step.
-      </p>
-      <div className={css.callout}>
-        <p>Plain text only. Angle brackets (&lt; and &gt;) are refused, and each message is a single line.</p>
-      </div>
-      <TextAreaField
-        label="Welcome message (optional)"
-        value={draft.welcome}
-        onChange={(v) => patch({ welcome: v })}
-        maxLength={280}
-        rows={3}
-        error={errors.welcome}
-        hint="Shown at the top of your customers' dashboard, and on the sign-in page unless you turn that off."
-      />
-      <TextAreaField
-        label="Footer text (optional)"
-        value={draft.footer}
-        onChange={(v) => patch({ footer: v })}
-        maxLength={160}
-        rows={2}
-        error={errors.footer}
-        hint="Shown at the bottom of the portal."
-      />
-    </StepFrame>
-  );
-}
 
 // --- step 6: communication -------------------------------------------------------------------------------
 
@@ -139,47 +86,6 @@ export function CommunicationStep({ ctx }: { ctx: Ctx }) {
         </ul>
         <p className={css.reason}>Nothing is configured for these: Workeasy360 does not send them.</p>
       </section>
-    </StepFrame>
-  );
-}
-
-// --- step 8: the login experience ----------------------------------------------------------------------
-
-export function LoginExperienceStep({ ctx }: { ctx: Ctx }) {
-  const action = useAction();
-  const { draft, patch } = ctx;
-  return (
-    <StepFrame
-      step="login"
-      nav={ctx.nav}
-      action={action}
-      intro={<p className={css.lead}>Choose what customers see around the sign-in form.</p>}
-      blocked={brandFirst(ctx)}
-      save={() => ctx.saveBrand(["login"])}
-      dirty={ctx.dirty("login")}
-      saveMessage="Login experience saved."
-    >
-      <fieldset className={css.group}>
-        <legend>On the sign-in page</legend>
-        <label className={css.check}>
-          <input type="checkbox" checked={draft.loginShowWelcome} onChange={(e) => patch({ loginShowWelcome: e.target.checked })} />
-          <span>Show the welcome message on the sign-in page</span>
-        </label>
-        <label className={css.check}>
-          <input type="checkbox" checked={draft.loginShowSupport} onChange={(e) => patch({ loginShowSupport: e.target.checked })} />
-          <span>Show support details on the sign-in page</span>
-        </label>
-      </fieldset>
-
-      <PortalPreview data={previewData(ctx)} only="login" />
-
-      <div className={css.callout}>
-        <p>
-          Authentication remains Workeasy360&apos;s own. There is no separate white-label sign-in: customers always sign in on Workeasy360&apos;s
-          secure page, which shows this brand.
-        </p>
-      </div>
-      <AuthenticationBox setup={ctx.setup} />
     </StepFrame>
   );
 }

@@ -81,6 +81,15 @@ describe("which portal serves a page", () => {
     expect(pageOwner("/administrator")).toBeNull();
   });
 
+  it("keeps the three partner workspaces inside the partner portal (ADR-047)", () => {
+    for (const path of ["/partner/reseller/dashboard", "/partner/white-label/brand-settings/url-manager", "/partner/affiliate/referral-links"]) {
+      expect(pageOwner(path), path).toBe("partner");
+      expect(servesPage("partner", path), path).toBe(true);
+      expect(servesPage("admin", path), path).toBe(false);
+      expect(servesPage("app", path), path).toBe(false);
+    }
+  });
+
   it("lets the central sign-in ask which organization a product sign-in is for", () => {
     expect(servesPage("auth", "/organizations/select")).toBe(true);
     expect(servesPage("app", "/organizations/select")).toBe(true);
@@ -93,6 +102,13 @@ describe("the return-URL allowlist", () => {
     expect(safeNext("admin", "/admin/customers?q=acme")).toBe("/admin/customers?q=acme");
     expect(safeNext("app", "/o/acme/explore")).toBe("/o/acme/explore");
     expect(safeNext("partner", "/partner/p1")).toBe("/partner/p1");
+  });
+
+  it("keeps a workspace page for the partner portal and for no other", () => {
+    expect(safeNext("partner", "/partner/white-label/dashboard")).toBe("/partner/white-label/dashboard");
+    expect(safeNext("partner", "/partner/affiliate/referral-links?x=1")).toBe("/partner/affiliate/referral-links?x=1");
+    expect(safeNext("admin", "/partner/affiliate/dashboard")).toBe("/admin");
+    expect(safeNext("app", "/partner/reseller/dashboard")).toBe("/dashboard");
   });
 
   it("refuses everything else, so `next` is never an open redirect", () => {
@@ -148,6 +164,20 @@ describe("routing a page request", () => {
   it("serves a signed-in visit, whoever it is - the server decides access", () => {
     expect(route("admin.workeasy360.com", "/admin", { session: true })).toEqual({ kind: "serve" });
     expect(route("partner.workeasy360.com", "/partner", { session: true })).toEqual({ kind: "serve" });
+  });
+
+  it("serves a workspace on the partner host, moves it there from another, and asks a signed-out visit to sign in", () => {
+    expect(route("partner.workeasy360.com", "/partner/affiliate/dashboard", { session: true })).toEqual({ kind: "serve" });
+    expect(route("app.workeasy360.com", "/partner/reseller/customers", { session: true })).toEqual({
+      kind: "redirect",
+      location: "https://partner.workeasy360.com/partner/reseller/customers",
+    });
+    const signedOut = route("partner.workeasy360.com", "/partner/white-label/dashboard");
+    expect(signedOut?.kind).toBe("redirect");
+    if (signedOut?.kind !== "redirect") return;
+    const url = new URL(signedOut.location);
+    expect(url.origin).toBe(ORIGINS.auth);
+    expect(Object.fromEntries(url.searchParams)).toEqual({ mode: "partner", next: "/partner/white-label/dashboard", state: STATE });
   });
 
   it("moves a page to the portal that serves it", () => {

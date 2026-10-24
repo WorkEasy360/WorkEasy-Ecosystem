@@ -41,12 +41,14 @@ from workeasy360.commercial.partners.domain import (
 from workeasy360.contracts.enums import (
     GrantStatus,
     PartnerLinkStatus,
-    PartnerMemberRole,
     PartnerStatus,
     PriceBookChannel,
+    PrincipalKind,
+    UserStatus,
 )
 from workeasy360.contracts.errors import (
     CommercialError,
+    PartnerNotActive,
     PartnerRecordNotFound,
     PartnerValidationError,
 )
@@ -64,6 +66,7 @@ from workeasy360.platform.observability.metrics import metrics
 logger = get_logger(__name__)
 
 MANAGE = "platform.staff_partner.manage"
+MEMBER_MANAGE = "platform.partner_member.manage"
 
 PARTNER_OPERATIONS = "partner_operations_total"
 
@@ -366,7 +369,7 @@ def _has_admin_member(partner_id: UUID) -> bool:
     return PartnerMember.objects.filter(
         partner_id=partner_id,
         status="active",
-        role=PartnerMemberRole.ADMIN.value,
+        role__in=sorted(capabilities.ADMIN_ROLES),
         user__status="active",
     ).exists()
 
@@ -448,10 +451,24 @@ def grant_capability(
     reason: Any,
     expires_at: datetime | None = None,
 ) -> Any:
+    """Grant one capability (staff). Idempotent: see ``_grant_capability``."""
+    authz.require(ctx, MANAGE)
+    return _grant_capability(
+        ctx, partner_id, capability=capability, reason=reason, expires_at=expires_at
+    )
+
+
+def _grant_capability(
+    ctx: TenantContext,
+    partner_id: UUID,
+    *,
+    capability: Any,
+    reason: Any,
+    expires_at: datetime | None = None,
+) -> Any:
     """Grant one capability. Idempotent: an existing active grant is returned."""
     from workeasy360.commercial.partners.models import PartnerCapabilityGrant
 
-    authz.require(ctx, MANAGE)
     spec = capabilities.require_capability(str(capability))
     why = clean_reason(reason)
     if expires_at is not None and expires_at <= timezone.now():
@@ -518,6 +535,14 @@ def grant_capability(
 def revoke_capability(
     ctx: TenantContext, partner_id: UUID, *, capability: Any, reason: Any
 ) -> Any:
+    """Revoke a capability (staff): see ``_revoke_capability``."""
+    authz.require(ctx, MANAGE)
+    return _revoke_capability(ctx, partner_id, capability=capability, reason=reason)
+
+
+def _revoke_capability(
+    ctx: TenantContext, partner_id: UUID, *, capability: Any, reason: Any
+) -> Any:
     """Revoke a capability, effective on the partner's very next action.
 
     The permission set is computed from these rows on every check with no
@@ -526,7 +551,6 @@ def revoke_capability(
     """
     from workeasy360.commercial.partners.models import PartnerCapabilityGrant
 
-    authz.require(ctx, MANAGE)
     spec = capabilities.require_capability(str(capability))
     why = clean_reason(reason)
 
@@ -604,21 +628,76 @@ def enable_white_label(ctx: TenantContext, partner_id: UUID, *, reason: Any) -> 
 # --- members --------------------------------------------------------------
 
 
+def _authorize_members(
+    ctx: TenantContext, partner_id: UUID, *, target_role: str | None = None
+) -> bool:
+    """Authorize a team command; ``True`` when the caller is the partner itself.
+
+    One command, two callers, no second implementation (the pattern
+    ``access.subject_partner`` uses for brand and domains):
+
+    - **staff** need ``platform.staff_partner.manage`` (dangerous: AAL 2);
+    - a **partner user** acts for their own partner only - an explicit
+      ``partner_id`` that is not theirs is the same 404 as any other partner's
+      record - needs ``platform.partner_member.manage`` (also dangerous: a
+      stolen session must not be able to add a stranger) and an *active*
+      partner, and only an owner may hand out the owner role.
+    """
+    if ctx.principal is PrincipalKind.PARTNER:
+        if partner_id != ctx.partner_id:
+            raise PartnerRecordNotFound("No such partner.", partner_id=str(partner_id))
+        authz.require(ctx, MEMBER_MANAGE)
+        partner = selectors.partner_row(partner_id)
+        if partner is None or not partner.status_enum.may_transact:
+            raise PartnerNotActive(
+                "This partner may not change its team.",
+                partner_status=partner.status if partner else None,
+            )
+        if target_role == "owner" and not _caller_is_owner(ctx):
+            raise PartnerValidationError(
+                "Only an owner can give the owner role.", field="role"
+            )
+        return True
+    authz.require(ctx, MANAGE)
+    return False
+
+
+def _caller_is_owner(ctx: TenantContext) -> bool:
+    member = selectors.member_of(ctx.partner_id, ctx.user_id)
+    return member is not None and member.role == "owner"
+
+
+def _other_admin_exists(partner_id: UUID, excluding_member_id: UUID) -> bool:
+    from workeasy360.commercial.partners.models import PartnerMember
+
+    return (
+        PartnerMember.objects.filter(
+            partner_id=partner_id,
+            status="active",
+            role__in=sorted(capabilities.ADMIN_ROLES),
+            user__status="active",
+        )
+        .exclude(id=excluding_member_id)
+        .exists()
+    )
+
+
 @in_scope
 def change_member_role(
     ctx: TenantContext, partner_id: UUID, *, member_id: UUID, role: Any
 ) -> Any:
-    """Move a partner user between the two tiers.
+    """Move a partner user to another role preset.
 
     Takes effect on their next request - permissions are computed from the row
     on every check. An *active* partner must keep one administrator, so the last
-    one cannot be turned into a viewer (the same rule that stops activating a
-    partner nobody can act for).
+    one cannot be turned into a non-administrator role (the same rule that stops
+    activating a partner nobody can act for). A partner user cannot change their
+    own role, and only an owner can change an owner's.
     """
     from workeasy360.commercial.partners.models import PartnerMember
 
-    authz.require(ctx, MANAGE)
     target = _parse_role(role)
+    by_partner = _authorize_members(ctx, partner_id, target_role=target.value)
     with transaction.atomic():
         partner = _lock_partner(partner_id)
         member = (
@@ -628,19 +707,22 @@ def change_member_role(
         )
         if member is None:
             raise PartnerRecordNotFound("No such member.", member_id=str(member_id))
+        if by_partner:
+            if member.user_id == ctx.user_id:
+                raise PartnerValidationError(
+                    "You cannot change your own role.", field="role"
+                )
+            if member.role == "owner" and not _caller_is_owner(ctx):
+                raise PartnerValidationError(
+                    "Only an owner can change an owner's role.", field="role"
+                )
         if member.role == target.value:
             return member
         if (
-            member.role == PartnerMemberRole.ADMIN.value
+            capabilities.is_admin_role(member.role)
+            and not capabilities.is_admin_role(target.value)
             and partner.status_enum is PartnerStatus.ACTIVE
-            and not PartnerMember.objects.filter(
-                partner_id=partner_id,
-                status="active",
-                role=PartnerMemberRole.ADMIN.value,
-                user__status="active",
-            )
-            .exclude(id=member.id)
-            .exists()
+            and not _other_admin_exists(partner_id, member.id)
         ):
             raise PartnerValidationError(
                 "An active partner needs at least one administrator. Add another first.",
@@ -668,17 +750,10 @@ def add_member(ctx: TenantContext, partner_id: UUID, *, email: Any, role: Any) -
     "disabled" and "already a member", so the endpoint is not an account
     directory.
     """
-    from workeasy360.commercial.partners.models import PartnerMember
     from workeasy360.platform.identity.selectors import active_user_id_for_email
 
     authz.require(ctx, MANAGE)
-    try:
-        member_role = PartnerMemberRole(str(role))
-    except ValueError as exc:
-        raise PartnerValidationError(
-            f"role must be one of {sorted(r.value for r in PartnerMemberRole)}.",
-            field="role",
-        ) from exc
+    member_role = _parse_role(role)
     address = _clean_email(email, required=True)
 
     with transaction.atomic():
@@ -690,46 +765,109 @@ def add_member(ctx: TenantContext, partner_id: UUID, *, email: Any, role: Any) -
         user_id = active_user_id_for_email(address)
         if user_id is None:
             raise PartnerValidationError("That account cannot be added.", field="email")
-        try:
-            with transaction.atomic():
-                member = PartnerMember.objects.create(
-                    partner_id=partner_id,
-                    user_id=user_id,
-                    role=member_role.value,
-                    added_by_id=ctx.user_id,
-                    added_at=timezone.now(),
-                )
-        except IntegrityError as exc:
-            raise PartnerValidationError(
-                "That account cannot be added.", field="email"
-            ) from exc
-        audit.record(
-            ctx,
-            "partner.member_added",
-            resource_type="partners.member",
-            resource_id=member.id,
-            changes={"partner_id": str(partner_id), "role": member.role},
-        )
+        return _attach_member(ctx, partner_id, user_id, member_role)
+
+
+def _attach_member(
+    ctx: TenantContext, partner_id: UUID, user_id: UUID, member_role: Any
+) -> Any:
+    """The one place a ``PartnerMember`` row for an *existing* identity is made
+    (``add_member``, and ``attach_user_as_member`` for a caller that has just
+    made or looked up the account itself). Runs inside the caller's transaction;
+    one uniform refusal for "already a member"."""
+    from workeasy360.commercial.partners.models import PartnerMember
+
+    try:
+        with transaction.atomic():
+            member = PartnerMember.objects.create(
+                partner_id=partner_id,
+                user_id=user_id,
+                role=member_role.value,
+                added_by_id=ctx.user_id,
+                added_at=timezone.now(),
+            )
+    except IntegrityError as exc:
+        raise PartnerValidationError(
+            "That account cannot be added.", field="email"
+        ) from exc
+    audit.record(
+        ctx,
+        "partner.member_added",
+        resource_type="partners.member",
+        resource_id=member.id,
+        changes={"partner_id": str(partner_id), "role": member.role},
+    )
     return member
+
+
+@in_scope
+def attach_user_as_member(
+    ctx: TenantContext, partner_id: UUID, *, user_id: UUID, role: Any
+) -> Any:
+    """Make an identity the caller already holds - one it created a moment ago,
+    or looked up and checked itself - a member of a partner (staff).
+
+    ``add_member`` finds the identity by address; this takes the id, so the
+    Add Partner command can create the administrator's account and attach it in
+    one transaction. It trusts nothing about the id beyond that it names a user:
+    the caller checked who the user is.
+    """
+    authz.require(ctx, MANAGE)
+    member_role = _parse_role(role)
+    with transaction.atomic():
+        partner = _lock_partner(partner_id)
+        if partner.status_enum is PartnerStatus.TERMINATED:
+            raise PartnerValidationError(
+                "A terminated partner cannot take on members.", field="partner_id"
+            )
+        return _attach_member(ctx, partner_id, user_id, member_role)
 
 
 @in_scope
 def remove_member(ctx: TenantContext, partner_id: UUID, *, member_id: UUID) -> Any:
     """Remove a partner user. Partner access ends on their next request; their
     membership of any customer organization is a different table and is
-    untouched (Task 65)."""
+    untouched (Task 65). A partner user cannot remove themselves, only an owner
+    removes an owner, and an active partner keeps one administrator."""
     from workeasy360.commercial.partners.models import PartnerMember
 
-    authz.require(ctx, MANAGE)
+    by_partner = _authorize_members(ctx, partner_id)
     with transaction.atomic():
-        _lock_partner(partner_id)
+        partner = _lock_partner(partner_id)
         member = (
             PartnerMember.objects.select_for_update()
-            .filter(id=member_id, partner_id=partner_id, status="active")
+            .filter(
+                id=member_id, partner_id=partner_id, status__in=("active", "suspended")
+            )
             .first()
         )
         if member is None:
             raise PartnerRecordNotFound("No such member.", member_id=str(member_id))
+        if by_partner:
+            if member.user_id == ctx.user_id:
+                raise PartnerValidationError(
+                    "You cannot remove yourself. Ask another administrator.",
+                    field="member",
+                )
+            if member.role == "owner" and not _caller_is_owner(ctx):
+                raise PartnerValidationError(
+                    "Only an owner can remove an owner.", field="member"
+                )
+            # A partner cannot lock itself out. (Staff keep the older, wider
+            # power to remove anyone, including the last administrator.)
+            # A suspended administrator holds no access, so removing one cannot
+            # take the last working administrator away.
+            if (
+                member.status == "active"
+                and capabilities.is_admin_role(member.role)
+                and partner.status_enum is PartnerStatus.ACTIVE
+                and not _other_admin_exists(partner_id, member.id)
+            ):
+                raise PartnerValidationError(
+                    "An active partner needs at least one administrator. "
+                    "Add another first.",
+                    field="member",
+                )
         member.status = "removed"
         member.removed_at = timezone.now()
         member.removed_by_id = ctx.user_id
@@ -737,6 +875,72 @@ def remove_member(ctx: TenantContext, partner_id: UUID, *, member_id: UUID) -> A
         audit.record(
             ctx,
             "partner.member_removed",
+            resource_type="partners.member",
+            resource_id=member.id,
+            changes={"partner_id": str(partner_id)},
+        )
+    return member
+
+
+@in_scope
+def suspend_member(ctx: TenantContext, partner_id: UUID, *, member_id: UUID) -> Any:
+    """Pause a partner user's access without removing them.
+
+    The membership row stays (so do their role and history) but is no longer
+    ``active``, and every permission check starts from an active row - so access
+    ends on their very next request, exactly as for a removal. Their Workeasy360
+    identity and any customer-organization membership are untouched. The same
+    guards as a removal: not yourself, only an owner pauses an owner, and an
+    active partner keeps one working administrator."""
+    return _set_member_paused(ctx, partner_id, member_id=member_id, pause=True)
+
+
+@in_scope
+def resume_member(ctx: TenantContext, partner_id: UUID, *, member_id: UUID) -> Any:
+    """Give a paused partner user their access back, in the role they held."""
+    return _set_member_paused(ctx, partner_id, member_id=member_id, pause=False)
+
+
+def _set_member_paused(
+    ctx: TenantContext, partner_id: UUID, *, member_id: UUID, pause: bool
+) -> Any:
+    from workeasy360.commercial.partners.models import PartnerMember
+
+    by_partner = _authorize_members(ctx, partner_id)
+    before, after = ("active", "suspended") if pause else ("suspended", "active")
+    with transaction.atomic():
+        partner = _lock_partner(partner_id)
+        member = (
+            PartnerMember.objects.select_for_update()
+            .filter(id=member_id, partner_id=partner_id, status=before)
+            .first()
+        )
+        if member is None:
+            raise PartnerRecordNotFound("No such member.", member_id=str(member_id))
+        if by_partner:
+            if member.user_id == ctx.user_id:
+                raise PartnerValidationError(
+                    "You cannot change your own access.", field="member"
+                )
+            if member.role == "owner" and not _caller_is_owner(ctx):
+                raise PartnerValidationError(
+                    "Only an owner can change an owner access.", field="member"
+                )
+        if (
+            pause
+            and capabilities.is_admin_role(member.role)
+            and partner.status_enum is PartnerStatus.ACTIVE
+            and not _other_admin_exists(partner_id, member.id)
+        ):
+            raise PartnerValidationError(
+                "An active partner needs at least one administrator. Add another first.",
+                field="member",
+            )
+        member.status = after
+        member.save(update_fields=["status"])
+        audit.record(
+            ctx,
+            "partner.member_suspended" if pause else "partner.member_resumed",
             resource_type="partners.member",
             resource_id=member.id,
             changes={"partner_id": str(partner_id)},
@@ -755,6 +959,23 @@ class MemberInvite:
 
 @in_scope
 def invite_member(
+    ctx: TenantContext,
+    partner_id: UUID,
+    *,
+    email: Any,
+    role: Any,
+    full_name: Any = "",
+    send_link: bool = True,
+) -> MemberInvite:
+    """Attach a person to a partner (staff, or the partner's own administrator):
+    see ``_invite_member``."""
+    _authorize_members(ctx, partner_id, target_role=_parse_role(role).value)
+    return _invite_member(
+        ctx, partner_id, email=email, role=role, full_name=full_name, send_link=send_link
+    )
+
+
+def _invite_member(
     ctx: TenantContext,
     partner_id: UUID,
     *,
@@ -787,7 +1008,6 @@ def invite_member(
     from workeasy360.commercial.partners.models import PartnerMember
     from workeasy360.platform.identity.services import ensure_identity_for_email
 
-    authz.require(ctx, MANAGE)
     member_role = _parse_role(role)
     address = _clean_email(email, required=True)
     person = clean_text(full_name, field="full_name", max_length=255, required=False)
@@ -800,6 +1020,13 @@ def invite_member(
             )
         user_id, created = ensure_identity_for_email(address, full_name=person)
         if user_id is None:
+            raise PartnerValidationError("That account cannot be added.", field="email")
+        paused = PartnerMember.objects.filter(
+            partner_id=partner_id, user_id=user_id, status="suspended"
+        ).exists()
+        if paused:
+            # Resume the paused membership instead; a second row would break the
+            # one-active-membership rule. The same uniform refusal as any other.
             raise PartnerValidationError("That account cannot be added.", field="email")
         already = (
             PartnerMember.objects.select_for_update()
@@ -859,7 +1086,7 @@ def resend_member_setup(ctx: TenantContext, partner_id: UUID, *, member_id: UUID
     password: a person who can sign in has no use for one."""
     from workeasy360.commercial.partners.models import PartnerMember
 
-    authz.require(ctx, MANAGE)
+    _authorize_members(ctx, partner_id)
     with transaction.atomic():
         partner = _lock_partner(partner_id)
         member = (
@@ -884,25 +1111,73 @@ def resend_member_setup(ctx: TenantContext, partner_id: UUID, *, member_id: UUID
     return sent
 
 
+@in_scope
+def send_member_password_reset(
+    ctx: TenantContext, partner_id: UUID, *, member_id: UUID
+) -> bool:
+    """Send one of this partner's people the ordinary forgotten-password link
+    (staff only).
+
+    This is the identity system's own reset - the link proves the mailbox, the
+    person chooses the new password, and every session of theirs ends - so a
+    password Workeasy360 staff typed once is never the only way back in. The
+    current password is neither read nor shown, and this sets none. ``False``
+    (nothing sent) when the account may not use a reset link."""
+    from workeasy360.commercial.partners.models import PartnerMember
+    from workeasy360.platform.administration import self_service
+    from workeasy360.platform.identity import selectors as identity
+
+    authz.require(ctx, MANAGE)
+    with transaction.atomic():
+        member = (
+            PartnerMember.objects.select_for_update()
+            .filter(id=member_id, partner_id=partner_id, status="active")
+            .first()
+        )
+        if member is None:
+            raise PartnerRecordNotFound("No such member.", member_id=str(member_id))
+        address = identity.contact_address(member.user_id)
+        # The ordinary reset mails only an active or pending account and stays
+        # silent otherwise (so it can never be used to probe addresses). This
+        # staff action is allowed to know: it reports "sent" only when it can have.
+        facts = identity.user_facts_for_email(address) if address else None
+        usable = facts is not None and facts["status"] in (
+            UserStatus.ACTIVE.value,
+            UserStatus.PENDING.value,
+        )
+        if usable:
+            self_service.request_password_reset(address)
+        audit.record(
+            ctx,
+            "partner.member_password_reset_sent",
+            resource_type="partners.member",
+            resource_id=member.id,
+            # Who it was for and whether it went; never the address or any link.
+            changes={"partner_id": str(partner_id), "sent": usable},
+        )
+    return usable
+
+
 def _has_password(user_id: UUID) -> bool:
     from workeasy360.platform.identity import selectors as identity
 
     return bool(identity.has_usable_password(user_id))
 
 
-def _parse_role(role: Any) -> PartnerMemberRole:
-    try:
-        return PartnerMemberRole(str(role))
-    except ValueError as exc:
-        raise PartnerValidationError(
-            f"role must be one of {sorted(r.value for r in PartnerMemberRole)}.",
-            field="role",
-        ) from exc
+def _parse_role(role: Any) -> capabilities.RoleSpec:
+    return capabilities.require_role(role)
 
 
+#: The wording of the invitation email. Kept as it was for the two original
+#: roles (an existing template and tests pin it); the presets use their label.
 _ROLE_NAMES = {
-    PartnerMemberRole.ADMIN.value: "Administrator",
-    PartnerMemberRole.VIEWER.value: "Viewer",
+    "admin": "Administrator",
+    "viewer": "Viewer",
+    **{
+        key: spec.label
+        for key, spec in capabilities.ROLE_PRESETS.items()
+        if key not in {"admin", "viewer"}
+    },
 }
 
 
@@ -971,6 +1246,27 @@ def grant_product(
     trial_allowed: Any = None,
     portal_visible: Any = None,
 ) -> Any:
+    """Allow a partner to sell a product (staff): see ``_grant_product``."""
+    authz.require(ctx, MANAGE)
+    return _grant_product(
+        ctx,
+        partner_id,
+        product_code=product_code,
+        plan_code=plan_code,
+        trial_allowed=trial_allowed,
+        portal_visible=portal_visible,
+    )
+
+
+def _grant_product(
+    ctx: TenantContext,
+    partner_id: UUID,
+    *,
+    product_code: Any,
+    plan_code: Any = None,
+    trial_allowed: Any = None,
+    portal_visible: Any = None,
+) -> Any:
     """Allow a partner to sell a product (or one plan of it). Idempotent.
 
     ``trial_allowed`` and ``portal_visible`` are the two per-grant choices
@@ -981,7 +1277,6 @@ def grant_product(
     from workeasy360.commercial.catalog import selectors as catalog
     from workeasy360.commercial.partners.models import PartnerProductGrant
 
-    authz.require(ctx, MANAGE)
     trial = _flag(trial_allowed, field="trial_allowed")
     visible = _flag(portal_visible, field="portal_visible")
     product_id, plan_id = catalog.resolve_product_and_plan(
@@ -1094,9 +1389,14 @@ def update_product_grant(
 
 @in_scope
 def revoke_product_grant(ctx: TenantContext, partner_id: UUID, *, grant_id: UUID) -> Any:
+    """Withdraw a product grant (staff): see ``_revoke_product_grant``."""
+    authz.require(ctx, MANAGE)
+    return _revoke_product_grant(ctx, partner_id, grant_id=grant_id)
+
+
+def _revoke_product_grant(ctx: TenantContext, partner_id: UUID, *, grant_id: UUID) -> Any:
     from workeasy360.commercial.partners.models import PartnerProductGrant
 
-    authz.require(ctx, MANAGE)
     with transaction.atomic():
         _lock_partner(partner_id)
         grant = (
@@ -1161,6 +1461,19 @@ def capability_presentation(ctx: TenantContext) -> dict[str, Any]:
                 "capabilities": list(preset["capabilities"]),  # type: ignore[call-overload]
             }
             for preset in capabilities.CAPABILITY_PRESETS
+        ],
+        # The creation presets of the three experiences (ADR-047): what choosing
+        # a type card on Add Partner grants. The form draws its cards and its
+        # review from this, so what it shows is what the server will grant.
+        "experiences": [
+            {
+                "key": key,
+                "label": capabilities.EXPERIENCES[key][0],
+                "description": capabilities.EXPERIENCE_DESCRIPTIONS[key],
+                "capabilities": list(capabilities.EXPERIENCE_BUNDLES[key]),
+                "sells": key in (capabilities.RESELLER, capabilities.WHITE_LABEL),
+            }
+            for key in capabilities.EXPERIENCES
         ],
     }
 

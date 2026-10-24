@@ -47,6 +47,13 @@ DANGEROUS_PARTNER = frozenset(
         "platform.partner_customer.manage",
         "platform.partner_subscription.sell",
         "platform.partner_subscription.manage",
+        # ADR-045: letting someone act for the partner, and creating partners
+        # under it, are each as consequential as selling.
+        "platform.partner_member.manage",
+        "platform.partner_subpartner.manage",
+        # ADR-046: minting, rotating or revoking a credential that reads the
+        # partner's data from outside the portal.
+        "platform.partner_apikey.manage",
     }
 )
 
@@ -91,12 +98,17 @@ def test_every_dangerous_partner_permission_needs_a_second_factor(
     from workeasy360.contracts.errors import StepUpRequired
     from workeasy360.platform.authz import services as authz
 
+    # A permission of the partner's own account (the team) belongs to no
+    # capability: every administrator holds it (ADR-045).
     capability = next(
-        key
-        for key, spec in capabilities.CAPABILITIES.items()
-        if permission in spec.manage or permission in spec.view
+        (
+            key
+            for key, spec in capabilities.CAPABILITIES.items()
+            if permission in spec.manage or permission in spec.view
+        ),
+        None,
     )
-    fx = partner_factory(capability)
+    fx = partner_factory(*([capability] if capability else []))
     with pytest.raises(StepUpRequired):
         authz.require(fx["actor"](aal=1), permission)
     authz.require(fx["actor"](aal=2), permission)

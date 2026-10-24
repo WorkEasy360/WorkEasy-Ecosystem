@@ -32,6 +32,8 @@ from workeasy360.interfaces.api.v1 import (
     intelligence_views,
     launcher_views,
     mfa_views,
+    partner_api_views,
+    partner_panel_views,
     partner_views,
     payment_views,
     public_site_views,
@@ -1081,6 +1083,16 @@ _admin = [
         name="admin-partner-referrals",
     ),
     path(
+        "admin/partners/<uuid:partner_id>/referral-codes",
+        admin_views.partner_referral_code_create_view,
+        name="admin-partner-referral-code-create",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/guest-view",
+        admin_views.partner_guest_view_start_view,
+        name="admin-partner-guest-view",
+    ),
+    path(
         "admin/partners/white-label",
         admin_views.partner_white_label_view,
         name="admin-partners-white-label",
@@ -1134,6 +1146,27 @@ _admin = [
         "admin/partners/reseller-review",
         admin_views.reseller_review_view,
         name="admin-reseller-review",
+    ),
+    # ADR-047/048: Add Partner - the credentials check and the one atomic create.
+    path(
+        "admin/partners/credentials-check",
+        admin_views.partner_credentials_check_view,
+        name="admin-partner-credentials-check",
+    ),
+    path(
+        "admin/partners/create",
+        admin_views.partner_create_view,
+        name="admin-partner-create",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/experience",
+        admin_views.partner_experience_view,
+        name="admin-partner-experience",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/members/<uuid:member_id>/password-reset",
+        admin_views.partner_member_password_reset_view,
+        name="admin-partner-member-password-reset",
     ),
     path(
         "admin/partners/<uuid:partner_id>/administrators",
@@ -1313,6 +1346,11 @@ _admin = [
 _partner = [
     path("partner/portal", partner_views.portal_view, name="partner-portal"),
     path(
+        "partner/guest-view/end",
+        partner_views.guest_view_end_view,
+        name="partner-guest-view-end",
+    ),
+    path(
         "partner/<uuid:partner_id>/customers",
         partner_views.customers_view,
         name="partner-customers",
@@ -1422,6 +1460,212 @@ _partner = [
         partner_views.domain_disable_view,
         name="partner-domain-disable",
     ),
+    # --- the partner business panel (ADR-045) ---
+    path(
+        "partner/<uuid:partner_id>/dashboard",
+        partner_panel_views.dashboard_view,
+        name="partner-dashboard",
+    ),
+    path(
+        "partner/<uuid:partner_id>/affiliate/overview",
+        partner_panel_views.affiliate_overview_view,
+        name="partner-affiliate-overview",
+    ),
+    path(
+        "partner/<uuid:partner_id>/reports",
+        partner_panel_views.reports_view,
+        name="partner-reports",
+    ),
+    path(
+        "partner/<uuid:partner_id>/white-label/status",
+        partner_panel_views.white_label_status_view,
+        name="partner-white-label-status",
+    ),
+    path(
+        "partner/<uuid:partner_id>/balance",
+        partner_panel_views.balance_view,
+        name="partner-balance",
+    ),
+    path(
+        "partner/<uuid:partner_id>/features",
+        partner_panel_views.features_view,
+        name="partner-features",
+    ),
+    path(
+        "partner/<uuid:partner_id>/orders",
+        partner_panel_views.orders_view,
+        name="partner-orders",
+    ),
+    path(
+        "partner/<uuid:partner_id>/activity",
+        partner_panel_views.activity_view,
+        name="partner-activity",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/export",
+        partner_panel_views.customers_export_view,
+        name="partner-customers-export",
+    ),
+    path(
+        "partner/<uuid:partner_id>/products",
+        partner_panel_views.products_view,
+        name="partner-products",
+    ),
+    path(
+        "partner/<uuid:partner_id>/products/order",
+        partner_panel_views.product_order_view,
+        name="partner-product-order",
+    ),
+    path(
+        "partner/<uuid:partner_id>/products/<str:product_code>",
+        partner_panel_views.product_setting_view,
+        name="partner-product-setting",
+    ),
+    path(
+        "partner/<uuid:partner_id>/plans",
+        partner_panel_views.plans_view,
+        name="partner-plans",
+    ),
+    path(
+        "partner/<uuid:partner_id>/packages",
+        partner_panel_views.packages_view,
+        name="partner-packages",
+    ),
+    path(
+        "partner/<uuid:partner_id>/currencies",
+        partner_panel_views.currencies_view,
+        name="partner-currencies",
+    ),
+    path(
+        "partner/<uuid:partner_id>/price-book",
+        partner_panel_views.price_book_view,
+        name="partner-price-book",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sub-partners",
+        partner_panel_views.sub_partners_view,
+        name="partner-sub-partners",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sub-partners/options",
+        partner_panel_views.sub_partner_options_view,
+        name="partner-sub-partner-options",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sub-partners/<uuid:child_id>/activate",
+        partner_panel_views.sub_partner_activate_view,
+        name="partner-sub-partner-activate",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sub-partners/<uuid:child_id>/suspend",
+        partner_panel_views.sub_partner_suspend_view,
+        name="partner-sub-partner-suspend",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sub-partners/<uuid:child_id>/resume",
+        partner_panel_views.sub_partner_resume_view,
+        name="partner-sub-partner-resume",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sub-partners/<uuid:child_id>/equipment",
+        partner_panel_views.sub_partner_equipment_view,
+        name="partner-sub-partner-equipment",
+    ),
+    path(
+        "partner/<uuid:partner_id>/affiliates",
+        partner_panel_views.affiliates_view,
+        name="partner-affiliates",
+    ),
+    path(
+        "partner/<uuid:partner_id>/affiliates/conversions",
+        partner_panel_views.conversions_view,
+        name="partner-affiliate-conversions",
+    ),
+    path(
+        "partner/<uuid:partner_id>/members",
+        partner_panel_views.members_view,
+        name="partner-members",
+    ),
+    path(
+        "partner/<uuid:partner_id>/members/<uuid:member_id>",
+        partner_panel_views.member_view,
+        name="partner-member",
+    ),
+    path(
+        "partner/<uuid:partner_id>/members/<uuid:member_id>/resend-setup",
+        partner_panel_views.member_resend_view,
+        name="partner-member-resend",
+    ),
+    path(
+        "partner/<uuid:partner_id>/profile",
+        partner_panel_views.profile_view,
+        name="partner-profile",
+    ),
+    path(
+        "partner/<uuid:partner_id>/authentication",
+        partner_panel_views.authentication_view,
+        name="partner-authentication",
+    ),
+    path(
+        "partner/<uuid:partner_id>/communication",
+        partner_panel_views.communication_view,
+        name="partner-communication",
+    ),
+    path(
+        "partner/<uuid:partner_id>/roles",
+        partner_panel_views.roles_view,
+        name="partner-roles",
+    ),
+    path(
+        "partner/<uuid:partner_id>/members/<uuid:member_id>/suspend",
+        partner_panel_views.member_suspend_view,
+        name="partner-member-suspend",
+    ),
+    path(
+        "partner/<uuid:partner_id>/members/<uuid:member_id>/resume",
+        partner_panel_views.member_resume_view,
+        name="partner-member-resume",
+    ),
+    path(
+        "partner/<uuid:partner_id>/channels",
+        partner_panel_views.channels_view,
+        name="partner-channels",
+    ),
+    path(
+        "partner/<uuid:partner_id>/translations",
+        partner_panel_views.translations_view,
+        name="partner-translations",
+    ),
+    path(
+        "partner/<uuid:partner_id>/api-keys",
+        partner_panel_views.api_keys_view,
+        name="partner-api-keys",
+    ),
+    path(
+        "partner/<uuid:partner_id>/api-keys/<uuid:key_id>/rotate",
+        partner_panel_views.api_key_rotate_view,
+        name="partner-api-key-rotate",
+    ),
+    path(
+        "partner/<uuid:partner_id>/api-keys/<uuid:key_id>/revoke",
+        partner_panel_views.api_key_revoke_view,
+        name="partner-api-key-revoke",
+    ),
+    path(
+        "partner/<uuid:partner_id>/notifications",
+        partner_panel_views.notifications_view,
+        name="partner-notifications",
+    ),
+    path(
+        "partner/<uuid:partner_id>/notifications/read",
+        partner_panel_views.notifications_read_view,
+        name="partner-notifications-read",
+    ),
+    path(
+        "partner/<uuid:partner_id>/support",
+        partner_panel_views.support_view,
+        name="partner-support",
+    ),
 ]
 
 _public = [
@@ -1453,4 +1697,22 @@ _public = [
     ),
 ]
 
-urlpatterns += _admin + _partner + _public
+# ADR-046: the key-authenticated, read-only partner API. The only routes that
+# accept a bearer key (and the only ones that ignore the session entirely).
+_partner_api = [
+    path(
+        "partner-api/account", partner_api_views.account_view, name="partner-api-account"
+    ),
+    path(
+        "partner-api/customers",
+        partner_api_views.customers_view,
+        name="partner-api-customers",
+    ),
+    path(
+        "partner-api/commissions",
+        partner_api_views.commissions_view,
+        name="partner-api-commissions",
+    ),
+]
+
+urlpatterns += _admin + _partner + _public + _partner_api

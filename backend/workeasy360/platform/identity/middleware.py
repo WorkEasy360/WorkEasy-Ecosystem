@@ -17,10 +17,11 @@ idle window refreshed at most once per ``SESSION_REFRESH_INTERVAL_S``.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import ClassVar
 
 from django.contrib.auth import logout as django_logout
 from django.contrib.sessions.middleware import SessionMiddleware
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 
 #: The session key the login view writes the epoch under, at the moment it
 #: establishes the session - see platform.identity views.
@@ -55,6 +56,51 @@ class SessionEpochMiddleware:
                 # merely logged out of identity while still carrying
                 # whatever else had been written into it.
                 django_logout(request)
+        return self.get_response(request)
+
+
+class PasswordChangeRequiredMiddleware:
+    """Refuse the API to a session whose password someone else chose, until it is changed.
+
+    A temporary password (shown once to an operator, e.g. for a development demo
+    partner) must not be a working credential: the person it was given to
+    changes it first. While ``password_change_required`` is set, only the calls
+    that let them do that - read the session, change the password, sign out and
+    the hand-off between portals - are served; everything else is a 403 with a
+    code the frontend turns into the change-password screen. Changing the
+    password clears the flag.
+    """
+
+    ALLOWED: ClassVar[frozenset[str]] = frozenset(
+        {
+            "/api/v1/auth/session",
+            "/api/v1/auth/logout",
+            "/api/v1/auth/password",
+            "/api/v1/auth/handoff",
+            "/api/v1/auth/handoff/redeem",
+            "/api/v1/partner/portal",
+        }
+    )
+
+    def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
+        self.get_response = get_response
+
+    def __call__(self, request: HttpRequest) -> HttpResponse:
+        user = getattr(request, "user", None)
+        if (
+            user is not None
+            and getattr(user, "is_authenticated", False)
+            and getattr(user, "password_change_required", False)
+            and request.path.startswith("/api/")
+            and request.path not in self.ALLOWED
+        ):
+            return JsonResponse(
+                {
+                    "code": "password_change_required",
+                    "detail": "Choose a new password before continuing.",
+                },
+                status=403,
+            )
         return self.get_response(request)
 
 

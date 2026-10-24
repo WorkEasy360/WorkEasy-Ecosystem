@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { applyAccent, contrastOn, hoverOf, textOnDark, textOnLight, useBranding, useOrganizationBranding } from "./useBranding";
+import { applyAccent, contrastOn, hoverOf, localizePortal, normalizePortal, textOnDark, textOnLight, useBranding, useOrganizationBranding } from "./useBranding";
 
 /**
  * The colours that follow from a partner's accent. Found by the Phase 10 browser
@@ -23,8 +23,8 @@ const contrast = (a: string, b: string) => {
   return (hi + 0.05) / (lo + 0.05);
 };
 
-const LIGHT_SURFACES = ["#f7f8fa", "#ffffff"];
-const DARK_SURFACES = ["#0f1115", "#171a21", "#1d212a"];
+const LIGHT_SURFACES = ["#eaf6ef", "#f4faf7", "#f7f8fa", "#ffffff"];
+const DARK_SURFACES = ["#0f1115", "#171a21", "#1d212a", "#0f171c", "#161d24", "#19222a"];
 
 // A spread of accents: the extremes, the awkward mid-tones, and a deterministic sweep.
 const ACCENTS = [
@@ -87,6 +87,9 @@ describe("colours derived from a partner's accent", () => {
       "--w360-brand-hover",
       "--w360-brand-text-on-light",
       "--w360-brand-text-on-dark",
+      "--w360-cta",
+      "--w360-cta-contrast",
+      "--w360-cta-hover",
     ]) {
       expect(el.style.getPropertyValue(name), name).toMatch(/^#[0-9a-f]{6}$/);
     }
@@ -235,5 +238,29 @@ describe("the portal on the public brand", () => {
       login_show_welcome: true,
       login_show_support: true,
     });
+  });
+});
+
+describe("a partner's own translations (ADR-046)", () => {
+  const portal = normalizePortal({ welcome_message: "Welcome", footer_text: "Footer", website_url: "https://acme.example" });
+
+  it("replaces only the two worded fields, for the visitor's language, and nothing else", () => {
+    const out = localizePortal(portal, { fr: { "portal.welcome_message": "Bienvenue", "portal.footer": "Pied", "portal.nav.dashboard": "x" } }, "fr-CA");
+    expect(out.welcome_message).toBe("Bienvenue");
+    expect(out.footer_text).toBe("Pied");
+    expect(out.website_url).toBe("https://acme.example");
+    expect(Object.keys(out).sort()).toEqual(Object.keys(portal).sort());
+  });
+
+  it("falls back to the platform's wording when the partner has none for that language", () => {
+    expect(localizePortal(portal, { fr: { "portal.welcome_message": "Bienvenue" } }, "de")).toEqual(portal);
+    expect(localizePortal(portal, undefined, "fr")).toEqual(portal);
+    expect(localizePortal(portal, { fr: { "portal.welcome_message": "   " } }, "fr").welcome_message).toBe("Welcome");
+    expect(localizePortal(portal, { fr: {} }, undefined)).toEqual(portal);
+  });
+
+  it("never reads a prototype property as a language", () => {
+    expect(localizePortal(portal, {}, "constructor")).toEqual(portal);
+    expect(localizePortal(portal, {}, "__proto__")).toEqual(portal);
   });
 });

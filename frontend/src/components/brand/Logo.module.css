@@ -1,0 +1,60 @@
+/* The logo keeps its own proportions (width follows height) and its clear
+   space comes from the layout around it, never from squeezing the image. */
+
+.logo {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  line-height: 0;
+}
+
+.full,
+.mark {
+  display: block;
+  width: auto;
+  height: 28px;
+}
+
+.logo[data-size="lg"] .full {
+  height: 40px;
+}
+
+.mark {
+  display: none;
+}
+
+.onDark {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .onLight {
+    display: none;
+  }
+
+  :root:not([data-theme="light"]) .onDark {
+    display: block;
+  }
+}
+
+:root[data-theme="dark"] .onLight {
+  display: none;
+}
+
+:root[data-theme="dark"] .onDark {
+  display: block;
+}
+
+@media (max-width: 480px) {
+  .logo[data-compact] .full {
+    display: none;
+  }
+
+  .logo[data-compact] .mark {
+    display: block;
+  }
+
+  .logo[data-size="lg"] .full {
+    height: 32px;
+  }
+}

@@ -31,7 +31,7 @@ import ps from "./PartnerProfileTabs.module.css";
 
 type Act = (action: () => Promise<unknown>, success: string) => Promise<void>;
 
-const ROLE_TEXT: Record<string, string> = { admin: "Administrator", viewer: "Viewer" };
+const ROLE_TEXT: Record<string, string> = { owner: "Owner", admin: "Administrator", viewer: "Viewer" };
 const roleText = (role: string) => ROLE_TEXT[role] ?? role;
 
 function MemberStatus({ member: m }: { member: PartnerMemberRow }) {
@@ -48,8 +48,9 @@ export function MembersSection({ partner, manage, act, busy }: { partner: Partne
   return (
     <Section title="Partner users">
       <p className={styles.muted}>
-        The people who can sign in and act for this partner. They choose their own password from the link they are emailed; staff never
-        set or see one. The contacts on the Contacts tab are not users.
+        The people who can sign in and act for this partner. Someone invited by email chooses their own password from the link they are
+        sent. The administrator set up through Add Partner signs in with the password typed there; it is never shown again, and “Send
+        password reset link” lets them choose a new one. The contacts on the Contacts tab are not users.
       </p>
       <Table
         caption="Members"
@@ -155,6 +156,22 @@ function MemberRow({ partnerId, member: m, manage, act, busy }: { partnerId: str
               {!m.password_set && (
                 <button type="button" className="w360-btn w360-btn-secondary" disabled={busy} onClick={() => void resend()}>
                   Resend setup link{" "}
+                  <span className="w360-visually-hidden">to {m.email}</span>
+                </button>
+              )}
+              {m.password_set && (
+                <button
+                  type="button"
+                  className="w360-btn w360-btn-secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(async () => {
+                      const result = await partnerConsoleApi.sendPasswordReset(partnerId, m.id);
+                      if (!result.sent) throw new ApiError(409, { detail: "No link was sent: this account cannot use a reset link." });
+                    }, "A password reset link was sent. Their current password keeps working until they use it.")
+                  }
+                >
+                  Send password reset link{" "}
                   <span className="w360-visually-hidden">to {m.email}</span>
                 </button>
               )}

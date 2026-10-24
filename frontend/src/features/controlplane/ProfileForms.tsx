@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { SUPPORTED_CURRENCIES } from "./amounts";
 import { countryOptions } from "./countries";
 import { SECONDARY_KINDS, type ContactDraft, type FieldErrors, type ProfileDraft } from "./profileDraft";
 import { SelectField, TextAreaField, TextField } from "./widgets";
@@ -192,8 +193,37 @@ export function BusinessDetailsForm({
         showRequired={must("country")}
         error={errors["business.country"]}
       />
+      <SelectField
+        label="Time zone (optional)"
+        value={value.timezone}
+        onChange={(v) => onChange({ timezone: v })}
+        options={timeZoneOptions(value.timezone)}
+        error={errors["business.timezone"]}
+      />
     </>
   );
+}
+
+/** Common time zones (IANA names the server accepts), with the stored one kept
+ * even if it is not among them. A short list on purpose: a select of every zone
+ * the browser knows is hundreds of options long. */
+const COMMON_TIME_ZONES = [
+  "UTC",
+  "Europe/London", "Europe/Dublin", "Europe/Lisbon", "Europe/Paris", "Europe/Berlin", "Europe/Madrid", "Europe/Rome",
+  "Europe/Amsterdam", "Europe/Stockholm", "Europe/Warsaw", "Europe/Athens", "Europe/Istanbul",
+  "Africa/Cairo", "Africa/Johannesburg", "Africa/Lagos", "Africa/Nairobi",
+  "Asia/Dubai", "Asia/Karachi", "Asia/Kolkata", "Asia/Colombo", "Asia/Kathmandu", "Asia/Dhaka", "Asia/Bangkok",
+  "Asia/Jakarta", "Asia/Singapore", "Asia/Kuala_Lumpur", "Asia/Manila", "Asia/Hong_Kong", "Asia/Shanghai",
+  "Asia/Tokyo", "Asia/Seoul",
+  "Australia/Perth", "Australia/Adelaide", "Australia/Brisbane", "Australia/Sydney", "Pacific/Auckland",
+  "America/Sao_Paulo", "America/Argentina/Buenos_Aires", "America/Bogota", "America/Lima", "America/Mexico_City",
+  "America/New_York", "America/Toronto", "America/Chicago", "America/Denver", "America/Phoenix",
+  "America/Los_Angeles", "America/Vancouver", "America/Anchorage", "Pacific/Honolulu",
+];
+
+function timeZoneOptions(current: string): { value: string; label: string }[] {
+  const zones = current && !COMMON_TIME_ZONES.includes(current) ? [current, ...COMMON_TIME_ZONES] : COMMON_TIME_ZONES;
+  return [{ value: "", label: "Not set" }, ...zones.map((z) => ({ value: z, label: z.replace(/_/g, " ") }))];
 }
 
 function ContactFields({
@@ -368,9 +398,12 @@ export function PayoutPrefsForm({
   onChange,
   errors = {},
   currency,
+  currencyEditable = false,
 }: FormProps & {
-  /** The partner's payout currency, shown as a fact. It is fixed when the partner is created. */
+  /** The partner's payout currency, shown as a fact once the partner is active. */
   currency?: string;
+  /** While the partner is a draft its preferred currency can still be chosen. */
+  currencyEditable?: boolean;
 }) {
   return (
     <>
@@ -378,10 +411,21 @@ export function PayoutPrefsForm({
         Payouts are prepared, approved and marked paid by staff, one step at a time. These are preferences for whoever prepares them -
         Workeasy360 moves no money and collects no bank details.
       </p>
-      {currency && (
-        <p>
-          Paid in <strong>{currency}</strong>. Commission is never converted from another currency.
-        </p>
+      {currencyEditable ? (
+        <SelectField
+          label="Preferred currency"
+          value={value.payoutCurrency || currency || ""}
+          onChange={(v) => onChange({ payoutCurrency: v })}
+          options={SUPPORTED_CURRENCIES.map((c) => ({ value: c, label: c }))}
+          hint="Prices, commission and payouts are kept in this currency. It can be changed until the partner is activated (and before it has prices of its own)."
+          error={errors["payout.currency"]}
+        />
+      ) : (
+        currency && (
+          <p>
+            Paid in <strong>{currency}</strong>. Commission is never converted from another currency.
+          </p>
+        )
       )}
       <SelectField
         label="Payout frequency"

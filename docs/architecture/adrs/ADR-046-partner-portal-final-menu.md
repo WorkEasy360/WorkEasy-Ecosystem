@@ -1,0 +1,43 @@
+# ADR-046: The partner portal's final menu
+
+Status: accepted, 2026-10-16. Builds on ADR-043 (the portal hosts), ADR-045 (the business panel) and ADR-028 (the partner channel). Supersedes the navigation of ADR-045; its screens, services and honest-gap registry stand.
+
+## Context
+
+ADR-045 grew the partner portal to 31 sidebar entries in seven groups, several of them one page cut into pieces (Commissions, Payouts, Partner Balance, Payments, Orders and Payment Links were six entries about one subject; Customers and Subscriptions two about one). The owner asked for a menu of exactly 24 entries in eight groups (Menu, Audience, Billing, Panel customization, New product settings, Settings, Team, Help), everything else consolidated or removed, with the shared backend, the commercial logic and the security architecture left as they were.
+
+## Decisions
+
+1. **One list is the menu.** `frontend/src/features/partnerpanel/menu.ts` holds the 24 entries, their groups, the permission each needs and the legacy redirects. The sidebar, `next.config.ts` (the redirects) and the architecture test read that file; there is no second menu to drift. Adding an entry, a page outside the approved segments, or a redirect that points at nothing fails `menu.test.ts`.
+2. **The list is a maximum.** An entry shows only when the server resolved a permission that makes its page useful (`needs`), and a few open on the first tab the person can read (`landing`): a payout-only affiliate lands on Payouts, an ended partner on its commission. This is navigation convenience; every request is authorized again by the backend, and the permissions are the ones ADR-045 already resolves. The menu names no partner type.
+3. **Sub-sections are tabs, not sidebar items.** Plans/Add-ons, Currency/Package & Pricing/Pricing Rule, Conversions/Payouts/Settings, Orders/Commissions/Balance, Branding/URL Manager/White-label setup, Channel/Templates/Alerts/Logs and Customers/Subscriptions are in-page navigation (`SubNav`), drawn only for tabs the person may read.
+4. **Old routes redirect; they do not render.** Every address the old portal served answers with a permanent redirect (308) to the page that now holds the feature (`LEGACY_REDIRECTS`), query string kept. None renders a page of its own, so there is never a second experience beside the first. The URL scheme stays `/partner/<id>/...` (ADR-043's partner host serves `/partner/**`); the brief's bare `/users`, `/agency` ... are that path under the partner id.
+5. **Merges, not deletions.** Customers -> Users; Sub-Partners -> Agency (still `PartnerHierarchyLink` over `PartnerAccount`); Products -> Partner Products (read-only grants) with the sale switch in Product Billing and the order/visibility in Product Manager; Commissions and Balance -> Payments tabs; Payouts -> Affiliates > Payouts; Currencies -> Currency & Pricing > Currency; Domains -> Brand Settings > URL Manager; Users & Permissions -> Role & Permissions + Team Members; Authentication -> Auth Configuration; Settings -> Account; Activity -> the trail on Account, its newest entries on the dashboard and, as notifications, the Notification Center. No backend route, model or table was removed.
+
+## What is new, and its boundary
+
+- **Role & Permissions** (`GET /partner/<id>/roles`): the seven presets as they apply to this partner, each the preset's list intersected with the capabilities the partner holds. Read-only. There are no custom roles.
+- **Team Members: suspend and resume** (`PartnerMember.status` gains `suspended`). Access ends on the next request exactly as for a removal (every check starts from an active row); the identity and any customer membership are untouched. Same guards as removal: not yourself, an owner alone for an owner, a working administrator always remains (a suspended administrator does not count), dangerous (second factor). A suspended person cannot be invited again (the uniform refusal); they can be removed.
+- **API Key Manager** (`PartnerApiKey`, `/partner/<id>/api-keys`, the read-only `/partner-api/` endpoints): scoped, expiring, revocable credentials for the partner's own systems.
+  - The secret is 256 random bits, shown once, and only its SHA-256 is kept (the platform's rule for every bearer secret). It is never returned again, never audited, never logged.
+  - Scopes are a closed list (`account.read`, `customers.read`, `commissions.read`), each tied to a permission. A person can mint a key only for scopes their own role holds; the scope is checked again on every use against what the creator may still do, so demoting or pausing the creator narrows or stops the key.
+  - A key reaches exactly its own partner (there is no partner id in a URL it can change), only by `GET`, never a session, and no key opens a portal endpoint. A key dies with its expiry (30-365 days, always), its revocation, its partner's ability to transact and its creator's membership. Every failure is the same 401. Rate limits: per address, per key, and a stricter one for refused credentials.
+  - Create, rotate and revoke need `platform.partner_apikey.manage`, a *dangerous* permission (AAL 2, enforced by the one decision function), are rate-limited and audited. Administrators only. Rotation revokes the old row and issues a new one (`replaces`); the no-escalation check runs again.
+  - No cloud, master, signing or database credential is stored, shown or accepted anywhere.
+- **Translation Manager** (`PartnerTranslation`): partner-worded customer-facing labels and messages from a closed key list, in a closed locale list, one line of plain text with no markup, braces or code, with the fall-back chain *partner -> Workeasy360 -> English* applied by the server. No security message, legal notice, validation text or authorization wording is in the list (a test pins the key names). The partner-worded strings are published with the brand payload for the customer's browser to apply.
+- **Notification Center**: the audit log, worded and classified (`partner_help.KINDS`), filtered to the kinds a person's permissions allow. Nothing is copied into a notification table; only read-state is stored (`PartnerNotificationRead`, `PartnerNotificationState`), per member. Marking read ignores any id the person could not see. Events the platform does not record against a partner (a customer's trial ending, a card payment result) are listed as not recorded, not invented.
+- **Support Manager**: a contact address (`W360_PARTNER_SUPPORT_EMAIL`), Easy Help Desk found from the product registry, and a request form that *prepares an email in the person's own mail app* (nothing is sent or stored by the platform). There is no ticket model and none was built; open and resolved requests are not listed.
+- **Channel Manager**: states derived from what exists. Email (the platform's own provider) is `connected`, or `needs_setup` for a white-label partner that has not named the sender; WhatsApp, SMS and webhook are `not_available` (never `disconnected` or `connected`). The vocabulary also carries `disconnected` and `error` for a channel that can have a connection to lose.
+- **Users**: a server-side search over *live* relationships only (an ended relationship hides the name, so the name cannot find it).
+- **Appearance**: "Advanced theme tokens" replaces any custom CSS: six colour tokens the server validates as six-digit hex, with a contrast gate in the form. Custom CSS and script remain refused.
+- **Product Manager** gained a customer preview; the **dashboard** gained product activity and a notifications strip; **Affiliates > Settings** shows eligible products and the payout currency.
+
+## What is deliberately not built (unchanged unless listed)
+
+Add-ons, partner-authored packages and pricing rules, wallet recharge, payment links, partner SMTP, WhatsApp/SMS/webhook, alerts, per-partner templates and delivery logs, partner integrations, shared resources, custom roles, ticket lists, a partner-configurable authentication policy (a default sign-in destination, a stronger second-factor rule, session length, SSO mode), a separate icon and favicon, a custom sign-in background, landing cards, a preloader and a menu layout. Each has a reason in `partner_portal.NOT_IMPLEMENTED`; remove an entry only when the capability is built and tested.
+
+## Consequences
+
+- One migration: `partners.0006` (four new tables and a choices-only change to `partnermember.status`). It changes no existing column, so the previous release is unaffected by it.
+- `platform.partner_apikey.view/manage` are new permissions held by administrators only.
+- Tests: `backend/tests/partner_menu/` and `frontend/src/features/partnerpanel/menu.test.ts`, `partner-screens.test.tsx`.

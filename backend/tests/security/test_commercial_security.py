@@ -577,11 +577,30 @@ def test_every_commercial_mutation_is_audited():
             takes_ctx = bool(node.args.args) and node.args.args[0].arg == "ctx"
             if not takes_ctx:
                 continue
-            audited = any(
-                isinstance(child, ast.Attribute)
-                and child.attr in {"record", "record_system"}
-                for child in ast.walk(node)
-            )
+
+            def records(function: ast.FunctionDef) -> bool:
+                return any(
+                    isinstance(child, ast.Attribute)
+                    and child.attr in {"record", "record_system"}
+                    for child in ast.walk(function)
+                )
+
+            audited = records(node)
+            if not audited:
+                # An authorizing wrapper that only delegates to its ``_<name>``
+                # core (ADR-045 split the staff-only partner commands so the
+                # partner's own team and sub-partner commands share the core)
+                # is audited when the core is.
+                core = next(
+                    (
+                        other
+                        for other in tree.body
+                        if isinstance(other, ast.FunctionDef)
+                        and other.name == f"_{node.name}"
+                    ),
+                    None,
+                )
+                audited = core is not None and records(core)
             if not audited:
                 unaudited.append(f"{path.parent.name}.{node.name}")
     assert not unaudited, f"Unaudited commercial mutations: {unaudited}"

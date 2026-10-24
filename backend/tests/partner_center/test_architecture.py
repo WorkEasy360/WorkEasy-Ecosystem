@@ -154,10 +154,13 @@ def test_no_new_tables_for_partners_staff_or_identity():
     0007 for universal sign-in, which adds no table: an account-event kind and a
     wider reason column - ADR-044.)"""
     expected = {
-        "commercial/partners": "0004_partner_setup_profile_contacts.py",
+        # 0007 adds one presentation column (default_experience, ADR-047) and no
+        # table; tests/partner_experience pins what it is and what reads it.
+        # 0008 only back-fills that column (tests/partner_management).
+        "commercial/partners": "0008_backfill_default_experience.py",
         "commercial/commissions": "0003_payout_list_keyset_index.py",
         "platform/authz": "0009_billing_manage_not_dangerous.py",
-        "platform/identity": "0007_account_event_sign_in_preference.py",
+        "platform/identity": "0008_password_change_required.py",
     }
     for app, newest in expected.items():
         found = sorted(p.name for p in (PACKAGE / app / "migrations").glob("0*.py"))[-1]

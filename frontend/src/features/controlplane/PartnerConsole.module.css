@@ -459,3 +459,274 @@
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+/* --- simplified partner management (ADR-048) ------------------------------------------ */
+
+.typeBadge {
+  border: 1px solid var(--w360-border-strong);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--w360-text);
+  background: var(--w360-neutral-bg);
+}
+
+.type_reseller {
+  border-color: var(--w360-accent);
+}
+
+.type_white_label {
+  border-style: dashed;
+}
+
+.searchField {
+  flex: 1 1 16rem;
+}
+
+.meter {
+  display: grid;
+  gap: 4px;
+  min-width: 7rem;
+}
+
+.meterTrack {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--w360-neutral-bg);
+  border: 1px solid var(--w360-border);
+  overflow: hidden;
+}
+
+.meterFill,
+.meterDone {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.meterFill {
+  background: var(--w360-text-muted);
+}
+
+.meterDone {
+  background: var(--w360-accent);
+}
+
+.success {
+  margin: 0;
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-success-bg);
+  color: var(--w360-success);
+  font-weight: 600;
+}
+
+.completion {
+  display: grid;
+  gap: var(--w360-space-2);
+  padding: var(--w360-space-4);
+  border-left: 4px solid var(--w360-warning);
+}
+
+.completion p {
+  margin: 0;
+}
+
+.completionDone {
+  border-left-color: var(--w360-accent);
+}
+
+.completionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-3);
+}
+
+.completionTitle {
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* The completion bar's width in tenths (a class, never an inline style). */
+.w0 {
+  width: 0%;
+}
+
+.w10 {
+  width: 10%;
+}
+
+.w20 {
+  width: 20%;
+}
+
+.w30 {
+  width: 30%;
+}
+
+.w40 {
+  width: 40%;
+}
+
+.w50 {
+  width: 50%;
+}
+
+.w60 {
+  width: 60%;
+}
+
+.w70 {
+  width: 70%;
+}
+
+.w80 {
+  width: 80%;
+}
+
+.w90 {
+  width: 90%;
+}
+
+.w100 {
+  width: 100%;
+}
+
+/* --- All Partners table: switch, icon actions, copyable cells -------------------- */
+
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 2.5rem;
+  height: 1.4rem;
+  padding: 0 0.15rem;
+  border: 1px solid var(--w360-border-strong);
+  border-radius: 999px;
+  background: var(--w360-neutral-bg);
+  cursor: pointer;
+}
+
+.switch[aria-checked="true"] {
+  border-color: var(--w360-brand);
+  background: var(--w360-brand);
+}
+
+.switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.switchKnob {
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  background: var(--w360-surface);
+  box-shadow: var(--w360-shadow-sm);
+  transition: transform 0.15s ease;
+}
+
+.switch[aria-checked="true"] .switchKnob {
+  transform: translateX(1.05rem);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switchKnob {
+    transition: none;
+  }
+}
+
+.iconRow {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0.25rem;
+  border: 1px solid var(--w360-border);
+  border-radius: 0.4rem;
+  background: var(--w360-surface);
+  color: var(--w360-text-secondary);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.iconButton:hover {
+  border-color: var(--w360-brand);
+  color: var(--w360-text);
+}
+
+.iconButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.copyCell {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  max-width: 15rem;
+  padding: 0.15rem 0.15rem 0.15rem 0.5rem;
+  border-radius: 0.4rem;
+  background: var(--w360-bg-soft);
+}
+
+.copyText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copyCell .iconButton {
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+}
+
+.nameMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+  margin-top: 0.25rem;
+  font-weight: 400;
+}
+
+.highlightRow > * {
+  background: var(--w360-brand-soft);
+}
+
+.promptRow > td {
+  background: var(--w360-bg-soft);
+}
+
+.promptForm {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 40rem;
+}
+
+.createdBanner {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--w360-success);
+  border-radius: 0.5rem;
+  background: var(--w360-success-bg);
+  color: var(--w360-text);
+}
+
+.createdBanner p {
+  margin: 0;
+}

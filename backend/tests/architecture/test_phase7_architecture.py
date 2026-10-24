@@ -226,6 +226,8 @@ ALLOWED_API_ROOTS = frozenset(
     {
         "admin",
         "partner",
+        # ADR-046: the read-only, bearer-key-authenticated partner API.
+        "partner-api",
         "public",
         "referrals",
         "invitations",

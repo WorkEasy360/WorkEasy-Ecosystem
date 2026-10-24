@@ -46,8 +46,10 @@ function mix(hex: string, toward: "#000000" | "#ffffff", amount: number): string
   return `#${channel(1)}${channel(3)}${channel(5)}`;
 }
 
-// The lightest surface a link can sit on in each theme (see globals.css).
-const LIGHT_SURFACE = "#f7f8fa";
+// The surface a link must still read on in each theme (see globals.css): the
+// darkest light one - the sign-in page's mint canvas, where a partner's support
+// links sit - and the lightest dark one (the raised surface).
+const LIGHT_SURFACE = "#eaf6ef";
 const DARK_SURFACE = "#1d212a";
 const WCAG_AA_TEXT = 4.5;
 
@@ -93,6 +95,9 @@ const ACCENT_VARIABLES = [
   "--w360-brand-hover",
   "--w360-brand-text-on-light",
   "--w360-brand-text-on-dark",
+  "--w360-cta",
+  "--w360-cta-contrast",
+  "--w360-cta-hover",
 ] as const;
 
 /**
@@ -112,6 +117,9 @@ export function applyAccent(el: HTMLElement, color: string | null | undefined): 
     el.style.setProperty("--w360-brand-hover", hoverOf(safe));
     el.style.setProperty("--w360-brand-text-on-light", textOnLight(safe));
     el.style.setProperty("--w360-brand-text-on-dark", textOnDark(safe));
+    el.style.setProperty("--w360-cta", safe);
+    el.style.setProperty("--w360-cta-contrast", contrastOn(safe));
+    el.style.setProperty("--w360-cta-hover", hoverOf(safe));
   } else {
     for (const name of ACCENT_VARIABLES) el.style.removeProperty(name);
   }
@@ -149,6 +157,33 @@ export function normalizePortal(raw: Partial<PublicPortalFields> | null | undefi
   };
 }
 
+/** The portal fields a partner's own wording (Translation Manager) may replace,
+ * and the translation key each one reads. A closed map: a translation can only
+ * change these two plain-text fields, never a link, a flag or anything else. */
+const TRANSLATED_FIELDS = { welcome_message: "portal.welcome_message", footer_text: "portal.footer" } as const;
+
+/**
+ * Apply the partner's own translation for the visitor's language, if it has one
+ * (the server already limited the keys, the locales and the text to one line of
+ * plain words). The fall-back chain is the rest of the page: no partner string
+ * means the platform's wording, which is the English the page already shows.
+ */
+export function localizePortal(
+  portal: PublicPortalFields,
+  translations: Record<string, Record<string, string>> | undefined,
+  language: string | undefined,
+): PublicPortalFields {
+  const locale = (language ?? "").toLowerCase().split("-")[0] ?? "";
+  const mine = translations && Object.prototype.hasOwnProperty.call(translations, locale) ? translations[locale] : undefined;
+  if (!mine) return portal;
+  const out = { ...portal };
+  for (const [field, key] of Object.entries(TRANSLATED_FIELDS)) {
+    const value = text(mine[key]).trim();
+    if (value) out[field as keyof typeof TRANSLATED_FIELDS] = value;
+  }
+  return out;
+}
+
 /**
  * The white-label brand for the host the visitor is on, if a partner's active
  * verified domain matches it. The server resolves the brand from the explicit
@@ -170,7 +205,7 @@ export function useBranding(forHost?: string): HostBrand | null {
       .forHost(forHost ?? window.location.host)
       .then(({ brand: b }) => {
         if (cancelled || !b) return;
-        setBrand({ ...b, portal: normalizePortal(b.portal) });
+        setBrand({ ...b, portal: localizePortal(normalizePortal(b.portal), b.translations, navigator.language) });
         applyAccent(document.documentElement, b.accent_color);
       })
       .catch(() => undefined);
@@ -202,7 +237,7 @@ export function useOrganizationBranding(slug: string): OwnBrand | null {
       .own(slug)
       .then(({ brand: b }) => {
         if (cancelled) return;
-        setBrand(b ? { ...b, portal: normalizePortal(b.portal) } : null);
+        setBrand(b ? { ...b, portal: localizePortal(normalizePortal(b.portal), b.translations, navigator.language) } : null);
         applyAccent(document.documentElement, b?.accent_color);
       })
       .catch(() => undefined);

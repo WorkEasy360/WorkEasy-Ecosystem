@@ -1,0 +1,14 @@
+#!/bin/sh
+# Workeasy360 on the single host: `docker compose` with the project name, both
+# compose files and the env file fixed, so no command can reach another
+# Compose project or run without the secrets.
+#
+#   sudo /opt/workeasy360/bin/w360 ps
+#   sudo /opt/workeasy360/bin/w360 logs --tail 50 api
+#   sudo /opt/workeasy360/bin/w360 up -d
+set -eu
+ROOT="${W360_ROOT:-/opt/workeasy360}"
+exec docker compose -p w360 \
+  -f "$ROOT/current/deploy/compose/production.yml" \
+  -f "$ROOT/current/deploy/single-host/compose.single-host.yml" \
+  --env-file "$ROOT/env/production.env" "$@"

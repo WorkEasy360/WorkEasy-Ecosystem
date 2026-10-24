@@ -124,6 +124,19 @@
   margin: 0 0 var(--w360-space-4);
 }
 
+/* A sentence-long status drawn as a badge (a guest view, an inactive partner
+   account): it wraps at phone widths instead of widening the page, which a
+   badge's nowrap would do. */
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2, 8px);
+  white-space: normal;
+  line-height: 1.5;
+  padding: 8px 12px;
+  border-radius: var(--w360-radius-sm);
+}
+
 @media (max-width: 900px) {
   .split {
     grid-template-columns: minmax(0, 1fr);

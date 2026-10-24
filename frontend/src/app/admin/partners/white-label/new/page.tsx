@@ -1,10 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { WhiteLabelSetup } from "@/features/controlplane/WhiteLabelSetup";
-
-/** Partners → White-label → Set up white-label: the ten-step wizard, starting
- * by choosing an existing partner. Nothing is created: the wizard configures a
- * partner that already exists. */
+/** Old address: adding a partner is the one Add Partner form, with the type preselected (ADR-048). */
 export default function Page() {
-  return <WhiteLabelSetup />;
+  redirect("/admin/partners/new?type=white_label");
 }

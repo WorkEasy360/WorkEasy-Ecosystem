@@ -204,6 +204,13 @@ def has_partner_price(partner_id: UUID) -> bool:
     return _partner_prices().filter(price_book__partner_id=partner_id).exists()
 
 
+def partner_has_price_book(partner_id: UUID) -> bool:
+    """Whether this partner has any price book of its own, in any state."""
+    from workeasy360.commercial.pricing.models import PriceBook
+
+    return PriceBook.objects.filter(partner_id=partner_id).exists()
+
+
 def partner_price_cycles(partner_id: UUID) -> dict[UUID, set[str]]:
     """The billing cycles this partner has its own current price for, by plan
     version - one query."""

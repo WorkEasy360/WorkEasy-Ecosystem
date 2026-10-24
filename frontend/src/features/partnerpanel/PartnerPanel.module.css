@@ -1,0 +1,682 @@
+/* The partner business panel. CSS modules only - no inline style attributes, and
+   no value from the server is written into a stylesheet. Design tokens come from
+   globals.css so light and dark follow the platform. The panel is always
+   WorkEasy360-branded: white cards with soft borders on a light mint canvas,
+   green kept for actions, the current/selected state and positive figures. */
+
+.page {
+  display: grid;
+  gap: var(--w360-space-5);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.page > * {
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3) var(--w360-space-4);
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--w360-text);
+}
+
+.lead {
+  margin: var(--w360-space-1) 0 0;
+  color: var(--w360-text-muted);
+  max-width: 62ch;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.kpis {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kpi {
+  display: grid;
+  gap: var(--w360-space-1);
+  align-content: start;
+  padding: var(--w360-space-4) var(--w360-space-5);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-lg);
+  background: var(--w360-surface);
+  box-shadow: var(--w360-shadow-sm);
+}
+
+.kpiHead {
+  display: flex;
+  gap: var(--w360-space-2);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+/* The figure's icon: brand green on a light mint disc. */
+.kpiIcon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--w360-brand-soft);
+  color: var(--w360-accent);
+}
+
+.kpiLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--w360-text-muted);
+}
+
+.kpiValue {
+  color: var(--w360-text);
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.kpiNote {
+  font-size: 13px;
+  color: var(--w360-text-muted);
+}
+
+.amounts {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.twoCol {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+}
+
+.panel {
+  padding: var(--w360-space-4) var(--w360-space-5);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-lg);
+  background: var(--w360-surface);
+  box-shadow: var(--w360-shadow-sm);
+  min-width: 0;
+}
+
+.panel {
+  min-inline-size: 0;
+}
+
+.panel h2,
+.panel h3 {
+  margin: 0 0 var(--w360-space-3);
+  font-size: 16px;
+}
+
+.quick {
+  display: grid;
+  gap: var(--w360-space-2);
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.quick a {
+  display: block;
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--w360-text);
+  background: var(--w360-surface);
+}
+
+.quick a:hover {
+  border-color: var(--w360-brand);
+  background: var(--w360-brand-soft);
+  color: var(--w360-brand);
+}
+
+.list {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.listItem {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1) var(--w360-space-3);
+  justify-content: space-between;
+  padding-bottom: var(--w360-space-2);
+  border-bottom: 1px solid var(--w360-border);
+  font-size: 14px;
+}
+
+.muted {
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3);
+  align-items: flex-end;
+}
+
+.range fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1);
+}
+
+.range legend {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--w360-text-muted);
+  margin-bottom: var(--w360-space-1);
+  padding: 0;
+}
+
+.rangeButton {
+  min-height: 40px;
+  padding: 0 var(--w360-space-3);
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-surface);
+  color: var(--w360-text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.rangeButton:hover {
+  background: var(--w360-bg-soft);
+}
+
+/* Selected: the light brand mint with deep-green text and a green edge - the
+   same "current" treatment as the sidebar, not a saturated fill. */
+.rangeButton[aria-pressed="true"] {
+  background: var(--w360-brand-soft);
+  border-color: var(--w360-indicator);
+  color: var(--w360-brand);
+  font-weight: 700;
+}
+
+.dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: flex-end;
+}
+
+.chartFrame {
+  display: grid;
+  gap: var(--w360-space-2);
+}
+
+.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* The primary series in the brand green, edged in the darker green so each
+   bar holds >= 3:1 against the card (WCAG 1.4.11). */
+.chartBar {
+  fill: var(--w360-chart-1);
+  stroke: var(--w360-chart-1-edge);
+  stroke-width: 1;
+}
+
+.chartGrid {
+  stroke: var(--w360-border);
+  stroke-width: 1;
+}
+
+.chartAxis {
+  fill: var(--w360-text-muted);
+  font-size: 11px;
+}
+
+.chartControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.emptyState {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3) var(--w360-space-4);
+  align-items: center;
+  padding: var(--w360-space-5);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-bg-soft);
+  color: var(--w360-text-muted);
+}
+
+/* The illustration: a brand-green icon on a mint disc inside a softer ring. */
+.emptyArt {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 56px;
+  height: 56px;
+  margin: 6px;
+  border-radius: 999px;
+  background: var(--w360-brand-soft);
+  box-shadow: 0 0 0 6px var(--w360-surface-mint);
+  color: var(--w360-accent);
+}
+
+.emptyText {
+  display: grid;
+  gap: var(--w360-space-1);
+  min-width: 0;
+  flex: 1 1 200px;
+}
+
+.emptyText strong {
+  color: var(--w360-text);
+  font-size: 16px;
+}
+
+.notice {
+  display: grid;
+  gap: var(--w360-space-2);
+  padding: var(--w360-space-4) var(--w360-space-5);
+  border: 1px solid var(--w360-border-strong);
+  border-left: 4px solid var(--w360-warning);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+}
+
+.notice h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.notice p {
+  margin: 0;
+}
+
+.cards {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: grid;
+  gap: var(--w360-space-3);
+  align-content: start;
+  padding: var(--w360-space-4) var(--w360-space-5);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-lg);
+  background: var(--w360-surface);
+  box-shadow: var(--w360-shadow-sm);
+  min-width: 0;
+}
+
+.cardHead {
+  display: flex;
+  gap: var(--w360-space-3);
+  align-items: center;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 17px;
+}
+
+.monogram {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-brand-soft);
+  color: var(--w360-brand);
+  font-weight: 800;
+}
+
+/* A product's row heading: its icon on the shared mint tile, then its name.
+   One shell for every product; only the line-art icon differs. */
+.productCell {
+  display: flex;
+  gap: var(--w360-space-3);
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.productIcon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-brand-soft);
+  color: var(--w360-brand);
+  font-weight: 800;
+}
+
+.facts {
+  display: grid;
+  gap: var(--w360-space-1) var(--w360-space-3);
+  grid-template-columns: auto minmax(0, 1fr);
+  margin: 0;
+  font-size: 14px;
+}
+
+.facts dt {
+  color: var(--w360-text-muted);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* One tab style for every page's sections (Users, Agency, Affiliates,
+   Payments, Brand Settings, Communication ...): green text and a green
+   underline for the current tab, soft mint on hover, neutral otherwise. */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1);
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.tabs a {
+  margin-bottom: -1px;
+  padding: var(--w360-space-2) var(--w360-space-3);
+  text-decoration: none;
+  color: var(--w360-text-secondary);
+  border-bottom: 3px solid transparent;
+  border-radius: var(--w360-radius-sm) var(--w360-radius-sm) 0 0;
+  font-weight: 600;
+}
+
+.tabs a:hover {
+  background: var(--w360-brand-soft);
+  color: var(--w360-text);
+}
+
+.tabs a[aria-current="page"] {
+  color: var(--w360-brand);
+  border-bottom-color: var(--w360-indicator);
+  font-weight: 700;
+}
+
+.formGrid {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  max-width: 760px;
+}
+
+.checks {
+  /* A fieldset's default minimum width is its content's: without this a long
+     label stretches the page past 320px instead of wrapping. */
+  min-width: 0;
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.checks label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  display: flex;
+  gap: var(--w360-space-2);
+  align-items: flex-start;
+}
+
+.swatches {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr));
+}
+
+.swatch {
+  display: grid;
+  gap: var(--w360-space-1);
+  padding: var(--w360-space-2);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-surface);
+  text-align: left;
+  font: inherit;
+  color: var(--w360-text);
+  cursor: pointer;
+}
+
+.swatch[aria-pressed="true"] {
+  border-color: var(--w360-indicator);
+  outline: 2px solid var(--w360-indicator);
+}
+
+/* These six dots draw the white-label PRESETS a partner can pick for their
+   customers (Account.tsx PRESETS) - partner data, not the panel's own colours,
+   so they are written as the presets' values rather than platform tokens. */
+
+.swatchDot {
+  display: block;
+  height: 28px;
+  border-radius: var(--w360-radius-sm);
+}
+
+.dotEmerald {
+  background: #0a8043;
+}
+.dotBlue {
+  background: #2549b8;
+}
+.dotViolet {
+  background: #6b3fb8;
+}
+.dotAmber {
+  background: #8a5a00;
+}
+.dotRose {
+  background: #b3265b;
+}
+.dotSlate {
+  background: #334155;
+}
+
+/* A secret shown exactly once (API key manager): wrapped so it never forces a
+   horizontal scroll, selectable so it can be copied by hand. */
+.secret {
+  display: block;
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+  font-family: var(--w360-font-mono, ui-monospace, monospace);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.notificationList {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notification {
+  display: grid;
+  gap: var(--w360-space-1);
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border: 1px solid var(--w360-border);
+  border-left: 4px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+}
+
+.notification[data-unread="true"] {
+  border-left-color: var(--w360-brand);
+}
+
+.notification[data-important="true"] {
+  border-left-color: var(--w360-warning);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+}
+
+/* --- the workspaces (ADR-047) ------------------------------------------------------ */
+
+/* A copy button and the words that say whether it worked. */
+.copy {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+}
+
+/* The affiliate's link, as the page's first and largest thing. */
+.linkBox {
+  display: grid;
+  gap: var(--w360-space-2);
+  min-width: 0;
+  padding: var(--w360-space-4);
+  border: 2px solid var(--w360-brand);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-brand-soft);
+}
+
+.linkBox h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.linkBox p {
+  margin: 0;
+}
+
+.linkRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.linkRow input {
+  flex: 1 1 18rem;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* The workspace switcher: a row of links, the current one marked by weight and
+   an underline - not by colour alone. */
+.switcher {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  margin: 0 0 var(--w360-space-3);
+}
+
+.switcher a {
+  padding: 2px 12px;
+  border: 1px solid var(--w360-border-strong);
+  border-radius: 999px;
+  color: var(--w360-text);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.switcher a[aria-current="page"] {
+  border-color: var(--w360-brand);
+  border-width: 2px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.switcher a:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+.statusStrip {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.denied {
+  display: grid;
+  gap: var(--w360-space-3);
+  max-width: 640px;
+  padding: var(--w360-space-5);
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+}
+
+.denied h1,
+.denied p {
+  margin: 0;
+}

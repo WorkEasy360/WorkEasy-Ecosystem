@@ -25,6 +25,7 @@ from workeasy360.contracts.values.cursor import (
 def audit_page(
     *,
     action_prefix: str | None = None,
+    actions: Iterable[str] | None = None,
     resource_ids: Iterable[str] | None = None,
     changes_match: tuple[str, str] | None = None,
     limit: int = 25,
@@ -35,6 +36,9 @@ def audit_page(
     ``changes`` is included (it was redacted when written); IP hashes and the
     hash chain are not - they are integrity metadata, not something a reader
     needs.
+
+    ``actions`` is an exact allow-list of action names (the partner Notification
+    Center shows only the kinds a person's permissions allow).
 
     ``resource_ids`` and ``changes_match`` narrow the page to entries *about*
     something (Phase 10: one partner's activity) without a second audit store:
@@ -48,6 +52,9 @@ def audit_page(
     queryset = AuditEvent.objects.order_by("-occurred_at", "-id")
     if action_prefix:
         queryset = queryset.filter(action__startswith=action_prefix[:64])
+    if actions is not None:
+        # An exact allow-list: an empty one matches nothing (never "everything").
+        queryset = queryset.filter(action__in=[str(a)[:64] for a in actions][:100])
     about: list[Q] = []
     if resource_ids is not None:
         about.append(Q(resource_id__in=[str(i) for i in resource_ids][:50]))

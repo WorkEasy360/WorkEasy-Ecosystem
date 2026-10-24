@@ -548,6 +548,13 @@ def test_unscoped_manager_use_is_allowlisted():
         # before any tenant context as register_products; every write goes
         # through the ordinary staff-context ecosystem services.
         "commercial/controlplane/management/commands/connect_product_sso.py",
+        # 2026-10-16 (ADR-045): the development-only demo partner. Like
+        # bootstrap_superadmin it reads and creates one global identity (the
+        # control-plane system user, the demo owner) before any tenant context
+        # exists; it refuses every environment but development and test, and
+        # every other write goes through the ordinary partner commands.
+        "commercial/controlplane/demo_partner.py",
+        "commercial/controlplane/management/commands/create_demo_partner.py",
         # --- Phase 8 extension ---
         #
         # An invitee redeems an invitation before any membership - and so any
@@ -1069,11 +1076,18 @@ def test_every_session_authenticated_write_is_csrf_protected():
     protection - which is the bug, not the pattern.
     """
     from workeasy360.interfaces.api.v1.ecosystem_views import CREDENTIALED_VIEWS
+    from workeasy360.interfaces.api.v1.partner_api_views import (
+        CREDENTIALED_VIEWS as PARTNER_KEY_VIEWS,
+    )
     from workeasy360.interfaces.api.v1.payment_views import SIGNED_WEBHOOK_VIEWS
 
     # Phase 8 extension: payment provider callbacks, authenticated by the
     # provider's signature over the raw body - a credential, not a cookie.
-    allowed = {view.__name__ for view in (*CREDENTIALED_VIEWS, *SIGNED_WEBHOOK_VIEWS)}
+    # ADR-046: the partner API authenticates by a scoped bearer key, read-only.
+    allowed = {
+        view.__name__
+        for view in (*CREDENTIALED_VIEWS, *SIGNED_WEBHOOK_VIEWS, *PARTNER_KEY_VIEWS)
+    }
     offenders = []
     api_root = PACKAGE / "interfaces"
     for path in api_root.rglob("*.py"):

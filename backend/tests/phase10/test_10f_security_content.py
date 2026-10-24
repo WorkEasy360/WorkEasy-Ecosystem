@@ -592,6 +592,8 @@ def test_only_the_explicit_host_parameter_selects_a_brand_and_it_says_nothing_ab
         "support_url",
         "logo_url",
         "portal",
+        # ADR-046: the plain words the partner itself chose, by locale.
+        "translations",
     }, set(brand)
     # The portal a customer's browser receives is the public part only: never the
     # sender identity of emails sent in the partner's name.

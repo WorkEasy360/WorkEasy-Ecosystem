@@ -306,6 +306,8 @@ def test_the_portfolio_shows_no_member_or_contact_data(channel):
         "ended_at",
         "subscription_status",
         "products",
+        # ADR-045: trial, customer or nothing - a commercial state, not a person.
+        "access_class",
         # Phase 10e: where the owner's activation stands - a state, its expiry
         # and how many times a link was sent. Never the address or the link.
         "owner_activation",

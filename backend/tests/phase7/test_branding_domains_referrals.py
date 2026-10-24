@@ -263,6 +263,8 @@ def test_a_domain_is_inactive_until_ownership_is_proven(partner_factory, dns):
         "support_url",
         # The public part of the customer portal (ADR-042): never the sender identity.
         "portal",
+        # ADR-046: the plain words the partner itself chose, by locale.
+        "translations",
     }
     assert (
         "sender_name" not in brand["portal"] and "reply_to_email" not in brand["portal"]

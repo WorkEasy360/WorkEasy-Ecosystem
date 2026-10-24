@@ -22,6 +22,8 @@ ALLOWED_CUSTOMER_KEYS = {
     "ended_at",
     "subscription_status",
     "products",
+    # ADR-045: trial, customer or nothing - a commercial state, not a person.
+    "access_class",
     # Phase 10e: the state of the owner's activation, its expiry and how many
     # links were sent - a partner may know whether its customer has activated,
     # never the address the link went to or the link.

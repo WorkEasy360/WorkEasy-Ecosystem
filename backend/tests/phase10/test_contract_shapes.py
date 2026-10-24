@@ -25,9 +25,12 @@ def test_the_interface_reader_reads_the_phase10_client():
 def test_the_overview_matches_its_type(console, viewer):
     body = viewer.get("/api/v1/admin/partners/overview").json()
     ts.assert_matches(body, "PartnersOverview", "overview")
-    with_amounts = [c for c in body["cards"] if c.get("amounts")]
-    assert with_amounts, "the fixture must produce a card with money on it"
-    ts.assert_matches(body["cards"][0], "OverviewCard", "cards[0]")
+    # ADR-048: the dashboard carries counts only (no money card any more).
+    assert not [c for c in body["cards"] if c.get("amounts")]
+    for card in body["cards"]:
+        ts.assert_matches(card, "OverviewCard", card["key"])
+    for item in body["recent_partners"]:
+        ts.assert_matches(item, "OverviewRecentPartner", item["code"])
 
 
 def test_the_reseller_list_matches_its_type(console, viewer):

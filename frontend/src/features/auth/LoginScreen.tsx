@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useId, useState } from "react";
 import Link from "next/link";
+import { Logo } from "@/components/brand/Logo";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/auth/useSession";
 import { usePortals } from "@/lib/portalContext";
@@ -91,8 +92,16 @@ function Heading({ brand }: { brand: HostBrand | null }) {
   // The partner's own welcome message replaces the platform's tagline when it
   // chose to show one on the sign-in page; otherwise the tagline stays.
   const welcome = !choosing && brand?.portal.login_show_welcome && brand.portal.welcome_message.trim();
+  // The WorkEasy360 logo on the platform's own sign-in only. A partner-branded
+  // sign-in never shows it - not even while that partner's brand is loading.
+  const platform = !brand && !brandHostParam(searchParams.get("brand"));
   return (
     <div className={styles.heading}>
+      {platform && (
+        <div className={styles.logoRow}>
+          <Logo size="lg" />
+        </div>
+      )}
       {brand?.logo_url?.startsWith("/api/v1/") && (
         // eslint-disable-next-line @next/next/no-img-element -- same-origin, scanned PNG/JPEG
         <img src={brand.logo_url} alt="" className={brandStyles.logo} />
@@ -109,10 +118,11 @@ const MODES: { mode: SignInMode; label: string; description: string }[] = [
   { mode: "user", label: "User", description: "Access your organization and products" },
 ];
 
-/** The two ways in. Each is an ordinary link (keyboard, middle-click and
+/** The ways in. Each is an ordinary link (keyboard, middle-click and
  * back-button behave as everywhere else); choosing one only changes the
- * address to `?mode=...`. */
-function ModeChooser() {
+ * address to `?mode=...` - except "Partner" when a separate Partner Panel is
+ * configured (`W360_PARTNER_PANEL_URL`), which then opens that app. */
+function ModeChooser({ partnerPanelUrl }: { partnerPanelUrl?: string }) {
   const headingId = useId();
   return (
     <section aria-labelledby={headingId}>
@@ -121,7 +131,7 @@ function ModeChooser() {
       </h2>
       <ul className={styles.modes}>
         {MODES.map((m) => (
-          <ModeOption key={m.mode} {...m} />
+          <ModeOption key={m.mode} {...m} href={m.mode === "partner" && partnerPanelUrl ? partnerPanelUrl : undefined} />
         ))}
       </ul>
       <p className="w360-hint">
@@ -131,23 +141,38 @@ function ModeChooser() {
   );
 }
 
-function ModeOption({ mode, label, description }: { mode: SignInMode; label: string; description: string }) {
+function ModeOption({ mode, label, description, href }: { mode: SignInMode; label: string; description: string; href?: string }) {
   const descriptionId = useId();
+  const content = (
+    <>
+      <span className={styles.modeIcon} aria-hidden="true">
+        {mode === "admin" ? <ShieldIcon /> : mode === "partner" ? <PartnerIcon /> : <PersonIcon />}
+      </span>
+      <span className={styles.modeText}>
+        <span className={styles.modeLabel}>{label}</span>
+        <span id={descriptionId} className={styles.modeDescription}>
+          {description}
+        </span>
+      </span>
+      <span className={styles.modeArrow} aria-hidden="true">
+        ›
+      </span>
+    </>
+  );
+  // Another app: a plain link, so the browser does a full navigation.
+  if (href) {
+    return (
+      <li>
+        <a href={href} className={styles.mode} aria-label={label} aria-describedby={descriptionId}>
+          {content}
+        </a>
+      </li>
+    );
+  }
   return (
     <li>
       <Link href={`/login?mode=${mode}`} className={styles.mode} aria-label={label} aria-describedby={descriptionId}>
-        <span className={styles.modeIcon} aria-hidden="true">
-          {mode === "admin" ? <ShieldIcon /> : mode === "partner" ? <PartnerIcon /> : <PersonIcon />}
-        </span>
-        <span className={styles.modeText}>
-          <span className={styles.modeLabel}>{label}</span>
-          <span id={descriptionId} className={styles.modeDescription}>
-            {description}
-          </span>
-        </span>
-        <span className={styles.modeArrow} aria-hidden="true">
-          ›
-        </span>
+        {content}
       </Link>
     </li>
   );
@@ -183,13 +208,13 @@ const SIGN_IN_TITLE: Record<SignInMode, string> = {
   user: "Sign in as User",
 };
 
-function SignInCard() {
+function SignInCard({ partnerPanelUrl }: { partnerPanelUrl?: string }) {
   const searchParams = useSearchParams();
   const portals = usePortals();
   const session = useSession();
   const [signedInHere, setSignedInHere] = useState(false);
   const mode = effectiveMode(searchParams);
-  if (mode === null) return <ModeChooser />;
+  if (mode === null) return <ModeChooser partnerPanelUrl={partnerPanelUrl} />;
   // The central sign-in (ADR-043): once signed in here, hand the sign-in to
   // the chosen portal. A product sign-in (`resume`) completes here instead.
   const signedIn = signedInHere || (session.status === "ready" && session.session.authenticated);
@@ -205,11 +230,6 @@ function SignInCard() {
         <h2 className={styles.cardTitle}>
           {reauthenticating(searchParams) ? "Confirm it's you" : changeable || mode === "admin" ? SIGN_IN_TITLE[mode] : "Sign in"}
         </h2>
-        {changeable && (
-          <Link href="/login" className={styles.change}>
-            Change<span className="w360-visually-hidden"> how you sign in</span>
-          </Link>
-        )}
       </div>
       {mode === "admin" && (
         <p className={styles.note}>
@@ -228,7 +248,10 @@ function SignInCard() {
   );
 }
 
-export function LoginScreen() {
+/** `partnerPanelUrl`: the separate Partner Panel the "Partner" choice opens
+ * (from `W360_PARTNER_PANEL_URL`, read by the server page); omitted, "Partner"
+ * signs in here as before. */
+export function LoginScreen({ partnerPanelUrl }: { partnerPanelUrl?: string } = {}) {
   return (
     <main id="w360-main" className={`w360-container ${styles.main}`}>
       <Suspense fallback={null}>
@@ -253,7 +276,7 @@ export function LoginScreen() {
                 <Heading brand={brand} />
                 <div className={`w360-card ${styles.card}`}>
                   <Suspense fallback={<p>Loading…</p>}>
-                    <SignInCard />
+                    <SignInCard partnerPanelUrl={partnerPanelUrl} />
                   </Suspense>
                 </div>
                 {/* Support details when the partner chose to show them, and its website. */}

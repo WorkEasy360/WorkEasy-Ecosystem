@@ -29,7 +29,7 @@ PARTNERS = COMMERCIAL / "partners"
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 
 
-def test_the_partner_models_are_the_frozen_set_plus_exactly_two():
+def test_the_partner_models_are_the_frozen_set_plus_the_declared_additions():
     assert _model_names("partners") == {
         "PartnerAccount",
         "PartnerCapabilityGrant",
@@ -42,6 +42,15 @@ def test_the_partner_models_are_the_frozen_set_plus_exactly_two():
         "PartnerLogoUpload",
         "PartnerProfile",
         "PartnerContact",
+        # Partner business control panel (ADR-045): the sub-partner relationship
+        # and a partner's per-product presentation. Pinned in tests/partner_panel.
+        "PartnerHierarchyLink",
+        "PartnerProductSetting",
+        # The final partner menu (ADR-046): API keys, translations and read-state.
+        "PartnerApiKey",
+        "PartnerTranslation",
+        "PartnerNotificationRead",
+        "PartnerNotificationState",
     }
 
 

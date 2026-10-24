@@ -5,12 +5,11 @@ import Link from "next/link";
 import { adminApi, type PartnerDetail } from "@/lib/api/controlPlane";
 import {
   partnerConsoleApi,
-  type ActivationReadiness,
+  type CompletionSection,
   type ConsoleProduct,
   type PartnerPricingRow,
   type PartnerReferrals,
   type PartnerSummaryView,
-  type SetupStep,
   type SummaryProduct,
 } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
@@ -19,7 +18,7 @@ import { CustomerTable, StaffOwnerActions } from "./PartnerCustomers";
 import { PayoutRowView } from "./AdminMoney";
 import { MembersSection } from "./PartnerMembers";
 import { Section } from "./PartnerSection";
-import { MISSING_TAB, STEP_TAB, TAB_LABELS, type TabKey, type TabProps } from "./partnerTabs";
+import { TAB_LABELS, type TabKey, type TabProps } from "./partnerTabs";
 import { LoadGate, MoreButton, ReasonAction, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
 import { formatBasisPoints, toBasisPoints, toMinor } from "./amounts";
 import styles from "./ControlPlane.module.css";
@@ -27,47 +26,51 @@ import local from "./PartnerConsole.module.css";
 import ps from "./PartnerProfileTabs.module.css";
 
 /**
- * The panels of the reseller detail (Phase 10c). Each tab reads through the
- * console's own read models and changes anything only through the *existing*
- * commands: capabilities, product grants, prices, commission, members, domains
- * and payouts each keep the one implementation they always had. Subscriptions
- * are shown here and changed where they always were (the customer's page), and
- * nothing in this file writes a subscription or an entitlement.
+ * The panels of one partner's page (Phase 10c, simplified by ADR-048). Each tab
+ * reads through the console's own read models and changes anything only through
+ * the *existing* commands: capabilities, product grants, prices, commission,
+ * members, domains and payouts each keep the one implementation they always
+ * had. The partner's Complete Your Profile wizard shows several of these same
+ * panels as its steps. Subscriptions are shown here and changed where they
+ * always were (the customer's page), and nothing in this file writes a
+ * subscription or an entitlement.
  *
- * The Business Details and Contacts tabs are in `PartnerProfileTabs.tsx`, the
- * people table in `PartnerMembers.tsx`.
+ * The Profile tab's editors are in `PartnerProfileTabs.tsx`, the people table in
+ * `PartnerMembers.tsx`.
  */
 
 export type { TabProps };
 
 // --- overview ---------------------------------------------------------------------------------
 
-const STEP_TEXT: Record<SetupStep["state"], string> = {
+const SECTION_TEXT: Record<CompletionSection["state"], string> = {
   complete: "Complete",
-  incomplete: "Needs attention",
+  incomplete: "Incomplete",
   pending: "Waiting",
-  optional: "Optional",
+  optional: "Not required",
 };
 
-const STEP_BADGE: Record<SetupStep["state"], string> = {
+const SECTION_BADGE: Record<CompletionSection["state"], string> = {
   complete: "w360-badge w360-badge-success",
   incomplete: "w360-badge w360-badge-warning",
   pending: "w360-badge w360-badge-neutral",
   optional: "w360-badge w360-badge-neutral",
 };
 
-type OnOpen = (tab: TabKey) => void;
+/** Where each completion section is filled in: a step of Complete Your Profile,
+ * or (for the capabilities and the administrator) a tab of this page. */
+const SECTION_STEP: Record<string, string> = {
+  business: "business",
+  products: "products",
+  pricing: "pricing",
+  commission: "commission",
+  brand: "brand",
+  domain: "domain",
+  referral: "referral",
+};
+const SECTION_TAB: Record<string, TabKey> = { capabilities: "users", administrator: "users" };
 
-/** A button that moves to another tab. The tab it opens is named in words, and
- * the thing it is for is added for a screen reader so several of them differ. */
-function OpenTab({ tab, forWhat, onOpen }: { tab: TabKey; forWhat: string; onOpen: OnOpen }) {
-  return (
-    <button type="button" className={`w360-btn w360-btn-secondary ${ps.linkButton}`} onClick={() => onOpen(tab)}>
-      Open {TAB_LABELS[tab]}{" "}
-      <span className="w360-visually-hidden">to deal with {forWhat}</span>
-    </button>
-  );
-}
+type OnOpen = (tab: TabKey) => void;
 
 export function OverviewTab({
   partner,
@@ -82,42 +85,73 @@ export function OverviewTab({
   );
 }
 
-/** A draft partner can do nothing until it is activated. Says what stands in the
- * way, in the server's own words, and where each thing is fixed; or says it can
- * be activated. The server still makes the final check when it is. */
-function ActivationNotice({ activation, onOpen, available }: { activation: ActivationReadiness; onOpen: OnOpen; available: TabKey[] }) {
-  const id = useId();
+/** The profile's sections as the server computed them: what is done, what is
+ * not, and where each is filled in. Optional sections are listed and marked
+ * "Not required"; they never count towards the percentage. */
+export function CompletionList({
+  sections,
+  partnerId,
+  onOpen,
+  available,
+  onStep,
+}: {
+  sections: CompletionSection[];
+  partnerId: string;
+  onOpen?: OnOpen;
+  available?: TabKey[];
+  /** Inside Complete Your Profile: move to a step of the wizard itself (a link to
+   * the same page would change the address and not the step). `steps` are the
+   * wizard's own; a section whose step is not among them links to the partner's page. */
+  onStep?: { go: (step: string) => void; steps: readonly string[] };
+}) {
   const { permissions } = useAdmin();
-  if (activation.can_activate) {
-    return (
-      <section className={ps.ready} aria-labelledby={id}>
-        <h3 id={id}>Ready to activate</h3>
-        <p>
-          Everything needed before activation is in place.{" "}
-          {can(permissions, "platform.staff_partner.manage")
-            ? "Use Activate above to start this partner; the server makes the final check."
-            : "Someone who may manage partners can activate it."}
-        </p>
-      </section>
-    );
-  }
+  const manage = can(permissions, "platform.staff_partner.manage");
   return (
-    <section className={ps.notice} aria-labelledby={id}>
-      <h3 id={id}>Setup incomplete</h3>
-      <p>This partner is still a draft. It can do nothing until it is activated, and it cannot be activated yet:</p>
-      <ul className={ps.missing}>
-        {activation.missing.map((m) => {
-          const tab = MISSING_TAB[m.key];
-          return (
-            <li key={m.key}>
-              <strong>{m.label}</strong>
-              <span className={styles.muted}>{m.detail}</span>
-              {tab && available.includes(tab) && <OpenTab tab={tab} forWhat={m.label} onOpen={onOpen} />}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+    <ul className={ps.progress}>
+      {sections.map((s) => {
+        const step = SECTION_STEP[s.key];
+        const tab = SECTION_TAB[s.key];
+        const open = s.state !== "complete";
+        return (
+          <li key={s.key} className={ps.progressRow}>
+            <span className={SECTION_BADGE[s.state]}>{SECTION_TEXT[s.state]}</span>
+            <span className={ps.progressText}>
+              <strong>
+                {s.label}
+                {!s.required && <span className={styles.muted}> (optional)</span>}
+              </strong>
+              {s.detail && <span className={styles.muted}>{s.detail}</span>}
+            </span>
+            {open && manage && step && onStep?.steps.includes(step) && (
+              <button type="button" className={`w360-btn w360-btn-secondary ${ps.linkButton}`} onClick={() => onStep.go(step)}>
+                Complete<span className="w360-visually-hidden"> {s.label}</span>
+              </button>
+            )}
+            {open && manage && step && !onStep && (
+              <Link className={`w360-btn w360-btn-secondary ${ps.linkButton}`} href={`/admin/partners/${partnerId}/profile?step=${step}`}>
+                Complete<span className="w360-visually-hidden"> {s.label}</span>
+              </Link>
+            )}
+            {open && manage && onStep && (s.key === "administrator" ? !onStep.steps.includes("team") : tab !== undefined) && (
+              <Link className={`w360-btn w360-btn-secondary ${ps.linkButton}`} href={`/admin/partners/${partnerId}?tab=users`}>
+                Open Users &amp; Permissions<span className="w360-visually-hidden"> to deal with {s.label}</span>
+              </Link>
+            )}
+            {open && manage && onStep && s.key === "administrator" && onStep.steps.includes("team") && (
+              <button type="button" className={`w360-btn w360-btn-secondary ${ps.linkButton}`} onClick={() => onStep.go("team")}>
+                Complete<span className="w360-visually-hidden"> {s.label}</span>
+              </button>
+            )}
+            {open && tab && onOpen && available?.includes(tab) && (
+              <button type="button" className={`w360-btn w360-btn-secondary ${ps.linkButton}`} onClick={() => onOpen(tab)}>
+                Open {TAB_LABELS[tab]}
+                <span className="w360-visually-hidden"> to deal with {s.label}</span>
+              </button>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -142,9 +176,20 @@ function OverviewBody({
   onOpen: OnOpen;
   available: TabKey[];
 }) {
+  const labels = d.experience.map((e) => e.key);
+  const sells = labels.includes("reseller") || labels.includes("white_label");
   return (
     <div className={styles.stack}>
-      {partner.status === "draft" && <ActivationNotice activation={d.activation} onOpen={onOpen} available={available} />}
+      <Section title="Profile completion">
+        <p>
+          <strong>{d.profile_completion.percent}% complete</strong>
+          <span className={styles.muted}>
+            {" "}
+            · {d.profile_completion.done} of {d.profile_completion.required} required sections
+          </span>
+        </p>
+        <CompletionList sections={d.profile_completion.sections} partnerId={partner.id} onOpen={onOpen} available={available} />
+      </Section>
       <ul className={ps.stats} aria-label="Key figures">
         <Stat label="Customers" note={d.customers.owner_activation_pending > 0 ? `${d.customers.owner_activation_pending} awaiting owner activation` : undefined}>
           {d.customers.live}
@@ -161,24 +206,6 @@ function OverviewBody({
         </Stat>
         <Stat label="Domain status">{d.white_label.domain_status === "none" ? "None" : <Status value={d.white_label.domain_status} />}</Stat>
       </ul>
-      <Section title="Setup progress">
-        <ul className={ps.progress}>
-          {d.setup_progress.map((s) => {
-            const tab = STEP_TAB[s.key];
-            const fixable = (s.state === "incomplete" || s.state === "pending") && tab !== undefined && available.includes(tab);
-            return (
-              <li key={s.key} className={ps.progressRow}>
-                <span className={STEP_BADGE[s.state]}>{STEP_TEXT[s.state]}</span>
-                <span className={ps.progressText}>
-                  <strong>{s.label}</strong>
-                  {s.detail && <span className={styles.muted}>{s.detail}</span>}
-                </span>
-                {fixable && <OpenTab tab={tab} forWhat={s.label} onOpen={onOpen} />}
-              </li>
-            );
-          })}
-        </ul>
-      </Section>
       <div className={local.split}>
         <Section title="Partner">
           <dl className={local.review}>
@@ -208,13 +235,16 @@ function OverviewBody({
                 <div className={styles.muted}>
                   {d.capabilities.length === 0 ? "None granted." : d.capabilities.map((c) => c.label).join("; ")}
                 </div>
-                <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpen("users")}>
-                  Manage capabilities
-                </button>
+                {available.includes("users") && (
+                  <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpen("users")}>
+                    Manage capabilities
+                  </button>
+                )}
               </dd>
             </div>
           </dl>
         </Section>
+        {sells && (
         <Section title="Customers">
           <dl className={local.review}>
             <div>
@@ -240,6 +270,7 @@ function OverviewBody({
             Open customers
           </button>
         </Section>
+        )}
         <Section title="Products">
           {d.products.length === 0 ? (
             <p className={styles.muted}>None: this partner cannot sell anything.</p>
@@ -254,7 +285,7 @@ function OverviewBody({
             </ul>
           )}
           <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpen("products")}>
-            Products &amp; pricing
+            Open products
           </button>
         </Section>
         <Section title="Commission">
@@ -265,9 +296,11 @@ function OverviewBody({
           </p>
           <CommissionSummary rows={d.commission} />
           <div>
-            <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpen("commissions")}>
-              Open commissions
-            </button>
+            {available.includes("commission") && (
+              <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpen("commission")}>
+                Open commission
+              </button>
+            )}
           </div>
         </Section>
         <Section title="Payouts">
@@ -277,9 +310,11 @@ function OverviewBody({
               ? `Latest: ${d.payouts.latest.status}, ${money(d.payouts.latest.payable_minor, d.payouts.latest.currency)} for the period to ${d.payouts.latest.period_end}.`
               : "None yet."}
           </p>
-          <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpen("payouts")}>
-            Open payouts
-          </button>
+          {available.includes("payouts") && (
+            <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpen("payouts")}>
+              Open payouts
+            </button>
+          )}
         </Section>
         <Section title="White-label">
           <dl className={local.review}>
@@ -306,9 +341,7 @@ function OverviewBody({
               </button>
             </div>
           ) : (
-            <Link className="w360-btn w360-btn-secondary" href={`/admin/partners/white-label/${partner.id}`}>
-              Enable white-label
-            </Link>
+            <p className={styles.muted}>Not a white-label partner. Add the White-label experience under {TAB_LABELS.users} to give it a brand and a domain.</p>
           )}
         </Section>
         <Section title="Affiliate & referrals">
@@ -402,42 +435,99 @@ export function CustomersTab({ partnerId, rev }: TabProps) {
 
 // --- products & pricing --------------------------------------------------------------------------------------
 
-export function ProductsTab({ partnerId, partner, summary, rev, bump }: TabProps) {
+/** Whether the server's labels say this partner sells (Reseller or White-label). */
+export const sellsFrom = (summary: TabProps["summary"], partner: TabProps["partner"]): boolean => {
+  const labels = summary.status === "ready" ? summary.data.experience.map((e) => e.key) : (partner.experience ?? []).map((e) => e.key);
+  return labels.includes("reseller") || labels.includes("white_label");
+};
+
+/** Products: what this partner may sell (product grants and their two options).
+ * An affiliate is granted no product: what it promotes is the scope of its
+ * commission, so for a partner that does not sell this says so instead. */
+export function ProductsTab(props: TabProps) {
+  return sellsFrom(props.summary, props.partner) ? <ProductGrantsPanel {...props} /> : <PromotionPanel {...props} />;
+}
+
+function PromotionPanel({ partnerId, rev }: TabProps) {
+  const [state] = useLoad(() => partnerConsoleApi.commission(partnerId), [partnerId, rev]);
+  const [catalog] = useLoad(() => partnerConsoleApi.products().catch(() => ({ results: [] })), []);
+  const nameOf = (code: string) => (catalog.status === "ready" ? (catalog.data.results.find((p) => p.code === code)?.name ?? code) : code);
+  return (
+    <div className={styles.stack}>
+      <Section title="Products this partner promotes">
+        <p className={styles.muted}>
+          An affiliate promotes Workeasy360 products and earns commission on the customers it refers. It is granted no product: it cannot
+          sell, price or administer anything for a customer. What it promotes is the scope of its commission rate - all products, or one
+          product per rate - set on the Commission step.
+        </p>
+        <LoadGate load={state} what="the commission scope">
+          {(d) => {
+            const scoped = [...new Set(d.rules.filter((r) => r.state !== "superseded").map((r) => r.product_code))];
+            if (scoped.length === 0) return <p>No rate of its own yet: the programme&apos;s default rate applies to every product.</p>;
+            return (
+              <ul className={local.checks}>
+                {scoped.map((code) => (
+                  <li key={code || "all"}>{code ? nameOf(code) : "All products"}</li>
+                ))}
+              </ul>
+            );
+          }}
+        </LoadGate>
+      </Section>
+      {catalog.status === "ready" && (
+        <Section title="Products in the catalog">
+          <ul className={local.checks}>
+            {catalog.data.results
+              .filter((p) => p.status === "available")
+              .map((p) => (
+                <li key={p.code}>{p.name}</li>
+              ))}
+          </ul>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function ProductGrantsPanel({ partner, summary, bump }: TabProps) {
   const { permissions } = useAdmin();
   const manage = can(permissions, "platform.staff_partner.manage");
-  const canPrice = can(permissions, "platform.staff_pricing.manage");
-  const canCommission = can(permissions, "platform.staff_commission.manage");
   const { act, busy, feedback } = useAction(bump);
   const [catalog] = useLoad(() => partnerConsoleApi.products().catch(() => ({ results: [] })), []);
-  const [pricing] = useLoad(() => partnerConsoleApi.pricing(partnerId), [partnerId, rev]);
   const productId = useId();
   const [product, setProduct] = useState("");
+  const granted = new Set(partner.product_grants.map((g) => g.product_code));
 
   return (
     <div className={styles.stack}>
       {feedback}
       <Section title="Products this partner may sell">
-        <Table caption="Product grants" head={["Product", "Plan", ""]} isEmpty={partner.product_grants.length === 0} empty="None: this partner cannot sell anything.">
+        <p className={styles.muted}>
+          Chosen from the product catalog; a product added to the catalog appears here. Allowing a product lets the partner sell it - it
+          gives no customer access by itself.
+        </p>
+        <Table caption="Product grants" head={["Product", "Plan", ""]} isEmpty={partner.product_grants.length === 0} empty="None: this partner cannot sell anything yet.">
           {partner.product_grants.map((g) => (
             <tr key={g.id}>
               <th scope="row">{g.product_code}</th>
               <td>{g.plan_code ?? "all plans"}</td>
               <td>
                 {manage && (
-                  <button type="button" className="w360-btn w360-btn-secondary" disabled={busy} onClick={() => act(() => adminApi.revokeProductGrant(partner.id, g.id), "Product grant revoked.")}>
-                    Revoke
+                  <button type="button" className="w360-btn w360-btn-secondary" disabled={busy} onClick={() => act(() => adminApi.revokeProductGrant(partner.id, g.id), "Product removed.")}>
+                    Remove<span className="w360-visually-hidden"> {g.product_code}</span>
                   </button>
                 )}
               </td>
             </tr>
           ))}
         </Table>
-        {manage && (
+        {manage && partner.status !== "terminated" && (
           <form
             className={styles.form}
             onSubmit={(e) => {
               e.preventDefault();
-              void act(() => adminApi.grantProduct(partner.id, product), "Product granted.");
+              void act(() => adminApi.grantProduct(partner.id, product), "Product allowed.");
+              setProduct("");
             }}
           >
             <div className={styles.field}>
@@ -448,7 +538,7 @@ export function ProductsTab({ partnerId, partner, summary, rev, bump }: TabProps
                 <option value="">Choose…</option>
                 {catalog.status === "ready" &&
                   catalog.data.results
-                    .filter((p) => p.status === "available")
+                    .filter((p) => p.status === "available" && !granted.has(p.code))
                     .map((p) => (
                       <option key={p.code} value={p.code}>
                         {p.name}
@@ -458,7 +548,7 @@ export function ProductsTab({ partnerId, partner, summary, rev, bump }: TabProps
             </div>
             <div>
               <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !product}>
-                Grant product
+                Allow product
               </button>
             </div>
           </form>
@@ -484,20 +574,63 @@ export function ProductsTab({ partnerId, partner, summary, rev, bump }: TabProps
           )}
         </LoadGate>
       </Section>
+    </div>
+  );
+}
 
+/** Pricing: what a customer of this partner pays for each plan it may sell,
+ * beside the list price, with the server's discount, commission and margin. */
+export function PricingTab({ partnerId, partner, rev, bump }: TabProps) {
+  const { permissions } = useAdmin();
+  const canPrice = can(permissions, "platform.staff_pricing.manage");
+  const { act, busy, feedback } = useAction(bump);
+  const [pricing] = useLoad(() => partnerConsoleApi.pricing(partnerId), [partnerId, rev]);
+  return (
+    <div className={styles.stack}>
+      {feedback}
       <Section title="Prices">
         <p className={styles.muted}>
-          The customer pays the partner price; the partner earns commission on it. The server calculates every figure. A plan
-          without a partner price is charged the list price.
+          Optional. The customer pays the partner price; the partner earns commission on it. A plan without a partner price is charged the
+          list price. The server calculates every figure - nothing here computes a price.
         </p>
         <LoadGate load={pricing} what="the prices">
           {(d) => (
-            <PricingTable rows={d.results} canPrice={canPrice} busy={busy} onSave={(row, minor) => act(() => partnerConsoleApi.setPartnerPrice(partner.id, { plan_version_id: row.plan_version_id, interval: row.interval, amount_minor: minor }), "Partner price saved.")} currency={d.currency} />
+            <PricingTable
+              rows={d.results}
+              canPrice={canPrice && partner.status !== "terminated"}
+              busy={busy}
+              onSave={(row, minor) =>
+                act(
+                  () => partnerConsoleApi.setPartnerPrice(partner.id, { plan_version_id: row.plan_version_id, interval: row.interval, amount_minor: minor }),
+                  "Partner price saved.",
+                )
+              }
+              currency={d.currency}
+            />
           )}
         </LoadGate>
       </Section>
+    </div>
+  );
+}
 
+/** Commission: the rate this partner earns (a new version from a date, never
+ * backdated) and, for staff who may read money, its ledger. */
+export function CommissionTab(props: TabProps & { ledger?: boolean }) {
+  const { partnerId, rev, bump, ledger = true } = props;
+  const { permissions } = useAdmin();
+  const canCommission = can(permissions, "platform.staff_commission.manage");
+  const { act, busy, feedback } = useAction(bump);
+  const [catalog] = useLoad(() => partnerConsoleApi.products().catch(() => ({ results: [] })), []);
+  return (
+    <div className={styles.stack}>
+      {feedback}
       <CommissionSection partnerId={partnerId} rev={rev} canManage={canCommission} act={act} busy={busy} products={catalog.status === "ready" ? catalog.data.results : []} />
+      {ledger && can(permissions, "platform.staff_commission.view") && (
+        <Section title="Commission earned">
+          <CommissionsTab {...props} />
+        </Section>
+      )}
     </div>
   );
 }
@@ -703,6 +836,10 @@ function CommissionSection({
                 ? `In force now: ${formatBasisPoints(d.in_force.rate_bp)} (${d.in_force.scope.replace(/_/g, " ")}).`
                 : "No rule applies: this partner earns nothing."}
               {!d.partner_earns && " It does not hold the Earn commission capability, so nothing accrues either way."}
+            </p>
+            <p className={styles.muted}>
+              Commission type: a percentage of the sale. Rates apply per product (or to all products); the rule engine has no per-plan scope and
+              no per-partner hold period - commission clears after the programme&apos;s holdback.
             </p>
             <Table caption="This partner's rules" head={["Scope", "Version", "Rate", "From", "State"]} isEmpty={d.rules.length === 0} empty="No rule of its own: the programme default applies.">
               {d.rules.map((r) => (
@@ -994,8 +1131,8 @@ export function BrandingTab({ partnerId, rev }: TabProps) {
         }
       </LoadGate>
       <div>
-        <Link className="w360-btn w360-btn-primary" href={`/admin/partners/white-label/${partnerId}`}>
-          Set up white-label
+        <Link className="w360-btn w360-btn-primary" href={`/admin/partners/${partnerId}/profile?step=brand`}>
+          Edit brand identity
         </Link>
       </div>
     </div>
@@ -1038,8 +1175,8 @@ export function DomainsTab({ partnerId, rev, bump }: TabProps) {
         )}
       </LoadGate>
       <div>
-        <Link className="w360-btn w360-btn-primary" href={`/admin/partners/white-label/${partnerId}`}>
-          Set up white-label
+        <Link className="w360-btn w360-btn-primary" href={`/admin/partners/${partnerId}/profile?step=domain`}>
+          Request or verify a domain
         </Link>
       </div>
     </div>

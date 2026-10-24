@@ -257,12 +257,14 @@ def change_password(
     with transaction.atomic():
         user = User.objects.select_for_update().get(pk=user_id)
         user.set_password(new_password)
+        user.password_change_required = False
         user.session_epoch += 1
         user.failed_login_count = 0
         user.locked_until = None
         user.save(
             update_fields=[
                 "password",
+                "password_change_required",
                 "session_epoch",
                 "failed_login_count",
                 "locked_until",

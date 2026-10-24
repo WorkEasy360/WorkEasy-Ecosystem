@@ -387,6 +387,8 @@ def test_the_brand_endpoint_is_readable_by_any_member_and_leaks_nothing_extra(
         "support_email",
         "support_url",
         "logo_url",
+        # ADR-046: the plain words the partner itself chose, by locale.
+        "translations",
         # The public part of the customer portal (ADR-042): words and support
         # details, never the sender identity of emails sent in the partner's name.
         "portal",

@@ -30,7 +30,10 @@ from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.interfaces.api.v1 import commercial_views as legacy
 from workeasy360.interfaces.api.v1.control_plane_http import (
     authenticated_user,
+    end_guest_view,
+    guest_context,
     limited,
+    live_guest_view,
     page_response,
     partner_view,
     query_page_args,
@@ -43,6 +46,14 @@ _uuid = legacy._uuid
 _enum = legacy._enum
 _int = legacy._int
 _flag = legacy._flag
+
+
+def _owner_name(body: dict[str, Any]) -> str:
+    """The owner's name from the first/last fields the form sends (or a single
+    ``owner_name``). Joined here; validated as text where it is used."""
+    first = str(body.get("owner_first_name") or "").strip()
+    last = str(body.get("owner_last_name") or "").strip()
+    return f"{first} {last}".strip() or str(body.get("owner_name") or "")
 
 
 def _key(request: HttpRequest, body: dict[str, Any]) -> str:
@@ -62,7 +73,38 @@ def portal_view(request: HttpRequest) -> JsonResponse:
     Empty for a user who is not a partner user; that is not an error.
     """
     user = authenticated_user(request)
-    return JsonResponse({"partners": partner_selectors.partners_for_user(user.id)})
+    partners = partner_selectors.partners_for_user(user.id)
+    guest_entry = _guest_entry(request, {p["partner_id"] for p in partners})
+    if guest_entry is not None:
+        partners.append(guest_entry)
+    return JsonResponse({"partners": partners})
+
+
+def _guest_entry(request: HttpRequest, listed: set[str]) -> dict[str, Any] | None:
+    """The partner a staff member is viewing as a guest, marked ``guest``
+    (``commercial.partners.guest``); ``None`` without a live guest view."""
+    from workeasy360.contracts.errors import AccessPolicyDenied, PermissionDenied
+
+    view = live_guest_view(request)
+    if view is None or str(view.partner_id) in listed:
+        return None
+    try:
+        ctx = guest_context(request, view.partner_id)
+    except (PermissionDenied, AccessPolicyDenied):
+        return None
+    entry = partner_selectors.guest_portal_entry(ctx) if ctx is not None else None
+    if entry is None:
+        return None
+    return {
+        **entry,
+        "guest": {"reason": view.reason, "expires_at": view.expires_at.isoformat()},
+    }
+
+
+@require_http_methods(["POST"])
+def guest_view_end_view(request: HttpRequest) -> JsonResponse:
+    """ "Exit guest session": ends this sign-in's guest view, if any (always 200)."""
+    return JsonResponse({"ended": end_guest_view(request)})
 
 
 # --- customers ------------------------------------------------------------
@@ -76,6 +118,7 @@ def customers_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             partner_selectors.partner_customers_page(
                 ctx.partner_id,
                 status=request.GET.get("status") or None,
+                search=request.GET.get("q") or None,
                 **query_page_args(request),
             )
         )
@@ -89,6 +132,7 @@ def customers_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
         owner_email=body.get("owner_email"),
         idempotency_key=_key(request, body),
         currency=body.get("currency"),
+        owner_name=_owner_name(body),
     )
     return JsonResponse(
         {
@@ -305,7 +349,15 @@ def referrals_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             status=request.GET.get("status") or None,
             **query_page_args(request),
         )
-        return JsonResponse({**payload, "referrals": page.as_dict()})
+        return JsonResponse(
+            {
+                **payload,
+                # Everyone who followed a link, whatever became of them: made here,
+                # so no screen adds up the statuses itself.
+                "total": sum(payload["counts"].values()),
+                "referrals": page.as_dict(),
+            }
+        )
     body = _body(request)
     code = referrals.create_referral_code(ctx, label=body.get("label", ""))
     return JsonResponse(

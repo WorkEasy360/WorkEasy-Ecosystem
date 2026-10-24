@@ -82,12 +82,20 @@ def test_the_dashboard_counts_every_partner_and_the_affiliates(
     console, viewer, affiliate
 ):
     cards = _cards(viewer)
-    # The reseller, the white-label partner, the draft and the affiliate.
+    # The reseller, the white-label partner, the draft and the affiliate. The
+    # label cards (ADR-048) count every partner holding the grants, in any
+    # state - each card is the size of the All Partners list it opens.
     assert cards["total_partners"]["count"] == 4
     assert cards["active_partners"]["count"] == 3
-    assert cards["active_affiliates"]["count"] == 1
-    assert cards["active_resellers"]["count"] == 1
-    assert cards["white_label_enabled"]["count"] == 1
+    assert cards["affiliates"]["count"] == 1
+    for key, label in (
+        ("resellers", "reseller"),
+        ("white_label", "white_label"),
+        ("affiliates", "affiliate"),
+    ):
+        listed = admin_list_count(viewer, label)
+        assert cards[key]["count"] == listed, (key, cards[key]["count"], listed)
+    assert cards["suspended_partners"]["count"] == 0
 
 
 def test_a_suspended_partner_still_counts_as_a_partner_but_not_as_active(
@@ -105,7 +113,10 @@ def test_a_suspended_partner_still_counts_as_a_partner_but_not_as_active(
     )
     cards = _cards(viewer)
     assert cards["total_partners"]["count"] == 4
-    assert cards["active_affiliates"]["count"] == 0
+    assert cards["active_partners"]["count"] == 2
+    assert cards["suspended_partners"]["count"] == 1
+    # Still counted as an affiliate: the label follows the grants, not the status.
+    assert cards["affiliates"]["count"] == 1
     row = next(r for r in _list(viewer, "all") if r["id"] == str(affiliate["partner"].id))
     assert row["status"] == "suspended"
     # Still an affiliate by its grants - the status is a separate fact.
@@ -486,3 +497,11 @@ def test_view_permission_unchanged_for_the_lists(staff_client):
         assert client.get(f"{BASE}/resellers?scope=affiliates").status_code == 403
     holder, _u = staff_client(VIEW)
     assert holder.get(f"{BASE}/resellers?scope=affiliates").status_code == 200
+
+
+def admin_list_count(client, label: str) -> int:
+    response = client.get(
+        f"{BASE}/resellers", {"scope": "all", "type": label, "limit": 100}
+    )
+    assert response.status_code == 200, response.content
+    return len(response.json()["results"])

@@ -1,8 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { AddReseller } from "@/features/controlplane/AddReseller";
-
-/** Partners → Resellers → Add reseller (Phase 10b). */
+/** Old address: adding a partner is the one Add Partner form, with the type preselected (ADR-048). */
 export default function Page() {
-  return <AddReseller />;
+  redirect("/admin/partners/new?type=reseller");
 }

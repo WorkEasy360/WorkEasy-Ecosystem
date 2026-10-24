@@ -3,7 +3,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 
 import { PartnerShell } from "./ControlShell";
 import { PortalWhiteLabelPage, WhiteLabelWizard, currentDomain } from "./WhiteLabelWizard";
-import { WhiteLabelList } from "./WhiteLabelList";
 import { LivePreview } from "./BrandPreview";
 import { AdminContextForTest, SIGNED_IN, expectNoViolations, mockApi, ok, type Call, type Reply } from "./testSupport";
 import { staffWhiteLabel } from "@/lib/api/partnerConsole";
@@ -370,7 +369,7 @@ describe("the partner portal", () => {
     const PORTAL = `/api/v1/partner/${ID}`;
     const calls = mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
-      "GET /api/v1/partner/portal": [ok({ partners: [{ partner_id: ID, code: "acme", display_name: "Acme Partners", status: "active", role: "admin", is_admin: true, capabilities: ["branding.manage", "domain.manage"] }] })],
+      "GET /api/v1/partner/portal": [ok({ partners: [{ partner_id: ID, code: "acme", display_name: "Acme Partners", status: "active", role: "admin", is_admin: true, capabilities: ["branding.manage", "domain.manage"], permissions: ["platform.partner_branding.view", "platform.partner_branding.manage", "platform.partner_domain.view", "platform.partner_domain.manage", "platform.partner_dashboard.view"] }] })],
       [`GET ${PORTAL}/branding`]: [ok({ brand: null })],
       [`GET ${PORTAL}/domains`]: [ok({ results: [] })],
     });
@@ -383,7 +382,9 @@ describe("the partner portal", () => {
     await screen.findByLabelText("Brand name");
     expect(calls.some((c) => c.key === `GET ${PORTAL}/branding`)).toBe(true);
     expect(calls.some((c) => c.url.includes("/api/v1/admin/"))).toBe(false); // never the staff endpoints
-    expect(screen.getByRole("link", { name: "Set up white-label" })).toHaveAttribute("href", `/partner/${ID}/white-label`);
+    // The wizard is reached from Brand Settings now (ADR-046), not a sidebar entry of its own.
+    expect(screen.getByRole("link", { name: "Brand Settings" })).toHaveAttribute("href", `/partner/${ID}/brand-settings`);
+    expect(screen.queryByRole("link", { name: "Set up white-label" })).not.toBeInTheDocument();
   });
 
   it("says when white-label is not enabled or the partner is not active", () => {
@@ -391,101 +392,5 @@ describe("the partner portal", () => {
     expect(screen.getByRole("status")).toHaveTextContent(/not enabled for your account/);
     rerender(<PortalWhiteLabelPage partnerId={ID} partnerName="Acme" capabilities={["branding.manage", "domain.manage"]} active={false} />);
     expect(screen.getByRole("status")).toHaveTextContent(/not active/);
-  });
-});
-
-describe("the white-label list", () => {
-  const row = (overrides: Record<string, unknown> = {}) => ({
-    id: ID,
-    code: "acme",
-    display_name: "Acme Partners",
-    status: "active",
-    experience: [{ key: "white_label", label: "White-label" }],
-    brand: { configured: true, name: "Acme Brand", has_logo: true },
-    domain: { hostname: "app.acme.example", status: "verified" },
-    customers: 3,
-    updated_at: "2026-02-01T00:00:00Z",
-    ...overrides,
-  });
-  const routes = (rows: unknown[]) => ({
-    "GET /api/v1/admin/partners/white-label": [ok({ results: rows, next_cursor: null, has_more: false })],
-    "GET /api/v1/admin/partners/resellers": [ok({ results: [{ id: "p9", display_name: "Nine Co" }], next_cursor: null, has_more: false })],
-  });
-
-  it("shows the seven columns the brief lists, derived from capabilities", async () => {
-    mockApi(routes([row()]));
-    const { container } = render(
-      <AdminContextForTest permissions={MANAGE}>
-        <WhiteLabelList />
-      </AdminContextForTest>,
-    );
-    const table = await screen.findByRole("table", { name: "White-label partners" });
-    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
-      "Brand",
-      "Partner",
-      "Brand status",
-      "Domain",
-      "Domain status",
-      "Customers",
-      "Updated",
-      "",
-    ]);
-    expect(within(table).getByText("Acme Brand")).toBeInTheDocument();
-    expect(within(table).getByText("app.acme.example")).toBeInTheDocument();
-    expect(within(table).getByText("White-label")).toBeInTheDocument();
-    await expectNoViolations(container);
-  });
-
-  it("sends its filters to the server, starting from the address", async () => {
-    query = "domain_status=awaiting";
-    const calls = mockApi(routes([]));
-    render(
-      <AdminContextForTest permissions={MANAGE}>
-        <WhiteLabelList />
-      </AdminContextForTest>,
-    );
-    await screen.findByText(/No partner matches/);
-    expect(calls.find((c) => c.key === "GET /api/v1/admin/partners/white-label")!.url).toContain("domain_status=awaiting");
-    fireEvent.change(screen.getByLabelText("Brand"), { target: { value: "none" } });
-    await waitFor(() => expect(calls.filter((c) => c.key === "GET /api/v1/admin/partners/white-label").at(-1)!.url).toContain("brand=none"));
-  });
-
-  it("starts the ten-step setup, which chooses the partner itself, and opens a listed partner pre-selected", async () => {
-    mockApi(routes([row()]));
-    render(
-      <AdminContextForTest permissions={MANAGE}>
-        <WhiteLabelList />
-      </AdminContextForTest>,
-    );
-    // The call to action under the list: a link into the wizard's first step (below).
-    // Each row opens the same wizard with that partner already chosen.
-    expect(await screen.findByRole("link", { name: "Set up white-label for Acme Partners" })).toHaveAttribute("href", `/admin/partners/white-label/${ID}`);
-    expect(screen.getByRole("link", { name: "Set up white-label" })).toHaveAttribute("href", "/admin/partners/white-label/new");
-  });
-
-  it("offers no setup to someone who may only view partners", async () => {
-    mockApi(routes([row()]));
-    render(
-      <AdminContextForTest permissions={["platform.staff_partner.view"]}>
-        <WhiteLabelList />
-      </AdminContextForTest>,
-    );
-    await screen.findByRole("table", { name: "White-label partners" });
-    expect(screen.queryByRole("link", { name: /Set up white-label/ })).not.toBeInTheDocument();
-  });
-
-  it("renders hostile brand and partner names as text", async () => {
-    const EVIL = `<img src=x onerror="window.__pwned=1"><script>window.__pwned=2</script>`;
-    mockApi(routes([row({ display_name: EVIL, brand: { configured: true, name: EVIL, has_logo: false }, domain: { hostname: EVIL, status: "active" } })]));
-    const { container } = render(
-      <AdminContextForTest permissions={["platform.staff_partner.view"]}>
-        <WhiteLabelList />
-      </AdminContextForTest>,
-    );
-    await screen.findByRole("table", { name: "White-label partners" });
-    expect(container.querySelector("img")).toBeNull();
-    expect(container.querySelector("script")).toBeNull();
-    expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
-    expect(container.textContent).toContain("<img");
   });
 });

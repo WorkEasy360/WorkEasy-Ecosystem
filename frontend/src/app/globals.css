@@ -1,28 +1,78 @@
 :root {
-  --w360-bg: #f7f8fa;
+  /* The WorkEasy360 palette, taken from workeasy360.com. Primitives first; the
+     semantic tokens below are what components use - never a hex in a module.
+     Every pairing is checked for WCAG AA (see the token table in
+     docs/brand/partner-brand-alignment.md):
+     - the vivid brand green is a FILL (buttons, chart bars, icon accents) with
+       deep-navy text on it (7.1:1). White on it is only 2.4:1, so never that;
+     - green TEXT (links, the current page, selected tabs) is the deeper
+       --w360-green-800, which reads at >= 4.5:1 on every light surface,
+       the darkest mint (#dbefe6) included. */
+  --w360-green-500: #02c065;
+  --w360-green-600: #04a05b;
+  --w360-green-700: #04884c;
+  --w360-green-800: #047a44;
+  --w360-green-900: #036b3b;
+  --w360-ink-900: #161d24;
+  --w360-ink-800: #2d2e2f;
+  --w360-ink-500: #5e6c67;
+  --w360-mint-50: #f4faf7;
+  --w360-mint-100: #eaf6ef;
+  --w360-mint-200: #dbefe6;
+  --w360-line-200: #d8e5de;
+
+  --w360-bg: var(--w360-mint-100);
+  --w360-bg-soft: var(--w360-mint-50);
   --w360-surface: #ffffff;
   --w360-surface-raised: #ffffff;
-  --w360-border: #e2e5eb;
-  --w360-border-strong: #c9ced9;
-  --w360-text: #14171f;
-  --w360-text-muted: #5c6470;
-  --w360-text-faint: #8a92a0;
-  --w360-brand: #4338ca;
-  --w360-brand-hover: #3730a3;
+  --w360-surface-mint: var(--w360-mint-200);
+  /* The selected / current / hover-with-intent background: a light mint. */
+  --w360-brand-soft: var(--w360-mint-100);
+  --w360-border: var(--w360-line-200);
+  --w360-border-strong: #b5c8be;
+  /* A form control's own edge: >= 3:1 against white (WCAG 1.4.11). */
+  --w360-input-border: #7f918a;
+  --w360-text: var(--w360-ink-900);
+  --w360-text-secondary: var(--w360-ink-800);
+  --w360-text-muted: var(--w360-ink-500);
+  --w360-text-faint: var(--w360-ink-500);
+  --w360-navy: var(--w360-ink-900);
+  --w360-navy-contrast: #ffffff;
+  --w360-accent: var(--w360-green-500);
+  --w360-brand: var(--w360-green-800);
+  --w360-brand-hover: var(--w360-green-900);
   --w360-brand-contrast: #ffffff;
-  --w360-focus-ring: #4338ca;
-  --w360-success: #0f7a4c;
-  --w360-success-bg: #e7f6ee;
-  --w360-warning: #92600a;
-  --w360-warning-bg: #fdf3df;
+  /* Call-to-action buttons: the website's green with deep-navy text. A
+     partner's accent replaces all three together (useBranding.applyAccent). */
+  --w360-cta: var(--w360-green-500);
+  --w360-cta-hover: var(--w360-green-600);
+  --w360-cta-contrast: var(--w360-ink-900);
+  --w360-focus-ring: var(--w360-green-700);
+  /* A state marker drawn as a line (current page bar, selected tab underline):
+     >= 3:1 on white and on the mint. */
+  --w360-indicator: var(--w360-green-700);
+  --w360-success: #03703e;
+  --w360-success-bg: var(--w360-mint-200);
+  --w360-warning: #8a5a00;
+  --w360-warning-bg: #fdf0c8;
   --w360-danger: #b3261e;
+  --w360-danger-hover: #931f19;
+  --w360-danger-contrast: #ffffff;
   --w360-danger-bg: #fbeaea;
-  --w360-neutral-bg: #eef0f4;
+  --w360-info: #2549b8;
+  --w360-info-bg: #e3ebfd;
+  --w360-neutral-bg: #e8f0ec;
+  /* Charts: the brand green, then deep navy - never two greens side by side. */
+  --w360-chart-1: var(--w360-green-500);
+  --w360-chart-1-edge: var(--w360-green-700);
+  --w360-chart-2: var(--w360-ink-900);
+  --w360-chart-3: #2549b8;
+  --w360-chart-4: #c2410c;
   --w360-radius-sm: 6px;
   --w360-radius-md: 10px;
   --w360-radius-lg: 16px;
-  --w360-shadow-sm: 0 1px 2px rgba(20, 23, 31, 0.06);
-  --w360-shadow-md: 0 4px 16px rgba(20, 23, 31, 0.08);
+  --w360-shadow-sm: 0 1px 2px rgba(22, 29, 36, 0.05);
+  --w360-shadow-md: 0 8px 24px rgba(22, 29, 36, 0.08);
   --w360-space-1: 4px;
   --w360-space-2: 8px;
   --w360-space-3: 12px;
@@ -34,52 +84,98 @@
     Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
 }
 
+/* Dark: mapped, not inverted. Deep green-black surfaces; the brand green keeps
+   its own value here (7:1 on the surface) and carries dark text when filled. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --w360-bg: #0f1115;
-    --w360-surface: #171a21;
-    --w360-surface-raised: #1d212a;
-    --w360-border: #2a2f3a;
-    --w360-border-strong: #3a4152;
-    --w360-text: #eef0f4;
-    --w360-text-muted: #a4abb8;
-    --w360-text-faint: #767e8c;
-    --w360-brand: #818cf8;
-    --w360-brand-hover: #a5b0fb;
-    --w360-brand-contrast: #14171f;
-    --w360-focus-ring: #a5b0fb;
+    --w360-bg: #0f171c;
+    --w360-bg-soft: #121a20;
+    --w360-surface: #161d24;
+    --w360-surface-raised: #19222a;
+    --w360-surface-mint: #124132;
+    --w360-brand-soft: #13342d;
+    --w360-border: #2a3640;
+    --w360-border-strong: #3a4853;
+    --w360-input-border: #62737c;
+    --w360-text: #eef3f1;
+    --w360-text-secondary: #d5ddd9;
+    --w360-text-muted: #a9b7b1;
+    --w360-text-faint: #a9b7b1;
+    --w360-navy: #0b1115;
+    --w360-navy-contrast: #ffffff;
+    --w360-accent: #02c065;
+    --w360-brand: #02c065;
+    --w360-brand-hover: #2ed583;
+    --w360-brand-contrast: #0f171c;
+    --w360-cta: #02c065;
+    --w360-cta-hover: #2ed583;
+    --w360-cta-contrast: #0f171c;
+    --w360-focus-ring: #2ed583;
+    --w360-indicator: #02c065;
     --w360-success: #4ade80;
-    --w360-success-bg: #113224;
+    --w360-success-bg: #13372e;
     --w360-warning: #fbbf24;
-    --w360-warning-bg: #332506;
+    --w360-warning-bg: #332806;
     --w360-danger: #f87171;
+    --w360-danger-hover: #fa9191;
+    --w360-danger-contrast: #0f171c;
     --w360-danger-bg: #341313;
-    --w360-neutral-bg: #232734;
+    --w360-info: #8fb0ff;
+    --w360-info-bg: #14264f;
+    --w360-neutral-bg: #1f2a32;
+    --w360-chart-1: #02c065;
+    --w360-chart-1-edge: #02c065;
+    --w360-chart-2: #c9d3cf;
+    --w360-chart-3: #8fb0ff;
+    --w360-chart-4: #fb923c;
     --w360-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --w360-shadow-md: 0 4px 20px rgba(0, 0, 0, 0.5);
+    --w360-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
   }
 }
 
 :root[data-theme="dark"] {
-  --w360-bg: #0f1115;
-  --w360-surface: #171a21;
-  --w360-surface-raised: #1d212a;
-  --w360-border: #2a2f3a;
-  --w360-border-strong: #3a4152;
-  --w360-text: #eef0f4;
-  --w360-text-muted: #a4abb8;
-  --w360-text-faint: #767e8c;
-  --w360-brand: #818cf8;
-  --w360-brand-hover: #a5b0fb;
-  --w360-brand-contrast: #14171f;
-  --w360-focus-ring: #a5b0fb;
+  --w360-bg: #0f171c;
+  --w360-bg-soft: #121a20;
+  --w360-surface: #161d24;
+  --w360-surface-raised: #19222a;
+  --w360-surface-mint: #124132;
+  --w360-brand-soft: #13342d;
+  --w360-border: #2a3640;
+  --w360-border-strong: #3a4853;
+  --w360-input-border: #62737c;
+  --w360-text: #eef3f1;
+  --w360-text-secondary: #d5ddd9;
+  --w360-text-muted: #a9b7b1;
+  --w360-text-faint: #a9b7b1;
+  --w360-navy: #0b1115;
+  --w360-navy-contrast: #ffffff;
+  --w360-accent: #02c065;
+  --w360-brand: #02c065;
+  --w360-brand-hover: #2ed583;
+  --w360-brand-contrast: #0f171c;
+  --w360-cta: #02c065;
+  --w360-cta-hover: #2ed583;
+  --w360-cta-contrast: #0f171c;
+  --w360-focus-ring: #2ed583;
+  --w360-indicator: #02c065;
   --w360-success: #4ade80;
-  --w360-success-bg: #113224;
+  --w360-success-bg: #13372e;
   --w360-warning: #fbbf24;
-  --w360-warning-bg: #332506;
+  --w360-warning-bg: #332806;
   --w360-danger: #f87171;
+  --w360-danger-hover: #fa9191;
+  --w360-danger-contrast: #0f171c;
   --w360-danger-bg: #341313;
-  --w360-neutral-bg: #232734;
+  --w360-info: #8fb0ff;
+  --w360-info-bg: #14264f;
+  --w360-neutral-bg: #1f2a32;
+  --w360-chart-1: #02c065;
+  --w360-chart-1-edge: #02c065;
+  --w360-chart-2: #c9d3cf;
+  --w360-chart-3: #8fb0ff;
+  --w360-chart-4: #fb923c;
+  --w360-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --w360-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
 * {
@@ -94,11 +190,21 @@ body {
 
 body {
   background: var(--w360-bg);
-  color: var(--w360-text);
+  color: var(--w360-text-secondary);
   font-family: var(--w360-font);
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Headings bold deep navy, body dark grey (as on workeasy360.com). `:where`
+   keeps these at zero specificity, so any module rule still wins. */
+:where(h1, h2, h3, h4, strong, th, caption, legend) {
+  color: var(--w360-text);
+}
+
+:where(h1, h2, h3, h4) {
+  font-weight: 700;
 }
 
 /* Link text. A partner's accent (useBranding.applyAccent) supplies a variant of
@@ -199,13 +305,25 @@ button:disabled {
   min-height: 40px;
 }
 
+/* The important action on a screen: the WorkEasy360 green with deep-navy text.
+   Colours come from the --w360-cta tokens, so a partner's accent carries through
+   on their branded pages. One primary style - no competing primary colours. */
 .w360-btn-primary {
-  background: var(--w360-brand);
-  color: var(--w360-brand-contrast);
+  background: var(--w360-cta);
+  color: var(--w360-cta-contrast);
+  font-weight: 700;
+  box-shadow: var(--w360-shadow-sm);
+  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
-.w360-btn-primary:hover {
-  background: var(--w360-brand-hover);
+.w360-btn-primary:hover:not(:disabled) {
+  background: var(--w360-cta-hover);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--w360-cta) 30%, transparent);
+  transform: translateY(-1px);
+}
+
+.w360-btn-primary:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 .w360-btn-secondary {
@@ -214,22 +332,81 @@ button:disabled {
   color: var(--w360-text);
 }
 
-.w360-btn-secondary:hover {
-  background: var(--w360-neutral-bg);
+.w360-btn-secondary:hover:not(:disabled) {
+  background: var(--w360-brand-soft);
+  border-color: var(--w360-brand);
 }
 
+/* Destructive actions (revoke, remove, suspend, terminate) are never green. */
+.w360-btn-danger {
+  background: var(--w360-danger);
+  color: var(--w360-danger-contrast);
+  font-weight: 700;
+}
+
+.w360-btn-danger:hover:not(:disabled) {
+  background: var(--w360-danger-hover);
+}
+
+.w360-btn:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .w360-btn-primary,
+  .w360-btn-primary:hover:not(:disabled) {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* Disabled stays legible (muted text on a neutral fill, >= 4.5:1) instead of
+   fading the whole control out. */
 .w360-btn:disabled {
-  opacity: 0.55;
+  background: var(--w360-neutral-bg);
+  border-color: var(--w360-border);
+  color: var(--w360-text-muted);
+  box-shadow: none;
 }
 
 .w360-input {
   width: 100%;
   padding: 9px 12px;
-  border: 1px solid var(--w360-border-strong);
+  border: 1px solid var(--w360-input-border);
   border-radius: var(--w360-radius-sm);
   background: var(--w360-surface);
   color: var(--w360-text);
   min-height: 40px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.w360-input:hover:not(:disabled) {
+  border-color: var(--w360-text-muted);
+}
+
+/* Focus: a green edge plus a soft green halo, on top of the global outline. */
+.w360-input:focus-visible {
+  border-color: var(--w360-brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--w360-cta) 28%, transparent);
+  outline-offset: 1px;
+}
+
+.w360-input[aria-invalid="true"] {
+  border-color: var(--w360-danger);
+}
+
+.w360-input:disabled,
+fieldset:disabled .w360-input {
+  background: var(--w360-bg-soft);
+  border-color: var(--w360-border-strong);
+  color: var(--w360-text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .w360-input {
+    transition: none;
+  }
 }
 
 .w360-label {
@@ -275,6 +452,18 @@ button:disabled {
 .w360-badge-danger {
   background: var(--w360-danger-bg);
   color: var(--w360-danger);
+}
+
+/* A trial: its own colour, distinct from active (green) and warning (amber). */
+.w360-badge-info {
+  background: var(--w360-info-bg);
+  color: var(--w360-info);
+}
+
+@media (forced-colors: active) {
+  .w360-badge {
+    border: 1px solid CanvasText;
+  }
 }
 
 /* Phase 8 extension: a vertical form (one field per row) and a field hint. */

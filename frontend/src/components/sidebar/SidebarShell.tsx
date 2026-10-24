@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Logo } from "@/components/brand/Logo";
 import { NavIcon } from "./icons";
 import styles from "./SidebarShell.module.css";
 
@@ -18,6 +19,9 @@ export interface SidebarItem {
   /** The URL prefix this entry is current under, when it differs from `href`
    * (a section entry whose link opens one of several pages beneath it). */
   match?: string;
+  /** More prefixes the entry is current under (the pages of its section that
+   * live elsewhere in the address space). */
+  alsoMatch?: string[];
   children?: SidebarItem[];
 }
 
@@ -29,8 +33,9 @@ export interface SidebarGroup {
 
 function isActive(pathname: string, item: SidebarItem): boolean {
   if (item.exact) return pathname === item.href;
-  const prefix = item.match ?? item.href;
-  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+  return [item.match ?? item.href, ...(item.alsoMatch ?? [])].some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
 }
 
 const visible = (items: SidebarItem[]) => items.filter((i) => i.when !== false);
@@ -123,7 +128,9 @@ export function SidebarShell({
             <span className={styles.brandName}>{brandName}</span>
           </span>
         ) : (
-          <span className={styles.brand}>Workeasy360</span>
+          <span className={styles.brand}>
+            <Logo compact />
+          </span>
         )}
         {context && <div className={styles.context}>{context}</div>}
         <div className={styles.spacer} />

@@ -47,6 +47,9 @@ export interface PartnerSummary {
   contact_email: string;
   payout_currency: string;
   status: "draft" | "active" | "suspended" | "terminated";
+  /** Which workspace the portal opens first (or empty for "what the grants earn
+   * first"). A presentation preference: it decides no permission. */
+  default_experience: string;
   version: number;
   created_at: string;
   activated_at: string | null;
@@ -79,6 +82,10 @@ export interface PartnerDetail extends PartnerSummary {
   live_customers: number;
   /** Derived by the server from the grants in force ("Reseller", ...). */
   experience: { key: string; label: string }[];
+  /** The workspaces those grants open, and the one the portal lands on. Optional
+   * only so a screen survives an answer from the release before this one. */
+  workspaces?: { key: string; label: string }[];
+  landing?: string | null;
 }
 
 export interface CustomerRow {
@@ -456,6 +463,12 @@ export const adminApi = {
     contact_email?: string;
   }) =>
     apiFetch<PartnerSummary>(`${admin}/partners`, { method: "POST", body: json(body) }),
+  /** Guest login: open the partner's portal read-only, for a reason, for a limited time. */
+  startGuestView: (id: string, reason: string) =>
+    apiFetch<GuestView & { portal_path: string }>(`${admin}/partners/${id}/guest-view`, {
+      method: "POST",
+      body: json({ reason }),
+    }),
   setPartnerStatus: (id: string, status: string, reason: string, expectedVersion: number) =>
     apiFetch(`${admin}/partners/${id}/status`, {
       method: "POST",
@@ -543,8 +556,32 @@ export interface PortalPartner {
   display_name: string;
   status: string;
   role: string;
+  /** "Partner Owner", "Sales", ... - the server's wording for the role. */
+  role_label?: string;
   is_admin: boolean;
   capabilities: string[];
+  /** The workspaces these grants open (Reseller, White-label, Affiliate), in a
+   * fixed order. Derived by the server on every read; a switcher is offered
+   * only when there is more than one. */
+  workspaces?: { key: string; label: string }[];
+  /** The stored landing preference. It selects among `workspaces`; it opens none. */
+  default_experience?: string;
+  /** The workspace to open first, resolved by the server; null for a partner
+   * whose grants earn none (the generic portal opens). */
+  landing?: string | null;
+  /** What the server will let this person do right now. Navigation is drawn
+   * from it; every request is authorized again by the service it reaches. */
+  permissions?: string[];
+  /** Present when a staff member is viewing this partner as a guest (read-only). */
+  guest?: GuestView;
+}
+
+/** A staff guest view of one partner's portal: read-only, time-boxed, audited. */
+export interface GuestView {
+  partner_id: string;
+  reason: string;
+  started_at?: string;
+  expires_at: string;
 }
 
 export interface PartnerCustomerRow {
@@ -555,6 +592,8 @@ export interface PartnerCustomerRow {
   started_at: string;
   ended_at: string | null;
   subscription_status: string;
+  /** `customer` (a paid or granted product is live), `trial` or empty. */
+  access_class?: string;
   products: string[];
   owner_activation: PortalOwnerActivation;
 }
@@ -629,13 +668,19 @@ const partner = (id: string) => `/api/v1/partner/${encodeURIComponent(id)}`;
 
 export const partnerApi = {
   portal: () => apiFetch<{ partners: PortalPartner[] }>("/api/v1/partner/portal"),
-  customers: (id: string, cursor?: string) =>
-    apiFetch<Page<PartnerCustomerRow>>(`${partner(id)}/customers`, { query: { cursor } }),
-  provision: (id: string, organizationName: string, ownerEmail: string, key: string) =>
+  endGuestView: () => apiFetch<{ ended: boolean }>("/api/v1/partner/guest-view/end", { method: "POST" }),
+  customers: (id: string, cursor?: string, q?: string) =>
+    apiFetch<Page<PartnerCustomerRow>>(`${partner(id)}/customers`, { query: { cursor, q: q || undefined } }),
+  provision: (id: string, organizationName: string, ownerEmail: string, key: string, owner?: { first?: string; last?: string }) =>
     apiFetch<{ organization_id: string; slug: string; replayed: boolean }>(`${partner(id)}/customers`, {
       method: "POST",
       headers: idem(key),
-      body: json({ organization_name: organizationName, owner_email: ownerEmail }),
+      body: json({
+        organization_name: organizationName,
+        owner_email: ownerEmail,
+        owner_first_name: owner?.first || undefined,
+        owner_last_name: owner?.last || undefined,
+      }),
     }),
   catalog: (id: string) => apiFetch<{ results: ApprovedPlan[] }>(`${partner(id)}/catalog`),
   sell: (id: string, orgId: string, planVersionId: string, quantity: number, key: string) =>
@@ -658,7 +703,18 @@ export const partnerApi = {
   referrals: (id: string) =>
     apiFetch<{
       counts: Record<string, number>;
+      /** Everyone who followed a link, whatever became of them: the server's sum. */
+      total: number;
       codes: { id: string; code: string; label: string; status: string }[];
+      /** The newest referrals: a date, a campaign and a status - never a person. */
+      referrals: Page<{
+        id: string;
+        code: string;
+        label: string;
+        status: string;
+        captured_at: string;
+        converted_at: string | null;
+      }>;
     }>(`${partner(id)}/referrals`),
   createReferralCode: (id: string, label: string) =>
     apiFetch(`${partner(id)}/referrals`, { method: "POST", body: json({ label }) }),
@@ -701,11 +757,13 @@ export interface OwnBrand {
   support_url: string;
   logo_url: string | null;
   portal: PublicPortalFields;
+  /** What the partner itself has worded, by locale (ADR-046). */
+  translations?: Record<string, Record<string, string>>;
 }
 
 export const brandingApi = {
   forHost: (host: string) =>
-    apiFetch<{ brand: (Omit<Brand, "logo_file_id" | "version" | "portal"> & { logo_url: string | null; portal: PublicPortalFields }) | null }>(
+    apiFetch<{ brand: (Omit<Brand, "logo_file_id" | "version" | "portal"> & { logo_url: string | null; portal: PublicPortalFields; translations?: Record<string, Record<string, string>> }) | null }>(
       "/api/v1/public/branding",
       { query: { host } },
     ),

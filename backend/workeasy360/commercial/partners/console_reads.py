@@ -134,32 +134,170 @@ def overview_counts(
     reseller_keys: frozenset[str],
     white_label_keys: frozenset[str],
     affiliate_keys: frozenset[str],
+    incomplete: Any,
 ) -> dict[str, int]:
-    """The counts the overview cards show: partners (every one, and the active
-    ones by label), live customers, the live customers holding an active
-    subscription, and domains awaiting proof."""
-    from workeasy360.commercial.partners.models import PartnerAccount, PartnerDomain
+    """The counts the Partners dashboard shows (ADR-048), each the size of the
+    All Partners list its card opens: the three labels over every partner that
+    holds the grants, in any state (a partner holding several is counted under
+    each), and ``profiles_incomplete`` with the same filter as
+    ``profile=incomplete`` (``incomplete`` - a terminated partner is history,
+    not unfinished)."""
+    from workeasy360.commercial.partners.models import PartnerAccount
 
-    active = PartnerAccount.objects.filter(status=PartnerStatus.ACTIVE.value)
-    live = _live_links()
+    every = PartnerAccount.objects.all()
     return {
-        "total_partners": PartnerAccount.objects.count(),
-        "active_partners": active.count(),
-        "active_resellers": active.filter(_holds_any(now, reseller_keys)).count(),
-        "white_label_enabled": active.filter(_holds_any(now, white_label_keys)).count(),
-        "active_affiliates": active.filter(_holds_any(now, affiliate_keys)).count(),
-        "partner_customers": live.count(),
-        # One live link per organization (a partial unique index), so counting
-        # links is counting customers.
-        "active_partner_subscriptions": live.filter(
-            organization_id__in=provisioning.organization_ids_matching(
-                subscription_status=SubscriptionStatus.ACTIVE.value
-            )
-        ).count(),
-        "domains_awaiting_verification": PartnerDomain.objects.filter(
-            status__in=AWAITING_VERIFICATION
-        ).count(),
+        "total_partners": every.count(),
+        "active_partners": every.filter(status=PartnerStatus.ACTIVE.value).count(),
+        "resellers": every.filter(_holds_any(now, reseller_keys)).count(),
+        "white_label": every.filter(_holds_any(now, white_label_keys)).count(),
+        "affiliates": every.filter(_holds_any(now, affiliate_keys)).count(),
+        "suspended_partners": every.filter(status=PartnerStatus.SUSPENDED.value).count(),
+        "profiles_incomplete": every.filter(incomplete).count(),
     }
+
+
+# --- profile completion (ADR-048) ------------------------------------------------
+
+
+def profile_complete_q(
+    now: datetime,
+    *,
+    any_capability: frozenset[str],
+    products_for: frozenset[str],
+    commission_for: frozenset[str],
+    brand_for: frozenset[str],
+    referral_for: frozenset[str],
+    commission_earn: str,
+    commission_rule: Any,
+    referral_code: Any,
+) -> Q:
+    """Whether a partner's profile is complete, as a filter over partners - the
+    SQL form of ``controlplane.profile_completion.evaluate`` (a test holds the
+    two to the same answers). Which capability sets make which section required
+    is decided there and passed in; ``commission_rule`` and ``referral_code``
+    are ``Exists`` expressions the commissions module builds, so this module
+    opens no table it does not own."""
+    from workeasy360.commercial.partners import capabilities
+    from workeasy360.commercial.partners.models import (
+        PartnerBrand,
+        PartnerMember,
+        PartnerProductGrant,
+        PartnerProfile,
+    )
+
+    business = (
+        ~Q(contact_name="")
+        & ~Q(contact_email="")
+        & Q(
+            Exists(
+                PartnerProfile.objects.filter(partner=OuterRef("pk"))
+                .exclude(business_email="")
+                .exclude(country="")
+            )
+        )
+    )
+    administrator = Q(
+        Exists(
+            PartnerMember.objects.filter(
+                partner=OuterRef("pk"),
+                status="active",
+                role__in=sorted(capabilities.ADMIN_ROLES),
+            )
+        )
+    )
+    products = Q(
+        Exists(
+            PartnerProductGrant.objects.filter(
+                partner=OuterRef("pk"), status=GrantStatus.ACTIVE.value
+            )
+        )
+    )
+    commission = Q(_holds_any(now, frozenset({commission_earn}))) & Q(commission_rule)
+    brand = Q(
+        Exists(PartnerBrand.objects.filter(partner=OuterRef("pk")).exclude(brand_name=""))
+    )
+
+    def unless(keys: frozenset[str], then: Q) -> Q:
+        # Required only for a partner that holds one of ``keys``.
+        return ~Q(_holds_any(now, keys)) | then
+
+    return (
+        business
+        & administrator
+        & Q(_holds_any(now, any_capability))
+        & unless(products_for, products)
+        & unless(commission_for, commission)
+        & unless(brand_for, brand)
+        & unless(referral_for, Q(referral_code))
+    )
+
+
+def completion_facts(
+    partner_ids: list[UUID], now: datetime
+) -> dict[UUID, dict[str, Any]]:
+    """The partner-owned facts the completion rule reads, for these partners, in
+    five queries whatever their number: the account's contact, the profile's
+    business email and country, whether an administrator exists, how many
+    products are granted and whether a brand is named. Capabilities are read
+    with ``held_capabilities``."""
+    from workeasy360.commercial.partners import capabilities
+    from workeasy360.commercial.partners.models import (
+        PartnerAccount,
+        PartnerBrand,
+        PartnerMember,
+        PartnerProductGrant,
+        PartnerProfile,
+    )
+
+    out: dict[UUID, dict[str, Any]] = {}
+    if not partner_ids:
+        return out
+    for row in PartnerAccount.objects.filter(id__in=partner_ids).values(
+        "id", "contact_name", "contact_email"
+    ):
+        out[row["id"]] = {
+            "contact_name": row["contact_name"],
+            "contact_email": row["contact_email"],
+            "business_email": "",
+            "country": "",
+            "has_administrator": False,
+            "product_count": 0,
+            "brand_named": False,
+        }
+    for row in PartnerProfile.objects.filter(partner_id__in=partner_ids).values(
+        "partner_id", "business_email", "country"
+    ):
+        if row["partner_id"] in out:
+            out[row["partner_id"]]["business_email"] = row["business_email"]
+            out[row["partner_id"]]["country"] = row["country"]
+    for partner_id in (
+        PartnerMember.objects.filter(
+            partner_id__in=partner_ids,
+            status="active",
+            role__in=sorted(capabilities.ADMIN_ROLES),
+        )
+        .values_list("partner_id", flat=True)
+        .distinct()
+    ):
+        if partner_id in out:
+            out[partner_id]["has_administrator"] = True
+    for row in (
+        PartnerProductGrant.objects.filter(
+            partner_id__in=partner_ids, status=GrantStatus.ACTIVE.value
+        )
+        .values("partner_id")
+        .annotate(n=Count("id"))
+    ):
+        if row["partner_id"] in out:
+            out[row["partner_id"]]["product_count"] = row["n"]
+    for partner_id in (
+        PartnerBrand.objects.filter(partner_id__in=partner_ids)
+        .exclude(brand_name="")
+        .values_list("partner_id", flat=True)
+    ):
+        if partner_id in out:
+            out[partner_id]["brand_named"] = True
+    return out
 
 
 # --- the reseller list ---------------------------------------------------------
@@ -175,13 +313,23 @@ def partner_rows(
     capability: str | None,
     cursor: str | None,
     page_size: int,
+    extra: Any = None,
 ) -> tuple[list[Any], bool]:
     """One page of partner rows, newest first, and whether there is another.
 
-    ``experience_keys`` restricts the list to partners holding one of them (the
-    Reseller label); ``None`` lists every partner. Filters compose as ``AND``.
+    ``experience_keys`` restricts the list to partners holding one of them (a
+    label); ``None`` lists every partner. ``query`` matches the partner's name,
+    code or legal name, or an email it is reached at - its contact, its business
+    email or an active member's sign-in address. ``extra`` is one more filter
+    expression the caller built (the profile-completion filter). Filters compose
+    as ``AND``.
     """
-    from workeasy360.commercial.partners.models import PartnerAccount, PartnerProductGrant
+    from workeasy360.commercial.partners.models import (
+        PartnerAccount,
+        PartnerMember,
+        PartnerProductGrant,
+        PartnerProfile,
+    )
 
     queryset = PartnerAccount.objects.order_by("-created_at", "-id")
     if experience_keys is not None:
@@ -193,7 +341,26 @@ def partner_rows(
             Q(display_name__icontains=query)
             | Q(code__icontains=query)
             | Q(legal_name__icontains=query)
+            | Q(contact_email__icontains=query)
+            | Q(
+                Exists(
+                    PartnerProfile.objects.filter(
+                        partner=OuterRef("pk"), business_email__icontains=query
+                    )
+                )
+            )
+            | Q(
+                Exists(
+                    PartnerMember.objects.filter(
+                        partner=OuterRef("pk"),
+                        status="active",
+                        user__email__icontains=query,
+                    )
+                )
+            )
         )
+    if extra is not None:
+        queryset = queryset.filter(extra)
     if capability:
         queryset = queryset.filter(_holds_any(now, frozenset({capability})))
     if product:
@@ -226,10 +393,14 @@ def page_facts(partner_ids: list[UUID], now: datetime) -> dict[str, Any]:
         "products": defaultdict(list),
         "subscriptions": {},
         "link_at": {},
+        "administrators": {},
+        "reach": {},
     }
     if not partner_ids:
         return out
     out["capabilities"] = held_capabilities(partner_ids, now)
+    out["administrators"] = administrators_of(partner_ids)
+    out["reach"] = reach_of(partner_ids)
 
     live = _live_links().filter(partner_id__in=partner_ids)
     out["customers"] = {
@@ -268,6 +439,54 @@ def page_facts(partner_ids: list[UUID], now: datetime) -> dict[str, Any]:
         if stamps:
             out["link_at"][row["partner_id"]] = max(stamps)
     return out
+
+
+def reach_of(partner_ids: list[UUID]) -> dict[UUID, dict[str, str]]:
+    """The phone and country on each partner's profile, for the staff list. One
+    query whatever the page size; a partner without a profile has neither."""
+    from workeasy360.commercial.partners.models import PartnerProfile
+
+    return {
+        row["partner_id"]: {"phone": row["phone"], "country": row["country"]}
+        for row in PartnerProfile.objects.filter(partner_id__in=partner_ids).values(
+            "partner_id", "phone", "country"
+        )
+    }
+
+
+def administrators_of(partner_ids: list[UUID]) -> dict[UUID, dict[str, Any]]:
+    """The person who runs each partner: its owner (else its earliest
+    administrator), with the address they sign in with and when they last did.
+    One query whatever the page size. Staff read it; it is never a partner's
+    view of another partner."""
+    from workeasy360.commercial.partners import capabilities
+    from workeasy360.commercial.partners.models import PartnerMember
+
+    chosen: dict[UUID, Any] = {}
+    members = (
+        PartnerMember.objects.filter(
+            partner_id__in=partner_ids,
+            status="active",
+            role__in=sorted(capabilities.ADMIN_ROLES),
+        )
+        .select_related("user")
+        .order_by("added_at")
+    )
+    for member in members:
+        best = chosen.get(member.partner_id)
+        if best is None or (member.role == "owner" and best.role != "owner"):
+            chosen[member.partner_id] = member
+    return {
+        partner_id: {
+            "email": member.user.email,
+            "name": member.user.full_name,
+            "role": member.role,
+            "last_login_at": member.user.last_login_at.isoformat()
+            if member.user.last_login_at
+            else None,
+        }
+        for partner_id, member in chosen.items()
+    }
 
 
 # --- the white-label list --------------------------------------------------------

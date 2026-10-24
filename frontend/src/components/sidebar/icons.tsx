@@ -24,6 +24,7 @@ const PATHS: Record<string, string> = {
   key: "M15 7a4 4 0 1 1-3.9 5H9v2H7v2H4v-3l5.1-5.1A4 4 0 0 1 15 7Zm1 1h.01",
   network: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm-9 9h18M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3Z",
   receipt: "M6 3h12v18l-3-2-3 2-3-2-3 2V3Zm3 5h6M9 12h6M9 16h3",
+  plus: "M12 5v14M5 12h14",
   handshake: "M3 12 7 8l4 2 3-3 7 5-5 5-3-2-2 2-4-3-4-2Zm8-2 3 3",
   gift: "M4 11h16v10H4V11Zm-1-4h18v4H3V7Zm9 0v14M12 7c-1.5-3-5-3-5-1s3 1 5 1Zm0 0c1.5-3 5-3 5-1s-3 1-5 1Z",
   store: "M4 9l1.5-5h13L20 9M4 9h16M4 9v11h16V9M9 20v-6h6v6",
@@ -31,6 +32,10 @@ const PATHS: Record<string, string> = {
   device: "M5 4h14v11H5V4Zm-2 15h18M9 19l1-4h4l1 4",
   history: "M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 7v5l3 3",
   diagnostics: "M3 12h4l3-8 4 16 3-8h4",
+  bell: "M6 16V11a6 6 0 1 1 12 0v5l2 2H4l2-2Zm4 4a2 2 0 0 0 4 0",
+  help: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 13h.01M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5",
+  login: "M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l4-4-4-4M14 12H3",
+  copy: "M9 9h11v11H9V9Zm-5 6V4h11",
 };
 
 export function NavIcon({ name }: { name?: string }) {
