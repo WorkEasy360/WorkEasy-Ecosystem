@@ -1,7 +1,18 @@
 import type { Metadata } from "next";
+import { Plus_Jakarta_Sans } from "next/font/google";
 import { PortalsProvider } from "@/lib/portalContext";
 import { readPortalOrigins } from "@/lib/portals";
 import "./globals.css";
+
+/** The website's typeface (workeasy360.com). `next/font` downloads it at build
+ * time and serves it from `/_next/static/media`, so the browser never contacts
+ * Google and the CSP's `font-src 'self'` holds. Exposed as a variable that
+ * globals.css puts first in `--w360-font`. */
+const brandFont = Plus_Jakarta_Sans({
+  subsets: ["latin", "latin-ext"],
+  display: "swap",
+  variable: "--w360-font-brand",
+});
 
 export const metadata: Metadata = {
   title: "Workeasy360",
@@ -42,7 +53,7 @@ export const dynamic = "force-dynamic";
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en">
+    <html lang="en" className={brandFont.variable}>
       <body>
         <a href="#w360-main" className="w360-skip-link">
           Skip to main content

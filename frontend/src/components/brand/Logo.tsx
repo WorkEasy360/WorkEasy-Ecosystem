@@ -19,10 +19,20 @@ const srcOf = (image: StaticImageData | string) => (typeof image === "string" ? 
  *
  * Workeasy360's own surfaces only - Super Admin, the partner portal and the
  * platform sign-in. A white-label customer's console shows that partner's brand.
+ * `onBand` always draws the light wordmark, for the deep-green band (the public
+ * site's footer), which is dark in both themes.
  */
-export function Logo({ size = "md", compact = false }: { size?: "md" | "lg"; compact?: boolean }) {
+export function Logo({
+  size = "md",
+  compact = false,
+  onBand = false,
+}: {
+  size?: "md" | "lg";
+  compact?: boolean;
+  onBand?: boolean;
+}) {
   return (
-    <span className={styles.logo} data-size={size} data-compact={compact || undefined}>
+    <span className={styles.logo} data-size={size} data-compact={compact || undefined} data-on-band={onBand || undefined}>
       {/* eslint-disable-next-line @next/next/no-img-element -- a same-origin static file; next/image is unused elsewhere in this app. */}
       <img className={`${styles.full} ${styles.onLight}`} src={srcOf(onLight)} alt="" data-w360-logo="" width={499} height={80} />
       {/* eslint-disable-next-line @next/next/no-img-element -- as above */}

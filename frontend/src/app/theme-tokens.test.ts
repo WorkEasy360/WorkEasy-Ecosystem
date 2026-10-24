@@ -76,6 +76,15 @@ const PAIRS: [string, string, number][] = [
   ["--w360-indicator", "--w360-brand-soft", 3],
   ["--w360-chart-1-edge", "--w360-surface", 3],
   ["--w360-chart-2", "--w360-surface", 3],
+  // The website's section colours (the public site's bands and footer).
+  ["--w360-band-text", "--w360-band", 4.5], // also the focus ring on the band
+  ["--w360-band-muted", "--w360-band", 4.5],
+  ["--w360-sun-contrast", "--w360-sun", 4.5], // yellow button, step numbers
+  ["--w360-sun-contrast", "--w360-sun-hover", 4.5],
+  ["--w360-sun", "--w360-band", 3], // the yellow button's edge on the band
+  ["--w360-text", "--w360-cream", 4.5],
+  ["--w360-text-muted", "--w360-cream", 4.5],
+  ["--w360-brand", "--w360-cream", 4.5],
 ];
 
 describe("WorkEasy360 colour tokens", () => {
@@ -90,6 +99,15 @@ describe("WorkEasy360 colour tokens", () => {
     expect(resolve(light, "--w360-surface-mint")).toBe("#dbefe6");
     expect(resolve(light, "--w360-border")).toBe("#d8e5de");
     expect(resolve(dark, "--w360-cta")).toBe("#02c065");
+    expect(resolve(light, "--w360-sun")).toBe("#fcc63c");
+    expect(resolve(light, "--w360-cream")).toBe("#fff8e8");
+  });
+
+  it("puts the website's typeface first", () => {
+    expect(block(":root {")["--w360-font"]).toMatch(/^var\(--w360-font-brand, "Plus Jakarta Sans"\)/);
+    const layout = readFileSync(path.resolve(__dirname, "layout.tsx"), "utf8");
+    expect(layout).toMatch(/Plus_Jakarta_Sans\(/);
+    expect(layout).toMatch(/variable: "--w360-font-brand"/);
   });
 
   for (const [themeName, theme] of [
@@ -111,8 +129,10 @@ describe("WorkEasy360 colour tokens", () => {
 
 describe("partner panel colours", () => {
   const src = path.resolve(__dirname, "..");
-  // The six preset dots are partner data (Account.tsx PRESETS), not panel colours.
-  const strip = (text: string) => text.replace(/\.dot[A-Z][a-z]+\s*\{[^}]*\}/g, "");
+  // The six preset dots are partner data (Account.tsx PRESETS), not panel colours;
+  // the public site's six monogram accents tell products apart, likewise.
+  const strip = (text: string) =>
+    text.replace(/\.dot[A-Z][a-z]+\s*\{[^}]*\}/g, "").replace(/\.accent\d\s*\{[^}]*\}/g, "");
 
   it.each([
     "features/partnerpanel/PartnerPanel.module.css",
@@ -120,6 +140,7 @@ describe("partner panel colours", () => {
     "components/brand/Logo.module.css",
     "features/controlplane/ControlPlane.module.css",
     "features/auth/LoginScreen.module.css",
+    "features/site/Site.module.css",
   ])("%s uses the tokens, never a hard-coded colour", (file) => {
     const text = strip(readFileSync(path.join(src, file), "utf8")).replace(/\/\*[\s\S]*?\*\//g, "");
     expect(text.match(/#[0-9a-f]{3,8}\b|rgba?\(/gi) ?? []).toEqual([]);

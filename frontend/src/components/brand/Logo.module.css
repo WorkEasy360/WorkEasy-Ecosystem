@@ -58,3 +58,13 @@
     height: 32px;
   }
 }
+
+/* On the deep-green band (dark in both themes): the light wordmark always.
+   Last, so it wins over the theme rules above. */
+.logo[data-on-band] .full.onLight {
+  display: none;
+}
+
+.logo[data-on-band] .full.onDark {
+  display: block;
+}

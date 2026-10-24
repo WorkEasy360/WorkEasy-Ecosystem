@@ -26,26 +26,13 @@
   gap: var(--w360-space-4);
 }
 
+/* The official logo (components/brand/Logo), as on workeasy360.com. */
 .logo {
   display: inline-flex;
   align-items: center;
-  gap: var(--w360-space-2);
-  font-weight: 800;
-  font-size: 18px;
-  color: var(--w360-text);
+  padding: var(--w360-space-1);
+  border-radius: var(--w360-radius-sm);
   text-decoration: none;
-  white-space: nowrap;
-}
-
-.logoMark {
-  display: inline-grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: var(--w360-brand);
-  color: var(--w360-brand-contrast);
-  font-size: 13px;
 }
 
 .nav {
@@ -170,9 +157,10 @@
   padding: var(--w360-space-7) var(--w360-space-4);
 }
 
+/* The website's section rhythm: a mint hero, then white, cream, and a
+   deep-green band before a deep-green footer. */
 .hero {
-  background: linear-gradient(180deg, var(--w360-surface) 0%, var(--w360-bg) 100%);
-  border-bottom: 1px solid var(--w360-border);
+  background: var(--w360-bg);
 }
 
 .heroInner {
@@ -183,20 +171,39 @@
   gap: var(--w360-space-5);
 }
 
+/* A white pill with green text, as above the website's headline. */
 .eyebrow {
+  justify-self: start;
+  padding: 6px 14px;
+  border: 1px solid var(--w360-border);
+  border-radius: 999px;
+  background: var(--w360-surface);
   color: var(--w360-brand);
   font-weight: 700;
   font-size: 13px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   margin: 0;
 }
 
 .heroTitle {
-  font-size: clamp(30px, 5vw, 48px);
-  line-height: 1.1;
+  font-size: clamp(32px, 5.5vw, 56px);
+  font-weight: 800;
+  line-height: 1.08;
   margin: 0;
   max-width: 18ch;
+}
+
+/* The headline's key word in green - the deeper brand green, which holds
+   4.5:1 on the mint where the website's vivid green does not. */
+.highlight {
+  color: var(--w360-brand);
+}
+
+.surfaceBand {
+  background: var(--w360-surface);
+}
+
+.creamBand {
+  background: var(--w360-cream);
 }
 
 .heroLead {
@@ -275,7 +282,7 @@
   border-radius: 12px;
   font-weight: 800;
   font-size: 16px;
-  color: #ffffff;
+  color: var(--w360-navy-contrast);
 }
 
 .accent0 { background: #0a8043; }
@@ -406,8 +413,9 @@
   height: 28px;
   margin-bottom: var(--w360-space-2);
   border-radius: 50%;
-  background: var(--w360-neutral-bg);
-  font-weight: 700;
+  background: var(--w360-sun);
+  color: var(--w360-sun-contrast);
+  font-weight: 800;
 }
 
 .stepTitle {
@@ -511,34 +519,121 @@
   max-width: 640px;
 }
 
+/* The deep-green band (the website's AI section) and its two buttons: sunshine
+   yellow with navy text, and an outlined one in the band's own text colour. */
+.band {
+  background: var(--w360-band);
+  color: var(--w360-band-text);
+}
+
+.bandInner {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: var(--w360-space-7) var(--w360-space-4);
+  display: grid;
+  gap: var(--w360-space-4);
+  justify-items: start;
+}
+
+.bandTitle {
+  color: var(--w360-band-text);
+  font-size: clamp(26px, 4vw, 38px);
+  font-weight: 800;
+  line-height: 1.15;
+  margin: 0;
+}
+
+.bandLead {
+  color: var(--w360-band-muted);
+  font-size: 17px;
+  margin: 0;
+  max-width: 60ch;
+}
+
+.band :focus-visible,
+.footer :focus-visible {
+  outline-color: var(--w360-band-text);
+}
+
+.sunButton {
+  background: var(--w360-sun);
+  border-color: var(--w360-sun);
+  color: var(--w360-sun-contrast);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.sunButton:hover {
+  background: var(--w360-sun-hover);
+  border-color: var(--w360-sun-hover);
+}
+
+.bandButton {
+  background: transparent;
+  border-color: var(--w360-band-text);
+  color: var(--w360-band-text);
+  text-decoration: none;
+}
+
+.bandButton:hover {
+  background: color-mix(in srgb, var(--w360-band-text) 12%, transparent);
+}
+
 .footer {
-  border-top: 1px solid var(--w360-border);
-  background: var(--w360-surface);
+  background: var(--w360-band);
+  color: var(--w360-band-muted);
+  font-size: 14px;
 }
 
 .footerInner {
   max-width: 1160px;
   margin: 0 auto;
-  padding: var(--w360-space-5) var(--w360-space-4);
+  padding: var(--w360-space-7) var(--w360-space-4) var(--w360-space-5);
   display: flex;
   flex-wrap: wrap;
-  gap: var(--w360-space-4);
+  gap: var(--w360-space-5);
   justify-content: space-between;
-  color: var(--w360-text-muted);
-  font-size: 14px;
+  align-items: flex-start;
+}
+
+.footerBrand {
+  display: grid;
+  gap: var(--w360-space-3);
+  max-width: 320px;
+}
+
+.footerTagline {
+  margin: 0;
+  color: var(--w360-band-text);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
 }
 
 .footerLinks {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--w360-space-4);
+  gap: var(--w360-space-3) var(--w360-space-5);
   list-style: none;
   padding: 0;
   margin: 0;
 }
 
 .footerLinks a {
-  color: inherit;
+  color: var(--w360-band-text);
+  text-decoration: none;
+}
+
+.footerLinks a:hover {
+  text-decoration: underline;
+}
+
+.footerLegal {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: var(--w360-space-4);
+  border-top: 1px solid color-mix(in srgb, var(--w360-band-text) 20%, transparent);
+  font-size: 13px;
 }
 
 .authPage {
