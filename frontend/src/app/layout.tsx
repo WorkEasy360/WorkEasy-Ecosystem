@@ -53,7 +53,10 @@ export const dynamic = "force-dynamic";
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={brandFont.variable}>
+    // Always the light theme, as on workeasy360.com (owner, 2026-10-25): the
+    // dark palette in globals.css applies only to an explicit data-theme="dark",
+    // never to the device's dark-mode setting.
+    <html lang="en" className={brandFont.variable} data-theme="light">
       <body>
         <a href="#w360-main" className="w360-skip-link">
           Skip to main content
