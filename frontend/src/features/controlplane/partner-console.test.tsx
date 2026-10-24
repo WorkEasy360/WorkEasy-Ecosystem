@@ -308,8 +308,10 @@ describe("All Partners", () => {
     const badges = within(combo).getByRole("list", { name: /Partner type/ });
     expect(within(badges).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Reseller", "White-label", "Affiliate"]);
     expect(within(combo).getByRole("link", { name: "Complete setup of Combo Co" })).toHaveAttribute("href", "/admin/partners/p2/profile");
-    // A draft is activated from its page once complete, never from the switch.
-    expect(within(combo).getByRole("switch", { name: "Combo Co active" })).toBeDisabled();
+    // A draft nobody can act for is not offered activation (the server refuses it).
+    const comboSwitch = within(combo).getByRole("switch", { name: "Combo Co active" });
+    expect(comboSwitch).toBeDisabled();
+    expect(comboSwitch).toHaveAttribute("title", "Add an administrator before activating this partner.");
     expect(combo).toHaveTextContent("Setup required");
     expect(combo).toHaveTextContent("No administrator");
     await expectNoViolations(container);
@@ -426,7 +428,30 @@ describe("All Partners", () => {
     expect(await screen.findByText("Paused Co reactivated.")).toBeInTheDocument();
   });
 
-  it("offers no lifecycle action to staff who may only view, and none on a draft", async () => {
+  it("activates a draft with an administrator from its switch, with a recorded reason", async () => {
+    const calls = mockApi(
+      listRoutes([row({ id: "p5", display_name: "Draft Co", status: "draft", version: 2 })], {
+        "POST /api/v1/admin/partners/p5/status": [ok({ id: "p5" })],
+      }),
+    );
+    renderList();
+    const table = await screen.findByRole("table", { name: "Partners" });
+    const toggle = within(table).getByRole("switch", { name: "Draft Co active" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(toggle).toBeEnabled();
+    fireEvent.click(toggle);
+    fireEvent.change(within(table).getByLabelText(/Reason to activate Draft Co/), { target: { value: "Agreement signed today" } });
+    fireEvent.click(within(table).getByRole("button", { name: "Activate" }));
+    await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p5/status")).toBe(true));
+    expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p5/status")!.body).toEqual({
+      status: "active",
+      reason: "Agreement signed today",
+      expected_version: 2,
+    });
+    expect(await screen.findByText("Draft Co activated.")).toBeInTheDocument();
+  });
+
+  it("offers no lifecycle action to staff who may only view", async () => {
     mockApi(listRoutes([row(), row({ id: "p4", display_name: "Draft Co", status: "draft" })]));
     renderList([VIEW]);
     const table = await screen.findByRole("table", { name: "Partners" });

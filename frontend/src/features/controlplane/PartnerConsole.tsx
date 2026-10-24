@@ -313,7 +313,7 @@ export function AllPartnersList() {
           <p>
             <strong>Partner created successfully.</strong> Its profile is incomplete: use{" "}
             <Link href={`/admin/partners/${created}/profile`}>Complete setup</Link> (the gear in its row) to finish it,
-            then activate it from its page.
+            then activate it with the switch in its row.
           </p>
         </div>
       )}
@@ -353,7 +353,11 @@ export function AllPartnersList() {
                 onStatus={(target, reason) =>
                   act(
                     () => adminApi.setPartnerStatus(r.id, target, reason, r.version),
-                    target === "suspended" ? `${r.display_name} suspended.` : `${r.display_name} reactivated.`,
+                    target === "suspended"
+                      ? `${r.display_name} suspended.`
+                      : r.status === "draft"
+                        ? `${r.display_name} activated.`
+                        : `${r.display_name} reactivated.`,
                   )
                 }
                 onGuest={(reason) =>
@@ -441,19 +445,25 @@ function PartnerRow({
   const panelPath = `/partner/${r.id}`;
   const panelUrl = portals ? portalHref(portals, "partner", panelPath) : `${window.location.origin}${panelPath}`;
   const on = r.status === "active";
-  const canToggle = manage && (r.status === "active" || r.status === "suspended");
+  const draft = r.status === "draft";
+  // The server refuses to activate a partner nobody can act for, so a draft
+  // without an administrator is not offered the switch.
+  const canToggle = manage && (r.status === "active" || r.status === "suspended" || (draft && r.administrator !== null));
   const toggleNote =
-    r.status === "draft"
-      ? "A draft is activated from its page once the profile is complete."
-      : r.status === "terminated"
-        ? "A terminated partner cannot be reactivated."
-        : !manage
-          ? "You may not change a partner's status."
+    r.status === "terminated"
+      ? "A terminated partner cannot be reactivated."
+      : !manage
+        ? "You may not change a partner's status."
+        : draft && r.administrator === null
+          ? "Add an administrator before activating this partner."
           : on
             ? "Suspend this partner"
-            : "Reactivate this partner";
+            : draft
+              ? "Activate this partner"
+              : "Reactivate this partner";
   const complete = r.profile_completion.complete;
   const target = on ? "suspended" : "active";
+  const verb = on ? "Suspend" : draft ? "Activate" : "Reactivate";
   const minLength = prompt === "guest" ? 3 : 10;
 
   function open(next: Prompt) {
@@ -548,7 +558,7 @@ function PartnerRow({
               <label className="w360-label" htmlFor={reasonId}>
                 {prompt === "guest"
                   ? `Why are you opening the portal of ${r.display_name}? (recorded, and shown in the partner's activity)`
-                  : `Reason to ${on ? "suspend" : "reactivate"} ${r.display_name} (recorded in the audit log)`}
+                  : `Reason to ${verb.toLowerCase()} ${r.display_name} (recorded in the audit log)`}
               </label>
               <input
                 id={reasonId}
@@ -571,7 +581,7 @@ function PartnerRow({
                   className={`w360-btn ${prompt === "status" && on ? "w360-btn-danger" : "w360-btn-primary"}`}
                   disabled={busy || reason.trim().length < minLength}
                 >
-                  {prompt === "guest" ? "Open guest view" : on ? "Suspend" : "Reactivate"}
+                  {prompt === "guest" ? "Open guest view" : verb}
                 </button>
                 <button type="button" className="w360-btn w360-btn-secondary" onClick={() => open(null)}>
                   Cancel
