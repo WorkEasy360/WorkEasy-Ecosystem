@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { issueHandoff, logout } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
 import { MODE_TO_PORTAL, isState, portalHref, safeNext, type Destination, type PortalOrigins } from "@/lib/portals";
-import { StepUpForm } from "@/features/security/StepUpForm";
 import type { SignInMode } from "./signInMode";
 import styles from "./LoginScreen.module.css";
 
@@ -16,7 +15,6 @@ const PORTAL_NAME: Record<Destination, string> = {
 
 type Step =
   | { kind: "working" }
-  | { kind: "verify" }
   | { kind: "denied" }
   | { kind: "failed" };
 
@@ -27,10 +25,9 @@ type Step =
  * The choice (`mode`) only says where to go. The server answers from the
  * account itself - live StaffGrants for the Admin portal, an active partner
  * membership for the Partner portal - and the portal checks again on every
- * request. Its three answers are shown as they are: go (a one-time code in the
- * URL fragment of that portal's `/auth/continue`), verify a factor first (an
- * administrator whose authenticator is enrolled), or no access (nothing about
- * the portal is shown).
+ * request. Its answers are shown as they are: go (a one-time code in the URL
+ * fragment of that portal's `/auth/continue`), or no access (nothing about the
+ * portal is shown).
  *
  * Without the portal's binding value (`state`) - someone opened this page
  * directly - the browser first visits that portal's own sign-in address,
@@ -60,8 +57,7 @@ export function PortalHandoff({
       ({ redirect_url }) => window.location.assign(redirect_url),
       (err: unknown) => {
         const code = err instanceof ApiError ? err.code : "";
-        if (code === "mfa_required") setStep({ kind: "verify" });
-        else if (code === "portal_access_denied") setStep({ kind: "denied" });
+        if (code === "portal_access_denied") setStep({ kind: "denied" });
         else setStep({ kind: "failed" });
       },
     );
@@ -71,30 +67,11 @@ export function PortalHandoff({
     go();
   }, [go]);
 
-  const retry = () => {
-    setStep({ kind: "working" });
-    go();
-  };
   // A full load after signing out, so nothing of the signed-in page survives.
   // eslint-disable-next-line @next/next/no-location-assign-relative-destination
   const signOut = () => logout().finally(() => window.location.assign(`${origins.auth}/login`));
   const asUser = () => window.location.assign(portalHref(origins, "app", "/login"));
 
-  if (step.kind === "verify") {
-    return (
-      <section aria-labelledby="w360-verify-title">
-        <h2 id="w360-verify-title" className={styles.cardTitle}>
-          Verify it&apos;s you
-        </h2>
-        <p className={styles.note}>The Admin portal opens only after a code from your authenticator in this sign-in.</p>
-        <StepUpForm
-          prompt="Enter a code from your authenticator app, or a recovery code."
-          onVerified={retry}
-          onCancel={() => setStep({ kind: "denied" })}
-        />
-      </section>
-    );
-  }
   if (step.kind === "denied") {
     return (
       <div className={styles.denied}>
