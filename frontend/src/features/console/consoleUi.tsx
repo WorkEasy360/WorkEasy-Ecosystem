@@ -6,7 +6,7 @@ import local from "./ConsoleScreens.module.css";
 
 /**
  * Small pieces the organization console's screens share (Phase 8 extension).
- * The heavier kit - loading, actions with step-up, tables, money - is
+ * The heavier kit - loading, actions, tables, money - is
  * `features/controlplane/ui.tsx`; this adds page vocabulary only.
  */
 

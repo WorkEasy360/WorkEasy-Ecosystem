@@ -16,7 +16,6 @@ The journeys themselves create the other partners through the wizards.
 Scratch databases only - see README.md.
 """
 
-import base64
 import os
 import uuid
 
@@ -43,7 +42,7 @@ from workeasy360.contracts.enums import (
 )
 from workeasy360.contracts.values.money import CurrencyCode
 from workeasy360.platform.authz.control_plane import acting_scope, platform_context
-from workeasy360.platform.identity import lifecycle, mfa
+from workeasy360.platform.identity import lifecycle
 from workeasy360.platform.identity import services as identity
 from workeasy360.platform.identity.models import User
 from workeasy360.platform.tenancy.unscoped import unscoped_access
@@ -58,12 +57,9 @@ sctx = platform_context(user_id=admin.id, aal=2)
 
 
 def enroll_totp(user):
-    start = identity.begin_totp_enrollment(user.id)
-    secret = start.secret_base32 + "=" * (-len(start.secret_base32) % 8)
-    identity.confirm_totp_enrollment(
-        user.id, start.factor_id, mfa.current_totp(base64.b32decode(secret))
-    )
-    return start.secret_base32
+    """No second factor exists any more (ADR-050): nothing to enrol. The harnesses
+    still read a ``STAFF_TOTP`` line, so this returns an empty one."""
+    return ""
 
 
 def person(email, name):

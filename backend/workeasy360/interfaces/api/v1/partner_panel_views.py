@@ -31,6 +31,7 @@ from workeasy360.commercial.partners import (
     profile,
     services,
     translations,
+    upgrades,
 )
 from workeasy360.contracts.errors import PartnerRecordNotFound, PartnerValidationError
 from workeasy360.contracts.values.tenant import TenantContext
@@ -487,3 +488,70 @@ def notifications_read_view(request: HttpRequest, ctx: TenantContext) -> JsonRes
 @partner_view(["GET"])
 def support_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     return JsonResponse(partner_help.support(ctx))
+
+
+# --- growing the partnership: upgrade requests (ADR-049) -----------------------------------------
+
+
+def _upgrade_limited(request: HttpRequest) -> JsonResponse | None:
+    return limited(request, "partner_upgrade", user=request.user)
+
+
+@partner_view(["GET"])
+def upgrade_state_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """Where this partner stands and what it may ask for. Read-only."""
+    return JsonResponse(upgrades.state(ctx))
+
+
+@partner_view(["POST"])
+def upgrade_start_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """Open an upgrade request on this partner's own account. It grants nothing."""
+    blocked = _upgrade_limited(request)
+    if blocked is not None:
+        return blocked
+    return JsonResponse(
+        upgrades.start(ctx, to=_body(request).get("experience")), status=201
+    )
+
+
+@partner_view(["PUT"])
+def upgrade_section_view(
+    request: HttpRequest, ctx: TenantContext, request_id: UUID, section: str
+) -> JsonResponse:
+    blocked = _upgrade_limited(request)
+    if blocked is not None:
+        return blocked
+    body = _body(request)
+    return JsonResponse(
+        upgrades.save_section(
+            ctx,
+            request_id,
+            section=section,
+            data=body.get("data"),
+            expected_version=body.get("expected_version"),
+        )
+    )
+
+
+@partner_view(["POST"])
+def upgrade_submit_view(
+    request: HttpRequest, ctx: TenantContext, request_id: UUID
+) -> JsonResponse:
+    blocked = _upgrade_limited(request)
+    if blocked is not None:
+        return blocked
+    return JsonResponse(
+        upgrades.submit(
+            ctx, request_id, expected_version=_body(request).get("expected_version")
+        )
+    )
+
+
+@partner_view(["POST"])
+def upgrade_cancel_view(
+    request: HttpRequest, ctx: TenantContext, request_id: UUID
+) -> JsonResponse:
+    blocked = _upgrade_limited(request)
+    if blocked is not None:
+        return blocked
+    return JsonResponse(upgrades.cancel(ctx, request_id))

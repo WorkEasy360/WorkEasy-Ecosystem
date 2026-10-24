@@ -63,8 +63,7 @@ export interface BrandDraft {
 }
 export type DraftKey = keyof BrandDraft;
 
-/** The fields one step edits. A step saves its own group, so a second-factor
- * prompt lands on the step that needs it. */
+/** The fields one step edits. A step saves its own group. */
 export type Group = "identity" | "portal" | "communication" | "login";
 export const ALL_GROUPS: Group[] = ["identity", "portal", "communication", "login"];
 

@@ -51,8 +51,7 @@ def test_create_organization_bootstraps_owner_with_full_permissions(
     ctx = TenantContext(
         organization_id=result.organization_id,
         membership_id=result.membership_id,
-        user_id=user.id,
-        aal=2,  # dangerous permissions need it; irrelevant ones ignore it
+        user_id=user.id,  # dangerous permissions need it; irrelevant ones ignore it
     )
     with in_tenant(ctx):
         # A representative sample, not every permission: ordinary
@@ -270,7 +269,7 @@ def test_remove_member_deletes_the_projection_row(
     ).exists()
 
     grant_permissions(org, owner_membership, ["platform.member.remove"])
-    ctx = tenant_ctx_factory(org, owner_membership, owner_user, aal=2)
+    ctx = tenant_ctx_factory(org, owner_membership, owner_user)
 
     with in_tenant(ctx):
         remove_member(ctx, member.id)
@@ -290,7 +289,7 @@ def test_remove_member_refuses_to_remove_the_owner(
 ):
     org, membership, user = organization_factory()
     grant_permissions(org, membership, ["platform.member.remove"])
-    ctx = tenant_ctx_factory(org, membership, user, aal=2)
+    ctx = tenant_ctx_factory(org, membership, user)
 
     with in_tenant(ctx), pytest.raises(OrganizationValidationError):
         remove_member(ctx, membership.id)
@@ -302,7 +301,7 @@ def test_remove_member_requires_the_permission(
     from workeasy360.contracts.errors import PermissionDenied
 
     org, membership, user = organization_factory()
-    ctx = tenant_ctx_factory(org, membership, user, aal=2)
+    ctx = tenant_ctx_factory(org, membership, user)
 
     with in_tenant(ctx), pytest.raises(PermissionDenied):
         remove_member(ctx, membership.id)

@@ -14,7 +14,6 @@ import {
   setSubscriptions,
 } from "@/lib/api/integrations";
 import type { CatalogEvent, Connection, ConnectionStatus } from "@/lib/api/types";
-import { useStepUp } from "@/features/security/useStepUp";
 import { SecretReveal } from "./SecretReveal";
 import styles from "./Integrations.module.css";
 
@@ -49,7 +48,6 @@ export function ConnectionsSettings({ orgSlug }: { orgSlug: string }) {
   const [revealed, setRevealed] = useState<{ label: string; secret: string } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { run, stepUp } = useStepUp();
 
   function refresh() {
     Promise.all([listConnections(orgSlug), getEventCatalog(orgSlug)])
@@ -67,11 +65,9 @@ export function ConnectionsSettings({ orgSlug }: { orgSlug: string }) {
     setError(null);
     setMessage(null);
     try {
-      await run(async () => {
-        await action();
-        setMessage(success);
-        refresh();
-      });
+      await action();
+      setMessage(success);
+      refresh();
     } catch (err) {
       setError(describeError(err));
     }
@@ -85,7 +81,6 @@ export function ConnectionsSettings({ orgSlug }: { orgSlug: string }) {
 
   return (
     <div className={styles.stack}>
-      {stepUp}
       {revealed && (
         <SecretReveal
           label={revealed.label}

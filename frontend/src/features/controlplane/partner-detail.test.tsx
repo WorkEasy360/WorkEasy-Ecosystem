@@ -53,8 +53,8 @@ const DETAIL = {
   status_reason: "",
   capabilities: [{ capability: "customer.provision", granted_at: "2026-01-02T00:00:00Z", expires_at: null, is_effective: true }],
   members: [
-    { id: "m1", user_id: "u1", email: "boss@acme.example", role: "admin", added_at: "2026-01-02T00:00:00Z", password_set: false, full_name: "", last_login_at: null, invitation_sent_at: "2026-01-02T00:00:00Z", invitation_deferred: false, mfa_enabled: false },
-    { id: "m2", user_id: "u2", email: "ops@acme.example", role: "viewer", added_at: "2026-01-03T00:00:00Z", password_set: true, full_name: "Olu Ops", last_login_at: "2026-02-01T09:00:00Z", invitation_sent_at: "2026-01-03T00:00:00Z", invitation_deferred: false, mfa_enabled: true },
+    { id: "m1", user_id: "u1", email: "boss@acme.example", role: "admin", added_at: "2026-01-02T00:00:00Z", password_set: false, full_name: "", last_login_at: null, invitation_sent_at: "2026-01-02T00:00:00Z", invitation_deferred: false },
+    { id: "m2", user_id: "u2", email: "ops@acme.example", role: "viewer", added_at: "2026-01-03T00:00:00Z", password_set: true, full_name: "Olu Ops", last_login_at: "2026-02-01T09:00:00Z", invitation_sent_at: "2026-01-03T00:00:00Z", invitation_deferred: false },
   ],
   product_grants: [{ id: "g1", product_code: "crm", plan_code: null, trial_allowed: true, portal_visible: true }],
   live_customers: 2,
@@ -192,6 +192,7 @@ function routes(extra: Record<string, Reply[]> = {}): Record<string, Reply[]> {
     [`GET /api/v1/admin/partners/${ID}/commission`]: [ok(COMMISSION)],
     "GET /api/v1/admin/commission/accruals": [ok(EMPTY_PAGE)],
     "GET /api/v1/admin/partners/products": [ok({ results: [{ code: "crm", name: "CRM", status: "available", plans: [] }, { code: "books", name: "Books", status: "available", plans: [] }] })],
+    [`GET /api/v1/admin/partners/${ID}/upgrades`]: [ok({ current: "reseller", eligible: ["white_label"], status: "none", requested: null, open: null, checklist: [], history: [], products: [] })],
     "GET /api/v1/admin/partners/capabilities": [ok({ results: [{ key: "customer.provision", label: "Create customer organizations", short_label: "Create customers", group: "customer_management" }], groups: [], presets: [] })],
     ...extra,
   };
@@ -970,5 +971,80 @@ describe("Referrals", () => {
     // No column could hold who was referred.
     expect(within(referrals).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Code", "Status", "Captured", "Converted"]);
     await expectNoViolations(container);
+  });
+});
+
+// --- the upgrade request (ADR-049) ----------------------------------------------------------------------
+
+describe("an open upgrade request", () => {
+  const UPGRADES = {
+    current: "affiliate",
+    eligible: [],
+    status: "pending_approval",
+    requested: "reseller",
+    open: {
+      id: "r1",
+      partner_id: ID,
+      from_experience: "affiliate",
+      to_experience: "reseller",
+      status: "pending_approval",
+      proposal: { products: ["crm"], pricing: { preference: "standard", notes: "" } },
+      requested_at: "2026-10-01T10:00:00Z",
+      submitted_at: "2026-10-02T10:00:00Z",
+      decided_at: null,
+      info_request_note: "",
+      decision_note: "",
+      capabilities_added: [],
+      capabilities_removed: [],
+      products_granted: [],
+      version: 2,
+      editable: false,
+      requested_by: "boss@acme.example",
+      decided_by: null,
+      commercial_reference: "",
+      correlation_id: null,
+    },
+    checklist: [{ key: "business", label: "Business details", required: true, done: true, detail: "" }],
+    history: [],
+    products: [{ code: "crm", name: "CRM" }],
+  };
+  const withUpgrade = () => routes({ [`GET /api/v1/admin/partners/${ID}/upgrades`]: [ok(UPGRADES)] });
+
+  it("is flagged above the tabs and decided on Users & Permissions, beside the experience", async () => {
+    mockApi(withUpgrade());
+    const { container } = mount();
+    const notice = await screen.findByRole("region", { name: "Upgrade request" });
+    expect(notice).toHaveTextContent("Upgrade to Reseller requested");
+    fireEvent.click(within(notice).getByRole("button", { name: "Review the upgrade request" }));
+    expect(screen.getByRole("tab", { name: "Users & Permissions" })).toHaveAttribute("aria-selected", "true");
+    const panel = await screen.findByRole("heading", { level: 2, name: "Upgrade" });
+    expect(panel.closest("section")).toHaveTextContent("pending approval");
+    expect(screen.getByRole("button", { name: "Approve upgrade" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Experience" })).toBeInTheDocument();
+    await expectNoViolations(container);
+  });
+
+  it("leads to the partner's own tabs that the decision depends on", async () => {
+    mockApi(withUpgrade());
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Review the upgrade request" }));
+    const form = (await screen.findByRole("heading", { name: "Decision" })).closest("form")!;
+    fireEvent.click(within(form).getByRole("button", { name: "Products" }));
+    expect(screen.getByRole("tab", { name: "Products" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("offers staff who may only view no decision", async () => {
+    mockApi(withUpgrade());
+    mount(VIEW_ONLY);
+    fireEvent.click(await screen.findByRole("button", { name: "Review the upgrade request" }));
+    expect(await screen.findByText("You can read this request but not decide it.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve upgrade" })).not.toBeInTheDocument();
+  });
+
+  it("changes nothing on the page when there is no request", async () => {
+    mockApi(routes());
+    mount();
+    await screen.findByRole("heading", { level: 1, name: "Acme Partners" });
+    expect(screen.queryByRole("region", { name: "Upgrade request" })).not.toBeInTheDocument();
   });
 });

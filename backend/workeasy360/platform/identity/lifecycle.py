@@ -150,36 +150,15 @@ def reset_credentials(user: Any, password: str, *, at: datetime | None = None) -
 
 
 def clear_lockouts(user: Any) -> None:
-    """Both lockouts - password and second factor - lifted."""
+    """The password lockout, lifted."""
     user.failed_login_count = 0
     user.locked_until = None
-    user.mfa_failed_attempts = 0
-    user.mfa_locked_until = None
-    user.save(
-        update_fields=[
-            *_LOCKOUT_FIELDS,
-            "mfa_failed_attempts",
-            "mfa_locked_until",
-            "updated_at",
-        ]
-    )
+    user.save(update_fields=[*_LOCKOUT_FIELDS, "updated_at"])
 
 
 def set_status(user: Any, status: UserStatus) -> None:
     user.status = status.value
     user.save(update_fields=["status", "updated_at"])
-
-
-def reset_second_factors(user: Any) -> int:
-    """Break glass (Phase 12, D-037 residual): remove every factor of the
-    account - authenticator and recovery codes - and sign every session out.
-    Returns the number of factor records removed. Callers decide what else a
-    reset means (the staff command also removes the designation)."""
-    from workeasy360.platform.identity.models import AuthFactor
-
-    removed, _ = AuthFactor.objects.filter(user_id=user.id).delete()
-    user.revoke_sessions()
-    return removed
 
 
 def set_staff(user: Any, enabled: bool) -> None:

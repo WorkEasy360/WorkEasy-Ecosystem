@@ -13,7 +13,6 @@
 Scratch databases only - see README.md.
 """
 
-import base64
 import os
 import uuid
 
@@ -43,7 +42,6 @@ from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.administration import site
 from workeasy360.platform.authz import services as authz
 from workeasy360.platform.authz.control_plane import acting_scope, platform_context
-from workeasy360.platform.identity import mfa
 from workeasy360.platform.identity import services as identity
 from workeasy360.platform.identity.models import User
 from workeasy360.platform.onboarding.services import create_organization
@@ -241,12 +239,7 @@ with acting_scope(cctx):
         with_trial=True,
     )
 
-# The owner has an authenticator, so the browser check can step up for the
-# dangerous member actions (sign a member out, change the security policy).
-start = identity.begin_totp_enrollment(owner.id)
-secret = start.secret_base32 + "=" * (-len(start.secret_base32) % 8)
-identity.confirm_totp_enrollment(owner.id, start.factor_id, mfa.current_totp(base64.b32decode(secret)))
 
 print("SEEDED", org.slug, corg.slug)
 print("PLAN_BUSINESS", versions["desk_business"].id)
-print("OWNER_TOTP", start.secret_base32)
+print("OWNER_TOTP", "")

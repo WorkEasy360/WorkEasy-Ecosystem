@@ -61,6 +61,10 @@ const dashboard = (label = "Dashboard"): WorkspaceEntry => ({
   label,
   icon: "dashboard",
   path: "dashboard",
+  // The upgrade pages hang off the dashboard's "Grow Your Partnership" section
+  // (ADR-049). They are not a menu entry; whether an upgrade is offered, or may be
+  // asked for, is the server's answer on the page and again on every request.
+  also: ["upgrade", "upgrade/reseller", "upgrade/white-label"],
   needs: (can) => can("dashboard.view"),
 });
 

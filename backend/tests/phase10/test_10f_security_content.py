@@ -41,10 +41,10 @@ def send(client, method, url, body=None, **extra):
 
 @pytest.fixture
 def login(http_login):
-    def make(fx, *, aal2=True):
+    def make(fx):
         fx["user"].set_password(PASSWORD)
         fx["user"].save(update_fields=["password"])
-        return http_login(fx["user"], aal2=aal2)
+        return http_login(fx["user"])
 
     return make
 

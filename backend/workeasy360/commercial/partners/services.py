@@ -2,7 +2,7 @@
 
 Every function is a use case: it authorizes through ``authz.require`` (which,
 for a ``STAFF`` context, resolves from explicit ``platform.staff_*`` grants and
-demands AAL 2 for each ``dangerous`` key), validates **before its first
+refuses each ``dangerous`` key under impersonation), validates **before its first
 write** (D-016), owns its transaction, audits in the one audit log and
 publishes to the outbox in that same transaction.
 
@@ -595,7 +595,7 @@ def enable_white_label(ctx: TenantContext, partner_id: UUID, *, reason: Any) -> 
 
     White-label is a *label the pair earns*, not a kind of account, so this is
     only two ordinary capability grants made together: the same command, the
-    same second factor and the same audit entry each as granting them one at a
+    same audit entry each as granting them one at a
     time - and nothing a partner could not be given by hand. Idempotent.
     """
     authz.require(ctx, MANAGE)
@@ -636,7 +636,7 @@ def _authorize_members(
     One command, two callers, no second implementation (the pattern
     ``access.subject_partner`` uses for brand and domains):
 
-    - **staff** need ``platform.staff_partner.manage`` (dangerous: AAL 2);
+    - **staff** need ``platform.staff_partner.manage`` (dangerous);
     - a **partner user** acts for their own partner only - an explicit
       ``partner_id`` that is not theirs is the same 404 as any other partner's
       record - needs ``platform.partner_member.manage`` (also dangerous: a

@@ -665,7 +665,7 @@ def test_staff_without_the_integration_grant_see_no_integration_section(
 def test_the_console_is_staff_only(live, staff_login, login):
     outsider, _ = staff_login("platform.staff_customer.view")
     assert outsider.get(CONSOLE).status_code == 403
-    assert login(live["owner"], aal2=True).get(CONSOLE).status_code in (401, 403, 404)
+    assert login(live["owner"]).get(CONSOLE).status_code in (401, 403, 404)
     from django.test import Client
 
     assert Client().get(CONSOLE).status_code in (401, 403)
@@ -722,14 +722,6 @@ def test_editing_needs_the_integration_manage_grant(live, staff_login):
         _edit(client, "crm", {"launch_url": "https://new.example.com/"}).status_code
         == 403
     )
-
-
-def test_editing_needs_a_recent_second_factor(live, staff_login):
-    client, _ = staff_login(
-        *CATALOG_STAFF, "platform.staff_integration.manage", aal2=False
-    )
-    response = _edit(client, "crm", {"launch_url": "https://new.example.com/"})
-    assert response.status_code in (401, 403)
 
 
 def test_the_technical_switch_is_separate_from_the_commercial_status(live, staff_login):

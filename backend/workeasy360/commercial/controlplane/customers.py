@@ -229,7 +229,7 @@ def suspend_organization(
 ) -> dict[str, Any]:
     """Make a customer read-only. Nothing is deleted or hidden.
 
-    Dangerous (AAL 2). The organization is locked while it changes state;
+    Dangerous. The organization is locked while it changes state;
     commercial writes, partner writes and new launches stop through the
     existing R-10 write block, which reads this same status.
     """

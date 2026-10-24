@@ -72,7 +72,7 @@ function asStaff(permissions: string[], ui: React.ReactNode) {
 }
 
 const SIGNED_IN: Reply = { status: 200, body: { authenticated: true, user_id: "u1", email: "s@example.com" } };
-const STEP_UP: Reply = { status: 401, body: { code: "step_up_required", detail: "Verify again." } };
+const FAILED: Reply = { status: 500, body: { code: "unavailable", detail: "Try again shortly." } };
 const T = "2026-09-01T10:00:00Z";
 const ORG = "22222222-2222-2222-2222-222222222222";
 const EVIL = `<img src=x onerror="window.__pwned=1"><script>window.__pwned=2</script>`;
@@ -97,7 +97,6 @@ describe("the Super Admin navigation", () => {
           status: 200,
           body: {
             is_staff: true,
-            aal: 1,
             permissions: [
               "platform.staff_user.view",
               "platform.staff_customer.view",
@@ -133,7 +132,7 @@ describe("the Super Admin navigation", () => {
     mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/admin/session": [
-        { status: 200, body: { is_staff: true, aal: 1, permissions: ["platform.staff_customer.view"] } },
+        { status: 200, body: { is_staff: true, permissions: ["platform.staff_customer.view"] } },
       ],
     });
     render(
@@ -487,14 +486,13 @@ describe("the plan builder", () => {
     });
   });
 
-  it("resumes after a step-up without creating the plan twice", async () => {
+  it("resumes after a failed step without creating the plan twice", async () => {
     const calls = mockApi(
       catalogRoutes({
         "POST /api/v1/admin/catalog/plan-versions": [
-          STEP_UP,
+          FAILED,
           { status: 201, body: { id: "new-version", version: 1, published: true } },
         ],
-        "POST /api/v1/auth/mfa/step-up": [{ status: 200, body: { aal: 2 } }],
       }),
     );
     asStaff(CATALOG_MANAGER, <PlansScreen />);
@@ -502,17 +500,16 @@ describe("the plan builder", () => {
     await fillPackage();
     fireEvent.click(screen.getByRole("button", { name: "Create product package" }));
 
-    const code = await screen.findByLabelText(/needs a recent verification/);
-    expect(screen.getByText("Waiting for your verification")).toBeInTheDocument();
-    fireEvent.change(code, { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    expect((await screen.findAllByText("Try again shortly.")).length).toBeGreaterThan(0);
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    // The plan was made before the failure: saving again resumes, it does not start over.
+    fireEvent.click(screen.getByRole("button", { name: "Resume saving" }));
     await screen.findByText("Product package “Alpha Team” created.");
 
     const keys = writes(calls).map((c) => c.key);
     expect(keys).toEqual([
       "POST /api/v1/admin/catalog/plans",
       "POST /api/v1/admin/catalog/plan-versions",
-      "POST /api/v1/auth/mfa/step-up",
       "POST /api/v1/admin/catalog/plan-versions",
       "POST /api/v1/admin/catalog/prices",
       "POST /api/v1/admin/catalog/plans/new-plan/status",
@@ -931,7 +928,6 @@ function userDetail(id: string, extra: Record<string, unknown> = {}) {
     status: "active",
     is_staff: false,
     locked: false,
-    mfa_enrolled: true,
     organizations: 1,
     email_verified: true,
     acquisition_source: "self_signup",
@@ -1000,7 +996,6 @@ describe("users", () => {
     expect(screen.getByRole("button", { name: "Sign out everywhere" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deactivate" })).not.toBeInTheDocument();
     expect(screen.getByText("Staff member")).toBeInTheDocument();
-    expect(screen.getByText("MFA enrolled")).toBeInTheDocument();
     await expectNoViolations(container);
   });
 

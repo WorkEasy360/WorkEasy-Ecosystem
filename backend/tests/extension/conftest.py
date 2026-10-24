@@ -13,23 +13,10 @@ BROWSER = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, 
 
 @pytest.fixture
 def login(db):
-    """Sign a user in through the real login endpoint. ``aal2`` then records a
-    step-up on the session, exactly as a verified MFA code would."""
+    """Sign a user in through the real login endpoint (password only)."""
     from django.test import Client
 
-    from tests.factories.sessions import lapsed_step_up
-    from workeasy360.platform.tenancy.resolution import record_step_up
-
-    def make(
-        user,
-        *,
-        aal2: bool = False,
-        password: str = PASSWORD,
-        ip: str = "127.0.0.1",
-        mfa_verified: bool | None = None,
-    ):
-        """``mfa_verified`` (default: staff only) marks a session without
-        ``aal2`` as having verified a factor earlier (D-037)."""
+    def make(user, *, password: str = PASSWORD, ip: str = "127.0.0.1"):
         client = Client(HTTP_USER_AGENT=BROWSER, REMOTE_ADDR=ip)
         client.get("/api/v1/auth/session")
         response = client.post(
@@ -38,25 +25,9 @@ def login(db):
             content_type="application/json",
         )
         assert response.status_code == 200, response.content
-        verified = user.is_staff if mfa_verified is None else mfa_verified
-        if aal2 or verified:
-            session = client.session
-            if aal2:
-                record_step_up(session)
-            else:
-                lapsed_step_up(session)
-            session.save()
         return client
 
     return make
-
-
-def step_up(client) -> None:
-    from workeasy360.platform.tenancy.resolution import record_step_up
-
-    session = client.session
-    record_step_up(session)
-    session.save()
 
 
 @pytest.fixture
@@ -136,12 +107,12 @@ def url(slug: str, suffix: str) -> str:
 
 @pytest.fixture
 def staff_login(staff_factory, user_factory, login):
-    """A signed-in staff member holding exactly ``permissions`` (AAL 2 unless told)."""
+    """A signed-in staff member holding exactly ``permissions``."""
     from workeasy360.platform.authz import staff
 
     root = user_factory(is_staff=True)
 
-    def make(*permissions: str, aal2: bool = True):
+    def make(*permissions: str):
         user = user_factory(is_staff=True, password=PASSWORD)
         for permission in permissions:
             staff.create_grant(
@@ -150,13 +121,13 @@ def staff_login(staff_factory, user_factory, login):
                 granted_by_id=root.id,
                 reason="Test fixture grants a control-plane permission",
             )
-        return login(user, aal2=aal2), user
+        return login(user), user
 
     return make
 
 
 def staff_scope(*permissions: str):
-    """A staff context holding ``permissions`` (AAL 2), bound to the platform
+    """A staff context holding ``permissions``, bound to the platform
     organization's scope - for calling control-plane services directly."""
     import uuid as _uuid
     from contextlib import contextmanager
@@ -180,7 +151,7 @@ def staff_scope(*permissions: str):
                 granted_by_id=root.id,
                 reason="Test helper grants a control-plane permission",
             )
-        ctx = platform_context(user_id=actor.id, aal=2)
+        ctx = platform_context(user_id=actor.id)
         with acting_scope(ctx):
             yield ctx
 

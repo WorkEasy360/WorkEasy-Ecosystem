@@ -13,7 +13,6 @@ an unhandled IntegrityError would land there).
 from __future__ import annotations
 
 import threading
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -316,84 +315,3 @@ def test_concurrent_removals_of_one_member_record_one_state_change(user_factory)
             ).count()
             == 1
         )
-
-
-# --- MFA ---------------------------------------------------------------------
-
-
-def _enrolled(user_factory):
-    """A user with a confirmed TOTP factor. Returns (user, raw_secret, codes)."""
-    from workeasy360.platform.identity import mfa
-    from workeasy360.platform.identity.models import AuthFactor
-    from workeasy360.platform.identity.services import (
-        begin_totp_enrollment,
-        confirm_totp_enrollment,
-    )
-
-    user = user_factory()
-    start = begin_totp_enrollment(user.id)
-    secret = mfa.decrypt_totp_secret(
-        AuthFactor.objects.get(id=start.factor_id).secret_ref
-    )
-    codes = confirm_totp_enrollment(user.id, start.factor_id, mfa.current_totp(secret))
-    return user, secret, codes
-
-
-def test_a_recovery_code_is_accepted_exactly_once_under_concurrency(user_factory):
-    from workeasy360.platform.identity.models import AuthFactor
-    from workeasy360.platform.identity.services import verify_step_up_code
-
-    user, _secret, codes = _enrolled(user_factory)
-
-    results, errors = _run(lambda _i: verify_step_up_code(user.id, codes[0]))
-
-    assert errors == []
-    assert results.count(True) == 1
-    assert (
-        AuthFactor.objects.filter(user_id=user.id, kind="recovery_code").count()
-        == len(codes) - 1
-    )
-
-
-def test_a_totp_code_is_accepted_exactly_once_under_concurrency(user_factory):
-    from workeasy360.platform.identity import mfa
-    from workeasy360.platform.identity.services import verify_step_up_code
-
-    user, secret, _codes = _enrolled(user_factory)
-    # The confirming code spent the current step; the next step's code is
-    # inside the window and not yet used.
-    fresh = mfa.current_totp(secret, at=time.time() + mfa.TOTP_STEP_SECONDS)
-
-    results, errors = _run(lambda _i: verify_step_up_code(user.id, fresh))
-
-    assert errors == []
-    assert results.count(True) == 1
-
-
-def test_concurrent_enrollment_confirmations_activate_the_factor_once(user_factory):
-    from workeasy360.contracts.errors import MfaEnrollmentNotFound
-    from workeasy360.platform.identity import mfa
-    from workeasy360.platform.identity.models import AuthFactor
-    from workeasy360.platform.identity.services import (
-        begin_totp_enrollment,
-        confirm_totp_enrollment,
-    )
-
-    user = user_factory()
-    start = begin_totp_enrollment(user.id)
-    secret = mfa.decrypt_totp_secret(
-        AuthFactor.objects.get(id=start.factor_id).secret_ref
-    )
-    code = mfa.current_totp(secret)
-
-    results, errors = _run(
-        lambda _i: confirm_totp_enrollment(user.id, start.factor_id, code)
-    )
-
-    assert len(results) == 1  # exactly one caller ever sees recovery codes
-    assert all(isinstance(e, MfaEnrollmentNotFound) for e in errors)
-    stored = AuthFactor.objects.filter(user_id=user.id, kind="recovery_code")
-    assert stored.count() == mfa.RECOVERY_CODE_COUNT
-    assert {row.secret_ref for row in stored} == {
-        mfa.hash_recovery_code(c) for c in results[0]
-    }

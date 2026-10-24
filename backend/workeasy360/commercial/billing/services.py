@@ -129,7 +129,7 @@ def set_billing_terms(
 ) -> Any:
     """A Super Admin sets how an account is collected and which regional price
     book it buys from - a sales-led customer paying by invoice, a regional
-    agreement (Phase 9). Dangerous (``platform.staff_payment.manage``, AAL 2),
+    agreement (Phase 9). Dangerous (``platform.staff_payment.manage``),
     with a reason, audited in the platform log and the customer's own. Future
     invoices and prices follow; nothing already issued changes."""
     from workeasy360.commercial.billing.models import BillingAccount

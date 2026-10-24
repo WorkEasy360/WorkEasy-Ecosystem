@@ -82,8 +82,7 @@ ORGANIZATION_REQUIRED: Final = "organization_required"
 PRODUCT_NO_SEAT: Final = "product_no_seat"
 #: Phase 8 extension. The member belongs to the organization and it holds the
 #: product, but the organization's own access policy refuses this sign-in -
-#: an address outside its allowed networks, a session that has not verified
-#: the second factor the organization requires, one older than its session
+#: an address outside its allowed networks, one older than its session
 #: limit, or a password below its policy. ``error_description`` names which;
 #: the remedy is in Workeasy360, not in the product.
 ACCESS_POLICY_DENIED: Final = "access_policy_denied"

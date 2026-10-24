@@ -24,123 +24,6 @@ def identity(*args):
     call_command("w360_staff_identity", *args)
 
 
-def _enrol_authenticator(user):
-    """A confirmed TOTP factor on ``user``'s own account; its recovery codes."""
-    from workeasy360.platform.identity import mfa
-    from workeasy360.platform.identity.models import AuthFactor
-    from workeasy360.platform.identity.services import (
-        begin_totp_enrollment,
-        confirm_totp_enrollment,
-    )
-
-    start = begin_totp_enrollment(user.id)
-    secret = mfa.decrypt_totp_secret(
-        AuthFactor.objects.get(id=start.factor_id).secret_ref
-    )
-    return confirm_totp_enrollment(user.id, start.factor_id, mfa.current_totp(secret))
-
-
-def test_an_account_without_a_second_factor_is_never_designated_staff(user_factory):
-    """Phase 12 (D-037): the first factor of an account needs only its password,
-    so a factor must exist - and be the person's - before the account is staff."""
-    person = user_factory(email="no.factor@example.com")
-    with pytest.raises(CommandError, match="no confirmed second factor"):
-        identity(
-            "--email",
-            person.email,
-            "--enable",
-            "--reason",
-            "Joined the support team",
-            "--confirm",
-        )
-    person.refresh_from_db()
-    assert not person.is_staff
-
-
-def test_the_break_glass_reset_removes_factors_sessions_and_the_designation(
-    user_factory, capsys
-):
-    """Phase 12 (D-037 residual): a lost authenticator no longer means raw SQL."""
-    from workeasy360.platform.authz import staff
-    from workeasy360.platform.identity.models import AuthFactor, User
-
-    root = user_factory(is_staff=True)
-    person = user_factory(email="lost.phone@example.com")
-    _enrol_authenticator(person)
-    identity(
-        "--email",
-        person.email,
-        "--enable",
-        "--reason",
-        "Joined the support team",
-        "--confirm",
-    )
-    staff.create_grant(
-        user_id=person.id,
-        permission="platform.staff_customer.view",
-        granted_by_id=root.id,
-        reason="Support desk access for the test",
-    )
-    epoch = User.objects.get(id=person.id).session_epoch
-
-    call_command(
-        "w360_staff_mfa_reset",
-        "--email",
-        person.email,
-        "--reason",
-        "Lost phone and recovery codes",
-    )
-    assert AuthFactor.objects.filter(user_id=person.id).exists()  # report only
-
-    call_command(
-        "w360_staff_mfa_reset",
-        "--email",
-        person.email,
-        "--reason",
-        "Lost phone and recovery codes",
-        "--confirm",
-    )
-    person.refresh_from_db()
-    assert not AuthFactor.objects.filter(user_id=person.id).exists()
-    assert person.session_epoch == epoch + 1
-    assert not person.is_staff and staff.staff_permissions(person.id) == frozenset()
-    assert "w360_staff_identity" in capsys.readouterr().out
-
-    # The way back is the ordinary one, which needs a new factor.
-    with pytest.raises(CommandError, match="no confirmed second factor"):
-        identity(
-            "--email",
-            person.email,
-            "--enable",
-            "--reason",
-            "Back after the reset",
-            "--confirm",
-        )
-    _enrol_authenticator(person)
-    identity(
-        "--email",
-        person.email,
-        "--enable",
-        "--reason",
-        "Back after the reset",
-        "--confirm",
-    )
-    assert "platform.staff_customer.view" in staff.staff_permissions(person.id)
-
-
-def test_the_reset_refuses_an_account_that_is_not_staff(user_factory):
-    person = user_factory(email="customer@example.com")
-    with pytest.raises(CommandError, match="No staff identity"):
-        call_command(
-            "w360_staff_mfa_reset",
-            "--email",
-            person.email,
-            "--reason",
-            "Not a staff member at all",
-            "--confirm",
-        )
-
-
 def test_a_second_person_becomes_a_staff_identity_only_through_the_operator_command(
     user_factory, staff_client
 ):
@@ -158,7 +41,6 @@ def test_a_second_person_becomes_a_staff_identity_only_through_the_operator_comm
             granted_by_id=root.id,
             reason="Not yet a staff identity",
         )
-    _enrol_authenticator(person)  # Phase 12 (D-037): required before designation
     identity("--email", person.email, "--enable", "--reason", "Joined the support team")
     person.refresh_from_db()
     assert not person.is_staff  # report only without --confirm

@@ -10,12 +10,10 @@ secrets and connector credentials are both in the designated field-level
 encryption set).
 
 **Mechanism.** Fernet (AES-128-CBC + HMAC-SHA256, from ``cryptography``,
-already a pinned dependency) - the same primitive ``platform/identity/mfa``
-uses for TOTP secrets, under a **separate key** so rotating one never
-invalidates the other. Wrapped in ``MultiFernet`` so the *master* key can
+already a pinned dependency), under a **separate key** so rotating it never
+invalidates another secret. Wrapped in ``MultiFernet`` so the *master* key can
 be rotated too: new values are sealed under the first configured key, and
-every configured key can open (the P2 the Phase 5 audit recorded against
-MFA - no MultiFernet - is not repeated here).
+every configured key can open.
 
 **Binding.** Fernet has no associated data, so the sealed plaintext carries
 its own context - organization, connection and version - and opening checks

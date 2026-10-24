@@ -321,18 +321,6 @@ def test_a_staff_member_without_the_partner_grant_cannot_create(catalog, staff_c
     nothing_was_created()
 
 
-def test_a_lapsed_second_factor_is_asked_for_a_step_up_and_nothing_is_created(
-    catalog, staff_client
-):
-    client, _u = staff_client(
-        "platform.staff_partner.manage", "platform.staff_partner.view", aal2=False
-    )
-    response = send(client, CREATE, make_body("reseller"))
-    assert response.status_code == 401
-    assert response.json()["code"] == "step_up_required"
-    nothing_was_created()
-
-
 def test_a_partner_user_and_an_anonymous_visitor_cannot_create(
     catalog, partner_client, anonymous
 ):

@@ -35,10 +35,10 @@ const ALL = [
 const VIEW_ONLY = ["platform.staff_partner.view"];
 
 const MEMBERS = [
-  { id: "m1", user_id: "u1", email: "priya@acme.example", role: "admin", added_at: "2026-01-02T00:00:00Z", password_set: true, full_name: "Priya Shah", last_login_at: "2026-02-01T09:00:00Z", invitation_sent_at: "2026-01-02T00:00:00Z", invitation_deferred: false, mfa_enabled: true },
-  { id: "m2", user_id: "u2", email: "ops@acme.example", role: "viewer", added_at: "2026-01-03T00:00:00Z", password_set: false, full_name: "", last_login_at: null, invitation_sent_at: "2026-02-10T10:00:00Z", invitation_deferred: false, mfa_enabled: false },
-  { id: "m3", user_id: "u3", email: "later@acme.example", role: "viewer", added_at: "2026-01-04T00:00:00Z", password_set: false, full_name: "Lena Later", last_login_at: null, invitation_sent_at: null, invitation_deferred: true, mfa_enabled: false },
-  { id: "m4", user_id: "u4", email: "old@acme.example", role: "viewer", added_at: "2025-12-01T00:00:00Z", password_set: false, full_name: "", last_login_at: null, invitation_sent_at: null, invitation_deferred: false, mfa_enabled: false },
+  { id: "m1", user_id: "u1", email: "priya@acme.example", role: "admin", added_at: "2026-01-02T00:00:00Z", password_set: true, full_name: "Priya Shah", last_login_at: "2026-02-01T09:00:00Z", invitation_sent_at: "2026-01-02T00:00:00Z", invitation_deferred: false },
+  { id: "m2", user_id: "u2", email: "ops@acme.example", role: "viewer", added_at: "2026-01-03T00:00:00Z", password_set: false, full_name: "", last_login_at: null, invitation_sent_at: "2026-02-10T10:00:00Z", invitation_deferred: false },
+  { id: "m3", user_id: "u3", email: "later@acme.example", role: "viewer", added_at: "2026-01-04T00:00:00Z", password_set: false, full_name: "Lena Later", last_login_at: null, invitation_sent_at: null, invitation_deferred: true },
+  { id: "m4", user_id: "u4", email: "old@acme.example", role: "viewer", added_at: "2025-12-01T00:00:00Z", password_set: false, full_name: "", last_login_at: null, invitation_sent_at: null, invitation_deferred: false },
 ];
 
 const DETAIL = {
@@ -205,12 +205,12 @@ function routes(extra: Record<string, Reply[]> = {}): Record<string, Reply[]> {
     [`GET ${BASE}/pricing`]: [ok({ currency: "GBP", results: [] })],
     [`GET ${BASE}/commission`]: [ok({ partner_earns: true, rules: [], live_versions: {}, in_force: null })],
     "GET /api/v1/admin/partners/products": [ok(CATALOG)],
+    [`GET ${BASE}/upgrades`]: [ok({ current: "reseller", eligible: ["white_label"], status: "none", requested: null, open: null, checklist: [], history: [], products: [] })],
     "GET /api/v1/admin/partners/capabilities": [ok(CAPABILITIES)],
     ...extra,
   };
 }
 
-const STEP_UP: Reply = { status: 401, body: { code: "step_up_required", detail: "Verify again." } };
 const writes = (calls: Call[]) => calls.filter((c) => !c.key.startsWith("GET "));
 const putCalls = (calls: Call[]) => calls.filter((c) => c.key === `PUT ${BASE}/profile`);
 type ProfileBody = {
@@ -513,27 +513,6 @@ describe("Business Details", () => {
     expect(screen.getByLabelText(/^Website/)).toHaveValue("https://acme.example");
     expect(screen.queryByRole("button", { name: "Reload" })).not.toBeInTheDocument();
     expect(calls.filter((c) => c.key === `GET ${BASE}/profile`)).toHaveLength(4);
-  });
-
-  it("resumes the same save after a second-factor prompt", async () => {
-    const calls = mockApi(
-      routes({
-        [`PUT ${BASE}/profile`]: [STEP_UP, ok(PROFILE)],
-        "POST /api/v1/auth/mfa/step-up": [ok({ aal: 2 })],
-      }),
-    );
-    mount("business");
-    await screen.findByLabelText(/^Website/);
-    change(/^Website/, "https://www.acme.example");
-    fireEvent.click(screen.getByRole("button", { name: "Save business details" }));
-    const code = await screen.findByLabelText(/needs a recent verification/);
-    expect(screen.queryByText("Business details saved.")).not.toBeInTheDocument();
-    fireEvent.change(code, { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
-    await screen.findByText("Business details saved.");
-    const puts = putCalls(calls);
-    expect(puts).toHaveLength(2);
-    expect(puts[1].body).toEqual(puts[0].body);
   });
 
   it("is read-only without the manage permission: the values as text, no inputs", async () => {
@@ -984,7 +963,7 @@ describe("Products: product options", () => {
 describe("Users & Permissions", () => {
   const rowOf = (members: HTMLElement, email: string) => within(members).getByRole("rowheader", { name: email }).closest("tr")!;
 
-  it("shows name, role, status, MFA and last activity, with capabilities by their friendly names", async () => {
+  it("shows name, role, status and last activity, with capabilities by their friendly names", async () => {
     mockApi(routes());
     const { container } = mount("users");
     const caps = await screen.findByRole("table", { name: "Granted capabilities" });
@@ -998,21 +977,19 @@ describe("Users & Permissions", () => {
       "Email",
       "Role",
       "Status",
-      "MFA",
       "Last activity",
       "Actions",
     ]);
     const cells = (email: string) => within(rowOf(members, email)).getAllByRole("cell").map((c) => c.textContent);
 
-    // Active, with a second factor, last seen on a date.
-    expect(cells("priya@acme.example").slice(0, 5)).toEqual(["Priya Shah", "Administrator", "Active", "On", new Date("2026-02-01T09:00:00Z").toLocaleString()]);
+    // Active, last seen on a date.
+    expect(cells("priya@acme.example").slice(0, 4)).toEqual(["Priya Shah", "Administrator", "Active", new Date("2026-02-01T09:00:00Z").toLocaleString()]);
     // Invited: the date it was sent.
     const ops = cells("ops@acme.example");
     expect(ops[0]).toBe("-");
     expect(ops[1]).toBe("Viewer");
     expect(ops[2]).toBe(`Invitation sent ${new Date("2026-02-10T10:00:00Z").toLocaleString()}`);
-    expect(ops[3]).toBe("Off");
-    expect(ops[4]).toBe("Never signed in");
+    expect(ops[3]).toBe("Never signed in");
     // Named, but the invitation waits for activation.
     expect(cells("later@acme.example")[2]).toBe("Invitation not sent yet (sent when the partner is activated)");
     // Attached before invitations were tracked.

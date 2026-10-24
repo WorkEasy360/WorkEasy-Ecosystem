@@ -20,7 +20,7 @@ import styles from "./ControlPlane.module.css";
  * its own sign-in page and scopes - and its credentials, by public reference
  * only. A generated client secret is shown once, in the answer to the request
  * that made it, and never again. Every change goes through the server's
- * audited, second-factor-gated manifest write; nothing here names a product.
+ * audited manifest write; nothing here names a product.
  */
 
 export const SIGN_IN_MODE_LABELS: Record<ConsoleIntegration["sign_in_mode"], string> = {
@@ -296,7 +296,7 @@ export function RegisterIntegration({ code, name, busy, act }: { code: string; n
 
 /** Credentials by public reference; add a public key or generate a secret
  * (shown once); revoke. Loaded on demand. Every change goes through `act`,
- * which handles the second-factor prompt and announces the outcome. */
+ * which announces the outcome. */
 export function CredentialsPanel({ code, manage, busy, act }: { code: string; manage: boolean; busy: boolean; act: Act }) {
   const [rows, setRows] = useState<ConsoleCredential[] | null>(null);
   const [issued, setIssued] = useState<IssuedConsoleCredential | null>(null);

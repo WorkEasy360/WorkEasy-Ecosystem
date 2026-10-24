@@ -65,7 +65,6 @@ function partner(over: Record<string, unknown> = {}) {
         last_login_at: null,
         invitation_sent_at: null,
         invitation_deferred: false,
-        mfa_enabled: false,
       },
     ],
     product_grants: [],

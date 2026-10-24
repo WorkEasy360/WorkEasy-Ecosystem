@@ -5,7 +5,7 @@ the test suite runs it with the database's write path instrumented. The answer
 is a *reason chain* - an ordered list of facts, each true or not, ending at the
 first one that blocks - and never a guess at a root cause. A diagnostic reports
 state (statuses, counts, codes); it never returns a secret, a credential, a
-signing key, an MFA factor, an SMTP setting or an integration secret, because
+signing key, an SMTP setting or an integration secret, because
 none of those is read.
 
 Two callers, one implementation, different authority:

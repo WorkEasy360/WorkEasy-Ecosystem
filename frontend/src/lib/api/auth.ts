@@ -32,7 +32,7 @@ export function logout(): Promise<void> {
   return apiFetch<void>("/api/v1/auth/logout", { method: "POST" });
 }
 
-export type HandoffErrorCode = "portal_access_denied" | "mfa_required" | "handoff_invalid" | "login_required";
+export type HandoffErrorCode = "portal_access_denied" | "handoff_invalid" | "login_required";
 
 /** On the central sign-in host: hand this sign-in to one portal. The answer
  * is a URL whose fragment carries a one-time code for that portal. `mode` is

@@ -11,7 +11,7 @@ import styles from "./AdminConsole.module.css";
 /**
  * Super Admin → Communication (Phase 8 extension): the wording of every
  * platform email and the sender it goes out as. Changing either is dangerous
- * (``platform.staff_communication.manage``, AAL 2) - an altered invitation is
+ * (``platform.staff_communication.manage``) - an altered invitation is
  * a phishing kit - so saves go through `useAction`, and each save names the
  * version it was based on so two editors can't silently overwrite each other.
  *

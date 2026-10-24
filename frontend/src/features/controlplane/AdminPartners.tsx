@@ -26,6 +26,7 @@ import {
 } from "./ResellerTabs";
 import { TAB_LABELS, TAB_ORDER, tabFromParam, type TabKey, type TabProps } from "./partnerTabs";
 import { LoadGate, ReasonAction, Status, useAction, useLoad, type Load } from "./ui";
+import { UpgradeNotice, UpgradePanel } from "./UpgradePanel";
 import { Tabs, type TabItem } from "./widgets";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
@@ -70,9 +71,13 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
   // Overview and the product options all show it, and a change refreshes it in
   // place (the current answer stays on screen until the new one arrives).
   const [summary, reloadSummary] = useLoad(() => partnerConsoleApi.summary(partnerId), [partnerId]);
+  // The upgrade standing (ADR-049): read once here so the line above the tabs and
+  // the panel on Users & Permissions show the same answer.
+  const [upgrades, reloadUpgrades] = useLoad(() => partnerConsoleApi.upgrades(partnerId), [partnerId]);
   const bump = () => {
     reload();
     reloadSummary();
+    reloadUpgrades();
     setRev((n) => n + 1);
   };
   const { act, busy, feedback } = useAction(bump);
@@ -108,6 +113,7 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
                 {p.status_reason && ` · ${p.status_reason}`}
               </p>
               <CompletionBanner partnerId={p.id} summary={summary} manage={manage} />
+              <UpgradeNotice load={upgrades} onOpen={() => setTab("users")} />
               {feedback}
               {manage && (
                 <div className={styles.row}>
@@ -158,6 +164,7 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
                 {selected === "payouts" && <PayoutsTab {...tabProps} />}
                 {selected === "users" && (
                   <div className={styles.stack}>
+                    <UpgradePanel partnerId={p.id} load={upgrades} manage={manage} onChanged={bump} onOpenTab={setTab} available={available} />
                     <ExperiencePanel partner={p} manage={manage} onChanged={bump} />
                     <UsersTab {...tabProps} />
                   </div>

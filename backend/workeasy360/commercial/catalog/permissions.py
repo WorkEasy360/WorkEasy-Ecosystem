@@ -38,7 +38,7 @@ CATALOG_PERMISSIONS: Final = (
         label="Create and change products, features, plans and bundles",
         category="commercial",
         # Publishing a plan version is irreversible and changes what every
-        # future customer buys. AAL 2 and no impersonation, like any other
+        # future customer buys. No impersonation, like any other
         # dangerous permission.
         dangerous=True,
         implies=("commercial.catalog.view",),

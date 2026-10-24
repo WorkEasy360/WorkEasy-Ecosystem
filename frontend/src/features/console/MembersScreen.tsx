@@ -24,7 +24,7 @@ const STATUS_FILTERS = [
  * owner (ownership moves by transfer) and never on yourself (the same mistake
  * made on oneself has no one left to undo it) - and every one is authorized
  * again by the server. Role changes and signing a member out are dangerous
- * (AAL 2), so they run through `useAction`, which asks for a code and retries.
+ * so they run through `useAction`.
  */
 export function MembersScreen() {
   const { slug, access, can } = useOrgAccess();

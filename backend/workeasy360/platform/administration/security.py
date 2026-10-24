@@ -1,10 +1,10 @@
 """The organization's own access policy, and its name.
 
-Auth configuration (required MFA, session length, password minimum) and
+Auth configuration (session length, password minimum) and
 network access (the IP allow-list) are two pages in the console but one
 policy on the organization row, applied by ``contracts.values.access_policy``
 at both doors - the console and product sign-in. Changing either is
-``platform.security.update``: dangerous (AAL 2, refused under impersonation,
+``platform.security.update``: dangerous (refused under impersonation,
 refused while the organization is read-only) and audited with before/after.
 
 Both edits carry the version the administrator loaded: two administrators
@@ -65,16 +65,11 @@ def _optional_int(raw: Any, field: str, *, low: int, high: int) -> int | None:
 def update_authentication(
     ctx: TenantContext,
     *,
-    require_mfa: Any,
     session_max_age_minutes: Any,
     password_min_length: Any,
     expected_version: int,
 ) -> dict[str, Any]:
     authz.require(ctx, UPDATE)
-    if not isinstance(require_mfa, bool):
-        raise SecurityPolicyValidationError(
-            "require_mfa must be true or false.", field="require_mfa"
-        )
     max_age = _optional_int(
         session_max_age_minutes,
         "session_max_age_minutes",
@@ -88,7 +83,6 @@ def update_authentication(
         high=access_policy.MIN_PASSWORD_LENGTH_CEILING,
     )
     changes = {
-        "require_mfa": require_mfa,
         "session_max_age_minutes": max_age,
         "password_min_length": minimum,
     }
@@ -108,10 +102,9 @@ def update_authentication(
 
 def _auth_view(values: dict[str, Any]) -> dict[str, Any]:
     """Audit keys avoid the words the audit redactor treats as secrets
-    ("mfa", "session", "password"): these values are policy, not credentials,
+    ("session", "password"): these values are policy, not credentials,
     and an auditor must be able to read them."""
     return {
-        "two_step_verification": values["require_mfa"],
         "sign_in_max_age_minutes": values["session_max_age_minutes"],
         "minimum_length": values["password_min_length"],
     }

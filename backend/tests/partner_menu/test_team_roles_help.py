@@ -174,9 +174,7 @@ def test_the_last_working_administrator_cannot_be_suspended(
     assert member_of(pid, seller["user"]).status == "active"
 
 
-def test_only_administrators_suspend_and_it_needs_the_second_factor(
-    seller, owner_client, member_client, http_login
-):
+def test_only_administrators_suspend(seller, owner_client, member_client, http_login):
     pid = seller["partner"].id
     sales_client, sales = member_client(seller, "sales")
     finance_client, _fin = member_client(seller, "finance")
@@ -187,10 +185,6 @@ def test_only_administrators_suspend_and_it_needs_the_second_factor(
         ).status_code
         == 403
     )
-    low = http_login(seller["user"], aal2=False)
-    assert send(
-        low, "post", api(pid, f"members/{target.id}/suspend"), {}
-    ).status_code in (401, 403)
     assert member_of(pid, sales).status == "active"
 
 

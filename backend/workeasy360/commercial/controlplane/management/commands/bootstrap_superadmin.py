@@ -16,7 +16,7 @@ shell history and process listings). Safe to run on every deploy:
 - **Never changes an existing account's password**, and never prints it.
 - **No back door.** It refuses once a *different* person already holds
   security administration: from then on, staff access is granted in the Super
-  Admin console, with a reason, a second factor and an audit entry. The check
+  Admin console, with a reason and an audit entry. The check
   and the grant are serialised on an advisory lock, so two concurrent runs
   cannot both succeed.
 - **Audited** as a system action in the platform log. The grants are made by

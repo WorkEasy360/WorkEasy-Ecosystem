@@ -102,7 +102,7 @@ export function InvitationsScreen() {
               </select>
               <p id={roleHintId} className="w360-hint">
                 {canPrivileged
-                  ? "Inviting an Administrator or a Billing Manager asks for a code from your authenticator app."
+                  ? "You can invite Members, Read Only users, Administrators and Billing Managers."
                   : "You can invite Members and Read Only users. An administrator who can assign roles can invite administrators and billing managers."}
               </p>
             </div>

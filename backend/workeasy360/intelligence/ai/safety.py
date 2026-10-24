@@ -5,7 +5,7 @@ a vendor - a skill's input, a retrieval query, and every document at ingestion
 (before it is chunked, stored or embedded, so a secret is never indexed
 either):
 
-- private keys (PEM blocks), and ``otpauth://`` MFA enrolment URIs;
+- private keys (PEM blocks), and ``otpauth://`` URIs;
 - vendor API keys and tokens with recognisable shapes (cloud, source hosting,
   chat, payments, AI vendors), and this platform's own ``whsec_`` secrets;
 - bearer tokens and JWTs (session and identity tokens);

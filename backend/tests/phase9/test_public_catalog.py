@@ -178,20 +178,17 @@ def test_editing_a_product_validates_audits_and_never_touches_its_code(
     assert Client().get(f"{CATALOG}/products/workeasy-crm").status_code == 200
 
 
-def test_editing_products_needs_the_catalog_grant_and_a_second_factor(
-    catalog, staff_login
-):
+def test_editing_products_needs_the_catalog_grant(catalog, staff_login):
     crm = catalog["products"]["crm"]
     viewer, _ = staff_login("platform.staff_catalog.view")
     assert _edit(viewer, crm.id, tagline="x").status_code == 403
-    manager, _ = staff_login("platform.staff_catalog.manage", aal2=False)
-    response = _edit(manager, crm.id, tagline="x")
-    assert (response.status_code, response.json()["code"]) == (401, "step_up_required")
+    manager, _ = staff_login("platform.staff_catalog.manage")
+    assert _edit(manager, crm.id, tagline="x").status_code == 200
 
 
 def test_a_customer_cannot_reach_the_product_manager(catalog, console_org, login):
     org = console_org()
-    owner = login(org["owner"], aal2=True)
+    owner = login(org["owner"])
     response = _edit(owner, catalog["products"]["crm"].id, tagline="owned")
     assert response.status_code == 403
 
@@ -211,7 +208,7 @@ def test_explore_hides_what_the_public_site_hides(
 # --- platform settings ---------------------------------------------------------------
 
 
-def test_platform_settings_are_dangerous_versioned_and_public_in_part(staff_login):
+def test_platform_settings_are_permissioned_versioned_and_public_in_part(staff_login):
     viewer, _ = staff_login("platform.staff_settings.view")
     current = viewer.get("/api/v1/admin/settings").json()
     assert current["version"] == 0 and current["signup_enabled"] is True
@@ -227,13 +224,6 @@ def test_platform_settings_are_dangerous_versioned_and_public_in_part(staff_logi
             "/api/v1/admin/settings", body, content_type="application/json"
         ).status_code
         == 403
-    )
-    low, _ = staff_login("platform.staff_settings.manage", aal2=False)
-    assert (
-        low.put(
-            "/api/v1/admin/settings", body, content_type="application/json"
-        ).status_code
-        == 401
     )
     manager, _ = staff_login("platform.staff_settings.manage")
     saved = manager.put("/api/v1/admin/settings", body, content_type="application/json")
@@ -258,6 +248,6 @@ def test_platform_settings_are_dangerous_versioned_and_public_in_part(staff_logi
 
 def test_a_customer_owner_cannot_change_platform_settings(console_org, login):
     org = console_org()
-    owner = login(org["owner"], aal2=True)
+    owner = login(org["owner"])
     assert owner.get("/api/v1/admin/settings").status_code == 403
     assert PASSWORD

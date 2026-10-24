@@ -33,7 +33,7 @@ export function ProfileScreen() {
           </dl>
         )}
         <p className={local.textBlock}>
-          <Link href={`/o/${slug}/settings/security`}>Password, sessions and two-step verification</Link>
+          <Link href={`/o/${slug}/settings/security`}>Password and sessions</Link>
         </p>
       </Panel>
     </div>

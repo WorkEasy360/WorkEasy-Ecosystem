@@ -115,7 +115,6 @@ def _production_env(**overrides) -> dict[str, str]:
         "W360_DB_APP_PASSWORD": "p" * 24,
         "W360_DB_APP_USER": "w360_app",
         "W360_FILE_URL_SIGNING_KEY": "f" * 40,
-        "W360_MFA_ENCRYPTION_KEY": "m" * 40,
         # Phase 6: seals connection signing secrets; its own key.
         "W360_INTEGRATION_SECRETS_KEYS": "i" * 40,
         # Phase 8 extension: seals invitation links waiting to be emailed.
@@ -207,7 +206,6 @@ def test_invalid_types_are_reported_with_the_offending_key():
         "W360_ALLOWED_HOSTS",
         "W360_CSRF_TRUSTED_ORIGINS",
         "W360_FILE_URL_SIGNING_KEY",
-        "W360_MFA_ENCRYPTION_KEY",
         "W360_INTEGRATION_SECRETS_KEYS",
         "W360_RELEASE",
         "W360_TRUSTED_PROXY_COUNT",
@@ -301,13 +299,10 @@ def test_production_refuses_to_start_without_a_critical_setting(missing, monkeyp
             {"W360_FRONTEND_URL": "https://auth.workeasy360.com"},
             "must be W360_APP_ORIGIN",
         ),
-        # Phase 5 final audit. Key separation by value, not only by name.
-        ({"W360_MFA_ENCRYPTION_KEY": "s" * 60}, "must differ"),
-        ({"W360_MFA_ENCRYPTION_KEY": "f" * 40}, "must differ"),
         # Phase 6. The connection-secret key is separate by value too, and
         # long enough to be a key rather than a password.
         ({"W360_INTEGRATION_SECRETS_KEYS": "s" * 60}, "must differ"),
-        ({"W360_INTEGRATION_SECRETS_KEYS": "i" * 40 + ",m" + "m" * 39}, "must differ"),
+        ({"W360_INTEGRATION_SECRETS_KEYS": "i" * 40 + "," + "f" * 40}, "must differ"),
         ({"W360_INTEGRATION_SECRETS_KEYS": "too-short"}, "at least 32"),
         # Phase 12. The S3 adapter: a bucket is required, and a custom
         # (S3-compatible) endpoint must be https.

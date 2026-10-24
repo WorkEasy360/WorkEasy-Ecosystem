@@ -232,7 +232,7 @@ def test_only_staff_holding_the_catalog_grant_may_configure(catalog, staff_login
 
 def test_a_customer_cannot_configure_a_trial(catalog, console_org, login):
     crm = catalog["products"]["crm"]
-    client = login(console_org()["owner"], aal2=True)
+    client = login(console_org()["owner"])
     response = put(
         client,
         f"/api/v1/admin/catalog/products/{crm.id}/trial",

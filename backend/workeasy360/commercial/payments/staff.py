@@ -1,7 +1,7 @@
 """The Super Admin's payments: provider accounts, a customer's invoices and
 payments, manual settlement, voiding, the event log and collection totals.
 
-``platform.staff_payment.view`` to read; ``.manage`` (dangerous: AAL 2,
+``platform.staff_payment.view`` to read; ``.manage`` (dangerous:
 refused under impersonation) for every change, each audited - provider changes
 in the control-plane log, invoice changes in the customer's own log.
 

@@ -58,7 +58,7 @@ def change_role(
     ctx: TenantContext, membership_id: UUID, *, role_key: str
 ) -> dict[str, Any]:
     """Give a member exactly one system role. ``platform.role.assign``
-    (dangerous: AAL 2, refused under impersonation)."""
+    (dangerous: refused under impersonation)."""
     from workeasy360.platform.organizations.selectors import member
     from workeasy360.platform.organizations.services import lock_member
 
@@ -153,7 +153,7 @@ def sign_out(ctx: TenantContext, membership_id: UUID) -> dict[str, Any]:
     """End every session the member has *for this organization*: any session
     signed in before now is refused here until they sign in again. Their
     sessions elsewhere are theirs and untouched. ``platform.member.sign_out``
-    (dangerous: AAL 2, audited). Only the owner may sign the owner out."""
+    (dangerous: audited). Only the owner may sign the owner out."""
     from workeasy360.platform.organizations.selectors import member
     from workeasy360.platform.organizations.services import cut_off_member_sessions
 

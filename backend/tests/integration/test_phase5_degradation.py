@@ -30,7 +30,6 @@ UNREACHABLE_CACHE = {
 }
 PASSWORD = "a long enough passphrase for tests"
 ORGANIZATIONS = "/api/v1/organizations"
-STEP_UP = "/api/v1/auth/mfa/step-up"
 #: Generous for a local test run; the point is "bounded", not a latency SLO.
 REQUEST_BUDGET_S = 2.0
 
@@ -52,14 +51,6 @@ def _sign_in(client, user):
         client, "/api/v1/auth/login", {"email": user.email, "password": PASSWORD}
     )
     assert response.status_code == 200
-
-
-def _totp(factor_id, *, steps_ahead=0):
-    from workeasy360.platform.identity import mfa
-    from workeasy360.platform.identity.models import AuthFactor
-
-    raw = mfa.decrypt_totp_secret(AuthFactor.objects.get(id=factor_id).secret_ref)
-    return mfa.current_totp(raw, at=time.time() + 30 * steps_ahead)
 
 
 # --- Redis unreachable ------------------------------------------------------
@@ -88,10 +79,9 @@ def test_onboarding_chooser_and_selection_work_with_an_unreachable_cache(
 def test_authorization_never_fails_open_with_an_unreachable_cache(
     client, user_factory, organization_factory, settings
 ):
-    """The three decisions that must not loosen: a dangerous permission at
-    AAL1, a stale projection row, another tenant."""
+    """The decisions that must not loosen: a stale projection row, another
+    tenant."""
     from workeasy360.contracts.enums import OrganizationStatus
-    from workeasy360.contracts.errors import StepUpRequired
     from workeasy360.contracts.values.tenant import TenantContext
     from workeasy360.platform.authz import services as authz
     from workeasy360.platform.onboarding.services import create_organization
@@ -112,8 +102,6 @@ def test_authorization_never_fails_open_with_an_unreachable_cache(
     )
     with tenant_context(ctx), tenant_db_scope(ctx):
         assert authz.check(ctx, "platform.member.view")
-        with pytest.raises(StepUpRequired):
-            authz.require(ctx, "platform.organization.delete")
 
     other_org, other_membership, member = organization_factory()
     _sign_in(client, owner)
@@ -133,45 +121,6 @@ def test_authorization_never_fails_open_with_an_unreachable_cache(
         other_org.slug
     ]
     assert _timed(client.get, f"/api/v1/orgs/{other_org.slug}/context").status_code == 404
-
-
-def test_mfa_stays_correct_with_an_unreachable_cache(
-    client, user_factory, settings, frozen_throttle_window
-):
-    """Enrollment, step-up and replay protection live in PostgreSQL; the
-    code throttle degrades to a per-process counter - approximate, never
-    absent."""
-    settings.CACHES = UNREACHABLE_CACHE
-    settings.MFA_STEP_UP_RATE_LIMITS = {
-        "step_up_account": (4, 60),
-        "step_up_ip": (100, 60),
-    }
-    user = user_factory(password=PASSWORD)
-    _sign_in(client, user)
-    slug = _post(client, ORGANIZATIONS, {"name": "MFA Co"}).json()["slug"]
-
-    started = _post(client, "/api/v1/auth/mfa/totp/enroll").json()
-    first = _totp(started["factor_id"])
-    confirmed = _post(
-        client,
-        "/api/v1/auth/mfa/totp/confirm",
-        {"factor_id": started["factor_id"], "code": first},
-    )
-    assert confirmed.status_code == 200
-
-    assert _post(client, STEP_UP, {"code": first}).status_code == 400  # replay
-    assert (
-        _post(
-            client, STEP_UP, {"code": _totp(started["factor_id"], steps_ahead=1)}
-        ).status_code
-        == 200
-    )
-    assert client.get(f"/api/v1/orgs/{slug}/context").json()["aal"] == 2
-
-    # Three attempts so far (confirm, replay, step-up: one shared budget);
-    # one more wrong code exhausts the limit of 4.
-    assert _post(client, STEP_UP, {"code": "000000"}).status_code == 400
-    assert _post(client, STEP_UP, {"code": "000000"}).status_code == 429
 
 
 def test_organization_creation_throttle_degrades_but_does_not_vanish(
@@ -241,19 +190,10 @@ def test_onboarding_completes_without_the_broker_and_its_event_is_durable(
     assert event.published_at is not None
 
 
-def test_mfa_and_selection_need_no_broker(client, user_factory, broker_down):
+def test_selection_needs_no_broker(client, user_factory, broker_down):
     user = user_factory(password=PASSWORD)
     _sign_in(client, user)
-    slug = _post(client, ORGANIZATIONS, {"name": "Brokerless MFA"}).json()["slug"]
+    slug = _post(client, ORGANIZATIONS, {"name": "Brokerless Co"}).json()["slug"]
 
-    started = _post(client, "/api/v1/auth/mfa/totp/enroll").json()
-    confirmed = _post(
-        client,
-        "/api/v1/auth/mfa/totp/confirm",
-        {"factor_id": started["factor_id"], "code": _totp(started["factor_id"])},
-    )
-    assert confirmed.status_code == 200
-    step = _post(client, STEP_UP, {"code": _totp(started["factor_id"], steps_ahead=1)})
-    assert step.status_code == 200
-    assert _timed(client.get, f"/api/v1/orgs/{slug}/context").json()["aal"] == 2
+    assert _timed(client.get, f"/api/v1/orgs/{slug}/context").status_code == 200
     assert broker_down == []

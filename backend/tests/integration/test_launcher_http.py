@@ -44,9 +44,7 @@ def test_login_with_correct_credentials_establishes_a_session(client, user_facto
         "user_id": str(user.id),
         "email": user.email,
         "name": user.full_name,
-        # Phase 8 extension: whether an organization's "require MFA" can be
-        # met, and which consoles the shell may offer.
-        "mfa_enrolled": False,
+        # Phase 8 extension: which consoles the shell may offer.
         # ADR-045: true only while a temporary password is in force.
         "password_change_required": False,
         "consoles": {"staff": False, "partner": False},

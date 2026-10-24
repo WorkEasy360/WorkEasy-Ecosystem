@@ -418,15 +418,6 @@ def test_staff_set_sales_led_terms_and_such_orders_are_fulfilled_at_once(
         content_type="application/json",
     )
     assert set_terms.status_code == 200, set_terms.content
-    low, _ = staff_login("platform.staff_payment.manage", aal2=False)
-    assert (
-        low.post(
-            target,
-            {"collection_mode": "automatic", "reason": "x" * 12},
-            content_type="application/json",
-        ).status_code
-        == 401
-    )
     order = place_order(
         shop["client"], shop["slug"], plan_version_id=_version(shop, "crm_professional")
     ).json()

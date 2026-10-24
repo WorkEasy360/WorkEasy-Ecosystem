@@ -2,7 +2,6 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { ApiError } from "@/lib/api/client";
-import { useStepUp } from "@/features/security/useStepUp";
 import styles from "./ControlPlane.module.css";
 
 // --- errors ------------------------------------------------------------------
@@ -83,20 +82,18 @@ export function LoadGate<T>({
 // --- actions ------------------------------------------------------------------------
 
 /**
- * Runs actions that may need a second factor and reports their outcome.
- * Every dangerous control-plane action goes through this one flow.
+ * Runs an action and reports its outcome: busy while it runs, then the success
+ * message or the server's own refusal. Every control-plane action goes through
+ * this one flow.
  */
 export function useAction(after?: () => void) {
-  // A retry after verification goes through ``settle`` like the first
-  // attempt: busy while it runs, its success or error shown here.
-  const { run, stepUp } = useStepUp({ onRetry: (again) => void settle(again) });
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const outcome = useRef<HTMLParagraphElement | null>(null);
 
   // The control that started an action is often gone when it settles - a
-  // reason prompt or the MFA prompt unmounts on submit - which drops keyboard
+  // reason prompt unmounts on submit - which drops keyboard
   // focus to <body> and sends a keyboard user back to the top of the page.
   // Only in that case, focus moves to the outcome (which is also announced);
   // focus the user has placed elsewhere is never taken.
@@ -112,7 +109,7 @@ export function useAction(after?: () => void) {
     setError(null);
     setMessage(null);
     try {
-      await run(task);
+      await task();
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -131,7 +128,6 @@ export function useAction(after?: () => void) {
 
   const feedback = (
     <>
-      {stepUp}
       {message && (
         <p role="status" tabIndex={-1} ref={outcome}>
           {message}
@@ -249,6 +245,9 @@ const BADGES: Record<string, string> = {
   draft: "w360-badge w360-badge-neutral",
   ready: "w360-badge w360-badge-neutral",
   requested: "w360-badge w360-badge-neutral",
+  pending_approval: "w360-badge w360-badge-warning",
+  profile_required: "w360-badge w360-badge-warning",
+  rejected: "w360-badge w360-badge-danger",
   verification_pending: "w360-badge w360-badge-warning",
   suspended: "w360-badge w360-badge-warning",
   past_due: "w360-badge w360-badge-warning",

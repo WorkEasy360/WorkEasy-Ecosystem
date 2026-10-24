@@ -197,7 +197,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return (
       <PolicyGate
         reason={org.reason}
-        mfaEnrolled={session.status === "ready" && Boolean(session.session.mfa_enrolled)}
         onResolved={reload}
       />
     );

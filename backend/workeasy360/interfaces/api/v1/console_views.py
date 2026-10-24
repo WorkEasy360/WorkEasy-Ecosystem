@@ -239,7 +239,6 @@ def security_policy_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     return JsonResponse(
         security.update_authentication(
             ctx,
-            require_mfa=body.get("require_mfa"),
             session_max_age_minutes=body.get("session_max_age_minutes"),
             password_min_length=body.get("password_min_length"),
             expected_version=_version(body),

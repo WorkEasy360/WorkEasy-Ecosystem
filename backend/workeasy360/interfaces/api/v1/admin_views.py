@@ -4,7 +4,7 @@ Thin adapters over ``commercial/controlplane`` and the partner/commission
 services. Every handler: authenticates the session, requires ``User.is_staff``
 as a precondition, builds the staff context, calls **one** service and shapes
 the result. The service authorizes (an explicit ``platform.staff_*``
-permission; dangerous ones demand AAL 2) and owns the transaction, so a
+permission; dangerous ones are refused under impersonation) and owns the transaction, so a
 refusal raised *before or inside* the service leaves nothing behind.
 
 Inputs are read field by field - there is no generic serializer, so a client
@@ -32,6 +32,7 @@ from workeasy360.commercial.controlplane import (
     partner_console,
     partner_detail,
     partner_onboarding,
+    partner_upgrades,
     reseller_setup,
     white_label_setup,
 )
@@ -45,6 +46,7 @@ from workeasy360.commercial.partners import experience as partner_experience
 from workeasy360.commercial.partners import profile as partner_profile
 from workeasy360.commercial.partners import selectors as partner_selectors
 from workeasy360.commercial.partners import services as partner_services
+from workeasy360.commercial.partners import upgrades as partner_upgrade_requests
 from workeasy360.commercial.partners.domain import clean_text
 from workeasy360.contracts.enums import (
     ChangeTiming,
@@ -114,8 +116,8 @@ def session_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     **This is the answer to "may this person enter the Admin Console?"** The
     sign-in page lets a person say they *intend* to sign in as an
     administrator; that choice reaches no server and grants nothing. What
-    decides is this endpoint: a staff identity (``is_staff``), a session that
-    verified a second factor (``staff_view``), and at least one ``StaffGrant``
+    decides is this endpoint: a staff identity (``is_staff``), a signed-in session
+    (``staff_view``), and at least one ``StaffGrant``
     in force, read live. A staff identity whose every grant was revoked or has
     expired is refused here on its very next request - the same rule as the
     session's ``consoles.staff`` flag - instead of being shown an empty
@@ -126,7 +128,7 @@ def session_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
         raise PermissionDenied(
             "Not permitted.", permission="platform.staff", reason="no_staff_grant"
         )
-    return JsonResponse({"is_staff": True, "aal": ctx.aal, "permissions": permissions})
+    return JsonResponse({"is_staff": True, "permissions": permissions})
 
 
 @staff_view(["GET"])
@@ -594,7 +596,7 @@ def partner_white_label_view(request: HttpRequest, ctx: TenantContext) -> JsonRe
 def partner_brand_view(
     request: HttpRequest, ctx: TenantContext, partner_id: UUID
 ) -> JsonResponse:
-    """A partner's brand: read it, or (staff, second factor) set it for the
+    """A partner's brand: read it, or (staff) set it for the
     partner - through the very command the partner's own portal uses."""
     if request.method == "GET":
         return JsonResponse(partner_detail.brand(ctx, partner_id))
@@ -620,7 +622,7 @@ def partner_profile_view(
     request: HttpRequest, ctx: TenantContext, partner_id: UUID
 ) -> JsonResponse:
     """A partner's business details, contacts, support details, payout
-    preferences and staff notes: read them, or (staff, second factor) change
+    preferences and staff notes: read them, or (staff) change
     them. Staff only - a partner portal has no route to this."""
     if request.method == "GET":
         return JsonResponse(partner_profile.get_profile(ctx, partner_id))
@@ -1016,6 +1018,56 @@ def partner_experience_view(request, ctx, partner_id: UUID) -> JsonResponse:
             "default_experience": result.default_experience,
         }
     )
+
+
+@staff_view(["GET"])
+def partner_upgrade_queue_view(request, ctx) -> JsonResponse:
+    """The review queue: upgrade requests across partners (ADR-049)."""
+    return JsonResponse(
+        partner_upgrade_requests.staff_queue(
+            ctx, status=request.GET.get("status") or None
+        )
+    )
+
+
+@staff_view(["GET"])
+def partner_upgrades_view(request, ctx, partner_id: UUID) -> JsonResponse:
+    """One partner's upgrade standing: level, request, checklist and history."""
+    return JsonResponse(partner_upgrade_requests.staff_for_partner(ctx, partner_id))
+
+
+@staff_view(["POST"])
+def partner_upgrade_decision_view(
+    request, ctx, partner_id: UUID, request_id: UUID
+) -> JsonResponse:
+    """Decide an upgrade request: ``approve`` (grants the bundle - every
+    server-side rule must pass), ``reject`` or ``request_info``. Staff and
+    ``platform.staff_partner.manage``: nothing a partner sends
+    reaches this."""
+    body = _body(request)
+    action = body.get("action")
+    if action == "approve":
+        result = partner_upgrades.approve(
+            ctx,
+            partner_id,
+            request_id,
+            products=body.get("products"),
+            commercial_reference=body.get("commercial_reference", ""),
+            note=body.get("note", ""),
+        )
+    elif action == "reject":
+        result = partner_upgrade_requests.reject(
+            ctx, partner_id, request_id, note=body.get("note")
+        )
+    elif action == "request_info":
+        result = partner_upgrade_requests.request_info(
+            ctx, partner_id, request_id, note=body.get("note")
+        )
+    else:
+        raise CatalogValidationError(
+            "action must be approve, reject or request_info.", field="action"
+        )
+    return JsonResponse(result)
 
 
 @staff_view(["POST"])

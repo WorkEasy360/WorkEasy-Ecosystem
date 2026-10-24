@@ -22,11 +22,11 @@ PLAIN = summary_skill(
 def admin(ai_org, grant_permissions, signed_in, client):
     """An AI-entitled organization whose owner holds the AI permissions."""
 
-    def make(*, aal=2, permissions=AI_PERMISSIONS):
+    def make(*, permissions=AI_PERMISSIONS):
         org = ai_org()
         if permissions:
             grant_permissions(org["org"], org["membership"], permissions)
-        signed_in(org["user"], aal=aal)
+        signed_in(org["user"])
         org["api"] = f"/api/v1/orgs/{org['org'].slug}"
         return org
 
@@ -133,14 +133,16 @@ def test_invalid_settings_are_refused_before_anything_is_written(
         ).exists()
 
 
-def test_changing_ai_settings_needs_step_up(admin, client, ai_registry):
-    org = admin(aal=1)
+def test_changing_ai_settings_takes_effect(admin, client, ai_registry):
+    org = admin()
     response = _patch(
         client, f"{org['api']}/ai/settings", {"revision": 1, "ai_enabled": False}
     )
-    assert (response.status_code, response.json()["code"]) == (401, "step_up_required")
+    assert response.status_code == 200, response.content
     settings = client.get(f"{org['api']}/ai/settings")
-    assert settings.status_code == 200 and settings.json()["policy"]["ai_enabled"] is True
+    assert (
+        settings.status_code == 200 and settings.json()["policy"]["ai_enabled"] is False
+    )
 
 
 def test_a_member_without_the_permission_sees_nothing(admin, client):
@@ -176,9 +178,9 @@ def test_the_organization_cannot_set_the_platforms_fields(admin, client, ai_regi
 
 @pytest.fixture
 def staff(staff_factory, signed_in):
-    def make(*permissions, aal=2):
-        user, ctx = staff_factory(*permissions, aal=aal)
-        signed_in(user, aal=aal)
+    def make(*permissions):
+        user, ctx = staff_factory(*permissions)
+        signed_in(user)
         return user, ctx
 
     return make
@@ -199,21 +201,18 @@ def test_the_registry_shows_whether_a_credential_is_configured_never_its_value(
 def test_the_registry_needs_a_live_staff_grant(
     staff, client, ai_registry, user_factory, signed_in
 ):
-    signed_in(user_factory(), aal=2)
+    signed_in(user_factory())
     assert client.get("/api/v1/admin/ai/registry").status_code == 403
     staff()  # staff, but no AI grant
     assert client.get("/api/v1/admin/ai/registry").status_code == 403
 
 
-def test_switching_a_provider_off_needs_step_up_and_stops_its_use(
+def test_switching_a_provider_off_stops_its_use(
     staff, client, ai_registry, fake_ai, ai_client, ai_org
 ):
-    staff("platform.staff_ai.manage", aal=1)
+    staff("platform.staff_ai.manage")
     url = "/api/v1/admin/ai/providers/anthropic/status"
     body = {"status": "disabled", "reason": "Vendor incident INC-42"}
-    denied = _post(client, url, body)
-    assert (denied.status_code, denied.json()["code"]) == (401, "step_up_required")
-    staff("platform.staff_ai.manage")
     assert _post(client, url, body).status_code == 200
     ai_client.register_skill(PLAIN)
     status, answer = ai_client.invoke(

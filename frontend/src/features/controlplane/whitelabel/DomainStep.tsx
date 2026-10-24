@@ -21,8 +21,7 @@ const LIFECYCLE: { status: string; label: string }[] = [
 /**
  * Step 7 (optional): a custom domain.
  *
- * Four separate acts, each its own action so a second-factor prompt appears where
- * it is needed: request a host name, check the DNS record, activate, disable.
+ * Four separate acts, each its own action: request a host name, check the DNS record, activate, disable.
  * **Activation is never automatic** - verification proves a name is the partner's,
  * and only a deliberate Activate, from ``verified``, makes it serve the brand.
  *

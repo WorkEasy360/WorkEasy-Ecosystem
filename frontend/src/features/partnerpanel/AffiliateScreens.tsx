@@ -69,7 +69,8 @@ function LinkBlock({ link, createHref }: { link: AffiliateLink | null; createHre
   );
 }
 
-export function AffiliateDashboard() {
+/** `grow` is the upgrade offer (ADR-049), drawn last: the dashboard is otherwise unchanged. */
+export function AffiliateDashboard({ grow }: { grow?: React.ReactNode } = {}) {
   const { partner, base, can, active } = usePanel();
   const { load, controls } = useOverview();
   return (
@@ -133,6 +134,7 @@ export function AffiliateDashboard() {
           </>
         )}
       </LoadGate>
+      {grow}
     </div>
   );
 }

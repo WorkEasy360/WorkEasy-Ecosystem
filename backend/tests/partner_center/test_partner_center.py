@@ -472,20 +472,6 @@ def test_creating_an_affiliate_is_an_ordinary_partner_with_grants(staff_client):
     assert PartnerAccount.objects.filter(code="new-affiliate").count() == 1
 
 
-def test_changing_capabilities_still_needs_a_fresh_second_factor(console, staff_client):
-    """Dangerous Control Center actions keep the existing step-up rule."""
-    manager, _u = staff_client(MANAGE, aal2=False)
-    response = post(
-        manager,
-        f"{BASE}/{console['draft'].id}/capabilities",
-        {"capability": "referral.view", "reason": "Make it an affiliate"},
-    )
-    assert response.status_code == 401
-    assert response.json()["code"] == "step_up_required"
-    # Viewing does not.
-    assert manager.get(f"{BASE}/overview").status_code == 200
-
-
 def test_the_staff_money_lists_still_need_the_commission_permission(console, viewer):
     assert viewer.get("/api/v1/admin/commission/accruals").status_code == 403
     assert viewer.get("/api/v1/admin/payouts").status_code == 403

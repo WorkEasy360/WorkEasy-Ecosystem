@@ -78,8 +78,8 @@ class Organization(models.Model):
     # it can only deny. Written only by ``platform.administration``, with
     # ``platform.security.update`` (dangerous) and an audit entry.
 
-    #: Members must verify a second factor in the session before reaching
-    #: this organization.
+    #: Unused since the second factor was removed (ADR-050). The column is kept
+    #: so no data is dropped; nothing reads or writes it.
     require_mfa = models.BooleanField(default=False)
     #: Minutes after sign-in beyond which a session no longer reaches this
     #: organization. NULL = the platform's own session lifetime.

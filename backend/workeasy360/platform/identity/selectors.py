@@ -109,25 +109,6 @@ def account_can_authenticate(user_id: Any) -> bool:
     return status is not None and UserStatus(status).can_authenticate
 
 
-def users_with_second_factor(user_ids: Any) -> set[Any]:
-    """Which of these accounts has confirmed a second factor. One query.
-
-    A yes/no per person for a staff screen ("MFA: on / off") - never which
-    factor, a label or anything about it.
-    """
-    from workeasy360.platform.identity.models import AuthFactor
-
-    ids = list(user_ids)
-    if not ids:
-        return set()
-    return set(
-        AuthFactor.objects.filter(user_id__in=ids, confirmed_at__isnull=False)
-        .exclude(kind=AuthFactor.Kind.RECOVERY_CODE)
-        .values_list("user_id", flat=True)
-        .distinct()
-    )
-
-
 def emails_for_users(user_ids: Any) -> dict[Any, str]:
     """``{user_id: email}`` for these accounts. One query.
 
@@ -211,21 +192,3 @@ def account_statistics(*, since: Any) -> dict[str, int]:
         signed_in=Count("id", filter=Q(last_login_at__gte=since)),
     )
     return {key: int(value or 0) for key, value in counts.items()}
-
-
-def users_with_mfa(user_ids: Any) -> set[Any]:
-    """Which of these accounts have a confirmed second factor. One query.
-
-    A fact about enrollment only (never the factor, its secret or its kind), for
-    the team page of a partner that wants to know who has not yet secured their
-    account."""
-    from workeasy360.platform.identity.models import AuthFactor
-
-    ids = {i for i in user_ids if i}
-    if not ids:
-        return set()
-    return set(
-        AuthFactor.objects.filter(user_id__in=ids, confirmed_at__isnull=False)
-        .values_list("user_id", flat=True)
-        .distinct()
-    )

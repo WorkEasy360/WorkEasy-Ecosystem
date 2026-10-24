@@ -14,7 +14,6 @@ from workeasy360.contracts.errors import (
     InvalidStateTransition,
     PartnerRecordNotFound,
     PartnerValidationError,
-    StepUpRequired,
 )
 from workeasy360.platform.authz import services as authz
 from workeasy360.platform.authz import staff
@@ -34,7 +33,7 @@ def test_a_staff_member_holds_only_the_grants_they_were_given(staff_factory):
 
 def test_django_superuser_confers_nothing(user_factory):
     user = user_factory(is_staff=True, is_superuser=True)
-    ctx = platform_context(user_id=user.id, aal=2)
+    ctx = platform_context(user_id=user.id)
     assert not authz.check(ctx, "platform.staff_partner.manage").allowed
 
 
@@ -73,14 +72,6 @@ def test_every_staff_write_permission_is_dangerous():
             assert declaration.dangerous, key
         if key.startswith("platform.staff_payout.approve"):
             assert declaration.dangerous
-
-
-def test_dangerous_staff_action_needs_aal2(staff_factory):
-    _user, ctx = staff_factory("platform.staff_partner.manage", aal=1)
-    with pytest.raises(StepUpRequired):
-        services.create_partner(
-            ctx, code="needs-mfa", display_name="X", payout_currency="GBP"
-        )
 
 
 def test_a_revoked_staff_grant_stops_working_at_once(staff_factory, user_factory):
@@ -145,7 +136,7 @@ def test_a_partner_starts_in_draft_and_cannot_act(staff_factory, user_factory):
     )
     from workeasy360.commercial.partners.access import partner_actor
 
-    actor = partner_actor(user_id=member.id, partner_id=partner.id, aal=2)
+    actor = partner_actor(user_id=member.id, partner_id=partner.id)
     assert not authz.check(actor, "platform.partner_customer.provision").allowed
 
 
@@ -345,7 +336,7 @@ def test_membership_of_a_customer_org_grants_no_partner_authority(
     org, _membership, owner = organization_factory()
     # The owner of an unrelated customer is not a partner user of anyone.
     with pytest.raises(PartnerRecordNotFound):
-        partner_actor(user_id=owner.id, partner_id=fx["partner"].id, aal=2)
+        partner_actor(user_id=owner.id, partner_id=fx["partner"].id)
 
 
 def test_a_guessed_partner_id_is_indistinguishable_from_no_partner(
@@ -358,9 +349,9 @@ def test_a_guessed_partner_id_is_indistinguishable_from_no_partner(
     fx = partner_factory("customer.provision")
     stranger = user_factory()
     with pytest.raises(PartnerRecordNotFound):
-        partner_actor(user_id=stranger.id, partner_id=fx["partner"].id, aal=2)
+        partner_actor(user_id=stranger.id, partner_id=fx["partner"].id)
     with pytest.raises(PartnerRecordNotFound):
-        partner_actor(user_id=stranger.id, partner_id=uuid.uuid4(), aal=2)
+        partner_actor(user_id=stranger.id, partner_id=uuid.uuid4())
 
 
 def test_partner_actions_do_not_reach_staff_permissions(partner_factory):

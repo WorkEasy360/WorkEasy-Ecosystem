@@ -30,7 +30,7 @@ What it deliberately does **not** do:
 The actor must be an existing staff identity that already holds the catalog
 and integration grants (``platform.staff_catalog.manage`` and
 ``platform.staff_integration.manage``); the command grants nothing. Like the
-seed scripts, it speaks for that actor at the second-factor level - a person
+seed scripts, it speaks for that actor - a person
 with a shell on the host can do anything the console can - and every write is
 audited under the actor's name.
 """
@@ -189,7 +189,7 @@ class Command(BaseCommand):
         if actor is None:
             raise CommandError("No staff identity has that address.")
 
-        sctx = platform_context(user_id=actor.id, aal=2)
+        sctx = platform_context(user_id=actor.id)
         dry = bool(options["dry_run"])
         with acting_scope(sctx):
             existing_products = {

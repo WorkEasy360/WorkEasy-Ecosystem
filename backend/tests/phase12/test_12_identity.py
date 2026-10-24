@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from datetime import timedelta
 
 import pytest
@@ -10,15 +9,12 @@ from django.test import Client
 from django.utils import timezone
 
 from workeasy360.platform.identity.models import User
-from workeasy360.platform.tenancy.resolution import SESSION_AUTHENTICATED_AT_KEY
 
 pytestmark = pytest.mark.django_db
 
 PASSWORD = "Phase-12-Correct-Horse-7"
 LOGIN = "/api/v1/auth/login"
 SESSION = "/api/v1/auth/session"
-ENROLL = "/api/v1/auth/mfa/totp/enroll"
-STEP_UP = "/api/v1/auth/mfa/step-up"
 
 
 def _signed_in(user_factory):
@@ -64,37 +60,6 @@ def test_an_administrators_lock_still_ends_every_session(user_factory):
     user, browser = _signed_in(user_factory)
     User.objects.filter(id=user.id).update(status=UserStatus.LOCKED.value)
     assert browser.get(SESSION).json()["authenticated"] is False
-
-
-def test_the_first_authenticator_needs_a_recent_sign_in(user_factory):
-    """G-15: an old session (a stolen cookie) cannot plant a first factor."""
-    _user, browser = _signed_in(user_factory)
-    assert browser.post(ENROLL, content_type="application/json").status_code == 200
-
-    session = browser.session
-    session[SESSION_AUTHENTICATED_AT_KEY] = time.time() - 3600
-    session.save()
-    stale = browser.post(ENROLL, content_type="application/json")
-    assert stale.status_code == 401
-    assert stale.json()["code"] == "reauthentication_required"
-
-
-def test_step_up_issues_a_new_session_key(user_factory, monkeypatch):
-    """G-20: a key observed at AAL 1 does not become an AAL 2 key."""
-    from workeasy360.platform.identity import services
-
-    _user, browser = _signed_in(user_factory)
-    monkeypatch.setattr(services, "verify_step_up_code", lambda user_id, code: True)
-    before = browser.cookies["w360_session"].value
-    response = browser.post(STEP_UP, {"code": "123456"}, content_type="application/json")
-    assert response.status_code == 200, response.content
-    after = browser.cookies["w360_session"].value
-    assert after and after != before
-
-    stale = Client()
-    stale.cookies["w360_session"] = before
-    assert stale.get(SESSION).json()["authenticated"] is False
-    assert browser.get(SESSION).json()["authenticated"] is True
 
 
 def test_the_lockout_still_expires_by_itself(user_factory):

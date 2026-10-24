@@ -2,7 +2,6 @@
 
 import { useId } from "react";
 import { accountApi, type AccountEvent, type SessionRow } from "@/lib/api/console";
-import { MfaSettings } from "@/features/security/MfaSettings";
 import { LoadGate, Table, useAction, useLoad, when } from "@/features/controlplane/ui";
 import cp from "@/features/controlplane/ControlPlane.module.css";
 import styles from "./Console.module.css";
@@ -49,13 +48,9 @@ export function describeAccountEvent(event: Pick<AccountEvent, "kind" | "reason"
 
 /**
  * "My security": the person's own account, in every organization - the
- * authenticator app, the password, where they are signed in and what has
- * happened to the account recently.
- *
- * Signing a session out is dangerous (AAL 2): it runs through `useAction`, so
- * the step-up prompt appears. Someone without an authenticator app cannot
- * pass it - for them, changing the password is the way to end every other
- * session, and the page says so.
+ * password, where they are signed in and what has happened to the account
+ * recently. Signing a session out ends it at once; changing the password ends
+ * every other session, and the page says so.
  */
 export function MySecurityScreen() {
   const [sessions, reloadSessions] = useLoad(() => accountApi.sessions(), []);
@@ -66,7 +61,6 @@ export function MySecurityScreen() {
   };
   const { act, busy, feedback } = useAction(refresh);
   const noteId = useId();
-  const mfaId = useId();
 
   return (
     <div className={styles.page}>
@@ -75,21 +69,13 @@ export function MySecurityScreen() {
         lead="How you sign in and where you're signed in. These settings belong to your account, in every organization."
       />
 
-      <section aria-labelledby={mfaId} className={local.section}>
-        <h2 id={mfaId} className="w360-visually-hidden">
-          Two-step verification
-        </h2>
-        <MfaSettings />
-      </section>
-
       <Panel title="Password">
         <ChangePasswordForm onChanged={refresh} />
       </Panel>
 
       <Panel title="Where you're signed in">
         <p id={noteId} className={cp.muted}>
-          Signing a session out asks for a code from your authenticator app. If you haven&apos;t set one up, change
-          your password instead - that also signs out every other session.
+          Signing a session out ends it at once. Changing your password also signs out every other session.
         </p>
         {feedback}
         <LoadGate load={sessions} what="your sessions">

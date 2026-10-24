@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from workeasy360.contracts.enums import PrincipalKind
-from workeasy360.contracts.errors import PermissionDenied, StepUpRequired
+from workeasy360.contracts.errors import PermissionDenied
 from workeasy360.contracts.values.identifiers import PermissionKey
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.authz.registry import permission_registry
@@ -128,14 +128,6 @@ def check(
     effective = effective_permissions(ctx)
     if key not in effective:
         return _deny(ctx, key, "permission_not_granted")
-
-    # Step 5 (partial): dangerous permissions need a second factor and a
-    # recent re-auth, regardless of how the session started.
-    if declaration.dangerous and ctx.aal < 2:
-        metrics.increment(AUTHZ_DENIALS, permission=key, reason="step_up_required")
-        raise StepUpRequired(
-            f"{key} requires multi-factor authentication.", permission=key
-        )
 
     # Impersonation cannot perform dangerous actions at all. Blocked in the
     # decision function rather than in the UI, because the UI is not a
@@ -614,7 +606,7 @@ SYSTEM_ROLES: Final[dict[str, dict[str, Any]]] = {
             # Phase 6: the organization's own integrations and automations
             # (declared in integration/). Administrators run these; billing,
             # member and read-only roles do not. ``manage`` is dangerous, so
-            # holding it still requires AAL 2 for every use.
+            # it is refused under impersonation.
             "platform.connection.view",
             "platform.connection.manage",
             "platform.webhook.replay",
@@ -623,7 +615,7 @@ SYSTEM_ROLES: Final[dict[str, dict[str, Any]]] = {
             # Phase 8: the organization's AI settings and usage, and the
             # analytics shell (declared in intelligence/). ``ai.manage``
             # decides whether the organization's data may be sent to AI
-            # providers at all, so it is dangerous (AAL 2).
+            # providers at all, so it is dangerous.
             "platform.ai.view",
             "platform.ai.manage",
             "platform.analytics.view",

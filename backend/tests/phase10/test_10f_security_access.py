@@ -41,10 +41,10 @@ def call(client, method, url, body=None):
 def login(http_login):
     """A signed-in client for a partner fixture's administrator."""
 
-    def make(fx, *, aal2=True, enforce_csrf=False):
+    def make(fx, *, enforce_csrf=False):
         fx["user"].set_password(PASSWORD)
         fx["user"].save(update_fields=["password"])
-        return http_login(fx["user"], aal2=aal2, enforce_csrf=enforce_csrf)
+        return http_login(fx["user"], enforce_csrf=enforce_csrf)
 
     return make
 
@@ -189,7 +189,7 @@ def test_a_partner_user_has_no_reach_into_the_staff_console(rivals):
 def test_an_ordinary_customer_user_has_no_reach_into_either_console(
     http_login, user_factory, rivals
 ):
-    customer = http_login(user_factory(password=PASSWORD), aal2=False)
+    customer = http_login(user_factory(password=PASSWORD))
     a = rivals["a"]["partner"]
     assert customer.get("/api/v1/admin/partners/overview").status_code == 403
     assert customer.get(f"/api/v1/partner/{a.id}/customers").status_code == 404
@@ -469,51 +469,12 @@ DANGEROUS_STAFF = [
 ]
 
 
-@pytest.mark.parametrize(
-    "method,template,body,permission",
-    DANGEROUS_STAFF,
-    ids=[t[1].rsplit("/", 1)[-1] for t in DANGEROUS_STAFF],
-)
-def test_dangerous_staff_actions_need_a_recent_second_factor(
-    console, staff_client, method, template, body, permission
-):
-    partner = (
-        console["white_label"]["partner"]
-        if "domains" in template
-        else console["reseller"]["partner"]
-    )
-    url = template.format(p=partner.id, o=console["org"])
-    weak, _ = staff_client(permission, aal2=False)
-    refused = call(weak, method, url, body)
-    assert refused.status_code == 401 and refused.json()["code"] == "step_up_required", (
-        refused.content
-    )
-
-
-def test_a_stale_second_factor_is_as_good_as_none(console, staff_client):
-    from django.conf import settings
-
-    from workeasy360.platform.tenancy.resolution import SESSION_STEP_UP_AT_KEY
-
-    client, _u = staff_client("platform.staff_commission.manage")
-    session = client.session
-    session[SESSION_STEP_UP_AT_KEY] = 1.0  # verified long ago
-    session.save()
-    partner = console["reseller"]["partner"]
-    body = {"rate_bp": 1200, "reason": "Agreed terms for the test", "expected_version": 0}
-    stale = call(client, "POST", f"/api/v1/admin/partners/{partner.id}/commission", body)
-    assert stale.status_code == 401 and stale.json()["code"] == "step_up_required"
-    assert settings.STEP_UP_MAX_AGE_SECONDS > 0
-
-
-def test_the_brand_can_be_saved_without_a_second_factor_but_the_domain_cannot(
-    rivals, login
-):
-    """The asymmetry the brief names: branding is presentation; a domain is
-    authority over a hostname. They are separate submits, so a partner is never
-    asked for a second factor to change a colour."""
+def test_the_brand_and_the_domain_request_are_separate_submits(rivals, login):
+    """Branding is presentation; a domain is authority over a hostname. They
+    are separate submits, and a domain is only a request until its DNS proof is
+    seen."""
     a = rivals["a"]
-    weak = login(a, aal2=False)
+    weak = login(a)
     base = f"/api/v1/partner/{a['partner'].id}"
     brand = weak.put(
         f"{base}/branding",
@@ -522,8 +483,9 @@ def test_the_brand_can_be_saved_without_a_second_factor_but_the_domain_cannot(
     )
     assert brand.status_code == 200, brand.content
     domain = call(weak, "POST", f"{base}/domains", {"hostname": "asym.example-brand.com"})
-    assert domain.status_code == 401 and domain.json()["code"] == "step_up_required"
-    assert not PartnerDomain.objects.filter(partner_id=a["partner"].id).exists()
+    assert domain.status_code == 201, domain.content
+    row = PartnerDomain.objects.get(partner_id=a["partner"].id)
+    assert row.status in ("requested", "verification_pending")
 
 
 # --- CSRF -------------------------------------------------------------------------------------------

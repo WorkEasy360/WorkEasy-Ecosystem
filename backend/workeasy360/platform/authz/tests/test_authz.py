@@ -7,7 +7,6 @@ import pytest
 from workeasy360.contracts.enums import OrganizationStatus
 from workeasy360.contracts.errors import (
     PermissionDenied,
-    StepUpRequired,
     UnknownPermission,
 )
 from workeasy360.contracts.values.identifiers import PermissionKey
@@ -187,23 +186,20 @@ def test_every_declared_implication_target_exists():
     assert permission_registry.validate_all() == []
 
 
-# --- dangerous permissions and step-up ------------------------------------
+# --- dangerous permissions -----------------------------------------------
 
 
-def test_dangerous_permission_requires_aal2(
+def test_dangerous_permission_needs_the_grant_and_no_second_factor(
     two_tenants, in_tenant, grant_role, tenant_ctx_factory
 ):
-    """Step-up is enforced in the decision function, not in the UI."""
+    """A dangerous permission is allowed to whoever holds it: no second factor
+    stands between the grant and the action (ADR-050)."""
     a = two_tenants["a"]
     grant_role(a["org"], a["membership"], ["platform.role.assign"])
 
-    with in_tenant(a["ctx"]):
-        with pytest.raises(StepUpRequired):
-            authz.check(a["ctx"], "platform.role.assign")
-
-    strong = tenant_ctx_factory(a["org"], a["membership"], a["user"], aal=2)
-    with in_tenant(strong):
-        assert authz.check(strong, "platform.role.assign").allowed
+    held = tenant_ctx_factory(a["org"], a["membership"], a["user"])
+    with in_tenant(held):
+        assert authz.check(held, "platform.role.assign").allowed
 
 
 def test_dangerous_permission_blocked_under_impersonation(
@@ -221,7 +217,6 @@ def test_dangerous_permission_blocked_under_impersonation(
         a["org"],
         a["membership"],
         a["user"],
-        aal=2,
         is_break_glass=True,
         reason="Investigating support ticket 1234",
     )
@@ -252,9 +247,9 @@ def test_dangerous_permission_denied_when_organization_read_only(
     a = two_tenants["a"]
     grant_role(a["org"], a["membership"], ["platform.role.assign"])
 
-    suspended = tenant_ctx_factory(
-        a["org"], a["membership"], a["user"], aal=2
-    ).replace_status(OrganizationStatus.SUSPENDED)
+    suspended = tenant_ctx_factory(a["org"], a["membership"], a["user"]).replace_status(
+        OrganizationStatus.SUSPENDED
+    )
 
     with in_tenant(a["ctx"]):
         decision = authz.check(suspended, "platform.role.assign")

@@ -8,7 +8,7 @@ from django.db import IntegrityError, transaction
 
 from workeasy360.contracts.enums import UserStatus
 from workeasy360.platform.identity.email import is_plausible_email, normalize_email
-from workeasy360.platform.identity.models import AuthFactor, User
+from workeasy360.platform.identity.models import User
 
 pytestmark = pytest.mark.django_db
 
@@ -281,75 +281,3 @@ def test_user_is_not_tenant_scoped():
 
 
 # --- MFA readiness --------------------------------------------------------
-
-
-def test_auth_factor_model_supports_totp_and_webauthn():
-    """Modelled from day one: retrofitting a factor model into a live auth
-    system is expensive and risky (04-identity-authz.md section 3.3)."""
-    user = User.objects.create_user(email="a@example.com")
-
-    totp = AuthFactor.objects.create(
-        user=user, kind=AuthFactor.Kind.TOTP, label="Phone", secret_ref="kms://ref"
-    )
-    webauthn = AuthFactor.objects.create(
-        user=user,
-        kind=AuthFactor.Kind.WEBAUTHN,
-        label="YubiKey",
-        credential_id=b"cred",
-        public_key=b"pk",
-        sign_count=0,
-    )
-    assert totp.kind == "totp"
-    assert webauthn.sign_count == 0
-
-
-def test_unconfirmed_factor_does_not_satisfy_aal2():
-    user = User.objects.create_user(email="a@example.com")
-    factor = AuthFactor.objects.create(user=user, kind=AuthFactor.Kind.TOTP)
-    assert not factor.satisfies_aal2
-
-    from django.utils import timezone
-
-    factor.confirmed_at = timezone.now()
-    factor.save()
-    assert factor.satisfies_aal2
-
-
-def test_sms_is_a_weak_factor_and_cannot_satisfy_aal2():
-    """SMS is supported but classified weak; it must not raise assurance for
-    staff or partner admins (04-identity-authz.md section 3.3)."""
-    from django.utils import timezone
-
-    user = User.objects.create_user(email="a@example.com")
-    factor = AuthFactor.objects.create(
-        user=user, kind=AuthFactor.Kind.SMS, confirmed_at=timezone.now()
-    )
-    assert not factor.satisfies_aal2
-
-
-def test_mfa_secret_is_a_reference_not_a_secret():
-    """The column holds a KMS reference. A database dump must not yield
-    working second factors (12-security.md section 6)."""
-    user = User.objects.create_user(email="a@example.com")
-    factor = AuthFactor.objects.create(
-        user=user, kind=AuthFactor.Kind.TOTP, secret_ref="kms://alias/w360-mfa/abc"
-    )
-    assert factor.secret_ref.startswith("kms://")
-
-
-def test_has_mfa_reflects_confirmed_factors_only():
-    from django.utils import timezone
-
-    user = User.objects.create_user(email="a@example.com")
-    assert not user.has_mfa
-
-    AuthFactor.objects.create(user=user, kind=AuthFactor.Kind.TOTP)
-    assert not user.has_mfa  # enrolled but unconfirmed
-
-    AuthFactor.objects.create(
-        user=user,
-        kind=AuthFactor.Kind.WEBAUTHN,
-        label="key",
-        confirmed_at=timezone.now(),
-    )
-    assert user.has_mfa

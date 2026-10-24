@@ -4,8 +4,7 @@
  *
  * Kept apart from `controlPlane.ts`, whose shapes the backend's contract tests
  * parse. The same rules apply: every call is re-authorized server-side against
- * the staff member's live grants, dangerous ones need a recent second factor
- * (`401 step_up_required`, handled by `useAction`), money is integer minor
+ * the staff member's live grants, money is integer minor
  * units, and the browser never sends an amount it was not asked for.
  */
 
@@ -241,7 +240,6 @@ export interface UserRow {
   status: "active" | "disabled" | "locked" | "pending";
   is_staff: boolean;
   locked: boolean;
-  mfa_enrolled: boolean;
   organizations: number | null;
   email_verified: boolean;
   acquisition_source: string;

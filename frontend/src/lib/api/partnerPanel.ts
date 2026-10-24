@@ -354,7 +354,6 @@ export interface MemberRow {
   role_label: string;
   status: string;
   setup_pending: boolean;
-  mfa_enrolled: boolean;
   invited_at: string | null;
   last_login_at: string | null;
   joined_at: string;
@@ -420,7 +419,7 @@ export interface AuthenticationStatement {
   summary: string;
   sign_in_url: string;
   brand_domains: { hostname: string; status: string }[];
-  team: { members: number; with_second_factor: number };
+  team: { members: number };
   controlled_by_workeasy360: string[];
   partner_choices: string[];
 }
@@ -552,6 +551,78 @@ export interface SupportResponse {
   not_implemented: NotImplemented;
 }
 
+// --- growing the partnership: upgrade requests (ADR-049) ----------------------------------
+
+export type UpgradeTarget = "reseller" | "white_label";
+export type UpgradeStatus =
+  | "requested"
+  | "profile_required"
+  | "pending_approval"
+  | "approved"
+  | "rejected"
+  | "cancelled";
+
+/** What the partner proposed that has no other home yet. Every key is optional:
+ * a section the partner has not reached is absent. */
+export interface UpgradeProposal {
+  products?: string[];
+  pricing?: { preference: "standard" | "negotiated"; notes: string };
+  commercial?: {
+    expected_customers: number | null;
+    team_size: number | null;
+    customer_management: string;
+    notes: string;
+  };
+  brand?: { brand_name: string; primary_color: string; secondary_color: string; support_email: string };
+  domain?: { hostname: string };
+}
+
+export interface UpgradeRequest {
+  id: string;
+  partner_id: string;
+  from_experience: string;
+  to_experience: UpgradeTarget;
+  status: UpgradeStatus;
+  proposal: UpgradeProposal;
+  requested_at: string;
+  submitted_at: string | null;
+  decided_at: string | null;
+  /** What staff wrote when they asked for more - shown to the partner. */
+  info_request_note: string;
+  decision_note: string;
+  capabilities_added: string[];
+  capabilities_removed: string[];
+  products_granted: string[];
+  version: number;
+  editable: boolean;
+}
+
+export interface UpgradeChecklistItem {
+  key: string;
+  label: string;
+  required: boolean;
+  done: boolean;
+  detail: string;
+}
+
+export interface UpgradeState {
+  /** The workspace the partner opens first now (the server's word). */
+  current: string | null;
+  /** The upgrades it may ask for from here; empty at the top. */
+  eligible: UpgradeTarget[];
+  /** Whether this member may act (administrators only); anyone may read. */
+  can_request: boolean;
+  open: UpgradeRequest | null;
+  recent: UpgradeRequest[];
+  steps: Record<UpgradeTarget, { key: string; label: string }[]>;
+  /** The products on sale, offered on the Products step (only while a request is open). */
+  products: { code: string; name: string }[];
+  checklist: UpgradeChecklistItem[];
+}
+
+/** The section names the server accepts. The business step is the profile. */
+export type UpgradeSection = "products" | "pricing" | "commercial" | "brand" | "domain";
+
 // --- the client --------------------------------------------------------------------------
 
 export const panelApi = {
@@ -641,6 +712,22 @@ export const panelApi = {
       method: "PUT",
       body: json({ ...body, expected_version: expectedVersion }),
     }),
+  // ADR-049: an upgrade is a request on the same account; nothing here grants a power.
+  upgrade: (id: string) => apiFetch<UpgradeState>(`${partner(id)}/upgrade`),
+  startUpgrade: (id: string, experience: UpgradeTarget) =>
+    apiFetch<UpgradeRequest>(`${partner(id)}/upgrade/requests`, { method: "POST", body: json({ experience }) }),
+  saveUpgradeSection: (id: string, requestId: string, section: UpgradeSection, data: unknown, expectedVersion: number) =>
+    apiFetch<UpgradeRequest>(`${partner(id)}/upgrade/requests/${requestId}/sections/${section}`, {
+      method: "PUT",
+      body: json({ data, expected_version: expectedVersion }),
+    }),
+  submitUpgrade: (id: string, requestId: string, expectedVersion: number) =>
+    apiFetch<UpgradeRequest>(`${partner(id)}/upgrade/requests/${requestId}/submit`, {
+      method: "POST",
+      body: json({ expected_version: expectedVersion }),
+    }),
+  cancelUpgrade: (id: string, requestId: string) =>
+    apiFetch<UpgradeRequest>(`${partner(id)}/upgrade/requests/${requestId}/cancel`, { method: "POST", body: json({}) }),
   authentication: (id: string) => apiFetch<AuthenticationStatement>(`${partner(id)}/authentication`),
   communication: (id: string) => apiFetch<CommunicationOverview>(`${partner(id)}/communication`),
   channels: (id: string) => apiFetch<ChannelManagerResponse>(`${partner(id)}/channels`),

@@ -63,16 +63,6 @@ def test_staff_without_the_permission_is_refused_per_endpoint(staff_client):
     )
 
 
-def test_a_dangerous_action_needs_a_fresh_second_factor(staff_client):
-    client, _u = staff_client("platform.staff_partner.manage", aal2=False)
-    body = {"code": "aal-test", "display_name": "AAL", "payout_currency": "GBP"}
-    response = post(client, "/api/v1/admin/partners", body)
-    assert response.status_code == 401 and response.json()["code"] == "step_up_required"
-    from workeasy360.commercial.partners.models import PartnerAccount
-
-    assert PartnerAccount.objects.count() == 0  # nothing written
-
-
 def test_the_session_view_lists_only_control_plane_permissions_held(staff_client):
     client, _u = staff_client(
         "platform.staff_customer.view", "platform.staff_partner.manage"

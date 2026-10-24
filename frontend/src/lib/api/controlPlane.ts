@@ -4,7 +4,7 @@
  * Two facts shape every function here:
  *
  * 1. **The backend is the authority.** Nothing below decides who may do what;
- *    the calls simply fail with 401 `step_up_required`, 403 or 404 and the
+ *    the calls simply fail with 403 or 404 and the
  *    screens present that. Hiding a nav item is a convenience.
  * 2. **The browser sends selections and never authority.** A body carries a
  *    choice (a plan version id, a capability key, a reason) - never a price, a
@@ -57,7 +57,7 @@ export interface PartnerSummary {
 }
 
 /** One person who acts for a partner. `invitation_sent_at` null with no password
- * means "named, not yet invited"; `mfa_enabled` is a yes/no, never which factor. */
+ * means "named, not yet invited". */
 export interface PartnerMemberRow {
   id: string;
   user_id: string;
@@ -72,7 +72,6 @@ export interface PartnerMemberRow {
    * activated. Null `invitation_sent_at` with this false and no password is a
    * person attached before invitations were tracked: show "Invitation pending". */
   invitation_deferred: boolean;
-  mfa_enabled: boolean;
 }
 
 export interface PartnerDetail extends PartnerSummary {
@@ -366,7 +365,7 @@ export interface CapabilityInfo {
 const admin = "/api/v1/admin";
 
 export const adminApi = {
-  session: () => apiFetch<{ is_staff: boolean; aal: number; permissions: string[] }>(`${admin}/session`),
+  session: () => apiFetch<{ is_staff: boolean; permissions: string[] }>(`${admin}/session`),
   dashboard: () => apiFetch<Dashboard>(`${admin}/dashboard`),
   audit: (cursor?: string, action?: string) =>
     apiFetch<Page<AuditRow>>(`${admin}/audit`, { query: { cursor, action } }),

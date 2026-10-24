@@ -32,7 +32,7 @@ def grant_permission(
 ) -> Any:
     """Give a staff member one control-plane permission, optionally time-boxed.
 
-    Dangerous (AAL 2). The target is named by address and must be an active
+    Dangerous. The target is named by address and must be an active
     staff account; anything else is one uniform refusal. A person cannot grant
     to themselves, and the permission must be a registered control-plane key.
     """

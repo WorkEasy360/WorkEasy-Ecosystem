@@ -76,19 +76,13 @@ def test_staff_suspend_and_resume_change_access_and_are_audited(customer, staff_
     assert all(row["actor_kind"] == "staff" for row in rows)
 
 
-def test_a_suspension_needs_a_real_reason_a_second_factor_and_the_permission(
-    customer, staff_client
-):
+def test_a_suspension_needs_a_real_reason_and_the_permission(customer, staff_client):
     org, sub = customer["org"], customer["subscription"]
     url = f"/api/v1/admin/customers/{org}/subscriptions/{sub.id}/suspend"
 
     staff, _u = staff_client("platform.staff_subscription.manage")
     assert send(staff, url, {"reason": "short"}).status_code == 400
     assert send(staff, url, {}).status_code == 400
-
-    low, _u = staff_client("platform.staff_subscription.manage", aal2=False)
-    denied = send(low, url, {"reason": "Long enough reason to be recorded"})
-    assert denied.status_code == 401 and denied.json()["code"] == "step_up_required"
 
     reader, _u = staff_client("platform.staff_customer.view")
     assert (
@@ -225,14 +219,10 @@ def test_an_override_never_leaks_to_another_customer(customer, staff_client, cha
     assert not _allowed(other.organization_id, "books")
 
 
-def test_an_override_needs_the_subscription_permission_and_a_second_factor(
-    customer, staff_client
-):
+def test_an_override_needs_the_subscription_permission(customer, staff_client):
     org = customer["org"]
     reader, _u = staff_client("platform.staff_customer.view")
     assert _override(reader, org).status_code == 403
-    low, _u = staff_client("platform.staff_subscription.manage", aal2=False)
-    assert _override(low, org).status_code == 401
     assert not _allowed(org, "books")
 
 

@@ -21,7 +21,7 @@ def test_the_directory_shows_state_never_credentials(staff_login, user_factory, 
     listing = viewer.get(USERS, {"q": "person@"})
     rows = listing.json()["results"]
     assert [r["email"] for r in rows] == ["person@example.com"]
-    assert rows[0]["last_sign_in_at"] is not None and rows[0]["mfa_enrolled"] is False
+    assert rows[0]["last_sign_in_at"] is not None and "mfa_enrolled" not in rows[0]
     text = listing.content.decode()
     assert "argon2" not in text and "pbkdf2" not in text and "password" not in text
     detail = viewer.get(f"{USERS}/{person.id}").json()
@@ -33,9 +33,7 @@ def test_the_directory_shows_state_never_credentials(staff_login, user_factory, 
     ]
 
 
-def test_account_actions_need_manage_step_up_and_a_reason(
-    staff_login, user_factory, login
-):
+def test_account_actions_need_manage_and_a_reason(staff_login, user_factory, login):
     person = user_factory(password=PASSWORD)
     target = f"{USERS}/{person.id}/sign-out"
     viewer, _ = staff_login("platform.staff_user.view")
@@ -47,11 +45,6 @@ def test_account_actions_need_manage_step_up_and_a_reason(
         ).status_code
         == 403
     )
-    no_step_up, _ = staff_login("platform.staff_user.manage", aal2=False)
-    response = no_step_up.post(
-        target, {"reason": "Suspicious activity seen"}, content_type="application/json"
-    )
-    assert (response.status_code, response.json()["code"]) == (401, "step_up_required")
     manager, _ = staff_login("platform.staff_user.manage")
     assert (
         manager.post(
@@ -116,7 +109,7 @@ def test_signing_a_person_out_everywhere_and_disabling_them(
     assert all(e["reason"] for e in audit)
 
 
-def test_unlock_clears_both_lockouts(staff_login, user_factory):
+def test_unlock_clears_the_lockout(staff_login, user_factory):
     from datetime import timedelta
 
     from django.utils import timezone
@@ -125,8 +118,6 @@ def test_unlock_clears_both_lockouts(staff_login, user_factory):
     type(person).objects.filter(id=person.id).update(
         failed_login_count=10,
         locked_until=timezone.now() + timedelta(minutes=10),
-        mfa_failed_attempts=15,
-        mfa_locked_until=timezone.now() + timedelta(hours=1),
     )
     manager, _ = staff_login("platform.staff_user.manage")
     response = manager.post(
@@ -136,11 +127,7 @@ def test_unlock_clears_both_lockouts(staff_login, user_factory):
     )
     assert response.status_code == 200 and response.json()["locked"] is False
     person.refresh_from_db()
-    assert (
-        person.failed_login_count,
-        person.mfa_failed_attempts,
-        person.mfa_locked_until,
-    ) == (0, 0, None)
+    assert (person.failed_login_count, person.locked_until) == (0, None)
 
 
 # --- cross-cutting -------------------------------------------------------------------------

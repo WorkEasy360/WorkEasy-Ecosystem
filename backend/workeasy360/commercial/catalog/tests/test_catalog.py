@@ -538,7 +538,7 @@ def test_catalog_management_requires_an_internal_identity(
     """
     org, membership, user = organization_factory()
     grant_permissions(org, membership, ("commercial.catalog.manage",))
-    ctx = tenant_ctx_factory(org, membership, user, aal=2)
+    ctx = tenant_ctx_factory(org, membership, user)
 
     assert user.is_staff is False
     with in_tenant(ctx), pytest.raises(PermissionDenied, match="control-plane"):

@@ -7,7 +7,6 @@
   separation-of-duties rules.
 """
 
-import base64
 import json
 
 import django
@@ -20,7 +19,6 @@ from workeasy360.commercial.commissions import ledger, payouts
 from workeasy360.commercial.partners.models import PartnerAccount
 from workeasy360.platform.authz import staff
 from workeasy360.platform.authz.control_plane import platform_context
-from workeasy360.platform.identity import mfa
 from workeasy360.platform.identity import services as identity
 from workeasy360.platform.identity.models import User
 from workeasy360.platform.tenancy.unscoped import unscoped_access
@@ -53,11 +51,4 @@ payout = payouts.prepare_payout(
 payouts.mark_payout_ready(rctx, payout.id)
 
 secrets = {}
-for user in (admin, partner_user):
-    start = identity.begin_totp_enrollment(user.id)
-    padded = start.secret_base32 + "=" * (-len(start.secret_base32) % 8)
-    identity.confirm_totp_enrollment(
-        user.id, start.factor_id, mfa.current_totp(base64.b32decode(padded))
-    )
-    secrets[user.email] = start.secret_base32
 print("KEYBOARD-SEEDED", json.dumps({"payout": str(payout.id), "secrets": secrets}))

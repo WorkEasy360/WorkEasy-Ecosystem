@@ -95,7 +95,6 @@ def _resolve(user_id: UUID, **organization_lookup: Any) -> TenantResolution | No
 #: The organization columns the access policy is built from, loaded with the
 #: organization in the bootstrap query - so enforcing it costs no query.
 _POLICY_FIELDS = (
-    "require_mfa",
     "session_max_age_minutes",
     "ip_allowlist_enabled",
     "ip_allowlist",
@@ -106,7 +105,6 @@ def access_policy_for(organization: Any, membership: Any) -> AccessPolicy:
     valid_after = getattr(membership, "sessions_valid_after", None)
     minutes = organization.session_max_age_minutes
     return AccessPolicy(
-        require_mfa=bool(organization.require_mfa),
         session_max_age_s=int(minutes) * 60 if minutes else None,
         ip_allowlist_enabled=bool(organization.ip_allowlist_enabled),
         ip_allowlist=tuple(str(e) for e in (organization.ip_allowlist or [])),

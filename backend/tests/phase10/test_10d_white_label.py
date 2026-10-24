@@ -223,15 +223,12 @@ def test_the_partner_in_the_path_is_the_only_authority(wl, partner_factory, mana
     assert not PartnerBrand.objects.filter(partner=other["partner"]).exists()
 
 
-def test_a_staff_brand_write_needs_manage_and_a_second_factor(wl, staff_client):
+def test_a_staff_brand_write_needs_manage(wl, staff_client):
     view_only, _u = staff_client("platform.staff_partner.view")
     assert (
         put(view_only, urls(wl["partner"])["brand"], {"brand_name": "X"}).status_code
         == 403
     )
-    weak, _u2 = staff_client("platform.staff_partner.manage", aal2=False)
-    response = put(weak, urls(wl["partner"])["brand"], {"brand_name": "X"})
-    assert response.status_code == 401 and response.json()["code"] == "step_up_required"
     assert not PartnerBrand.objects.exists()
 
 
@@ -448,23 +445,18 @@ def test_activation_needs_a_brand_first(wl, manager, dns):
     assert PartnerDomain.objects.get(id=domain_id).status == "verified"
 
 
-def test_every_staff_domain_action_needs_a_second_factor(wl, staff_client, manager, dns):
+def test_every_staff_domain_action_needs_manage(wl, staff_client, manager, dns):
     domain_id = post(
         manager, urls(wl["partner"])["domain"], {"hostname": HOSTNAME}
     ).json()["id"]
-    weak, _u = staff_client("platform.staff_partner.manage", aal2=False)
+    view_only, _u2 = staff_client("platform.staff_partner.view")
     for url, body in (
         (urls(wl["partner"])["domain"], {"hostname": "other.wl-example.com"}),
         (f"/api/v1/admin/domains/{domain_id}/verify", {}),
         (f"/api/v1/admin/domains/{domain_id}/activate", {}),
         (f"/api/v1/admin/domains/{domain_id}/disable", {}),
     ):
-        response = post(weak, url, body)
-        assert (
-            response.status_code == 401 and response.json()["code"] == "step_up_required"
-        ), url
-    view_only, _u2 = staff_client("platform.staff_partner.view")
-    assert post(view_only, f"/api/v1/admin/domains/{domain_id}/verify").status_code == 403
+        assert post(view_only, url, body).status_code == 403, url
 
 
 def test_another_partner_cannot_take_a_hostname_a_partner_has_proved(
@@ -543,18 +535,18 @@ def test_a_domain_is_served_only_once_active_and_only_as_presentation(
 # --- the AAL2 asymmetry, from the partner's own portal ---------------------------------------------------------------
 
 
-def test_a_partner_saves_a_brand_without_a_second_factor_but_a_domain_needs_one(
+def test_a_partner_saves_a_brand_and_requests_a_domain(
     partner_client,
 ):
-    client, fx = partner_client("branding.manage", "domain.manage", aal2=False)
+    client, fx = partner_client("branding.manage", "domain.manage")
     base = f"/api/v1/partner/{fx['partner'].id}"
     brand = put(
         client, f"{base}/branding", {"brand_name": "Acme", "accent_color": "#1a56db"}
     )
     assert brand.status_code == 200, brand.content
     domain = post(client, f"{base}/domains", {"hostname": HOSTNAME})
-    assert domain.status_code == 401 and domain.json()["code"] == "step_up_required"
-    assert not PartnerDomain.objects.exists()
+    assert domain.status_code == 201, domain.content
+    assert PartnerDomain.objects.filter(hostname=HOSTNAME).exists()
 
 
 def test_a_partner_with_a_second_factor_does_both_separately(partner_client):

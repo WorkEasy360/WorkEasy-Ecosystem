@@ -7,7 +7,7 @@ prices; this module adds what the builder was missing: a combined listing,
 presentation edits, bundle status, and publishing a version drafted earlier.
 
 Every write authorizes in the service (``commercial.catalog.manage`` held via a
-``platform.staff_catalog.manage`` grant, AAL 2, audited).
+``platform.staff_catalog.manage`` grant, audited).
 """
 
 from __future__ import annotations

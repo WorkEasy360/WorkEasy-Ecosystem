@@ -326,7 +326,7 @@ def credentials_check(ctx: TenantContext, raw: Any) -> dict[str, Any]:
     password is judged only when a new account would be created. The answer
     carries no password and no detail of an existing account beyond that it
     exists - which is the one fact the form needs, and the reason this is a
-    staff-only, second-factor-gated, rate-limited command.
+    staff-only, rate-limited command.
     """
     authz.require(ctx, MANAGE)
     problems = Problems()
@@ -517,7 +517,7 @@ def _raise(problems: list[dict[str, str]]) -> None:
 def create(ctx: TenantContext, raw: Any) -> Created:
     """Create the partner (a draft) and its administrator's login, atomically.
 
-    Order of events: authorize (the partner command's second-factor gate first),
+    Order of events: authorize (the staff partner permission first),
     validate everything (nothing is written until all of it is right), then one
     transaction does every write. A refusal anywhere rolls the whole thing back.
     """

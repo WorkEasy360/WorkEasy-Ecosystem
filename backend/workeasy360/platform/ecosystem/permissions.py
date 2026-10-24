@@ -1,14 +1,11 @@
 """Permissions for the product integration control plane.
 
-Every one of these is ``dangerous=True``, and that is the answer to the
-carried step-up trigger rather than a precaution.
+Every one of these is ``dangerous=True``.
 
-**Trigger reached: yes.** ``dangerous`` is already implemented and already
-enforced in ``platform/authz/services.py::check`` - it demands ``aal >= 2``,
-blocks the action outright under break-glass impersonation, and refuses it
-when the organization is read-only. The mechanism exists, the actions here
-are the highest-value control-plane writes in the platform, so leaving them
-at AAL 1 would be leaving a working control switched off.
+``dangerous`` is enforced in ``platform/authz/services.py::check``: it blocks
+the action outright under break-glass impersonation, and refuses it when the
+organization is read-only. The actions here are the highest-value
+control-plane writes in the platform.
 
 What each of these can do if it is misused:
 
@@ -66,7 +63,7 @@ ECOSYSTEM_PERMISSIONS: Final = (
         # Not dangerous: reading the registry discloses client ids and
         # redirect URIs, which are public by construction - a client id is
         # in every authorization URL and a redirect URI is where the browser
-        # visibly goes. Gating a read behind step-up would push operators
+        # visibly goes. Making a read dangerous would push operators
         # toward keeping a copy somewhere worse.
         dangerous=False,
     ),

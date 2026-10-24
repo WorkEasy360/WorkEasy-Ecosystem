@@ -1,7 +1,7 @@
 """The Super Admin products console over HTTP (Phase 11): ``/api/v1/admin/products``.
 
 Thin, like every view (F-7): parse, call one service, shape the response.
-Authorization, validation, the second factor and audit all live in the
+Authorization, validation and audit all live in the
 services they call - ``controlplane.products`` and, beneath it,
 ``ecosystem.update_manifest`` / ``ecosystem.transition``, the same staff-only,
 dangerous, audited writes the integration registry API uses.

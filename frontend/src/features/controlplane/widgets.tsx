@@ -1,7 +1,6 @@
 "use client";
 
 import { Fragment, useEffect, useId, useRef, useState } from "react";
-import { isStepUpRequired } from "@/features/security/mfaErrors";
 import { describeError } from "./ui";
 import cp from "./ControlPlane.module.css";
 import styles from "./AdminConsole.module.css";
@@ -520,7 +519,7 @@ export function MarkdownPreview({ text }: { text: string }) {
 
 // --- resumable steps ------------------------------------------------------------------------
 
-export type StepState = "pending" | "running" | "done" | "failed" | "waiting";
+export type StepState = "pending" | "running" | "done" | "failed";
 
 export interface StepView {
   key: string;
@@ -540,7 +539,6 @@ const STATE_TEXT: Record<StepState, string> = {
   running: "In progress…",
   done: "Done",
   failed: "Failed",
-  waiting: "Waiting for your verification",
 };
 
 const STATE_BADGE: Record<StepState, string> = {
@@ -548,13 +546,12 @@ const STATE_BADGE: Record<StepState, string> = {
   running: "w360-badge w360-badge-neutral",
   done: "w360-badge w360-badge-success",
   failed: "w360-badge w360-badge-danger",
-  waiting: "w360-badge w360-badge-warning",
 };
 
 /**
  * Runs an ordered list of calls and remembers which ones finished, so running
- * the same list again - after a step-up retry, or after fixing what made a
- * step fail - skips everything already done instead of creating it twice.
+ * the same list again - after fixing what made a step fail - skips everything
+ * already done instead of creating it twice.
  */
 export function useStepRunner() {
   const done = useRef<Set<string>>(new Set());
@@ -575,8 +572,7 @@ export function useStepRunner() {
       try {
         await def.run();
       } catch (err) {
-        const stepUp = isStepUpRequired(err);
-        mark(def.key, stepUp ? "waiting" : "failed", stepUp ? undefined : describeError(err));
+        mark(def.key, "failed", describeError(err));
         throw err;
       }
       done.current.add(def.key);
@@ -585,8 +581,7 @@ export function useStepRunner() {
   }
 
   const started = steps.some((s) => s.state === "done");
-  // True while a step is in flight - including the retry the step-up prompt
-  // starts after verification, which runs outside useAction's `busy`.
+  // True while a step is in flight.
   const running = steps.some((s) => s.state === "running");
   return { steps, prepare, runAll, started, running };
 }

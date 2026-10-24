@@ -205,8 +205,8 @@ def _domain_for(ctx: TenantContext, domain_id: UUID, *, staff_ok: bool) -> Any:
     """The domain, scoped to the caller: a partner's own, or any for staff.
 
     A staff caller needs ``platform.staff_partner.manage``, which is dangerous:
-    verifying, activating and disabling a hostname are second-factor actions
-    whoever performs them."""
+    verifying, activating and disabling a hostname are refused under
+    impersonation whoever performs them."""
     from workeasy360.commercial.partners.models import PartnerDomain
 
     if ctx.principal is PrincipalKind.PARTNER:

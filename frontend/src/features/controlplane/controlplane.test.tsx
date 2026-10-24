@@ -115,7 +115,7 @@ describe("the Super Admin shell", () => {
     mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/admin/session": [
-        { status: 200, body: { is_staff: true, aal: 1, permissions: ["platform.staff_customer.view", "platform.staff_audit.view"] } },
+        { status: 200, body: { is_staff: true, permissions: ["platform.staff_customer.view", "platform.staff_audit.view"] } },
       ],
     });
     render(
@@ -167,11 +167,11 @@ describe("the Super Admin shell", () => {
     pathname = "/admin";
   });
 
-  it("opens the control plane after a password sign-in, with no code to enter", async () => {
+  it("opens the control plane after a password sign-in, with nothing more to enter", async () => {
     mockApi({
-      "GET /api/v1/auth/session": [{ status: 200, body: { ...(SIGNED_IN.body as object), mfa_enrolled: true } }],
+      "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/admin/session": [
-        { status: 200, body: { is_staff: true, aal: 1, permissions: ["platform.staff_customer.view"] } },
+        { status: 200, body: { is_staff: true, permissions: ["platform.staff_customer.view"] } },
       ],
     });
     render(
@@ -180,13 +180,12 @@ describe("the Super Admin shell", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(screen.queryByRole("heading", { name: "Two-step verification is required" })).not.toBeInTheDocument();
   });
 
   it("says so when signing out fails, instead of pretending it worked", async () => {
     mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
-      "GET /api/v1/admin/session": [{ status: 200, body: { is_staff: true, aal: 2, permissions: [] } }],
+      "GET /api/v1/admin/session": [{ status: 200, body: { is_staff: true, permissions: [] } }],
       "POST /api/v1/auth/logout": [{ status: 503, body: { code: "unavailable" } }],
     });
     render(

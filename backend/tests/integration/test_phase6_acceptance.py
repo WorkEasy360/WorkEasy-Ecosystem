@@ -114,10 +114,10 @@ def test_phase_6_acceptance_flow(
 ):
     settings.WEBHOOK_MAX_ATTEMPTS = 2
 
-    # 1. An organization owner logs in (with step-up: managing connections
-    #    is a dangerous permission).
+    # 1. An organization owner logs in (managing connections is a dangerous
+    #    permission, held by the owner).
     org_a = integration_org()
-    signed_in(org_a["user"], aal=2)
+    signed_in(org_a["user"])
 
     # 2-3. Creates a webhook connection. The platform validates the endpoint
     #      safely: a metadata-service URL is refused and nothing is written.
@@ -260,7 +260,7 @@ def test_phase_6_acceptance_flow(
     try:
         org_b = integration_org()
         client.logout()
-        signed_in(org_b["user"], aal=2)
+        signed_in(org_b["user"])
         connection_b, _secret_b = _create_connection(client, org_b, f"{url_b}/hooks")
         _activate_with(client, org_b, connection_b, [EVENT_REF])
         status, _ = product.publish_event(
@@ -274,7 +274,7 @@ def test_phase_6_acceptance_flow(
 
     # 16. A failing destination is retried with bounded backoff.
     client.logout()
-    signed_in(org_a["user"], aal=2)
+    signed_in(org_a["user"])
     webhook_receiver.reply(500, times=2)
     before = timezone.now()
     status, _ = product.publish_event(

@@ -1,16 +1,13 @@
 """A person's own account: password, sessions, security trail - and the
 invitation acceptance page (Phase 8 extension).
 
-Session-authenticated, not tenant-scoped, like ``auth_views`` and
-``mfa_views``: these belong to the global account. The caller only ever acts on
+Session-authenticated, not tenant-scoped, like ``auth_views``: these belong
+to the global account. The caller only ever acts on
 their *own* account - no endpoint here takes a user id.
 
-**Step-up.** Changing a password and ending a session are dangerous: the
-session must hold AAL 2 (a verified second factor within the step-up window).
-A person without MFA cannot reach AAL 2, so for them revoking sessions is
-unavailable - and changing the password is their path instead: it ends every
-other session anyway (``identity.account.change_password``) and is guarded by
-the current password, which the session alone does not prove.
+Changing a password is guarded by the current password, which the session
+alone does not prove, and ends every other session
+(``identity.account.change_password``).
 """
 
 from __future__ import annotations
@@ -35,10 +32,7 @@ from workeasy360.interfaces.api.v1.control_plane_http import limited
 from workeasy360.platform.identity import account
 from workeasy360.platform.identity.middleware import SESSION_EPOCH_KEY
 from workeasy360.platform.identity.sessions import session_public_id
-from workeasy360.platform.tenancy.resolution import (
-    SESSION_PASSWORD_NONCOMPLIANT_KEY,
-    session_aal,
-)
+from workeasy360.platform.tenancy.resolution import SESSION_PASSWORD_NONCOMPLIANT_KEY
 
 
 def _user(request: HttpRequest) -> Any:
@@ -46,10 +40,6 @@ def _user(request: HttpRequest) -> Any:
     if user is None or not user.is_authenticated:
         raise AuthenticationRequired("Sign in to continue.")
     return user
-
-
-def _step_up_required(detail: str) -> JsonResponse:
-    return JsonResponse({"code": "step_up_required", "detail": detail}, status=401)
 
 
 def _body(request: HttpRequest) -> dict[str, Any]:
@@ -105,7 +95,6 @@ def sessions_view(request: HttpRequest) -> JsonResponse:
             "sessions": account.list_sessions(
                 user.id, current_public_id=session_public_id(request.session)
             ),
-            "aal": session_aal(request.session),
         }
     )
 
@@ -117,16 +106,14 @@ def session_revoke_view(request: HttpRequest, session_id: str) -> JsonResponse:
     blocked = limited(request, "session_revoke", user=user)
     if blocked is not None:
         return blocked
-    if session_aal(request.session) < 2:
-        return _step_up_required("Verify a code before signing a session out.")
     try:
         target = uuid.UUID(str(session_id))
     except ValueError as exc:
         raise SessionNotFound("No such session.") from exc
     current = session_public_id(request.session)
     if target == current:
-        # Ending your own session is signing out, which needs no step-up and
-        # has its own endpoint; refusing here keeps this one unambiguous.
+        # Ending your own session is signing out, which has its own
+        # endpoint; refusing here keeps this one unambiguous.
         raise SessionNotFound("Use sign out to end this session.")
     where = connection_facts(request)
     account.revoke_session(user.id, target, **where)
@@ -140,8 +127,6 @@ def sessions_revoke_others_view(request: HttpRequest) -> JsonResponse:
     blocked = limited(request, "session_revoke", user=user)
     if blocked is not None:
         return blocked
-    if session_aal(request.session) < 2:
-        return _step_up_required("Verify a code before signing other sessions out.")
     where = connection_facts(request)
     ended = account.revoke_other_sessions(
         user.id, keep_public_id=session_public_id(request.session), **where

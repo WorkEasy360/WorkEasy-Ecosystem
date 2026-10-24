@@ -107,7 +107,7 @@ def test_an_administrator_choosing_administrator_gets_the_console(
     http_login, user_factory
 ):
     user, _g, _r = _staff_user(user_factory, VIEW)
-    client = http_login(user)  # verified a second factor
+    client = http_login(user)
     response = client.get(SESSION)
     assert response.status_code == 200
     assert VIEW in response.json()["permissions"]
@@ -117,10 +117,10 @@ def test_an_administrator_choosing_administrator_gets_the_console(
 def test_a_password_sign_in_opens_the_console(http_login, user_factory):
     """Owner decision 2026-10-24: no sign-in code for the admin console."""
     user, _g, _r = _staff_user(user_factory, VIEW)
-    client = http_login(user, aal2=False, mfa_verified=False)
+    client = http_login(user)
     response = client.get(SESSION)
     assert response.status_code == 200
-    assert response.json()["aal"] == 1
+    assert "aal" not in response.json()
     assert VIEW in response.json()["permissions"]
 
 
@@ -131,7 +131,7 @@ def test_a_staff_identity_without_any_grant_is_not_an_administrator(
     http_login, user_factory
 ):
     user = user_factory(is_staff=True, password=PASSWORD)
-    client = http_login(user)  # verified
+    client = http_login(user)
     response = client.get(SESSION)
     assert response.status_code == 403
     assert response.json()["code"] == "permission_denied"
@@ -141,7 +141,7 @@ def test_a_staff_identity_without_any_grant_is_not_an_administrator(
 @pytest.mark.parametrize("is_staff", [False, True], ids=["superuser", "staff+superuser"])
 def test_django_superuser_is_not_an_administrator(http_login, user_factory, is_staff):
     user = user_factory(is_staff=is_staff, is_superuser=True, password=PASSWORD)
-    client = http_login(user, mfa_verified=True)
+    client = http_login(user)
     assert client.get(SESSION).status_code == 403
     assert client.get("/api/v1/admin/partners/overview").status_code == 403
     assert client.get("/api/v1/auth/session").json()["consoles"]["staff"] is False

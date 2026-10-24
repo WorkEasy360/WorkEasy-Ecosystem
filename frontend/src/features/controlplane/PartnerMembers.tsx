@@ -12,7 +12,7 @@ import ps from "./PartnerProfileTabs.module.css";
 
 /**
  * The people who can sign in and act for one partner: who they are, whether
- * they have taken up the invitation, whether a second factor protects them and
+ * they have taken up the invitation and
  * when they last used it - and the four things staff do about them.
  *
  * - **Invite** names a person (first and last name, used only when the address
@@ -54,7 +54,7 @@ export function MembersSection({ partner, manage, act, busy }: { partner: Partne
       </p>
       <Table
         caption="Members"
-        head={["Name", "Email", "Role", "Status", "MFA", "Last activity", ...(manage ? ["Actions"] : [])]}
+        head={["Name", "Email", "Role", "Status", "Last activity", ...(manage ? ["Actions"] : [])]}
         isEmpty={partner.members.length === 0}
         empty="No users yet."
       >
@@ -112,7 +112,6 @@ function MemberRow({ partnerId, member: m, manage, act, busy }: { partnerId: str
       <td>
         <MemberStatus member={m} />
       </td>
-      <td>{m.mfa_enabled ? "On" : "Off"}</td>
       <td>{m.last_login_at ? when(m.last_login_at) : "Never signed in"}</td>
       {manage && (
         <td>

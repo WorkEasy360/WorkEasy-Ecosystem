@@ -87,7 +87,6 @@ def ensure_platform_organization() -> None:
 def platform_context(
     *,
     user_id: UUID,
-    aal: int,
     principal: PrincipalKind = PrincipalKind.STAFF,
     partner_id: UUID | None = None,
 ) -> TenantContext:
@@ -99,7 +98,6 @@ def platform_context(
         membership_id=NO_MEMBERSHIP,
         user_id=user_id,
         organization_status=OrganizationStatus.ACTIVE,
-        aal=max(1, int(aal)),
         principal=principal,
         partner_id=partner_id,
     )

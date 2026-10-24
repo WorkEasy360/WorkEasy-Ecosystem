@@ -471,7 +471,6 @@ def set_lifecycle_status(
 #: The organization's own access policy (Phase 8 extension), applied by
 #: ``contracts.values.access_policy`` at both doors - console and product sign-in.
 ACCESS_POLICY_FIELDS = (
-    "require_mfa",
     "session_max_age_minutes",
     "password_min_length",
     "ip_allowlist_enabled",

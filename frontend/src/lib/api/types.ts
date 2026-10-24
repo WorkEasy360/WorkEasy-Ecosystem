@@ -6,8 +6,6 @@ export interface SessionState {
   user_id?: string;
   email?: string;
   name?: string;
-  /** Phase 8 extension: whether an organization's "require MFA" can be met. */
-  mfa_enrolled?: boolean;
   /** True while the password is a temporary one someone else chose: the shell
    * asks for a new one before anything else (the server refuses the rest). */
   password_change_required?: boolean;
@@ -134,21 +132,6 @@ export interface MembershipSummary {
   member_type: string;
   is_owner: boolean;
   joined_at: string | null;
-}
-
-export interface MfaFactor {
-  factor_id: string | null;
-  kind: "totp" | "webauthn" | "recovery_code" | "sms";
-  label: string;
-  confirmed: boolean;
-  created_at: string | null;
-  last_used_at: string | null;
-}
-
-export interface TotpEnrollmentStart {
-  factor_id: string;
-  secret: string;
-  provisioning_uri: string;
 }
 
 // --- Phase 6: connections, webhooks, automation -------------------------

@@ -93,18 +93,18 @@ def test_staff_without_a_grant_in_force_are_refused_the_admin_portal(
     from tests.portals.conftest import PASSWORD
 
     user = user_factory(is_staff=True, password=PASSWORD)
-    auth = sign_in(user, aal2=True)
+    auth = sign_in(user)
     refused = auth.post(
         "/api/v1/auth/handoff", {"mode": "admin", "next": "/admin", "state": new_state()}
     )
     assert refused.json() == {"code": "portal_access_denied"}
 
 
-def test_an_enrolled_administrator_is_handed_off_with_a_password_sign_in(
+def test_an_administrator_is_handed_off_with_a_password_sign_in(
     sign_in, hand_off, staff_user
 ):
-    """Owner decision 2026-10-24: no sign-in code before the admin portal. The
-    portal session starts at AAL 1; dangerous actions there still step up."""
+    """Owner decision 2026-10-24: no sign-in code before the admin portal, and
+    no second factor anywhere (ADR-050)."""
     admin, issued, redeemed = hand_off(
         sign_in(staff_user()), "admin", next_path="/admin/customers"
     )
@@ -112,50 +112,7 @@ def test_an_enrolled_administrator_is_handed_off_with_a_password_sign_in(
     assert redeemed.json() == {"next": "/admin/customers"}
     response = admin.get("/api/v1/admin/session")
     assert response.status_code == 200, response.content
-    assert response.json()["aal"] == 1
-
-
-def test_a_step_up_on_the_sign_in_host_carries_into_the_admin_portal(
-    sign_in, hand_off, staff_user
-):
-    from workeasy360.platform.tenancy.resolution import record_step_up
-
-    auth = sign_in(staff_user())
-    session = auth.session
-    record_step_up(session)
-    session.save()
-    admin, _, redeemed = hand_off(auth, "admin")
-    assert redeemed.status_code == 200
-    assert admin.get("/api/v1/admin/session").json()["aal"] == 2
-
-
-def test_the_hand_off_never_extends_elevation(sign_in, hand_off, staff_user):
-    """The portal session's AAL 2 keeps the step-up time of the sign-in it
-    came from: it lapses at the same moment, never later."""
-    from workeasy360.platform.tenancy.resolution import (
-        SESSION_STEP_UP_AT_KEY,
-        record_step_up,
-    )
-
-    auth = sign_in(staff_user())
-    session = auth.session
-    record_step_up(session)
-    session[SESSION_STEP_UP_AT_KEY] = time.time() - 600  # ten minutes ago
-    session.save()
-    stepped_up_at = auth.session[SESSION_STEP_UP_AT_KEY]
-    admin, _, redeemed = hand_off(auth, "admin")
-    assert redeemed.status_code == 200
-    assert admin.session[SESSION_STEP_UP_AT_KEY] == stepped_up_at
-
-
-def test_an_administrator_without_a_factor_reaches_the_console_at_aal1(
-    sign_in, hand_off, staff_user
-):
-    admin, issued, redeemed = hand_off(sign_in(staff_user(mfa=False)), "admin")
-    assert issued.status_code == 200 and redeemed.status_code == 200
-    response = admin.get("/api/v1/admin/session")
-    assert response.status_code == 200, response.content
-    assert response.json()["aal"] == 1
+    assert "aal" not in response.json()
 
 
 # --- the Partner portal --------------------------------------------------------------
@@ -194,12 +151,7 @@ def test_a_partner_member_reaches_the_customer_portal_only_through_membership(
 def test_an_administrator_without_a_membership_sees_no_organization(
     sign_in, hand_off, staff_user, customer
 ):
-    from workeasy360.platform.tenancy.resolution import record_step_up
-
     auth = sign_in(staff_user())
-    session = auth.session
-    record_step_up(session)
-    session.save()
     app, _, _ = hand_off(auth, "user")
     assert app.get("/api/v1/organizations").json()["organizations"] == []
     other = app.get(f"/api/v1/orgs/{customer['org'].slug}/apps")
@@ -245,12 +197,7 @@ def test_a_code_needs_the_browser_the_portal_sent_to_sign_in(sign_in, customer):
 
 
 def test_a_code_works_only_on_the_portal_it_names(sign_in, staff_user):
-    from workeasy360.platform.tenancy.resolution import record_step_up
-
     auth = sign_in(staff_user())
-    session = auth.session
-    record_step_up(session)
-    session.save()
     code, state = _issue(auth, mode="admin", next_path="/admin")
     assert _redeem("app", code, state)[1].status_code == 400
     # Burnt by the wrong-host attempt.
@@ -362,12 +309,7 @@ def test_redeeming_replaces_whatever_session_the_portal_host_had(
 def test_signing_out_of_one_portal_ends_the_whole_sign_in(sign_in, hand_off, staff_user):
     """No stale elevated admin session: signing out of the customer portal
     ends the Super Admin and central sessions of the same sign-in too."""
-    from workeasy360.platform.tenancy.resolution import record_step_up
-
     auth = sign_in(staff_user())
-    session = auth.session
-    record_step_up(session)
-    session.save()
     admin, _, _ = hand_off(auth, "admin")
     app, _, _ = hand_off(auth, "user")
     assert admin.get("/api/v1/admin/session").status_code == 200
@@ -404,7 +346,7 @@ def test_guest_login_reaches_the_partner_portal_without_a_partner_membership(
     then handed to partner. - although the staff member belongs to no partner.
     Before the guest view (and after it ends) the hand-off is refused."""
     partner_id = str(partner_member["partner"].id)
-    auth = sign_in(_guest_staff(staff_user), aal2=True)
+    auth = sign_in(_guest_staff(staff_user))
     _, refused, _ = hand_off(auth, "partner")
     assert refused.json() == {"code": "portal_access_denied"}
 
@@ -444,14 +386,14 @@ def test_a_guest_view_of_another_sign_in_opens_nothing(
     """The grant belongs to one sign-in: the same staff member signed in a
     second time (another browser) is still refused the partner portal."""
     user = _guest_staff(staff_user)
-    first = sign_in(user, aal2=True)
+    first = sign_in(user)
     admin, _, _ = hand_off(first, "admin")
     started = admin.post(
         f"/api/v1/admin/partners/{partner_member['partner'].id}/guest-view",
         {"reason": "Checking the partner's setup for support"},
     )
     assert started.status_code == 201, started.content
-    second = sign_in(user, aal2=True)
+    second = sign_in(user)
     _, refused, _ = hand_off(second, "partner")
     assert refused.json() == {"code": "portal_access_denied"}
 
@@ -459,7 +401,7 @@ def test_a_guest_view_of_another_sign_in_opens_nothing(
 def _guest_session(sign_in, hand_off, staff_user, partner_member):
     """A staff member's guest view started on admin., then the hand-off to partner."""
     user = _guest_staff(staff_user)
-    auth = sign_in(user, aal2=True)
+    auth = sign_in(user)
     admin, _, _ = hand_off(auth, "admin")
     started = admin.post(
         f"/api/v1/admin/partners/{partner_member['partner'].id}/guest-view",
@@ -467,27 +409,6 @@ def _guest_session(sign_in, hand_off, staff_user, partner_member):
     )
     assert started.status_code == 201, started.content
     return user, auth, admin
-
-
-def test_a_guest_only_partner_session_is_never_elevated(
-    sign_in, hand_off, staff_user, partner_member
-):
-    """AAL 1 and no step-up time on partner.: a dangerous self-service action
-    there asks for the second factor again (audit P2, 2026-10-23)."""
-    from workeasy360.platform.identity.sessions import SESSION_GUEST_UNTIL_KEY
-    from workeasy360.platform.tenancy.resolution import (
-        SESSION_AAL_KEY,
-        SESSION_STEP_UP_AT_KEY,
-    )
-
-    _user, auth, _admin = _guest_session(sign_in, hand_off, staff_user, partner_member)
-    assert auth.session[SESSION_AAL_KEY] == 2
-    partner, _, redeemed = hand_off(auth, "partner")
-    assert redeemed.status_code == 200, redeemed.content
-    session = partner.session
-    assert session[SESSION_AAL_KEY] == 1
-    assert SESSION_STEP_UP_AT_KEY not in session
-    assert session[SESSION_GUEST_UNTIL_KEY] > time.time()
 
 
 def test_a_guest_only_partner_session_ends_with_the_guest_view(

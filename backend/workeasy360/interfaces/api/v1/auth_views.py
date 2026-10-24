@@ -42,7 +42,6 @@ from workeasy360.platform.observability import throttle
 from workeasy360.platform.observability.client_ip import client_ip, rate_limit_identity
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import metrics
-from workeasy360.platform.tenancy.resolution import reset_session_aal
 
 logger = get_logger(__name__)
 
@@ -157,12 +156,6 @@ def establish_session(request: HttpRequest, user: Any, *, password: str) -> None
     # trusting that authenticate() succeeded.
     django_login(request, user, backend="django.contrib.auth.backends.ModelBackend")
     request.session[SESSION_EPOCH_KEY] = user.session_epoch
-    # AAL 1: a password alone. Explicitly reset rather than left to the
-    # default: django_login keeps session data when the same user signs in
-    # again without logging out, and a new sign-in must never inherit an
-    # earlier step-up. AAL 2 is reached only through mfa_views.step_up_view.
-    reset_session_aal(request.session)
-
     where = connection_facts(request)
     request.session[SESSION_IP_PREFIX_KEY] = where["ip_prefix"]
     request.session[SESSION_DEVICE_KEY] = where["device_label"]
@@ -273,11 +266,10 @@ def _end_guest_view(request: HttpRequest, user: Any) -> None:
     from workeasy360.commercial.partners import guest
     from workeasy360.platform.authz.control_plane import platform_context
     from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
-    from workeasy360.platform.tenancy.resolution import session_aal
 
     try:
         guest.end(
-            platform_context(user_id=user.id, aal=session_aal(request.session)),
+            platform_context(user_id=user.id),
             request.session.get(SESSION_SIGN_IN_ID_KEY),
         )
     except Exception:  # the sign-out itself must still happen
@@ -289,17 +281,11 @@ def _handed_off_keys() -> tuple[str, ...]:
     from: never more elevated, never elevated for longer (ADR-043)."""
     from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
     from workeasy360.platform.tenancy.resolution import (
-        SESSION_AAL_KEY,
         SESSION_AUTHENTICATED_AT_KEY,
-        SESSION_MFA_VERIFIED_KEY,
         SESSION_PASSWORD_NONCOMPLIANT_KEY,
-        SESSION_STEP_UP_AT_KEY,
     )
 
     return (
-        SESSION_AAL_KEY,
-        SESSION_STEP_UP_AT_KEY,
-        SESSION_MFA_VERIFIED_KEY,
         SESSION_AUTHENTICATED_AT_KEY,
         SESSION_PASSWORD_NONCOMPLIANT_KEY,
         SESSION_SIGN_IN_ID_KEY,
@@ -312,8 +298,8 @@ def _refused(code: str, status: int) -> JsonResponse:
 
 def _guest_hand_off(request: HttpRequest) -> int | None:
     """When this sign-in's guest view ends (epoch seconds), if the staff member
-    may still hold it: a live guest view, the staff partner view grant in
-    force and a verified second factor. ``None`` otherwise."""
+    may still hold it: a live guest view and the staff partner view grant in
+    force. ``None`` otherwise."""
     from workeasy360.commercial.partners import guest
     from workeasy360.contracts.errors import AccessPolicyDenied, PermissionDenied
     from workeasy360.interfaces.api.v1.control_plane_http import (
@@ -344,7 +330,7 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
     without one, a live guest view of this sign-in (Guest login) with the
     staff partner view grant - and the portal checks
     again on every request. A guest-only partner session is weaker than the
-    sign-in it came from: AAL 1, no step-up time, and it ends when the guest
+    sign-in it came from: it ends when the guest
     view does (``SESSION_GUEST_UNTIL_KEY``). ``next`` is only a path, validated against that
     portal's allowlist; the origin always comes from configuration.
     """
@@ -370,15 +356,14 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
     consoles = _consoles(user)
     if portal == portals.ADMIN and not consoles["staff"]:
         # A password sign-in opens the admin portal (owner decision
-        # 2026-10-24); dangerous actions there still ask for a step-up.
+        # 2026-10-24).
         return _refused("portal_access_denied", 403)
     guest_until: int | None = None
     if portal == portals.PARTNER and not consoles["partner"]:
         # A staff member's Guest login (commercial.partners.guest) is the
         # other way in: a live guest view of *this* sign-in, which only a
-        # staff member with the manage grant, a recent second factor and a
-        # reason could start - and the staff view grant and the verified
-        # factor are checked again now. It opens a session and nothing else:
+        # staff member with the manage grant and a
+        # reason could start - and the staff view grant is checked again now. It opens a session and nothing else:
         # every partner request is authorized again, read-only (guest_context).
         guest_until = _guest_hand_off(request)
         if guest_until is None:
@@ -400,15 +385,7 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
     auth_state = {k: request.session[k] for k in keys if k in request.session}
     if guest_until is not None:
         from workeasy360.platform.identity.sessions import SESSION_GUEST_UNTIL_KEY
-        from workeasy360.platform.tenancy.resolution import (
-            SESSION_AAL_KEY,
-            SESSION_STEP_UP_AT_KEY,
-        )
 
-        # Never elevated on the partner host: a dangerous action there (a
-        # password or factor change) asks for the second factor again.
-        auth_state.pop(SESSION_STEP_UP_AT_KEY, None)
-        auth_state[SESSION_AAL_KEY] = min(int(auth_state.get(SESSION_AAL_KEY) or 1), 1)
         auth_state[SESSION_GUEST_UNTIL_KEY] = guest_until
     code = handoff.issue(
         user=user,
@@ -476,7 +453,6 @@ def handoff_redeem_view(request: HttpRequest) -> JsonResponse:
     # belonged to anyone else on this host.
     django_login(request, user, backend="django.contrib.auth.backends.ModelBackend")
     request.session[SESSION_EPOCH_KEY] = user.session_epoch
-    reset_session_aal(request.session)
     from workeasy360.platform.identity.sessions import SESSION_GUEST_UNTIL_KEY
 
     allowed = {*_handed_off_keys(), SESSION_GUEST_UNTIL_KEY}
@@ -551,10 +527,8 @@ def session_view(request: HttpRequest) -> JsonResponse:
             "user_id": str(user.id),
             "email": user.email,
             "name": user.full_name,
-            # Phase 8 extension: where the shell may send this person, and
-            # whether they can satisfy an organization's "require MFA". The
+            # Phase 8 extension: where the shell may send this person. The
             # consoles re-check everything server-side on every request.
-            "mfa_enrolled": user.has_mfa,
             # True while the password is a temporary one someone else chose:
             # the shell sends the person to the change-password screen.
             "password_change_required": bool(

@@ -79,7 +79,7 @@ def _buy(org, catalog, plan="crm_professional", currency="GBP"):
 @pytest.fixture
 def paying_org(console_org, login, catalog):
     org = console_org()
-    owner = login(org["owner"], aal2=True)
+    owner = login(org["owner"])
     _buy(org, catalog)
     invoices = owner.get(url(org["slug"], "billing/invoices")).json()["results"]
     assert len(invoices) == 1
@@ -211,7 +211,7 @@ def test_a_purchase_issues_one_invoice_from_the_price_agreed(paying_org):
 
 def test_a_trial_owes_nothing_yet(console_org, login, catalog):
     org = console_org()
-    owner = login(org["owner"], aal2=True)
+    owner = login(org["owner"])
     owner.post(
         url(org["slug"], "billing-account"),
         {"currency": "GBP"},
@@ -233,7 +233,7 @@ def test_a_trial_owes_nothing_yet(console_org, login, catalog):
 
 def test_invoices_are_the_organizations_own(paying_org, console_org, login):
     other = console_org()
-    stranger = login(other["owner"], aal2=True)
+    stranger = login(other["owner"])
     invoice_id = paying_org["invoice"]["invoice_id"]
     assert (
         stranger.get(url(other["slug"], f"billing/invoices/{invoice_id}")).status_code
@@ -262,12 +262,7 @@ def test_paying_needs_billing_manage_but_no_step_up(paying_org, providers, login
     target = url(
         paying_org["slug"], f"billing/invoices/{paying_org['invoice']['invoice_id']}/pay"
     )
-    assert (
-        login(member["user"], aal2=True)
-        .post(target, HTTP_IDEMPOTENCY_KEY="a")
-        .status_code
-        == 403
-    )
+    assert login(member["user"]).post(target, HTTP_IDEMPOTENCY_KEY="a").status_code == 403
     accepted = login(billing["user"]).post(target, HTTP_IDEMPOTENCY_KEY="b")
     assert accepted.status_code == 202 and accepted.json()["status"] == "pending"
 
@@ -275,7 +270,7 @@ def test_paying_needs_billing_manage_but_no_step_up(paying_org, providers, login
 def test_a_billing_manager_sees_the_subscription_but_cannot_buy(paying_org, login):
     """The role is "billing and subscriptions only": it reads the subscription
     it pays for (granted by authz.0008), and buying stays the owner's."""
-    billing = login(paying_org["add"]("billing_manager")["user"], aal2=True)
+    billing = login(paying_org["add"]("billing_manager")["user"])
     permissions = billing.get(url(paying_org["slug"], "access")).json()["permissions"]
     assert "commercial.subscription.view" in permissions
     assert "commercial.subscription.manage" not in permissions
@@ -523,7 +518,7 @@ def test_razorpay_payment_links_end_to_end(
             valid_from=timezone.now() - timedelta(days=1),
         )
     org = console_org()
-    owner = login(org["owner"], aal2=True)
+    owner = login(org["owner"])
     _buy(org, catalog, currency="INR")
     invoice = owner.get(url(org["slug"], "billing/invoices")).json()["results"][0]
     fx = {**org, "client": owner, "invoice": invoice}
@@ -803,7 +798,7 @@ def test_manual_settlement_and_void_need_manage_reason_and_version(
     assert audit[0]["reason"] == "Paid by bank transfer"
 
     other = console_org()
-    owner = login(other["owner"], aal2=True)
+    owner = login(other["owner"])
     _buy(other, catalog)
     invoice = owner.get(url(other["slug"], "billing/invoices")).json()["results"][0]
     voided = manager.post(
@@ -960,7 +955,7 @@ def test_simultaneous_pay_clicks_create_one_attempt(paying_org, providers, login
     from workeasy360.platform.tenancy.db import organization_db_scope
     from workeasy360.platform.tenancy.unscoped import unscoped_access
 
-    clients = [login(paying_org["owner"], aal2=True) for _ in range(3)]
+    clients = [login(paying_org["owner"]) for _ in range(3)]
     barrier = threading.Barrier(3)
     ids: list[str] = []
 

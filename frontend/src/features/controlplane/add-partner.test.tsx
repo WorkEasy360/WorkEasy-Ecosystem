@@ -189,17 +189,6 @@ describe("creating", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("asks for the second factor when the server wants one, and creates nothing meanwhile", async () => {
-    const calls = mockApi({
-      "POST /api/v1/admin/partners/create": [{ status: 401, body: { code: "step_up_required", detail: "Verify to continue." } }],
-    });
-    mount();
-    fill();
-    create();
-    expect(await screen.findByText(/needs a recent verification/)).toBeInTheDocument();
-    expect(createCalls(calls)).toHaveLength(1);
-    expect(push).not.toHaveBeenCalled();
-  });
 });
 
 describe("an email that already has an account", () => {

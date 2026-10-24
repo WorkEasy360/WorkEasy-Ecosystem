@@ -5,8 +5,8 @@ Staff authority is two things held by different people on purpose:
 - **Being a staff identity** (``User.is_staff``): an operator decision, made
   here, from a terminal. It confers nothing by itself.
 - **Holding a permission**: a ``StaffGrant`` issued by a security
-  administrator in the Super Admin UI, with a reason, an optional expiry and a
-  second factor. A grant can only be issued to a staff identity.
+  administrator in the Super Admin UI, with a reason and an optional expiry.
+  A grant can only be issued to a staff identity.
 
 The split limits a compromised security-administrator session: it can grant
 only to accounts the operator already designated, never to a fresh account an
@@ -88,28 +88,6 @@ class Command(BaseCommand):
                 f"{target.email} is already {'a' if enable else 'not a'} staff identity."
             )
             return
-        if enable:
-            # Phase 12 (D-037): dangerous staff actions need a step-up with a
-            # second factor, and the *first* factor of an account needs only its password to
-            # enrol. So the factor must exist before the account is staff - and
-            # the operator confirms it is the person's - or a phished password
-            # of a newly designated account could still enrol the attacker's.
-            factor = (
-                target.auth_factors.filter(kind="totp", confirmed_at__isnull=False)
-                .order_by("confirmed_at")
-                .first()
-            )
-            if factor is None:
-                raise CommandError(
-                    "That account has no confirmed second factor. A staff identity "
-                    "must already hold one: have the person enrol an authenticator "
-                    "app on their own account (Account > Security), confirm the "
-                    "enrolment with them, then run this again."
-                )
-            self.stdout.write(
-                f"Authenticator confirmed {factor.confirmed_at:%Y-%m-%d %H:%M} UTC - "
-                f"check with the person that this enrolment was theirs."
-            )
         if not options["confirm"]:
             verb = "designate" if enable else "remove the staff designation of"
             self.stdout.write(f"Would {verb} {target.email}. Re-run with --confirm.")

@@ -14,13 +14,12 @@ import uuid
 
 import pytest
 
-from tests.partner_setup.conftest import MANAGE, VIEW, patch
+from tests.partner_setup.conftest import VIEW, patch
 from workeasy360.commercial.partners import branding, services
 from workeasy360.commercial.partners.models import PartnerProductGrant
 from workeasy360.contracts.errors import (
     PartnerValidationError,
     PermissionDenied,
-    StepUpRequired,
 )
 
 pytestmark = pytest.mark.django_db
@@ -137,16 +136,13 @@ def test_a_grant_of_another_partner_is_not_found_under_this_one(
     assert grant_of(other["partner"].id).trial_allowed is True
 
 
-def test_the_choices_need_manage_and_a_second_factor_and_no_partner_may_set_them(
+def test_the_choices_need_manage_and_no_partner_may_set_them(
     staff_client, partner_client, channel
 ):
     pid = channel["partner"].id
     url = grants_url(pid, grant_of(pid).id)
     viewer, _u = staff_client(VIEW)
     assert patch(viewer, url, {"trial_allowed": False}).status_code == 403
-    weak, _w = staff_client(MANAGE, aal2=False)
-    stepped = patch(weak, url, {"trial_allowed": False})
-    assert stepped.status_code == 401 and stepped.json()["code"] == "step_up_required"
     own, fx = partner_client("subscription.sell")
     services.grant_product(fx["staff_ctx"], fx["partner"].id, product_code="crm")
     assert (
@@ -166,9 +162,6 @@ def test_the_service_authorizes_in_the_service(channel, staff_factory):
     _v, viewer = staff_factory(VIEW)
     with pytest.raises(PermissionDenied):
         services.update_product_grant(viewer, pid, grant_id=grant_id, trial_allowed=False)
-    _w, weak = staff_factory(MANAGE, aal=1)
-    with pytest.raises(StepUpRequired):
-        services.update_product_grant(weak, pid, grant_id=grant_id, trial_allowed=False)
 
 
 def test_a_terminated_partner_cannot_be_changed(channel):

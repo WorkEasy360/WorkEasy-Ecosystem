@@ -442,9 +442,9 @@ describe("plans & add-ons and payments", () => {
 describe("the team", () => {
   const MEMBERS = {
     members: [
-      { id: "m1", name: "Owner One", email: "owner@acme.example.com", role: "owner", role_label: "Partner Owner", status: "active", setup_pending: false, mfa_enrolled: true, invited_at: null, last_login_at: null, joined_at: "2026-09-01T00:00:00Z", is_you: true },
-      { id: "m2", name: "Sam Sales", email: "sam@acme.example.com", role: "sales", role_label: "Sales", status: "active", setup_pending: false, mfa_enrolled: false, invited_at: null, last_login_at: null, joined_at: "2026-10-01T00:00:00Z", is_you: false },
-      { id: "m3", name: "Pat Paused", email: "pat@acme.example.com", role: "viewer", role_label: "Viewer", status: "suspended", setup_pending: false, mfa_enrolled: false, invited_at: null, last_login_at: null, joined_at: "2026-10-02T00:00:00Z", is_you: false },
+      { id: "m1", name: "Owner One", email: "owner@acme.example.com", role: "owner", role_label: "Partner Owner", status: "active", setup_pending: false, invited_at: null, last_login_at: null, joined_at: "2026-09-01T00:00:00Z", is_you: true },
+      { id: "m2", name: "Sam Sales", email: "sam@acme.example.com", role: "sales", role_label: "Sales", status: "active", setup_pending: false, invited_at: null, last_login_at: null, joined_at: "2026-10-01T00:00:00Z", is_you: false },
+      { id: "m3", name: "Pat Paused", email: "pat@acme.example.com", role: "viewer", role_label: "Viewer", status: "suspended", setup_pending: false, invited_at: null, last_login_at: null, joined_at: "2026-10-02T00:00:00Z", is_you: false },
     ],
     roles: [{ key: "sales", label: "Sales", description: "Sells." }, { key: "viewer", label: "Viewer", description: "Reads." }],
     can_manage: true,
@@ -569,7 +569,7 @@ describe("auth configuration", () => {
       [`GET ${API}/authentication`]: [
         ok({
           mode: "central", custom_domain_sign_in: false, summary: "Sign-in stays on the central page.", sign_in_url: "https://auth.workeasy360.com",
-          brand_domains: [], team: { members: 2, with_second_factor: 1 },
+          brand_domains: [], team: { members: 2 },
           controlled_by_workeasy360: ["The issuer and signing keys other products trust"], partner_choices: ["Your brand shown on that page"],
         }),
       ],

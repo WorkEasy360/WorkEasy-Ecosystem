@@ -90,7 +90,7 @@ class TenancyMiddleware:
             return self._deny_uniform(request, resolution)
 
         # Phase 8 extension: the organization's own access policy - network
-        # allow-list, required MFA, session age, "signed out of this
+        # allow-list, session age, "signed out of this
         # organization", password policy. Evaluated only once membership and
         # status have admitted the request, so it can deny and never widen.
         denial = self._check_access_policy(request, resolution)

@@ -2,8 +2,7 @@
 
 ``platform.ai.*`` rather than a product prefix: AI settings belong to the
 organization, not to any one product. ``view`` shows settings, limits and
-usage metadata. ``manage`` is **dangerous** (AAL 2 within the step-up window,
-refused under impersonation, refused while the organization is read-only):
+usage metadata. ``manage`` is **dangerous** (refused under impersonation, refused while the organization is read-only):
 it decides whether the organization's data may be sent to AI providers at
 all, to which vendors, and how much may be spent doing it.
 

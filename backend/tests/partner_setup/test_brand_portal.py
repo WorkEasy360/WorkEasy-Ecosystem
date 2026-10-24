@@ -457,15 +457,15 @@ def test_the_staff_brand_read_carries_the_full_portal_for_staff_only(
     )
 
 
-def test_a_staff_portal_write_needs_manage_and_a_second_factor(wl, staff_client):
+def test_a_staff_portal_write_needs_manage(wl, staff_client):
     viewer, _u = staff_client(VIEW)
     assert (
         save_brand(viewer, wl["partner"].id, portal={"short_name": "x"}).status_code
         == 403
     )
-    weak, _w = staff_client(MANAGE, aal2=False)
-    response = save_brand(weak, wl["partner"].id, portal={"short_name": "x"})
-    assert response.status_code == 401 and response.json()["code"] == "step_up_required"
+    manager, _w = staff_client(MANAGE)
+    response = save_brand(manager, wl["partner"].id, portal={"short_name": "x"})
+    assert response.status_code == 200, response.content
 
 
 def test_the_service_validates_before_its_first_write(wl):

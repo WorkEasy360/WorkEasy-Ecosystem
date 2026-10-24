@@ -2,7 +2,7 @@
  * The reseller and white-label console API (Phase 10), and its wire types.
  *
  * The same two rules as `controlPlane.ts` apply: the backend is the authority
- * (these calls simply fail with 401 `step_up_required`, 403 or 404), and the
+ * (these calls simply fail with 403 or 404), and the
  * browser sends selections and never authority - a body carries a choice (a
  * capability key, a product code, an amount the operator typed) and never a
  * computed price, margin, discount or commission. Every figure on screen comes
@@ -63,6 +63,8 @@ export interface OverviewRecentPartner {
 
 export interface PartnersOverview {
   as_of: string;
+  /** Upgrade requests waiting for a decision (ADR-049); beside the cards, not one of them. */
+  upgrades_pending?: number;
   cards: OverviewCard[];
   recent_partners: OverviewRecentPartner[];
 }
@@ -172,6 +174,8 @@ export interface ResellerRow {
   payouts: ResellerPayouts;
   referrals: ResellerReferrals;
   profile_completion: ListCompletion;
+  /** The open upgrade request, if any: a badge, never an authority (ADR-049). */
+  upgrade?: UpgradeBadge | null;
   last_activity_at: string;
 }
 
@@ -971,6 +975,92 @@ export interface WhiteLabelFilters {
   cursor?: string;
 }
 
+// --- partner upgrades (ADR-049) ----------------------------------------------------------------------
+
+/** The open upgrade request of a partner, as the All Partners list draws it. */
+export interface UpgradeBadge {
+  id: string;
+  to: string;
+  status: string;
+}
+
+/** What the partner proposed. Plain text and codes only; every key is optional
+ * because a request is filled in step by step. */
+export interface UpgradeProposal {
+  products?: string[];
+  pricing?: { preference: string; notes: string };
+  commercial?: { expected_customers: number | null; team_size: number | null; customer_management: string; notes: string };
+  brand?: { brand_name: string; primary_color: string; secondary_color: string; support_email: string };
+  domain?: { hostname: string };
+}
+
+/** One upgrade request as staff read it: the partner's fields plus who raised
+ * and decided it and the commercial reference. */
+export interface UpgradeRequestRow {
+  id: string;
+  partner_id: string;
+  from_experience: string;
+  to_experience: string;
+  status: string;
+  proposal: UpgradeProposal;
+  requested_at: string;
+  submitted_at: string | null;
+  decided_at: string | null;
+  info_request_note: string;
+  decision_note: string;
+  capabilities_added: string[];
+  capabilities_removed: string[];
+  products_granted: string[];
+  version: number;
+  editable: boolean;
+  requested_by?: string;
+  decided_by?: string | null;
+  commercial_reference?: string;
+  correlation_id?: string | null;
+}
+
+/** What the request still needs, decided by the server. */
+export interface UpgradeChecklistItem {
+  key: string;
+  label: string;
+  required: boolean;
+  done: boolean;
+  detail: string;
+}
+
+/** A partner's upgrade standing: its level now, what it may ask for, its open
+ * request, the checklist and its history. `status` is "none" without a request. */
+export interface PartnerUpgrades {
+  current: string | null;
+  eligible: string[];
+  status: string;
+  requested: string | null;
+  open: UpgradeRequestRow | null;
+  checklist: UpgradeChecklistItem[];
+  history: UpgradeRequestRow[];
+  products: { code: string; name: string }[];
+}
+
+export type UpgradeAction = "approve" | "reject" | "request_info";
+
+/** A decision: a choice and a note. Never a grant, a capability or an amount. */
+export interface UpgradeDecisionBody {
+  action: UpgradeAction;
+  note?: string;
+  products?: string[];
+  commercial_reference?: string;
+}
+
+export interface UpgradeQueueItem extends UpgradeRequestRow {
+  partner_name: string;
+  partner_code: string;
+}
+
+export interface UpgradeQueue {
+  items: UpgradeQueueItem[];
+  counts: Record<string, number>;
+}
+
 const json = (body: unknown): string => JSON.stringify(body);
 
 // --- what the white-label wizard needs, whoever is running it ---------------------------------------------
@@ -991,9 +1081,8 @@ export interface BrandDraftBody {
 /**
  * The one wizard, two callers. A partner's own portal and a staff member
  * preparing a partner both run these eight calls; only the address differs,
- * and the server decides who may (a partner user needs branding.manage, and a
- * second factor for anything about a domain; staff need partner management and
- * a second factor for everything). The wizard never chooses an endpoint by role.
+ * and the server decides who may (a partner user needs branding.manage; staff
+ * need partner management). The wizard never chooses an endpoint by role.
  */
 export interface WhiteLabelApi {
   brand: () => Promise<{ brand: Brand | null }>;
@@ -1092,6 +1181,17 @@ export const partnerConsoleApi = {
       method: "POST",
       body: json(body),
     }),
+  /** A partner's upgrade standing: level, request, checklist and history (staff). */
+  upgrades: (partnerId: string) => apiFetch<PartnerUpgrades>(`${admin}/partners/${partnerId}/upgrades`),
+  /** Approve, reject or ask for more on a submitted request. Approving grants
+   * the approved bundle - the server applies every rule; this only asks. */
+  decideUpgrade: (partnerId: string, requestId: string, body: UpgradeDecisionBody) =>
+    apiFetch<UpgradeRequestRow>(`${admin}/partners/${partnerId}/upgrades/${requestId}/decision`, {
+      method: "POST",
+      body: json(body),
+    }),
+  /** The review queue across partners; open requests unless a status is given. */
+  upgradeQueue: (status?: string) => apiFetch<UpgradeQueue>(`${admin}/partner-upgrades`, { query: { status } }),
   /** Send the ordinary forgotten-password link. The current password is never read or shown. */
   sendPasswordReset: (partnerId: string, memberId: string) =>
     apiFetch<{ sent: boolean }>(`${admin}/partners/${partnerId}/members/${memberId}/password-reset`, {

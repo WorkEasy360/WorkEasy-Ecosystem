@@ -31,7 +31,6 @@ from workeasy360.interfaces.api.v1 import (
     intelligence_product_views,
     intelligence_views,
     launcher_views,
-    mfa_views,
     partner_api_views,
     partner_panel_views,
     partner_views,
@@ -59,16 +58,6 @@ urlpatterns = [
         name="auth-handoff-redeem",
     ),
     path("organizations", auth_views.organizations_view, name="organizations"),
-    # --- MFA: enrollment, challenge, step-up (Task 37-39) ---
-    path("auth/mfa/totp/enroll", mfa_views.totp_enroll_view, name="mfa-totp-enroll"),
-    path("auth/mfa/totp/confirm", mfa_views.totp_confirm_view, name="mfa-totp-confirm"),
-    path("auth/mfa/factors", mfa_views.factors_view, name="mfa-factors"),
-    path(
-        "auth/mfa/factors/<str:factor_id>",
-        mfa_views.factor_detail_view,
-        name="mfa-factor-detail",
-    ),
-    path("auth/mfa/step-up", mfa_views.step_up_view, name="mfa-step-up"),
     # --- Phase 8 extension: the account itself ---
     path("auth/password", account_views.password_view, name="auth-password"),
     path("auth/sessions", account_views.sessions_view, name="auth-sessions"),
@@ -707,8 +696,7 @@ urlpatterns = [
 # the tenancy middleware resolves no organization and opens no transaction for
 # them. Each handler establishes its own actor and each service its own
 # transaction and scope. ``admin/`` is the Workeasy360 control plane
-# (staff-only, explicit ``platform.staff_*`` permissions, AAL 2 for anything
-# dangerous); ``partner/<partner_id>/`` is the partner portal (membership
+# (staff-only, explicit ``platform.staff_*`` permissions); ``partner/<partner_id>/`` is the partner portal (membership
 # verified from the URL id, capabilities from grants); ``public/`` is the small
 # unauthenticated surface, rate-limited and identity-free.
 _admin = [
@@ -1164,6 +1152,21 @@ _admin = [
         name="admin-partner-experience",
     ),
     path(
+        "admin/partner-upgrades",
+        admin_views.partner_upgrade_queue_view,
+        name="admin-partner-upgrade-queue",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/upgrades",
+        admin_views.partner_upgrades_view,
+        name="admin-partner-upgrades",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/upgrades/<uuid:request_id>/decision",
+        admin_views.partner_upgrade_decision_view,
+        name="admin-partner-upgrade-decision",
+    ),
+    path(
         "admin/partners/<uuid:partner_id>/members/<uuid:member_id>/password-reset",
         admin_views.partner_member_password_reset_view,
         name="admin-partner-member-password-reset",
@@ -1470,6 +1473,31 @@ _partner = [
         "partner/<uuid:partner_id>/affiliate/overview",
         partner_panel_views.affiliate_overview_view,
         name="partner-affiliate-overview",
+    ),
+    path(
+        "partner/<uuid:partner_id>/upgrade",
+        partner_panel_views.upgrade_state_view,
+        name="partner-upgrade-state",
+    ),
+    path(
+        "partner/<uuid:partner_id>/upgrade/requests",
+        partner_panel_views.upgrade_start_view,
+        name="partner-upgrade-start",
+    ),
+    path(
+        "partner/<uuid:partner_id>/upgrade/requests/<uuid:request_id>/sections/<str:section>",
+        partner_panel_views.upgrade_section_view,
+        name="partner-upgrade-section",
+    ),
+    path(
+        "partner/<uuid:partner_id>/upgrade/requests/<uuid:request_id>/submit",
+        partner_panel_views.upgrade_submit_view,
+        name="partner-upgrade-submit",
+    ),
+    path(
+        "partner/<uuid:partner_id>/upgrade/requests/<uuid:request_id>/cancel",
+        partner_panel_views.upgrade_cancel_view,
+        name="partner-upgrade-cancel",
     ),
     path(
         "partner/<uuid:partner_id>/reports",

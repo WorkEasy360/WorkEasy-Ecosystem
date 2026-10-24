@@ -43,9 +43,8 @@ export function ActivationBadge({ owner }: { owner: Pick<OwnerActivation, "activ
 /**
  * Send a customer's owner a new activation link, or withdraw the current one.
  * Shown only where it can do something: a customer whose owner has not
- * activated yet, on a relationship that is still live. Both are dangerous
- * actions on the server, so a missing recent verification prompts inline
- * (``useAction``) and the same click then completes. The link itself is never
+ * activated yet, on a relationship that is still live. Both run through
+ * ``useAction``, which announces the outcome. The link itself is never
  * in what comes back - only the state - so there is nothing here to show.
  */
 export function OwnerInvitationActions({

@@ -86,8 +86,8 @@ def test_a_suspended_integration_is_reported_distinctly_from_no_entitlement(
     """Entitled and seated, but the platform suspended the integration - an
     operational fact, never confused with a commercial one (Task 48).
 
-    The transition itself requires staff + AAL 2 (``platform.integration.
-    lifecycle`` is ``dangerous``) - performed by ``platform_admin``, not by
+    The transition itself requires staff (``platform.integration.lifecycle``
+    is ``dangerous``) - performed by ``platform_admin``, not by
     the entitled organization's own member, exactly as production requires.
     """
     from workeasy360.platform.ecosystem import services as ecosystem_services

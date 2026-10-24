@@ -106,8 +106,8 @@ def start(
 ) -> GuestView:
     """Open ``partner_id``'s portal read-only for the staff member ``ctx``.
 
-    Needs ``platform.staff_partner.manage`` (dangerous: a recent second factor,
-    audited, refused under impersonation - so a guest cannot start another).
+    Needs ``platform.staff_partner.manage`` (dangerous: audited,
+    refused under impersonation - so a guest cannot start another).
     Replaces any guest view this sign-in already had, ending that one.
     """
     from workeasy360.platform.audit import services as audit

@@ -4,9 +4,7 @@
  * The same rules as every client here: the backend is the authority (a hidden
  * menu item is a convenience; every call is authorized again), the browser
  * sends selections and never authority, and money on screen is server-derived
- * integer minor units with a currency. Dangerous actions answer
- * `401 step_up_required` until the session has verified a second factor - the
- * screens run them through `useAction`/`useStepUp`, which prompts and retries.
+ * integer minor units with a currency.
  */
 
 import { apiFetch } from "./client";
@@ -35,13 +33,11 @@ export interface ConsoleAccess {
  * access policy refuses a request (after membership was verified). */
 export type AccessPolicyDenial =
   | "network_not_allowed"
-  | "mfa_required"
   | "reauthentication_required"
   | "password_change_required";
 
 export const ACCESS_POLICY_DENIALS: readonly AccessPolicyDenial[] = [
   "network_not_allowed",
-  "mfa_required",
   "reauthentication_required",
   "password_change_required",
 ];
@@ -144,7 +140,6 @@ export interface SignInRow {
 // --- security policy -------------------------------------------------------------------
 
 export interface SecurityPolicy {
-  require_mfa: boolean;
   session_max_age_minutes: number | null;
   password_min_length: number | null;
   ip_allowlist_enabled: boolean;
@@ -453,7 +448,6 @@ export const consoleApi = {
   updateSecurityPolicy: (
     slug: string,
     body: {
-      require_mfa: boolean;
       session_max_age_minutes: number | null;
       password_min_length: number | null;
       version: number;
@@ -560,7 +554,7 @@ export const accountApi = {
       method: "POST",
       body: json({ current_password: currentPassword, new_password: newPassword }),
     }),
-  sessions: () => apiFetch<{ sessions: SessionRow[]; aal: number }>("/api/v1/auth/sessions"),
+  sessions: () => apiFetch<{ sessions: SessionRow[] }>("/api/v1/auth/sessions"),
   revokeSession: (sessionId: string) =>
     apiFetch<{ ok: boolean }>(`/api/v1/auth/sessions/${sessionId}/revoke`, { method: "POST" }),
   revokeOtherSessions: () =>

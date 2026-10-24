@@ -7,7 +7,7 @@ overrides an entitlement by writing one of *these* and asking provisioning to
 reconcile - never by touching ``Entitlement``.
 
 This module writes grants only. It does not authorize (the caller requires a
-dangerous staff permission and AAL 2), does not audit and does not reconcile;
+dangerous staff permission), does not audit and does not reconcile;
 those are the composing layer's, because ``entitlements`` may import neither
 ``audit`` nor ``commercial`` (F-5, F-4).
 

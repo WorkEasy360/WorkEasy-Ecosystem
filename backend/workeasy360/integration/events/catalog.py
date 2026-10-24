@@ -15,7 +15,7 @@ Finer-grained visibility *within* a product (an HR event only some
 administrators should see) is not something the platform can know, because
 it does not own the product's data model. Two things bound it instead:
 subscribing requires ``platform.connection.manage`` - an organization
-administrator, at AAL 2 - and a product decides what it publishes; the
+administrator - and a product decides what it publishes; the
 product integration guide tells it to publish identifiers and minimal
 detail, never sensitive fields (12-security.md section 11).
 """

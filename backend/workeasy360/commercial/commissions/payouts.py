@@ -7,8 +7,8 @@ platform decides that payment happened.
 
 **Dual approval required: NO.** The money flow is manual and low volume, the
 payout is prepared and approved by *different* staff members (the database
-refuses an approver equal to the preparer), approval needs its own permission,
-AAL 2 and a reason, and it is audited. That is separation of duties without
+refuses an approver equal to the preparer), approval needs its own permission
+and a reason, and it is audited. That is separation of duties without
 the operational cost of a two-signature workflow. The trigger to adopt dual
 approval is any of: automated payment execution, a single payout above a
 configured threshold, or more than one approver being routinely unavailable.

@@ -140,9 +140,7 @@ def test_roles_name_only_registered_staff_permissions_and_read_only_is_harmless(
             assert not role.permissions & dangerous_platform_wide, key
 
 
-def test_granting_a_role_is_dangerous_audited_and_derives_its_holders(
-    staff_login, user_factory
-):
+def test_granting_a_role_is_audited_and_derives_its_holders(staff_login, user_factory):
     security, _ = staff_login("platform.staff_security.manage")
     person = user_factory(email="billing.admin@example.com", is_staff=True)
     body = {
@@ -150,13 +148,6 @@ def test_granting_a_role_is_dangerous_audited_and_derives_its_holders(
         "role": "BILLING_ADMIN",
         "reason": "Joined the finance team",
     }
-    low, _ = staff_login("platform.staff_security.manage", aal2=False)
-    assert (
-        low.post(
-            "/api/v1/admin/security/roles", body, content_type="application/json"
-        ).status_code
-        == 401
-    )
     granted = security.post(
         "/api/v1/admin/security/roles", body, content_type="application/json"
     )

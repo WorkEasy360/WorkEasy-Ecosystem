@@ -44,7 +44,7 @@ def test_unauthenticated_sign_in_with_a_deeply_nested_body_is_not_a_server_error
 
 @pytest.mark.django_db
 def test_a_signed_in_write_with_a_deeply_nested_body_is_a_400(user_factory, login):
-    client = login(user_factory(password=PASSWORD), aal2=True)
+    client = login(user_factory(password=PASSWORD))
     response = client.post("/api/v1/auth/password", DEEP, content_type="application/json")
     assert response.status_code == 400
 

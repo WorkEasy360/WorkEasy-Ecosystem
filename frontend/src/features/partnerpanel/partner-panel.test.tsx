@@ -417,8 +417,8 @@ describe("affiliates", () => {
 describe("the team", () => {
   const MEMBERS = {
     members: [
-      { id: "m1", name: "Owner One", email: "owner@acme.example.com", role: "owner", role_label: "Partner Owner", status: "active", setup_pending: false, mfa_enrolled: true, invited_at: null, last_login_at: null, joined_at: "2026-09-01T00:00:00Z", is_you: true },
-      { id: "m2", name: "Sam Sales", email: "sam@acme.example.com", role: "sales", role_label: "Sales", status: "active", setup_pending: true, mfa_enrolled: false, invited_at: "2026-10-01T00:00:00Z", last_login_at: null, joined_at: "2026-10-01T00:00:00Z", is_you: false },
+      { id: "m1", name: "Owner One", email: "owner@acme.example.com", role: "owner", role_label: "Partner Owner", status: "active", setup_pending: false, invited_at: null, last_login_at: null, joined_at: "2026-09-01T00:00:00Z", is_you: true },
+      { id: "m2", name: "Sam Sales", email: "sam@acme.example.com", role: "sales", role_label: "Sales", status: "active", setup_pending: true, invited_at: "2026-10-01T00:00:00Z", last_login_at: null, joined_at: "2026-10-01T00:00:00Z", is_you: false },
     ],
     roles: [
       { key: "owner", label: "Partner Owner", description: "Everything." },

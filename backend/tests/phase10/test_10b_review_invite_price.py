@@ -24,7 +24,6 @@ from workeasy360.contracts.errors import (
     AccountLinkInvalid,
     PartnerValidationError,
     PermissionDenied,
-    StepUpRequired,
 )
 from workeasy360.contracts.values.money import CurrencyCode
 
@@ -347,7 +346,7 @@ def test_the_reviewed_figures_are_what_a_real_sale_charges_and_earns(
 
     from workeasy360.commercial.partners.access import partner_actor
 
-    actor = partner_actor(user_id=invite.member.user_id, partner_id=partner.id, aal=2)
+    actor = partner_actor(user_id=invite.member.user_id, partner_id=partner.id)
     from workeasy360.commercial.partners import customers
 
     owner_email = f"owner-{uuid.uuid4().hex[:6]}@example.com"
@@ -427,7 +426,7 @@ def test_the_link_sets_the_first_password_once_and_the_person_can_then_act(
     assert user.check_password(NEW_PASSWORD) and user.email_verified_at is not None
     with pytest.raises(AccountLinkInvalid):
         self_service.reset_password(token, NEW_PASSWORD + "x")  # single use
-    actor = partner_actor(user_id=user.id, partner_id=fx["partner"].id, aal=1)
+    actor = partner_actor(user_id=user.id, partner_id=fx["partner"].id)
     assert actor.partner_id == fx["partner"].id and result.member.user_id == user.id
 
 
@@ -500,19 +499,12 @@ def test_a_terminated_partner_takes_no_one(partner_factory, manager):
         )
 
 
-def test_only_a_partner_manager_with_a_second_factor_can_invite(
-    partner_factory, staff_factory
-):
+def test_only_a_partner_manager_can_invite(partner_factory, staff_factory):
     fx = partner_factory()
     _v, viewer = staff_factory("platform.staff_partner.view")
     with pytest.raises(PermissionDenied):
         services.invite_member(
             viewer, fx["partner"].id, email="a@example.com", role="admin"
-        )
-    _m, weak = staff_factory("platform.staff_partner.manage", aal=1)
-    with pytest.raises(StepUpRequired):
-        services.invite_member(
-            weak, fx["partner"].id, email="a@example.com", role="admin"
         )
     # A partner's own administrator may now invite into *its own* partner
     # (ADR-045, tests/partner_panel); into any other partner it is a 404.
@@ -588,13 +580,6 @@ def test_the_invite_endpoint_answers_the_same_for_new_and_known_addresses(
     existing = call(known.email)
     assert fresh.status_code == existing.status_code == 201
     assert set(fresh.json()) == set(existing.json()) == {"id", "role", "invited"}
-    weak, _u2 = staff_client("platform.staff_partner.manage", aal2=False)
-    stepped = weak.post(
-        url,
-        json.dumps({"email": "x@example.com", "role": "admin"}),
-        content_type="application/json",
-    )
-    assert stepped.status_code == 401 and stepped.json()["code"] == "step_up_required"
 
 
 def test_the_activation_email_contains_no_password_and_the_link_is_in_the_fragment(
@@ -700,15 +685,6 @@ def test_the_price_command_needs_pricing_authority_and_a_live_partner(
     with pytest.raises(PermissionDenied):
         services.set_partner_price(
             manage_only,
-            fx["partner"].id,
-            plan_version_id=version,
-            interval="monthly",
-            amount_minor=1,
-        )
-    _p, weak = staff_factory("platform.staff_pricing.manage", aal=1)
-    with pytest.raises(StepUpRequired):
-        services.set_partner_price(
-            weak,
             fx["partner"].id,
             plan_version_id=version,
             interval="monthly",

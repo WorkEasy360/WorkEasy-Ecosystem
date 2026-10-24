@@ -89,7 +89,7 @@ def manager_only(staff_client):
 
 
 def sign_in(email: str, password: str):
-    """A browser signing in through the real endpoint (no step-up, as a partner)."""
+    """A browser signing in through the real endpoint."""
     from django.test import Client
 
     client = Client()
