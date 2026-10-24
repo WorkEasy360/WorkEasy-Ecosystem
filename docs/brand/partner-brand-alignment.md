@@ -99,9 +99,41 @@ used by components.
   exclude only the platform logo (`img[data-w360-logo]`), so an image drawn from
   hostile text still fails them.
 
+## Whole-platform alignment (2026-10-25)
+
+The owner asked for the website's colour combination across the whole software.
+
+- **Typeface: Plus Jakarta Sans everywhere**, as on the website (this settles the
+  open font decision above). `app/layout.tsx` loads it through `next/font/google`,
+  which downloads it at build time and serves it from `/_next/static/media`, so
+  the CSP's `font-src 'self'` is unchanged and no visitor contacts Google. The
+  system stack stays as the fallback. `next build` (and so the Docker image and
+  CI) needs internet access to fetch the font.
+- **New section tokens**, from the website's bands:
+
+  | Token | Light | Dark | Use |
+  |---|---|---|---|
+  | `--w360-band` | `#047A44` | `#0E3B28` | deep-green band and footer (the website's `#008F49` holds white at only 4.2:1) |
+  | `--w360-band-text` / `-muted` | `#FFFFFF` / `#D9F0E3` | `#EEF3F1` / `#BCD3C8` | text on the band, also its focus ring |
+  | `--w360-sun` / `-hover` | `#FCC63C` / `#F5B70F` | `#FCC63C` / `#FDD56B` | yellow button and step numbers, navy text |
+  | `--w360-sun-contrast` | `#161D24` | `#0F171C` | |
+  | `--w360-cream` | `#FFF8E8` | `#1E1B13` | warm section background |
+
+- **Public site** (`features/site`), the counterpart of the marketing website:
+  the official logo in the header, a flat mint hero with a pill eyebrow and
+  the key word in green, then a white products band, a cream "How it works"
+  band with yellow step numbers, a deep-green call to action with a yellow
+  button, and a deep-green footer with the light logo (`<Logo onBand />`).
+- Links drawn as buttons (`.w360-btn`) are no longer underlined.
+- Consoles, sign-in and partner portal already used the palette; they change
+  only by the typeface.
+- Kept: primary buttons still carry navy text on the green (white is 2.41:1).
+- `theme-tokens.test.ts` checks the new pairings in both themes, the font
+  wiring, and that `Site.module.css` has no hard-coded colour (the six product
+  monogram accents excepted).
+
 ## Remaining
 
-- Font: the system stack versus the website's Plus Jakarta Sans (owner decision, above).
 - The organization console uses the same shell (`SidebarShell`), so it shows the
   logo too when the organization has no white-label partner. It and the customer
   launcher share the tokens, so their colours moved with this change. Neither

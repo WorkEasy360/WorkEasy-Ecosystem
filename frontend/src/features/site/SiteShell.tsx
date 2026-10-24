@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useSession } from "@/lib/auth/useSession";
 import { publicApi, type PublicProduct, type SiteSettings } from "@/lib/api/public";
 import { money } from "@/features/controlplane/ui";
+import { Logo } from "@/components/brand/Logo";
 import styles from "./Site.module.css";
 
 // --- shared pieces ---------------------------------------------------------------------
@@ -257,10 +258,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
       <header className={`${styles.header} ${navOpen ? styles.navOpen : ""}`}>
         <div className={styles.headerInner}>
           <Link href="/" className={styles.logo} aria-label="Workeasy360 home">
-            <span className={styles.logoMark} aria-hidden="true">
-              W
-            </span>
-            Workeasy360
+            <Logo compact />
           </Link>
           <button
             type="button"
@@ -309,7 +307,10 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
       </main>
       <footer className={styles.footer}>
         <div className={styles.footerInner}>
-          <p>© {new Date().getFullYear()} Workeasy360</p>
+          <div className={styles.footerBrand}>
+            <Logo onBand />
+            <p className={styles.footerTagline}>One account for every app your business runs on.</p>
+          </div>
           <ul className={styles.footerLinks} aria-label="Footer">
             <li>
               <Link href="/products">Products</Link>
@@ -328,6 +329,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
             </li>
           </ul>
         </div>
+        <p className={styles.footerLegal}>© {new Date().getFullYear()} Workeasy360. All rights reserved.</p>
       </footer>
     </div>
   );

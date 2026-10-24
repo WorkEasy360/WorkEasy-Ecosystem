@@ -400,7 +400,7 @@ export function LandingPage() {
         <div className={styles.heroInner}>
           <p className={styles.eyebrow}>One account. Every business app.</p>
           <h1 id="hero-title" className={styles.heroTitle}>
-            Run your whole business on Workeasy360
+            Run your whole business on <span className={styles.highlight}>Workeasy360</span>
           </h1>
           <p className={styles.heroLead}>
             Sign up once, then add the products your business needs - each one ready the moment it is paid for, all
@@ -417,50 +417,71 @@ export function LandingPage() {
         </div>
       </section>
 
-      <section className={styles.section} aria-labelledby="products-title">
-        <h2 id="products-title" className={styles.sectionTitle}>
-          Products
-        </h2>
-        <p className={styles.sectionLead}>Start with one. Add the rest whenever you are ready.</p>
-        <LoadGate load={load} what="products">
-          {(catalog) =>
-            catalog.products.length === 0 ? (
-              <p className={styles.muted}>Products will appear here soon.</p>
-            ) : (
-              <div className={styles.grid}>
-                {catalog.products.map((p) => (
-                  <ProductTile key={p.code} product={p} />
-                ))}
-              </div>
-            )
-          }
-        </LoadGate>
-      </section>
+      <div className={styles.surfaceBand}>
+        <section className={styles.section} aria-labelledby="products-title">
+          <h2 id="products-title" className={styles.sectionTitle}>
+            Products
+          </h2>
+          <p className={styles.sectionLead}>Start with one. Add the rest whenever you are ready.</p>
+          <LoadGate load={load} what="products">
+            {(catalog) =>
+              catalog.products.length === 0 ? (
+                <p className={styles.muted}>Products will appear here soon.</p>
+              ) : (
+                <div className={styles.grid}>
+                  {catalog.products.map((p) => (
+                    <ProductTile key={p.code} product={p} />
+                  ))}
+                </div>
+              )
+            }
+          </LoadGate>
+        </section>
+      </div>
 
-      <section className={styles.section} aria-labelledby="how-title">
-        <h2 id="how-title" className={styles.sectionTitle}>
-          How it works
-        </h2>
-        <ol className={styles.steps}>
-          <li>
-            <p className={styles.stepTitle}>Create your account</p>
-            <p className={styles.muted}>Free. Confirm your email address and your workspace is ready.</p>
-          </li>
-          <li>
-            <p className={styles.stepTitle}>Explore the products</p>
-            <p className={styles.muted}>See what each one does and what it costs, in your currency.</p>
-          </li>
-          <li>
-            <p className={styles.stepTitle}>Buy or start a trial</p>
-            <p className={styles.muted}>Pay securely; access starts as soon as the payment is confirmed.</p>
-          </li>
-          <li>
-            <p className={styles.stepTitle}>Open it from your dashboard</p>
-            {/* Phase 12: no promise of single sign-on - no product performs it
-                yet (docs/phase-12/phase-12-status.md). True either way: */}
-            <p className={styles.muted}>Every product your organization holds opens from the same dashboard.</p>
-          </li>
-        </ol>
+      <div className={styles.creamBand}>
+        <section className={styles.section} aria-labelledby="how-title">
+          <h2 id="how-title" className={styles.sectionTitle}>
+            How it works
+          </h2>
+          <ol className={styles.steps}>
+            <li>
+              <p className={styles.stepTitle}>Create your account</p>
+              <p className={styles.muted}>Free. Confirm your email address and your workspace is ready.</p>
+            </li>
+            <li>
+              <p className={styles.stepTitle}>Explore the products</p>
+              <p className={styles.muted}>See what each one does and what it costs, in your currency.</p>
+            </li>
+            <li>
+              <p className={styles.stepTitle}>Buy or start a trial</p>
+              <p className={styles.muted}>Pay securely; access starts as soon as the payment is confirmed.</p>
+            </li>
+            <li>
+              <p className={styles.stepTitle}>Open it from your dashboard</p>
+              {/* Phase 12: no promise of single sign-on - no product performs it
+                  yet (docs/phase-12/phase-12-status.md). True either way: */}
+              <p className={styles.muted}>Every product your organization holds opens from the same dashboard.</p>
+            </li>
+          </ol>
+        </section>
+      </div>
+
+      <section className={styles.band} aria-labelledby="start-title">
+        <div className={styles.bandInner}>
+          <h2 id="start-title" className={styles.bandTitle}>
+            One sign-in. One organization. One bill.
+          </h2>
+          <p className={styles.bandLead}>Create your account free, then add products when you need them.</p>
+          <div className={styles.ctaRow}>
+            <Link href="/signup" className={`w360-btn ${styles.sunButton}`}>
+              Get started
+            </Link>
+            <Link href="/pricing" className={`w360-btn ${styles.bandButton}`}>
+              See pricing
+            </Link>
+          </div>
+        </div>
       </section>
     </>
   );

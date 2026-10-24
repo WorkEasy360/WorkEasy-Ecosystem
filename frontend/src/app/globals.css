@@ -62,6 +62,18 @@
   --w360-info: #2549b8;
   --w360-info-bg: #e3ebfd;
   --w360-neutral-bg: #e8f0ec;
+  /* The website's other section colours. A deep-green band (its AI section and
+     footer) with white text - the website's #008f49 holds white at only 4.2:1,
+     so the band is the deeper --w360-green-800 (5.4:1). Sunshine yellow for a
+     highlight or an action on that band, always with navy text. Cream for a
+     warm section between white and mint ones. */
+  --w360-band: var(--w360-green-800);
+  --w360-band-text: #ffffff;
+  --w360-band-muted: #d9f0e3;
+  --w360-sun: #fcc63c;
+  --w360-sun-hover: #f5b70f;
+  --w360-sun-contrast: var(--w360-ink-900);
+  --w360-cream: #fff8e8;
   /* Charts: the brand green, then deep navy - never two greens side by side. */
   --w360-chart-1: var(--w360-green-500);
   --w360-chart-1-edge: var(--w360-green-700);
@@ -80,8 +92,10 @@
   --w360-space-5: 24px;
   --w360-space-6: 32px;
   --w360-space-7: 48px;
-  --w360-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  /* Plus Jakarta Sans, as on the website (loaded in app/layout.tsx); the system
+     stack only until it arrives or if it cannot load. */
+  --w360-font: var(--w360-font-brand, "Plus Jakarta Sans"), -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
 }
 
 /* Dark: mapped, not inverted. Deep green-black surfaces; the brand green keeps
@@ -123,6 +137,13 @@
     --w360-info: #8fb0ff;
     --w360-info-bg: #14264f;
     --w360-neutral-bg: #1f2a32;
+    --w360-band: #0e3b28;
+    --w360-band-text: #eef3f1;
+    --w360-band-muted: #bcd3c8;
+    --w360-sun: #fcc63c;
+    --w360-sun-hover: #fdd56b;
+    --w360-sun-contrast: #0f171c;
+    --w360-cream: #1e1b13;
     --w360-chart-1: #02c065;
     --w360-chart-1-edge: #02c065;
     --w360-chart-2: #c9d3cf;
@@ -169,6 +190,13 @@
   --w360-info: #8fb0ff;
   --w360-info-bg: #14264f;
   --w360-neutral-bg: #1f2a32;
+  --w360-band: #0e3b28;
+  --w360-band-text: #eef3f1;
+  --w360-band-muted: #bcd3c8;
+  --w360-sun: #fcc63c;
+  --w360-sun-hover: #fdd56b;
+  --w360-sun-contrast: #0f171c;
+  --w360-cream: #1e1b13;
   --w360-chart-1: #02c065;
   --w360-chart-1-edge: #02c065;
   --w360-chart-2: #c9d3cf;
@@ -205,6 +233,11 @@ body {
 
 :where(h1, h2, h3, h4) {
   font-weight: 700;
+}
+
+/* The website's headings are set tight. */
+:where(h1, h2) {
+  letter-spacing: -0.02em;
 }
 
 /* Link text. A partner's accent (useBranding.applyAccent) supplies a variant of
@@ -303,6 +336,9 @@ button:disabled {
   font-size: 14px;
   line-height: 1.2;
   min-height: 40px;
+  /* A link drawn as a button reads as a button (as on the website): its shape
+     and fill mark it, not an underline. */
+  text-decoration: none;
 }
 
 /* The important action on a screen: the WorkEasy360 green with deep-navy text.
