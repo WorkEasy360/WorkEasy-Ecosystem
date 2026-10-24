@@ -10,7 +10,7 @@ only decide *when*.
 
 **Overrides are narrow and explainable.** The one override this platform offers
 is a time-boxed *entitlement grant* (an input to provisioning, never an edit of
-an entitlement row), bounded to 90 days, requiring a reason and AAL 2, and
+an entitlement row), bounded to 90 days, requiring a reason, and
 audited. Staff never write ``Entitlement`` rows: a grant is recorded and
 provisioning is asked to reconcile, so the result is rebuildable (Task 13, 57).
 """
@@ -151,7 +151,7 @@ def cancel(
     """Cancel at period end (default) or, deliberately, now.
 
     An immediate cancellation is the bounded override for fraud or a mistaken
-    signup: it needs the same dangerous permission and AAL 2 as everything
+    signup: it needs the same dangerous permission as everything
     here, a recorded reason, and it is visible in the customer's own log.
     """
     authz.require(ctx, MANAGE)

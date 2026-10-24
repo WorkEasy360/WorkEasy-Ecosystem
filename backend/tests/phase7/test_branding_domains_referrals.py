@@ -15,7 +15,6 @@ from workeasy360.contracts.errors import (
     PartnerRecordNotFound,
     PartnerValidationError,
     PermissionDenied,
-    StepUpRequired,
 )
 from workeasy360.platform.authz import services as authz
 
@@ -294,12 +293,6 @@ def test_a_resolver_outage_is_a_failed_lookup_not_a_proof_or_a_miss(partner_fact
         checked.status == "verification_pending"
         and checked.failure_code == "lookup_failed"
     )
-
-
-def test_domain_management_requires_aal2(partner_factory, dns):
-    fx = _ready_partner(partner_factory)
-    with pytest.raises(StepUpRequired):
-        domains.request_domain(fx["actor"](aal=1), hostname="app.acme-example.com")
 
 
 def test_request_is_idempotent_and_bounded(partner_factory, dns):

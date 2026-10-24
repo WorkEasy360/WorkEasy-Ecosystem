@@ -22,7 +22,6 @@ Everything goes through the existing commands and services:
 Writes ``$USSO_WORK/seed.json``. Scratch databases only - see README.md.
 """
 
-import base64
 import json
 import os
 import uuid
@@ -55,7 +54,7 @@ from workeasy360.platform.authz.control_plane import (  # noqa: E402
 )
 from workeasy360.platform.ecosystem import selectors as ecosystem_selectors  # noqa: E402
 from workeasy360.platform.ecosystem import services as ecosystem  # noqa: E402
-from workeasy360.platform.identity import lifecycle, mfa  # noqa: E402
+from workeasy360.platform.identity import lifecycle  # noqa: E402
 from workeasy360.platform.identity import services as identity  # noqa: E402
 from workeasy360.platform.identity.models import User  # noqa: E402
 from workeasy360.platform.launcher import services as launcher  # noqa: E402
@@ -89,12 +88,9 @@ sctx = platform_context(user_id=admin.id, aal=2)
 
 
 def enroll_totp(user):
-    start = identity.begin_totp_enrollment(user.id)
-    secret = start.secret_base32 + "=" * (-len(start.secret_base32) % 8)
-    identity.confirm_totp_enrollment(
-        user.id, start.factor_id, mfa.current_totp(base64.b32decode(secret))
-    )
-    return start.secret_base32
+    """No second factor exists any more (ADR-050): nothing to enrol. The harnesses
+    still read a ``STAFF_TOTP`` line, so this returns an empty one."""
+    return ""
 
 
 def person(email, name):

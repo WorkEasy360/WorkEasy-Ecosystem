@@ -75,7 +75,7 @@ def test_overrides_must_keep_required_variables_and_a_one_line_subject():
     assert rendered.body_text == "Hi!  invited you: https://x (until 1 Oct). {literal}"
 
 
-def test_viewing_editing_and_step_up_are_separate(staff_login):
+def test_viewing_and_editing_are_separate(staff_login):
     viewer, _ = staff_login("platform.staff_communication.view")
     assert viewer.get(TEMPLATES).status_code == 200
     body = {
@@ -90,9 +90,9 @@ def test_viewing_editing_and_step_up_are_separate(staff_login):
         == 403
     )
 
-    editor, _ = staff_login("platform.staff_communication.manage", aal2=False)
-    refused = editor.put(f"{TEMPLATES}/{INVITED}", body, content_type="application/json")
-    assert (refused.status_code, refused.json()["code"]) == (401, "step_up_required")
+    editor, _ = staff_login("platform.staff_communication.manage")
+    saved = editor.put(f"{TEMPLATES}/{INVITED}", body, content_type="application/json")
+    assert saved.status_code == 200, saved.content
 
     nobody, _ = staff_login("platform.staff_audit.view")
     assert nobody.get(TEMPLATES).status_code == 403

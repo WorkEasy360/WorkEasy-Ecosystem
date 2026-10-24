@@ -384,7 +384,7 @@ def test_only_the_authorization_endpoint_implies_an_organization():
     from workeasy360.platform.ecosystem import authorization
 
     with pytest.raises(protocol.OAuthError) as refused:
-        authorization.resolve_subject(user_id=uuid4(), organization_id=None, aal=1)
+        authorization.resolve_subject(user_id=uuid4(), organization_id=None)
     assert refused.value.error == protocol.ORGANIZATION_REQUIRED
 
 

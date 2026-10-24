@@ -562,7 +562,7 @@ export function HelpScreen() {
             <Link href={`/o/${slug}/settings/billing`}>Subscription & billing</Link>.
           </li>
           <li>
-            Signing in? Manage your password and two-step verification in{" "}
+            Signing in? Manage your password and sessions in{" "}
             <Link href={`/o/${slug}/settings/security`}>My security</Link>.
           </li>
         </ul>

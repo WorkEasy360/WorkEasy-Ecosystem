@@ -139,7 +139,7 @@ def test_the_full_flow_issues_a_verifiable_identity_token(
 ):
     registration = register_product("crm")
     org = entitled_org("crm")
-    signed_in(org["user"], aal=2)
+    signed_in(org["user"])
 
     verifier, challenge = _pkce()
     response = client.get(
@@ -173,7 +173,7 @@ def test_the_full_flow_issues_a_verifiable_identity_token(
     assert claims["aud"] == registration["client_id"]
     assert claims["iss"] == "http://testserver"
     assert claims["nonce"] == "client-nonce"
-    assert claims["aal"] == 2
+    assert "aal" not in claims  # no assurance level is issued (ADR-050)
 
 
 def test_state_is_echoed_verbatim(

@@ -134,17 +134,6 @@ def test_a_customer_who_is_nobody_special_reaches_none_of_them(
         assert call(owner, method, url, body).status_code == 403, url
 
 
-def test_every_write_demands_a_second_factor(staff_client, target):
-    client, _u = staff_client(MANAGE, VIEW, aal2=False)
-    for method, url, body, kind in endpoints(target):
-        if kind != "write":
-            continue
-        response = call(client, method, url, body)
-        assert (
-            response.status_code == 401 and response.json()["code"] == "step_up_required"
-        ), url
-
-
 def test_a_write_without_a_csrf_token_is_refused(staff_client, target):
     client, _u = staff_client(MANAGE, VIEW, enforce_csrf=True)
     for method, url, body, kind in endpoints(target):

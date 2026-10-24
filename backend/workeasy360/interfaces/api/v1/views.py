@@ -34,7 +34,6 @@ def tenant_context_view(request: HttpRequest, org_slug: str) -> JsonResponse:
             "membership_id": str(ctx.membership_id),
             "organization_status": ctx.organization_status.value,
             "write_allowed": ctx.is_write_allowed,
-            "aal": ctx.aal,
             "method": request.method,
         }
     )

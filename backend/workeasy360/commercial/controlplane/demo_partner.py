@@ -95,7 +95,7 @@ def create_demo_partner(
     ensure_platform_organization()
     with unscoped_access(reason="Look up the control-plane identity", module=__name__):
         control_plane_user = User.objects.get(email=PLATFORM_SYSTEM_USER_EMAIL)
-    ctx = platform_context(user_id=control_plane_user.id, aal=2)
+    ctx = platform_context(user_id=control_plane_user.id)
     password: str | None = None
 
     with transaction.atomic(), ensure_scope(ctx):

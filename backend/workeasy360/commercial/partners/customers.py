@@ -582,7 +582,7 @@ def cancel_customer_subscription(
     """Schedule a related customer's cancellation at period end.
 
     Never immediate: cutting a customer off mid-term is a decision for staff
-    (with a reason and a second factor), not a routine partner action.
+    (with a reason), not a routine partner action.
     """
     authz.require(ctx, SUBSCRIPTION_MANAGE)
     customer = access.customer_context(ctx, organization_id, write=True)

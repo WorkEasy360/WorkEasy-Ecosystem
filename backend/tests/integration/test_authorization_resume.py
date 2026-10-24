@@ -123,7 +123,7 @@ def test_a_full_browser_shaped_resume_round_trip(
     )
     token = _resume_token(parked["Location"])
 
-    signed_in(org["user"], aal=2)
+    signed_in(org["user"])
     resumed = client.get(RESUME, {"resume": token})
     assert resumed.status_code == 302
     code = parse_qs(urlsplit(resumed["Location"]).query)["code"][0]

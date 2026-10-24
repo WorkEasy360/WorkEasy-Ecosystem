@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from tests.extension.conftest import PASSWORD, step_up, url
+from tests.extension.conftest import PASSWORD, url
 
 pytestmark = pytest.mark.django_db
 
@@ -33,7 +33,7 @@ def test_an_empty_policy_denies_nothing():
         evaluate,
     )
 
-    facts = SessionFacts(client_ip="unknown", authenticated_at=None, mfa_verified=False)
+    facts = SessionFacts(client_ip="unknown", authenticated_at=None)
     assert evaluate(AccessPolicy(), facts, now=time.time()) is None
 
 
@@ -45,26 +45,15 @@ def test_denials_are_checked_network_first():
     )
 
     strict = AccessPolicy(
-        require_mfa=True,
         session_max_age_s=60,
         ip_allowlist_enabled=True,
         ip_allowlist=("10.0.0.0/8",),
     )
-    outside = SessionFacts(
-        client_ip="203.0.113.5", authenticated_at=None, mfa_verified=False
-    )
+    outside = SessionFacts(client_ip="203.0.113.5", authenticated_at=None)
     assert evaluate(strict, outside, now=time.time()) == "network_not_allowed"
-    inside_old = SessionFacts(
-        client_ip="10.1.2.3", authenticated_at=time.time() - 120, mfa_verified=True
-    )
+    inside_old = SessionFacts(client_ip="10.1.2.3", authenticated_at=time.time() - 120)
     assert evaluate(strict, inside_old, now=time.time()) == "reauthentication_required"
-    inside_fresh = SessionFacts(
-        client_ip="10.1.2.3", authenticated_at=time.time(), mfa_verified=False
-    )
-    assert evaluate(strict, inside_fresh, now=time.time()) == "mfa_required"
-    ok = SessionFacts(
-        client_ip="10.1.2.3", authenticated_at=time.time(), mfa_verified=True
-    )
+    ok = SessionFacts(client_ip="10.1.2.3", authenticated_at=time.time())
     assert evaluate(strict, ok, now=time.time()) is None
 
 
@@ -88,52 +77,43 @@ def test_allowlists_are_normalised_and_bounded():
 # --- auth configuration ------------------------------------------------------------
 
 
-def test_policy_changes_need_the_permission_step_up_and_a_current_version(
-    console_org, login
-):
+def test_policy_changes_need_the_permission_and_a_current_version(console_org, login):
     org = console_org()
     admin = org["add"]("admin")
     member = org["add"]("member")
-    owner = login(org["owner"])
     body = {
-        "require_mfa": True,
-        "session_max_age_minutes": None,
+        "session_max_age_minutes": 60,
         "password_min_length": None,
         "version": 1,
     }
 
-    refused = _put(owner, org["slug"], POLICY, body)
-    assert (refused.status_code, refused.json()["code"]) == (401, "step_up_required")
-    assert (
-        _put(login(member["user"], aal2=True), org["slug"], POLICY, body).status_code
-        == 403
-    )
+    assert _put(login(member["user"]), org["slug"], POLICY, body).status_code == 403
 
-    admin_client = login(admin["user"], aal2=True)
+    admin_client = login(admin["user"])
     saved = _put(admin_client, org["slug"], POLICY, body)
     assert saved.status_code == 200 and saved.json()["version"] == 2
-    stale = _put(admin_client, org["slug"], POLICY, {**body, "require_mfa": False})
+    stale = _put(
+        admin_client, org["slug"], POLICY, {**body, "session_max_age_minutes": 120}
+    )
     assert (stale.status_code, stale.json()["code"]) == (409, "concurrent_modification")
 
     entries = admin_client.get(url(org["slug"], "audit"), {"action": "security."}).json()[
         "results"
     ]
     assert entries[0]["action"] == "security.policy_updated"
-    assert entries[0]["changes"]["after"]["two_step_verification"] is True
+    assert entries[0]["changes"]["after"]["sign_in_max_age_minutes"] == 60
 
 
 def test_policy_values_are_bounded(console_org, login):
     org = console_org()
-    owner = login(org["owner"], aal2=True)
+    owner = login(org["owner"])
     for field, value in (
         ("session_max_age_minutes", 5),
         ("session_max_age_minutes", 10**7),
         ("password_min_length", 6),
         ("password_min_length", 500),
-        ("require_mfa", "yes"),
     ):
         body = {
-            "require_mfa": False,
             "session_max_age_minutes": None,
             "password_min_length": None,
             "version": 1,
@@ -141,27 +121,6 @@ def test_policy_values_are_bounded(console_org, login):
         body[field] = value
         response = _put(owner, org["slug"], POLICY, body)
         assert response.status_code == 400, (field, value)
-
-
-def test_required_mfa_stops_a_session_until_it_verifies(console_org, login):
-    org = console_org()
-    member = org["add"]("member")
-    _put(
-        login(org["owner"], aal2=True),
-        org["slug"],
-        POLICY,
-        {
-            "require_mfa": True,
-            "session_max_age_minutes": None,
-            "password_min_length": None,
-            "version": 1,
-        },
-    )
-    client = login(member["user"])
-    denied = client.get(url(org["slug"], "access"))
-    assert (denied.status_code, denied.json()["code"]) == (403, "mfa_required")
-    step_up(client)  # a verified code marks the session
-    assert client.get(url(org["slug"], "access")).status_code == 200
 
 
 def test_the_session_age_limit_applies_per_organization(console_org, login):
@@ -215,7 +174,7 @@ def test_a_short_password_must_be_changed_before_entering(console_org, login):
 
 def test_the_allow_list_refuses_to_lock_out_its_editor(console_org, login):
     org = console_org()
-    owner = login(org["owner"], aal2=True)
+    owner = login(org["owner"])
     view = owner.get(url(org["slug"], NETWORK)).json()
     assert view["your_address"] == "127.0.0.1" and view["your_network"] == "127.0.0.0/24"
 
@@ -246,7 +205,7 @@ def test_outside_addresses_are_refused_everywhere_in_the_organization(console_or
     org = console_org()
     member = org["add"]("member")
     _put(
-        login(org["owner"], aal2=True),
+        login(org["owner"]),
         org["slug"],
         NETWORK,
         {
@@ -273,7 +232,7 @@ def test_outside_addresses_are_refused_everywhere_in_the_organization(console_or
 def test_staff_can_break_glass_a_locked_out_organization(console_org, login, staff_login):
     org = console_org()
     _put(
-        login(org["owner"], aal2=True),
+        login(org["owner"]),
         org["slug"],
         NETWORK,
         {
@@ -332,18 +291,14 @@ def test_resolve_subject_refuses_what_the_policy_refuses(organization_factory):
     Organization.objects.filter(id=org.id).update(
         ip_allowlist_enabled=True, ip_allowlist=["10.0.0.0/8"]
     )
-    outside = SessionFacts(
-        client_ip="203.0.113.1", authenticated_at=time.time(), mfa_verified=True
-    )
+    outside = SessionFacts(client_ip="203.0.113.1", authenticated_at=time.time())
     with pytest.raises(protocol.OAuthError) as denied:
         authorization.resolve_subject(
-            user_id=user.id, organization_id=org.id, aal=1, facts=outside
+            user_id=user.id, organization_id=org.id, facts=outside
         )
     assert denied.value.error == protocol.ACCESS_POLICY_DENIED
-    inside = SessionFacts(
-        client_ip="10.9.9.9", authenticated_at=time.time(), mfa_verified=False
-    )
+    inside = SessionFacts(client_ip="10.9.9.9", authenticated_at=time.time())
     subject = authorization.resolve_subject(
-        user_id=user.id, organization_id=org.id, aal=1, facts=inside
+        user_id=user.id, organization_id=org.id, facts=inside
     )
     assert subject.organization_id == org.id

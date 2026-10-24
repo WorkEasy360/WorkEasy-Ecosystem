@@ -101,31 +101,6 @@ def test_the_secret_never_reaches_the_audit_trail_or_a_log(seller, owner_client,
     assert body not in caplog.text and secret not in caplog.text
 
 
-def test_creating_needs_the_second_factor(seller, owner_client, http_login):
-    from workeasy360.commercial.partners.models import PartnerApiKey
-
-    low = http_login(seller["user"], aal2=False)
-    response = send(
-        low,
-        "post",
-        api(seller["partner"].id, "api-keys"),
-        {"name": "x", "scopes": ["account.read"]},
-    )
-    assert response.status_code in (401, 403)
-    assert not PartnerApiKey.objects.filter(partner_id=seller["partner"].id).exists()
-
-
-def test_rotating_and_revoking_need_the_second_factor(seller, owner_client, http_login):
-    pid = seller["partner"].id
-    key = make_key(owner_client, pid)["key"]
-    low = http_login(seller["user"], aal2=False)
-    for action in ("rotate", "revoke"):
-        assert send(
-            low, "post", api(pid, f"api-keys/{key['id']}/{action}"), {}
-        ).status_code in (401, 403)
-    assert owner_client.get(api(pid, "api-keys")).json()["keys"][0]["status"] == "active"
-
-
 @pytest.mark.parametrize("role", ["sales", "finance", "support", "marketing", "viewer"])
 def test_only_the_roles_that_run_the_account_see_or_manage_keys(
     seller, member_client, role

@@ -8,13 +8,12 @@ from __future__ import annotations
 
 import pytest
 
-from tests.partner_setup.conftest import MANAGE, VIEW, post
+from tests.partner_setup.conftest import VIEW, post
 from workeasy360.commercial.partners import selectors, services
 from workeasy360.commercial.partners.models import PartnerAccount, PartnerCapabilityGrant
 from workeasy360.contracts.errors import (
     PartnerValidationError,
     PermissionDenied,
-    StepUpRequired,
 )
 
 pytestmark = pytest.mark.django_db
@@ -271,15 +270,12 @@ def test_a_reason_is_required_and_a_terminated_partner_cannot_be_enabled(channel
         services.enable_white_label(ctx, pid, reason=REASON)
 
 
-def test_enabling_needs_manage_a_second_factor_and_is_never_a_partners_own_act(
+def test_enabling_needs_manage_and_is_never_a_partners_own_act(
     staff_client, partner_client, channel, staff_factory
 ):
     pid = channel["partner"].id
     viewer, _u = staff_client(VIEW)
     assert post(viewer, enable_url(pid), {"reason": REASON}, key=False).status_code == 403
-    weak, _w = staff_client(MANAGE, aal2=False)
-    stepped = post(weak, enable_url(pid), {"reason": REASON}, key=False)
-    assert stepped.status_code == 401 and stepped.json()["code"] == "step_up_required"
     own, fx = partner_client("customer.provision")
     assert (
         post(own, enable_url(fx["partner"].id), {"reason": REASON}, key=False).status_code
@@ -289,9 +285,6 @@ def test_enabling_needs_manage_a_second_factor_and_is_never_a_partners_own_act(
     _v, plain = staff_factory(VIEW)
     with pytest.raises(PermissionDenied):
         services.enable_white_label(plain, pid, reason=REASON)
-    _m, lapsed = staff_factory(MANAGE, aal=1)
-    with pytest.raises(StepUpRequired):
-        services.enable_white_label(lapsed, pid, reason=REASON)
     assert set(selectors.active_capabilities(pid)).isdisjoint(
         {"branding.manage", "domain.manage"}
     )

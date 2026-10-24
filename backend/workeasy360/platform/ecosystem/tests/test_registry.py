@@ -20,7 +20,6 @@ from workeasy360.contracts.errors import (
     PermissionDenied,
     ProductIntegrationError,
     ProductIntegrationNotFound,
-    StepUpRequired,
 )
 from workeasy360.platform.ecosystem import selectors, services
 from workeasy360.platform.ecosystem.models import (
@@ -470,19 +469,6 @@ def test_every_registry_mutation_requires_platform_staff(
     assert "internal platform identity" in str(exc.value)
 
 
-def test_registry_mutations_require_step_up(platform_admin, catalog, in_tenant):
-    """Every ``platform.integration.*`` write permission is declared
-    dangerous, so the decision function demands AAL 2.
-
-    This is the carried step-up trigger, reached and wired.
-    """
-    from dataclasses import replace
-
-    ctx = replace(platform_admin["ctx"], aal=1)
-    with in_tenant(ctx), pytest.raises(StepUpRequired):
-        services.register_integration(ctx, manifest=manifest_for("crm"))
-
-
 def test_registry_mutations_are_blocked_under_impersonation(
     platform_admin, catalog, in_tenant
 ):
@@ -509,7 +495,7 @@ def test_reading_the_registry_does_not_require_step_up(
     from dataclasses import replace
 
     register_product("crm")
-    ctx = replace(platform_admin["ctx"], aal=1)
+    ctx = replace(platform_admin["ctx"])
     with in_tenant(ctx):
         assert selectors.integrations(ctx)
 

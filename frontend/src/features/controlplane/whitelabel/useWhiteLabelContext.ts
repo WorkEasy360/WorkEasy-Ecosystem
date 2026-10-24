@@ -14,8 +14,8 @@ import type { Ctx, Nav } from "./shared";
  * (ADR-048); every write is a command that always existed (``update_brand``,
  * ``upload_logo`` and the domain commands).
  *
- * Each step that edits the brand saves with ``PUT brand`` as its own action, so a
- * second-factor prompt appears at the step that needs it. The brand's own fields
+ * Each step that edits the brand saves with ``PUT brand`` as its own action. The
+ * brand's own fields
  * are replaced by every save and its portal fields are merged, so each save sends
  * the stored brand fields back (``brandBody``) and re-reads the setup for the new
  * version.

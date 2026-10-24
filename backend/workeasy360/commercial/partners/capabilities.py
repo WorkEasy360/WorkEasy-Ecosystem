@@ -66,8 +66,7 @@ _SPECS: Final = (
         SUBSCRIPTION_SELL,
         "Sell approved products and plans to related customers",
         # Selling means seeing what is for sale and at what price. Reading the
-        # catalog is the view tier - it needs no second factor - while the sale
-        # itself (the manage tier) does.
+        # catalog is the view tier, while the sale itself is the manage tier.
         view=("platform.partner_customer.view", "platform.partner_pricing.view"),
         manage=("platform.partner_subscription.sell",),
     ),

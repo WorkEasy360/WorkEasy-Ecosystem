@@ -188,7 +188,7 @@ export function AuthConfiguration() {
                 </dd>
                 <dt>Your team</dt>
                 <dd>
-                  {a.team.with_second_factor} of {a.team.members} have two-step sign-in set up
+                  {a.team.members} {a.team.members === 1 ? "person" : "people"} can sign in for this partner
                 </dd>
               </dl>
             </section>

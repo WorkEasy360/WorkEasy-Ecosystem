@@ -680,3 +680,105 @@
 .denied p {
   margin: 0;
 }
+
+/* --- growing the partnership: the upgrade section and its wizard (ADR-049) --- */
+
+.grow {
+  display: grid;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-4) var(--w360-space-5);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-lg);
+  background: var(--w360-surface);
+  box-shadow: var(--w360-shadow-sm);
+  min-width: 0;
+}
+
+.grow h2,
+.grow h3,
+.grow p {
+  margin: 0;
+}
+
+.grow h2 {
+  font-size: 18px;
+}
+
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: inline-flex;
+  gap: var(--w360-space-2);
+  align-items: center;
+  padding: var(--w360-space-1) var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: 999px;
+  color: var(--w360-text-secondary);
+  font-weight: 600;
+  background: var(--w360-surface);
+}
+
+.step[aria-current="step"] {
+  border-color: var(--w360-indicator);
+  color: var(--w360-brand);
+  background: var(--w360-brand-soft);
+}
+
+.stepNumber {
+  font-variant-numeric: tabular-nums;
+}
+
+.wizardActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.summary {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+}
+
+.summary div {
+  display: grid;
+  gap: var(--w360-space-1);
+  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr);
+}
+
+.summary dt {
+  color: var(--w360-text-secondary);
+  font-weight: 600;
+}
+
+.summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 480px) {
+  .summary div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.checklist {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checklist li {
+  overflow-wrap: anywhere;
+}

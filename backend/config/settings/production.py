@@ -60,21 +60,6 @@ DATABASES["default"]["PASSWORD"] = env.secret(
 FILE_URL_SIGNING_KEY = env.secret(
     "W360_FILE_URL_SIGNING_KEY", required=True, min_length=32
 )
-# Required, never derived from SECRET_KEY here: rotating SECRET_KEY must not
-# silently make every stored TOTP secret undecryptable (base.py, MFA).
-_MFA_KEY_MATERIAL = env.secret("W360_MFA_ENCRYPTION_KEY", required=True, min_length=32)
-MFA_ENCRYPTION_KEY = base64.urlsafe_b64encode(
-    hashlib.sha256(_MFA_KEY_MATERIAL.encode("utf-8")).digest()
-)
-# ...and never the same value either, which is the same coupling by hand: a
-# leaked SECRET_KEY (or file-signing key) would then also decrypt every TOTP
-# secret and forge every recovery-code hash.
-env.check(
-    not _MFA_KEY_MATERIAL or _MFA_KEY_MATERIAL not in (SECRET_KEY, FILE_URL_SIGNING_KEY),
-    "W360_MFA_ENCRYPTION_KEY must differ from W360_SECRET_KEY and "
-    "W360_FILE_URL_SIGNING_KEY.",
-)
-
 # Required, never derived: connection signing secrets are sealed under this
 # (integration/connectors/secrets.py), so it must be its own key - rotating
 # SECRET_KEY must not make every customer's webhook secret unreadable.
@@ -92,10 +77,9 @@ env.check(
     "Every W360_INTEGRATION_SECRETS_KEYS entry must be at least 32 characters.",
 )
 env.check(
-    not set(_INTEGRATION_SECRET_MATERIALS)
-    & {SECRET_KEY, FILE_URL_SIGNING_KEY, _MFA_KEY_MATERIAL},
-    "W360_INTEGRATION_SECRETS_KEYS must differ from W360_SECRET_KEY, "
-    "W360_FILE_URL_SIGNING_KEY and W360_MFA_ENCRYPTION_KEY.",
+    not set(_INTEGRATION_SECRET_MATERIALS) & {SECRET_KEY, FILE_URL_SIGNING_KEY},
+    "W360_INTEGRATION_SECRETS_KEYS must differ from W360_SECRET_KEY and "
+    "W360_FILE_URL_SIGNING_KEY.",
 )
 
 # Phase 8 extension. Required, never derived: an invitation link waiting in the
@@ -119,7 +103,6 @@ env.check(
     & {
         SECRET_KEY,
         FILE_URL_SIGNING_KEY,
-        _MFA_KEY_MATERIAL,
         *_INTEGRATION_SECRET_MATERIALS,
     },
     "W360_NOTIFICATION_SEAL_KEYS must differ from every other platform key.",

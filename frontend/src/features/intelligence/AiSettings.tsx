@@ -13,7 +13,6 @@ import {
   type AiRequestRow,
   type AiUsage,
 } from "@/lib/api/intelligence";
-import { useStepUp } from "@/features/security/useStepUp";
 import styles from "./Intelligence.module.css";
 
 type Load =
@@ -53,7 +52,6 @@ export function AiSettings({ orgSlug }: { orgSlug: string }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { run, stepUp } = useStepUp();
 
   function refresh() {
     Promise.all([getAiUsage(orgSlug), getAiSettings(orgSlug), listAiRequests(orgSlug)])
@@ -86,11 +84,9 @@ export function AiSettings({ orgSlug }: { orgSlug: string }) {
     setError(null);
     setMessage(null);
     try {
-      await run(async () => {
-        await updateAiSettings(orgSlug, change);
-        setMessage("AI settings saved.");
-        refresh();
-      });
+      await updateAiSettings(orgSlug, change);
+      setMessage("AI settings saved.");
+      refresh();
     } catch (err) {
       setError(describeError(err));
     }
@@ -98,7 +94,6 @@ export function AiSettings({ orgSlug }: { orgSlug: string }) {
 
   return (
     <div className={styles.stack}>
-      {stepUp}
       {message && <p role="status">{message}</p>}
       {error && (
         <p className="w360-error-text" role="alert">

@@ -26,7 +26,6 @@ from workeasy360.contracts.errors import (
     PartnerValidationError,
     PermissionDenied,
     SeparationOfDutiesViolation,
-    StepUpRequired,
 )
 from workeasy360.contracts.values.money import CurrencyCode
 
@@ -517,12 +516,9 @@ def test_nothing_is_marked_paid_without_a_reference_or_approval(owed):
         )
 
 
-def test_approval_needs_the_dangerous_permission_and_aal2(owed, staff_factory):
+def test_approval_needs_the_approve_permission(owed, staff_factory):
     payout = _prepare(owed)
     payouts.mark_payout_ready(owed["prep"], payout.id)
-    _u, low = staff_factory("platform.staff_payout.approve", aal=1)
-    with pytest.raises(StepUpRequired):
-        payouts.approve_payout(low, payout.id, reason="No second factor here")
     with pytest.raises(PermissionDenied):
         payouts.approve_payout(owed["prep"], payout.id, reason="Not permitted to approve")
 

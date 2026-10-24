@@ -7,7 +7,7 @@ year; a change reaches visitors within ``CACHE_SECONDS``.
 
 The Super Admin reads and changes the row through ``settings_view`` /
 ``update_settings``: ``platform.staff_settings.view`` / ``.manage`` (dangerous,
-AAL 2, audited with the values before and after, optimistic version).
+audited with the values before and after, optimistic version).
 """
 
 from __future__ import annotations

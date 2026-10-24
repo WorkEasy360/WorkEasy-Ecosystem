@@ -514,7 +514,7 @@ export function Team() {
           <>
             <Table
               caption="Your team"
-              head={["Name", "Email", "Role", "Status", "Two-step sign-in", "Last sign-in", "Joined", "Actions"]}
+              head={["Name", "Email", "Role", "Status", "Last sign-in", "Joined", "Actions"]}
               isEmpty={d.members.length === 0}
               empty="No users."
             >
@@ -625,7 +625,6 @@ function MemberLine({
       <td>
         <Status value={m.setup_pending ? "pending" : m.status} />
       </td>
-      <td>{m.mfa_enrolled ? "On" : "Not set up"}</td>
       <td>{when(m.last_login_at)}</td>
       <td>{when(m.joined_at)}</td>
       <td>

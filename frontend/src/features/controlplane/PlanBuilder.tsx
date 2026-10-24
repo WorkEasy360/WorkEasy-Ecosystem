@@ -47,9 +47,7 @@ import styles from "./AdminConsole.module.css";
  *   the status is Draft) → publish one price per chosen billing cycle →
  *   move it to the chosen status.
  *
- * The whole sequence runs inside one `useAction`, so the first call that needs
- * a recent second factor raises the step-up prompt and the sequence is run
- * again after verification. It is resumable: ids created on the way are kept
+ * The whole sequence runs inside one `useAction`. It is resumable: ids created on the way are kept
  * and finished steps are skipped, so a retry never creates a second plan.
  *
  * "Publish new version" reuses the same form for an existing row: it drafts

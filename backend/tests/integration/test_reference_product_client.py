@@ -121,7 +121,7 @@ def test_an_independent_product_integrates_end_to_end(
 
     # 2-3. A user is authenticated in Workeasy360 and belongs to Organization A.
     org_a = entitled_org("crm")
-    signed_in(org_a["user"], aal=2)
+    signed_in(org_a["user"])
 
     # 4. Organization A holds an active entitlement for the product - granted
     #    through commercial/provisioning, the sole sanctioned writer.

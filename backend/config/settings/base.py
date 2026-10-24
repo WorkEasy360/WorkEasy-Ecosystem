@@ -933,6 +933,9 @@ CONTROL_PLANE_RATE_LIMITS = {
     # a password-reset link for a partner's person is an email, limited likewise.
     "partner_onboard_user": (env.int("W360_RL_PARTNER_ONBOARD_USER", 30), 60),
     "partner_onboard_ip": (env.int("W360_RL_PARTNER_ONBOARD_IP", 60), 60),
+    # ADR-049: upgrade requests. A partner raises or edits one a few times, ever.
+    "partner_upgrade_user": (env.int("W360_RL_PARTNER_UPGRADE_USER", 60), 60),
+    "partner_upgrade_ip": (env.int("W360_RL_PARTNER_UPGRADE_IP", 120), 60),
     "partner_password_reset_user": (
         env.int("W360_RL_PARTNER_PASSWORD_RESET_USER", 10),
         60,
@@ -973,14 +976,6 @@ W360_COMMISSION_HOLDBACK_DAYS = env.int("W360_COMMISSION_HOLDBACK_DAYS", 30)
 #: Retention: unconverted referral captures live this long past expiry.
 W360_REFERRAL_CAPTURE_DAYS = env.int("W360_REFERRAL_CAPTURE_DAYS", 90)
 W360_REFERRAL_RETENTION_DAYS = env.int("W360_REFERRAL_RETENTION_DAYS", 180)
-
-# Phase 5, Task 39/58. Tighter than login's: a 6-digit TOTP code has ~20 bits
-# of entropy, so an online guesser is a real threat an unthrottled endpoint
-# would hand a meaningful window to.
-MFA_STEP_UP_RATE_LIMITS = {
-    "step_up_ip": (env.int("W360_RL_STEP_UP_IP", 20), 60),
-    "step_up_account": (env.int("W360_RL_STEP_UP_ACCOUNT", 8), 60),
-}
 
 # --- Integration platform (Phase 6) ----------------------------------------
 #
@@ -1203,26 +1198,6 @@ FILE_URL_TTL_SECONDS = env.int("W360_FILE_URL_TTL_SECONDS", 900)
 # Signing key for local download URLs. Distinct from SECRET_KEY so that
 # rotating one does not invalidate the other.
 FILE_URL_SIGNING_KEY = env.secret("W360_FILE_URL_SIGNING_KEY", "") or SECRET_KEY
-
-# --- MFA (Phase 5, Task 37) ------------------------------------------------
-#
-# Field-level encryption for TOTP secrets (12-security.md section 6,
-# platform/identity/mfa.py). Any string works as input - it is put through
-# SHA-256 and base64url-encoded into a valid 32-byte Fernet key below, so
-# operators do not need to hand-generate a correctly-shaped key. Distinct
-# from SECRET_KEY and FILE_URL_SIGNING_KEY: rotating this one specifically
-# invalidates every stored TOTP secret and forces re-enrollment, which
-# should never be an accidental side effect of rotating an unrelated key.
-_MFA_KEY_MATERIAL = env.secret("W360_MFA_ENCRYPTION_KEY", "") or SECRET_KEY
-MFA_ENCRYPTION_KEY = base64.urlsafe_b64encode(
-    hashlib.sha256(_MFA_KEY_MATERIAL.encode("utf-8")).digest()
-)
-
-# How long a completed step-up keeps the session at AAL2. 12-security.md
-# section 2: `dangerous` permissions require aal >= 2 *and* re-auth within
-# 15 minutes - without this window a single step-up would last the whole
-# session (up to SESSION_ABSOLUTE_TIMEOUT).
-STEP_UP_MAX_AGE_SECONDS = env.int("W360_STEP_UP_MAX_AGE_S", 15 * 60)
 
 # --- Notifications -------------------------------------------------------
 

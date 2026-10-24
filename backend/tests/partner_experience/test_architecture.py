@@ -96,6 +96,9 @@ def test_the_partner_models_are_unchanged_by_this_work():
         "PartnerTranslation",
         "PartnerNotificationRead",
         "PartnerNotificationState",
+        # ADR-049: the one table the upgrade workflow needed - a request record,
+        # not a kind of partner (tests/partner_upgrade pins what it may do).
+        "PartnerUpgradeRequest",
     }
 
 

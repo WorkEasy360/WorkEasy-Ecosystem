@@ -624,7 +624,7 @@ export function ProductsConsole() {
 // --- one payout row (Partner Detail -> Payouts) -------------------------------------
 
 /** One payout with its lifecycle controls (approver is never the preparer, and
- * every dangerous step asks for a second factor - all enforced by the server).
+ * every step is enforced by the server).
  * Exported so a partner's own Payouts tab shows the very same controls rather
  * than a second copy of them. */
 export function PayoutRowView({

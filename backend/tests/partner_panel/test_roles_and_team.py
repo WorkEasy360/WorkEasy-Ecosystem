@@ -92,7 +92,7 @@ def test_a_sales_member_sells_but_cannot_change_the_brand(seller, member_client)
     client, user = member_client(seller, "sales")
     from workeasy360.commercial.partners.access import partner_actor
 
-    ctx = partner_actor(user_id=user.id, partner_id=seller["partner"].id, aal=2)
+    ctx = partner_actor(user_id=user.id, partner_id=seller["partner"].id)
     assert authz.check(ctx, "platform.partner_subscription.sell").allowed
     assert not authz.check(ctx, "platform.partner_branding.manage").allowed
     assert not authz.check(ctx, "platform.partner_member.manage").allowed
@@ -123,7 +123,7 @@ def test_a_suspended_partner_keeps_only_the_read_tier_of_the_members_role(
         target=PartnerStatus.SUSPENDED,
         reason="Suspended for the test",
     )
-    ctx = partner_actor(user_id=user.id, partner_id=seller["partner"].id, aal=2)
+    ctx = partner_actor(user_id=user.id, partner_id=seller["partner"].id)
     assert authz.check(ctx, "platform.partner_customer.view").allowed
     assert not authz.check(ctx, "platform.partner_subscription.sell").allowed
     assert not authz.check(ctx, "platform.partner_member.manage").allowed
@@ -145,8 +145,8 @@ def test_a_terminated_partner_shows_a_finance_member_the_money_and_a_sales_membe
         reason="Terminated for the test",
     )
     pid = seller["partner"].id
-    fin = partner_actor(user_id=finance.id, partner_id=pid, aal=2)
-    sal = partner_actor(user_id=sales.id, partner_id=pid, aal=2)
+    fin = partner_actor(user_id=finance.id, partner_id=pid)
+    sal = partner_actor(user_id=sales.id, partner_id=pid)
     assert authz.check(fin, "platform.partner_commission.view").allowed
     assert not authz.check(sal, "platform.partner_commission.view").allowed
     assert not authz.check(fin, "platform.partner_dashboard.view").allowed
@@ -189,19 +189,6 @@ def test_a_non_admin_cannot_manage_the_team(seller, member_client):
         assert (
             client.get(api(pid, "members")).status_code == 200
         )  # everyone may read the team
-
-
-def test_team_management_needs_the_second_factor(seller, owner_client, http_login):
-    seller["user"].set_password("correct horse battery staple 42")
-    seller["user"].save(update_fields=["password"])
-    low = http_login(seller["user"], aal2=False)
-    response = send(
-        low,
-        "post",
-        api(seller["partner"].id, "members"),
-        {"email": "y@example.com", "role": "viewer"},
-    )
-    assert response.status_code in (401, 403)
 
 
 def test_only_an_owner_can_hand_out_or_change_the_owner_role(

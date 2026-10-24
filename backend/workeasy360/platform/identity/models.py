@@ -154,10 +154,8 @@ class User(AbstractBaseUser):
     #: permanent, so an attacker cannot lock a victim out at will.
     failed_login_count = models.PositiveIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
-    #: Consecutive failed MFA codes, and the step-up lock they have earned
-    #: (``identity.services.verify_step_up_code``). Separate from the login
-    #: counter above: only someone already holding the password can move
-    #: these, and they must not lock the password out with them.
+    #: Unused since the second factor was removed (ADR-050): the columns are
+    #: kept so no data is dropped; nothing reads or writes them.
     mfa_failed_attempts = models.PositiveIntegerField(default=0)
     mfa_locked_until = models.DateTimeField(null=True, blank=True)
 
@@ -230,10 +228,6 @@ class User(AbstractBaseUser):
     @property
     def is_email_verified(self) -> bool:
         return self.email_verified_at is not None
-
-    @property
-    def has_mfa(self) -> bool:
-        return self.auth_factors.filter(confirmed_at__isnull=False).exists()
 
     def revoke_sessions(self) -> None:
         """Invalidate every session by bumping the epoch.
@@ -404,15 +398,13 @@ class AccountToken(models.Model):
 
 
 class AuthFactor(models.Model):
-    """A second authentication factor.
+    """A stored second authentication factor - **dormant** (ADR-050).
 
-    Modelled from day one even though enforcement policy arrives later:
-    retrofitting a factor model into a live authentication system is expensive
-    and risky (04-identity-authz.md section 3.3).
-
-    WebAuthn is first-class rather than an afterthought - ``credential_id``,
-    ``public_key`` and ``sign_count`` are present now, so adding passkeys is a
-    feature rather than a migration of the auth model.
+    The platform asks for no second factor anywhere and nothing reads or writes
+    this table. It is kept, with the rows people enrolled before the factor was
+    removed, so that removing it destroyed no data and putting a factor back
+    would not need a migration of the auth model. Dropping it is a separate,
+    deliberate, irreversible decision.
     """
 
     class Kind(models.TextChoices):
@@ -456,18 +448,6 @@ class AuthFactor(models.Model):
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.get_kind_display()} for {self.user_id}"
 
-    @property
-    def satisfies_aal2(self) -> bool:
-        """Whether this factor can raise the session to AAL 2.
-
-        SMS is supported but classified as weak and cannot satisfy AAL 2 for
-        staff or partner admins (04-identity-authz.md section 3.3).
-        """
-        return self.confirmed_at is not None and self.kind in {
-            self.Kind.TOTP,
-            self.Kind.WEBAUTHN,
-        }
-
 
 class SessionHandoff(models.Model):
     """A one-time hand-off of a sign-in from the central sign-in host to one
@@ -483,11 +463,9 @@ class SessionHandoff(models.Model):
     the code to the browser the portal sent to sign in (a host-only cookie on
     the portal), so a code handed to someone else's browser is refused.
 
-    ``auth_state`` copies what the sign-in established - AAL and its step-up
-    time, whether a factor was verified, when the password was entered, which
-    organizations' password policies it falls short of, the sign-in id - so a
-    portal session is never *more* elevated, or elevated for *longer*, than
-    the sign-in it came from.
+    ``auth_state`` copies what the sign-in established - when the password was
+    entered, which organizations' password policies it falls short of, the
+    sign-in id - so a portal session never outlives the sign-in it came from.
     """
 
     code_hash = models.CharField(max_length=64, unique=True)

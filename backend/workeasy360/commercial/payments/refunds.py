@@ -1,6 +1,6 @@
 """Refunds: requested by staff, sent to the provider outside any transaction.
 
-``request_refund`` (``platform.staff_payment.manage`` - dangerous, AAL 2, a
+``request_refund`` (``platform.staff_payment.manage`` - dangerous, a
 reason, audited in the customer's own log) locks the attempt, refuses more than
 was captured minus what is already refunded or in flight, records a
 ``requested`` refund and a timer.

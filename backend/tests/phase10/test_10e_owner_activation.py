@@ -358,7 +358,7 @@ def test_another_signed_in_person_cannot_use_the_link(
 ):
     data = journey()
     stranger = user_factory(password=PASSWORD)
-    client = http_login(stranger, aal2=False)
+    client = http_login(stranger)
     response = post(client, ACCEPT, {"token": data["token"]})
     assert (response.status_code, code(response)) == (403, "invitation_email_mismatch")
     assert invite_of(data["org"]).status == "pending"
@@ -399,7 +399,7 @@ def test_an_existing_person_signs_in_and_accepts_without_a_second_account(
 
     existing = user_factory(password=PASSWORD, full_name="Existing Person")
     data = journey(address=existing.email)
-    client = http_login(existing, aal2=False)
+    client = http_login(existing)
     preview = post(client, PREVIEW, {"token": data["token"]}).json()
     assert preview["signed_in_as_invitee"] is True
     response = post(client, ACCEPT, {"token": data["token"]})
@@ -641,16 +641,6 @@ def test_a_partner_without_the_provisioning_capability_cannot_resend(
     assert invite_of(data["org"]).send_count == 1
 
 
-def test_a_resend_needs_a_recent_verification(channel, journey, http_login):
-    data = journey()
-    channel["user"].set_password(PASSWORD)
-    channel["user"].save(update_fields=["password"])
-    client = http_login(channel["user"], aal2=False)
-    response = post(client, resend_url(channel, data["org"]))
-    assert (response.status_code, code(response)) == (401, "step_up_required")
-    assert invite_of(data["org"]).send_count == 1
-
-
 def test_a_partner_that_is_suspended_cannot_resend(channel, journey, partner_http):
     from workeasy360.commercial.partners import services
     from workeasy360.contracts.enums import PartnerStatus
@@ -683,15 +673,10 @@ def test_staff_may_resend_and_withdraw_and_it_is_audited(channel, journey, staff
     } <= actions
 
 
-def test_staff_need_the_manage_permission_and_a_recent_verification(
-    channel, journey, staff_client
-):
+def test_staff_need_the_manage_permission(channel, journey, staff_client):
     data = journey()
     viewer, _ = staff_client("platform.staff_partner.view")
     assert post(viewer, resend_url(channel, data["org"], staff=True)).status_code == 403
-    stale, _ = staff_client(MANAGE, aal2=False)
-    response = post(stale, resend_url(channel, data["org"], staff=True))
-    assert (response.status_code, code(response)) == (401, "step_up_required")
     assert invite_of(data["org"]).send_count == 1
 
 

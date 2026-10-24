@@ -80,20 +80,15 @@ def host_client():
 @pytest.fixture
 def sign_in(portals_on):
     """Sign ``user`` in on the central sign-in host; returns that host's
-    client. ``aal2`` records a completed step-up on that session."""
-    from workeasy360.platform.tenancy.resolution import record_step_up
+    client."""
 
-    def make(user, *, aal2: bool = False):
+    def make(user):
         auth = HostClient("auth")
         auth.get("/api/v1/auth/session")
         response = auth.post(
             "/api/v1/auth/login", {"email": user.email, "password": PASSWORD}
         )
         assert response.status_code == 200, response.content
-        if aal2:
-            session = auth.session
-            record_step_up(session)
-            session.save()
         return auth
 
     return make
@@ -142,7 +137,7 @@ def staff_user(user_factory):
 
     root = user_factory(is_staff=True)
 
-    def make(*permissions: str, mfa: bool = True):
+    def make(*permissions: str):
         user = user_factory(is_staff=True, password=PASSWORD)
         for permission in permissions or ("platform.staff_customer.view",):
             staff.create_grant(
@@ -151,25 +146,9 @@ def staff_user(user_factory):
                 granted_by_id=root.id,
                 reason="Test fixture grants a control-plane permission",
             )
-        if mfa:
-            enrol_totp(user)
         return user
 
     return make
-
-
-def enrol_totp(user) -> None:
-    from django.utils import timezone
-
-    from workeasy360.platform.identity.models import AuthFactor
-
-    AuthFactor.objects.create(
-        user=user,
-        kind="totp",
-        label="phone",
-        secret_ref="test",
-        confirmed_at=timezone.now(),
-    )
 
 
 @pytest.fixture

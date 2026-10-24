@@ -8,7 +8,6 @@ payment provider - so every console page renders rows, not empty states.
 Scratch databases only - see README.md.
 """
 
-import base64
 import uuid
 from datetime import timedelta
 
@@ -40,7 +39,6 @@ from workeasy360.platform.authz import services as authz
 from workeasy360.platform.authz import staff
 from workeasy360.platform.authz.control_plane import acting_scope, platform_context
 from workeasy360.platform.authz.permissions import STAFF_PERMISSIONS
-from workeasy360.platform.identity import mfa
 from workeasy360.platform.identity import services as identity
 from workeasy360.platform.identity.models import User
 from workeasy360.platform.onboarding.services import create_organization
@@ -202,11 +200,5 @@ with acting_scope(octx):
     )
 invoicing.ensure_invoices(org_id)
 
-# The owner has an authenticator, so the browser check can pass step-up for
-# the payment (the code confirming enrolment is spent; the check waits for the
-# next 30-second step).
-start = identity.begin_totp_enrollment(owner.id)
-secret = start.secret_base32 + "=" * (-len(start.secret_base32) % 8)
-identity.confirm_totp_enrollment(owner.id, start.factor_id, mfa.current_totp(base64.b32decode(secret)))
 print("SEEDED", created.slug, org_id)
-print("OWNER_TOTP", start.secret_base32)
+print("OWNER_TOTP", "")

@@ -14,8 +14,8 @@ import { useOrgAccess } from "./OrgAccess";
  * The organization's own access policy: authentication rules and the network
  * allow-list. Two pages, one policy row with one version - every save sends
  * the version it was loaded at, so two administrators saving at once get a
- * conflict instead of silently overwriting each other. Saving is dangerous
- * (AAL 2) and runs through `useAction`.
+ * conflict instead of silently overwriting each other. Saving runs through
+ * `useAction`.
  */
 
 const MAX_PASSWORD_LENGTH = 64;
@@ -59,7 +59,7 @@ export function AuthenticationPolicyScreen() {
     <div className={styles.page}>
       <PageHeader
         title="Authentication"
-        lead="How members of this organization sign in: two-step verification, how long a sign-in lasts, and how long passwords must be."
+        lead="How members of this organization sign in: how long a sign-in lasts, and how long passwords must be."
       />
       {feedback}
       {conflict && (
@@ -105,19 +105,15 @@ function AuthenticationForm({
   canEdit: boolean;
   busy: boolean;
   onSave: (body: {
-    require_mfa: boolean;
     session_max_age_minutes: number | null;
     password_min_length: number | null;
     version: number;
   }) => void;
 }) {
-  const mfaId = useId();
-  const mfaHintId = useId();
   const sessionId = useId();
   const sessionHintId = useId();
   const lengthId = useId();
   const lengthHintId = useId();
-  const [requireMfa, setRequireMfa] = useState(policy.require_mfa);
   const [maxAge, setMaxAge] = useState(policy.session_max_age_minutes == null ? "" : String(policy.session_max_age_minutes));
   const [minLength, setMinLength] = useState(policy.password_min_length == null ? "" : String(policy.password_min_length));
   const floor = policy.platform_password_min_length;
@@ -138,7 +134,6 @@ function AuthenticationForm({
         e.preventDefault();
         if (!lengthOk) return;
         onSave({
-          require_mfa: requireMfa,
           session_max_age_minutes: maxAge === "" ? null : Number(maxAge),
           password_min_length: lengthValue === "" ? null : Number(lengthValue),
           version: policy.version,
@@ -148,23 +143,6 @@ function AuthenticationForm({
       {!canEdit && (
         <p className={cp.muted}>You can view these settings. Changing them needs permission to manage security.</p>
       )}
-      <div className={cp.field}>
-        <div className={local.check}>
-          <input
-            id={mfaId}
-            type="checkbox"
-            checked={requireMfa}
-            disabled={!canEdit}
-            onChange={(e) => setRequireMfa(e.target.checked)}
-            aria-describedby={mfaHintId}
-          />
-          <label htmlFor={mfaId}>Require two-step verification</label>
-        </div>
-        <p id={mfaHintId} className="w360-hint">
-          Everyone must verify a code from an authenticator app to open this organization. Members who haven&apos;t
-          set one up are asked to, the next time they open it. Set up your own first.
-        </p>
-      </div>
       <div className={cp.field}>
         <label className="w360-label" htmlFor={sessionId}>
           Session length

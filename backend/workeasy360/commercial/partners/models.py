@@ -1057,3 +1057,125 @@ class PartnerNotificationRead(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.member_id} read {self.event_id}"
+
+
+class PartnerUpgradeRequest(models.Model):
+    """A partner's request to move to a larger experience (ADR-049).
+
+    **The request is a workflow record and nothing more.** It never holds a
+    capability, a price or a permission: approving it asks the one experience
+    transition service (``experience.transition_experience``) to grant the
+    approved bundle, exactly as staff do by hand. So the same user, the same
+    partner account and the same capability grants carry the partner from
+    Affiliate to Reseller or White-label; only the landing preference and the
+    grants change, and nothing the partner earned is touched.
+
+    ``status`` is the lifecycle the Super Admin console and the partner both
+    read: ``requested`` (the partner started it), ``profile_required`` (staff
+    asked for more), ``pending_approval`` (submitted), then the three ends
+    ``approved``, ``rejected`` and ``cancelled``. A partner has at most one
+    open request (a partial unique index), so two clicks, two tabs or two
+    administrators cannot raise two.
+
+    ``proposal`` holds only what has no home elsewhere yet - the products asked
+    for, the pricing preference, the commercial notes, and the brand and domain
+    a White-label partner proposes - in a closed key set the service validates.
+    Business details go to ``PartnerProfile`` through the profile command; they
+    are not duplicated here. Business data, never a secret, and never copied
+    into an audit entry (those record which sections changed).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="upgrade_requests"
+    )
+    #: The workspace the partner opened first when it asked (``""`` for none).
+    from_experience = models.CharField(max_length=16, blank=True, default="")
+    to_experience = models.CharField(max_length=16)
+    status = models.CharField(max_length=20, default="requested")
+    proposal = models.JSONField(default=dict)
+
+    requested_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    requested_at = models.DateTimeField()
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    #: What staff wrote when they asked for more, shown to the partner.
+    info_request_note = models.CharField(max_length=500, blank=True, default="")
+
+    decided_by = models.ForeignKey(
+        "identity.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.CharField(max_length=500, blank=True, default="")
+    #: What approving it changed, kept on the row so the console can show it
+    #: without reading the audit log. The grants themselves are the authority.
+    capabilities_added = models.JSONField(default=list)
+    capabilities_removed = models.JSONField(default=list)
+    products_granted = models.JSONField(default=list)
+    #: Staff's pointer to the commercial terms agreed (a contract or invoice
+    #: number). A reference only: no amount is stored or charged here.
+    commercial_reference = models.CharField(max_length=120, blank=True, default="")
+    correlation_id = models.UUIDField(null=True, blank=True)
+
+    #: Optimistic token: two administrators editing one draft must not silently
+    #: overwrite each other.
+    version = models.IntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "partners_upgrade_request"
+        indexes = [
+            models.Index(
+                fields=["partner", "-requested_at"], name="ix_upgrade_partner_time"
+            ),
+            models.Index(fields=["status", "-requested_at"], name="ix_upgrade_status"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["partner"],
+                condition=models.Q(
+                    status__in=["requested", "profile_required", "pending_approval"]
+                ),
+                name="uq_partner_one_open_upgrade",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(to_experience__in=["reseller", "white_label"]),
+                name="ck_upgrade_target_known",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    from_experience__in=["", "reseller", "white_label", "affiliate"]
+                ),
+                name="ck_upgrade_source_known",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    status__in=[
+                        "requested",
+                        "profile_required",
+                        "pending_approval",
+                        "approved",
+                        "rejected",
+                        "cancelled",
+                    ]
+                ),
+                name="ck_upgrade_status_known",
+            ),
+            # A decision always names who made it and when.
+            models.CheckConstraint(
+                condition=~models.Q(status__in=["approved", "rejected"])
+                | (
+                    models.Q(decided_by__isnull=False)
+                    & models.Q(decided_at__isnull=False)
+                ),
+                name="ck_upgrade_decision_has_actor",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.partner_id}: {self.from_experience or '-'} -> {self.to_experience} [{self.status}]"

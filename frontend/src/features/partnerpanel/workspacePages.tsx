@@ -34,6 +34,8 @@ import { PartnerDashboard } from "./Dashboard";
 import { Notifications, Support } from "./Help";
 import { Affiliates, AffiliateConversions, AffiliatePayouts, AffiliateSettings, Agency, Team, Users } from "./Network";
 import { Reports } from "./Reports";
+import { UpgradeGrow } from "./UpgradeGrow";
+import { UpgradePage } from "./UpgradeWizard";
 import { ApiKeys, ChannelManager, Translations } from "./Tools";
 import { WhiteLabelDashboard } from "./WhiteLabelDashboard";
 import type { ExperienceKey } from "./experiences";
@@ -93,12 +95,18 @@ const PAGES: Record<string, ReactElement> = {
   campaigns: <Campaigns />,
   "marketing-materials": <MarketingMaterials />,
   leads: <Leads />,
+  // Growing the partnership: a request on the same account (ADR-049).
+  upgrade: <UpgradePage />,
+  "upgrade/reseller": <UpgradePage target="reseller" />,
+  "upgrade/white-label": <UpgradePage target="white_label" />,
 };
 
 const DASHBOARDS: Record<ExperienceKey, ReactElement> = {
-  reseller: <PartnerDashboard />,
+  // The upgrade offer sits on the dashboards that have something above them
+  // (ADR-049). White-label has nothing above it, so it draws none.
+  reseller: <PartnerDashboard extra={<UpgradeGrow workspace="reseller" />} />,
   white_label: <WhiteLabelDashboard />,
-  affiliate: <AffiliateDashboard />,
+  affiliate: <AffiliateDashboard grow={<UpgradeGrow workspace="affiliate" />} />,
 };
 
 /** The page of a workspace, or null when there is none. */

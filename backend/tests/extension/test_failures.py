@@ -142,7 +142,7 @@ def test_a_notice_that_cannot_be_queued_never_fails_the_invoice(
 
     monkeypatch.setattr(services, "notify", broken)
     org = console_org()
-    owner = login(org["owner"], aal2=True)
+    owner = login(org["owner"])
     buy_directly(org, catalog["versions"]["crm_starter"].id)
     assert len(owner.get(url(org["slug"], "billing/invoices")).json()["results"]) == 1
 
@@ -160,7 +160,7 @@ def test_an_invoicing_failure_never_fails_the_purchase_and_the_clock_repairs_it(
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db blip")),
     )
     org = console_org()
-    owner = login(org["owner"], aal2=True)
+    owner = login(org["owner"])
     buy_directly(org, catalog["versions"]["crm_starter"].id)
     assert owner.get(url(org["slug"], "billing/invoices")).json()["results"] == []
 

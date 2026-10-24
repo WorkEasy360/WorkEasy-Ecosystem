@@ -415,7 +415,7 @@ def test_an_invitation_completes_a_pending_signup_with_the_invitee_password(
 
     org = console_org()
     _signup(anonymous(), email="joiner@example.com")
-    owner = login(org["owner"], aal2=True)
+    owner = login(org["owner"])
     invited = owner.post(
         url(org["slug"], "invitations"),
         {"email": "joiner@example.com", "role": "member"},

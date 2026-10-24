@@ -110,7 +110,7 @@ def test_deep_health_requires_staff(client, user_factory, signed_in):
     assert client.get("/healthz/deep").status_code == 404
 
     staff = user_factory(is_staff=True)
-    signed_in(staff, aal=1, mfa_verified=False)
+    signed_in(staff)
     assert client.get("/healthz/deep").status_code == 200
 
 

@@ -33,7 +33,7 @@ Always give `exec` `</dev/null` inside scripts: it reads stdin and will swallow 
 2. **SMTP (Hostinger):** create `no-reply@workeasy360.com`, then
    `sudo python3 /opt/workeasy360/current/deploy/single-host/make_env.py set W360_EMAIL_HOST_PASSWORD --env /opt/workeasy360/env/production.env`
    (input hidden) and `sudo /opt/workeasy360/bin/w360 up -d api worker-critical`.
-3. **Super Admin:** sign in at https://admin.workeasy360.com as `admin@workeasy360.com` with the password in `superadmin-initial-password`, enrol an authenticator (staff APIs answer `mfa_required` until then), change the password, delete the file.
+3. **Super Admin:** sign in at https://admin.workeasy360.com as `admin@workeasy360.com` with the password in `superadmin-initial-password`, change the password, delete the file. (No second factor is asked for anywhere - ADR-050; the Super Admin console is protected by the password alone, so use a long unique one.)
 4. **Products:** registered as draft integrations with 7-day trials stored switched off; publish plans and activate integrations in the console.
 
 ## Release and rollback

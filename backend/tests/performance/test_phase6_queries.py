@@ -241,7 +241,7 @@ def test_listing_does_not_grow_with_the_page(
         with _scope(org):
             connection_id = Connection.objects.values_list("id", flat=True).get()
         _seed_rules(org, 60, connection_id)
-    signed_in(org["user"], aal=2)
+    signed_in(org["user"])
     url = f"/api/v1/orgs/{org['org'].slug}/{listing}"
     client.get(url)  # warm the per-session caches so both pages compare equal
     counts, timings = {}, {}

@@ -65,8 +65,8 @@ PLATFORM_PERMISSIONS: Final = (
         "platform.organization.delete",
         "Delete the organization",
         category="organization",
-        # Irreversible after the recovery window. Requires AAL 2, and is
-        # blocked under impersonation entirely.
+        # Irreversible after the recovery window. Blocked under
+        # impersonation entirely.
         dangerous=True,
         implies=("platform.organization.view",),
     ),
@@ -97,7 +97,7 @@ PLATFORM_PERMISSIONS: Final = (
         implies=("platform.member.view",),
     ),
     # Phase 8 extension. Ends a member's sessions *for this organization*
-    # (``Membership.sessions_valid_after``) - a revocation, so dangerous: AAL 2,
+    # (``Membership.sessions_valid_after``) - a revocation, so dangerous:
     # refused under impersonation, audited.
     _p(
         "platform.member.sign_out",
@@ -134,8 +134,8 @@ PLATFORM_PERMISSIONS: Final = (
     _p("platform.billing.view", "View billing and invoices", category="billing"),
     # Phase 9 (owner decision, 2026-09-26): paying through the provider's
     # hosted checkout is not dangerous. The provider authenticates the card
-    # (3-D Secure) and no stored instrument exists (D-028), so a second factor
-    # here only stood between a new customer and their first purchase.
+    # (3-D Secure) and no stored instrument exists (D-028), so the dangerous
+    # flag here only stood between a new customer and their first purchase.
     # Refunds, void, mark-paid and provider configuration stay dangerous
     # staff permissions.
     _p(
@@ -169,7 +169,7 @@ PLATFORM_PERMISSIONS: Final = (
     _p("platform.security.view", "View security settings", category="security"),
     _p(
         "platform.security.update",
-        "Change MFA and session policy",
+        "Change session and password policy",
         category="security",
         dangerous=True,
         implies=("platform.security.view",),
@@ -224,7 +224,7 @@ permission_registry.register_all(PLATFORM_PERMISSIONS)
 # 1. **No role grants them.** ``control_plane=True`` removes them from the
 #    owner role's ``"*"``; they are held only through ``StaffGrant`` rows,
 #    which a customer administrator cannot create.
-# 2. **Writes are dangerous** - AAL 2, and refused under impersonation.
+# 2. **Writes are dangerous** - refused under impersonation.
 # 3. **Django's ``is_superuser`` is never consulted.** A staff member holds
 #    exactly the grants they were given and nothing else.
 #
@@ -398,7 +398,7 @@ STAFF_PERMISSIONS: Final = (
         implies=("platform.staff_ai.view",),
     ),
     # Phase 8 extension. The platform-wide user directory: accounts, their
-    # status, sign-in recency and MFA enrolment - never a credential. Managing
+    # status and sign-in recency - never a credential. Managing
     # an account (sign out everywhere, unlock, disable, enable) reaches every
     # organization the person belongs to at once, so it is dangerous.
     _p(

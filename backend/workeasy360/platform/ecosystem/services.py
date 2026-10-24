@@ -8,7 +8,7 @@ models directly.
 administration is, and for the same reason:
 
     authz.require(ctx, "platform.integration.<x>")   # role, and dangerous ->
-                                                     # AAL 2, no impersonation
+                                                     # no impersonation
     authz.require_platform_staff(ctx, operation=..., permission=...)
                                                      # held via a StaffGrant
 

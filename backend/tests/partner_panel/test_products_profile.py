@@ -330,7 +330,9 @@ def test_authentication_is_a_statement_with_no_control(owner):
     assert body["mode"] == "workeasy360_secure_sign_in"
     for method in ("post", "put", "patch", "delete"):
         assert (
-            send(client, method, api(pid, "authentication"), {"mfa": False}).status_code
+            send(
+                client, method, api(pid, "authentication"), {"enabled": False}
+            ).status_code
             == 405
         )
 

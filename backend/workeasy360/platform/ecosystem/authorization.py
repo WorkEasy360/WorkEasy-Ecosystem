@@ -377,7 +377,6 @@ class ResolvedSubject:
     organization_id: UUID
     membership_id: UUID
     organization_status: OrganizationStatus
-    aal: int
     #: What the authorizing browser session vouched for when the access policy
     #: allowed it. Recorded on the code (``issue_code``) so the token endpoint
     #: re-judges the *live* policy against the session that actually signed in,
@@ -399,7 +398,6 @@ class ResolvedSubject:
             membership_id=self.membership_id,
             user_id=self.user_id,
             organization_status=self.organization_status,
-            aal=self.aal,
         )
 
 
@@ -427,7 +425,6 @@ def resolve_subject(
     *,
     user_id: UUID,
     organization_id: UUID | None,
-    aal: int,
     facts: SessionFacts | None = None,
 ) -> ResolvedSubject:
     """Verify membership and organization status. Raises on any failure.
@@ -485,12 +482,12 @@ def resolve_subject(
     # Phase 8 extension: the organization's access policy, applied exactly as
     # the tenancy middleware applies it to every console request - the same
     # pure function over the same resolution, so a product sign-in can never
-    # be the way around an allow-list or a required second factor. Callers
+    # be the way around an allow-list or a session lifetime. Callers
     # that cannot describe a browser session (none today) pass no facts and
     # are judged as the least trusted session.
     reason = access_policy.evaluate(
         resolution.access_policy,
-        facts or SessionFacts(client_ip="", authenticated_at=None, mfa_verified=False),
+        facts or SessionFacts(client_ip="", authenticated_at=None),
         now=time.time(),
     )
     if reason is not None:
@@ -504,7 +501,6 @@ def resolve_subject(
         organization_id=resolution.organization_id,
         membership_id=resolution.membership_id,
         organization_status=status,
-        aal=aal,
         facts=facts,
     )
 
@@ -645,7 +641,7 @@ def person_access_reason(
 
     The organization's own status and entitlement are the caller's first
     question (``verification.verify``); this answers only what is personal.
-    The access policy (step 6's MFA, allow-list, session age) is not applied:
+    The access policy (step 6's allow-list, session age) is not applied:
     it judges a browser session at sign-in, and a server asking later has none
     to describe. Anything that is not an answer - the database is down -
     propagates, so the endpoint says 503 rather than "removed".
@@ -669,7 +665,6 @@ def person_access_reason(
         organization_id=resolution.organization_id,
         membership_id=resolution.membership_id,
         organization_status=resolution.organization_status,
-        aal=1,
     )
     if not _holds_seat_if_required(subject, product_code):
         return PERSON_NO_SEAT
@@ -921,7 +916,6 @@ def facts_record(facts: SessionFacts | None) -> dict[str, Any] | None:
     return {
         "client_ip": facts.client_ip,
         "authenticated_at": facts.authenticated_at,
-        "mfa_verified": facts.mfa_verified,
         "password_noncompliant": facts.password_noncompliant,
     }
 
@@ -944,7 +938,6 @@ def facts_from_record(raw: Any) -> SessionFacts | None:
         authenticated_at=float(authenticated_at)
         if authenticated_at is not None
         else None,
-        mfa_verified=raw.get("mfa_verified") is True,
         password_noncompliant=raw.get("password_noncompliant") is True,
     )
 
@@ -967,7 +960,6 @@ def issue_code(request: AuthorizationRequest, subject: ResolvedSubject) -> Grant
         user_id=subject.user_id,
         organization_id=subject.organization_id,
         membership_id=subject.membership_id,
-        aal=subject.aal,
         redirect_uri=request.redirect_uri,
         scope=" ".join(request.scope),
         code_challenge=request.code_challenge,
@@ -1003,7 +995,6 @@ class RedeemedCode:
     user_id: UUID
     organization_id: UUID
     membership_id: UUID
-    aal: int
     scope: tuple[str, ...]
     nonce: str
     #: ``auth_time`` for the ID token: when the authorizing session signed in.
@@ -1105,7 +1096,6 @@ def redeem_code(
         user_id=row.user_id,
         organization_id=row.organization_id,
         membership_id=row.membership_id,
-        aal=row.aal,
         scope=tuple(s for s in row.scope.split(" ") if s),
         nonce=row.nonce,
         auth_time=(
@@ -1159,16 +1149,13 @@ def _revalidate_subject(row: Any) -> None:
         subject = resolve_subject(
             user_id=row.user_id,
             organization_id=row.organization_id,
-            # Carried from the code, not re-read: the browser session that
-            # reached AAL 2 is not present at the token endpoint, and
-            # defaulting it down here would silently demote every step-up.
-            aal=row.aal,
-            # The same reasoning for the access policy's session facts (sign-in
-            # time, second factor, the browser's address). Before Phase 12 none
+            # The access policy's session facts (sign-in time, the browser's
+            # address) are carried from the code, not re-read: the browser
+            # session is not present at the token endpoint. Before Phase 12 none
             # were passed here, so the live policy judged a least-trusted
-            # session and every organization that required MFA, an IP
-            # allow-list or a session age failed every product sign-in at this
-            # step with invalid_grant. The policy itself is still re-read live:
+            # session and every organization that required an IP allow-list or
+            # a session age failed every product sign-in at this step with
+            # invalid_grant. The policy itself is still re-read live:
             # tightened inside the code's lifetime, it still refuses.
             facts=facts_from_record(row.session_facts),
         )

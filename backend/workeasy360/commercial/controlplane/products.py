@@ -20,8 +20,8 @@ Commercial status and technical status are deliberately separate fields
 a product is for sale, and neither feeds Workeasy360's own readiness.
 
 Nothing here holds a credential or returns one. Editing an integration goes
-through ``ecosystem.update_manifest`` - the same audited, staff-only,
-second-factor-gated write the registry API uses - never around it.
+through ``ecosystem.update_manifest`` - the same audited, staff-only
+write the registry API uses - never around it.
 """
 
 from __future__ import annotations
@@ -216,8 +216,8 @@ def update_integration(
 
     Merges ``changes`` into the *stored* manifest and hands the whole to
     ``ecosystem.update_manifest``, which re-validates it (https only, no
-    internal or metadata address, exact redirect URIs), requires the
-    second factor and audits the old and new redirect URIs. Unknown fields are
+    internal or metadata address, exact redirect URIs), and audits the old and new
+    redirect URIs. Unknown fields are
     refused rather than ignored, so a typo cannot look like success.
     """
     unknown = sorted(set(changes) - set(EDITABLE_INTEGRATION_FIELDS))
@@ -257,7 +257,7 @@ def set_integration_status(
 ) -> dict[str, Any]:
     """Activate, suspend or retire a product's integration - the technical
     switch, separate from whether the product is for sale. The service refuses
-    an illegal move, requires a reason to suspend and the second factor."""
+    an illegal move, requires a reason to suspend."""
     current = ecosystem_selectors.integration_for_product(ctx, product_code=product_code)
     if current is None:
         raise ManifestRejected(
@@ -280,7 +280,7 @@ def register_integration(
     """Register the integration of a catalog product that has none - the
     console's "Add product -> Integration" step (ADR-044). Starts in
     ``draft`` with no credential, through ``ecosystem.register_integration``:
-    staff-only, second factor, audited, the manifest validated exactly as
+    staff-only, audited, the manifest validated exactly as
     the registry API validates it. Nothing here names a product."""
     unknown = sorted(set(spec) - set(REGISTRATION_FIELDS))
     if unknown:

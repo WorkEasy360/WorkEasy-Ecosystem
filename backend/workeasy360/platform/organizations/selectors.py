@@ -522,7 +522,6 @@ def security_policy(ctx: TenantContext) -> dict[str, Any]:
 
     org = Organization.objects.get(id=ctx.organization_id)
     return {
-        "require_mfa": org.require_mfa,
         "session_max_age_minutes": org.session_max_age_minutes,
         "password_min_length": org.password_min_length,
         "ip_allowlist_enabled": org.ip_allowlist_enabled,

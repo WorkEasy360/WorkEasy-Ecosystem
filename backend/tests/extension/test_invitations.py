@@ -211,11 +211,12 @@ def test_resending_rotates_the_link(console_org, login, client):
     )
 
 
-def test_inviting_as_administrator_needs_role_assign_and_step_up(console_org, login):
+def test_inviting_as_administrator_needs_role_assign(console_org, login):
     org = console_org()
     owner = login(org["owner"])
-    refused = _invite(owner, org["slug"], "boss@example.com", role="admin")
-    assert (refused.status_code, refused.json()["code"]) == (401, "step_up_required")
+    assert (
+        _invite(owner, org["slug"], "boss@example.com", role="admin").status_code == 201
+    )
     assert (
         _invite(owner, org["slug"], "worker@example.com", role="member").status_code
         == 201

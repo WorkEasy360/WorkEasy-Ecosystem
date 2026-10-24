@@ -163,7 +163,7 @@ NOT_IMPLEMENTED: Final[dict[str, str]] = {
     ),
     "auth_policy": (
         "How your customers are authenticated is Workeasy360's policy, not a "
-        "partner setting: a default sign-in destination, a stronger second-factor "
+        "partner setting: a default sign-in destination, a stronger password "
         "rule, a session length and the single-sign-on mode would each change "
         "security for people who belong to their own organization. Only how the "
         "sign-in page is presented (your brand) is yours to choose."
@@ -381,8 +381,8 @@ def balance(ctx: TenantContext) -> dict[str, Any]:
     """The partner's balance: its commission ledger, by what can happen next.
 
     There is no mutable balance field anywhere. The ledger is append-only and
-    the balance is its sum; a manual adjustment is staff's, with a reason and a
-    second factor. Recharge is not built (``features``)."""
+    the balance is its sum; a manual adjustment is staff's, with a reason.
+    Recharge is not built (``features``)."""
     authz.require(ctx, COMMISSION_VIEW)
     now = dj_timezone.now()
     return {
@@ -869,8 +869,7 @@ def export_customers(
 def authentication(ctx: TenantContext) -> dict[str, Any]:
     """How sign-in works for this partner and its customers, as the platform
     states it. Nothing here is a setting: the issuer, the signing keys, the
-    second-factor policy, the staff grants and the session lifetime are
-    Workeasy360's, and a partner can neither read nor change them."""
+    staff grants and the session lifetime are Workeasy360's, and a partner can neither read nor change them."""
     from workeasy360.commercial.controlplane.white_label_setup import AUTHENTICATION
     from workeasy360.platform.identity import portals as portal_links
 
@@ -882,15 +881,13 @@ def authentication(ctx: TenantContext) -> dict[str, Any]:
         for d in partner_selectors.domains_for(partner_id)
     ]
     users = panel_selectors.active_member_user_ids(partner_id)
-    secured = identity_selectors.users_with_mfa(users)
     return {
         **AUTHENTICATION,
         "sign_in_url": portal_links.auth_url(),
         "brand_domains": domains,
-        "team": {"members": len(users), "with_second_factor": len(secured)},
+        "team": {"members": len(users)},
         "controlled_by_workeasy360": [
             "Where people sign in (the central sign-in page)",
-            "The second-factor requirements for staff and for dangerous actions",
             "How long a session lasts",
             "The issuer and signing keys other products trust",
             "Which Workeasy360 staff may do what",

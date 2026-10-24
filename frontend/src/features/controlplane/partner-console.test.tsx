@@ -102,7 +102,7 @@ describe("the Super Admin sidebar", () => {
   async function sidebarLinks(permissions: string[]) {
     mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
-      "GET /api/v1/admin/session": [ok({ is_staff: true, aal: 1, permissions })],
+      "GET /api/v1/admin/session": [ok({ is_staff: true, permissions })],
     });
     render(
       <AdminShell>
@@ -464,5 +464,65 @@ describe("All Partners", () => {
     mockApi(listRoutes([]));
     renderList();
     expect(await screen.findByText("No partners match these filters.")).toBeInTheDocument();
+  });
+});
+
+// --- upgrade requests (ADR-049) -------------------------------------------------------------------
+
+describe("upgrade requests on the Partners screens", () => {
+  it("tells the dashboard how many requests wait for a decision, and says nothing when none do", async () => {
+    mockApi({ "GET /api/v1/admin/partners/overview": [ok({ ...OVERVIEW, upgrades_pending: 2 })] });
+    const first = render(
+      <AdminContextForTest permissions={[VIEW]}>
+        <PartnersOverview />
+      </AdminContextForTest>,
+    );
+    const notice = (await screen.findByText("2 upgrade requests are waiting for a decision.")).closest("section")!;
+    expect(within(notice).getByRole("link", { name: "Open All Partners" })).toHaveAttribute("href", "/admin/partners/all");
+    // It sits beside the cards: the pinned card list is unchanged.
+    expect(screen.getAllByRole("link", { name: /Open the list\./ })).toHaveLength(CARDS.length);
+    await expectNoViolations(first.container);
+    first.unmount();
+
+    for (const body of [{ ...OVERVIEW, upgrades_pending: 0 }, OVERVIEW]) {
+      mockApi({ "GET /api/v1/admin/partners/overview": [ok(body)] });
+      const again = render(
+        <AdminContextForTest permissions={[VIEW]}>
+          <PartnersOverview />
+        </AdminContextForTest>,
+      );
+      await screen.findByRole("link", { name: /Total partners/ });
+      expect(screen.queryByRole("region", { name: "Upgrade requests" })).not.toBeInTheDocument();
+      again.unmount();
+    }
+  });
+
+  it("says it is one request when it is one", async () => {
+    mockApi({ "GET /api/v1/admin/partners/overview": [ok({ ...OVERVIEW, upgrades_pending: 1 })] });
+    render(
+      <AdminContextForTest permissions={[VIEW]}>
+        <PartnersOverview />
+      </AdminContextForTest>,
+    );
+    expect(await screen.findByText("1 upgrade request is waiting for a decision.")).toBeInTheDocument();
+  });
+
+  it("draws an Upgrade badge on a partner with an open request, linking to where it is decided", async () => {
+    mockApi(
+      listRoutes([
+        row({ upgrade: { id: "r1", to: "white_label", status: "pending_approval" } }),
+        row({ id: "p2", display_name: "Quiet Co", upgrade: null }),
+        row({ id: "p3", display_name: "Old Style Co" }),
+      ]),
+    );
+    const { container } = renderList();
+    const table = await screen.findByRole("table", { name: "Partners" });
+    const acme = within(table).getByRole("row", { name: /Acme Partners/ });
+    const badge = within(acme).getByRole("link", { name: "Upgrade: Pending approval, to White-label - Acme Partners" });
+    expect(badge).toHaveTextContent("Upgrade: Pending approval");
+    expect(badge).toHaveAttribute("href", "/admin/partners/p1?tab=users");
+    expect(within(table).getByRole("row", { name: /Quiet Co/ })).not.toHaveTextContent("Upgrade:");
+    expect(within(table).getByRole("row", { name: /Old Style Co/ })).not.toHaveTextContent("Upgrade:");
+    await expectNoViolations(container);
   });
 });

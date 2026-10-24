@@ -18,7 +18,7 @@ inside an organization context, audited against it.
 
 Every mutation below is gated twice in the service it calls
 (``platform.integration.*`` **and** ``require_platform_staff``) and every one
-of those permissions is ``dangerous``, so AAL 2 is required and impersonation
+of those permissions is ``dangerous``, so impersonation
 is blocked outright. None of that is enforced here - a view-only check is
 bypassed by any internal caller (F-7, C7).
 """

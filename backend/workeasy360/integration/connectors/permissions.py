@@ -5,8 +5,8 @@ brief's ``integration.*`` example: ``platform.integration.*`` already names
 the *staff* product-registration control plane (``platform/ecosystem``), and
 one prefix for two unrelated trust models is how the wrong one gets granted.
 
-**Step-up: trigger reached - YES (Tasks 52/53).** ``manage`` is ``dangerous``
-(AAL 2 within the step-up window, blocked under impersonation, refused while
+**Dangerous: YES (Tasks 52/53).** ``manage`` is ``dangerous``
+(blocked under impersonation, refused while
 the organization is read-only), for a concrete reason each:
 
 - choosing a destination URL is choosing where the organization's business
@@ -17,8 +17,7 @@ the organization is read-only), for a concrete reason each:
 - subscribing a connection to more events widens what leaves the building.
 
 The mechanism already exists (``authz.check``) and is already used for the
-equivalent staff actions; leaving the customer-side equivalent at AAL 1
-would be leaving a working control switched off. ``view`` is not dangerous:
+equivalent staff actions. ``view`` is not dangerous:
 reading metadata and delivery status discloses no secret (none is readable)
 and is what an administrator does while diagnosing.
 """

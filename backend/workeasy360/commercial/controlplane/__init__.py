@@ -8,7 +8,7 @@ read models** - and nothing else. It owns no table and no business rule.
 Every function takes the actor's ``TenantContext`` (a ``STAFF`` principal
 bound to the platform organization), authorizes through the one decision
 function against an explicit ``platform.staff_*`` permission (dangerous ones
-demand AAL 2), and reaches every commercial fact through the *same* services a
+are also refused under impersonation), and reaches every commercial fact through the *same* services a
 customer's own purchase uses. Nothing here writes a subscription, an
 entitlement, a price or a ledger row directly; the only things it writes are
 its own audit entries, and the one lifecycle flag ``organizations`` exposes.

@@ -15,7 +15,7 @@ cannot land in an access log, a proxy log or a ``Referer`` header.
 **Privilege.** ``platform.member.invite`` invites members and read-only users.
 Inviting someone as an administrator or billing manager *also* needs
 ``platform.role.assign`` (dangerous) - otherwise inviting would be a way round
-the rule that assigning those roles needs step-up. Owners are never invited.
+the rule that assigning those roles is a dangerous permission. Owners are never invited.
 
 **Acceptance** is by the invited address only: a signed-in invitee must be
 signed in as that address; otherwise an account is created (the password is

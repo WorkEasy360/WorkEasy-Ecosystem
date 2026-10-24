@@ -88,6 +88,15 @@ export function CompletionMeter({ value, label }: { value: Pick<ListCompletion, 
   );
 }
 
+/** The open upgrade request's state, in words (ADR-049). */
+const UPGRADE_TEXT: Record<string, string> = {
+  requested: "Requested",
+  profile_required: "Profile required",
+  pending_approval: "Pending approval",
+};
+const upgradeText = (status: string): string => UPGRADE_TEXT[status] ?? status.replace(/_/g, " ");
+const upgradeTarget = (key: string): string => (key === "white_label" ? "White-label" : key === "reseller" ? "Reseller" : key);
+
 // --- the dashboard -----------------------------------------------------------------------
 
 /** Where each card's number can be inspected: All Partners, filtered. */
@@ -149,6 +158,19 @@ export function PartnersOverview() {
       <LoadGate load={load} what="the partner dashboard">
         {(d) => (
           <>
+            {(d.upgrades_pending ?? 0) > 0 && (
+              <section className={`w360-card ${local.completion}`} aria-label="Upgrade requests">
+                <p className={local.completionTitle}>
+                  {d.upgrades_pending} upgrade {d.upgrades_pending === 1 ? "request is" : "requests are"} waiting for a decision.
+                </p>
+                <p>
+                  <Link className="w360-btn w360-btn-primary" href="/admin/partners/all">
+                    Open All Partners
+                  </Link>{" "}
+                  <span className={styles.muted}>Partners with a request carry an &ldquo;Upgrade&rdquo; badge.</span>
+                </p>
+              </section>
+            )}
             <section aria-labelledby="partner-kpis" className={styles.stack}>
               <h2 id="partner-kpis" className="w360-visually-hidden">
                 Key figures
@@ -525,6 +547,15 @@ function PartnerRow({
           <div className={local.nameMeta}>
             <TypeBadges labels={r.experience} />
             <SetupStatusBadge value={r.profile_completion.setup_status} />
+            {r.upgrade && (
+              <Link
+                href={`${href}?tab=users`}
+                className={`w360-badge ${r.upgrade.status === "pending_approval" ? "w360-badge-warning" : "w360-badge-neutral"}`}
+                aria-label={`Upgrade: ${upgradeText(r.upgrade.status)}, to ${upgradeTarget(r.upgrade.to)} - ${r.display_name}`}
+              >
+                Upgrade: {upgradeText(r.upgrade.status)}
+              </Link>
+            )}
           </div>
         </th>
         <td>

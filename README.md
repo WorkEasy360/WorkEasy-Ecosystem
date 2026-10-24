@@ -35,7 +35,7 @@ Deployment: [docs/phase-12/04-deployment.md](docs/phase-12/04-deployment.md).
 
 *Earlier status (Phase 5):* **a new customer can create their organization,
 become its owner, find it through a scalable organization directory and
-satisfy MFA step-up** ([docs/phase-5/](docs/phase-5/00-overview.md); evidence in
+reach the launcher** ([docs/phase-5/](docs/phase-5/00-overview.md); evidence in
 [phase-5-status.md](docs/phase-5/phase-5-status.md): 1,121 backend tests and
 41 frontend tests, 0 failed, fresh database).
 

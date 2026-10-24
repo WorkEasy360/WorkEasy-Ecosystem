@@ -22,10 +22,9 @@ import local from "./PartnerConsole.module.css";
  * communication or enable steps because those are staff acts.
  *
  * **Every step is its own action.** Saving a brand and requesting a domain are
- * separate submits, each through ``useAction``, so a second-factor prompt
- * appears at the step that needs one and is never hidden inside a combined
- * submit. (For a partner, a brand is not a dangerous action and a domain is; for
- * staff, both are - the server decides, and this screen just handles the
+ * separate submits, each through ``useAction``, so the outcome of each is
+ * announced where it happened. (The server decides who may do what; this
+ * screen just handles the
  * prompt whichever step raises it.)
  *
  * **Activation is never automatic.** Verification proves a name; making it serve

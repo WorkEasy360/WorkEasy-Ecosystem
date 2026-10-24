@@ -322,7 +322,7 @@ That last question is the cheapest architectural test available. "Nothing — it
 | [ADR-037 … ADR-039](docs/architecture/adrs/) | Phases 10–12: partner consoles and owner activation; four-product integration and independent product trials; white-label domains keep authentication on the canonical host (D-035) |
 | [ADR-040](docs/architecture/adrs/ADR-040-per-request-overhead-connections-sessions-hashing.md) | 2026-10 audit: persistent pooled connections, a throttled session idle window, bounded password hashing |
 | [Phase 3 — Remote Integration](docs/phase-3/00-overview.md) | How an external product connects: registry, SSO, entitlement API, key management |
-| [Phase 5 — Onboarding, access directory, MFA](docs/phase-5/00-overview.md) | Organization creation, the chooser projection, TOTP and step-up |
+| [Phase 5 — Onboarding, access directory, MFA](docs/phase-5/00-overview.md) | Organization creation, the chooser projection (its TOTP and step-up were removed by ADR-050) |
 | [Phase 6 — Integration, webhooks, automation](docs/phase-6/00-overview.md) | Product event ingestion, signed webhooks, connectors, SSRF boundary, generic automation |
 | [Phase 7 — Super Admin and the partner channel](docs/phase-7/00-overview.md) | Staff control plane, capability-based partners, reseller / white-label / affiliate foundations, commission ledger, manual payouts |
 | [Phase 8 — Shared AI, retrieval and analytics](docs/phase-8/00-overview.md) | AI gateway, model registry, spend control, skills, RAG, unified analytics |

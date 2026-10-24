@@ -9,7 +9,7 @@ import uuid
 import pytest
 from django.core import mail
 
-from tests.partner_setup.conftest import MANAGE, VIEW, post
+from tests.partner_setup.conftest import VIEW, post
 from tests.phase9.conftest import deliver_account_mail
 from workeasy360.commercial.partners import services
 from workeasy360.commercial.partners.models import PartnerMember
@@ -17,7 +17,6 @@ from workeasy360.contracts.enums import PartnerStatus
 from workeasy360.contracts.errors import (
     PartnerValidationError,
     PermissionDenied,
-    StepUpRequired,
 )
 
 pytestmark = pytest.mark.django_db
@@ -187,12 +186,10 @@ def members(client, partner_id):
     return client.get(f"/api/v1/admin/partners/{partner_id}").json()["members"]
 
 
-def test_the_member_rows_carry_name_mfa_last_activity_and_invitation_state(
-    manager, draft
-):
+def test_the_member_rows_carry_name_last_activity_and_invitation_state(manager, draft):
     from django.utils import timezone
 
-    from workeasy360.platform.identity.models import AuthFactor, User
+    from workeasy360.platform.identity.models import User
 
     partner, _ctx = draft
     email = f"rows-{uuid.uuid4().hex[:6]}@example.com"
@@ -206,35 +203,15 @@ def test_the_member_rows_carry_name_mfa_last_activity_and_invitation_state(
     )
     (row,) = [m for m in members(manager, partner.id) if m["email"] == email]
     assert row["full_name"] == "Row Person"
-    assert row["mfa_enabled"] is False
+    assert "mfa_enabled" not in row
     assert row["last_login_at"] is None
     assert row["invitation_sent_at"] is None and row["password_set"] is False
     assert row["invitation_deferred"] is True
     user = User.objects.get(email=email)
-    AuthFactor.objects.create(
-        user=user, kind="totp", label="app", confirmed_at=timezone.now()
-    )
     user.last_login_at = timezone.now()
     user.save(update_fields=["last_login_at"])
     (row,) = [m for m in members(manager, partner.id) if m["email"] == email]
-    assert row["mfa_enabled"] is True and row["last_login_at"]
-
-
-def test_an_unconfirmed_factor_or_a_recovery_code_is_not_mfa(manager, draft):
-    from django.utils import timezone
-
-    from workeasy360.platform.identity.models import AuthFactor, User
-
-    partner, _ctx = draft
-    email = f"nomfa-{uuid.uuid4().hex[:6]}@example.com"
-    invite(manager, partner.id, email=email)
-    user = User.objects.get(email=email)
-    AuthFactor.objects.create(user=user, kind="totp", label="pending")  # never confirmed
-    AuthFactor.objects.create(
-        user=user, kind="recovery_code", label="codes", confirmed_at=timezone.now()
-    )
-    (row,) = [m for m in members(manager, partner.id) if m["email"] == email]
-    assert row["mfa_enabled"] is False
+    assert row["last_login_at"]
 
 
 # --- changing a role ------------------------------------------------------------------------------------------
@@ -359,15 +336,9 @@ def test_changing_a_role_needs_manage_and_a_second_factor(
         post(viewer, role_url(pid, member.id), {"role": "viewer"}, key=False).status_code
         == 403
     )
-    weak, _w = staff_client(MANAGE, aal2=False)
-    stepped = post(weak, role_url(pid, member.id), {"role": "viewer"}, key=False)
-    assert stepped.status_code == 401 and stepped.json()["code"] == "step_up_required"
     _p, plain = staff_factory(VIEW)
     with pytest.raises(PermissionDenied):
         services.change_member_role(plain, pid, member_id=member.id, role="viewer")
-    _l, lapsed = staff_factory(MANAGE, aal=1)
-    with pytest.raises(StepUpRequired):
-        services.change_member_role(lapsed, pid, member_id=member.id, role="viewer")
 
 
 def test_a_partner_cannot_change_its_own_roles(partner_client):

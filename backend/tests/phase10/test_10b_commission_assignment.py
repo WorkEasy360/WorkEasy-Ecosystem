@@ -23,7 +23,6 @@ from workeasy360.contracts.errors import (
     PartnerRecordNotFound,
     PartnerValidationError,
     PermissionDenied,
-    StepUpRequired,
 )
 
 pytestmark = pytest.mark.django_db
@@ -236,13 +235,10 @@ def test_a_rate_is_whole_basis_points_between_zero_and_a_hundred_percent(
     assert assign(manager, partner, 10000, expected=1).rule.rate_bp == 10000
 
 
-def test_only_a_manager_may_assign_and_it_needs_a_second_factor(staff_factory, partner):
+def test_only_a_manager_may_assign(staff_factory, partner):
     _v, viewer = staff_factory("platform.staff_commission.view")
     with pytest.raises(PermissionDenied):
         assign(viewer, partner, 2000)
-    _m, no_step_up = staff_factory("platform.staff_commission.manage", aal=1)
-    with pytest.raises(StepUpRequired):
-        assign(no_step_up, partner, 2000)
     assert not CommissionRule.objects.filter(partner=partner["partner"]).exists()
 
 
@@ -330,15 +326,8 @@ def test_the_endpoint_reads_and_assigns_and_forged_fields_are_ignored(
     assert after["in_force"]["rate_bp"] == 1800
 
 
-def test_the_endpoint_needs_step_up_and_answers_409_on_a_stale_token(
-    partner, staff_client
-):
+def test_the_endpoint_answers_409_on_a_stale_token(partner, staff_client):
     url = f"/api/v1/admin/partners/{partner['partner'].id}/commission"
-    weak, _u = staff_client("platform.staff_commission.manage", aal2=False)
-    response = _post(
-        weak, url, {"rate_bp": 1800, "reason": REASON, "expected_version": 0}
-    )
-    assert response.status_code == 401 and response.json()["code"] == "step_up_required"
     client, _u = staff_client("platform.staff_commission.manage")
     assert (
         _post(

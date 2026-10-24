@@ -6,9 +6,9 @@ login lockout, disabling it (a compromised or departed person) and enabling it
 again.
 
 ``platform.staff_user.view`` reads: address, name, status, when it last signed
-in, how many organizations it belongs to, whether MFA is enrolled, whether it
-is staff - never a password hash, a factor, a session key or a token.
-``platform.staff_user.manage`` (dangerous: AAL 2, refused under impersonation)
+in, how many organizations it belongs to, whether it
+is staff - never a password hash, a session key or a token.
+``platform.staff_user.manage`` (dangerous: refused under impersonation)
 acts, with a reason of at least ten characters, audited in the control-plane
 log and in the person's own security trail.
 
@@ -106,7 +106,7 @@ def _segment_filter(
     if segment == "deactivated":
         return Q(status=UserStatus.DISABLED.value)
     if segment == "suspended":
-        return active & (Q(locked_until__gt=now) | Q(mfa_locked_until__gt=now))
+        return active & Q(locked_until__gt=now)
     if customer_orgs is None or trial_orgs is None:
         raise ValueError("Lifecycle segments need the organizations' access classes.")
     if segment == "customers":
@@ -139,7 +139,7 @@ def directory(
 
     from django.utils import timezone
 
-    from workeasy360.platform.identity.models import AuthFactor, User
+    from workeasy360.platform.identity.models import User
 
     authz.require(ctx, VIEW)
     limit = max(1, min(int(limit or 25), MAX_PAGE))
@@ -153,17 +153,6 @@ def directory(
         User.objects.exclude(email=PLATFORM_SYSTEM_USER_EMAIL)
         .annotate(
             organizations=Count("organization_access_rows", distinct=True),
-            factors=Count(
-                "auth_factors",
-                filter=Q(
-                    auth_factors__confirmed_at__isnull=False,
-                    auth_factors__kind__in=[
-                        AuthFactor.Kind.TOTP,
-                        AuthFactor.Kind.WEBAUTHN,
-                    ],
-                ),
-                distinct=True,
-            ),
         )
         .filter(segment_q)
         .order_by("-created_at", "-id")
@@ -201,7 +190,6 @@ def _user_row(user: Any) -> dict[str, Any]:
         "status": user.status,
         "is_staff": user.is_staff,
         "locked": user.is_locked_out,
-        "mfa_enrolled": bool(getattr(user, "factors", 0)),
         "organizations": getattr(user, "organizations", None),
         "email_verified": user.email_verified_at is not None,
         "acquisition_source": user.acquisition_source,
@@ -224,7 +212,6 @@ def detail(ctx: TenantContext, user_id: UUID) -> dict[str, Any]:
         .annotate(organizations=Count("organization_access_rows", distinct=True))
         .first()
     )
-    row["mfa_enrolled"] = user.has_mfa
     return {
         **row,
         "memberships": [
@@ -326,7 +313,7 @@ def record_staff_session(user: Any, *, signed_in: bool, where: dict[str, str]) -
 
     if not getattr(user, "is_staff", False):
         return
-    ctx = platform_context(user_id=user.id, aal=1)
+    ctx = platform_context(user_id=user.id)
     try:
         with acting_scope(ctx):
             audit.record(

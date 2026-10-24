@@ -34,8 +34,8 @@ class PermissionDeclaration:
     #: time, so a check stays a single set-membership test.
     implies: tuple[str, ...] = ()
 
-    #: Requires aal >= 2 and a recent re-auth, and is grouped separately in
-    #: the UI. Also blocked outright under impersonation.
+    #: Grouped separately in the UI. Blocked outright under impersonation,
+    #: and refused while the organization is read-only.
     dangerous: bool = False
 
     #: Belongs to the control plane (Workeasy360 staff or a partner), not to

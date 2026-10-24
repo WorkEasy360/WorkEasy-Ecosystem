@@ -62,7 +62,7 @@ def test_is_staff_alone_does_not_unlock_the_legacy_catalog_routes(
     No StaffGrant was involved, so revoking every grant did not remove it."""
     person = user_factory(is_staff=True, password=PASSWORD)
     org = _own_organization(person)
-    client = http_login(person, aal2=True)
+    client = http_login(person)
     base = f"/api/v1/orgs/{org.slug}"
 
     product = _json(
@@ -96,7 +96,7 @@ def test_the_legacy_catalog_route_follows_the_staff_grant_and_its_revocation(
         reason="Catalog administration for the launch",
     )
     org = _own_organization(person)
-    client = http_login(person, aal2=True)
+    client = http_login(person)
     url = f"/api/v1/orgs/{org.slug}/commercial/products"
 
     assert (
@@ -124,7 +124,7 @@ def test_a_support_only_staff_member_cannot_reach_catalog_writes(
         reason="Front-line support rota member",
     )
     org = _own_organization(person)
-    client = http_login(person, aal2=True)
+    client = http_login(person)
     response = _json(
         client,
         "post",

@@ -426,7 +426,7 @@ def test_credentialed_endpoints_ignore_session_authentication(
     """
     register_product("crm")
     org = entitled_org("crm")
-    signed_in(org["user"], aal=2)
+    signed_in(org["user"])
 
     for path, body in (
         (TOKEN, {"grant_type": "authorization_code", "code": "x"}),

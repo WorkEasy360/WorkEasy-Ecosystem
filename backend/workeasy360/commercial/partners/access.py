@@ -38,7 +38,7 @@ from workeasy360.platform.authz.control_plane import (
 STAFF_MANAGE = "platform.staff_partner.manage"
 
 
-def partner_actor(*, user_id: UUID, partner_id: UUID, aal: int) -> TenantContext:
+def partner_actor(*, user_id: UUID, partner_id: UUID) -> TenantContext:
     """The context of ``user_id`` acting for ``partner_id``.
 
     Raises ``PartnerRecordNotFound`` unless the user is an active member of
@@ -48,13 +48,11 @@ def partner_actor(*, user_id: UUID, partner_id: UUID, aal: int) -> TenantContext
     if selectors.member_of(partner_id, user_id) is None:
         raise PartnerRecordNotFound("No such partner.", partner_id=str(partner_id))
     return platform_context(
-        user_id=user_id, aal=aal, principal=PrincipalKind.PARTNER, partner_id=partner_id
+        user_id=user_id, principal=PrincipalKind.PARTNER, partner_id=partner_id
     )
 
 
-def guest_actor(
-    *, user_id: UUID, partner_id: UUID, aal: int, reason: str
-) -> TenantContext:
+def guest_actor(*, user_id: UUID, partner_id: UUID, reason: str) -> TenantContext:
     """A staff member's read-only *guest view* of ``partner_id`` (``guest.py``).
 
     A ``PARTNER`` context whose user is the staff member, marked break-glass
@@ -68,7 +66,7 @@ def guest_actor(
     if selectors.partner_row(partner_id) is None:
         raise PartnerRecordNotFound("No such partner.", partner_id=str(partner_id))
     ctx = platform_context(
-        user_id=user_id, aal=aal, principal=PrincipalKind.PARTNER, partner_id=partner_id
+        user_id=user_id, principal=PrincipalKind.PARTNER, partner_id=partner_id
     )
     return replace(ctx, is_break_glass=True, reason=reason)
 
@@ -103,10 +101,10 @@ def subject_partner(
       ``partner_id`` that is not theirs is the same 404 as any other partner's
       record, and the command's own permission (``partner_permission``) is what
       authorizes it - so branding stays a non-dangerous action for the partner
-      and a domain stays dangerous (AAL 2), exactly as before;
+      and a domain stays dangerous, exactly as before;
     - **staff** act for the partner they name, under
       ``platform.staff_partner.manage`` - which is dangerous, so every staff
-      write is a second-factor write, and is refused under impersonation.
+      write is refused under impersonation.
       Staff may prepare a partner that is not yet active; a terminated
       partner takes no new brand or domain from anyone.
     """

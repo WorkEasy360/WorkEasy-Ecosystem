@@ -3,8 +3,6 @@
 import Link from "next/link";
 import { logout } from "@/lib/api/auth";
 import type { AccessPolicyDenial } from "@/lib/api/console";
-import { MfaSettings } from "@/features/security/MfaSettings";
-import { StepUpForm } from "@/features/security/StepUpForm";
 import { ChangePasswordForm } from "./ChangePasswordForm";
 import styles from "./Console.module.css";
 import { usePortalRouter } from "@/lib/portalRouter";
@@ -16,7 +14,6 @@ import { usePortalRouter } from "@/lib/portalRouter";
  * here - the pages under the organization are exactly what the policy is
  * refusing, so they cannot host them:
  *
- * - `mfa_required`: set up an authenticator app, or verify a code;
  * - `password_change_required`: change the password now;
  * - `reauthentication_required`: sign in again;
  * - `network_not_allowed`: nothing to do from here - connect from an allowed
@@ -24,11 +21,9 @@ import { usePortalRouter } from "@/lib/portalRouter";
  */
 export function PolicyGate({
   reason,
-  mfaEnrolled,
   onResolved,
 }: {
   reason: AccessPolicyDenial;
-  mfaEnrolled: boolean;
   onResolved: () => void;
 }) {
   const router = usePortalRouter();
@@ -38,27 +33,6 @@ export function PolicyGate({
   return (
     <main id="w360-main" className={styles.gate}>
       <div className={`w360-card ${styles.gateCard}`}>
-        {reason === "mfa_required" && (
-          <>
-            <h1 className={styles.gateTitle}>Two-step verification is required</h1>
-            <p>This organization requires everyone to verify a code from an authenticator app before continuing.</p>
-            {mfaEnrolled ? (
-              <StepUpForm
-                prompt="Enter a code from your authenticator app, or a recovery code."
-                onVerified={onResolved}
-                onCancel={() => router.push("/organizations/select")}
-              />
-            ) : (
-              <>
-                <p>Set up an authenticator app first. When it is confirmed, choose Continue.</p>
-                <MfaSettings />
-                <button type="button" className="w360-btn w360-btn-primary" onClick={onResolved}>
-                  Continue
-                </button>
-              </>
-            )}
-          </>
-        )}
         {reason === "password_change_required" && (
           <>
             <h1 className={styles.gateTitle}>Update your password</h1>

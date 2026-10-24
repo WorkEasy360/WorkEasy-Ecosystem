@@ -11,7 +11,6 @@ from workeasy360.commercial.partners.models import PartnerContact, PartnerProfil
 from workeasy360.contracts.errors import (
     PartnerValidationError,
     PermissionDenied,
-    StepUpRequired,
 )
 
 pytestmark = pytest.mark.django_db
@@ -419,25 +418,11 @@ def test_no_grant_at_all_cannot_even_read(staff_client, draft_partner):
     assert client.get(profile_url(draft_partner.id)).status_code == 403
 
 
-def test_writing_a_profile_demands_a_second_factor(staff_client, draft_partner):
-    client, _u = staff_client(MANAGE, aal2=False)
-    response = save(client, draft_partner, {"support": {"email": "a@example.com"}})
-    assert response.status_code == 401 and response.json()["code"] == "step_up_required"
-
-
 def test_the_service_is_authorized_in_the_service(staff_factory, draft_partner):
     _v, viewer = staff_factory(VIEW)
     with pytest.raises(PermissionDenied):
         profile.update_profile(
             viewer,
-            draft_partner.id,
-            expected_version=0,
-            data={"support": {"email": "a@example.com"}},
-        )
-    _w, weak = staff_factory(MANAGE, aal=1)
-    with pytest.raises(StepUpRequired):
-        profile.update_profile(
-            weak,
             draft_partner.id,
             expected_version=0,
             data={"support": {"email": "a@example.com"}},

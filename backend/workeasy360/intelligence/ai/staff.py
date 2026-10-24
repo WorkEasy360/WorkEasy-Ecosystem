@@ -5,7 +5,7 @@ organization's AI policy and its usage - read-only diagnostics that return no
 credential (none is stored; a provider shows only *whether* its secret
 reference resolves), no prompt and no output.
 
-``platform.staff_ai.manage`` (dangerous: StaffGrant + AAL 2, one
+``platform.staff_ai.manage`` (dangerous: StaffGrant, one
 ``authz.check``): switch a provider or model on or off, reorder models, add a
 model, publish a new price version, and set an organization's platform-side
 AI policy (suspend its AI, set its platform cap, allow premium models). Every

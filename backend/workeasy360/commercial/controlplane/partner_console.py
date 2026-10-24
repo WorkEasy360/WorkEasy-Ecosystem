@@ -36,7 +36,7 @@ from uuid import UUID
 from django.utils import timezone
 
 from workeasy360.commercial.commissions import selectors as commission_selectors
-from workeasy360.commercial.partners import capabilities
+from workeasy360.commercial.partners import capabilities, upgrades
 from workeasy360.commercial.partners import console_reads as partner_reads
 from workeasy360.contracts.enums import PartnerStatus
 from workeasy360.contracts.errors import PartnerRecordNotFound, PartnerValidationError
@@ -161,6 +161,9 @@ def overview(ctx: TenantContext) -> dict[str, Any]:
     )
     return {
         "as_of": now.isoformat(),
+        # Upgrade requests waiting for a decision (ADR-049). Beside the cards, not
+        # one of them: the card list is a pinned contract of the dashboard.
+        "upgrades_pending": upgrades.pending_count(),
         "cards": [
             {"key": key, "label": label, "count": counts[key]} for key, label in cards
         ],
@@ -248,6 +251,7 @@ def resellers_page(
         referrals=facts["referrals"],
     )
 
+    upgrading = upgrades.open_for_partners([r.id for r in rows])
     items = []
     for row in rows:
         held = facts["capabilities"].get(row.id, set())
@@ -276,6 +280,8 @@ def resellers_page(
                 "primary_experience": capabilities.resolve_landing(
                     row.default_experience, held
                 ),
+                # The open upgrade request, if any: a badge, never an authority.
+                "upgrade": upgrading.get(row.id),
                 "capability_count": len(held),
                 "capabilities": sorted(held),
                 "administrator": facts["administrators"].get(row.id),

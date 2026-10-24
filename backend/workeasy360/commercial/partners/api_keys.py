@@ -19,8 +19,8 @@ it is deliberately narrow:
   the platform); comparison is constant-time.
 - **Creating, rotating and revoking are dangerous actions**: they need the
   ``platform.partner_apikey.manage`` permission, which the permission registry
-  marks ``dangerous`` - a second-factor (AAL 2) session is required by the one
-  decision function, not by this module - and they are rate-limited by the view
+  marks ``dangerous`` - refused under impersonation by the one decision
+  function, not by this module - and they are rate-limited by the view
   and audited here (the audit entry names the key, never the secret).
 - **A key always expires** (30 to 365 days) and dies with its creator's
   membership.

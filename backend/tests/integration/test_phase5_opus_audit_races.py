@@ -493,42 +493,6 @@ def test_chooser_paging_through_a_mutation_never_repeats_and_only_drops_the_muta
         assert added["id"] in set(_page_all(client))  # and the next traversal has it
 
 
-# --- Audit 24/56: the step-up lock under concurrency -------------------------
-
-
-def test_concurrent_wrong_guesses_cannot_outrun_the_step_up_lock(user_factory, settings):
-    """Many simultaneous guesses (many instances, a Redis outage - the
-    per-minute bucket out of the picture): the database lets at most the
-    free allowance plus the one that earns the lock evaluate a code; every
-    other attempt is refused unevaluated."""
-    from workeasy360.contracts.errors import MfaThrottled
-    from workeasy360.platform.identity import mfa
-    from workeasy360.platform.identity.models import AuthFactor
-    from workeasy360.platform.identity.services import (
-        MFA_FREE_FAILURES,
-        begin_totp_enrollment,
-        confirm_totp_enrollment,
-        verify_step_up_code,
-    )
-
-    user = user_factory()
-    start = begin_totp_enrollment(user.id)
-    secret = mfa.decrypt_totp_secret(
-        AuthFactor.objects.get(id=start.factor_id).secret_ref
-    )
-    confirm_totp_enrollment(user.id, start.factor_id, mfa.current_totp(secret))
-    near = {mfa.current_totp(secret, at=time.time() + 30 * s) for s in range(-3, 4)}
-    wrong = next(c for c in (f"{n:06d}" for n in range(1000)) if c not in near)
-
-    attempts = 3 * MFA_FREE_FAILURES
-    results, errors = _run(lambda _i: verify_step_up_code(user.id, wrong), count=attempts)
-
-    assert results.count(True) == 0
-    assert len(results) <= MFA_FREE_FAILURES + 1
-    assert len(errors) == attempts - len(results)
-    assert all(isinstance(e, MfaThrottled) for e in errors)
-
-
 # --- Audit 60: the one-owner invariant under concurrency --------------------
 
 

@@ -88,7 +88,7 @@ function summaryLines(errors: FieldErrors): string[] {
 
 /** What the server's refusal means here. A version conflict and a problem with
  * one field become a plain message plus state the form reads; anything else
- * (including the second-factor request) passes through unchanged. */
+ * passes through unchanged. */
 function refusal(err: unknown, setErrors: (e: FieldErrors) => void, setConflict: (c: boolean) => void): unknown {
   if (!(err instanceof ApiError)) return err;
   if (err.status === 409) {
@@ -103,8 +103,8 @@ function refusal(err: unknown, setErrors: (e: FieldErrors) => void, setConflict:
   return err;
 }
 
-/** One save path for both tabs: runs through `useAction` (so the second-factor
- * prompt, the busy state and the announced outcome are the page's usual ones). */
+/** One save path for both tabs: runs through `useAction` (so the busy state
+ * and the announced outcome are the page's usual ones). */
 function useProfileSaver(bump: () => void) {
   const { act, busy, feedback } = useAction(bump);
   const [serverErrors, setServerErrors] = useState<FieldErrors>({});

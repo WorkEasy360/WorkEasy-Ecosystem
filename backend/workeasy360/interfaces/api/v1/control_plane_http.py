@@ -5,8 +5,7 @@ rate limit, parse a bounded body. **No authorization decision lives here.** The
 decorators establish *who is acting*; whether that actor may do the thing is
 decided, again, inside the application service by the one decision function.
 Hiding a route in the frontend is a convenience; every request is re-checked
-server-side for staff status, the explicit permission and AAL 2 where the
-permission is dangerous (Task 77).
+server-side for staff status and the explicit permission (Task 77).
 
 Cookie-authenticated mutations go through Django's CSRF middleware like every
 other unsafe request; nothing here is exempt.
@@ -35,7 +34,6 @@ from workeasy360.platform.observability import throttle
 from workeasy360.platform.observability.client_ip import client_ip, rate_limit_identity
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import metrics
-from workeasy360.platform.tenancy.resolution import session_aal
 
 logger = get_logger(__name__)
 
@@ -57,8 +55,8 @@ def staff_context(request: HttpRequest) -> TenantContext:
     is never read.
 
     A password sign-in opens the control plane (owner decision 2026-10-24,
-    withdrawing D-037's sign-in code); ``dangerous`` permissions still demand
-    a recent step-up (AAL 2) in ``authz.check``.
+    withdrawing D-037's sign-in code), and no second factor is asked for
+    anywhere (owner decision 2026-10-24, ADR-050).
     """
     user = authenticated_user(request)
     if not user.is_staff:
@@ -66,8 +64,7 @@ def staff_context(request: HttpRequest) -> TenantContext:
         raise PermissionDenied(
             "Not permitted.", permission="platform.staff", reason="not_platform_staff"
         )
-    session = getattr(request, "session", None)
-    return platform_context(user_id=user.id, aal=session_aal(session))
+    return platform_context(user_id=user.id)
 
 
 def hidden_unless_staff(
@@ -128,7 +125,6 @@ def partner_view(
                 ctx = access.partner_actor(
                     user_id=user.id,
                     partner_id=partner_id,
-                    aal=session_aal(getattr(request, "session", None)),
                 )
             except PartnerRecordNotFound:
                 ctx = guest_context(request, partner_id)
@@ -170,7 +166,6 @@ def guest_context(request: HttpRequest, partner_id: UUID) -> TenantContext | Non
     return access.guest_actor(
         user_id=user.id,
         partner_id=partner_id,
-        aal=session_aal(session),
         reason=view.reason,
     )
 
@@ -206,7 +201,7 @@ def end_guest_view(request: HttpRequest) -> bool:
     if not user.is_staff:
         return False
     session = request.session
-    ctx = platform_context(user_id=user.id, aal=session_aal(session))
+    ctx = platform_context(user_id=user.id)
     ended = guest.end(ctx, session.get(SESSION_SIGN_IN_ID_KEY))
     if getattr(settings, "PORTALS_ENABLED", False) and not (
         partner_selectors.partners_for_user(user.id)

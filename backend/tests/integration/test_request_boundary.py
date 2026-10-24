@@ -244,7 +244,6 @@ def test_debug_is_never_enabled_in_production():
         "W360_SECRET_KEY": "x" * 60,
         "W360_DB_APP_PASSWORD": "y" * 24,
         "W360_FILE_URL_SIGNING_KEY": "z" * 40,
-        "W360_MFA_ENCRYPTION_KEY": "m" * 40,
         "W360_ALLOWED_HOSTS": "app.workeasy360.com",
         "W360_CSRF_TRUSTED_ORIGINS": "https://app.workeasy360.com",
         "W360_RELEASE": "2026.09.21-abc",

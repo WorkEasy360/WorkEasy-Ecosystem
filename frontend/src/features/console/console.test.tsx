@@ -77,8 +77,7 @@ function mockApi(routes: Record<string, Reply[]>) {
 }
 
 const ORG = "/api/v1/orgs/acme";
-const STEP_UP: Reply = { status: 401, body: { code: "step_up_required", detail: "Verify a code first." } };
-const STEPPED_UP: Reply = { status: 200, body: { aal: 2 } };
+const UNAVAILABLE: Reply = { status: 503, body: { code: "unavailable", detail: "Try again shortly." } };
 const page = <T,>(results: T[]) => ({ status: 200, body: { results, next_cursor: null, has_more: false } });
 
 const ADMIN = [
@@ -125,12 +124,6 @@ function renderOrg(ui: React.ReactNode, permissions: string[]) {
     </OrgAccessContext.Provider>,
   );
   return { ...result, reload };
-}
-
-async function stepUpWith(code = "123456") {
-  const input = await screen.findByLabelText(/recovery code/);
-  fireEvent.change(input, { target: { value: code } });
-  fireEvent.click(screen.getByRole("button", { name: "Verify" }));
 }
 
 const posted = (calls: Call[], key: string) => calls.filter((c) => c.key === key);
@@ -332,11 +325,10 @@ describe("members", () => {
     expect(posted(calls, `DELETE ${ORG}/memberships/m2`)).toHaveLength(1);
   });
 
-  it("a role change asks for a code when the server wants one, then retries the same change", async () => {
+  it("a role change is sent once and reported", async () => {
     const calls = mockApi({
       [`GET ${ORG}/members`]: [page(MEMBERS)],
-      [`POST ${ORG}/members/m2/role`]: [STEP_UP, { status: 200, body: {} }],
-      "POST /api/v1/auth/mfa/step-up": [STEPPED_UP],
+      [`POST ${ORG}/members/m2/role`]: [{ status: 200, body: {} }],
     });
     const { container } = renderOrg(<MembersScreen />, ADMIN);
     const select = await screen.findByLabelText("Role for Bob Jones");
@@ -344,12 +336,10 @@ describe("members", () => {
     expect(save).toBeDisabled();
     fireEvent.change(select, { target: { value: "readonly" } });
     fireEvent.click(save);
-    await screen.findByLabelText(/recovery code/);
-    await expectNoViolations(container);
-    await stepUpWith();
     expect(await screen.findByText("Bob Jones is now Read Only.")).toBeInTheDocument();
+    await expectNoViolations(container);
     const roleCalls = posted(calls, `POST ${ORG}/members/m2/role`);
-    expect(roleCalls.map((c) => c.body)).toEqual([{ role: "readonly" }, { role: "readonly" }]);
+    expect(roleCalls.map((c) => c.body)).toEqual([{ role: "readonly" }]);
   });
 
   it("searches on submit and filters by status", async () => {
@@ -647,16 +637,16 @@ describe("subscription & billing", () => {
     await expectNoViolations(container);
   });
 
-  it("retries a payment that needed a code with the same idempotency key", async () => {
+  it("retries a payment that did not get through with the same idempotency key", async () => {
     const calls = mockApi(
       billingRoutes({
-        [`POST ${ORG}/billing/invoices/inv1/pay`]: [STEP_UP, { status: 202, body: attempt("awaiting_payment", "https://pay.example.com/c/1") }],
-        "POST /api/v1/auth/mfa/step-up": [STEPPED_UP],
+        [`POST ${ORG}/billing/invoices/inv1/pay`]: [UNAVAILABLE, { status: 202, body: attempt("awaiting_payment", "https://pay.example.com/c/1") }],
       }),
     );
     renderOrg(<BillingScreen />, OWNER_BILLING);
     fireEvent.click(await screen.findByRole("button", { name: "Pay invoice INV-0001" }));
-    await stepUpWith();
+    await screen.findByText("Try again shortly.");
+    fireEvent.click(screen.getByRole("button", { name: "Pay invoice INV-0001" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://pay.example.com/c/1"));
     const keys = posted(calls, `POST ${ORG}/billing/invoices/inv1/pay`).map((c) => c.headers["idempotency-key"]);
     expect(keys).toHaveLength(2);
@@ -1282,7 +1272,6 @@ describe("MarkdownLite", () => {
 
 // --- my security -----------------------------------------------------------------------------------------
 
-const TOTP = { factor_id: "f1", kind: "totp", label: "Authenticator app", confirmed: true, created_at: null, last_used_at: null };
 const SESSIONS = {
   sessions: [
     {
@@ -1304,7 +1293,6 @@ const SESSIONS = {
       device_label: "Firefox on Windows",
     },
   ],
-  aal: 1,
 };
 const EVENTS = {
   events: [
@@ -1316,7 +1304,6 @@ const EVENTS = {
 
 function securityRoutes(extra: Record<string, Reply[]> = {}): Record<string, Reply[]> {
   return {
-    "GET /api/v1/auth/mfa/factors": [{ status: 200, body: { factors: [TOTP] } }],
     "GET /api/v1/auth/sessions": [{ status: 200, body: SESSIONS }],
     "GET /api/v1/auth/activity": [{ status: 200, body: EVENTS }],
     ...extra,
@@ -1334,26 +1321,19 @@ describe("my security", () => {
     expect(screen.getByRole("button", { name: /^Sign out Firefox on Windows/ })).toBeInTheDocument();
     expect(screen.getByText("All other sessions were signed out")).toBeInTheDocument();
     expect(screen.getByLabelText("Current password")).toBeInTheDocument();
-    expect(screen.getByText(/change your password instead/)).toBeInTheDocument();
-    await screen.findByRole("button", { name: "Remove Authenticator app" });
+    expect(screen.getByText(/Changing your password also signs out every other session/)).toBeInTheDocument();
     await expectNoViolations(container);
   });
 
-  it("signing a session out asks for a code, then retries", async () => {
+  it("signing a session out ends it at once", async () => {
     const calls = mockApi(
-      securityRoutes({
-        "POST /api/v1/auth/sessions/s2/revoke": [STEP_UP, { status: 200, body: { ok: true } }],
-        "POST /api/v1/auth/mfa/step-up": [STEPPED_UP],
-      }),
+      securityRoutes({ "POST /api/v1/auth/sessions/s2/revoke": [{ status: 200, body: { ok: true } }] }),
     );
     const { container } = renderOrg(<MySecurityScreen />, []);
     fireEvent.click(await screen.findByRole("button", { name: /^Sign out Firefox on Windows/ }));
-    await screen.findByLabelText(/recovery code/);
-    await expectNoViolations(container);
-    await stepUpWith("654321");
     expect(await screen.findByText("Signed out the session on Firefox on Windows.")).toBeInTheDocument();
-    expect(posted(calls, "POST /api/v1/auth/sessions/s2/revoke")).toHaveLength(2);
-    expect(posted(calls, "POST /api/v1/auth/mfa/step-up")[0].body).toEqual({ code: "654321" });
+    expect(posted(calls, "POST /api/v1/auth/sessions/s2/revoke")).toHaveLength(1);
+    await expectNoViolations(container);
   });
 
   it("signs out every other session", async () => {
@@ -1379,7 +1359,6 @@ describe("my security", () => {
 // --- security policy --------------------------------------------------------------------------------------
 
 const POLICY = {
-  require_mfa: false,
   session_max_age_minutes: null,
   password_min_length: null,
   ip_allowlist_enabled: false,
@@ -1393,12 +1372,11 @@ describe("authentication policy", () => {
   it("saves the policy with its version, turning blank fields into 'no setting'", async () => {
     const calls = mockApi({
       [`GET ${ORG}/security/policy`]: [{ status: 200, body: POLICY }],
-      [`PUT ${ORG}/security/policy`]: [{ status: 200, body: { ...POLICY, require_mfa: true, version: 8 } }],
+      [`PUT ${ORG}/security/policy`]: [{ status: 200, body: { ...POLICY, session_max_age_minutes: 480, version: 8 } }],
     });
     const { container } = renderOrg(<AuthenticationPolicyScreen />, ADMIN);
-    const mfa = await screen.findByLabelText("Require two-step verification");
+    await screen.findByLabelText("Session length");
     await expectNoViolations(container);
-    fireEvent.click(mfa);
     fireEvent.change(screen.getByLabelText("Session length"), { target: { value: "480" } });
     fireEvent.change(screen.getByLabelText("Minimum password length"), { target: { value: "8" } });
     expect(screen.getByRole("button", { name: "Save authentication settings" })).toBeDisabled();
@@ -1407,7 +1385,6 @@ describe("authentication policy", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save authentication settings" }));
     expect(await screen.findByText("Authentication settings saved.")).toBeInTheDocument();
     expect(posted(calls, `PUT ${ORG}/security/policy`)[0].body).toEqual({
-      require_mfa: true,
       session_max_age_minutes: 480,
       password_min_length: null,
       version: 7,
@@ -1432,7 +1409,7 @@ describe("authentication policy", () => {
   it("is view-only without the update permission", async () => {
     mockApi({ [`GET ${ORG}/security/policy`]: [{ status: 200, body: { ...POLICY, session_max_age_minutes: 90 } }] });
     renderOrg(<AuthenticationPolicyScreen />, ["platform.security.view"]);
-    expect(await screen.findByLabelText("Require two-step verification")).toBeDisabled();
+    expect(await screen.findByLabelText("Session length")).toBeDisabled();
     expect(screen.getByLabelText("Session length")).toHaveValue("90");
     expect(screen.queryByRole("button", { name: "Save authentication settings" })).not.toBeInTheDocument();
   });

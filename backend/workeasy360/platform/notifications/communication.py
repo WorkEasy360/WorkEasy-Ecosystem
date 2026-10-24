@@ -14,7 +14,7 @@ one of the template's declared variable names - no attribute access
 spec, no positional fields. What remains can only substitute plain values.
 
 Authorization: ``platform.staff_communication.view`` to read and preview,
-``.manage`` (dangerous: AAL 2, audited) to change anything.
+``.manage`` (dangerous: audited) to change anything.
 """
 
 from __future__ import annotations

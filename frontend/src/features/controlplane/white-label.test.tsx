@@ -10,7 +10,7 @@ import { staffWhiteLabel } from "@/lib/api/partnerConsole";
 /**
  * Phase 10d: the white-label list and the partner's own five-step wizard. What
  * the backend cannot enforce for the browser: the preview stores nothing, each
- * step is its own action (so a second-factor prompt lands on the step that needs
+ * step is its own action (so a refusal lands on the step that needs
  * one), activation never happens by itself, and nothing a partner typed is ever
  * rendered as markup.
  *
@@ -30,7 +30,7 @@ vi.mock("next/navigation", () => ({
 const ID = "p1";
 const BASE = `/api/v1/admin/partners/${ID}`;
 const MANAGE = ["platform.staff_partner.view", "platform.staff_partner.manage"];
-const STEP_UP: Reply = { status: 401, body: { code: "step_up_required", detail: "Verify again." } };
+const REFUSED: Reply = { status: 400, body: { code: "partner_validation_error", detail: "That domain cannot be used." } };
 
 const BRAND = {
   brand_name: "Acme Brand",
@@ -253,29 +253,26 @@ describe("the domain steps", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Next" })).toBeEnabled());
   });
 
-  it("asks for a second factor at the domain step, not at the brand step, and does not repeat what was done", async () => {
+  it("a refused domain request is reported at the domain step and does not repeat the brand save", async () => {
     const calls = mockApi({
       [`GET ${BASE}/brand`]: [ok({ brand: null }), ok({ brand: BRAND })],
       [`GET ${BASE}/domains`]: [ok({ results: [] })],
       [`PUT ${BASE}/brand`]: [ok(BRAND)],
-      [`POST ${BASE}/domains/request`]: [STEP_UP, { status: 201, body: domain("requested") }],
-      "POST /api/v1/auth/mfa/step-up": [ok({ aal: 2 })],
+      [`POST ${BASE}/domains/request`]: [REFUSED, { status: 201, body: domain("requested") }],
     });
     wizard();
     await fillBrand();
     next();
     await heading(2);
-    fireEvent.click(screen.getByRole("button", { name: "Save brand" })); // no prompt: nothing dangerous
+    fireEvent.click(screen.getByRole("button", { name: "Save brand" }));
     await screen.findByText("Brand saved.");
-    expect(screen.queryByLabelText(/needs a recent verification/)).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "Next" })).toBeEnabled());
     next();
     await heading(3);
     fireEvent.change(screen.getByLabelText(/Hostname/), { target: { value: "app.acme.example" } });
     fireEvent.click(screen.getByRole("button", { name: "Request domain" }));
-    const code = await screen.findByLabelText(/needs a recent verification/);
-    fireEvent.change(code, { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("That domain cannot be used.");
+    fireEvent.click(screen.getByRole("button", { name: "Request domain" }));
     await screen.findByText("Domain requested. Publish the DNS record, then check it.");
     const keys = writes(calls).map((c) => c.key);
     expect(keys.filter((k) => k === `PUT ${BASE}/brand`)).toHaveLength(1);

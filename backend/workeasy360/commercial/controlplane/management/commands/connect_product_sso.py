@@ -142,7 +142,7 @@ class Command(BaseCommand):
             raise CommandError("No staff identity has that address.")
 
         product = str(options["product"])
-        sctx = platform_context(user_id=actor.id, aal=2)
+        sctx = platform_context(user_id=actor.id)
         with acting_scope(sctx):
             integration = ecosystem_selectors.integration_for_product(
                 sctx, product_code=product

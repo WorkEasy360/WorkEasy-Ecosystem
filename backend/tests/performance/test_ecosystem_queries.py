@@ -382,7 +382,6 @@ def test_report_token_signing_cost(db, new_signing_key, capsys, algorithm):
         product_code="crm",
         client_id="bench",
         scope="openid",
-        aal=1,
     )
 
     samples = []

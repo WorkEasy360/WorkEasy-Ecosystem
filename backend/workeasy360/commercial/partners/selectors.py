@@ -156,7 +156,6 @@ def partner_detail(partner_id: UUID) -> dict[str, Any] | None:
         PartnerOrganizationLink,
         PartnerProductGrant,
     )
-    from workeasy360.platform.identity.selectors import users_with_second_factor
 
     row = partner_row(partner_id)
     if row is None:
@@ -199,9 +198,6 @@ def partner_detail(partner_id: UUID) -> dict[str, Any] | None:
         }
         for m in member_rows
     ]
-    with_mfa = users_with_second_factor(m.user_id for m in member_rows)
-    for entry in members:
-        entry["mfa_enabled"] = UUID(entry["user_id"]) in with_mfa
     products = [
         {
             "id": str(g.id),
@@ -365,7 +361,6 @@ def _permissions_of(member: Any) -> frozenset[str]:
 
     ctx = platform_context(
         user_id=member.user_id,
-        aal=1,
         principal=PrincipalKind.PARTNER,
         partner_id=member.partner_id,
     )

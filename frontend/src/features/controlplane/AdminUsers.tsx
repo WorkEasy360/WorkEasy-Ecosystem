@@ -22,7 +22,7 @@ const LIFECYCLE_LABELS: Record<string, string> = {
  * yet), Trial, Customers - and by account state (unverified, suspended =
  * temporarily locked out, deactivated). One identity each: a person moves
  * between segments as their organizations buy, never between tables. Never a
- * credential. Managing an account (``platform.staff_user.manage``, AAL 2)
+ * credential. Managing an account (``platform.staff_user.manage``)
  * reaches every organization the person belongs to at once, so each action
  * asks for an audited reason. Nobody is offered "Deactivate" on their own
  * account (the server refuses it too).
@@ -160,11 +160,6 @@ export function UserDetailScreen({ userId }: { userId: string }) {
               <li>
                 <span className={u.is_staff ? "w360-badge w360-badge-warning" : "w360-badge w360-badge-neutral"}>
                   {u.is_staff ? "Staff member" : "Not staff"}
-                </span>
-              </li>
-              <li>
-                <span className={u.mfa_enrolled ? "w360-badge w360-badge-success" : "w360-badge w360-badge-warning"}>
-                  {u.mfa_enrolled ? "MFA enrolled" : "No MFA"}
                 </span>
               </li>
               <li>

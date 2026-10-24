@@ -105,7 +105,6 @@ def test_contract_price_beats_every_book(catalog, platform_admin, customer, in_t
         organization_id=customer_ctx.organization_id,
         membership_id=customer_ctx.membership_id,
         user_id=admin_ctx.user_id,
-        aal=2,
     )
     grant_role_for(acting, customer)
 
@@ -406,7 +405,6 @@ def test_cross_currency_contract_price_is_refused_explicitly(
         organization_id=customer_ctx.organization_id,
         membership_id=customer_ctx.membership_id,
         user_id=admin_ctx.user_id,
-        aal=2,
     )
     grant_role_for(acting, customer)
 

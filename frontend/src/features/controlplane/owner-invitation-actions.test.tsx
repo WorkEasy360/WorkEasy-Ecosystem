@@ -3,15 +3,14 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 
 import { OwnerInvitationActions, StaffOwnerActions } from "./PartnerCustomers";
 import { CustomersTab, type TabProps } from "./ResellerTabs";
-import { AdminContextForTest, expectNoViolations, mockApi, ok, type Reply } from "./testSupport";
+import { AdminContextForTest, expectNoViolations, mockApi, ok } from "./testSupport";
 import { partnerConsoleApi, portalOwnerInvitationApi, type PartnerCustomerAdminRow } from "@/lib/api/partnerConsole";
 
 /**
  * Phase 10e: the console's side of the owner activation - what a customer row
  * says about it, and the two actions that change it. The server decides who may
- * act and when a recent verification is needed; the browser must show only what
- * can work, prompt for a second factor on the click that needs it, and never be
- * handed (or show) the link.
+ * act; the browser must show only what can work and never be handed (or show)
+ * the link.
  */
 
 vi.mock("next/navigation", () => ({
@@ -20,7 +19,6 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/partners/p1",
 }));
 
-const STEP_UP: Reply = { status: 401, body: { code: "step_up_required", detail: "Verify again." } };
 const STATE = {
   activation: "pending",
   expires_at: "2026-10-12T00:00:00Z",
@@ -125,18 +123,14 @@ describe("acting", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("The customer is unchanged");
   });
 
-  it("asks for a second factor on the click that needs it, then completes the same action", async () => {
+  it("resends the link on one click", async () => {
     const calls = mockApi({
-      "POST /api/v1/admin/partners/p1/customers/o1/owner-invitation/resend": [STEP_UP, ok(STATE)],
-      "POST /api/v1/auth/mfa/step-up": [ok({ aal: 2 })],
+      "POST /api/v1/admin/partners/p1/customers/o1/owner-invitation/resend": [ok(STATE)],
     });
     actions("pending");
     fireEvent.click(screen.getByRole("button", { name: "Resend activation link for Acme Ltd" }));
-    const code = await screen.findByLabelText(/needs a recent verification/);
-    fireEvent.change(code, { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
     expect(await screen.findByText(/A new activation link was emailed/)).toBeInTheDocument();
-    expect(calls.filter((c) => c.key.endsWith("/resend"))).toHaveLength(2);
+    expect(calls.filter((c) => c.key.endsWith("/resend"))).toHaveLength(1);
   });
 
   it("reports a refusal without changing what is shown", async () => {

@@ -1,7 +1,7 @@
 """Phase 5 acceptance, chained over real HTTP (Task 66).
 
-A brand-new customer, from sign-in to a launcher and AAL2, through a real
-socket: ``live_server`` runs the full WSGI stack in a server thread, and the
+A brand-new customer, from sign-in to a launcher, through a real socket:
+``live_server`` runs the full WSGI stack in a server thread, and the
 "browser" here is ``urllib`` with a cookie jar that submits the CSRF token
 the way the frontend does (read the ``w360_csrf`` cookie, echo it in
 ``X-CSRFToken``). No application service is called to *drive* the flow;
@@ -9,11 +9,10 @@ direct database reads appear only as after-the-fact assertions about what
 the HTTP calls produced.
 
 The one exception is marked where it happens: no customer-facing endpoint is
-gated by a ``dangerous`` permission yet, so "a dangerous action recognizes
-AAL2" is proven by resolving a tenant context from the *live session this
+gated by a ``dangerous`` permission yet, so "a dangerous action needs only the
+grant" is proven by resolving a tenant context from the *live session this
 test's HTTP calls produced* and asking ``authz`` about
-``platform.organization.delete`` - plus MFA factor removal, which is the
-AAL2-gated action the current UX actually exposes over HTTP.
+``platform.organization.delete``.
 
 ``transaction=True``: the server thread has its own connection, so the data
 must genuinely commit for it to see anything.
@@ -21,13 +20,8 @@ must genuinely commit for it to see anything.
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import http.cookiejar
 import json
-import struct
-import time
 import urllib.error
 import urllib.request
 import uuid
@@ -37,17 +31,6 @@ import pytest
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.slow]
 
 PASSWORD = "a long enough passphrase for tests"
-
-
-def totp(secret_b32: str, at: float) -> str:
-    """RFC 6238 (SHA-1, 6 digits, 30 s), implemented here independently of
-    ``platform.identity.mfa`` so the test does not grade the code with its
-    own function."""
-    key = base64.b32decode(secret_b32 + "=" * (-len(secret_b32) % 8))
-    digest = hmac.new(key, struct.pack(">Q", int(at // 30)), hashlib.sha1).digest()
-    offset = digest[-1] & 0x0F
-    value = int.from_bytes(digest[offset : offset + 4], "big") & 0x7FFFFFFF
-    return str(value % 1_000_000).zfill(6)
 
 
 class Browser:
@@ -107,7 +90,7 @@ def _json(raw: bytes):
         return raw.decode("utf-8", "replace")
 
 
-def _session_aal_check(browser: Browser, slug: str, permission: str):
+def _permission_check(browser: Browser, slug: str, permission: str):
     """authz's verdict for the tenant context the *live* session resolves to.
 
     Loads the real session row the HTTP calls produced (by its cookie) and
@@ -142,10 +125,9 @@ def _session_aal_check(browser: Browser, slug: str, permission: str):
     return None
 
 
-def test_a_new_customer_goes_from_sign_in_to_launcher_and_aal2_over_http(
+def test_a_new_customer_goes_from_sign_in_to_launcher_over_http(
     live_server, user_factory
 ):
-    from workeasy360.contracts.errors import StepUpRequired
     from workeasy360.platform.authz.models import RoleAssignment
     from workeasy360.platform.organizations.models import (
         Membership,
@@ -225,7 +207,7 @@ def test_a_new_customer_goes_from_sign_in_to_launcher_and_aal2_over_http(
     assert status == 200
     assert context["organization_id"] == created["organization_id"]
     assert context["write_allowed"] is True
-    assert context["aal"] == 1
+    assert "aal" not in context
 
     # --- owner permissions work --------------------------------------------
     status, members_page = browser.get(f"/api/v1/orgs/{slug}/memberships")
@@ -243,51 +225,11 @@ def test_a_new_customer_goes_from_sign_in_to_launcher_and_aal2_over_http(
     assert status == 200
     assert entitlements == {"products": []}
 
-    # --- a dangerous permission is refused at AAL1 --------------------------
-    denied = _session_aal_check(browser, slug, "platform.organization.delete")
-    assert isinstance(denied, StepUpRequired)
+    # --- a dangerous permission is allowed to the owner who holds it: a
+    # password sign-in is enough, no second factor stands in the way ---------
+    assert _permission_check(browser, slug, "platform.organization.delete") is None
 
-    # --- MFA enrollment ------------------------------------------------------
-    status, enrollment = browser.post("/api/v1/auth/mfa/totp/enroll")
-    assert status == 200
-    secret = enrollment["secret"]
-    assert enrollment["provisioning_uri"].startswith("otpauth://totp/")
-
-    now = time.time()
-    confirm_code = totp(secret, now)
-    status, confirmed = browser.post(
-        "/api/v1/auth/mfa/totp/confirm",
-        {"factor_id": enrollment["factor_id"], "code": confirm_code},
-    )
-    assert status == 200, confirmed
-    recovery_codes = confirmed["recovery_codes"]
-    assert len(recovery_codes) == 10
-    assert all(len(c) == 11 and c[5] == "-" for c in recovery_codes)
-
-    # Enrolled, but not stepped up: still AAL1, and the factor-changing
-    # actions refuse until a code is verified this session.
-    status, body = browser.get(f"/api/v1/orgs/{slug}/context")
-    assert body["aal"] == 1
-    status, body = browser.post("/api/v1/auth/mfa/totp/enroll")
-    assert (status, body["code"]) == (401, "step_up_required")
-    status, body = browser.delete(f"/api/v1/auth/mfa/factors/{enrollment['factor_id']}")
-    assert (status, body["code"]) == (401, "step_up_required")
-
-    # The code that confirmed enrollment is spent (RFC 6238 section 5.2).
-    status, body = browser.post("/api/v1/auth/mfa/step-up", {"code": confirm_code})
-    assert (status, body["code"]) == (400, "mfa_code_invalid")
-
-    # --- step-up with the next code -----------------------------------------
-    status, body = browser.post(
-        "/api/v1/auth/mfa/step-up", {"code": totp(secret, now + 30)}
-    )
-    assert (status, body) == (200, {"aal": 2})
-
-    status, context = browser.get(f"/api/v1/orgs/{slug}/context")
-    assert context["aal"] == 2
-    assert _session_aal_check(browser, slug, "platform.organization.delete") is None
-
-    # --- a new sign-in never inherits the step-up ---------------------------
+    # --- a new sign-in works the same way -----------------------------------
     status, _ = browser.post("/api/v1/auth/logout")
     assert status == 200
     status, body = browser.get(f"/api/v1/orgs/{slug}/context")
@@ -295,15 +237,7 @@ def test_a_new_customer_goes_from_sign_in_to_launcher_and_aal2_over_http(
 
     browser.sign_in(user.email)
     status, context = browser.get(f"/api/v1/orgs/{slug}/context")
-    assert (status, context["aal"]) == (200, 1)
-
-    # A recovery code also satisfies step-up - once.
-    status, body = browser.post("/api/v1/auth/mfa/step-up", {"code": recovery_codes[0]})
-    assert (status, body) == (200, {"aal": 2})
-    browser.post("/api/v1/auth/logout")
-    browser.sign_in(user.email)
-    status, body = browser.post("/api/v1/auth/mfa/step-up", {"code": recovery_codes[0]})
-    assert (status, body["code"]) == (400, "mfa_code_invalid")
+    assert status == 200 and "aal" not in context
 
 
 def test_an_existing_customer_is_not_sent_to_onboarding(

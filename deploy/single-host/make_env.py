@@ -70,7 +70,6 @@ def render(out: Path, release: str, domain: str, smtp_user: str) -> None:
         # --- platform keys ---
         "W360_SECRET_KEY": token(64),
         "W360_FILE_URL_SIGNING_KEY": token(),
-        "W360_MFA_ENCRYPTION_KEY": token(),
         "W360_INTEGRATION_SECRETS_KEYS": token(),
         "W360_NOTIFICATION_SEAL_KEYS": token(),
         # --- database ---

@@ -31,7 +31,6 @@ def _subject(**overrides):
         "product_code": "crm",
         "client_id": "test-client",
         "scope": "openid",
-        "aal": 1,
     }
     payload.update(overrides)
     return tokens.TokenSubject(**payload)

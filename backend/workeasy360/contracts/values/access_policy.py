@@ -24,16 +24,14 @@ from typing import Final
 #: organization's configuration.
 NETWORK_NOT_ALLOWED: Final = "network_not_allowed"
 REAUTHENTICATION_REQUIRED: Final = "reauthentication_required"
-MFA_REQUIRED: Final = "mfa_required"
 PASSWORD_CHANGE_REQUIRED: Final = "password_change_required"  # noqa: S105 - a denial code
 
 #: HTTP status per denial. 401 where the remedy is signing in again, 403 where
-#: it is doing something first (enrolling MFA, changing a password) or nothing
-#: the user can do (network).
+#: it is doing something first (changing a password) or nothing the user can
+#: do (network).
 DENIAL_STATUS: Final = {
     NETWORK_NOT_ALLOWED: 403,
     REAUTHENTICATION_REQUIRED: 401,
-    MFA_REQUIRED: 403,
     PASSWORD_CHANGE_REQUIRED: 403,
 }
 
@@ -43,10 +41,6 @@ DENIAL_MESSAGES: Final = {
         "connection is not one of them."
     ),
     REAUTHENTICATION_REQUIRED: "Your session for this organization has ended. Sign in again.",
-    MFA_REQUIRED: (
-        "This organization requires two-step verification. Verify a code from "
-        "your authenticator app to continue."
-    ),
     PASSWORD_CHANGE_REQUIRED: (
         "Your password does not meet this organization's password policy. "
         "Change it to continue."
@@ -62,7 +56,6 @@ MIN_PASSWORD_LENGTH_CEILING: Final = 64
 
 @dataclass(frozen=True, slots=True)
 class AccessPolicy:
-    require_mfa: bool = False
     #: Seconds since sign-in after which the session no longer reaches this
     #: organization. ``None`` = the platform's own lifetime only.
     session_max_age_s: int | None = None
@@ -76,8 +69,7 @@ class AccessPolicy:
     @property
     def is_empty(self) -> bool:
         return not (
-            self.require_mfa
-            or self.session_max_age_s
+            self.session_max_age_s
             or self.ip_allowlist_enabled
             or self.sessions_valid_after
         )
@@ -91,7 +83,6 @@ class SessionFacts:
     #: Epoch seconds of the sign-in that established the session, or ``None``
     #: when the session cannot say (treated as too old whenever age matters).
     authenticated_at: float | None
-    mfa_verified: bool
     password_noncompliant: bool = False
 
 
@@ -113,8 +104,6 @@ def evaluate(policy: AccessPolicy, facts: SessionFacts, *, now: float) -> str | 
         or now - facts.authenticated_at > policy.session_max_age_s
     ):
         return REAUTHENTICATION_REQUIRED
-    if policy.require_mfa and not facts.mfa_verified:
-        return MFA_REQUIRED
     if facts.password_noncompliant:
         return PASSWORD_CHANGE_REQUIRED
     return None

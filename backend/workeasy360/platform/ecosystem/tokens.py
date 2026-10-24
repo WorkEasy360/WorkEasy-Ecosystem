@@ -88,7 +88,6 @@ class TokenSubject:
     product_code: str
     client_id: str
     scope: str
-    aal: int
     nonce: str = ""
     #: When the person last entered their password in the session that
     #: authorized (epoch seconds), when known. OIDC Core's ``auth_time``:
@@ -120,11 +119,10 @@ def issue_id_token(
     ttl = int(settings.OIDC_ID_TOKEN_TTL_S)
     claims = _base_claims(subject, ttl=ttl, token_type=TYPE_ID_TOKEN)
 
-    # The ecosystem's own claims. Three, each documented in
+    # The ecosystem's own claims. Two, each documented in
     # docs/phase-3/05-token-claims.md and each one a product cannot derive.
     claims["organization_id"] = str(subject.organization_id)
     claims["product_code"] = subject.product_code
-    claims["aal"] = subject.aal
 
     if subject.nonce:
         # OIDC Core 3.1.3.7 step 11. Echoed verbatim so the client can prove

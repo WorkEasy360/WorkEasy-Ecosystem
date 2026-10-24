@@ -148,7 +148,6 @@ def world(channel, staff_client, http_login, monkeypatch, staff_factory):
     from workeasy360.commercial.commissions import accrual, payouts, referrals
     from workeasy360.commercial.partners import branding, domains, services
     from workeasy360.commercial.pricing.models import PriceBook  # noqa: F401
-    from workeasy360.platform.tenancy.resolution import record_step_up  # noqa: F401
 
     monkeypatch.setattr(accrual, "holdback_days", lambda: 0)
     fx = channel

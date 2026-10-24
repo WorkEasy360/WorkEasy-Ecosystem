@@ -59,8 +59,7 @@ export type ActionHandle = ReturnType<typeof useAction>;
  * what to fix, the outcome of the step's action, the fields, and the buttons.
  *
  * A step owns its ``useAction`` and hands it here, so the step's own controls and
- * these buttons share one busy state, and a second-factor prompt appears in the
- * step that needs it.
+ * these buttons share one busy state.
  */
 export function StepFrame({
   step,

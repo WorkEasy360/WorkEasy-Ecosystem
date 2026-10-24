@@ -3,8 +3,8 @@
 The platform signs every identity token products verify. That private key is
 the single most valuable secret in the ecosystem: whoever holds it can mint a
 token for any user, in any organization, for any product. It therefore
-follows the rule the rest of the system already applies to MFA secrets
-(``identity.AuthFactor.secret_ref``): **the database stores a reference, the
+follows the rule the rest of the system applies to secrets:
+**the database stores a reference, the
 secret lives in the secret manager** (12-security.md section 5).
 
 ``SigningKey`` rows hold the public half, the ``kid``, the algorithm and the

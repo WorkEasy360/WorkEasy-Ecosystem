@@ -19,7 +19,6 @@ import type {
   RuleDefinition,
   RuleStatus,
 } from "@/lib/api/types";
-import { useStepUp } from "@/features/security/useStepUp";
 import { describeError } from "./ConnectionsSettings";
 import styles from "./Integrations.module.css";
 
@@ -66,7 +65,6 @@ export function AutomationsSettings({ orgSlug }: { orgSlug: string }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { run, stepUp } = useStepUp();
 
   function refresh() {
     Promise.all([listRules(orgSlug), getEventCatalog(orgSlug), listConnections(orgSlug)])
@@ -89,11 +87,9 @@ export function AutomationsSettings({ orgSlug }: { orgSlug: string }) {
     setError(null);
     setMessage(null);
     try {
-      await run(async () => {
-        await action();
-        setMessage(success);
-        refresh();
-      });
+      await action();
+      setMessage(success);
+      refresh();
     } catch (err) {
       setError(describeError(err));
     }
@@ -105,7 +101,6 @@ export function AutomationsSettings({ orgSlug }: { orgSlug: string }) {
 
   return (
     <div className={styles.stack}>
-      {stepUp}
       {message && <p role="status">{message}</p>}
       {error && (
         <p className="w360-error-text" role="alert">

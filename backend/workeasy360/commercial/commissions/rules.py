@@ -12,7 +12,7 @@ second way to compute a commission. It finds the partner's rule chain by
 (partner, product), never by a naming convention, and appends the next version
 through :func:`create_rule_version`, so everything that command guarantees
 holds unchanged: effective-dated, never backdated, the predecessor retired at
-the moment the successor starts, audited, dangerous (AAL 2), and old sales keep
+the moment the successor starts, audited, dangerous, and old sales keep
 the rule they were computed under because an accrual never re-reads its rule.
 """
 
@@ -220,8 +220,8 @@ def assign_partner_commission(
     - **Idempotent.** Asking for the rate already in force (with the token from
       just before or just after it was set) changes nothing and reports
       ``created=False``, so a retry after a lost response is safe.
-    - **Authorized and audited** by :func:`create_rule_version`: dangerous, so a
-      second factor, and recorded with the reason; this adds the assignment's
+    - **Authorized and audited** by :func:`create_rule_version`: dangerous, and
+      recorded with the reason; this adds the assignment's
       own audit entry naming the previous rate.
     """
     from workeasy360.commercial.commissions.models import CommissionRule

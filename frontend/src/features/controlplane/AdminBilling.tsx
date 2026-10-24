@@ -13,7 +13,7 @@ import styles from "./AdminConsole.module.css";
 /**
  * A customer's invoices, payments and refunds on the Super Admin customer
  * page (Phase 8 extension; ``platform.staff_payment.view``). Changes need
- * ``platform.staff_payment.manage`` (AAL 2) and each asks for the reason an
+ * ``platform.staff_payment.manage`` and each asks for the reason an
  * auditor will read: marking an invoice paid (a transfer made elsewhere),
  * voiding it, or refunding a provider payment. Every change names the invoice
  * version it was decided on, so a stale page cannot overwrite a newer state.
@@ -257,7 +257,7 @@ function RefundAction({
   const currency = attempt.currency;
   const [amount, setAmount] = useState(() => toMajor(remaining, currency));
   // One command id per refund decision: a retry of the same refund (after a
-  // network error or a step-up) replays it; a new amount is a new decision.
+  // network error) replays it; a new amount is a new decision.
   const key = useRef<string | null>(null);
   const minor = toMinor(amount, currency);
   const invalid = minor === null || minor <= 0 || minor > remaining;

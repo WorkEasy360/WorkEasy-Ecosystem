@@ -25,16 +25,6 @@ from workeasy360.commercial.partners.models import PartnerAccount
 pytestmark = pytest.mark.django_db
 
 
-def step_up(client) -> None:
-    """Mark the session as having passed a second factor just now (as the partner
-    portal does after the code is entered)."""
-    from workeasy360.platform.tenancy.resolution import record_step_up
-
-    session = client.session
-    record_step_up(session)
-    session.save()
-
-
 def api(partner_id, path: str) -> str:
     return f"/api/v1/partner/{partner_id}/{path}"
 
@@ -389,7 +379,6 @@ def suspend(admin, pid, target="suspended"):
 
 def test_a_suspended_partner_keeps_history_and_loses_every_new_action(admin, reseller):
     client, pid = reseller
-    step_up(client)  # creating a customer is a second-factor action
     assert (
         call(
             client,

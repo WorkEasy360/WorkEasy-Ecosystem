@@ -250,7 +250,7 @@ def test_viewing_a_subscription_does_not_allow_buying_one(
     with in_tenant(owner):
         membership = Membership.objects.get(id=reader_membership)
     grant_permissions(customer["org"], membership, ("commercial.subscription.view",))
-    reader = tenant_ctx_factory(customer["org"], membership, customer["user"], aal=2)
+    reader = tenant_ctx_factory(customer["org"], membership, customer["user"])
 
     with in_tenant(reader), pytest.raises(PermissionDenied):
         services.purchase_plan(
@@ -323,7 +323,7 @@ def test_idempotency_keys_do_not_cross_tenants(
     for _ in range(2):
         org, membership, user = organization_factory()
         grant_permissions(org, membership, ("commercial.subscription.manage",))
-        ctx = tenant_ctx_factory(org, membership, user, aal=2)
+        ctx = tenant_ctx_factory(org, membership, user)
         billing_account(ctx)
         contexts.append(ctx)
 
@@ -1240,7 +1240,7 @@ def test_another_tenants_subscription_is_not_addressable(
 
     org, membership, user = organization_factory()
     grant_permissions(org, membership, ("commercial.subscription.manage",))
-    attacker = tenant_ctx_factory(org, membership, user, aal=2)
+    attacker = tenant_ctx_factory(org, membership, user)
 
     with in_tenant(attacker), pytest.raises(CommercialRecordNotFound):
         services.cancel_subscription(

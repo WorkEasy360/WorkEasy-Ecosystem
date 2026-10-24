@@ -379,9 +379,8 @@ class SigningKey(models.Model):
 
     The private half never enters this database. ``private_key_ref`` is a
     name that ``contracts/ports/signing.py`` resolves against the secret
-    manager - the same pattern ``identity.AuthFactor.secret_ref`` already
-    uses for MFA secrets, and for a strictly larger reason: whoever holds
-    this key can mint a token for any user in any organization for any
+    manager - the same pattern the rest of the system uses for secrets, and for a
+    strictly larger reason: whoever holds this key can mint a token for any user in any organization for any
     product.
     """
 
@@ -486,9 +485,8 @@ class AuthorizationCode(models.Model):
     organization_id = models.UUIDField()
     membership_id = models.UUIDField()
 
-    #: Authenticator assurance level reached by the session that authorized.
-    #: Carried into the token so a product can gate its own sensitive actions
-    #: on step-up without inventing a second factor.
+    #: Unused since the second factor was removed (ADR-050): always the default.
+    #: The column is kept so no data is dropped; nothing reads or writes it.
     aal = models.PositiveSmallIntegerField(default=1)
 
     #: Bound at issue, compared at redemption (RFC 6749 section 4.1.3).

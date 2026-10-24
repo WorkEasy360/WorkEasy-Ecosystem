@@ -100,23 +100,16 @@ describe("ConnectionsSettings", () => {
     expect(document.body.innerHTML).not.toContain(SECRET);
   });
 
-  it("offers step-up when the change needs it, then retries the same change", async () => {
+  it("runs the change at once and says so", async () => {
     const calls = mockApi({
       [`GET ${API}/connections`]: [{ status: 200, body: { results: [CONNECTION], next_cursor: null, has_more: false } }],
       [`GET ${API}/event-catalog`]: [CATALOG],
-      [`POST ${API}/connections/c1/status`]: [
-        { status: 401, body: { code: "step_up_required" } },
-        { status: 200, body: { ...CONNECTION, status: "active" } },
-      ],
-      ["POST /api/v1/auth/mfa/step-up"]: [{ status: 200, body: { aal: 2 } }],
+      [`POST ${API}/connections/c1/status`]: [{ status: 200, body: { ...CONNECTION, status: "active" } }],
     });
     render(<ConnectionsSettings orgSlug="acme" />);
     fireEvent.click(await screen.findByRole("button", { name: "Activate" }));
-    const code = await screen.findByLabelText(/recent verification/);
-    fireEvent.change(code, { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
     expect(await screen.findByRole("status")).toHaveTextContent("Connection activated.");
-    expect(calls.filter((c) => c.key === `POST ${API}/connections/c1/status`)).toHaveLength(2);
+    expect(calls.filter((c) => c.key === `POST ${API}/connections/c1/status`)).toHaveLength(1);
   });
 
   it("is accessible, including the one-time secret panel", async () => {

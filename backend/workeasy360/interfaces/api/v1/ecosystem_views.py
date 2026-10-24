@@ -180,7 +180,6 @@ def authorize(request: HttpRequest) -> HttpResponse:
         subject = authorization.resolve_subject(
             user_id=user.pk,
             organization_id=organization_id,
-            aal=_session_aal(request),
             facts=_session_facts(request, organization_id),
         )
         authorization.require_entitlement(subject, parsed.integration.product_code)
@@ -334,7 +333,6 @@ def resume(request: HttpRequest) -> HttpResponse:
         subject = authorization.resolve_subject(
             user_id=user.pk,
             organization_id=organization_id,
-            aal=_session_aal(request),
             facts=_session_facts(request, organization_id),
         )
         authorization.require_entitlement(
@@ -704,7 +702,6 @@ def _token_response(redeemed: Any) -> dict[str, Any]:
         product_code=redeemed.integration.product_code,
         client_id=redeemed.integration.client_id,
         scope=" ".join(redeemed.scope),
-        aal=redeemed.aal,
         nonce=redeemed.nonce,
         auth_time=redeemed.auth_time,
     )
@@ -1080,19 +1077,6 @@ def _session_facts(request: HttpRequest, organization_id: UUID | None) -> Any:
     if organization_id is None:
         return None
     return session_facts(request, organization_id)
-
-
-def _session_aal(request: HttpRequest) -> int:
-    """The assurance level this session reached.
-
-    Read from the session, which the platform's own login flow writes.
-    Defaults to 1 rather than raising: a session with no recorded level is a
-    single-factor session, and defaulting *down* is the fail-closed direction.
-    A step-up older than ``STEP_UP_MAX_AGE_SECONDS`` also reads as 1.
-    """
-    from workeasy360.platform.tenancy.resolution import session_aal
-
-    return session_aal(getattr(request, "session", None))
 
 
 #: Views that authenticate by credential rather than by session cookie, and

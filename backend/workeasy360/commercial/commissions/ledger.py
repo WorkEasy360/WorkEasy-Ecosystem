@@ -3,8 +3,8 @@
 A finalized ledger entry is never edited. When one is wrong - a refund, a
 chargeback, a mistaken rate - the correction is a **new entry** that refers to
 the one it corrects, so the partner's statement shows both the original and its
-correction and the balance is the sum. Both commands are staff-only, dangerous
-(AAL 2), require a reason a person will later read, are idempotent on the
+correction and the balance is the sum. Both commands are staff-only, dangerous,
+require a reason a person will later read, are idempotent on the
 caller's key and are audited.
 
 Neither accepts an amount from a partner or a customer - only staff reach this

@@ -231,8 +231,7 @@ export function PlatformSettingsScreen() {
       <div>
         <h1>Platform settings</h1>
         <p className={cp.lead}>
-          The public site&apos;s switches and addresses. Changing them needs a second factor and is recorded in the audit
-          log.
+          The public site&apos;s switches and addresses. Changing them is recorded in the audit log.
         </p>
       </div>
       <LoadGate load={load} what="platform settings">

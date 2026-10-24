@@ -61,7 +61,7 @@ const ENDED = new Set(["failed", "expired", "cancelled"]);
  * Subscription & billing: what the organization subscribes to, its billing
  * account, and its invoices - each shown only to those allowed to see it.
  *
- * Paying an invoice (AAL 2) starts a payment attempt with an idempotency key
+ * Paying an invoice starts a payment attempt with an idempotency key
  * minted once per click, waits for the provider's hosted page, and goes there.
  * Coming back (`?payment=<attempt>&outcome=...`) the page asks the server
  * whether the payment arrived: the browser's return proves nothing - only the
@@ -630,8 +630,8 @@ function attemptProblem(a: PaymentAttempt): string {
 /**
  * Start paying an invoice and take the payer to the provider's page.
  *
- * One idempotency key per invoice and user intent: a retry after a step-up
- * prompt or a network failure replays the same payment (the server hands back
+ * One idempotency key per invoice and user intent: a retry after a network
+ * failure replays the same payment (the server hands back
  * the attempt already in flight). Only once an attempt has ended - failed,
  * expired, cancelled - does the next click get a new key.
  */

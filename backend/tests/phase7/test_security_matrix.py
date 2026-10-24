@@ -1,6 +1,6 @@
-"""The Phase 7 security matrix: which permissions are dangerous, that the AAL
-rule holds for every one of them, that revocation is immediate, and that a
-partner cannot reach another partner's resources by guessing ids."""
+"""The Phase 7 security matrix: which permissions are dangerous, that revocation
+is immediate, and that a partner cannot reach another partner's resources by
+guessing ids."""
 
 from __future__ import annotations
 
@@ -70,63 +70,10 @@ def test_the_dangerous_permissions_are_exactly_the_pinned_set():
 
 
 def test_no_read_only_permission_is_dangerous():
-    """A `.view` that demanded AAL 2 would train people to approve prompts."""
+    """A read is never `dangerous`: that marker blocks a read-only organization."""
     assert not [
         d.key for d in _control_plane_keys() if d.key.endswith(".view") and d.dangerous
     ]
-
-
-@pytest.mark.parametrize("permission", sorted(DANGEROUS_STAFF))
-def test_every_dangerous_staff_permission_needs_a_second_factor(
-    staff_factory, permission
-):
-    from workeasy360.contracts.errors import StepUpRequired
-    from workeasy360.platform.authz import services as authz
-
-    _u, low = staff_factory(permission, aal=1)
-    with pytest.raises(StepUpRequired):
-        authz.require(low, permission)
-    _u, high = staff_factory(permission, aal=2)
-    authz.require(high, permission)  # does not raise
-
-
-@pytest.mark.parametrize("permission", sorted(DANGEROUS_PARTNER))
-def test_every_dangerous_partner_permission_needs_a_second_factor(
-    partner_factory, permission
-):
-    from workeasy360.commercial.partners import capabilities
-    from workeasy360.contracts.errors import StepUpRequired
-    from workeasy360.platform.authz import services as authz
-
-    # A permission of the partner's own account (the team) belongs to no
-    # capability: every administrator holds it (ADR-045).
-    capability = next(
-        (
-            key
-            for key, spec in capabilities.CAPABILITIES.items()
-            if permission in spec.manage or permission in spec.view
-        ),
-        None,
-    )
-    fx = partner_factory(*([capability] if capability else []))
-    with pytest.raises(StepUpRequired):
-        authz.require(fx["actor"](aal=1), permission)
-    authz.require(fx["actor"](aal=2), permission)
-
-
-def test_a_stolen_low_assurance_partner_session_cannot_provision_or_sell(partner_client):
-    client, fx = partner_client(*CAPS, aal2=False)
-    body = {"organization_name": "Sneaky Ltd", "owner_email": "x@sneaky.example.com"}
-    response = client.post(
-        f"/api/v1/partner/{fx['partner'].id}/customers",
-        json.dumps(body),
-        content_type="application/json",
-        HTTP_IDEMPOTENCY_KEY=uuid.uuid4().hex,
-    )
-    assert response.status_code == 401 and response.json()["code"] == "step_up_required"
-    from workeasy360.commercial.partners.models import PartnerOrganizationLink
-
-    assert PartnerOrganizationLink.objects.count() == 0
 
 
 # --- revocation is immediate --------------------------------------------------------

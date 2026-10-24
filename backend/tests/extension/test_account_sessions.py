@@ -8,7 +8,7 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 
-from tests.extension.conftest import PASSWORD, step_up
+from tests.extension.conftest import PASSWORD
 
 pytestmark = pytest.mark.django_db
 
@@ -50,16 +50,13 @@ def test_the_list_shows_only_my_own_live_sessions(user_factory, login):
     assert {s["current"] for s in _sessions(mine_b)} == {True, False}
 
 
-def test_revoking_a_session_needs_step_up_and_ends_only_that_session(user_factory, login):
+def test_revoking_a_session_ends_only_that_session(user_factory, login):
     user = user_factory(password=PASSWORD)
     here, there = login(user), login(user)
     target = next(s for s in _sessions(here) if not s["current"])["session_id"]
 
-    refused = here.post(f"{SESSIONS}/{target}/revoke")
-    assert (refused.status_code, refused.json()["code"]) == (401, "step_up_required")
     assert there.get("/api/v1/auth/session").json()["authenticated"] is True
 
-    step_up(here)
     assert here.post(f"{SESSIONS}/{target}/revoke").status_code == 200
     # The revoked browser is anonymous on its very next request.
     assert there.get("/api/v1/auth/session").json() == {"authenticated": False}
@@ -73,7 +70,7 @@ def test_nobody_can_revoke_another_users_session(user_factory, login):
     attacker = user_factory(password=PASSWORD)
     victim_client = login(victim)
     victim_session = _sessions(victim_client)[0]["session_id"]
-    attacker_client = login(attacker, aal2=True)
+    attacker_client = login(attacker)
 
     response = attacker_client.post(f"{SESSIONS}/{victim_session}/revoke")
     assert (response.status_code, response.json()["code"]) == (404, "session_not_found")
@@ -82,7 +79,7 @@ def test_nobody_can_revoke_another_users_session(user_factory, login):
 
 def test_revoke_others_keeps_the_current_session(user_factory, login):
     user = user_factory(password=PASSWORD)
-    here = login(user, aal2=True)
+    here = login(user)
     others = [login(user) for _ in range(3)]
 
     response = here.post(f"{SESSIONS}/revoke-others")

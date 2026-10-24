@@ -18,16 +18,16 @@ context because its permission set contains what they ask for. Each
 partner-facing service checks the specific ``platform.partner_*`` key first,
 so holding one capability never opens another.
 
-Four groups are ``dangerous`` (AAL 2), because a stolen partner session there
+Four groups are ``dangerous``, because a stolen partner session there
 is directly profitable or directly harmful:
 
 - **domain**: a custom domain changes where the platform's own pages are
   served, and an account takeover there is a phishing platform (Task 85);
 - **provision / sell / subscription-manage / customer-manage**: creating a
   customer and selling it a plan earns the partner commission, so a hijacked
-  session can manufacture commission. AAL 2 does not stop a dishonest partner
-  (the holdback, reversals and staff payout review do) but it does stop a
-  session thief from doing it silently.
+  session can manufacture commission. Marking them dangerous refuses them under
+  impersonation; the holdback, reversals and staff payout review are what
+  limit a dishonest partner.
 """
 
 from __future__ import annotations
@@ -150,7 +150,7 @@ PARTNER_PERMISSIONS: Final = (
     # Partner API keys (ADR-046): administrators only - a key reads the
     # partner's data from outside the portal, so who may mint one is as
     # sensitive as who may be on the team. Creating, rotating and revoking are
-    # dangerous (AAL 2).
+    # dangerous.
     _d("platform.partner_apikey.view", "See the partner's API keys (never a secret)"),
     _d(
         "platform.partner_apikey.manage",

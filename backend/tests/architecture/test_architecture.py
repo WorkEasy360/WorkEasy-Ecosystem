@@ -531,10 +531,6 @@ def test_unscoped_manager_use_is_allowlisted():
         # and flips one global identity's flag, touches no tenant row, and is
         # an operator terminal action, audited, never an HTTP path.
         "commercial/controlplane/management/commands/w360_staff_identity.py",
-        # Phase 12 (D-037 residual): the operator's break-glass reset of a staff
-        # member's lost second factor - the same global-identity, no-tenant,
-        # terminal-only, audited shape as the designation command above.
-        "commercial/controlplane/management/commands/w360_staff_mfa_reset.py",
         # Phase 11: registering the four external products' catalog rows and
         # integrations. The command's actor is named by email on the command
         # line, before any tenant context exists to look them up inside - the
@@ -837,14 +833,15 @@ def test_the_ecosystem_module_makes_no_outbound_http_request():
     )
 
 
-def test_every_integration_write_permission_requires_step_up():
-    """The carried AAL2 trigger, reached and wired.
+def test_every_integration_write_permission_is_dangerous():
+    """The `dangerous` marker, reached and wired.
 
     Registering an integration or changing a redirect URI is a full
     account-takeover primitive against every user of that product; minting a
     credential reads every organization's entitlement state; rotating the
     signing key mints tokens for anyone. All of them are `dangerous`, which
-    the decision function turns into "AAL 2, and never under impersonation".
+    the decision function turns into "never under impersonation, never in a
+    read-only organization".
     """
     from workeasy360.platform.authz.registry import permission_registry
 
@@ -881,7 +878,8 @@ def test_the_token_claim_set_is_exactly_what_is_documented():
     # to watch: it was considered and deliberately not issued, because a
     # product keys its data on (sub, organization_id) and has no use for the
     # platform's join row.
-    assert {"organization_id", "product_code", "aal"} <= advertised
+    assert {"organization_id", "product_code"} <= advertised
+    assert "aal" not in advertised  # no assurance level is issued (ADR-050)
     assert "membership_id" not in advertised
     assert "password" not in str(advertised)
 

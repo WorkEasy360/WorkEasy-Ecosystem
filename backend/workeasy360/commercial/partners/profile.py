@@ -339,7 +339,7 @@ def update_profile(
     """Change a partner's business profile and contacts.
 
     Authorized as every partner change is (``platform.staff_partner.manage``,
-    dangerous: a second factor), validated in full **before** the first write,
+    dangerous), validated in full **before** the first write,
     version-checked like :func:`services.update_partner` so two people editing
     one partner never silently overwrite each other, and audited with the names
     of the fields that changed - never their values.

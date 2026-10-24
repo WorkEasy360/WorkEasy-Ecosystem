@@ -201,12 +201,9 @@ def conversions(
 def members(ctx: TenantContext) -> dict[str, Any]:
     """The partner's own people. Names and addresses of its own users, a role,
     whether they have set a password, when they last signed in and joined."""
-    from workeasy360.platform.identity import selectors as identity
-
     authz.require(ctx, MEMBER_VIEW)
     permissions = authz.effective_permissions(ctx)
     rows = panel_selectors.team(ctx.partner_id)
-    secured = identity.users_with_mfa(m.user_id for m in rows)
     items = []
     for m in rows:
         spec = capabilities.ROLE_PRESETS.get(m.role)
@@ -225,7 +222,6 @@ def members(ctx: TenantContext) -> dict[str, Any]:
                     else "disabled"
                 ),
                 "setup_pending": not m.user.has_usable_password(),
-                "mfa_enrolled": m.user_id in secured,
                 "invited_at": m.invitation_sent_at.isoformat()
                 if m.invitation_sent_at
                 else None,

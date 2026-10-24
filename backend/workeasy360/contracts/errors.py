@@ -140,13 +140,6 @@ class MembershipRequired(AuthorizationError):
     code = "membership_required"
 
 
-class StepUpRequired(AuthorizationError):
-    """A `dangerous` permission was checked without aal >= 2."""
-
-    code = "step_up_required"
-    http_status = 401
-
-
 class ControlPlaneInvariantViolation(AuthorizationError):
     """A control-plane rule that holds regardless of who asks.
 
@@ -448,6 +441,18 @@ class PartnerValidationError(PartnerError):
         super().__init__(message, field=field, **context)
 
 
+class PartnerUpgradeConflict(PartnerError):
+    """An upgrade request is not in a state that allows what was asked.
+
+    409, like the other "the record is not as you thought" refusals: the request
+    was already decided, withdrawn or submitted, or the partner already has one
+    open. Re-read it and decide again.
+    """
+
+    code = "partner_upgrade_conflict"
+    http_status = 409
+
+
 class PartnerNotActive(PartnerError):
     """A new commercial action was attempted for a partner that may not transact.
 
@@ -605,51 +610,6 @@ class OrganizationValidationError(Workeasy360Error):
         self, message: str = "", *, field: str | None = None, **context: Any
     ) -> None:
         super().__init__(message or "Invalid organization data.", field=field, **context)
-
-
-# --- MFA (Phase 5) -----------------------------------------------------
-
-
-class MfaError(Workeasy360Error):
-    code = "mfa_error"
-    http_status = 400
-
-
-class MfaEnrollmentNotFound(MfaError):
-    """The enrollment referenced by a confirm/cancel call does not exist, is
-    already confirmed, or belongs to another user."""
-
-    code = "mfa_enrollment_not_found"
-    http_status = 404
-
-
-class MfaCodeInvalid(MfaError):
-    """A TOTP or recovery code did not verify.
-
-    Deliberately does not distinguish "wrong code" from "no such factor" in
-    its message - the same uniform-denial property login already applies
-    (12-security.md), since either is exploitable as an enumeration oracle
-    for whether a given account has MFA enrolled.
-    """
-
-    code = "mfa_code_invalid"
-    http_status = 400
-
-
-class MfaThrottled(MfaError):
-    """Too many consecutive failed MFA codes: this account's step-up is
-    locked until ``retry_after`` seconds have passed.
-
-    Shares the ``rate_limited`` code the per-minute buckets already answer
-    with, so a client needs one branch for "wait and try again".
-    """
-
-    code = "rate_limited"
-    http_status = 429
-
-    def __init__(self, message: str = "", *, retry_after: int, **context: Any) -> None:
-        super().__init__(message or "Too many attempts. Try again later.", **context)
-        self.retry_after = max(1, int(retry_after))
 
 
 # --- Intelligence platform (Phase 8): AI, retrieval, analytics -------------
@@ -893,7 +853,7 @@ class CredentialsInvalid(AccountSecurityError):
 
 class AccessPolicyDenied(AuthorizationError):
     """An organization's access policy refused this request after membership
-    was verified: ``network_not_allowed``, ``mfa_required``,
+    was verified: ``network_not_allowed``,
     ``reauthentication_required`` or ``password_change_required``."""
 
     code = "access_policy_denied"

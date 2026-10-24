@@ -135,12 +135,12 @@ describe("the sign-in page", () => {
     await expectNoViolations(container);
   });
 
-  it("Administrator: no authenticator code is promised after the password", async () => {
+  it("Administrator: nothing but the password is promised", async () => {
     query = "mode=admin";
     mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT] });
     render(<LoginScreen />);
     expect(await screen.findByRole("heading", { name: "Sign in as Administrator" })).toBeInTheDocument();
-    expect(screen.queryByText(/authenticator/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/authenticator|verification code/i)).not.toBeInTheDocument();
   });
 
   it("Administrator: the same form and request, then the Admin Console decides", async () => {

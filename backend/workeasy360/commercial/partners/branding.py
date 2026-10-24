@@ -245,7 +245,7 @@ def public_logo(file_id: str | None) -> tuple[bytes, str] | None:
         )
         from workeasy360.platform.files import selectors as file_selectors
 
-        ctx = platform_context(user_id=UUID(int=0), aal=1)
+        ctx = platform_context(user_id=UUID(int=0))
         with acting_scope(ctx):
             return file_selectors.servable_content(
                 UUID(str(file_id)), max_bytes=LOGO_MAX_BYTES

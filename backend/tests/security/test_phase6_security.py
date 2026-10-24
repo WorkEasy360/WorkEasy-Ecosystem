@@ -39,7 +39,7 @@ def _count(model, organization_id, **filters):
 @pytest.fixture
 def admin(integration_org, signed_in, client):
     org = integration_org()
-    signed_in(org["user"], aal=2)
+    signed_in(org["user"])
     return org
 
 
@@ -61,28 +61,9 @@ def connection(admin, client, local_egress):
 # --- authorization (Tasks 52, 53, 55, 56) --------------------------------------
 
 
-def test_managing_connections_requires_step_up(
-    integration_org, signed_in, client, local_egress
-):
-    """AAL 2 is the existing dangerous-action mechanism, not a parallel one."""
-    org = integration_org()
-    signed_in(org["user"], aal=1)
-    response = _post(
-        client,
-        f"{_api(org)}/connections",
-        {
-            "connector_key": "webhook",
-            "display_name": "x",
-            "config": {"url": "https://h.example.com/"},
-        },
-    )
-    assert response.status_code == 401
-    assert response.json()["code"] == "step_up_required"
-
-
 def test_a_member_without_the_permission_is_refused(integration_org, signed_in, client):
     org = integration_org(permissions=())
-    signed_in(org["user"], aal=2)
+    signed_in(org["user"])
     assert client.get(f"{_api(org)}/connections").status_code == 403
     assert client.get(f"{_api(org)}/automations").status_code == 403
     assert client.get(f"{_api(org)}/deliveries").status_code == 403
@@ -90,7 +71,7 @@ def test_a_member_without_the_permission_is_refused(integration_org, signed_in, 
 
 def test_replay_needs_its_own_permission(integration_org, signed_in, client):
     org = integration_org(permissions=("platform.connection.view",))
-    signed_in(org["user"], aal=2)
+    signed_in(org["user"])
     response = client.post(f"{_api(org)}/deliveries/{uuid.uuid4()}/replay")
     assert response.status_code == 403
 
@@ -129,7 +110,7 @@ def test_another_organizations_objects_are_404_never_403(
     integration_org, signed_in, client, local_egress
 ):
     org_a = integration_org()
-    signed_in(org_a["user"], aal=2)
+    signed_in(org_a["user"])
     created = _post(
         client,
         f"{_api(org_a)}/connections",
@@ -158,7 +139,7 @@ def test_another_organizations_objects_are_404_never_403(
 
     org_b = integration_org()
     client.logout()
-    signed_in(org_b["user"], aal=2)
+    signed_in(org_b["user"])
     base = _api(org_b)
     for path in (
         f"{base}/connections/{created['id']}",
@@ -499,7 +480,7 @@ def test_ingestion_ignores_a_browser_session(
 ):
     """CSRF-exempt is safe only because a cookie authenticates nothing here."""
     org = integration_org()
-    signed_in(org["user"], aal=2)
+    signed_in(org["user"])
     response = client.post(
         "/api/v1/integrations/events",
         {"organization_id": org["organization_id"], "event": json.dumps(product_event())},

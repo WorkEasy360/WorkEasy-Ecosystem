@@ -137,12 +137,11 @@ def document() -> dict[str, Any]:
             "typ",
             "nonce",
             "auth_time",
-            # The three ecosystem claims. Documented in full, with their
+            # The two ecosystem claims. Documented in full, with their
             # meaning and stability guarantee, in
             # docs/phase-3/05-token-claims.md.
             "organization_id",
             "product_code",
-            "aal",
             # Scope-gated, and only for integrations registered for them.
             "email",
             "email_verified",

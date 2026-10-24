@@ -57,12 +57,12 @@ def member_client(user_factory, http_login):
     """A signed-in member of ``fx``'s partner in ``role`` (added by staff)."""
     from workeasy360.commercial.partners import services
 
-    def make(fx, role: str, *, aal2: bool = True):
+    def make(fx, role: str):
         user = user_factory(password=PASSWORD)
         services.add_member(
             fx["staff_ctx"], fx["partner"].id, email=user.email, role=role
         )
-        return http_login(user, aal2=aal2), user
+        return http_login(user), user
 
     return make
 
@@ -119,11 +119,6 @@ def http_login_with_password(db):
                 content_type="application/json",
             )
             assert changed.status_code == 200, changed.content
-            from workeasy360.platform.tenancy.resolution import record_step_up
-
-            session = client.session
-            record_step_up(session)
-            session.save()
         return client
 
     return make

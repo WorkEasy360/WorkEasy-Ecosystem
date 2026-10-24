@@ -6,7 +6,6 @@ import { AppCard } from "@/features/launcher/AppCard";
 import { LoginForm } from "@/features/auth/LoginForm";
 import { SeatTable } from "@/features/launcher/SeatTable";
 import { StatusScreen } from "@/components/StatusScreen";
-import { MfaSettings } from "@/features/security/MfaSettings";
 import OnboardingPage from "@/app/onboarding/page";
 import OrganizationSelectPage from "@/app/organizations/select/page";
 import { Shell } from "@/features/launcher/Shell";
@@ -167,14 +166,6 @@ function mockApi(routes: Record<string, { status: number; body: unknown }[]>) {
 }
 
 const SIGNED_IN = { status: 200, body: { authenticated: true, user_id: "u1", email: "a@example.com" } };
-const TOTP_FACTOR = {
-  factor_id: "f1",
-  kind: "totp",
-  label: "Authenticator app",
-  confirmed: true,
-  created_at: null,
-  last_used_at: null,
-};
 
 describe("accessibility, Phase 5 UI (axe-core, WCAG 2.1 A + AA, non-visual rules)", () => {
   it("onboarding (create your first organization)", async () => {
@@ -252,71 +243,6 @@ describe("accessibility, Phase 5 UI (axe-core, WCAG 2.1 A + AA, non-visual rules
     expect(
       screen.getByRole("button", { name: "Current organization: Acme. Switch organization." }),
     ).toBeInTheDocument();
-    await expectNoViolations(container);
-  });
-
-  it("security settings with an enrolled factor", async () => {
-    mockApi({ "GET /api/v1/auth/mfa/factors": [{ status: 200, body: { factors: [TOTP_FACTOR] } }] });
-    const { container } = render(
-      <main>
-        <h1>Security</h1>
-        <MfaSettings />
-      </main>,
-    );
-    await screen.findByRole("button", { name: "Remove Authenticator app" });
-    await expectNoViolations(container);
-  });
-
-  it("MFA enrollment (secret + code entry), then the recovery codes shown once", async () => {
-    mockApi({
-      "GET /api/v1/auth/mfa/factors": [{ status: 200, body: { factors: [] } }],
-      "POST /api/v1/auth/mfa/totp/enroll": [
-        { status: 200, body: { factor_id: "f2", secret: "JBSWY3DPEHPK3PXP", provisioning_uri: "otpauth://totp/x" } },
-      ],
-      "POST /api/v1/auth/mfa/totp/confirm": [
-        { status: 400, body: { code: "mfa_code_invalid" } },
-        { status: 200, body: { recovery_codes: ["a1b2c-3d4e5", "f6a7b-8c9d0"] } },
-      ],
-    });
-    const { container } = render(
-      <main>
-        <h1>Security</h1>
-        <MfaSettings />
-      </main>,
-    );
-    fireEvent.click(await screen.findByRole("button", { name: "Add an authenticator app" }));
-    const input = await screen.findByLabelText("Enter the 6-digit code");
-    await expectNoViolations(container);
-
-    fireEvent.change(input, { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    await screen.findByRole("alert");
-    await expectNoViolations(container); // the error state
-
-    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    await screen.findByRole("heading", { name: "Save your recovery codes" });
-    await expectNoViolations(container);
-  });
-
-  it("the MFA step-up challenge, including its error state", async () => {
-    mockApi({
-      "GET /api/v1/auth/mfa/factors": [{ status: 200, body: { factors: [TOTP_FACTOR] } }],
-      "DELETE /api/v1/auth/mfa/factors/f1": [{ status: 401, body: { code: "step_up_required" } }],
-      "POST /api/v1/auth/mfa/step-up": [{ status: 400, body: { code: "mfa_code_invalid" } }],
-    });
-    const { container } = render(
-      <main>
-        <h1>Security</h1>
-        <MfaSettings />
-      </main>,
-    );
-    fireEvent.click(await screen.findByRole("button", { name: "Remove Authenticator app" }));
-    const input = await screen.findByLabelText(/recovery code/);
-    await expectNoViolations(container);
-
-    fireEvent.change(input, { target: { value: "000000" } });
-    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
-    await screen.findByRole("alert");
     await expectNoViolations(container);
   });
 });

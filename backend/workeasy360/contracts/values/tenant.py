@@ -41,10 +41,6 @@ class TenantContext:
     #: trip on every save.
     organization_status: OrganizationStatus = OrganizationStatus.ACTIVE
 
-    #: Authenticator assurance level: 1 = single factor, 2 = MFA satisfied.
-    #: `dangerous` permissions require >= 2 (04-identity-authz.md section 4.5).
-    aal: int = 1
-
     #: True for staff impersonation. Tagged in logs, traces and audit, and
     #: visible to the customer in near-real-time (04-identity-authz.md s6).
     is_break_glass: bool = False
@@ -78,8 +74,6 @@ class TenantContext:
                 "privileged session is exactly what the control exists to "
                 "prevent (04-identity-authz.md section 6)."
             )
-        if self.aal < 1:
-            raise ValueError("TenantContext.aal must be >= 1.")
         if (self.principal is PrincipalKind.PARTNER) != (self.partner_id is not None):
             raise ValueError(
                 "A partner_id is required for, and only valid on, a PARTNER principal."
@@ -136,7 +130,6 @@ class TenantContext:
             "membership_id": str(self.membership_id),
             "user_id": str(self.user_id),
             "organization_status": self.organization_status.value,
-            "aal": self.aal,
             "is_break_glass": self.is_break_glass,
             "reason": self.reason,
             "principal": self.principal.value,
@@ -159,7 +152,6 @@ class TenantContext:
                 organization_status=OrganizationStatus(
                     raw.get("organization_status", OrganizationStatus.ACTIVE.value)
                 ),
-                aal=int(raw.get("aal", 1)),
                 is_break_glass=bool(raw.get("is_break_glass", False)),
                 reason=raw.get("reason"),
                 principal=PrincipalKind(raw.get("principal", PrincipalKind.MEMBER.value)),

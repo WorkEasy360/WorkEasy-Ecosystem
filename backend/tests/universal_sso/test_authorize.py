@@ -257,7 +257,7 @@ def test_staff_and_partner_standing_grant_no_product_access(
     staff_user, _ctx = staff_factory(
         "platform.staff_catalog.manage", "platform.staff_integration.manage"
     )
-    signed_in(staff_user, sign_in_preference="auto_sso", aal=2)
+    signed_in(staff_user, sign_in_preference="auto_sso")
     assert query_of(_authorize(client, crm, org["organization_id"]))["error"] == [
         protocol.MEMBERSHIP_INACTIVE
     ]

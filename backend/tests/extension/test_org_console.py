@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.extension.conftest import step_up, url
+from tests.extension.conftest import url
 
 pytestmark = pytest.mark.django_db
 
@@ -85,16 +85,12 @@ def test_member_directory_carries_roles_and_last_sign_in(console_org, login):
     assert [r["email"] for r in searched["results"]] == [admin["user"].email]
 
 
-def test_changing_a_role_needs_step_up_and_takes_effect_immediately(console_org, login):
+def test_changing_a_role_takes_effect_immediately(console_org, login):
     org = console_org()
     member = org["add"]("member")
     owner = login(org["owner"])
     target = url(org["slug"], f"members/{member['membership'].id}/role")
 
-    refused = owner.post(target, {"role": "admin"}, content_type="application/json")
-    assert (refused.status_code, refused.json()["code"]) == (401, "step_up_required")
-
-    step_up(owner)
     assert (
         owner.post(target, {"role": "admin"}, content_type="application/json").status_code
         == 200
@@ -106,7 +102,7 @@ def test_changing_a_role_needs_step_up_and_takes_effect_immediately(console_org,
 def test_the_owner_and_oneself_are_protected(console_org, login):
     org = console_org()
     admin = org["add"]("admin")
-    client = login(admin["user"], aal2=True)
+    client = login(admin["user"])
     owner_id = org["membership"].id
     for action in ("suspend",):
         response = client.post(url(org["slug"], f"members/{owner_id}/{action}"))
@@ -130,7 +126,7 @@ def test_a_member_cannot_manage_members(console_org, login):
     org = console_org()
     member = org["add"]("member")
     other = org["add"]("member")
-    client = login(member["user"], aal2=True)
+    client = login(member["user"])
     for path, body in (
         (f"members/{other['membership'].id}/role", {"role": "admin"}),
         (f"members/{other['membership'].id}/suspend", {}),
@@ -194,7 +190,7 @@ def test_signing_a_member_out_ends_their_sessions_here_only(console_org, login):
     member_client = login(member["user"])
     assert member_client.get(url(here["slug"], "access")).status_code == 200
 
-    owner = login(here["owner"], aal2=True)
+    owner = login(here["owner"])
     assert (
         owner.post(
             url(here["slug"], f"members/{member['membership'].id}/sign-out")
@@ -216,13 +212,13 @@ def test_signing_a_member_out_ends_their_sessions_here_only(console_org, login):
 def test_the_audit_log_is_the_organizations_own_and_permissioned(console_org, login):
     a, b = console_org(), console_org()
     member = a["add"]("member")
-    owner_a = login(a["owner"], aal2=True)
+    owner_a = login(a["owner"])
     owner_a.post(
         url(a["slug"], f"members/{member['membership'].id}/role"),
         {"role": "readonly"},
         content_type="application/json",
     )
-    login(b["owner"], aal2=True).patch(
+    login(b["owner"]).patch(
         url(b["slug"], "organization"),
         {"display_name": "Bee Industries"},
         content_type="application/json",

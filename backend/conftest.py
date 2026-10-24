@@ -622,8 +622,6 @@ def platform_admin(
     mechanism. A customer administrator can be given the first by a
     misconfigured role; only Workeasy360 can provide the other two.
 
-    ``aal=2`` because every ``manage`` permission is declared dangerous, and
-    the decision function refuses those below AAL 2.
     """
     from workeasy360.platform.authz import staff
     from workeasy360.platform.tenancy.unscoped import unscoped_access
@@ -646,7 +644,7 @@ def platform_admin(
         )
 
     grant_permissions(org, membership, COMMERCIAL_PERMISSIONS)
-    ctx = tenant_ctx_factory(org, membership, user, aal=2)
+    ctx = tenant_ctx_factory(org, membership, user)
     return {"org": org, "membership": membership, "user": user, "ctx": ctx}
 
 
@@ -664,7 +662,7 @@ def customer(db, organization_factory, grant_permissions, tenant_ctx_factory):
         membership,
         ("commercial.subscription.view", "commercial.subscription.manage"),
     )
-    ctx = tenant_ctx_factory(org, membership, user, aal=2)
+    ctx = tenant_ctx_factory(org, membership, user)
     return {"org": org, "membership": membership, "user": user, "ctx": ctx}
 
 
@@ -1077,26 +1075,15 @@ def product_client(client):
 
 @pytest.fixture
 def signed_in(client, db):
-    """Sign a user into the platform's own session, with an assurance level.
+    """Sign a user into the platform's own session.
 
     The authorization endpoint is the one place in this phase that reads a
     browser session rather than a credential, so these suites need a real one.
-    ``force_login`` establishes it exactly as the platform's login flow would;
-    ``w360_aal`` is the claim that flow writes.
+    ``force_login`` establishes it exactly as the platform's login flow would.
     """
 
-    def make(
-        user,
-        *,
-        aal: int = 1,
-        mfa_verified: bool | None = None,
-        sign_in_preference: str | None = "auto_sso",
-    ):
-        """``mfa_verified`` (default: staff only) marks an AAL 1 session as
-        having verified a factor earlier - what a staff session must have
-        since D-037 (Phase 12).
-
-        ``sign_in_preference`` (ADR-044): the person's default product
+    def make(user, *, sign_in_preference: str | None = "auto_sso"):
+        """``sign_in_preference`` (ADR-044): the person's default product
         sign-in. These suites exercise the *silent* authorization path - a
         signed-in person entering a product with no question asked - which,
         since universal sign-in, is what a person who chose "automatically
@@ -1104,27 +1091,13 @@ def signed_in(client, db):
         preference, so the platform default applies (Automatic, since the
         one-login brief; ``tests/universal_sso`` passes ``"ask"`` where it
         needs the access chooser)."""
-        from tests.factories.sessions import lapsed_step_up
         from workeasy360.platform.ecosystem.models import UserSignInPreference
-        from workeasy360.platform.tenancy.resolution import (
-            record_step_up,
-            reset_session_aal,
-        )
 
         if sign_in_preference is not None:
             UserSignInPreference.objects.update_or_create(
                 user=user, product_code="", defaults={"mode": sign_in_preference}
             )
         client.force_login(user)
-        session = client.session
-        verified = user.is_staff if mfa_verified is None else mfa_verified
-        if aal >= 2:
-            record_step_up(session)
-        elif verified:
-            lapsed_step_up(session)
-        else:
-            reset_session_aal(session)
-        session.save()
         return client
 
     return make
@@ -1203,7 +1176,7 @@ def entitled_org(db, organization_factory, tenant_ctx_factory, entitled):
 # --- integration platform (Phase 6) ----------------------------------------
 #
 # One product ("example") that declares events, one organization entitled to
-# it with an administrator holding the integration permissions at AAL 2, a
+# it with an administrator holding the integration permissions, a
 # real loopback webhook receiver, and the one relaxation of the egress policy
 # a loopback receiver needs. Shared here for the same reason as the fixtures
 # above: "what a publishing product looks like" has one definition.
@@ -1261,15 +1234,13 @@ def example_product(db, catalog, platform_admin, in_tenant, register_product):
 @pytest.fixture
 def integration_org(example_product, entitled_org, grant_permissions, tenant_ctx_factory):
     """An organization entitled to ``example`` whose owner holds the Phase 6
-    permissions, with a context at AAL 2 (``manage`` is dangerous)."""
+    permissions."""
 
-    def make(*, permissions=INTEGRATION_PERMISSIONS, aal: int = 2):
+    def make(*, permissions=INTEGRATION_PERMISSIONS):
         org = entitled_org("example")
         if permissions:
             grant_permissions(org["org"], org["membership"], permissions)
-        org["ctx"] = tenant_ctx_factory(
-            org["org"], org["membership"], org["user"], aal=aal
-        )
+        org["ctx"] = tenant_ctx_factory(org["org"], org["membership"], org["user"])
         return org
 
     return make
@@ -1320,8 +1291,7 @@ def product_event():
 def staff_factory(db, user_factory):
     """A staff identity holding exactly the control-plane permissions named.
 
-    Returns ``(user, ctx)``; ``ctx`` is a ``STAFF`` control-plane context at
-    AAL 2 unless told otherwise. Grants are created through the real
+    Returns ``(user, ctx)``; ``ctx`` is a ``STAFF`` control-plane context. Grants are created through the real
     ``authz.staff`` mechanism by a separate root identity, because a grant to
     oneself is refused by design.
     """
@@ -1330,7 +1300,7 @@ def staff_factory(db, user_factory):
 
     root = user_factory(is_staff=True)
 
-    def make(*permissions: str, aal: int = 2, active: bool = True):
+    def make(*permissions: str, active: bool = True):
         user = user_factory(is_staff=True)
         for permission in permissions:
             staff.create_grant(
@@ -1339,7 +1309,7 @@ def staff_factory(db, user_factory):
                 granted_by_id=root.id,
                 reason="Test fixture grants a control-plane permission",
             )
-        ctx = platform_context(user_id=user.id, aal=aal)
+        ctx = platform_context(user_id=user.id)
         return user, ctx
 
     return make
@@ -1350,7 +1320,7 @@ def partner_factory(db, user_factory, staff_factory):
     """An ACTIVE partner with one admin member and the capabilities named.
 
     Returns a dict with ``partner`` (row), ``user``, ``admin`` (partner-actor
-    ctx factory taking ``aal``), ``staff_ctx``.
+    ctx factory), ``staff_ctx``.
     """
     import uuid
 
@@ -1389,8 +1359,8 @@ def partner_factory(db, user_factory, staff_factory):
             reason="Activated by test fixture",
         )
 
-        def actor(aal: int = 2):
-            return partner_actor(user_id=member_user.id, partner_id=partner.id, aal=aal)
+        def actor():
+            return partner_actor(user_id=member_user.id, partner_id=partner.id)
 
         return {
             "partner": partner,

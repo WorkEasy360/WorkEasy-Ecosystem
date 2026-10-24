@@ -71,7 +71,7 @@ export function ChannelManager() {
 
 /** API Key Manager: scoped credentials for the partner's own systems. The secret
  * is shown once, here, in memory only - it is never stored by the page and the
- * server keeps only a hash. Create, rotate and revoke ask for the second factor. */
+ * server keeps only a hash. */
 export function ApiKeys() {
   const { id, active } = usePanel();
   const [load, reload] = useLoad(() => panelApi.apiKeys(id), [id]);

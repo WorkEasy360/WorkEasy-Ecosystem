@@ -149,16 +149,6 @@ def test_presentation_edits_are_audited_and_the_type_freezes_once_on_sale(
     )
 
 
-def test_the_builder_needs_step_up(staff_login, catalog):
-    client, _ = staff_login("platform.staff_catalog.manage", aal2=False)
-    response = client.patch(
-        f"{ADMIN}/plans/{catalog['plans']['crm_starter'].id}",
-        {"caption": "x"},
-        content_type="application/json",
-    )
-    assert (response.status_code, response.json()["code"]) == (401, "step_up_required")
-
-
 def _open_account(owner, slug, currency="GBP"):
     return owner.post(
         url(slug, "billing-account"),
@@ -266,7 +256,7 @@ def test_an_add_on_needs_its_product_and_never_joins_a_bundle(
     assert refused.status_code == 400
 
     org = console_org()
-    owner = login(org["owner"], aal2=True)
+    owner = login(org["owner"])
     _open_account(owner, org["slug"])
     alone = _purchase(owner, org["slug"], plan_version_id=addon_version)
     assert (alone.status_code, alone.json()["reason"]) == (409, "add_on_requires_base")
@@ -309,7 +299,7 @@ def test_a_free_trial_opens_a_new_subscription_once(builder, console_org, login)
     _post(client, f"plans/{plan['id']}/status", {"status": "available"})
 
     org = console_org()
-    owner = login(org["owner"], aal2=True)
+    owner = login(org["owner"])
     _open_account(owner, org["slug"])
     started = _purchase(owner, org["slug"], plan_version_id=version["id"])
     assert started.status_code in (200, 201), started.content
@@ -319,7 +309,7 @@ def test_a_free_trial_opens_a_new_subscription_once(builder, console_org, login)
     assert again.status_code == 409  # already has a subscription (and the trial)
 
     paying = console_org()
-    paying_owner = login(paying["owner"], aal2=True)
+    paying_owner = login(paying["owner"])
     _open_account(paying_owner, paying["slug"])
     _purchase(
         paying_owner,
@@ -366,7 +356,7 @@ def test_the_marketplace_lists_what_can_be_bought_in_the_organizations_currency(
 
     org = console_org()
     member = org["add"]("member")
-    owner = login(org["owner"], aal2=True)
+    owner = login(org["owner"])
     before = login(member["user"]).get(url(org["slug"], "marketplace")).json()
     assert before["currency"] is None and before["billing_account"] is False
     assert all(p["prices"] == [] for p in before["plans"])

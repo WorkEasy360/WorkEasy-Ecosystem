@@ -103,7 +103,7 @@ interface Switch {
 }
 
 /** Capabilities shown as on/off switches. Each change is the ordinary grant or
- * revoke command (audited, second factor), never a separate setting: what the
+ * revoke command (audited), never a separate setting: what the
  * partner may do is exactly the capabilities it holds. */
 function CapabilitySwitches({ switches, props, legend }: { switches: Switch[]; props: StepProps; legend: string }) {
   const { permissions } = useAdmin();
