@@ -1,3 +1,8 @@
+/* Light form controls and scrollbars to go with the always-light theme. */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
 :root {
   /* The WorkEasy360 palette, taken from workeasy360.com. Primitives first; the
      semantic tokens below are what components use - never a hex in a module.

@@ -110,6 +110,11 @@ describe("WorkEasy360 colour tokens", () => {
     expect(layout).toMatch(/variable: "--w360-font-brand"/);
   });
 
+  it("is always light, like the website - never the device's dark mode", () => {
+    const layout = readFileSync(path.resolve(__dirname, "layout.tsx"), "utf8");
+    expect(layout).toMatch(/<html [^>]*data-theme="light"/);
+  });
+
   for (const [themeName, theme] of [
     ["light", light],
     ["dark", dark],
