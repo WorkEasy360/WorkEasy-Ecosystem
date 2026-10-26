@@ -1,6 +1,6 @@
 # Partner upgrade (Affiliate -> Reseller / White-label on the same login): status
 
-Date: 2026-10-24. Decision: [ADR-049](../architecture/adrs/ADR-049-partner-upgrade.md). Browser check: [scripts/partner_upgrade_browser_check](../../scripts/partner_upgrade_browser_check/README.md). **Not committed, not pushed, not deployed.**
+Date: 2026-10-24. Decision: [ADR-049](../architecture/adrs/ADR-049-partner-upgrade.md). Browser check: [scripts/partner_upgrade_browser_check](../../scripts/partner_upgrade_browser_check/README.md). **Committed in 6b44567 (merged to main as c1409b6) and deployed as release `2026.10.24-6b44567`** (`partners.0009` applied in production; the release live since 2026-10-25, `2026.10.25-f5e264d`, contains it). Production Login is still unverified: see section 6, step 3.
 
 ## Result
 
@@ -97,7 +97,9 @@ Evidence: browser journeys A (Reseller), B (White-label, with a request for more
 - A manual screen-reader pass was not executed.
 - The Windows ephemeral-port caveat of the other browser checks applies: run it apart from the full backend suite.
 
-## 6. Owner steps (nothing below has been done)
+## 6. Owner steps
+
+Steps 1 and 2 were done on 2026-10-24. Step 3 was re-attempted on 2026-10-26 and could not run from the development machine: the session was refused SSH to the host and had no outbound HTTPS. The same day, `backend/tests/partner_upgrade` passed (52/52) and the partner panel and upgrade panel vitest passed (173/173).
 
 1. **Commit** when you are satisfied (the work is uncommitted on `fix/ci-run-1`).
 2. **Release** as usual (`deploy/single-host/README.md`, "Release and rollback"): build and load the images under a new tag, unpack that commit's `deploy/` with `git -c core.autocrlf=false archive`, run `w360-backup` **first** (the backup is the recovery point; point-in-time recovery is off), set `W360_RELEASE`, re-point `current`, `w360 up -d`. The migration is `partners.0009`: one new table, nothing existing is touched, the previous release neither reads nor writes it, so the overlap is safe and a code rollback leaves the schema as is.

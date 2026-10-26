@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import axe, { type Result } from "axe-core";
 
 import { AdminContext, AdminShell, PartnerShell } from "./ControlShell";
-import { Customers, Dashboard } from "./AdminScreens";
+import { Customers } from "./AdminScreens";
 import { PayoutsTab, type TabProps } from "./ResellerTabs";
 import { PartnerBranding, PartnerCustomers, PartnerDomains } from "./PartnerScreens";
 import { applyAccent, contrastOn, safeColor } from "./useBranding";
@@ -101,8 +101,11 @@ function portal(capabilities: string[], status = "active", role = "admin"): Repl
   };
 }
 
+/** Every page in the menu, each collapsible section opened first. */
 function navLabels(): string[] {
-  return within(screen.getByRole("navigation")).queryAllByRole("link").map((a) => a.textContent ?? "");
+  const nav = screen.getByRole("navigation");
+  for (const b of within(nav).queryAllByRole("button")) if (b.getAttribute("aria-expanded") === "false") fireEvent.click(b);
+  return within(nav).queryAllByRole("link").map((a) => a.textContent ?? "");
 }
 
 beforeEach(() => {
@@ -268,29 +271,6 @@ describe("Super Admin screens", () => {
     expect(calls.length).toBe(before);
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() => expect(calls.length).toBe(before + 1));
-  });
-
-  it("the dashboard is honest that recurring revenue is unavailable", async () => {
-    mockApi({
-      "GET /api/v1/admin/dashboard": [
-        {
-          status: 200,
-          body: {
-            organizations: { active: 3 },
-            subscriptions: { active: 2 },
-            mrr: { available: false, reason: "No invoicing data exists yet." },
-            outbox: { pending: 0 },
-          },
-        },
-      ],
-    });
-    const { container } = render(
-      <main>
-        <Dashboard />
-      </main>,
-    );
-    await screen.findByText(/No invoicing data exists yet/);
-    await expectNoViolations(container);
   });
 
   it("preparing a payout sends only a partner and a date - never an amount", async () => {

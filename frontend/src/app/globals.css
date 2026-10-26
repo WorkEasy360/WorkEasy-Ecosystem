@@ -85,6 +85,31 @@
   --w360-chart-2: var(--w360-ink-900);
   --w360-chart-3: #2549b8;
   --w360-chart-4: #c2410c;
+  --w360-chart-5: #7c3aed;
+  --w360-chart-6: #db2777;
+  /* The Super Admin console's shell (2026-10-26 redesign): a deep navy top bar
+     and sidebar, dark in both themes, white text with a muted blue-grey for
+     group titles and icons; the current page is a lighter navy with a green
+     marker. The page itself sits on a cool light grey. */
+  --w360-shell: #0f2b3c;
+  --w360-shell-raised: #173a4f;
+  --w360-shell-active: #1d4760;
+  --w360-shell-border: #2a4d62;
+  --w360-shell-text: #ffffff;
+  --w360-shell-muted: #b4c5cf;
+  --w360-shell-marker: var(--w360-green-500);
+  --w360-shell-canvas: #f3f6f8;
+  /* The dashboard's figure tiles: a soft circle behind a coloured icon. */
+  --w360-tile-blue: #2459c4;
+  --w360-tile-blue-bg: #e5eefc;
+  --w360-tile-green: var(--w360-green-800);
+  --w360-tile-green-bg: var(--w360-mint-200);
+  --w360-tile-purple: #6b3fd4;
+  --w360-tile-purple-bg: #eee8fd;
+  --w360-tile-orange: #b24c06;
+  --w360-tile-orange-bg: #fdecdc;
+  --w360-tile-red: #c0263a;
+  --w360-tile-red-bg: #fde6e9;
   --w360-radius-sm: 6px;
   --w360-radius-md: 10px;
   --w360-radius-lg: 16px;
@@ -154,6 +179,9 @@
     --w360-chart-2: #c9d3cf;
     --w360-chart-3: #8fb0ff;
     --w360-chart-4: #fb923c;
+    --w360-chart-5: #b794f6;
+    --w360-chart-6: #f472b6;
+    --w360-shell-canvas: var(--w360-bg);
     --w360-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --w360-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
   }
@@ -207,6 +235,9 @@
   --w360-chart-2: #c9d3cf;
   --w360-chart-3: #8fb0ff;
   --w360-chart-4: #fb923c;
+  --w360-chart-5: #b794f6;
+  --w360-chart-6: #f472b6;
+  --w360-shell-canvas: var(--w360-bg);
   --w360-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --w360-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
 }

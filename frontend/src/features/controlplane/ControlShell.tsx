@@ -19,8 +19,9 @@ import consoleStyles from "@/features/console/Console.module.css";
 import { adminSignInUrl } from "@/features/auth/signInMode";
 import loginStyles from "@/features/auth/LoginScreen.module.css";
 import { PARTNER_MENU, type Can } from "@/features/partnerpanel/menu";
-import { centerItems } from "./partnerCenterNav";
 import { ForcedPasswordChange } from "./ForcedPasswordChange";
+import { AdminTools } from "./AdminTopbar";
+import { adminNav } from "./adminNav";
 import { usePortalRouter } from "@/lib/portalRouter";
 
 export function useSignOut() {
@@ -57,100 +58,7 @@ type AdminState =
   | { status: "error" }
   | { status: "ready"; permissions: string[] };
 
-/** The Super Admin's navigation (Phase 8 extension), in the agency-panel
- * shape: audience, billing, panel customization, security. Each entry appears
- * only when the staff member holds the grant its page needs. */
-export function adminNav(p: string[]): SidebarGroup[] {
-  return [
-    { items: [{ href: "/admin", label: "Dashboard", icon: "dashboard", exact: true }] },
-    {
-      title: "Audience",
-      items: [
-        { href: "/admin/users", label: "Users", icon: "users", when: can(p, "platform.staff_user.view") },
-        {
-          // One "Partners" entry opens the Partner Control Center, whose own
-          // navigation holds the dashboard, the partner views (All, Resellers,
-          // White-label, Affiliates - the last three are filters on
-          // capabilities, not kinds of account) and the programme's money
-          // screens. It stays highlighted on every page under /admin/partners.
-          href: centerItems(p)[0]?.href ?? "/admin/partners",
-          label: "Partners",
-          icon: "handshake",
-          when: centerItems(p).length > 0,
-          match: "/admin/partners",
-        },
-      ],
-    },
-    {
-      title: "Commerce",
-      items: [
-        { href: "/admin/orders", label: "Orders", icon: "receipt", when: can(p, "platform.staff_payment.view") },
-        {
-          href: "/admin/subscriptions",
-          label: "Subscriptions",
-          icon: "card",
-          when: can(p, "platform.staff_customer.view"),
-        },
-        {
-          href: "/admin/entitlements",
-          label: "Entitlements",
-          icon: "key",
-          when: can(p, "platform.staff_customer.view"),
-        },
-      ],
-    },
-    {
-      title: "Billing",
-      items: [
-        { href: "/admin/plans", label: "Plans & add-ons", icon: "tag", when: can(p, "platform.staff_catalog.view") },
-        {
-          href: "/admin/pricing",
-          label: "Currency & pricing",
-          icon: "currency",
-          when: can(p, "platform.staff_catalog.view"),
-        },
-        { href: "/admin/payments", label: "Payments", icon: "card", when: can(p, "platform.staff_payment.view") },
-      ],
-    },
-    {
-      title: "Panel customization",
-      items: [
-        {
-          href: "/admin/products",
-          label: "Product manager",
-          icon: "puzzle",
-          when: can(p, "platform.staff_catalog.view"),
-        },
-        {
-          href: "/admin/communication",
-          label: "Communication",
-          icon: "mail",
-          when: can(p, "platform.staff_communication.view"),
-        },
-        { href: "/admin/ai", label: "AI", icon: "sparkles", when: can(p, "platform.staff_ai.view") },
-        {
-          href: "/admin/settings",
-          label: "Platform settings",
-          icon: "settings",
-          when: can(p, "platform.staff_settings.view"),
-        },
-      ],
-    },
-    {
-      title: "Security & support",
-      items: [
-        { href: "/admin/security", label: "Staff access", icon: "key", when: can(p, "platform.staff_security.view") },
-        { href: "/admin/audit", label: "Audit", icon: "audit", when: can(p, "platform.staff_audit.view") },
-        {
-          href: "/admin/diagnostics",
-          label: "Diagnostics",
-          icon: "diagnostics",
-          when: can(p, "platform.staff_support.view"),
-        },
-      ],
-    },
-  ];
-}
+export { adminNav };
 
 /** "You don't have administrator access" - the answer for a signed-in account
  * the server refused (no staff identity, or no StaffGrant in force). It names
@@ -237,9 +145,11 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     <AdminContext.Provider value={{ permissions: state.permissions }}>
       <SidebarShell
         area="Super Admin"
-        context={<span className={consoleStyles.contextPill}>Super Admin</span>}
+        variant="admin"
+        navTitle="Admin panel"
         groups={adminNav(state.permissions)}
-        account={<AccountMenu name={who?.name || who?.email || ""} entries={entries} />}
+        tools={<AdminTools permissions={state.permissions} />}
+        account={<AccountMenu name={who?.name || who?.email || ""} entries={entries} showName />}
         banner={banner}
       >
         {children}

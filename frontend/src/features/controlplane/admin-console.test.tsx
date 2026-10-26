@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import axe, { type Result } from "axe-core";
 
 import { AdminContext, AdminShell } from "./ControlShell";
-import { CustomerDetailScreen, Dashboard } from "./AdminScreens";
+import { CustomerDetailScreen } from "./AdminScreens";
 import { PlansScreen } from "./AdminPlans";
 import { PricingScreen } from "./AdminPricing";
 import { PaymentsScreen } from "./AdminPayments";
@@ -85,8 +85,13 @@ beforeEach(() => {
 // --- navigation ------------------------------------------------------------------------
 
 describe("the Super Admin navigation", () => {
-  function navLabels(): string[] {
-    return within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent ?? "");
+  /** The menu's sections, then every page in it with each section opened. */
+  function openMenu(): { sections: string[]; links: string[] } {
+    const nav = screen.getByRole("navigation");
+    const buttons = within(nav).queryAllByRole("button");
+    const sections = buttons.map((b) => (b.textContent ?? "").replace("›", "").trim());
+    for (const b of buttons) if (b.getAttribute("aria-expanded") === "false") fireEvent.click(b);
+    return { sections, links: within(nav).getAllByRole("link").map((a) => a.textContent ?? "") };
   }
 
   it("shows the new areas to staff holding their grants", async () => {
@@ -114,17 +119,19 @@ describe("the Super Admin navigation", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(navLabels()).toEqual([
+    const menu = openMenu();
+    expect(menu.sections).toEqual(["User", "Product Store", "Communication"]);
+    expect(menu.links).toEqual([
       "Dashboard",
       "Users",
-      "Orders",
       "Subscriptions",
       "Entitlements",
+      "Product manager",
       "Plans & add-ons",
       "Currency & pricing",
+      "Orders",
       "Payments",
-      "Product manager",
-      "Communication",
+      "Email & templates",
     ]);
   });
 
@@ -141,54 +148,9 @@ describe("the Super Admin navigation", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(navLabels()).toEqual(["Dashboard", "Subscriptions", "Entitlements"]);
-  });
-});
-
-// --- dashboard ----------------------------------------------------------------------------
-
-describe("the dashboard", () => {
-  const base = {
-    organizations: { active: 3, suspended: 1 },
-    subscriptions: { active: 2, past_due: 1 },
-    mrr: { available: false, reason: "No safe global figure exists." },
-    outbox: { pending: 0 },
-  };
-
-  it("shows accounts and collections when the backend includes them", async () => {
-    mockApi({
-      "GET /api/v1/admin/dashboard": [
-        {
-          status: 200,
-          body: {
-            ...base,
-            users: { window_days: 7, total: 40, active: 38, new: 5, signed_in: 21 },
-            collections: { days: 30, by_currency: [{ currency: "INR", amount_minor: 4999900, payments: 12 }] },
-            pending_payouts: [],
-          },
-        },
-      ],
-    });
-    const { container } = asStaff([], <Dashboard />);
-    expect(await screen.findByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument();
-    // The heading is there at once; the figures arrive with the response.
-    expect(await screen.findByText("User accounts")).toBeInTheDocument();
-    expect(screen.getByText("38 active")).toBeInTheDocument();
-    expect(screen.getByText("New users (last 7 days)")).toBeInTheDocument();
-    expect(screen.getByText("Collected in the last 30 days")).toBeInTheDocument();
-    expect(screen.getByText("12 payments")).toBeInTheDocument();
-    expect(screen.getByText("3 active · 1 suspended")).toBeInTheDocument();
-    expect(screen.getByText("Payouts awaiting action")).toBeInTheDocument();
-    await expectNoViolations(container);
-  });
-
-  it("leaves out the sections a staff member isn't granted", async () => {
-    mockApi({ "GET /api/v1/admin/dashboard": [{ status: 200, body: base }] });
-    const { container } = asStaff([], <Dashboard />);
-    await screen.findByText(/No safe global figure/);
-    expect(screen.queryByText("User accounts")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Collected in the last/)).not.toBeInTheDocument();
-    await expectNoViolations(container);
+    const menu = openMenu();
+    expect(menu.sections).toEqual(["User"]);
+    expect(menu.links).toEqual(["Dashboard", "Subscriptions", "Entitlements"]);
   });
 });
 

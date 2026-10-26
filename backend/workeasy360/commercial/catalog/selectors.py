@@ -780,3 +780,29 @@ def product_facts(codes: list[str]) -> dict[str, dict[str, Any]]:
             ),
         }
     return out
+
+
+def product_counts(*, start: Any, end: Any) -> dict[str, int]:
+    """For the Super Admin dashboard: the products that are not retired and
+    existed by ``end`` (``total``), those on sale now (``available``), and how
+    many were added in ``[start, end)``."""
+    from django.db.models import Count, Q
+
+    from workeasy360.commercial.catalog.models import Product
+    from workeasy360.contracts.enums import ProductStatus
+
+    counts = Product.objects.exclude(status=ProductStatus.RETIRED.value).aggregate(
+        total=Count("id", filter=Q(created_at__lt=end)),
+        available=Count("id", filter=Q(status=ProductStatus.AVAILABLE.value)),
+        added=Count("id", filter=Q(created_at__gte=start, created_at__lt=end)),
+    )
+    return {key: int(value or 0) for key, value in counts.items()}
+
+
+def product_names(codes: list[str]) -> dict[str, str]:
+    """Display names by product code (one query)."""
+    from workeasy360.commercial.catalog.models import Product
+
+    if not codes:
+        return {}
+    return dict(Product.objects.filter(code__in=set(codes)).values_list("code", "name"))

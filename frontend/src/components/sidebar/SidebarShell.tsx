@@ -22,6 +22,9 @@ export interface SidebarItem {
   /** More prefixes the entry is current under (the pages of its section that
    * live elsewhere in the address space). */
   alsoMatch?: string[];
+  /** Pages of the section whose addresses no prefix describes (one record's
+   * own pages, `/admin/partners/<id>`). */
+  alsoMatchPattern?: RegExp;
   children?: SidebarItem[];
 }
 
@@ -33,6 +36,7 @@ export interface SidebarGroup {
 
 function isActive(pathname: string, item: SidebarItem): boolean {
   if (item.exact) return pathname === item.href;
+  if (item.alsoMatchPattern?.test(pathname)) return true;
   return [item.match ?? item.href, ...(item.alsoMatch ?? [])].some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
@@ -63,6 +67,9 @@ export function SidebarShell({
   children,
   brandName,
   brandLogoUrl,
+  variant,
+  navTitle,
+  tools,
 }: {
   area: string;
   context?: React.ReactNode;
@@ -75,6 +82,13 @@ export function SidebarShell({
    * show Workeasy360 itself. */
   brandName?: string | null;
   brandLogoUrl?: string | null;
+  /** `admin`: the Super Admin's deep-navy top bar and sidebar (2026-10-26). */
+  variant?: "admin";
+  /** A small heading above the navigation ("Admin panel"). */
+  navTitle?: string;
+  /** Controls in the top bar between the brand and the account menu (search,
+   * quick actions); they take the free space the spacer would. */
+  tools?: React.ReactNode;
 }) {
   const pathname = usePathname();
   const navId = useId();
@@ -103,7 +117,7 @@ export function SidebarShell({
   }, [open]);
 
   return (
-    <div className={styles.frame}>
+    <div className={styles.frame} data-variant={variant}>
       <header className={styles.topbar}>
         <button
           ref={toggle}
@@ -129,11 +143,11 @@ export function SidebarShell({
           </span>
         ) : (
           <span className={styles.brand}>
-            <Logo compact />
+            <Logo compact onBand={variant === "admin"} />
           </span>
         )}
         {context && <div className={styles.context}>{context}</div>}
-        <div className={styles.spacer} />
+        {tools ? <div className={styles.tools}>{tools}</div> : <div className={styles.spacer} />}
         {account}
       </header>
 
@@ -154,6 +168,7 @@ export function SidebarShell({
         className={styles.sidebar}
         data-open={open || undefined}
       >
+        {navTitle && <p className={styles.navTitle}>{navTitle}</p>}
         {groups.map((group, index) => {
           const items = visible(group.items);
           if (items.length === 0) return null;
@@ -192,6 +207,8 @@ function NavEntry({ item, pathname }: { item: SidebarItem; pathname: string }) {
     if (containsCurrent) setExpanded(true);
   }
 
+  // A section none of whose pages this person may open is not shown at all.
+  if (item.children && children.length === 0) return null;
   if (children.length > 0) {
     return (
       <li>
@@ -246,7 +263,16 @@ export interface AccountMenuEntry {
 
 /** The avatar button and its menu. Closes on Escape (focus returns to the
  * button) and on a click outside it. */
-export function AccountMenu({ name, entries }: { name: string; entries: AccountMenuEntry[] }) {
+export function AccountMenu({
+  name,
+  entries,
+  showName = false,
+}: {
+  name: string;
+  entries: AccountMenuEntry[];
+  /** Show the name beside the avatar (the Super Admin's top bar). */
+  showName?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement | null>(null);
   const button = useRef<HTMLButtonElement | null>(null);
@@ -276,14 +302,28 @@ export function AccountMenu({ name, entries }: { name: string; entries: AccountM
       <button
         ref={button}
         type="button"
-        className={styles.avatar}
+        className={showName ? styles.accountButton : styles.avatar}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         aria-label={`Account menu for ${name || "your account"}`}
         onClick={() => setOpen((v) => !v)}
       >
-        {initials(name)}
+        {showName ? (
+          <>
+            <span aria-hidden="true" className={styles.avatar}>
+              {initials(name)}
+            </span>
+            <span aria-hidden="true" className={styles.accountName}>
+              {firstName(name)}
+            </span>
+            <span aria-hidden="true" className={styles.accountChevron}>
+              ⌄
+            </span>
+          </>
+        ) : (
+          initials(name)
+        )}
       </button>
       {open && (
         <div id={menuId} className={styles.menu} role="menu">
@@ -317,6 +357,12 @@ export function AccountMenu({ name, entries }: { name: string; entries: AccountM
       )}
     </div>
   );
+}
+
+/** The first word of a name, or the part of an email before the @. */
+export function firstName(name: string): string {
+  const trimmed = name.trim();
+  return (trimmed.includes("@") ? trimmed.split("@")[0] : trimmed.split(/\s+/)[0]) || "Account";
 }
 
 export function initials(name: string): string {

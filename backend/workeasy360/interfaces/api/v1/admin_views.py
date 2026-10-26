@@ -133,7 +133,13 @@ def session_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
 
 @staff_view(["GET"])
 def dashboard_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
-    return JsonResponse(cp_dashboard.summary(ctx))
+    return JsonResponse(cp_dashboard.summary(ctx, month=request.GET.get("month") or None))
+
+
+@staff_view(["GET"])
+def attention_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """What is waiting for staff - the console's notification bell."""
+    return JsonResponse(cp_dashboard.attention(ctx))
 
 
 @staff_view(["GET"])

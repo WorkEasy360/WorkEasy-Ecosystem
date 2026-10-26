@@ -366,7 +366,10 @@ const admin = "/api/v1/admin";
 
 export const adminApi = {
   session: () => apiFetch<{ is_staff: boolean; permissions: string[] }>(`${admin}/session`),
-  dashboard: () => apiFetch<Dashboard>(`${admin}/dashboard`),
+  /** `month` is `YYYY-MM` (default: this month) - the overview's month. */
+  dashboard: (month?: string) => apiFetch<Dashboard>(`${admin}/dashboard`, { query: { month } }),
+  /** What is waiting for staff - the console's notification bell. */
+  attention: () => apiFetch<{ items: AttentionItem[] }>(`${admin}/attention`),
   audit: (cursor?: string, action?: string) =>
     apiFetch<Page<AuditRow>>(`${admin}/audit`, { query: { cursor, action } }),
 
@@ -450,7 +453,7 @@ export const adminApi = {
       method: "POST",
     }),
 
-  partners: (q: { status?: string; q?: string; cursor?: string }) =>
+  partners: (q: { status?: string; q?: string; cursor?: string; limit?: number }) =>
     apiFetch<Page<PartnerSummary>>(`${admin}/partners`, { query: q }),
   partner: (id: string) => apiFetch<PartnerDetail>(`${admin}/partners/${id}`),
   createPartner: (body: {
@@ -535,6 +538,33 @@ export interface Dashboard {
   outbox: Record<string, number>;
   partners?: Record<string, number>;
   pending_payouts?: { status: string; currency: string; count: number; payable_minor: number }[];
+  overview: DashboardOverview;
+}
+
+/** The dashboard's month (UTC days): figures for the month, a value per day for
+ * the charts (`null` for days still to come) and the period it is compared with.
+ * Each section is present only when the staff member holds its screen's grant. */
+export interface DashboardOverview {
+  month: string;
+  first_day: string;
+  last_day: string;
+  compared_with: { first_day: string; last_day: string };
+  users?: { total: number; new: number; previous: number; daily: (number | null)[] };
+  partners?: { total: number; new: number };
+  products?: { total: number; available: number; new: number };
+  orders?: { paid: number; previous: number; by_product: { code: string; name: string; orders: number }[] };
+  revenue?: {
+    currency: string;
+    amount_minor: number;
+    payments: number;
+    previous_minor: number;
+    daily: (number | null)[];
+  }[];
+}
+
+export interface AttentionItem {
+  key: "partner_upgrades" | "draft_partners" | "payouts";
+  count: number;
 }
 
 export interface Reconciliation {

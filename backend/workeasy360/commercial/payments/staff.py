@@ -304,6 +304,41 @@ def collections_summary(*, days: int = 30) -> dict[str, Any]:
     }
 
 
+def collections_by_day(*, start: Any, end: Any) -> list[dict[str, Any]]:
+    """Collected amounts in ``[start, end)`` per currency and per UTC day, from
+    the same event log as ``collections_summary``. Never converted or summed
+    across currencies. For the Super Admin dashboard, whose caller has already
+    authorized."""
+    from django.db.models.functions import TruncDate
+
+    from workeasy360.commercial.payments.models import PaymentWebhookEvent
+
+    rows = (
+        PaymentWebhookEvent.objects.filter(
+            received_at__gte=start,
+            received_at__lt=end,
+            outcome="applied",
+            kind="payment_succeeded",
+        )
+        .exclude(currency="")
+        .annotate(day=TruncDate("received_at"))
+        .values("currency", "day")
+        .annotate(total=Sum("amount_minor"), count=Count("id"))
+        .order_by("currency", "day")
+    )
+    by_currency: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        entry = by_currency.setdefault(
+            row["currency"],
+            {"currency": row["currency"], "amount_minor": 0, "payments": 0, "daily": {}},
+        )
+        amount = int(row["total"] or 0)
+        entry["amount_minor"] += amount
+        entry["payments"] += int(row["count"])
+        entry["daily"][row["day"].isoformat()] = amount
+    return list(by_currency.values())
+
+
 # --- one customer ------------------------------------------------------------------
 
 

@@ -889,3 +889,14 @@ def has_active_membership(user_id: UUID) -> bool:
     from workeasy360.commercial.partners.models import PartnerMember
 
     return PartnerMember.objects.filter(user_id=user_id, status="active").exists()
+
+
+def created_count(*, start: Any | None, end: Any) -> int:
+    """Partners created in ``[start, end)`` - from the first when ``start`` is
+    ``None`` - for the Super Admin dashboard."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    rows = PartnerAccount.objects.filter(created_at__lt=end)
+    if start is not None:
+        rows = rows.filter(created_at__gte=start)
+    return rows.count()

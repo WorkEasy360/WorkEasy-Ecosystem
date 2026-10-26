@@ -468,9 +468,9 @@ export const adminConsoleApi = {
     ),
 
   // users
-  users: (opts: { q?: string; segment?: string; cursor?: string } = {}) =>
+  users: (opts: { q?: string; segment?: string; cursor?: string; limit?: number } = {}) =>
     apiFetch<Page<UserRow>>("/api/v1/admin/users", {
-      query: { q: opts.q, segment: opts.segment, cursor: opts.cursor },
+      query: { q: opts.q, segment: opts.segment, cursor: opts.cursor, limit: opts.limit },
     }),
   user: (userId: string) => apiFetch<UserDetail>(`/api/v1/admin/users/${userId}`),
   userAction: (userId: string, action: UserAction, reason: string) =>
@@ -499,8 +499,10 @@ export const adminConsoleApi = {
       { method: "POST" },
     ),
   // Phase 9: orders, platform settings, staff roles, billing terms
-  orders: (opts: { status?: string; cursor?: string } = {}) =>
-    apiFetch<Page<StaffOrderRow>>("/api/v1/admin/orders", { query: { status: opts.status, cursor: opts.cursor } }),
+  orders: (opts: { status?: string; cursor?: string; limit?: number } = {}) =>
+    apiFetch<Page<StaffOrderRow>>("/api/v1/admin/orders", {
+      query: { status: opts.status, cursor: opts.cursor, limit: opts.limit },
+    }),
   settings: () => apiFetch<PlatformSettings>("/api/v1/admin/settings"),
   saveSettings: (body: {
     signup_enabled: boolean;

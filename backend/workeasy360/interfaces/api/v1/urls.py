@@ -702,6 +702,7 @@ urlpatterns = [
 _admin = [
     path("admin/session", admin_views.session_view, name="admin-session"),
     path("admin/dashboard", admin_views.dashboard_view, name="admin-dashboard"),
+    path("admin/attention", admin_views.attention_view, name="admin-attention"),
     path("admin/audit", admin_views.audit_view, name="admin-audit"),
     path("admin/customers", admin_views.customers_view, name="admin-customers"),
     # Phase 8: the AI registry, provider status and organization AI policy.

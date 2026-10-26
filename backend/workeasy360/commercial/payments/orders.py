@@ -1245,6 +1245,33 @@ def staff_orders(
     }
 
 
+def paid_orders_by_product(*, start: Any, end: Any) -> dict[str, Any]:
+    """Orders paid in ``[start, end)``: how many, and per product code (a bundle
+    order counts once for each of its products, so the per-product figures can
+    add up to more than ``orders``). For the Super Admin dashboard, whose
+    caller has already authorized. Codes and counts only."""
+    from collections import Counter
+
+    from workeasy360.commercial.payments.models import OrderSummary
+
+    per_product: Counter[str] = Counter()
+    orders = 0
+    rows = OrderSummary.objects.filter(paid_at__gte=start, paid_at__lt=end).values_list(
+        "product_codes", flat=True
+    )
+    for codes in rows.iterator():
+        orders += 1
+        per_product.update(set(codes or []))
+    return {"orders": orders, "by_product": dict(per_product)}
+
+
+def paid_order_count(*, start: Any, end: Any) -> int:
+    """How many orders were paid in ``[start, end)``."""
+    from workeasy360.commercial.payments.models import OrderSummary
+
+    return OrderSummary.objects.filter(paid_at__gte=start, paid_at__lt=end).count()
+
+
 def recent_orders_for_organizations(
     organization_ids: list[UUID], *, limit: int = 20
 ) -> list[dict[str, Any]]:

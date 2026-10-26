@@ -259,6 +259,175 @@
   background: var(--w360-brand-soft);
 }
 
+.tools {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+}
+
+.navTitle {
+  margin: var(--w360-space-2) var(--w360-space-3) var(--w360-space-3);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--w360-text-muted);
+}
+
+/* The name beside the avatar (Super Admin): one button, the avatar inside it. */
+.accountButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  border-radius: 999px;
+  color: inherit;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.accountButton .avatar {
+  display: inline-grid;
+  place-items: center;
+}
+
+.accountChevron {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* --- the Super Admin variant (2026-10-26): navy top bar and sidebar ----------- */
+
+.frame[data-variant="admin"] {
+  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-rows: 64px minmax(0, 1fr);
+  /* The sidebar's column is navy the whole height of the page. */
+  background: linear-gradient(to right, var(--w360-shell) 240px, var(--w360-shell-canvas) 240px);
+}
+
+.frame[data-variant="admin"] .topbar {
+  background: var(--w360-shell);
+  border-bottom-color: var(--w360-shell-border);
+  color: var(--w360-shell-text);
+  padding-inline: var(--w360-space-4) var(--w360-space-5);
+}
+
+.frame[data-variant="admin"] .brand {
+  width: calc(240px - var(--w360-space-4) - var(--w360-space-3));
+}
+
+.frame[data-variant="admin"] .menuButton {
+  color: var(--w360-shell-text);
+  border-color: var(--w360-shell-border);
+}
+
+.frame[data-variant="admin"] .menuButton:hover {
+  background: var(--w360-shell-raised);
+}
+
+.frame[data-variant="admin"] .sidebar {
+  top: 64px;
+  height: calc(100dvh - 64px);
+  background: var(--w360-shell);
+  border-right-color: var(--w360-shell-border);
+  padding: var(--w360-space-4) 0 var(--w360-space-6);
+}
+
+.frame[data-variant="admin"] .navTitle,
+.frame[data-variant="admin"] .groupTitle {
+  color: var(--w360-shell-muted);
+}
+
+.frame[data-variant="admin"] .link {
+  padding: 11px var(--w360-space-5) 11px calc(var(--w360-space-5) - 3px);
+  border-radius: 0;
+  color: var(--w360-shell-text);
+  font-size: 15px;
+  font-weight: 500;
+  gap: var(--w360-space-3);
+}
+
+.frame[data-variant="admin"] .link svg {
+  color: var(--w360-shell-muted);
+}
+
+.frame[data-variant="admin"] .link:hover {
+  background: var(--w360-shell-raised);
+  color: var(--w360-shell-text);
+}
+
+/* The current page: a lighter navy band, a green bar at the edge and bolder
+   text (not colour alone); aria-current="page" for assistive technology. */
+.frame[data-variant="admin"] .link[data-active] {
+  background: var(--w360-shell-active);
+  color: var(--w360-shell-text);
+  font-weight: 700;
+  border-left-color: var(--w360-shell-marker);
+}
+
+.frame[data-variant="admin"] .link[data-active] svg,
+.frame[data-variant="admin"] .link[data-contains-current] svg {
+  color: var(--w360-shell-text);
+}
+
+.frame[data-variant="admin"] .link[data-contains-current] {
+  color: var(--w360-shell-text);
+  font-weight: 700;
+}
+
+.frame[data-variant="admin"] .subList {
+  padding-left: 0;
+}
+
+.frame[data-variant="admin"] .subList .link {
+  padding-left: calc(var(--w360-space-5) + 18px + var(--w360-space-3) - 3px);
+  font-size: 14px;
+}
+
+.frame[data-variant="admin"] .chevron {
+  color: var(--w360-shell-muted);
+}
+
+.frame[data-variant="admin"] :focus-visible {
+  outline-color: var(--w360-shell-text);
+}
+
+.frame[data-variant="admin"] .main {
+  max-width: 1440px;
+  padding: var(--w360-space-5) var(--w360-space-5) var(--w360-space-7);
+}
+
+.frame[data-variant="admin"] .main :focus-visible {
+  outline-color: var(--w360-focus-ring);
+}
+
+.frame[data-variant="admin"] .accountButton .avatar {
+  width: 38px;
+  height: 38px;
+  background: var(--w360-shell-marker);
+  color: var(--w360-cta-contrast);
+  border: none;
+}
+
+.frame[data-variant="admin"] .accountButton:hover {
+  background: var(--w360-shell-raised);
+}
+
+.frame[data-variant="admin"] .menu {
+  color: var(--w360-text);
+}
+
+@media (max-width: 1100px) {
+  .accountName,
+  .accountChevron {
+    display: none;
+  }
+}
+
 
 @media (max-width: 900px) {
   .frame {
@@ -306,6 +475,28 @@
 
   .main {
     padding: var(--w360-space-5) var(--w360-space-4) var(--w360-space-6);
+  }
+
+  .frame[data-variant="admin"] {
+    grid-template-columns: minmax(0, 1fr);
+    background: var(--w360-shell-canvas);
+  }
+
+  .frame[data-variant="admin"] .brand {
+    width: auto;
+  }
+
+  .frame[data-variant="admin"] .topbar {
+    padding-inline: var(--w360-space-3);
+    gap: var(--w360-space-2);
+  }
+
+  .frame[data-variant="admin"] .backdrop {
+    inset: 64px 0 0 0;
+  }
+
+  .frame[data-variant="admin"] .main {
+    padding: var(--w360-space-4) var(--w360-space-4) var(--w360-space-6);
   }
 }
 
