@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ApiError } from "@/lib/api/client";
 import { partnerConsoleApi, type ReviewProblem } from "@/lib/api/partnerConsole";
@@ -9,7 +8,7 @@ import { can, useAdmin } from "../ControlShell";
 import { countryOptions } from "../countries";
 import type { FieldErrors } from "../profileDraft";
 import { useAction } from "../ui";
-import { ErrorSummary, RequiredMark, SelectField, TextField } from "../widgets";
+import { ErrorSummary, SelectField, TextField } from "../widgets";
 import styles from "../ControlPlane.module.css";
 import mine from "./AddPartner.module.css";
 import { PasswordField, PasswordGuidance } from "./PasswordField";
@@ -28,7 +27,8 @@ import {
 } from "./model";
 
 /**
- * Partners → Add Partner (ADR-048): the short form that creates a partner's
+ * Partners → Add Partner (ADR-048), shown as a dialog over All Partners
+ * (2026-10-26, the owner's reference design): the short form that creates a partner's
  * account - its name, the administrator's email and the password Super Admin
  * sets, the partner type, and optionally the country. Nothing more: business
  * details, products, prices, commission, brand, domain, referral program and
@@ -46,7 +46,7 @@ import {
  * - **Decide anything.** The type is a preset the server turns into capabilities;
  *   the new partner is a draft until its profile is complete and staff activate it.
  */
-export function AddPartnerForm() {
+export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose: () => void }) {
   const { permissions } = useAdmin();
   const params = useSearchParams();
   const router = useRouter();
@@ -59,8 +59,6 @@ export function AddPartnerForm() {
   const [existing, setExisting] = useState(false);
   const summaryRef = useRef<HTMLDivElement | null>(null);
   const guidanceId = useId();
-  const typeName = useId();
-  const typeError = useId();
   const { act, busy, feedback } = useAction();
 
   useEffect(() => {
@@ -69,9 +67,11 @@ export function AddPartnerForm() {
 
   if (!manage) {
     return (
-      <div className={styles.stack}>
-        <h1>Add Partner</h1>
-        <p role="alert">You need the permission to manage partners to add one.</p>
+      <div className={mine.dialogForm}>
+        <DialogHead titleId={titleId} onClose={onClose} />
+        <div className={mine.dialogBody}>
+          <p role="alert">You need the permission to manage partners to add one.</p>
+        </div>
       </div>
     );
   }
@@ -148,25 +148,23 @@ export function AddPartnerForm() {
     setDraft((d) => ({ ...d, mode: "create", email: "" }));
   }
 
+  const typeOptions = [
+    { value: "", label: "Select…" },
+    ...EXPERIENCE_KEYS.map((key) => ({ value: key, label: TYPE_CARDS[key].title })),
+  ];
+
   return (
-    <div className={styles.stack}>
-      <p className={styles.muted}>
-        <Link href="/admin/partners/all">All Partners</Link>
-      </p>
-      <h1>Add Partner</h1>
-      <p className={styles.lead}>
-        Create the partner&apos;s account and its administrator&apos;s sign-in. Business details, products, pricing, commission and
-        branding are completed afterwards in the partner&apos;s profile.
-      </p>
-      <form
-        className={`w360-card ${styles.card} ${styles.form} ${mine.shortForm}`}
-        noValidate
-        aria-busy={busy}
-        onSubmit={(e) => {
-          e.preventDefault();
-          void submit(draft);
-        }}
-      >
+    <form
+      className={mine.dialogForm}
+      noValidate
+      aria-busy={busy}
+      onSubmit={(e) => {
+        e.preventDefault();
+        void submit(draft);
+      }}
+    >
+      <DialogHead titleId={titleId} onClose={onClose} />
+      <div className={mine.dialogBody}>
         <ErrorSummary errors={summary} focusRef={summaryRef} />
         {feedback}
 
@@ -176,9 +174,9 @@ export function AddPartnerForm() {
           onChange={(v) => set("name", v)}
           maxLength={120}
           autoComplete="organization"
+          placeholder="Enter partner name"
           required
           showRequired
-          hint="For example, ABC Technologies."
           error={errors["partner.display_name"] ?? errors.partner}
         />
         <TextField
@@ -192,9 +190,9 @@ export function AddPartnerForm() {
           }}
           maxLength={254}
           autoComplete="off"
+          placeholder="Enter admin email"
           required
           showRequired
-          hint="The partner's administrator signs in at the partner portal with this email."
           error={errors["administrator.email"]}
         />
 
@@ -224,6 +222,7 @@ export function AddPartnerForm() {
               label="Password"
               value={draft.password}
               onChange={(v) => set("password", v)}
+              placeholder="Enter password"
               describedBy={guidanceId}
               error={errors["administrator.password"]}
             />
@@ -231,76 +230,59 @@ export function AddPartnerForm() {
               label="Confirm password"
               value={draft.confirm}
               onChange={(v) => set("confirm", v)}
+              placeholder="Confirm password"
               error={errors["administrator.password_confirm"]}
             />
-            <PasswordGuidance id={guidanceId} password={draft.password} confirm={draft.confirm} minLength={DEFAULT_MIN_PASSWORD} />
-            <p className={styles.muted}>
-              Nothing is emailed and no temporary password is made: tell the administrator this password privately. They can change it
-              after signing in.
-            </p>
+            <PasswordGuidance id={guidanceId} password={draft.password} confirm={draft.confirm} minLength={DEFAULT_MIN_PASSWORD} compact />
           </>
         )}
 
-        <fieldset aria-describedby={errors.experience ? typeError : undefined} className={mine.typeFieldset}>
-          <legend className={styles.cardTitle}>
-            Partner type
-            <RequiredMark />
-          </legend>
-          <ul className={mine.cards}>
-            {EXPERIENCE_KEYS.map((key) => {
-              const textId = `${typeName}-${key}`;
-              const selected = draft.experience === key;
-              return (
-                <li key={key} className={mine.card}>
-                  <label className={mine.cardHead}>
-                    <input
-                      type="radio"
-                      name={typeName}
-                      value={key}
-                      checked={selected}
-                      onChange={() => set("experience", key)}
-                      aria-describedby={textId}
-                      required
-                    />
-                    <span className={mine.cardTitle}>{TYPE_CARDS[key].title}</span>
-                    {selected && <span className={mine.selectedMark}>Selected</span>}
-                  </label>
-                  <p id={textId} className={mine.cardText}>
-                    {TYPE_CARDS[key].text}
-                  </p>
-                </li>
-              );
-            })}
-          </ul>
-          <p className="w360-hint">
-            The type is a starting point: it sets the partner&apos;s first capabilities and the workspace it opens. A partner can hold more
-            than one later.
-          </p>
-          {errors.experience && (
-            <p id={typeError} className="w360-error-text">
-              {errors.experience}
-            </p>
-          )}
-        </fieldset>
+        <SelectField
+          label="Partner type"
+          value={draft.experience ?? ""}
+          onChange={(v) => set("experience", experienceFromParam(v))}
+          options={typeOptions}
+          required
+          showRequired
+          hint={draft.experience ? TYPE_CARDS[draft.experience].text : "Sets the partner's first capabilities and the workspace it opens."}
+          error={errors.experience}
+        />
 
         <SelectField
-          label="Country (optional)"
+          label="Country"
           value={draft.country}
           onChange={(v) => set("country", v)}
-          options={countryOptions("Not set")}
-          hint="Also sets the starting currency, which can be changed until the partner is activated."
+          options={countryOptions("Select…")}
+          hint="Optional. Sets the starting currency, which can be changed until the partner is activated."
           error={errors["partner.country"]}
         />
 
-        <div className={styles.row}>
-          <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-            {busy ? "Creating…" : "Create Partner"}
-          </button>
-          <Link className="w360-btn w360-btn-secondary" href="/admin/partners/all">
-            Cancel
-          </Link>
-        </div>
-      </form>
+        {draft.mode === "create" && !existing && (
+          <p className={mine.note}>Nothing is emailed: tell the administrator this password privately. They can change it after signing in.</p>
+        )}
+      </div>
+      <div className={mine.dialogFoot}>
+        <button type="button" className="w360-btn w360-btn-secondary" onClick={onClose}>
+          Close
+        </button>
+        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
+          {busy ? "Adding…" : "Add Partner"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** The dialog's title and its close button (Escape closes it too). */
+function DialogHead({ titleId, onClose }: { titleId: string; onClose: () => void }) {
+  return (
+    <div className={mine.dialogHead}>
+      <h2 id={titleId} className={mine.dialogTitle}>
+        Add New Partner
+      </h2>
+      <button type="button" className={mine.closeButton} aria-label="Close" onClick={onClose}>
+        <span aria-hidden="true">×</span>
+      </button>
     </div>
   );
 }

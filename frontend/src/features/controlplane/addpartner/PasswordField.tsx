@@ -23,6 +23,7 @@ export function PasswordField({
   hint,
   describedBy,
   required = true,
+  placeholder,
 }: {
   label: string;
   value: string;
@@ -32,6 +33,7 @@ export function PasswordField({
   /** Ids of other text that describes this field (the requirements list). */
   describedBy?: string;
   required?: boolean;
+  placeholder?: string;
 }) {
   const id = useId();
   const hintId = useId();
@@ -56,6 +58,7 @@ export function PasswordField({
           autoCorrect="off"
           spellCheck={false}
           maxLength={128}
+          placeholder={placeholder}
           required={required}
           aria-invalid={error ? true : undefined}
           aria-describedby={described}
@@ -95,16 +98,19 @@ export function PasswordGuidance({
   password,
   confirm,
   minLength,
+  compact = false,
 }: {
   id: string;
   password: string;
   confirm: string;
   minLength: number;
+  /** Smaller, without the box - inside the Add Partner dialog. */
+  compact?: boolean;
 }) {
   const checks = passwordChecks(password, confirm, minLength);
   const strength = passwordStrength(password, minLength);
   return (
-    <div id={id} className={styles.guidance}>
+    <div id={id} className={compact ? styles.guidanceCompact : styles.guidance}>
       <p className={styles.strength}>
         Strength: <strong>{strength.label}</strong>{" "}
         <span className={styles.strengthBar} aria-hidden="true">
@@ -112,7 +118,7 @@ export function PasswordGuidance({
             <span key={n} className={n <= strength.score ? styles.strengthOn : styles.strengthOff} />
           ))}
         </span>{" "}
-        <span className={styles.muted}>(a hint only - the platform&apos;s password policy decides)</span>
+        <span className={compact ? "w360-visually-hidden" : styles.muted}>(a hint only - the platform&apos;s password policy decides)</span>
       </p>
       <ul className={styles.requirements} aria-label="Password requirements">
         {checks.map((c) => (
