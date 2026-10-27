@@ -13,7 +13,7 @@ import {
   type SetupStatus,
 } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
-import { ExperienceLabels, TypeBadges } from "./labels";
+import { ExperienceLabels, PrimaryType, TypeBadges } from "./labels";
 import { LoadGate, MoreButton, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
 import { NavIcon } from "@/components/sidebar/icons";
 import { usePortals } from "@/lib/portalContext";
@@ -354,6 +354,7 @@ export function AllPartnersList() {
               "Panel",
               "Partner ID",
               "Name",
+              "Partner Type",
               "Email",
               "Phone",
               "Country",
@@ -545,7 +546,6 @@ function PartnerRow({
         <th scope="row">
           <Link href={href}>{r.display_name}</Link>
           <div className={local.nameMeta}>
-            <TypeBadges labels={r.experience} />
             <SetupStatusBadge value={r.profile_completion.setup_status} />
             {r.upgrade && (
               <Link
@@ -558,6 +558,9 @@ function PartnerRow({
             )}
           </div>
         </th>
+        <td>
+          <PrimaryType value={r.primary_experience} />
+        </td>
         <td>
           {r.administrator?.email ? (
             <Copyable value={r.administrator.email} what={`email of ${r.display_name}`} />
@@ -574,7 +577,7 @@ function PartnerRow({
       </tr>
       {prompt !== null && (
         <tr className={local.promptRow}>
-          <td colSpan={12}>
+          <td colSpan={13}>
             <form
               className={local.promptForm}
               onSubmit={(e) => {

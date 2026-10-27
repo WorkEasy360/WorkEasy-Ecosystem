@@ -261,7 +261,7 @@ function renderList(permissions = [VIEW, MANAGE]) {
 }
 
 describe("All Partners", () => {
-  it("shows the agency-style columns, the type badges the server derived and the setup state", async () => {
+  it("shows the agency-style columns, one partner type per row and the setup state", async () => {
     mockApi(
       listRoutes([
         row(),
@@ -273,6 +273,7 @@ describe("All Partners", () => {
             { key: "white_label", label: "White-label" },
             { key: "affiliate", label: "Affiliate" },
           ],
+          primary_experience: "white_label",
           status: "draft",
           administrator: null,
           phone: "",
@@ -290,6 +291,7 @@ describe("All Partners", () => {
       "Panel",
       "Partner ID",
       "Name",
+      "Partner Type",
       "Email",
       "Phone",
       "Country",
@@ -311,8 +313,12 @@ describe("All Partners", () => {
     expect(acme).toHaveTextContent("35.54");
     expect(acme).toHaveTextContent("active");
     const combo = within(table).getByRole("row", { name: /Combo Co/ });
-    const badges = within(combo).getByRole("list", { name: /Partner type/ });
-    expect(within(badges).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Reseller", "White-label", "Affiliate"]);
+    // One type, the partner's current workspace - never all it holds.
+    const typeCell = (r: HTMLElement) => within(r).getAllByRole("cell")[4];
+    expect(typeCell(combo)).toHaveTextContent(/^White-label$/);
+    expect(typeCell(acme)).toHaveTextContent(/^Reseller$/);
+    expect(within(combo).queryByRole("list", { name: /Partner type/ })).not.toBeInTheDocument();
+    expect(combo).not.toHaveTextContent("Affiliate");
     expect(within(combo).getByRole("link", { name: "Complete setup of Combo Co" })).toHaveAttribute("href", "/admin/partners/p2/profile");
     // A draft nobody can act for is not offered activation (the server refuses it).
     const comboSwitch = within(combo).getByRole("switch", { name: "Combo Co active" });
