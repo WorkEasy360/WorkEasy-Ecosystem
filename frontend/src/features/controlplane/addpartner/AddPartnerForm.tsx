@@ -11,6 +11,7 @@ import { useAction } from "../ui";
 import { ErrorSummary, SelectField, TextField } from "../widgets";
 import styles from "../ControlPlane.module.css";
 import mine from "./AddPartner.module.css";
+import { DialogHead as SharedHead, dialog } from "../Modal";
 import { PasswordField, PasswordGuidance } from "./PasswordField";
 import {
   DEFAULT_MIN_PASSWORD,
@@ -67,9 +68,9 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
 
   if (!manage) {
     return (
-      <div className={mine.dialogForm}>
+      <div className={dialog.form}>
         <DialogHead titleId={titleId} onClose={onClose} />
-        <div className={mine.dialogBody}>
+        <div className={dialog.body}>
           <p role="alert">You need the permission to manage partners to add one.</p>
         </div>
       </div>
@@ -155,7 +156,7 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
 
   return (
     <form
-      className={mine.dialogForm}
+      className={dialog.form}
       noValidate
       aria-busy={busy}
       onSubmit={(e) => {
@@ -164,7 +165,7 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
       }}
     >
       <DialogHead titleId={titleId} onClose={onClose} />
-      <div className={mine.dialogBody}>
+      <div className={dialog.body}>
         <ErrorSummary errors={summary} focusRef={summaryRef} />
         {feedback}
 
@@ -261,7 +262,7 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
           <p className={mine.note}>Nothing is emailed: tell the administrator this password privately. They can change it after signing in.</p>
         )}
       </div>
-      <div className={mine.dialogFoot}>
+      <div className={dialog.foot}>
         <button type="button" className="w360-btn w360-btn-secondary" onClick={onClose}>
           Close
         </button>
@@ -275,14 +276,5 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
 
 /** The dialog's title and its close button (Escape closes it too). */
 function DialogHead({ titleId, onClose }: { titleId: string; onClose: () => void }) {
-  return (
-    <div className={mine.dialogHead}>
-      <h2 id={titleId} className={mine.dialogTitle}>
-        Add New Partner
-      </h2>
-      <button type="button" className={mine.closeButton} aria-label="Close" onClick={onClose}>
-        <span aria-hidden="true">×</span>
-      </button>
-    </div>
-  );
+  return <SharedHead titleId={titleId} title="Add New Partner" onClose={onClose} />;
 }

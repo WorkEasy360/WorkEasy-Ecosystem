@@ -1,0 +1,386 @@
+/* The Super Admin's Products screen (2026-10-26 redesign). Tokens only; every
+   grid child that can hold wide content gets min-width: 0 (reflow at 320px). */
+
+.page {
+  display: grid;
+  gap: var(--w360-space-5);
+  min-width: 0;
+}
+
+.pageHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--w360-space-3);
+}
+
+.pageTitle {
+  margin: 0;
+  font-size: 28px;
+}
+
+.lead {
+  margin: var(--w360-space-1) 0 0;
+  max-width: 62ch;
+  color: var(--w360-text-muted);
+}
+
+/* --- the summary ------------------------------------------------------------------ */
+
+.summary {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--w360-space-3);
+}
+
+.summaryTile {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-4);
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  box-shadow: var(--w360-shadow-sm);
+}
+
+.summaryIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  flex: none;
+}
+
+.summaryValue {
+  display: block;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--w360-text);
+}
+
+.summaryLabel {
+  display: block;
+  font-size: 13px;
+  color: var(--w360-text-muted);
+}
+
+/* --- product cards ------------------------------------------------------------------ */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
+  gap: var(--w360-space-4);
+  align-items: start;
+}
+
+.card {
+  display: grid;
+  gap: var(--w360-space-4);
+  min-width: 0;
+  padding: var(--w360-space-5);
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-lg);
+  box-shadow: var(--w360-shadow-sm);
+}
+
+.cardHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-3);
+}
+
+.monogram {
+  display: inline-grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--w360-radius-md);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  flex: none;
+}
+
+.titleBlock {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.name {
+  margin: 0;
+  font-size: 20px;
+}
+
+.sub {
+  display: block;
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--w360-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+}
+
+.badgeGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--w360-border);
+  border-radius: 999px;
+  background: var(--w360-shell-canvas);
+}
+
+.badgeLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--w360-text-muted);
+}
+
+.blue {
+  background: var(--w360-tile-blue-bg);
+  color: var(--w360-tile-blue);
+}
+
+.green {
+  background: var(--w360-tile-green-bg);
+  color: var(--w360-tile-green);
+}
+
+.purple {
+  background: var(--w360-tile-purple-bg);
+  color: var(--w360-tile-purple);
+}
+
+.orange {
+  background: var(--w360-tile-orange-bg);
+  color: var(--w360-tile-orange);
+}
+
+.red {
+  background: var(--w360-tile-red-bg);
+  color: var(--w360-tile-red);
+}
+
+/* Where it sells: four compact boxes. */
+.channels {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr));
+  gap: var(--w360-space-2);
+}
+
+.channel {
+  min-width: 0;
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-shell-canvas);
+}
+
+.channel dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--w360-text-muted);
+}
+
+.channel dt svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.channel dd {
+  margin: var(--w360-space-1) 0 0;
+}
+
+.channel dd strong {
+  display: block;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--w360-text);
+}
+
+.channel dd strong.good {
+  color: var(--w360-success);
+}
+
+.channel dd strong.warn {
+  color: var(--w360-warning);
+}
+
+/* The integration: facts in a row, actions beside its heading. */
+.integration {
+  display: grid;
+  gap: var(--w360-space-3);
+  padding-top: var(--w360-space-4);
+  border-top: 1px solid var(--w360-border);
+  min-width: 0;
+}
+
+.integrationHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-2);
+}
+
+.sectionLabel {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--w360-text-muted);
+}
+
+.integrationFacts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  gap: var(--w360-space-3);
+}
+
+.integrationFacts dt {
+  font-size: 12px;
+  color: var(--w360-text-muted);
+}
+
+.integrationFacts dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--w360-text-secondary);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+}
+
+.toolbar :global(.w360-btn) {
+  min-height: 36px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+
+/* Sign-in set-up, folded away until it is wanted. */
+.disclosure {
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+}
+
+.disclosure > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--w360-space-3);
+  row-gap: 2px;
+  padding: var(--w360-space-3) var(--w360-space-4);
+  cursor: pointer;
+  list-style: none;
+}
+
+.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosureSub {
+  grid-column: 1;
+  font-size: 13px;
+  color: var(--w360-text-muted);
+}
+
+/* Open or closed shown by the arrow's direction (and the panel itself). */
+.chevron {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--w360-text-muted);
+  transition: transform 0.15s ease;
+  flex: none;
+}
+
+.disclosure[open] .chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}
+
+.disclosure[open] > summary {
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.disclosureTitle {
+  display: inline;
+  margin: 0;
+  font-size: 15px;
+}
+
+.disclosureBody {
+  display: grid;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-4);
+  min-width: 0;
+}
+
+.editor {
+  padding: var(--w360-space-4);
+  border: 1px dashed var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-bg-soft);
+}
+
+.cardFoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-2);
+  padding-top: var(--w360-space-4);
+  border-top: 1px solid var(--w360-border);
+}

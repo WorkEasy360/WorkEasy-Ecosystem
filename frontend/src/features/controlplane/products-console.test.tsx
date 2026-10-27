@@ -149,6 +149,7 @@ describe("the products console", () => {
     expect(screen.queryByRole("button", { name: "Edit Easy CRM" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Configure trial" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Add a product SKU" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Add product" })).not.toBeInTheDocument();
   });
 
   it("without the integration grant, the facts show but no integration controls do", async () => {
@@ -254,7 +255,10 @@ describe("the products console", () => {
       [`POST ${ADMIN}/catalog/products`]: [{ status: 201, body: product({ status: "draft" }) }],
     });
     renderConsole(CATALOG);
-    fireEvent.change(await screen.findByLabelText("Code"), { target: { value: "easy_helpdesk" } });
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add product" }));
+    const dialog = screen.getByRole("dialog", { name: "Add a product SKU" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    fireEvent.change(screen.getByLabelText("Code"), { target: { value: "easy_helpdesk" } });
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Easy Help Desk" } });
     fireEvent.click(screen.getByRole("button", { name: "Create product" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${ADMIN}/catalog/products`)).toBe(true));
