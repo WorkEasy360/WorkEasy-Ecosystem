@@ -442,13 +442,17 @@ function Copyable({ value, shown, what }: { value: string; shown?: string; what:
   );
 }
 
-type Prompt = null | "status" | "guest";
+type Prompt = null | "guest";
 
-/** The reason recorded when the switch turns a partner on. Turning one on asks
- * nothing (the owner's call, 2026-10-27); the server still requires a reason, so
- * the switch states where the action came from, and the audit entry records
- * who and when. Turning a partner off still asks why. */
-const SWITCH_ON_REASON = { activate: "Activated from All Partners", reactivate: "Reactivated from All Partners" };
+/** The reason recorded when the switch changes a partner's status. The switch
+ * asks nothing (the owner's call, 2026-10-27); the server still requires a
+ * reason, so the switch states where the action came from, and the audit entry
+ * records who and when. */
+const SWITCH_REASON = {
+  activate: "Activated from All Partners",
+  reactivate: "Reactivated from All Partners",
+  suspend: "Suspended from All Partners",
+};
 
 function PartnerRow({
   row: r,
@@ -491,9 +495,7 @@ function PartnerRow({
               ? "Activate this partner"
               : "Reactivate this partner";
   const complete = r.profile_completion.complete;
-  const target = on ? "suspended" : "active";
-  const verb = on ? "Suspend" : draft ? "Activate" : "Reactivate";
-  const minLength = prompt === "guest" ? 3 : 10;
+  const minLength = 3;
 
   function open(next: Prompt) {
     setPrompt((current) => (current === next ? null : next));
@@ -509,12 +511,13 @@ function PartnerRow({
             role="switch"
             aria-checked={on}
             aria-label={`${r.display_name} active`}
-            aria-expanded={on ? prompt === "status" : undefined}
             title={toggleNote}
             className={local.switch}
             disabled={!canToggle || busy}
             onClick={() =>
-              on ? open("status") : onStatus("active", draft ? SWITCH_ON_REASON.activate : SWITCH_ON_REASON.reactivate)
+              on
+                ? onStatus("suspended", SWITCH_REASON.suspend)
+                : onStatus("active", draft ? SWITCH_REASON.activate : SWITCH_REASON.reactivate)
             }
           >
             <span className={local.switchKnob} />
@@ -593,14 +596,11 @@ function PartnerRow({
                 const text = reason.trim();
                 setPrompt(null);
                 setReason("");
-                if (prompt === "guest") onGuest(text);
-                else onStatus(target, text);
+                onGuest(text);
               }}
             >
               <label className="w360-label" htmlFor={reasonId}>
-                {prompt === "guest"
-                  ? `Why are you opening the portal of ${r.display_name}? (recorded, and shown in the partner's activity)`
-                  : `Reason to ${verb.toLowerCase()} ${r.display_name} (recorded in the audit log)`}
+                {`Why are you opening the portal of ${r.display_name}? (recorded, and shown in the partner's activity)`}
               </label>
               <input
                 id={reasonId}
@@ -612,18 +612,12 @@ function PartnerRow({
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
               />
-              {prompt === "guest" && (
-                <p className={styles.muted}>
-                  Read-only: you see the portal as the partner does but cannot change anything. It ends after 30 minutes.
-                </p>
-              )}
+              <p className={styles.muted}>
+                Read-only: you see the portal as the partner does but cannot change anything. It ends after 30 minutes.
+              </p>
               <div className={styles.row}>
-                <button
-                  type="submit"
-                  className={`w360-btn ${prompt === "status" && on ? "w360-btn-danger" : "w360-btn-primary"}`}
-                  disabled={busy || reason.trim().length < minLength}
-                >
-                  {prompt === "guest" ? "Open guest view" : verb}
+                <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || reason.trim().length < minLength}>
+                  Open guest view
                 </button>
                 <button type="button" className="w360-btn w360-btn-secondary" onClick={() => open(null)}>
                   Cancel

@@ -440,7 +440,7 @@ describe("All Partners", () => {
     expect(await screen.findByText("Paused Co reactivated.")).toBeInTheDocument();
   });
 
-  it("still asks why before suspending an active partner", async () => {
+  it("suspends an active partner from its switch at once", async () => {
     const calls = mockApi(
       listRoutes([row()], {
         "POST /api/v1/admin/partners/p1/status": [ok({ id: "p1" })],
@@ -449,13 +449,11 @@ describe("All Partners", () => {
     renderList();
     const table = await screen.findByRole("table", { name: "Partners" });
     fireEvent.click(within(table).getByRole("switch", { name: "Acme Partners active" }));
-    expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p1/status")).toBe(false);
-    fireEvent.change(within(table).getByLabelText(/Reason to suspend Acme Partners/), { target: { value: "Unpaid invoices, on hold" } });
-    fireEvent.click(within(table).getByRole("button", { name: "Suspend" }));
+    expect(within(table).queryByLabelText(/Reason to/)).not.toBeInTheDocument();
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p1/status")).toBe(true));
     expect((calls.find((c) => c.key === "POST /api/v1/admin/partners/p1/status")!.body as { status: string; reason: string })).toMatchObject({
       status: "suspended",
-      reason: "Unpaid invoices, on hold",
+      reason: "Suspended from All Partners",
     });
   });
 
