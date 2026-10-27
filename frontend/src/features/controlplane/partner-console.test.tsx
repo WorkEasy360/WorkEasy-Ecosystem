@@ -417,7 +417,7 @@ describe("All Partners", () => {
     expect(screen.getByLabelText("Partner type")).toHaveValue("white_label");
   });
 
-  it("offers Suspend or Reactivate with a recorded reason, sending the row's version", async () => {
+  it("reactivates from the switch at once, recording where it came from and sending the row's version", async () => {
     const calls = mockApi(
       listRoutes([row(), row({ id: "p3", display_name: "Paused Co", status: "suspended", version: 7 })], {
         "POST /api/v1/admin/partners/p3/status": [ok({ id: "p3" })],
@@ -429,18 +429,37 @@ describe("All Partners", () => {
     const toggle = within(paused).getByRole("switch", { name: "Paused Co active" });
     expect(toggle).toHaveAttribute("aria-checked", "false");
     fireEvent.click(toggle);
-    fireEvent.change(within(table).getByLabelText(/Reason to reactivate Paused Co/), { target: { value: "Review finished, back on" } });
-    fireEvent.click(within(table).getByRole("button", { name: "Reactivate" }));
+    // No reason is asked for turning a partner on.
+    expect(within(table).queryByLabelText(/Reason to/)).not.toBeInTheDocument();
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p3/status")).toBe(true));
     expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p3/status")!.body).toEqual({
       status: "active",
-      reason: "Review finished, back on",
+      reason: "Reactivated from All Partners",
       expected_version: 7,
     });
     expect(await screen.findByText("Paused Co reactivated.")).toBeInTheDocument();
   });
 
-  it("activates a draft with an administrator from its switch, with a recorded reason", async () => {
+  it("still asks why before suspending an active partner", async () => {
+    const calls = mockApi(
+      listRoutes([row()], {
+        "POST /api/v1/admin/partners/p1/status": [ok({ id: "p1" })],
+      }),
+    );
+    renderList();
+    const table = await screen.findByRole("table", { name: "Partners" });
+    fireEvent.click(within(table).getByRole("switch", { name: "Acme Partners active" }));
+    expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p1/status")).toBe(false);
+    fireEvent.change(within(table).getByLabelText(/Reason to suspend Acme Partners/), { target: { value: "Unpaid invoices, on hold" } });
+    fireEvent.click(within(table).getByRole("button", { name: "Suspend" }));
+    await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p1/status")).toBe(true));
+    expect((calls.find((c) => c.key === "POST /api/v1/admin/partners/p1/status")!.body as { status: string; reason: string })).toMatchObject({
+      status: "suspended",
+      reason: "Unpaid invoices, on hold",
+    });
+  });
+
+  it("activates a draft with an administrator from its switch at once", async () => {
     const calls = mockApi(
       listRoutes([row({ id: "p5", display_name: "Draft Co", status: "draft", version: 2 })], {
         "POST /api/v1/admin/partners/p5/status": [ok({ id: "p5" })],
@@ -452,12 +471,11 @@ describe("All Partners", () => {
     expect(toggle).toHaveAttribute("aria-checked", "false");
     expect(toggle).toBeEnabled();
     fireEvent.click(toggle);
-    fireEvent.change(within(table).getByLabelText(/Reason to activate Draft Co/), { target: { value: "Agreement signed today" } });
-    fireEvent.click(within(table).getByRole("button", { name: "Activate" }));
+    expect(within(table).queryByLabelText(/Reason to/)).not.toBeInTheDocument();
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p5/status")).toBe(true));
     expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p5/status")!.body).toEqual({
       status: "active",
-      reason: "Agreement signed today",
+      reason: "Activated from All Partners",
       expected_version: 2,
     });
     expect(await screen.findByText("Draft Co activated.")).toBeInTheDocument();

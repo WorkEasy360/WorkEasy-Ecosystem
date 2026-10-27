@@ -444,6 +444,12 @@ function Copyable({ value, shown, what }: { value: string; shown?: string; what:
 
 type Prompt = null | "status" | "guest";
 
+/** The reason recorded when the switch turns a partner on. Turning one on asks
+ * nothing (the owner's call, 2026-10-27); the server still requires a reason, so
+ * the switch states where the action came from, and the audit entry records
+ * who and when. Turning a partner off still asks why. */
+const SWITCH_ON_REASON = { activate: "Activated from All Partners", reactivate: "Reactivated from All Partners" };
+
 function PartnerRow({
   row: r,
   manage,
@@ -503,11 +509,13 @@ function PartnerRow({
             role="switch"
             aria-checked={on}
             aria-label={`${r.display_name} active`}
-            aria-expanded={prompt === "status"}
+            aria-expanded={on ? prompt === "status" : undefined}
             title={toggleNote}
             className={local.switch}
             disabled={!canToggle || busy}
-            onClick={() => open("status")}
+            onClick={() =>
+              on ? open("status") : onStatus("active", draft ? SWITCH_ON_REASON.activate : SWITCH_ON_REASON.reactivate)
+            }
           >
             <span className={local.switchKnob} />
           </button>
