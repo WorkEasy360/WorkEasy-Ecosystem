@@ -7,6 +7,7 @@ import { Customers } from "./AdminScreens";
 import { PayoutsTab, type TabProps } from "./ResellerTabs";
 import { PartnerBranding, PartnerCustomers, PartnerDomains } from "./PartnerScreens";
 import { applyAccent, contrastOn, safeColor } from "./useBranding";
+import { ReasonAction, useAction } from "./ui";
 
 /**
  * Phase 7 screens: behaviour the backend cannot enforce for the browser
@@ -327,7 +328,7 @@ describe("Super Admin screens", () => {
     expect(await screen.findByRole("button", { name: "Approve" })).toBeInTheDocument();
   });
 
-  it("a recorded reason must be long enough before a dangerous action can be confirmed", async () => {
+  it("approves a payout in one click, recording a reason without asking", async () => {
     const ready = {
       id: "p1",
       status: "ready",
@@ -339,22 +340,44 @@ describe("Super Admin screens", () => {
       line_count: 1,
       version: 1,
     };
-    mockApi({ "GET /api/v1/admin/payouts": [{ status: 200, body: { results: [ready], next_cursor: null, has_more: false } }] });
+    const calls = mockApi({
+      "GET /api/v1/admin/payouts": [{ status: 200, body: { results: [ready], next_cursor: null, has_more: false } }],
+      "POST /api/v1/admin/payouts/p1/approve": [{ status: 200, body: { ...ready, status: "approved", version: 2 } }],
+    });
     render(
       <AdminContextForTest permissions={["platform.staff_payout.approve"]}>
         <PayoutsFor />
       </AdminContextForTest>,
     );
     fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
-    const confirm = screen.getByRole("button", { name: "Confirm" });
-    expect(confirm).toBeDisabled();
-    fireEvent.change(screen.getByLabelText(/Reason for/), { target: { value: "short" } });
-    expect(confirm).toBeDisabled();
-    fireEvent.change(screen.getByLabelText(/Reason for/), { target: { value: "Reviewed the ledger lines." } });
-    expect(confirm).toBeEnabled();
+    expect(screen.queryByLabelText(/Reason for/)).not.toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent(/Payout approved/);
+    expect(calls.find((c) => c.key === "POST /api/v1/admin/payouts/p1/approve")!.body).toMatchObject({
+      reason: "Approve - Super Admin console",
+    });
   });
 
-  it("puts keyboard focus on the outcome when the prompt that started the action is gone", async () => {
+  it("a destructive action asks once to confirm, then puts keyboard focus on the outcome", async () => {
+    function Harness() {
+      const { act, feedback } = useAction();
+      return (
+        <>
+          {feedback}
+          <ReasonAction label="Suspend" danger onConfirm={(reason) => void act(async () => void reason, "Suspended.")} />
+        </>
+      );
+    }
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
+    const confirm = within(screen.getByRole("group", { name: "Confirm Suspend" })).getByRole("button", { name: "Confirm suspend" });
+    expect(screen.queryByLabelText(/Reason for/)).not.toBeInTheDocument();
+    fireEvent.click(confirm);
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("Suspended.");
+    await waitFor(() => expect(status).toHaveFocus());
+  });
+
+  it("puts keyboard focus nowhere new when the button that started the action is still there", async () => {
     const ready = {
       id: "p1",
       status: "ready",
@@ -375,12 +398,12 @@ describe("Super Admin screens", () => {
         <PayoutsFor />
       </AdminContextForTest>,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
-    fireEvent.change(screen.getByLabelText(/Reason for/), { target: { value: "Reviewed the ledger lines." } });
-    fireEvent.submit(screen.getByLabelText(/Reason for/).closest("form")!);
+    const approve = await screen.findByRole("button", { name: "Approve" });
+    approve.focus();
+    fireEvent.click(approve);
     const status = await screen.findByRole("status");
     expect(status).toHaveTextContent(/Payout approved/);
-    await waitFor(() => expect(status).toHaveFocus());
+    expect(status).not.toHaveFocus();
   });
 });
 

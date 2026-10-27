@@ -278,7 +278,7 @@ describe("the header", () => {
     await expectNoViolations(container);
   });
 
-  it("says a complete draft is ready, and Activate goes to the server with its reason and version", async () => {
+  it("says a complete draft is ready, and Activate goes to the server with a recorded reason and its version", async () => {
     const d = draft(COMPLETE);
     const calls = mockApi(
       routes({
@@ -296,12 +296,13 @@ describe("the header", () => {
     const activate = await screen.findByRole("button", { name: "Activate" });
     expect(activate).toBeEnabled();
     fireEvent.click(activate);
-    fireEvent.change(screen.getByLabelText(/Reason for/), { target: { value: "Profile reviewed and complete" } });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(screen.queryByLabelText(/reason for/i)).not.toBeInTheDocument();
+    const ask = screen.queryByRole("group", { name: /^Confirm / });
+    if (ask) fireEvent.click(within(ask).getAllByRole("button")[0]);
     await screen.findByText("Partner activated.");
     expect(calls.find((c) => c.key === `POST /api/v1/admin/partners/${ID}/status`)!.body).toEqual({
       status: "active",
-      reason: "Profile reviewed and complete",
+      reason: "Activate - Super Admin console",
       expected_version: 3,
     });
   });
@@ -671,12 +672,11 @@ describe("Commission", () => {
     await openTab("Commission");
     expect(await screen.findByText(/In force now: 15% \(partner\)/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("New rate (%)"), { target: { value: "17.5" } });
-    fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: "Agreed a better rate" } });
     fireEvent.click(screen.getByRole("button", { name: "Assign rate" }));
     await screen.findByText("Commission rate assigned.");
     expect(calls.find((c) => c.key.endsWith("/commission") && c.key.startsWith("POST"))!.body).toEqual({
       rate_bp: 1750,
-      reason: "Agreed a better rate",
+      reason: "Assign commission rate - Super Admin console",
       expected_version: 2,
     });
   });
@@ -687,7 +687,6 @@ describe("Commission", () => {
     await openTab("Commission");
     await screen.findByText(/In force now/);
     fireEvent.change(screen.getByLabelText("New rate (%)"), { target: { value: "20" } });
-    fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: "Agreed a better rate" } });
     fireEvent.click(screen.getByRole("button", { name: "Assign rate" }));
     expect(await screen.findByText(/was at version 3, not 2/)).toBeInTheDocument();
   });

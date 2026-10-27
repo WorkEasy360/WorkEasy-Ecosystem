@@ -5,7 +5,7 @@ import Link from "next/link";
 import { adminApi, type CatalogProduct } from "@/lib/api/controlPlane";
 import { adminConsoleApi, type PlatformSettings, type StaffRoleRow } from "@/lib/api/adminConsole";
 import { can, useAdmin } from "./ControlShell";
-import { LoadGate, MoreButton, ReasonAction, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
+import { LoadGate, MoreButton, ReasonAction, Status, Table, autoReason, money, useAction, useLoad, usePaged, when } from "./ui";
 import cp from "./ControlPlane.module.css";
 
 /**
@@ -321,10 +321,8 @@ export function StaffRolesPanel() {
   const manage = can(permissions, "platform.staff_security.manage");
   const emailId = useId();
   const roleId = useId();
-  const reasonId = useId();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("SUPPORT_ADMIN");
-  const [reason, setReason] = useState("");
 
   return (
     <section className={cp.stack} aria-labelledby={`${roleId}-title`}>
@@ -369,7 +367,7 @@ export function StaffRolesPanel() {
           className={`w360-card ${cp.card} ${cp.form}`}
           onSubmit={(e) => {
             e.preventDefault();
-            void act(() => adminConsoleApi.grantRole({ email: email.trim(), role, reason: reason.trim() }), "Role granted.");
+            void act(() => adminConsoleApi.grantRole({ email: email.trim(), role, reason: autoReason("Grant role") }), "Role granted.");
           }}
         >
           <h3 className={cp.cardTitle}>Grant a role</h3>
@@ -392,14 +390,8 @@ export function StaffRolesPanel() {
               <option value="READ_ONLY_ADMIN">Read-only Admin</option>
             </select>
           </div>
-          <div className={cp.field}>
-            <label className="w360-label" htmlFor={reasonId}>
-              Reason
-            </label>
-            <input id={reasonId} className="w360-input" required minLength={10} value={reason} onChange={(e) => setReason(e.target.value)} />
-          </div>
           <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !email.trim() || reason.trim().length < 10}>
+            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !email.trim()}>
               Grant role
             </button>
           </div>

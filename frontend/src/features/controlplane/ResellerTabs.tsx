@@ -19,7 +19,7 @@ import { PayoutRowView } from "./AdminMoney";
 import { MembersSection } from "./PartnerMembers";
 import { Section } from "./PartnerSection";
 import { TAB_LABELS, type TabKey, type TabProps } from "./partnerTabs";
-import { LoadGate, MoreButton, ReasonAction, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
+import { LoadGate, MoreButton, ReasonAction, Status, Table, autoReason, money, useAction, useLoad, usePaged, when } from "./ui";
 import { formatBasisPoints, toBasisPoints, toMinor } from "./amounts";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
@@ -814,11 +814,9 @@ function CommissionSection({
 }) {
   const [state] = useLoad(() => partnerConsoleApi.commission(partnerId), [partnerId, rev]);
   const rateId = useId();
-  const reasonId = useId();
   const scopeId = useId();
   const fromId = useId();
   const [rate, setRate] = useState("");
-  const [reason, setReason] = useState("");
   const [scope, setScope] = useState("");
   const [from, setFrom] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
@@ -867,7 +865,7 @@ function CommissionSection({
                     () =>
                       partnerConsoleApi.assignCommission(partnerId, {
                         rate_bp: bp,
-                        reason: reason.trim(),
+                        reason: autoReason("Assign commission rate"),
                         expected_version: d.live_versions[scope] ?? 0,
                         product_code: scope || undefined,
                         effective_from: from ? new Date(from).toISOString() : undefined,
@@ -903,19 +901,13 @@ function CommissionSection({
                   </label>
                   <input id={fromId} className="w360-input" type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
                 </div>
-                <div className={styles.field}>
-                  <label className="w360-label" htmlFor={reasonId}>
-                    Reason (recorded in the audit log)
-                  </label>
-                  <input id={reasonId} className="w360-input" required minLength={10} maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} />
-                </div>
                 {problem && (
                   <p role="alert" className="w360-error-text">
                     {problem}
                   </p>
                 )}
                 <div>
-                  <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !rate.trim() || reason.trim().length < 10}>
+                  <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !rate.trim()}>
                     Assign rate
                   </button>
                 </div>

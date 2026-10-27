@@ -113,6 +113,7 @@ function SubPartnerRowView({
                   label="Suspend"
                   confirmLabel="Suspend"
                   danger
+                  where="partner portal"
                   busy={busy}
                   onConfirm={(reason) => void act(() => panelApi.subPartnerAction(partnerId, row.id, "suspend", reason), `${row.name} is suspended.`)}
                 />
@@ -663,8 +664,8 @@ function MemberLine({
               label="Remove"
               confirmLabel="Remove"
               danger
+              where="partner portal"
               busy={busy}
-              minLength={3}
               onConfirm={() => void act(() => panelApi.removeMember(partnerId, m.id), `${m.email} was removed.`)}
             />
           </div>

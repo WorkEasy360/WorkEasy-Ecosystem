@@ -14,7 +14,7 @@ import {
 } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
 import { ExperienceLabels, PrimaryType, TypeBadges } from "./labels";
-import { LoadGate, MoreButton, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
+import { LoadGate, MoreButton, Status, Table, autoReason, money, useAction, useLoad, usePaged, when } from "./ui";
 import { NavIcon } from "@/components/sidebar/icons";
 import { usePortals } from "@/lib/portalContext";
 import { portalHref } from "@/lib/portals";
@@ -442,8 +442,6 @@ function Copyable({ value, shown, what }: { value: string; shown?: string; what:
   );
 }
 
-type Prompt = null | "guest";
-
 /** The reason recorded when the switch changes a partner's status. The switch
  * asks nothing (the owner's call, 2026-10-27); the server still requires a
  * reason, so the switch states where the action came from, and the audit entry
@@ -470,9 +468,6 @@ function PartnerRow({
   onGuest: (reason: string) => void;
 }) {
   const portals = usePortals();
-  const reasonId = useId();
-  const [prompt, setPrompt] = useState<Prompt>(null);
-  const [reason, setReason] = useState("");
   const href = `/admin/partners/${r.id}`;
   const setupHref = `/admin/partners/${r.id}/profile`;
   const panelPath = `/partner/${r.id}`;
@@ -495,12 +490,6 @@ function PartnerRow({
               ? "Activate this partner"
               : "Reactivate this partner";
   const complete = r.profile_completion.complete;
-  const minLength = 3;
-
-  function open(next: Prompt) {
-    setPrompt((current) => (current === next ? null : next));
-    setReason("");
-  }
 
   return (
     <>
@@ -538,10 +527,9 @@ function PartnerRow({
                 type="button"
                 className={local.iconButton}
                 aria-label={`Guest login to ${r.display_name}`}
-                aria-expanded={prompt === "guest"}
                 title="Guest login (read-only)"
                 disabled={busy}
-                onClick={() => open("guest")}
+                onClick={() => onGuest(autoReason("Guest login", "All Partners"))}
               >
                 <NavIcon name="login" />
               </button>
@@ -586,47 +574,6 @@ function PartnerRow({
         <td>{r.administrator?.last_login_at ? when(r.administrator.last_login_at) : <span className={styles.muted}>Never</span>}</td>
         <td>{when(r.created_at)}</td>
       </tr>
-      {prompt !== null && (
-        <tr className={local.promptRow}>
-          <td colSpan={13}>
-            <form
-              className={local.promptForm}
-              onSubmit={(e) => {
-                e.preventDefault();
-                const text = reason.trim();
-                setPrompt(null);
-                setReason("");
-                onGuest(text);
-              }}
-            >
-              <label className="w360-label" htmlFor={reasonId}>
-                {`Why are you opening the portal of ${r.display_name}? (recorded, and shown in the partner's activity)`}
-              </label>
-              <input
-                id={reasonId}
-                className="w360-input"
-                autoFocus
-                required
-                minLength={minLength}
-                maxLength={200}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-              />
-              <p className={styles.muted}>
-                Read-only: you see the portal as the partner does but cannot change anything. It ends after 30 minutes.
-              </p>
-              <div className={styles.row}>
-                <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || reason.trim().length < minLength}>
-                  Open guest view
-                </button>
-                <button type="button" className="w360-btn w360-btn-secondary" onClick={() => open(null)}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </td>
-        </tr>
-      )}
     </>
   );
 }

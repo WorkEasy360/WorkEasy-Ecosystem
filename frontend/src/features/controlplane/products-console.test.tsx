@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import axe, { type Result } from "axe-core";
 
 import { ProductsConsole } from "./AdminMoney";
@@ -211,18 +211,19 @@ describe("the products console", () => {
     });
   });
 
-  it("suspending needs a reason, and resuming needs none", async () => {
+  it("suspending records a reason without asking, and resuming needs none", async () => {
     const calls = mockApi({
       [`GET ${ADMIN}/products/console`]: [{ status: 200, body: console_() }],
       [`POST ${ADMIN}/products/crm/integration/status`]: [{ status: 200, body: { ...product().integration, status: "suspended" } }],
     });
     renderConsole(INTEGRATION);
     fireEvent.click(await screen.findByRole("button", { name: "Suspend" }));
-    fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: "planned maintenance window" } });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(screen.queryByLabelText(/reason for/i)).not.toBeInTheDocument();
+    const ask = screen.queryByRole("group", { name: /^Confirm / });
+    if (ask) fireEvent.click(within(ask).getAllByRole("button")[0]);
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${ADMIN}/products/crm/integration/status`)).toBe(true));
     const post = calls.find((c) => c.key === `POST ${ADMIN}/products/crm/integration/status`)!;
-    expect(post.body).toEqual({ status: "suspended", reason: "planned maintenance window" });
+    expect(post.body).toEqual({ status: "suspended", reason: "Suspend - Super Admin console" });
   });
 
   it("check now probes this product's own code and shows the result without a page reload", async () => {

@@ -820,10 +820,11 @@ describe("Overview", () => {
     expect(screen.getByText("Ready")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "Activate" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Activate" }));
-    fireEvent.change(screen.getByLabelText(/Reason for/), { target: { value: "Setup reviewed and complete" } });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(screen.queryByLabelText(/reason for/i)).not.toBeInTheDocument();
+    const ask = screen.queryByRole("group", { name: /^Confirm / });
+    if (ask) fireEvent.click(within(ask).getAllByRole("button")[0]);
     await screen.findByText("Partner activated.");
-    expect(calls.find((c) => c.key === `POST ${BASE}/status`)!.body).toEqual({ status: "active", reason: "Setup reviewed and complete", expected_version: 3 });
+    expect(calls.find((c) => c.key === `POST ${BASE}/status`)!.body).toEqual({ status: "active", reason: "Activate - Super Admin console", expected_version: 3 });
   });
 
   it("does not point staff who may not manage partners at an Activate button or an editor they do not have", async () => {

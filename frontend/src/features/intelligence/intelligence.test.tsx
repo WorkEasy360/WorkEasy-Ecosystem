@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import axe, { type Result } from "axe-core";
 import { AiSettings } from "./AiSettings";
 import { AnalyticsShell, windowFor } from "./AnalyticsShell";
@@ -285,7 +285,7 @@ describe("Super Admin AI", () => {
     await expectNoViolations(container);
   });
 
-  it("asks for an audited reason before switching a provider off", async () => {
+  it("switches a provider off, recording an audited reason without asking", async () => {
     const calls = mockApi({
       ["GET /api/v1/admin/ai/registry"]: [REGISTRY],
       ["POST /api/v1/admin/ai/providers/anthropic/status"]: [REGISTRY],
@@ -296,12 +296,13 @@ describe("Super Admin AI", () => {
       </AsStaff>,
     );
     fireEvent.click(await screen.findByRole("button", { name: "Disable Anthropic" }));
-    fireEvent.change(screen.getByLabelText(/reason for/i), { target: { value: "Vendor incident INC-42" } });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(screen.queryByLabelText(/reason for/i)).not.toBeInTheDocument();
+    const ask = screen.queryByRole("group", { name: /^Confirm / });
+    if (ask) fireEvent.click(within(ask).getAllByRole("button")[0]);
     await waitFor(() =>
       expect(calls.find((c) => c.key === "POST /api/v1/admin/ai/providers/anthropic/status")?.body).toEqual({
         status: "disabled",
-        reason: "Vendor incident INC-42",
+        reason: "Disable Anthropic - Super Admin console",
       }),
     );
   });

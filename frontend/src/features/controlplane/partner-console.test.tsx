@@ -340,7 +340,7 @@ describe("All Partners", () => {
     expect(await within(table).findByRole("button", { name: "Copied email of Acme Partners" })).toBeInTheDocument();
   });
 
-  it("guest login asks why, opens the partner's portal read-only and says so", async () => {
+  it("guest login opens the partner's portal read-only at once, recording where it came from", async () => {
     const assign = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign, origin: "http://localhost:3000" });
     const calls = mockApi(
@@ -353,12 +353,9 @@ describe("All Partners", () => {
     renderList();
     const table = await screen.findByRole("table", { name: "Partners" });
     fireEvent.click(within(table).getByRole("button", { name: "Guest login to Acme Partners" }));
-    const why = within(table).getByLabelText(/Why are you opening the portal of Acme Partners/);
-    expect(within(table).getByRole("button", { name: "Open guest view" })).toBeDisabled();
-    fireEvent.change(why, { target: { value: "Support ticket 42" } });
-    fireEvent.click(within(table).getByRole("button", { name: "Open guest view" }));
+    expect(within(table).queryByLabelText(/Why are you opening/)).not.toBeInTheDocument();
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/partner/p1"));
-    expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p1/guest-view")!.body).toEqual({ reason: "Support ticket 42" });
+    expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p1/guest-view")!.body).toEqual({ reason: "Guest login - All Partners" });
     vi.unstubAllGlobals();
   });
 

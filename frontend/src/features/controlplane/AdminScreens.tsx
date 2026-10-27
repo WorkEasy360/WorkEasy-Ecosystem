@@ -7,7 +7,7 @@ import { adminConsoleApi } from "@/lib/api/adminConsole";
 import { can, useAdmin } from "./ControlShell";
 import { CustomerBilling } from "./AdminBilling";
 import { StaffRolesPanel } from "./AdminCommerce";
-import { LoadGate, MoreButton, ReasonAction, Status, Table, useAction, useLoad, usePaged, when } from "./ui";
+import { LoadGate, MoreButton, ReasonAction, Status, Table, autoReason, useAction, useLoad, usePaged, when } from "./ui";
 import styles from "./ControlPlane.module.css";
 
 // --- customers --------------------------------------------------------------------
@@ -252,11 +252,9 @@ function OverridePanel({
   const kindId = useId();
   const codeId = useId();
   const daysId = useId();
-  const reasonId = useId();
   const [kind, setKind] = useState<"product_code" | "feature_key">("product_code");
   const [code, setCode] = useState("");
   const [days, setDays] = useState(30);
-  const [reason, setReason] = useState("");
 
   return (
     <div className={styles.stack}>
@@ -291,9 +289,8 @@ function OverridePanel({
             e.preventDefault();
             const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
             void act(async () => {
-              await adminApi.grantOverride(organizationId, { [kind]: code.trim(), reason: reason.trim(), expires_at: expires });
+              await adminApi.grantOverride(organizationId, { [kind]: code.trim(), reason: autoReason("Grant override"), expires_at: expires });
               setCode("");
-              setReason("");
             }, "Override granted; access was recomputed.");
           }}
         >
@@ -324,14 +321,8 @@ function OverridePanel({
               ))}
             </select>
           </div>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={reasonId}>
-              Reason (recorded in the audit log)
-            </label>
-            <input id={reasonId} className="w360-input" required minLength={10} maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} />
-          </div>
           <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !code.trim() || reason.trim().length < 10}>
+            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !code.trim()}>
               Grant override
             </button>
           </div>
@@ -551,11 +542,9 @@ export function SecurityScreen() {
   const manage = can(permissions, "platform.staff_security.manage");
   const emailId = useId();
   const permId = useId();
-  const reasonId = useId();
   const expiresId = useId();
   const [email, setEmail] = useState("");
   const [permission, setPermission] = useState("platform.staff_customer.view");
-  const [reason, setReason] = useState("");
   // Optional: the last moment of the chosen (local) day. Empty means no expiry.
   const [expiresOn, setExpiresOn] = useState("");
   const [today] = useState(() => new Date().toISOString().slice(0, 10));
@@ -597,7 +586,7 @@ export function SecurityScreen() {
             e.preventDefault();
             const expiresAt = expiresOn ? new Date(`${expiresOn}T23:59:59`).toISOString() : undefined;
             void act(
-              () => adminApi.grantPermission(email.trim(), permission.trim(), reason.trim(), expiresAt),
+              () => adminApi.grantPermission(email.trim(), permission.trim(), autoReason("Grant permission"), expiresAt),
               "Permission granted.",
             );
           }}
@@ -616,19 +605,13 @@ export function SecurityScreen() {
             <input id={permId} className="w360-input" required value={permission} onChange={(e) => setPermission(e.target.value)} />
           </div>
           <div className={styles.field}>
-            <label className="w360-label" htmlFor={reasonId}>
-              Reason (recorded)
-            </label>
-            <input id={reasonId} className="w360-input" required minLength={10} maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} />
-          </div>
-          <div className={styles.field}>
             <label className="w360-label" htmlFor={expiresId}>
               Expires on (optional)
             </label>
             <input id={expiresId} className="w360-input" type="date" min={today} value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
           </div>
           <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || reason.trim().length < 10}>
+            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
               Grant
             </button>
           </div>
