@@ -485,8 +485,24 @@ def notifications_read_view(request: HttpRequest, ctx: TenantContext) -> JsonRes
     )
 
 
-@partner_view(["GET"])
+@partner_view(["GET", "POST"])
 def support_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """GET: where support is. POST (ADR-053): send a request to it."""
+    if request.method == "POST":
+        blocked = limited(request, "partner_support", user=request.user)
+        if blocked is not None:
+            return blocked
+        body = _body(request)
+        return JsonResponse(
+            partner_help.send_support_request(
+                ctx,
+                subject=body.get("subject"),
+                message=body.get("message"),
+                priority=body.get("priority", "normal"),
+                workspace=body.get("workspace", ""),
+            ),
+            status=201,
+        )
     return JsonResponse(partner_help.support(ctx))
 
 

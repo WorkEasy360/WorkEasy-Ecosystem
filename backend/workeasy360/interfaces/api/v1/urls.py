@@ -20,7 +20,9 @@ from workeasy360.interfaces.api.v1 import (
     account_views,
     admin_catalog_views,
     admin_console_views,
+    admin_product_manager_views,
     admin_product_views,
+    admin_programme_views,
     admin_views,
     auth_views,
     commercial_views,
@@ -116,6 +118,21 @@ urlpatterns = [
         name="public-catalog-product",
     ),
     path("public/signup", public_site_views.signup_view, name="public-signup"),
+    path(
+        "public/storefront/<slug:slug>",
+        public_views.storefront_view,
+        name="public-storefront",
+    ),
+    path(
+        "public/storefront/<slug:slug>/logo",
+        public_views.storefront_logo_view,
+        name="public-storefront-logo",
+    ),
+    path(
+        "public/products/<slug:slug>/media/<uuid:media_id>",
+        public_site_views.product_media_view,
+        name="public-product-media",
+    ),
     path(
         "public/signup/verify",
         public_site_views.verify_email_view,
@@ -819,6 +836,43 @@ _admin = [
     path(
         "admin/products/console", admin_product_views.console_view, name="admin-products"
     ),
+    # ADR-051: the Product Manager - add (wizard), one product, its lifecycle,
+    # its listing images and its activity. Edits reuse admin/catalog/products.
+    path(
+        "admin/products",
+        admin_product_manager_views.create_view,
+        name="admin-product-create",
+    ),
+    path(
+        "admin/products/<uuid:product_id>",
+        admin_product_manager_views.detail_view,
+        name="admin-product-detail",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/activity",
+        admin_product_manager_views.activity_view,
+        name="admin-product-activity",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/media",
+        admin_product_manager_views.media_upload_view,
+        name="admin-product-media",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/media/reorder",
+        admin_product_manager_views.media_reorder_view,
+        name="admin-product-media-reorder",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/media/<uuid:media_id>",
+        admin_product_manager_views.media_item_view,
+        name="admin-product-media-item",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/<str:action>",
+        admin_product_manager_views.lifecycle_view,
+        name="admin-product-lifecycle",
+    ),
     path(
         "admin/products/<str:product_code>/integration",
         admin_product_views.integration_view,
@@ -1152,6 +1206,17 @@ _admin = [
         admin_views.partner_experience_view,
         name="admin-partner-experience",
     ),
+    path("admin/margins", admin_programme_views.margins_view, name="admin-margins"),
+    path(
+        "admin/margins/end",
+        admin_programme_views.margin_end_view,
+        name="admin-margin-end",
+    ),
+    path(
+        "admin/partner-programme/fees",
+        admin_programme_views.program_fees_view,
+        name="admin-program-fees",
+    ),
     path(
         "admin/partner-upgrades",
         admin_views.partner_upgrade_queue_view,
@@ -1433,6 +1498,26 @@ _partner = [
         "partner/<uuid:partner_id>/referral-codes/<uuid:code_id>/disable",
         partner_views.referral_code_disable_view,
         name="partner-referral-code-disable",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/orders/quote",
+        partner_views.customer_order_quote_view,
+        name="partner-customer-order-quote",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/orders",
+        partner_views.customer_order_view,
+        name="partner-customer-order",
+    ),
+    path(
+        "partner/<uuid:partner_id>/campaigns",
+        partner_views.campaigns_view,
+        name="partner-campaigns",
+    ),
+    path(
+        "partner/<uuid:partner_id>/campaigns/<uuid:campaign_id>/status",
+        partner_views.campaign_status_view,
+        name="partner-campaign-status",
     ),
     path(
         "partner/<uuid:partner_id>/branding",

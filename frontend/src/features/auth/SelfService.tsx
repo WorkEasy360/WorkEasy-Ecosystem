@@ -256,8 +256,10 @@ async function finishSignIn(router: ReturnType<typeof usePortalRouter>, organiza
   } catch {
     referral = null;
   }
-  if (referral && organizationId) {
-    await publicApi.convertReferral(referral, organizationId).catch(() => undefined);
+  // Asked even with no token in this tab: the verification link usually opens
+  // in a new tab, and the server then uses the referral cookie (ADR-052).
+  if (organizationId) {
+    await publicApi.convertReferral(referral ?? "", organizationId).catch(() => undefined);
   }
   router.replace("/dashboard");
 }

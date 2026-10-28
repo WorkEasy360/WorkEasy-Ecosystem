@@ -252,6 +252,15 @@ class PublicAvailability(_StrEnum):
         return self in (PublicAvailability.AVAILABLE, PublicAvailability.COMING_SOON)
 
 
+class ProductMediaKind(_StrEnum):
+    """An image a product's store listing shows (ADR-051). One logo and one
+    banner per product; screenshots are an ordered list."""
+
+    LOGO = "logo"
+    BANNER = "banner"
+    SCREENSHOT = "screenshot"
+
+
 class LicensingMode(_StrEnum):
     """How a product's value is consumed, and therefore how it is licensed.
 

@@ -35,6 +35,7 @@ from typing import Any, Final
 
 from django.utils import timezone
 
+from workeasy360.commercial.catalog import selectors as catalog_selectors
 from workeasy360.commercial.commissions import selectors as commission_selectors
 from workeasy360.commercial.controlplane import partner_network, partner_portal
 from workeasy360.commercial.controlplane.partner_portal import NOT_IMPLEMENTED
@@ -98,6 +99,41 @@ def without_money(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{**row, "commission_minor": None, "currency": ""} for row in rows]
 
 
+def _by_currency(cells: dict[str, dict[str, int]]) -> list[dict[str, Any]]:
+    """``{currency: {sales_minor, commission_minor, sales}}`` as sorted rows."""
+    return [{"currency": c, **cells[c]} for c in sorted(cells)]
+
+
+def _merge(
+    a: list[dict[str, Any]], b: list[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
+    totals: dict[str, dict[str, int]] = {}
+    for row in [*a, *(b or [])]:
+        cell = totals.setdefault(
+            row["currency"], {"sales_minor": 0, "commission_minor": 0, "sales": 0}
+        )
+        for key in cell:
+            cell[key] += row[key]
+    return _by_currency(totals)
+
+
+def _top_products(
+    earnings: dict[str, Any], products: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The products the partner's referrals sold most, by sale count."""
+    names = {p["code"]: p["name"] for p in products}
+    rows = [
+        {
+            "product_code": code,
+            "product_name": names.get(code, code),
+            "sales": sum(v["sales"] for v in cells.values()),
+            "earnings": _by_currency(cells),
+        }
+        for code, cells in earnings["by_product"].items()
+    ]
+    return sorted(rows, key=lambda r: (-r["sales"], r["product_name"]))[:5]
+
+
 # --- the affiliate dashboard ----------------------------------------------------------------
 
 
@@ -127,22 +163,36 @@ def affiliate_overview(
 
     activity = commission_selectors.referral_activity(partner_id, start, end)
     codes = commission_selectors.referral_codes(partner_id)
-    clicks = sum(v["clicks"] for v in activity["by_code"].values())
-    conversions = sum(v["conversions"] for v in activity["by_code"].values())
+    totals = activity["totals"]
+    clicks, conversions = totals["clicks"], totals["conversions"]
+    money_visible = COMMISSION_VIEW in permissions
+    earnings = (
+        commission_selectors.referral_earnings(partner_id, start, end)
+        if money_visible
+        else None
+    )
+    products = catalog_selectors.promotable_products(at=now)
+    names = catalog_selectors.product_names(
+        sorted({c["product_code"] for c in codes if c["product_code"]})
+    )
+    zero = {"clicks": 0, "visitors": 0, "registrations": 0, "conversions": 0}
 
     links = []
     for code in codes:
-        counts = activity["by_code"].get(code["id"], {"clicks": 0, "conversions": 0})
+        counts = activity["by_code"].get(code["id"], zero)
         links.append(
             {
                 **code,
-                "campaign": code["label"] or CAMPAIGN_PRESETS[0],
+                "campaign": code["campaign_name"] or code["label"] or CAMPAIGN_PRESETS[0],
+                "product_name": names.get(code["product_code"]) or None,
                 # A link that no longer takes visitors has no address to copy.
                 "url": partner_network.referral_url(code["code"])
                 if code["status"] == "active"
                 else None,
-                "clicks": counts["clicks"],
-                "conversions": counts["conversions"],
+                **{k: counts[k] for k in zero},
+                "earnings": _by_currency(earnings["by_code"].get(code["id"], {}))
+                if earnings is not None
+                else None,
             }
         )
     primary = next((link for link in links if link["status"] == "active"), None)
@@ -151,11 +201,19 @@ def affiliate_overview(
     for link in links:
         entry = campaigns.setdefault(
             link["campaign"],
-            {"campaign": link["campaign"], "links": 0, "clicks": 0, "conversions": 0},
+            {
+                "campaign": link["campaign"],
+                "campaign_id": link["campaign_id"],
+                "links": 0,
+                **zero,
+                "earnings": [] if earnings is not None else None,
+            },
         )
         entry["links"] += 1
-        entry["clicks"] += link["clicks"]
-        entry["conversions"] += link["conversions"]
+        for k in zero:
+            entry[k] += link[k]
+        if earnings is not None:
+            entry["earnings"] = _merge(entry["earnings"], link["earnings"])
 
     out: dict[str, Any] = {
         "partner": {
@@ -167,8 +225,9 @@ def affiliate_overview(
         "range": {"key": key, "from": start.isoformat(), "to": end.isoformat()},
         "kpis": {
             "clicks": clicks,
-            # Not recorded as a step of its own; see the registry.
-            "signups": None,
+            "unique_visitors": totals["visitors"],
+            # ADR-053: an account created by a visitor who followed a link.
+            "signups": totals["registrations"],
             "conversions": conversions,
             "conversion_rate_bp": rate_bp(conversions, clicks),
         },
@@ -178,13 +237,16 @@ def affiliate_overview(
             {**c, "conversion_rate_bp": rate_bp(c["conversions"], c["clicks"])}
             for c in sorted(campaigns.values(), key=lambda c: c["campaign"].lower())
         ],
+        "campaign_list": commission_selectors.campaigns(partner_id),
         "campaign_presets": list(CAMPAIGN_PRESETS),
+        "products": products,
+        "top_products": _top_products(earnings, products)
+        if earnings is not None
+        else None,
         "series": activity["by_day"],
         "money": None,
         "recent": {"conversions": [], "payouts": None},
         "not_implemented": {
-            "affiliate_signups": NOT_IMPLEMENTED["affiliate_signups"],
-            "marketing_materials": NOT_IMPLEMENTED["marketing_materials"],
             "promo_discount_codes": NOT_IMPLEMENTED["promo_discount_codes"],
         },
     }
@@ -199,6 +261,12 @@ def affiliate_overview(
         series = commission_selectors.partner_sales_by_day(partner_id, start, end)
         balances = commission_selectors.partner_money(partner_id, now)
         out["money"] = {
+            "sales": [
+                {"currency": c, "amount_minor": v["sales_minor"], "sales": v["sales"]}
+                for c, v in sorted(earnings["totals"].items())
+            ]
+            if earnings is not None
+            else [],
             "earned": _commission_by_currency(series),
             "pending": _amounts(balances, "pending_minor"),
             "available": _amounts(balances, "available_minor"),
@@ -284,28 +352,27 @@ def reports(
         }
     if REFERRAL_VIEW in permissions:
         activity = commission_selectors.referral_activity(partner_id, start, end)
-        clicks = sum(v["clicks"] for v in activity["by_code"].values())
-        conversions = sum(v["conversions"] for v in activity["by_code"].values())
+        totals = activity["totals"]
+        zero = {"clicks": 0, "visitors": 0, "registrations": 0, "conversions": 0}
         by_campaign: dict[str, dict[str, Any]] = {}
         for code in commission_selectors.referral_codes(partner_id):
-            counts = activity["by_code"].get(code["id"], {"clicks": 0, "conversions": 0})
-            name = code["label"] or CAMPAIGN_PRESETS[0]
-            entry = by_campaign.setdefault(
-                name, {"campaign": name, "clicks": 0, "conversions": 0}
-            )
-            entry["clicks"] += counts["clicks"]
-            entry["conversions"] += counts["conversions"]
+            counts = activity["by_code"].get(code["id"], zero)
+            name = code["campaign_name"] or code["label"] or CAMPAIGN_PRESETS[0]
+            entry = by_campaign.setdefault(name, {"campaign": name, **zero})
+            for k in zero:
+                entry[k] += counts[k]
         out["referrals"] = {
-            "clicks": clicks,
-            "conversions": conversions,
-            "conversion_rate_bp": rate_bp(conversions, clicks),
+            "clicks": totals["clicks"],
+            "unique_visitors": totals["visitors"],
+            "registrations": totals["registrations"],
+            "conversions": totals["conversions"],
+            "conversion_rate_bp": rate_bp(totals["conversions"], totals["clicks"]),
             "by_campaign": [
                 {**c, "conversion_rate_bp": rate_bp(c["conversions"], c["clicks"])}
                 for c in sorted(by_campaign.values(), key=lambda c: c["campaign"].lower())
             ],
             "series": activity["by_day"],
         }
-        out["not_implemented"]["affiliate_signups"] = NOT_IMPLEMENTED["affiliate_signups"]
     return out
 
 
@@ -321,8 +388,18 @@ def white_label_status(ctx: TenantContext) -> dict[str, Any]:
     permissions = authz.effective_permissions(ctx)
     partner_id = ctx.partner_id
     assert partner_id is not None
-    out: dict[str, Any] = {"brand": None, "domain": None}
+    out: dict[str, Any] = {"brand": None, "domain": None, "storefront": None}
     if BRANDING_VIEW in permissions:
+        # ADR-053: the partner's branded Store - live once the partner holds
+        # the white-label pair and the right to sell, with a brand set up.
+        from workeasy360.commercial.partners import storefront
+        from workeasy360.platform.identity import portals as portal_links
+
+        row = partner_selectors.partner_row(partner_id)
+        out["storefront"] = {
+            "url": f"{portal_links.app_url()}/store/{row.code}",
+            "live": storefront.storefront_partner(row.code) is not None,
+        }
         brand = partner_selectors.brand_for(partner_id)
         state = (
             "not_started"

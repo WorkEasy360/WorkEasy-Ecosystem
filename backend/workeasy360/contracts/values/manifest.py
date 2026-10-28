@@ -368,7 +368,12 @@ def parse_manifest(payload: Any, *, allow_insecure_urls: bool = False) -> Produc
             field=unknown[0],
         )
 
+    # ``redirect_uris`` is judged once the sign-in mode is known: a product that
+    # does not sign people in with Workeasy360 (``local_only``) has nowhere to
+    # receive a code, and the authorize endpoint refuses it anyway (ADR-051).
     for name in _REQUIRED_FIELDS:
+        if name == "redirect_uris" and _declares_local_only(payload):
+            continue
         if payload.get(name) in (None, "", [], ()):
             raise ManifestError(f"Manifest field {name!r} is required.", field=name)
 
@@ -392,7 +397,7 @@ def parse_manifest(payload: Any, *, allow_insecure_urls: bool = False) -> Produc
     )
 
     redirect_uris = _validate_redirect_uris(
-        payload["redirect_uris"],
+        payload.get("redirect_uris") or [],
         field="redirect_uris",
         allow_insecure=allow_insecure_urls,
     )
@@ -479,6 +484,16 @@ def parse_manifest(payload: Any, *, allow_insecure_urls: bool = False) -> Produc
 
 
 # --- field validators -----------------------------------------------------
+
+
+def _declares_local_only(payload: dict[str, Any]) -> bool:
+    """Whether the manifest says the product does not use Workeasy360 sign-in.
+    Only a manifest version that has ``sign_in_mode`` can say so; an older one
+    is ``sso_only`` by definition and must name its redirect URIs."""
+    return (
+        payload.get("manifest_version") in _VERSIONS_WITH_SIGN_IN
+        and payload.get("sign_in_mode") == ProductSignInMode.LOCAL_ONLY.value
+    )
 
 
 def _validate_sign_in(
@@ -656,6 +671,14 @@ def _validate_redirect_uris(
             raise ManifestError(f"Duplicate entry in {field}: {uri}.", field=field)
         validated.append(uri)
     return tuple(validated)
+
+
+def validate_browser_url(value: str, *, field: str) -> str:
+    """The registry's URL gate for any other address a browser is sent to
+    (ADR-051: a product's application, documentation and support links): https
+    only, in every environment, and never an internal or metadata host. Raises
+    :class:`ManifestError`."""
+    return _validate_url(value, field=field, allow_insecure=False)
 
 
 def _validate_url(

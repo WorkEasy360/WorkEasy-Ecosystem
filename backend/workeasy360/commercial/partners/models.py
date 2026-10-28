@@ -1121,6 +1121,14 @@ class PartnerUpgradeRequest(models.Model):
     #: number). A reference only: no amount is stored or charged here.
     commercial_reference = models.CharField(max_length=120, blank=True, default="")
     correlation_id = models.UUIDField(null=True, blank=True)
+    #: ADR-053: the programme's set-up fee for the target, fixed when the
+    #: request opened (a later fee change does not move it). ``None`` is "no
+    #: fee". When there is one, approval needs the payment's reference, and
+    #: ``fee_settled_at`` records when staff confirmed it - money is collected
+    #: outside the platform (an offline invoice), never charged here.
+    fee_amount_minor = models.BigIntegerField(null=True, blank=True)
+    fee_currency = models.CharField(max_length=3, blank=True, default="", db_default="")
+    fee_settled_at = models.DateTimeField(null=True, blank=True)
 
     #: Optimistic token: two administrators editing one draft must not silently
     #: overwrite each other.
@@ -1179,3 +1187,38 @@ class PartnerUpgradeRequest(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.partner_id}: {self.from_experience or '-'} -> {self.to_experience} [{self.status}]"
+
+
+class PartnerProgramFee(models.Model):
+    """The set-up fee for becoming a Reseller or a White-label partner
+    (ADR-053, the owner's "setup fee if configured"). One row per target
+    experience, set by Super Admin; no row, or a zero amount, is "no fee".
+
+    A request snapshots the fee when it opens, so changing it here never moves
+    a request already in progress. Settlement is offline: staff record the
+    payment's reference when approving.
+    """
+
+    experience = models.CharField(max_length=16, unique=True)
+    amount_minor = models.BigIntegerField()
+    currency = models.CharField(max_length=3, choices=_choices(CurrencyCode))
+    updated_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "partners_program_fee"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(experience__in=["reseller", "white_label"]),
+                name="ck_program_fee_experience",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount_minor__gte=0),
+                name="ck_program_fee_not_negative",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.experience}: {self.amount_minor} {self.currency}"

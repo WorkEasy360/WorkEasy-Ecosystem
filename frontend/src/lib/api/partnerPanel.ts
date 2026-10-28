@@ -66,6 +66,8 @@ export interface Dashboard {
     transactions: { date: string; count: number }[];
   } | null;
   sub_partners: { total: number; active?: number; suspended?: number } | null;
+  /** ADR-053: the margin rule that governs this partner's sales now, if any. */
+  earning?: { model: "margin" | "commission"; discount_bp: number | null };
   recent: {
     customers: { organization_id: string; name: string; link_status: string; started_at: string }[] | null;
     commissions: { id: string; kind: string; amount_minor: number; currency: string; event_at: string }[] | null;
@@ -78,6 +80,15 @@ export interface Dashboard {
 
 /** One tracking link: a referral code, with the campaign it is filed under (its
  * label - tracking metadata only), its address and how it did in the period. */
+/** What a link, campaign or product sold and earned, per currency (ADR-053):
+ * the sale amounts the commission was computed on, and the net commission. */
+export interface Earning {
+  currency: string;
+  sales_minor: number;
+  commission_minor: number;
+  sales: number;
+}
+
 export interface AffiliateLink {
   id: string;
   code: string;
@@ -85,24 +96,72 @@ export interface AffiliateLink {
   status: string;
   created_at: string;
   campaign: string;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  /** The product (and plan) the link promotes; empty for a general link. */
+  product_code: string;
+  product_name: string | null;
+  plan_code: string;
   /** The address to share; null once the link has been switched off. */
   url: string | null;
   clicks: number;
+  visitors: number;
+  registrations: number;
   conversions: number;
+  /** Null for a role that may see referrals but not commission. */
+  earnings: Earning[] | null;
 }
 
 export interface AffiliateCampaign {
   campaign: string;
+  campaign_id: string | null;
   links: number;
   clicks: number;
+  visitors: number;
+  registrations: number;
   conversions: number;
   /** Whole basis points, rounded half up; null when the campaign had no clicks. */
   conversion_rate_bp: number | null;
+  earnings: Earning[] | null;
+}
+
+export interface CampaignRow {
+  id: string;
+  name: string;
+  status: string;
+  links: number;
+  created_at: string;
+}
+
+export interface ProductMedia {
+  id: string;
+  kind: "logo" | "banner" | "screenshot" | string;
+  width: number | null;
+  height: number | null;
+  content_type: string;
+  caption: string;
+  url: string;
+}
+
+/** A Store product an affiliate may promote, with its approved listing content. */
+export interface PromotableProduct {
+  code: string;
+  name: string;
+  slug: string;
+  tagline: string;
+  summary: string;
+  description: string;
+  category: string;
+  icon: string;
+  plans: { plan_code: string; plan_name: string }[];
+  media: ProductMedia[];
 }
 
 export interface FunnelDay {
   date: string;
   clicks: number;
+  visitors?: number;
+  registrations?: number;
   conversions: number;
 }
 
@@ -111,7 +170,12 @@ export interface AffiliateConversionRow {
   code: string;
   code_label: string;
   captured_at: string;
+  registered_at?: string | null;
   converted_at: string | null;
+  /** What the referred customer bought (product and plan codes only). */
+  products?: { product_code: string; plan_code: string }[];
+  sales_minor?: number;
+  status?: "purchased" | "signed_up";
   /** Null for a role that may see referrals but not commission. */
   commission_minor: number | null;
   currency: string;
@@ -122,8 +186,9 @@ export interface AffiliateOverview {
   range: { key: RangeKey; from: string; to: string };
   kpis: {
     clicks: number;
-    /** Not recorded as a step of its own (see `not_implemented.affiliate_signups`). */
-    signups: null;
+    unique_visitors: number;
+    /** Accounts created by visitors who followed a link (ADR-053). */
+    signups: number;
     conversions: number;
     /** Whole basis points, rounded half up; null when there were no clicks. */
     conversion_rate_bp: number | null;
@@ -131,9 +196,13 @@ export interface AffiliateOverview {
   primary_link: AffiliateLink | null;
   links: AffiliateLink[];
   campaigns: AffiliateCampaign[];
+  campaign_list: CampaignRow[];
   campaign_presets: string[];
+  products: PromotableProduct[];
+  top_products: { product_code: string; product_name: string; sales: number; earnings: Earning[] }[] | null;
   series: FunnelDay[];
   money: {
+    sales: (CurrencyAmount & { sales: number })[];
     earned: CurrencyAmount[];
     pending: CurrencyAmount[];
     available: CurrencyAmount[];
@@ -174,6 +243,8 @@ export interface PartnerReports {
   } | null;
   referrals: {
     clicks: number;
+    unique_visitors?: number;
+    registrations?: number;
     conversions: number;
     conversion_rate_bp: number | null;
     by_campaign: { campaign: string; clicks: number; conversions: number; conversion_rate_bp: number | null }[];
@@ -185,6 +256,8 @@ export interface PartnerReports {
 export interface WhiteLabelStatus {
   brand: { state: "not_started" | "in_progress" | "complete"; name: string; logo: boolean } | null;
   domain: { state: string; hostname: string } | null;
+  /** ADR-053: the partner's branded Store, at `/store/<partner>` on the customer portal. */
+  storefront?: { url: string; live: boolean } | null;
 }
 
 export interface Balance {
@@ -246,10 +319,19 @@ export interface PlanRow {
   trial_days: number;
   currency: string;
   enabled_for_sale: boolean;
+  /** ADR-053: how the partner earns on this plan - its margin (a discount off
+   * list) or a commission. */
+  earning?: { model: "margin" | "commission"; discount_bp: number | null };
   prices: {
     interval: string;
     partner_price_minor: number | null;
     list_price_minor: number | null;
+    /** What the customer pays: the partner's book, else list (server-decided). */
+    customer_price_minor?: number | null;
+    /** List less the partner's discount; null when the partner earns commission. */
+    partner_cost_minor?: number | null;
+    margin_minor?: number | null;
+    margin_bp?: number | null;
     /** List minus the partner's price, in minor units (the server's subtraction). */
     difference_minor: number | null;
     source: "partner_price_book" | "list";
@@ -341,7 +423,11 @@ export interface ConversionRow {
   code: string;
   code_label: string;
   captured_at: string;
+  registered_at?: string | null;
   converted_at: string | null;
+  products?: { product_code: string; plan_code: string }[];
+  sales_minor?: number;
+  status?: "purchased" | "signed_up";
   commission_minor: number;
   currency: string;
 }
@@ -375,8 +461,21 @@ export interface OrderRow {
   status: string;
   description: string;
   products: string[];
+  plans?: string[];
   currency: string;
   amount_due_minor: number;
+  recurring_amount_minor?: number;
+  /** `partner` (you placed it), `storefront` (your branded Store) or `direct`. */
+  channel?: string;
+  sold_by_you?: boolean;
+  /** What the order earned you on the ledger; null without commission access or before it accrues. */
+  earning?: {
+    model: "margin" | "commission";
+    amount_minor: number;
+    partner_cost_minor: number | null;
+    currency: string;
+  } | null;
+  payment_status?: "awaiting_payment" | "paid" | "nothing_due" | "not_paid";
   customer: string;
   created_at: string;
   paid_at: string | null;
@@ -547,6 +646,8 @@ export interface SupportResponse {
   help_desk: { name: string; available: boolean; url: string; suspended: boolean };
   partner: { name: string };
   priorities: string[];
+  /** Whether the platform sends a request to its support address (ADR-053). */
+  can_send?: boolean;
   requests: null;
   not_implemented: NotImplemented;
 }
@@ -595,6 +696,8 @@ export interface UpgradeRequest {
   products_granted: string[];
   version: number;
   editable: boolean;
+  /** ADR-053: the set-up fee fixed when the request opened; null is no fee. */
+  setup_fee?: { amount_minor: number; currency: string; settled: boolean } | null;
 }
 
 export interface UpgradeChecklistItem {
@@ -618,6 +721,8 @@ export interface UpgradeState {
   /** The products on sale, offered on the Products step (only while a request is open). */
   products: { code: string; name: string }[];
   checklist: UpgradeChecklistItem[];
+  /** What starting each upgrade would cost now; null is no fee (ADR-053). */
+  fees?: Partial<Record<UpgradeTarget, CurrencyAmount | null>>;
 }
 
 /** The section names the server accepts. The business step is the profile. */
@@ -634,11 +739,27 @@ export const panelApi = {
   reports: (id: string, range: RangeKey, from?: string, to?: string) =>
     apiFetch<PartnerReports>(`${partner(id)}/reports`, { query: { range, from, to } }),
   whiteLabelStatus: (id: string) => apiFetch<WhiteLabelStatus>(`${partner(id)}/white-label/status`),
-  /** A new tracking link: a referral code filed under a campaign name. */
-  createTrackingLink: (id: string, campaign: string) =>
-    apiFetch<{ id: string; code: string; label: string }>(`${partner(id)}/referrals`, {
+  /** A new referral link (ADR-053): optionally a chosen code, a product (and
+   * plan) to open, and one of the partner's campaigns. The server builds the
+   * address and decides where it leads - the browser never composes either. */
+  createTrackingLink: (
+    id: string,
+    body: { label?: string; code?: string; product_code?: string; plan_code?: string; campaign_id?: string },
+  ) =>
+    apiFetch<{ id: string; code: string; label: string; url: string }>(`${partner(id)}/referrals`, {
       method: "POST",
-      body: json({ label: campaign }),
+      body: json(body),
+    }),
+  campaigns: (id: string) => apiFetch<{ campaigns: CampaignRow[] }>(`${partner(id)}/campaigns`),
+  createCampaign: (id: string, name: string) =>
+    apiFetch<{ id: string; name: string; status: string }>(`${partner(id)}/campaigns`, {
+      method: "POST",
+      body: json({ name }),
+    }),
+  setCampaignActive: (id: string, campaignId: string, active: boolean) =>
+    apiFetch<{ id: string; status: string }>(`${partner(id)}/campaigns/${encodeURIComponent(campaignId)}/status`, {
+      method: "POST",
+      body: json({ active }),
     }),
   disableTrackingLink: (id: string, codeId: string) =>
     apiFetch<{ id: string; status: string }>(`${partner(id)}/referral-codes/${encodeURIComponent(codeId)}/disable`, {
@@ -758,6 +879,21 @@ export const panelApi = {
   markNotificationsRead: (id: string, body: { ids: string[] } | { all: true }) =>
     apiFetch<NotificationsResponse>(`${partner(id)}/notifications/read`, { method: "POST", body: json(body) }),
   support: (id: string) => apiFetch<SupportResponse>(`${partner(id)}/support`),
+  /** ADR-053: a support request, sent by the platform's email to its support address. */
+  sendSupport: (id: string, body: { subject: string; message: string; priority: string; workspace?: string }) =>
+    apiFetch<{ sent: boolean; reference: string }>(`${partner(id)}/support`, { method: "POST", body: json(body) }),
+  /** ADR-053: a central Order for one of the partner's customers - identifiers only. */
+  quoteCustomerOrder: (id: string, orgId: string, body: CustomerOrderRequest) =>
+    apiFetch<CustomerOrderQuote>(`${partner(id)}/customers/${encodeURIComponent(orgId)}/orders/quote`, {
+      method: "POST",
+      body: json(body),
+    }),
+  placeCustomerOrder: (id: string, orgId: string, body: CustomerOrderRequest, idempotencyKey: string) =>
+    apiFetch<CustomerOrderPlaced>(`${partner(id)}/customers/${encodeURIComponent(orgId)}/orders`, {
+      method: "POST",
+      body: json(body),
+      headers: { "Idempotency-Key": idempotencyKey },
+    }),
 
   /** The customer CSV, fetched (not navigated to) so a refusal is shown as a
    * message instead of replacing the page. Returns the bytes and whether the
@@ -771,3 +907,39 @@ export const panelApi = {
     return { blob: await response.blob(), truncated: response.headers.get("X-Export-Truncated") === "true" };
   },
 };
+
+// --- orders for a customer (ADR-053) ------------------------------------------------------
+
+export interface CustomerOrderRequest {
+  plan_version_id?: string;
+  cart_items?: { plan_version_id: string; quantity?: number }[];
+  billing_interval?: string;
+  quantity?: number;
+}
+
+export interface CustomerOrderQuote {
+  kind: string;
+  description: string;
+  product_codes: string[];
+  currency: string;
+  billing_interval: string;
+  quantity: number;
+  recurring_amount_minor: number;
+  amount_due_minor: number;
+  requires_payment: boolean;
+  is_trial: boolean;
+  channel: string;
+  lines: { plan_version_id: string; product_code: string; plan_name: string; quantity: number; recurring_amount_minor: number }[];
+}
+
+export interface CustomerOrderPlaced {
+  order_id: string;
+  number: string;
+  status: string;
+  description: string;
+  currency: string;
+  amount_due_minor: number;
+  recurring_amount_minor: number;
+  requires_payment: boolean;
+  channel: string;
+}

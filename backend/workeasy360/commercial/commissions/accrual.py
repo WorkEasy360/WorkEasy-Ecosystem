@@ -35,6 +35,7 @@ the platform itself knew never happened.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Final
@@ -48,6 +49,7 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from workeasy360.commercial.catalog import selectors as catalog_selectors
 from workeasy360.commercial.commissions import domain, selectors
 from workeasy360.commercial.partners import capabilities
 from workeasy360.commercial.partners import selectors as partner_selectors
@@ -87,6 +89,135 @@ class Evaluation:
     currency: str = ""
     attribution_kind: str = ""
     attribution_ref: str = ""
+    #: ADR-053: set when the sale earns a margin instead of a commission.
+    margin: domain.MarginView | None = None
+    cost_minor: int | None = None
+    margin_rate_bp: int = 0
+
+    @property
+    def earning(self) -> str:
+        return "margin" if self.margin is not None else "commission"
+
+    @property
+    def version(self) -> int | None:
+        if self.margin is not None:
+            return self.margin.version
+        return self.rule.version if self.rule is not None else None
+
+    @property
+    def rate_bp(self) -> int | None:
+        if self.margin is not None:
+            return self.margin_rate_bp
+        return self.rule.rate_bp if self.rule is not None else None
+
+
+#: ``(fact, moment) -> list price of the fact's line in its currency``, or
+#: ``None`` when the catalog has none. Injected so evaluation stays a pure
+#: function of its inputs in tests.
+ListPrice = Callable[[Any, datetime], "int | None"]
+
+
+def list_total(fact: Any, moment: datetime) -> int | None:
+    """The line's **list** price at ``moment``: the default direct book, never
+    a contract or partner price. Price books are effective-dated and immutable
+    once published, so the answer for a past moment is stable."""
+    from workeasy360.commercial.pricing.resolution import resolve_price
+    from workeasy360.contracts.enums import BillingInterval
+    from workeasy360.contracts.errors import PriceNotAvailable
+
+    plan_version_id = getattr(fact, "plan_version_id", None)
+    bundle_version_id = getattr(fact, "bundle_version_id", None)
+    if (plan_version_id is None) == (bundle_version_id is None):
+        return None
+    try:
+        quote = resolve_price(
+            plan_version_id=plan_version_id,
+            bundle_version_id=bundle_version_id,
+            organization_id=None,
+            currency=CurrencyCode(fact.currency),
+            interval=BillingInterval(fact.interval),
+            quantity=max(int(fact.quantity or 1), 1),
+            at=moment,
+        )
+    except (PriceNotAvailable, ValueError):
+        return None
+    return quote.total.minor_units
+
+
+def _experience_at(partner_id: UUID, moment: datetime) -> str:
+    """The experience whose margin default applies: White-label when the
+    partner held its brand capability at the sale, else Reseller."""
+    if partner_selectors.had_capability_at(
+        partner_id, capabilities.BRANDING_MANAGE, moment
+    ):
+        return capabilities.WHITE_LABEL
+    return capabilities.RESELLER
+
+
+def _margin_evaluation(
+    *,
+    partner_id: UUID,
+    kind: str,
+    ref: str,
+    product_code: str,
+    currency: str,
+    customer_minor: int,
+    basis_minor: int,
+    whole: bool,
+    fact: Any,
+    moment: datetime,
+    margins: Iterable[domain.MarginView],
+    list_price: ListPrice | None,
+    renewal: bool = False,
+) -> Evaluation | None:
+    """A managed sale under a margin rule earns ``customer price - partner
+    cost`` instead of a commission (ADR-053, never both). ``None`` when no
+    margin rule governs it - the commission rules then apply as before."""
+    if kind != "managed":
+        return None
+    margin = domain.select_margin(
+        margins,
+        partner_id=partner_id,
+        experience=_experience_at(partner_id, moment),
+        product_code=product_code,
+        at=moment,
+    )
+    if margin is None:
+        return None
+    if renewal and not margin.recurring:
+        return _skip("not_recurring")
+    list_minor = (list_price or list_total)(fact, moment) if fact is not None else None
+    if list_minor is None:
+        return _skip("no_list_price")
+    cost = domain.partner_cost(
+        list_minor=list_minor,
+        currency=CurrencyCode(currency),
+        discount_bp=margin.discount_bp,
+    )
+    rate = domain.margin_bp(customer_minor=customer_minor, cost_minor=cost)
+    if customer_minor - cost <= 0 or rate <= 0:
+        return _skip("no_margin")
+    amount = (
+        customer_minor - cost
+        if whole
+        else domain.commission_amount(
+            basis_minor=basis_minor, currency=CurrencyCode(currency), rate_bp=rate
+        )
+    )
+    if amount <= 0:
+        return _skip("no_margin")
+    return Evaluation(
+        accrues=True,
+        partner_id=partner_id,
+        basis_minor=basis_minor,
+        amount_minor=amount,
+        currency=currency,
+        attribution_kind=kind,
+        attribution_ref=ref,
+        margin=margin,
+        cost_minor=cost,
+        margin_rate_bp=rate,
+    )
 
 
 def _skip(reason: str) -> Evaluation:
@@ -103,9 +234,15 @@ def sale_moment(fact: Any) -> datetime | None:
 
 
 def evaluate_sale(
-    fact: Any, *, rules: list[domain.RuleView], now: datetime
+    fact: Any,
+    *,
+    rules: list[domain.RuleView],
+    now: datetime,
+    margins: Iterable[domain.MarginView] = (),
+    list_price: ListPrice | None = None,
 ) -> Evaluation:
-    """Decide the commission for one sale. Pure given its durable inputs."""
+    """Decide the commission (or margin) for one sale. Pure given its durable
+    inputs and the list-price resolver."""
     moment = sale_moment(fact)
     if moment is None:
         return _skip("not_activated")
@@ -116,19 +253,16 @@ def evaluate_sale(
     if attribution is None:
         return _skip("no_attribution")
     partner_id, kind, ref = attribution
-
-    partner = partner_selectors.partner_row(partner_id)
-    if partner is None:
-        return _skip("no_attribution")
-    if partner.terminated_at is not None and partner.terminated_at <= moment:
-        return _skip("partner_terminated")
-    if not partner_selectors.had_capability_at(
-        partner_id, capabilities.COMMISSION_EARN, moment
+    if kind == "referral" and "affiliate" not in catalog_selectors.channels_open(
+        fact.product_code
     ):
-        return _skip("not_entitled_to_earn")
-    if fact.currency != partner.payout_currency:
-        # No conversion is ever attempted (Task 92). Reported, not hidden.
-        return _skip("unsupported_currency")
+        # ADR-051: Product Manager -> Availability -> Affiliate "Not allowed".
+        # Read when the sale is evaluated; an accrual already written stands.
+        return _skip("product_not_open_to_affiliates")
+
+    problem = _partner_problem(partner_id, moment, fact.currency)
+    if problem is not None:
+        return _skip(problem)
 
     basis = domain.sale_basis(
         total_minor=fact.total_amount_minor,
@@ -136,6 +270,23 @@ def evaluate_sale(
     )
     if basis <= 0:
         return _skip("no_basis")
+
+    margin = _margin_evaluation(
+        partner_id=partner_id,
+        kind=kind,
+        ref=ref,
+        product_code=fact.product_code,
+        currency=fact.currency,
+        customer_minor=fact.total_amount_minor,
+        basis_minor=basis,
+        whole=fact.predecessor_total_minor is None,
+        fact=fact,
+        moment=moment,
+        margins=margins,
+        list_price=list_price,
+    )
+    if margin is not None:
+        return margin
 
     rule = domain.select_rule(
         rules, partner_id=partner_id, product_code=fact.product_code, at=moment
@@ -158,6 +309,194 @@ def evaluate_sale(
         attribution_kind=kind,
         attribution_ref=ref,
     )
+
+
+def _partner_problem(partner_id: UUID, moment: datetime, currency: str) -> str | None:
+    """Why this partner cannot earn at ``moment`` in ``currency``, or ``None``."""
+    partner = partner_selectors.partner_row(partner_id)
+    if partner is None:
+        return "no_attribution"
+    if partner.terminated_at is not None and partner.terminated_at <= moment:
+        return "partner_terminated"
+    if not partner_selectors.had_capability_at(
+        partner_id, capabilities.COMMISSION_EARN, moment
+    ):
+        return "not_entitled_to_earn"
+    if currency != partner.payout_currency:
+        # No conversion is ever attempted (Task 92). Reported, not hidden.
+        return "unsupported_currency"
+    return None
+
+
+# --- recurring commission on renewals (ADR-052) ----------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Renewal:
+    """One paid renewal of a sale: an invoice line for a later period of a
+    subscription line whose first paid period was the sale itself."""
+
+    organization_id: UUID
+    source_ref: str
+    product_code: str
+    amount_minor: int
+    currency: str
+    paid_at: datetime
+    refunded: bool
+    #: The subscription line renewed (ADR-053: a margin renewal re-prices it).
+    item_id: str = ""
+
+
+def renewals_of(organization_id: UUID) -> list[Renewal]:
+    """Every paid renewal of this customer's subscription lines. The first
+    paid line of each subscription line is the sale (it earns through
+    ``evaluate_sale``); every later one is a renewal."""
+    from workeasy360.commercial.payments.selectors import paid_item_lines
+
+    out = []
+    for item_id, lines in paid_item_lines(organization_id).items():
+        for line in lines[1:]:
+            if line["paid_at"] is None:
+                continue
+            out.append(
+                Renewal(
+                    organization_id=organization_id,
+                    source_ref=f"payments.invoice_line:{line['line_id']}",
+                    product_code=line["product_code"],
+                    amount_minor=line["amount_minor"],
+                    currency=line["currency"],
+                    paid_at=line["paid_at"],
+                    refunded=line["refunded"],
+                    item_id=item_id,
+                )
+            )
+    return out
+
+
+def evaluate_renewal(
+    renewal: Renewal,
+    *,
+    rules: list[domain.RuleView],
+    now: datetime,
+    margins: Iterable[domain.MarginView] = (),
+    fact: Any = None,
+    list_price: ListPrice | None = None,
+) -> Evaluation:
+    """Decide the commission for one paid renewal: only under a **recurring**
+    rule, attributed as of the payment. A referral attributes a renewal for
+    as long as the referred customer stays (the rule's own choice to recur);
+    a managed relationship outranks it, as for a sale."""
+    moment = renewal.paid_at
+    if moment > now:
+        return _skip("not_yet_effective")
+    if renewal.refunded:
+        return _skip("refunded")
+    link = partner_selectors.link_at(renewal.organization_id, moment)
+    if link is not None:
+        partner_id, kind, ref = link.partner_id, "managed", str(link.id)
+    else:
+        referral = selectors.referral_conversion_for(renewal.organization_id, moment)
+        if referral is None:
+            return _skip("no_attribution")
+        partner_id, kind, ref = referral.partner_id, "referral", str(referral.id)
+    if kind == "referral" and "affiliate" not in catalog_selectors.channels_open(
+        renewal.product_code
+    ):
+        return _skip("product_not_open_to_affiliates")
+    problem = _partner_problem(partner_id, moment, renewal.currency)
+    if problem is not None:
+        return _skip(problem)
+    margin = _margin_evaluation(
+        partner_id=partner_id,
+        kind=kind,
+        ref=ref,
+        product_code=renewal.product_code,
+        currency=renewal.currency,
+        customer_minor=renewal.amount_minor,
+        basis_minor=renewal.amount_minor,
+        whole=True,
+        fact=fact,
+        moment=moment,
+        margins=margins,
+        list_price=list_price,
+        renewal=True,
+    )
+    if margin is not None:
+        return margin
+    rule = domain.select_rule(
+        rules, partner_id=partner_id, product_code=renewal.product_code, at=moment
+    )
+    if rule is None:
+        return _skip("no_rule")
+    if not rule.recurring:
+        return _skip("not_recurring")
+    amount = domain.commission_amount(
+        basis_minor=renewal.amount_minor,
+        currency=CurrencyCode(renewal.currency),
+        rate_bp=rule.rate_bp,
+    )
+    if amount <= 0:
+        return _skip("zero_commission")
+    return Evaluation(
+        accrues=True,
+        partner_id=partner_id,
+        rule=rule,
+        basis_minor=renewal.amount_minor,
+        amount_minor=amount,
+        currency=renewal.currency,
+        attribution_kind=kind,
+        attribution_ref=ref,
+    )
+
+
+def _accrue_renewals(
+    organization_id: UUID,
+    *,
+    rules: list[domain.RuleView],
+    margins: list[domain.MarginView],
+    facts: dict[str, Any],
+    now: datetime,
+    stats: AccrualStats,
+) -> None:
+    from workeasy360.commercial.commissions.models import CommissionAccrual
+
+    renewals = renewals_of(organization_id)
+    for renewal in renewals:
+        fact = facts.get(renewal.item_id)
+        evaluation = evaluate_renewal(
+            renewal, rules=rules, now=now, margins=margins, fact=fact
+        )
+        if not evaluation.accrues:
+            stats.skip(f"renewal_{evaluation.reason}")
+            continue
+        if _insert_accrual(
+            renewal,
+            evaluation,
+            moment=renewal.paid_at,
+            plan_code=getattr(fact, "plan_code", ""),
+        ):
+            stats.created += 1
+        else:
+            stats.duplicates += 1
+    # A renewal refunded while its commission is still in the holdback is
+    # reversed - the same no-judgement clawback as an immediate cancellation.
+    refunded = {r.source_ref for r in renewals if r.refunded}
+    if not refunded:
+        return
+    for accrual in CommissionAccrual.objects.filter(
+        organization_id=organization_id,
+        kind=AccrualKind.ACCRUAL.value,
+        source_ref__in=refunded,
+        clears_at__gt=now,
+    ):
+        if insert_reversal(
+            accrual,
+            amount_minor=-accrual.amount_minor,
+            reason_code="refund",
+            reason="The renewal's invoice was refunded inside the holdback window.",
+            created_by_id=None,
+        ):
+            stats.reversed += 1
 
 
 def _attribute(fact: Any, moment: datetime) -> tuple[UUID, str, str] | None:
@@ -208,9 +547,10 @@ def accrue_for_organization(
     if not facts:
         return stats
     rules = selectors.rule_views()
+    margins = selectors.margin_views()
 
     for fact in facts:
-        evaluation = evaluate_sale(fact, rules=rules, now=moment)
+        evaluation = evaluate_sale(fact, rules=rules, now=moment, margins=margins)
         if not evaluation.accrues:
             stats.skip(evaluation.reason)
             continue
@@ -221,15 +561,37 @@ def accrue_for_organization(
             stats.duplicates += 1
 
     stats.reversed += _reverse_cancelled_sales(organization_id, facts, moment)
+    if _any_recurring(rules, margins):
+        _accrue_renewals(
+            organization_id,
+            rules=rules,
+            margins=margins,
+            facts={str(f.item_id): f for f in facts},
+            now=moment,
+            stats=stats,
+        )
     return stats
 
 
-def _insert_accrual(fact: Any, evaluation: Evaluation) -> bool:
-    """Insert one ledger row; ``False`` if it already exists."""
+def _any_recurring(
+    rules: list[domain.RuleView], margins: list[domain.MarginView]
+) -> bool:
+    return any(r.recurring for r in rules) or any(m.recurring for m in margins)
+
+
+def _insert_accrual(
+    fact: Any,
+    evaluation: Evaluation,
+    *,
+    moment: datetime | None = None,
+    plan_code: str | None = None,
+) -> bool:
+    """Insert one ledger row; ``False`` if it already exists. ``moment`` is
+    the event's time when it is not a sale's (a renewal's payment)."""
     from workeasy360.commercial.commissions.models import CommissionAccrual
 
     key = domain.accrual_key(fact.source_ref)
-    moment = sale_moment(fact)
+    moment = moment or sale_moment(fact)
     if moment is None:  # pragma: no cover - evaluate_sale refuses these first
         return False
     try:
@@ -245,13 +607,21 @@ def _insert_accrual(fact: Any, evaluation: Evaluation) -> bool:
                 source_ref=fact.source_ref,
                 event_at=moment,
                 clears_at=domain.clears_at(moment, holdback_days()),
-                rule_id=evaluation.rule.id,
-                rule_version=evaluation.rule.version,
-                rate_bp=evaluation.rule.rate_bp,
+                rule_id=evaluation.rule.id if evaluation.rule is not None else None,
+                rule_version=evaluation.version,
+                rate_bp=evaluation.rate_bp,
                 basis_minor=evaluation.basis_minor,
                 basis_currency=evaluation.currency,
                 attribution_kind=evaluation.attribution_kind,
                 attribution_ref=evaluation.attribution_ref,
+                product_code=getattr(fact, "product_code", "") or "",
+                plan_code=(
+                    plan_code if plan_code is not None else getattr(fact, "plan_code", "")
+                )
+                or "",
+                earning=evaluation.earning,
+                margin_rule_id=evaluation.margin.id if evaluation.margin else None,
+                cost_minor=evaluation.cost_minor,
                 idempotency_key=key,
             )
             _announce(row, "commission.accrued", schemas.COMMISSION_ACCRUED_V1)
@@ -360,6 +730,10 @@ def insert_reversal(
                 rate_bp=accrual.rate_bp,
                 attribution_kind=accrual.attribution_kind,
                 attribution_ref=accrual.attribution_ref,
+                product_code=accrual.product_code,
+                plan_code=accrual.plan_code,
+                earning=accrual.earning,
+                margin_rule_id=accrual.margin_rule_id,
                 reverses_id=accrual.id,
                 reason_code=reason_code,
                 reason=reason[:200],
@@ -544,6 +918,7 @@ def reconcile(*, organization_ids: list[UUID] | None = None) -> ReconciliationRe
     report = ReconciliationReport()
     now = timezone.now()
     rules = selectors.rule_views()
+    margins = selectors.margin_views()
     targets = (
         organization_ids if organization_ids is not None else candidate_organizations()
     )
@@ -557,45 +932,68 @@ def reconcile(*, organization_ids: list[UUID] | None = None) -> ReconciliationRe
             rows.setdefault(row.source_ref, []).append(row)
 
         expected_refs: set[str] = set()
-        for fact in sale_facts(organization_id):
-            evaluation = evaluate_sale(fact, rules=rules, now=now)
-            existing = rows.get(fact.source_ref, [])
+        facts = sale_facts(organization_id)
+        evaluated = [
+            (
+                fact.source_ref,
+                evaluate_sale(fact, rules=rules, now=now, margins=margins),
+            )
+            for fact in facts
+        ]
+        if _any_recurring(rules, margins):
+            by_item = {str(f.item_id): f for f in facts}
+            evaluated += [
+                (
+                    renewal.source_ref,
+                    evaluate_renewal(
+                        renewal,
+                        rules=rules,
+                        now=now,
+                        margins=margins,
+                        fact=by_item.get(renewal.item_id),
+                    ),
+                )
+                for renewal in renewals_of(organization_id)
+            ]
+        for source_ref, evaluation in evaluated:
+            existing = rows.get(source_ref, [])
             if not evaluation.accrues:
                 report.skipped[evaluation.reason] = (
                     report.skipped.get(evaluation.reason, 0) + 1
                 )
-                if existing:
+                # A refunded renewal's accrual is answered by its reversal.
+                if existing and evaluation.reason != "refunded":
                     report.unexpected.append(
-                        {"source_ref": fact.source_ref, "why": evaluation.reason}
+                        {"source_ref": source_ref, "why": evaluation.reason}
                     )
                 continue
-            expected_refs.add(fact.source_ref)
+            expected_refs.add(source_ref)
             if not existing:
                 report.missing.append(
                     {
-                        "source_ref": fact.source_ref,
+                        "source_ref": source_ref,
                         "expected_minor": evaluation.amount_minor,
                     }
                 )
             elif len(existing) > 1:
                 report.duplicates.append(
-                    {"source_ref": fact.source_ref, "rows": [str(r.id) for r in existing]}
+                    {"source_ref": source_ref, "rows": [str(r.id) for r in existing]}
                 )
             else:
                 row = existing[0]
                 if (
                     row.partner_id != evaluation.partner_id
-                    or row.rule_version != evaluation.rule.version
-                    or row.rate_bp != evaluation.rule.rate_bp
+                    or row.rule_version != evaluation.version
+                    or row.rate_bp != evaluation.rate_bp
                     or row.amount_minor != evaluation.amount_minor
                 ):
                     report.wrong.append(
                         {
-                            "source_ref": fact.source_ref,
+                            "source_ref": source_ref,
                             "ledger_minor": row.amount_minor,
                             "expected_minor": evaluation.amount_minor,
                             "ledger_rule_version": row.rule_version,
-                            "expected_rule_version": evaluation.rule.version,
+                            "expected_rule_version": evaluation.version,
                         }
                     )
     return report

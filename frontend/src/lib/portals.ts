@@ -33,7 +33,7 @@ export const PORTAL_ROOT: Record<Destination, string> = { admin: "/admin", partn
 const NEXT_PREFIXES: Record<Destination, readonly string[]> = {
   admin: ["/admin"],
   partner: ["/partner"],
-  app: ["/dashboard", "/o", "/organizations", "/onboarding", "/billing", "/settings"],
+  app: ["/dashboard", "/o", "/organizations", "/onboarding", "/billing", "/settings", "/store"],
 };
 
 /** Which portal serves each page. A page not listed here (`/auth/continue`,
@@ -43,6 +43,8 @@ const PAGE_OWNERS: readonly (readonly [string, Portal])[] = [
   ["/partner", "partner"],
   ["/login", "auth"],
   ["/signup", "auth"],
+  // ADR-053: a referral link records the visit where sign-up will read it.
+  ["/r", "auth"],
   ["/verify-email", "auth"],
   ["/forgot-password", "auth"],
   ["/reset-password", "auth"],
@@ -53,6 +55,8 @@ const PAGE_OWNERS: readonly (readonly [string, Portal])[] = [
   ["/product-access", "auth"],
   ["/sign-out", "auth"],
   ["/dashboard", "app"],
+  // The Store's address (ADR-052): opens the organization's Explore.
+  ["/store", "app"],
   ["/o", "app"],
   ["/organizations", "app"],
   ["/onboarding", "app"],

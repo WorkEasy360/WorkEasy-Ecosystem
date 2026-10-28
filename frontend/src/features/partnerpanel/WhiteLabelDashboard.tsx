@@ -43,7 +43,22 @@ function Status({ s, base }: { s: WhiteLabelStatus; base: string }) {
         {s.domain && (
           <Kpi icon="network" label="Custom domain" value={DOMAIN[s.domain.state] ?? s.domain.state} note={s.domain.hostname || undefined} />
         )}
+        {s.storefront && (
+          <Kpi
+            icon="store"
+            label="Branded store"
+            value={s.storefront.live ? "Live" : "Not live yet"}
+            note={s.storefront.live ? s.storefront.url : "Finish your brand setup to open it"}
+          />
+        )}
       </ul>
+      {s.storefront?.live && (
+        <p>
+          <a href={s.storefront.url} target="_blank" rel="noopener noreferrer">
+            Open your branded store<span className="w360-visually-hidden"> (opens in a new tab)</span>
+          </a>
+        </p>
+      )}
       <p>
         {s.brand && <Link href={`${base}/brand-settings`}>Open brand settings</Link>}
         {s.brand && s.domain && " · "}

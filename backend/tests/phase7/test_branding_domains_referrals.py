@@ -604,6 +604,9 @@ def test_referral_visibility_is_counts_only(affiliate, organization_factory):
     assert set(page.items[0]) == {
         "id",
         "code",
+        # ADR-053: the link's product and when the visitor signed up - no person.
+        "product_code",
+        "registered_at",
         "label",
         "status",
         "captured_at",

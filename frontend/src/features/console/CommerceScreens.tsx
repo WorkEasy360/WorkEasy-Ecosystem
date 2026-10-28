@@ -14,6 +14,7 @@ import cp from "@/features/controlplane/ControlPlane.module.css";
 import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
 import { OpenAccountForm, usePayInvoice } from "./BillingScreen";
+import { useCart } from "./cart";
 import { AdminInsights } from "./DashboardScreen";
 import { PageHeader, Panel, UUID_RE, intervalLabel } from "./consoleUi";
 import { useOrgAccess } from "./OrgAccess";
@@ -275,13 +276,20 @@ export function orderRequestFrom(params: URLSearchParams): OrderRequest | null {
   const bundle = params.get("bundle");
   const activate = params.get("activate");
   const interval = params.get("interval");
+  const cart = params.get("cart");
   const request: OrderRequest = {};
-  if (plan && UUID_RE.test(plan)) request.plan_version_id = plan;
+  const cartIds = cart ? cart.split(",") : [];
+  if (cartIds.length >= 2 && cartIds.length <= 10 && cartIds.every((id) => UUID_RE.test(id))) {
+    request.cart_items = cartIds.map((id) => ({ plan_version_id: id }));
+  } else if (plan && UUID_RE.test(plan)) request.plan_version_id = plan;
   else if (bundle && UUID_RE.test(bundle)) request.bundle_version_id = bundle;
   else if (activate && UUID_RE.test(activate)) request.activate_subscription_id = activate;
   else return null;
   if (interval && INTERVALS.has(interval)) request.billing_interval = interval;
-  if (params.get("trial") === "1" && !request.activate_subscription_id) request.with_trial = true;
+  if (params.get("trial") === "1" && !request.activate_subscription_id && !request.cart_items) request.with_trial = true;
+  // ADR-053: a purchase that started in a partner's branded Store says which one.
+  const storefront = params.get("storefront");
+  if (storefront && /^[a-z0-9-]{1,48}$/.test(storefront)) request.storefront = storefront;
   return request;
 }
 
@@ -350,6 +358,7 @@ function Quote({ slug, request, onDone }: { slug: string; request: OrderRequest;
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pay = usePayInvoice(slug, () => undefined);
+  const cartStore = useCart(slug);
 
   async function place() {
     setBusy(true);
@@ -357,6 +366,8 @@ function Quote({ slug, request, onDone }: { slug: string; request: OrderRequest;
     try {
       const order = placed ?? (await consoleApi.placeOrder(slug, request, key.current));
       setPlaced(order);
+      // The order now holds the cart's lines; the server re-priced each one.
+      if (request.cart_items) cartStore.clear();
       if (order.requires_payment && order.invoice_id) {
         pay.start({ invoice_id: order.invoice_id, number: order.invoice_number ?? order.number });
       } else {
@@ -373,9 +384,27 @@ function Quote({ slug, request, onDone }: { slug: string; request: OrderRequest;
     <LoadGate load={load} what="the price">
       {(quote) => (
         <Panel title="Order summary">
+          {quote.lines && quote.lines.length > 0 && (
+            <Table
+              caption="Products in this order"
+              head={["Plan", quote.prorated && quote.requires_payment ? "Due now" : "Price"]}
+            >
+              {quote.lines.map((line) => (
+                <tr key={line.product_code}>
+                  <th scope="row">
+                    {line.plan_name}
+                    {line.quantity > 1 ? ` × ${line.quantity}` : ""}
+                  </th>
+                  <td className={cp.num}>
+                    {money(quote.prorated && quote.requires_payment ? line.amount_due_minor : line.recurring_amount_minor, quote.currency)}
+                  </td>
+                </tr>
+              ))}
+            </Table>
+          )}
           <dl className={local.details}>
             <div>
-              <dt>Item</dt>
+              <dt>{quote.lines && quote.lines.length > 0 ? "Items" : "Item"}</dt>
               <dd>{quote.description}</dd>
             </div>
             {quote.is_trial ? (
@@ -413,6 +442,7 @@ function Quote({ slug, request, onDone }: { slug: string; request: OrderRequest;
             {quote.requires_payment
               ? "You'll pay on our payment provider's secure page. Access starts as soon as the payment is confirmed."
               : "Nothing is charged now."}
+            {quote.channel === "storefront" && " Bought through your partner's store: they will be your partner for this account."}
           </p>
           <div className={local.actions}>
             <button

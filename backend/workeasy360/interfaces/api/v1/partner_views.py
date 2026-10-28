@@ -23,6 +23,7 @@ from django.views.decorators.http import require_http_methods
 from workeasy360.commercial.commissions import referrals
 from workeasy360.commercial.commissions import selectors as commission_selectors
 from workeasy360.commercial.controlplane import diagnostics as cp_diagnostics
+from workeasy360.commercial.controlplane import partner_network
 from workeasy360.commercial.partners import activation, branding, customers, domains
 from workeasy360.commercial.partners import selectors as partner_selectors
 from workeasy360.contracts.enums import BillingInterval, ChangeTiming
@@ -223,6 +224,49 @@ def sell_view(
     )
 
 
+#: ADR-053: what a partner's order for a customer may carry - identifiers and
+#: choices only (the same allowlist as a customer's own order), never a price.
+_ORDER_FIELDS = (
+    "plan_version_id",
+    "billing_interval",
+    "quantity",
+    "with_trial",
+    "cart_items",
+    "activate_subscription_id",
+)
+
+
+def _order_request(body: dict[str, Any]) -> dict[str, Any]:
+    return {key: body[key] for key in _ORDER_FIELDS if key in body}
+
+
+@partner_view(["POST"])
+def customer_order_quote_view(
+    request: HttpRequest, ctx: TenantContext, organization_id: UUID
+) -> JsonResponse:
+    """What an order for this customer would cost: the server's price."""
+    return JsonResponse(
+        customers.quote_customer_order(
+            ctx, organization_id, **_order_request(_body(request))
+        )
+    )
+
+
+@partner_view(["POST"])
+def customer_order_view(
+    request: HttpRequest, ctx: TenantContext, organization_id: UUID
+) -> JsonResponse:
+    """Place a central Order for this customer (``Idempotency-Key`` required)."""
+    body = _body(request)
+    order = customers.place_customer_order(
+        ctx,
+        organization_id,
+        idempotency_key=_key(request, body),
+        **_order_request(body),
+    )
+    return JsonResponse(order, status=201)
+
+
 @partner_view(["POST"])
 def change_plan_view(
     request: HttpRequest, ctx: TenantContext, organization_id: UUID, item_id: UUID
@@ -359,10 +403,49 @@ def referrals_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             }
         )
     body = _body(request)
-    code = referrals.create_referral_code(ctx, label=body.get("label", ""))
-    return JsonResponse(
-        {"id": str(code.id), "code": code.code, "label": code.label}, status=201
+    code = referrals.create_referral_code(
+        ctx,
+        label=body.get("label", ""),
+        code=body.get("code"),
+        product_code=body.get("product_code", ""),
+        plan_code=body.get("plan_code", ""),
+        campaign_id=body.get("campaign_id"),
     )
+    return JsonResponse(
+        {
+            "id": str(code.id),
+            "code": code.code,
+            "label": code.label,
+            "product_code": code.product_code,
+            "plan_code": code.plan_code,
+            "campaign_id": str(code.campaign_id) if code.campaign_id else None,
+            "url": partner_network.referral_url(code.code),
+        },
+        status=201,
+    )
+
+
+@partner_view(["GET", "POST"])
+def campaigns_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """ADR-053: the partner's campaigns - list, or start one."""
+    if request.method == "GET":
+        authz.require(ctx, "platform.partner_referral.view")
+        return JsonResponse({"campaigns": commission_selectors.campaigns(ctx.partner_id)})
+    campaign = referrals.create_campaign(ctx, name=_body(request).get("name"))
+    return JsonResponse(
+        {"id": str(campaign.id), "name": campaign.name, "status": campaign.status},
+        status=201,
+    )
+
+
+@partner_view(["POST"])
+def campaign_status_view(
+    request: HttpRequest, ctx: TenantContext, campaign_id: UUID
+) -> JsonResponse:
+    campaign = referrals.set_campaign_status(
+        ctx, campaign_id, active=_body(request).get("active")
+    )
+    return JsonResponse({"id": str(campaign.id), "status": campaign.status})
 
 
 @partner_view(["POST"])

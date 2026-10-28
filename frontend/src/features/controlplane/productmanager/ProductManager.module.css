@@ -1,0 +1,1062 @@
+/* The Super Admin Product Manager (ADR-051): list, wizard, detail and the store
+   preview. Tokens only; every grid child that can hold wide content gets
+   min-width: 0, so nothing overflows at 320-390px. */
+
+.page {
+  display: grid;
+  gap: var(--w360-space-5);
+  min-width: 0;
+}
+
+.pageHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--w360-space-3);
+}
+
+.pageTitle {
+  margin: 0;
+  font-size: 28px;
+}
+
+.lead {
+  margin: var(--w360-space-1) 0 0;
+  max-width: 62ch;
+  color: var(--w360-text-muted);
+}
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.back:hover {
+  text-decoration: underline;
+}
+
+/* --- cards and sections ------------------------------------------------------------ */
+
+.card {
+  display: grid;
+  gap: var(--w360-space-4);
+  min-width: 0;
+  padding: var(--w360-space-5);
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-lg);
+  box-shadow: var(--w360-shadow-sm);
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 18px;
+}
+
+.cardLead {
+  margin: -8px 0 0;
+  font-size: 14px;
+  color: var(--w360-text-muted);
+}
+
+.sectionLabel {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--w360-text-muted);
+}
+
+.muted {
+  color: var(--w360-text-muted);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+}
+
+.toolbar :global(.w360-btn) {
+  min-height: 38px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+
+/* --- summary tiles -------------------------------------------------------------------- */
+
+.summary {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: var(--w360-space-3);
+}
+
+.summaryTile {
+  display: grid;
+  gap: 2px;
+  padding: var(--w360-space-4);
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  box-shadow: var(--w360-shadow-sm);
+}
+
+.summaryValue {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.summaryLabel {
+  font-size: 13px;
+  color: var(--w360-text-muted);
+}
+
+/* --- filter bar ---------------------------------------------------------------------- */
+
+.filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+  gap: var(--w360-space-3);
+  align-items: end;
+  padding: var(--w360-space-4);
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+}
+
+.filters label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.filters :global(.w360-input) {
+  width: 100%;
+  min-height: 40px;
+  font-size: 14px;
+}
+
+@media (max-width: 900px) {
+  .filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* --- the product table ------------------------------------------------------------------ */
+
+.tableWrap {
+  /* A positioning context, so absolutely positioned content (the visually
+     hidden caption and header labels) is clipped by this scroller instead of
+     widening the page at 390 px. */
+  position: relative;
+  min-width: 0;
+  overflow-x: auto;
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  box-shadow: var(--w360-shadow-sm);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.table caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.table th,
+.table td {
+  padding: 12px 14px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.table thead th {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--w360-text-muted);
+  background: var(--w360-shell-canvas);
+  white-space: nowrap;
+}
+
+.table tbody tr:last-child th,
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table tbody tr:hover {
+  background: var(--w360-bg-soft);
+}
+
+.productCell {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+  min-width: 200px;
+}
+
+.productName {
+  display: block;
+  font-weight: 700;
+  color: var(--w360-text);
+}
+
+.slug {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--w360-text-muted);
+}
+
+.url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--w360-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.urlCell {
+  max-width: 220px;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--w360-space-2);
+}
+
+.actions :global(.w360-btn) {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+/* Lower-priority columns give way on narrow screens; Manage keeps everything. */
+@media (max-width: 1100px) {
+  .optional {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .secondary {
+    display: none;
+  }
+}
+
+.empty {
+  padding: var(--w360-space-6) var(--w360-space-4);
+  text-align: center;
+  color: var(--w360-text-muted);
+}
+
+/* --- the "More" menu ---------------------------------------------------------------- */
+
+.menu {
+  position: relative;
+}
+
+.menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.menuList {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  display: grid;
+  min-width: 190px;
+  padding: 6px;
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  box-shadow: var(--w360-shadow-md);
+}
+
+/* The last rows open their menu upwards, so it stays inside the table's
+   scroller rather than being cut off at its bottom edge. */
+.table tbody tr:nth-last-child(-n + 2):not(:nth-child(-n + 2)) .menuList {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.menuItem {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--w360-radius-sm, 6px);
+  background: none;
+  color: var(--w360-text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuItem:hover,
+.menuItem:focus-visible {
+  background: var(--w360-bg-soft);
+}
+
+.menuItem:disabled {
+  color: var(--w360-text-muted);
+  cursor: not-allowed;
+}
+
+.danger {
+  color: var(--w360-danger);
+}
+
+/* --- the product mark (logo, icon or monogram) --------------------------------------- */
+
+.mark {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  overflow: hidden;
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-tile-green-bg);
+  color: var(--w360-tile-green);
+  font-weight: 800;
+}
+
+.mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--w360-surface);
+}
+
+.mark32 {
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+}
+
+.mark40 {
+  width: 40px;
+  height: 40px;
+  font-size: 14px;
+}
+
+.mark56 {
+  width: 56px;
+  height: 56px;
+  font-size: 18px;
+}
+
+.mark72 {
+  width: 72px;
+  height: 72px;
+  font-size: 22px;
+}
+
+/* --- the wizard ------------------------------------------------------------------------- */
+
+.wizard {
+  display: grid;
+  gap: var(--w360-space-4);
+  max-width: 920px;
+  min-width: 0;
+}
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--w360-space-2);
+  counter-reset: step;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--w360-text-muted);
+}
+
+.stepNumber {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 2px solid var(--w360-border-strong);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.stepCurrent {
+  border-color: var(--w360-brand);
+  color: var(--w360-text);
+  box-shadow: 0 0 0 1px var(--w360-brand);
+}
+
+.stepCurrent .stepNumber {
+  border-color: var(--w360-brand);
+  background: var(--w360-brand);
+  color: var(--w360-navy);
+}
+
+.stepDone .stepNumber {
+  border-color: var(--w360-success);
+  color: var(--w360-success);
+}
+
+.stepName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--w360-space-4);
+}
+
+.full {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 720px) {
+  .formGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.wizardBar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-2);
+  padding: var(--w360-space-3) var(--w360-space-4);
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  box-shadow: var(--w360-shadow-md);
+}
+
+.code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+/* --- choices: icons and segmented availability ------------------------------------- */
+
+.iconGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.iconChoice {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 52px;
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+  color: var(--w360-text-secondary);
+  cursor: pointer;
+}
+
+.iconChoice input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.iconChoice:has(input:checked) {
+  border-color: var(--w360-brand);
+  box-shadow: 0 0 0 2px var(--w360-brand);
+  color: var(--w360-text);
+}
+
+.iconChoice:has(input:focus-visible) {
+  outline: 3px solid var(--w360-focus, var(--w360-brand));
+  outline-offset: 2px;
+}
+
+.channelGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--w360-space-3);
+}
+
+@media (max-width: 720px) {
+  .channelGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* --- image picker ------------------------------------------------------------------ */
+
+.picker {
+  display: grid;
+  gap: var(--w360-space-2);
+  min-width: 0;
+}
+
+.drop {
+  display: grid;
+  justify-items: center;
+  gap: var(--w360-space-2);
+  padding: var(--w360-space-5) var(--w360-space-4);
+  border: 2px dashed var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-bg-soft);
+  text-align: center;
+}
+
+.dropActive {
+  border-color: var(--w360-brand);
+  background: var(--w360-tile-green-bg);
+}
+
+.dropError {
+  border-color: var(--w360-danger);
+}
+
+.dropText {
+  margin: 0;
+  font-size: 14px;
+}
+
+.hiddenInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.previewRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+  min-width: 0;
+}
+
+.thumb {
+  flex: none;
+  width: 96px;
+  height: 64px;
+  border-radius: var(--w360-radius-sm, 6px);
+  border: 1px solid var(--w360-border);
+  background: var(--w360-bg-soft);
+  object-fit: contain;
+}
+
+.thumbSquare {
+  width: 64px;
+}
+
+.previewMeta {
+  flex: 1 1 10rem;
+  min-width: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--w360-brand);
+}
+
+.shotList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--w360-space-2);
+}
+
+/* --- detail ---------------------------------------------------------------------------- */
+
+.detailHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-4);
+}
+
+.detailTitle {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.detailTitle h1 {
+  margin: 0;
+  font-size: 26px;
+  overflow-wrap: anywhere;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  margin-top: 6px;
+}
+
+/* A grid item may not grow to the tab strip's full width: the strip scrolls. */
+.tabsWrap {
+  min-width: 0;
+}
+
+.tabList {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--w360-border);
+  margin-bottom: var(--w360-space-4);
+}
+
+.tab {
+  flex: none;
+  padding: 10px 16px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--w360-text-muted);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  border-bottom-color: var(--w360-brand);
+  color: var(--w360-text);
+}
+
+.tab:hover {
+  color: var(--w360-text);
+}
+
+.facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: var(--w360-space-4);
+}
+
+.facts dt {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--w360-text-muted);
+}
+
+.facts dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.checklist li {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  font-size: 14px;
+}
+
+.ok {
+  color: var(--w360-success);
+  font-weight: 800;
+}
+
+.missing {
+  color: var(--w360-warning);
+  font-weight: 800;
+}
+
+.note {
+  margin: 0;
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border-left: 4px solid var(--w360-warning);
+  border-radius: var(--w360-radius-sm, 6px);
+  background: var(--w360-bg-soft);
+  font-size: 14px;
+}
+
+.twoCol {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--w360-space-4);
+  align-items: start;
+}
+
+@media (max-width: 1024px) {
+  .twoCol {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.activity {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.activity li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--w360-space-3);
+  padding: var(--w360-space-3) 0;
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.activity li:last-child {
+  border-bottom: none;
+}
+
+.activityWhat {
+  font-weight: 700;
+}
+
+.activityMeta {
+  grid-column: 1 / -1;
+  font-size: 13px;
+  color: var(--w360-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.activityWhen {
+  font-size: 13px;
+  color: var(--w360-text-muted);
+  white-space: nowrap;
+}
+
+/* --- the integration panel (moved from the Phase 11 products console) ------------- */
+
+.integration {
+  display: grid;
+  gap: var(--w360-space-3);
+  min-width: 0;
+}
+
+.integrationHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-2);
+}
+
+.integrationFacts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  gap: var(--w360-space-3);
+}
+
+.integrationFacts dt {
+  font-size: 12px;
+  color: var(--w360-text-muted);
+}
+
+.integrationFacts dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.inlineForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--w360-space-3);
+}
+
+.inlineForm > :first-child {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.editor {
+  padding: var(--w360-space-4);
+  border: 1px dashed var(--w360-border-strong);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-bg-soft);
+}
+
+.disclosure {
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+}
+
+.disclosure > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--w360-space-3);
+  row-gap: 2px;
+  padding: var(--w360-space-3) var(--w360-space-4);
+  cursor: pointer;
+  list-style: none;
+}
+
+.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosureTitle {
+  display: inline;
+  margin: 0;
+  font-size: 15px;
+}
+
+.disclosureSub {
+  grid-column: 1;
+  font-size: 13px;
+  color: var(--w360-text-muted);
+}
+
+.chevron {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--w360-text-muted);
+  transition: transform 0.15s ease;
+}
+
+.disclosure[open] .chevron {
+  transform: rotate(90deg);
+}
+
+.disclosure[open] > summary {
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.disclosureBody {
+  display: grid;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-4);
+  min-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}
+
+/* --- store preview ------------------------------------------------------------------- */
+
+.previewBody {
+  display: grid;
+  gap: var(--w360-space-5);
+  padding: var(--w360-space-4) var(--w360-space-5) var(--w360-space-5);
+}
+
+.previewNote {
+  margin: 0;
+  font-size: 13px;
+  color: var(--w360-text-muted);
+}
+
+.storeCard {
+  display: grid;
+  gap: var(--w360-space-3);
+  width: min(320px, 100%);
+  padding: var(--w360-space-4);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-lg);
+  background: var(--w360-surface);
+  box-shadow: var(--w360-shadow-sm);
+}
+
+.storeCardHead {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+  min-width: 0;
+}
+
+.storeCardTitle {
+  margin: 0;
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+
+.storeCardText {
+  margin: 0;
+  font-size: 14px;
+  color: var(--w360-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--w360-shell-canvas);
+  border: 1px solid var(--w360-border);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.trialPill {
+  background: var(--w360-tile-green-bg);
+  border-color: transparent;
+  color: var(--w360-tile-green);
+}
+
+.listing {
+  display: grid;
+  gap: var(--w360-space-4);
+  min-width: 0;
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-lg);
+  overflow: hidden;
+}
+
+.banner {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  background: var(--w360-bg-soft);
+}
+
+.bannerEmpty {
+  height: 96px;
+  background: linear-gradient(120deg, var(--w360-tile-green-bg), var(--w360-tile-blue-bg));
+}
+
+.listingInner {
+  display: grid;
+  gap: var(--w360-space-4);
+  padding: 0 var(--w360-space-5) var(--w360-space-5);
+  min-width: 0;
+}
+
+.listingDescription {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.shots {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(220px, 1fr);
+  gap: var(--w360-space-3);
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.shots figure {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.shots img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-bg-soft);
+}
+
+.shots figcaption {
+  font-size: 13px;
+  color: var(--w360-text-muted);
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3);
+  font-size: 14px;
+}

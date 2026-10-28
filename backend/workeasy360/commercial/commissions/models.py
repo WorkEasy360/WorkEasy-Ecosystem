@@ -40,6 +40,40 @@ def _choices(enum_cls: Any) -> list[tuple[str, str]]:
     return [(member.value, member.name.replace("_", " ").title()) for member in enum_cls]
 
 
+class ReferralCampaign(models.Model):
+    """A partner's own grouping of referral links (ADR-053): "CRM October".
+
+    A name and a lifecycle, nothing else - every figure a campaign shows is
+    summed from its links' referrals and the ledger, never stored here.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        "partners.PartnerAccount", on_delete=models.PROTECT, related_name="campaigns"
+    )
+    name = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=16, choices=_choices(GrantStatus), default=GrantStatus.ACTIVE.value
+    )
+    created_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "commissions_referral_campaign"
+        constraints = [
+            models.UniqueConstraint(
+                models.F("partner"),
+                models.functions.Lower("name"),
+                name="uq_campaign_partner_name",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return self.name
+
+
 class ReferralCode(models.Model):
     """A public referral code belonging to one partner.
 
@@ -47,6 +81,11 @@ class ReferralCode(models.Model):
     short, unambiguous to read aloud, and grants nothing: knowing one lets you
     record that you were referred, and that is all. It carries no customer
     data and no partner id.
+
+    ADR-053: a code may point at one product (and plan) of the Store and belong
+    to a campaign. The destination is *derived* from the product - a Store page
+    on the platform's own origin - never a URL anyone typed, so a link cannot
+    redirect off the platform.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -56,6 +95,16 @@ class ReferralCode(models.Model):
     code = models.CharField(max_length=16, unique=True)
     #: A campaign label the partner chose. Free-form text, escaped on render.
     label = models.CharField(max_length=64, blank=True, default="")
+    #: The product (and plan) the link promotes; empty for a general link.
+    product_code = models.CharField(max_length=32, blank=True, default="", db_default="")
+    plan_code = models.CharField(max_length=64, blank=True, default="", db_default="")
+    campaign = models.ForeignKey(
+        ReferralCampaign,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="codes",
+    )
     status = models.CharField(
         max_length=16, choices=_choices(GrantStatus), default=GrantStatus.ACTIVE.value
     )
@@ -106,6 +155,12 @@ class Referral(models.Model):
     )
     captured_at = models.DateTimeField()
     expires_at = models.DateTimeField()
+    #: ADR-053: SHA-256 of the visitor's first-party cookie id - counts unique
+    #: visitors without storing anything that identifies a person.
+    visitor_hash = models.CharField(max_length=64, blank=True, default="", db_default="")
+    #: When the visitor created a Workeasy360 account (the Registrations step
+    #: between a click and a conversion).
+    registered_at = models.DateTimeField(null=True, blank=True)
     converted_at = models.DateTimeField(null=True, blank=True)
     organization = models.OneToOneField(
         "organizations.Organization",
@@ -163,6 +218,10 @@ class CommissionRule(models.Model):
     #: Empty applies to every product.
     product_code = models.CharField(max_length=32, blank=True, default="")
     rate_bp = models.PositiveIntegerField()
+    #: ADR-052: also earn on every paid renewal of the sale (Store Working Flow,
+    #: "Renewal Payment -> Commission Rule -> New Accrual"). Off by default: a
+    #: rule earns once per sale unless staff say otherwise.
+    recurring = models.BooleanField(default=False, db_default=False)
     effective_from = models.DateTimeField()
     retired_at = models.DateTimeField(null=True, blank=True)
     reason = models.CharField(max_length=200)
@@ -195,6 +254,82 @@ class CommissionRule(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.code} v{self.version} ({self.rate_bp}bp)"
+
+
+class MarginRule(models.Model):
+    """One version of a partner discount off list price (ADR-053).
+
+    The owner's margin model: a selling partner's **cost** is the list price
+    less ``discount_bp``; the customer pays the partner's price (its price
+    book, else list); the partner's **margin** is the difference, earned in the
+    one commission ledger *instead of* a commission on that sale.
+
+    Versioned exactly like ``CommissionRule``: a change is a new version, an
+    accrual records the version it used, and every column but ``retired_at``
+    is frozen by trigger, so a sale keeps the cost it was made at.
+
+    A rule is either a **default for a partner experience** (``experience``
+    set, ``partner`` null) or a **partner override** (``partner`` set,
+    ``experience`` empty); a product-specific rule outranks an all-products one.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    code = models.SlugField(max_length=64)
+    version = models.PositiveIntegerField()
+    #: ``reseller`` or ``white_label`` for a programme default; empty for an override.
+    experience = models.CharField(max_length=16, blank=True, default="")
+    partner = models.ForeignKey(
+        "partners.PartnerAccount",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="margin_rules",
+    )
+    product_code = models.CharField(max_length=32, blank=True, default="")
+    discount_bp = models.PositiveIntegerField()
+    #: Also earn the margin on every paid renewal (the partner's customer keeps
+    #: paying the partner's price). On by default for a margin.
+    recurring = models.BooleanField(default=True)
+    effective_from = models.DateTimeField()
+    retired_at = models.DateTimeField(null=True, blank=True)
+    reason = models.CharField(max_length=200)
+    created_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "commissions_margin_rule"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["code", "version"], name="uq_margin_code_version"
+            ),
+            models.UniqueConstraint(
+                fields=["code"],
+                condition=models.Q(retired_at__isnull=True),
+                name="uq_margin_one_live_version",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(discount_bp__lte=10000),
+                name="ck_margin_discount_at_most_100pct",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    partner__isnull=True, experience__in=["reseller", "white_label"]
+                )
+                | models.Q(partner__isnull=False, experience=""),
+                name="ck_margin_default_or_override",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["partner", "product_code", "effective_from"],
+                name="ix_margin_selection",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.code} v{self.version} ({self.discount_bp}bp)"
 
 
 class CommissionAccrual(models.Model):
@@ -245,6 +380,23 @@ class CommissionAccrual(models.Model):
     basis_currency = models.CharField(max_length=3, blank=True, default="")
     attribution_kind = models.CharField(max_length=16, blank=True, default="")
     attribution_ref = models.CharField(max_length=64, blank=True, default="")
+    #: ADR-053: what the sale was (for conversions, top products and reports).
+    product_code = models.CharField(max_length=32, blank=True, default="", db_default="")
+    plan_code = models.CharField(max_length=64, blank=True, default="", db_default="")
+    #: ``commission`` (a rate on the sale) or ``margin`` (customer price less
+    #: the partner's cost). For a margin, ``margin_rule`` is the version used,
+    #: ``cost_minor`` the partner's cost and ``rate_bp`` the effective margin.
+    earning = models.CharField(
+        max_length=16, blank=True, default="commission", db_default="commission"
+    )
+    margin_rule = models.ForeignKey(
+        MarginRule,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="accruals",
+    )
+    cost_minor = models.BigIntegerField(null=True, blank=True)
 
     reverses = models.ForeignKey(
         "self",

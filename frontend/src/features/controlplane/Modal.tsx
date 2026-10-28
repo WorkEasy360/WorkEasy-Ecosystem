@@ -13,7 +13,18 @@ const noSubscription = () => () => {};
  * closes it, the page behind does not scroll, and focus goes back where it was
  * when it closes. A click on the backdrop does nothing, so a
  * half-typed form is never lost by a stray click. */
-export function Modal({ labelledBy, onClose, children }: { labelledBy: string; onClose: () => void; children: React.ReactNode }) {
+export function Modal({
+  labelledBy,
+  onClose,
+  children,
+  wide = false,
+}: {
+  labelledBy: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  /** A wider card, for content rather than a short form (the store preview). */
+  wide?: boolean;
+}) {
   const box = useRef<HTMLDivElement | null>(null);
   const close = useRef(onClose);
   useEffect(() => {
@@ -59,7 +70,13 @@ export function Modal({ labelledBy, onClose, children }: { labelledBy: string; o
   if (!inBrowser) return null;
   return createPortal(
     <div className={styles.backdrop}>
-      <div ref={box} role="dialog" aria-modal="true" aria-labelledby={labelledBy} className={styles.dialog}>
+      <div
+        ref={box}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        className={wide ? `${styles.dialog} ${styles.wide}` : styles.dialog}
+      >
         {children}
       </div>
     </div>,

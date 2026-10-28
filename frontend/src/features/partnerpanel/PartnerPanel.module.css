@@ -782,3 +782,31 @@
 .checklist li {
   overflow-wrap: anywhere;
 }
+
+/* ADR-053: listing images in Marketing Materials. */
+.mediaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mediaRow li {
+  display: grid;
+  gap: var(--w360-space-1);
+  justify-items: start;
+  font-size: 13px;
+}
+
+.mediaThumb {
+  display: block;
+  max-width: min(160px, 100%);
+  max-height: 120px;
+  height: auto;
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md, 8px);
+  background: var(--w360-surface);
+  object-fit: contain;
+}

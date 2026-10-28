@@ -14,9 +14,11 @@ Three kinds, kept apart on purpose:
 
 from __future__ import annotations
 
+import secrets
 from urllib.parse import urlencode
 from uuid import UUID
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods
@@ -129,11 +131,37 @@ def referral_capture_view(request: HttpRequest) -> JsonResponse:
     limited_response = limited(request, "public_referral")
     if limited_response is not None:
         return limited_response
-    token = referrals.capture_referral(_body(request).get("code"))
-    if token is None:
+    visitor = request.COOKIES.get(settings.REFERRAL_VISITOR_COOKIE_NAME, "")[:64]
+    if not 16 <= len(visitor) <= 64:
+        visitor = secrets.token_urlsafe(24)
+    captured = referrals.capture_visit(_body(request).get("code"), visitor_id=visitor)
+    if captured is None:
         # One shape for unknown, disabled and ineligible codes.
         return JsonResponse({"code": "not_found", "detail": "Not found."}, status=404)
-    return JsonResponse({"token": token}, status=201)
+    token, destination = captured
+    # ``destination`` is a path the server derived (ADR-053): never a URL.
+    response = JsonResponse({"token": token, "destination": destination}, status=201)
+    response.set_cookie(
+        settings.REFERRAL_VISITOR_COOKIE_NAME,
+        visitor,
+        max_age=settings.REFERRAL_VISITOR_COOKIE_MAX_AGE,
+        path="/",
+        secure=settings.SESSION_COOKIE_SECURE,
+        httponly=True,
+        samesite="Lax",
+    )
+    # ADR-052: the same opaque token as an HttpOnly cookie, so the referral is
+    # still there when the verification link opens in another tab.
+    response.set_cookie(
+        settings.REFERRAL_COOKIE_NAME,
+        token,
+        max_age=settings.REFERRAL_COOKIE_MAX_AGE,
+        path="/",
+        secure=settings.SESSION_COOKIE_SECURE,
+        httponly=True,
+        samesite="Lax",
+    )
+    return response
 
 
 @require_http_methods(["POST"])
@@ -154,10 +182,16 @@ def referral_convert_view(request: HttpRequest) -> JsonResponse:
         organization_id = UUID(str(body.get("organization_id")))
     except ValueError:
         return JsonResponse({"converted": False})
+    # The token the page kept, else the cookie the referral link set (ADR-052).
+    token = _token(body) or request.COOKIES.get(settings.REFERRAL_COOKIE_NAME, "")[:200]
     converted = referrals.convert_referral(
-        user_id=user.id, token=body.get("token"), organization_id=organization_id
+        user_id=user.id, token=token, organization_id=organization_id
     )
-    return JsonResponse({"converted": converted})
+    response = JsonResponse({"converted": converted})
+    if settings.REFERRAL_COOKIE_NAME in request.COOKIES:
+        # Used once: converted, or no longer convertible for this sign-up.
+        response.delete_cookie(settings.REFERRAL_COOKIE_NAME, path="/", samesite="Lax")
+    return response
 
 
 def _token(body: dict) -> str:
@@ -225,3 +259,44 @@ def invitation_accept_view(request: HttpRequest, organization_id: UUID) -> JsonR
     user = authenticated_user(request)
     customers.accept_owner_invite(user_id=user.id, organization_id=organization_id)
     return JsonResponse({"organization_id": str(organization_id), "accepted": True})
+
+
+@require_http_methods(["GET"])
+def storefront_view(request: HttpRequest, slug: str) -> JsonResponse:
+    """A white-label partner's branded Store (ADR-053): its brand and the
+    products it may sell, at its prices. Presentation only - the response
+    carries no partner id or capability, and checkout re-verifies everything."""
+    from workeasy360.commercial.partners import storefront
+
+    limited_response = limited(request, "public_branding")
+    if limited_response is not None:
+        return limited_response
+    payload = storefront.public_storefront(slug)
+    if payload is None:
+        return JsonResponse({"code": "not_found", "detail": "Not found."}, status=404)
+    brand = payload["brand"]
+    brand["logo_url"] = (
+        f"/api/v1/public/storefront/{payload['slug']}/logo"
+        if brand.pop("has_logo")
+        else None
+    )
+    response = JsonResponse(payload)
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@require_http_methods(["GET"])
+def storefront_logo_view(request: HttpRequest, slug: str) -> HttpResponse:
+    """The storefront's brand logo, same-origin (the CSP allows only 'self')."""
+    from workeasy360.commercial.partners import storefront
+
+    found = branding.public_logo(storefront.logo_file_id(slug))
+    if found is None:
+        return HttpResponse(status=404)
+    data, content_type = found
+    response = HttpResponse(data, content_type=content_type)
+    response["Cache-Control"] = "public, max-age=300"
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Content-Security-Policy"] = "default-src 'none'; sandbox"
+    response["Content-Disposition"] = "inline"
+    return response

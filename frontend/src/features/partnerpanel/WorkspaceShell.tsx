@@ -47,6 +47,8 @@ import styles from "./PartnerPanel.module.css";
  * the backend, which is what actually protects the data.
  */
 
+const SWITCHER_ORDER: ExperienceKey[] = ["affiliate", "reseller", "white_label"];
+
 const STATUS_NOTICE: Record<string, string> = {
   draft: "This partner account isn't active yet. Nothing can be done until it is.",
   suspended: "This partner account is suspended. History stays visible; new actions are unavailable.",
@@ -172,7 +174,11 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
   }
 
   const who = session.status === "ready" ? session.session : null;
-  const workspaces = (partner.workspaces ?? []).filter((w): w is { key: ExperienceKey; label: string } => isExperienceKey(w.key));
+  // ADR-053: the switcher reads in the order a partner grows - Affiliate,
+  // Reseller, White-label. Presentation only; the server decides which exist.
+  const workspaces = (partner.workspaces ?? [])
+    .filter((w): w is { key: ExperienceKey; label: string } => isExperienceKey(w.key))
+    .sort((a, b) => SWITCHER_ORDER.indexOf(a.key) - SWITCHER_ORDER.indexOf(b.key));
   const entries: AccountMenuEntry[] = [
     ...(workspaces.length > 1
       ? workspaces.filter((w) => w.key !== experience).map((w) => ({ label: `Switch to ${w.label}`, href: workspaceHome(w.key) }))

@@ -36,6 +36,8 @@ const STORED: StoredBrand = {
     support_name: "Sam",
     support_phone: "+44 20 7946 0000",
     website_url: "https://acme.example",
+    terms_url: "https://acme.example/terms",
+    privacy_url: "https://acme.example/privacy",
     welcome_message: "Hello",
     footer_text: "Footer",
     sender_name: "Sender",
@@ -59,6 +61,8 @@ describe("draftOf", () => {
       supportPhone: "+44 20 7946 0000",
       supportUrl: "https://help.acme.example",
       websiteUrl: "https://acme.example",
+      termsUrl: "https://acme.example/terms",
+      privacyUrl: "https://acme.example/privacy",
       welcome: "Hello",
       footer: "Footer",
       senderName: "Sender",
@@ -200,7 +204,14 @@ describe("brandBody", () => {
   it("sends the identity from the draft, with its own portal keys, when the identity is saved", () => {
     const body = brandBody(STORED, draft, ["identity"]);
     expect(body.brand_name).toBe("Renamed");
-    expect(body.portal).toEqual({ short_name: "A", support_name: "Sam", support_phone: "+44 20 7946 0000", website_url: "https://acme.example" });
+    expect(body.portal).toEqual({
+      short_name: "A",
+      support_name: "Sam",
+      support_phone: "+44 20 7946 0000",
+      website_url: "https://acme.example",
+      terms_url: "https://acme.example/terms",
+      privacy_url: "https://acme.example/privacy",
+    });
     expect(body.logo_file_id).toBe("f1");
   });
 
@@ -212,6 +223,8 @@ describe("brandBody", () => {
         "support_name",
         "support_phone",
         "website_url",
+        "terms_url",
+        "privacy_url",
         "welcome_message",
         "footer_text",
         "sender_name",

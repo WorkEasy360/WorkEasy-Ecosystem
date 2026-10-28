@@ -204,7 +204,7 @@ export function AdminSearch({ permissions }: { permissions: string[] }) {
 
 const NEW_ITEMS: { label: string; href: string; permission: string }[] = [
   { label: "Add partner", href: "/admin/partners/new", permission: "platform.staff_partner.manage" },
-  { label: "Add product", href: "/admin/products", permission: "platform.staff_catalog.manage" },
+  { label: "Add product", href: "/admin/products/new", permission: "platform.staff_catalog.manage" },
   { label: "New plan", href: "/admin/plans", permission: "platform.staff_catalog.manage" },
   { label: "Grant staff access", href: "/admin/security", permission: "platform.staff_security.manage" },
 ];

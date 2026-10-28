@@ -12,9 +12,12 @@ Because the feed is the audit log, it is exactly as honest as the log: an event
 the platform does not record against the partner (a customer's trial ending, a
 card payment) is not invented here, and is listed under ``not_implemented``.
 
-**Support is a pointer, not a help desk.** The platform has no ticket model and
+**Support is a channel, not a help desk.** The platform has no ticket model and
 this module builds none: it tells the partner where support is (a configured
-contact address, and Easy Help Desk when that product is registered).
+contact address, and Easy Help Desk when that product is registered), and
+:func:`send_support_request` (ADR-053) delivers a request to that address
+through the platform's own email - queued, retried and audited - with the
+member's address as reply-to, so support answers by email or in Easy Help Desk.
 """
 
 from __future__ import annotations
@@ -259,7 +262,81 @@ def support(ctx: TenantContext) -> dict[str, Any]:
         "contact": {"email": address, "available": bool(address)},
         "help_desk": desk,
         "partner": {"name": partner.display_name if partner else ""},
-        "priorities": ["low", "normal", "high", "urgent"],
+        "priorities": list(PRIORITIES),
+        # ADR-053: the form sends through the platform when an address is set.
+        "can_send": bool(address),
         "requests": None,
         "not_implemented": {"partner_tickets": NOT_IMPLEMENTED["partner_tickets"]},
     }
+
+
+PRIORITIES: Final = ("low", "normal", "high", "urgent")
+SUPPORT_TEMPLATE: Final = "platform.partner.support_request"
+
+
+@in_scope
+def send_support_request(
+    ctx: TenantContext,
+    *,
+    subject: Any,
+    message: Any,
+    priority: Any = "normal",
+    workspace: Any = "",
+) -> dict[str, Any]:
+    """Send a partner member's support request to the platform's partner
+    support address (ADR-053). Plain text only; the member's own address is
+    the reply-to. Idempotent per member and text for a minute, so a double
+    click sends one email. Audited without the request's words."""
+    import hashlib
+
+    from django.utils import timezone
+
+    from workeasy360.commercial.partners.inputs import clean_markup_free, clean_note
+    from workeasy360.platform.audit import services as audit
+    from workeasy360.platform.identity import selectors as identity_selectors
+    from workeasy360.platform.notifications.services import notify_account
+
+    authz.require(ctx, DASHBOARD_VIEW)
+    address = str(getattr(settings, "W360_PARTNER_SUPPORT_EMAIL", "") or "")
+    if not address:
+        raise PartnerValidationError(
+            "Partner support email is not configured on this platform.",
+            field="subject",
+        )
+    title = clean_markup_free(subject, field="subject", max_length=120)
+    body = clean_note(message, field="message", max_length=4000)
+    if not title or not body:
+        raise PartnerValidationError(
+            "Enter a subject and a message.", field="subject" if not title else "message"
+        )
+    level = str(priority or "normal")
+    if level not in PRIORITIES:
+        raise PartnerValidationError("Choose a priority.", field="priority")
+    area = str(workspace or "")[:16]
+    partner = selectors.partner_row(ctx.partner_id)
+    requester = identity_selectors.contact_address(ctx.user_id)
+    minute = timezone.now().strftime("%Y%m%d%H%M")
+    digest = hashlib.sha256(f"{title}\n{body}".encode()).hexdigest()[:24]
+    notification_id = notify_account(
+        template_key=SUPPORT_TEMPLATE,
+        recipient_email=address,
+        idempotency_key=f"partner-support:{ctx.user_id}:{digest}:{minute}",
+        context={
+            "partner_name": partner.display_name if partner else "",
+            "partner_code": partner.code if partner else "",
+            "requester_email": requester,
+            "priority": level,
+            "subject": title,
+            "message": body,
+            "workspace": area,
+        },
+        envelope={"reply_to": requester} if requester else None,
+    )
+    audit.record(
+        ctx,
+        "partner.support_request_sent",
+        resource_type="partners.account",
+        resource_id=ctx.partner_id,
+        changes={"priority": level, "workspace": area},
+    )
+    return {"sent": True, "reference": str(notification_id)[:8]}

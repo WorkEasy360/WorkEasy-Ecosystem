@@ -211,6 +211,7 @@ def rules_list(*, live_only: bool = True) -> list[dict[str, Any]]:
             "partner_id": str(r.partner_id) if r.partner_id else None,
             "product_code": r.product_code,
             "rate_bp": r.rate_bp,
+            "recurring": r.recurring,
             "effective_from": r.effective_from.isoformat(),
             "retired_at": r.retired_at.isoformat() if r.retired_at else None,
         }
@@ -233,6 +234,7 @@ def _rule_payload(rule: Any, now: datetime) -> dict[str, Any]:
         "version": rule.version,
         "product_code": rule.product_code,
         "rate_bp": rule.rate_bp,
+        "recurring": rule.recurring,
         "effective_from": rule.effective_from.isoformat(),
         "retired_at": rule.retired_at.isoformat() if rule.retired_at else None,
         "state": _rule_state(rule, now),
@@ -344,8 +346,31 @@ def rule_views() -> list[Any]:
             rate_bp=r.rate_bp,
             effective_from=r.effective_from,
             retired_at=r.retired_at,
+            recurring=r.recurring,
         )
         for r in CommissionRule.objects.all()
+    ]
+
+
+def margin_views() -> list[Any]:
+    """Every margin rule version, as pure-domain views (ADR-053)."""
+    from workeasy360.commercial.commissions.domain import MarginView
+    from workeasy360.commercial.commissions.models import MarginRule
+
+    return [
+        MarginView(
+            id=m.id,
+            code=m.code,
+            version=m.version,
+            experience=m.experience,
+            partner_id=m.partner_id,
+            product_code=m.product_code,
+            discount_bp=m.discount_bp,
+            effective_from=m.effective_from,
+            retired_at=m.retired_at,
+            recurring=m.recurring,
+        )
+        for m in MarginRule.objects.all()
     ]
 
 
@@ -488,24 +513,136 @@ def referral_activity(partner_id: UUID, start: datetime, end: datetime) -> dict[
         partner_id=partner_id, captured_at__gte=start, captured_at__lt=end
     )
     converted = Q(status=ReferralStatus.CONVERTED.value)
+    # ADR-053: unique visitors (distinct cookie hashes) and registrations (the
+    # visitor created an account) between the click and the conversion.
+    counts = {
+        "clicks": Count("id"),
+        "visitors": Count("visitor_hash", distinct=True, filter=~Q(visitor_hash="")),
+        "registrations": Count("id", filter=Q(registered_at__isnull=False) | converted),
+        "converted": Count("id", filter=converted),
+    }
     by_code = {
-        str(r["code_id"]): {"clicks": r["clicks"], "conversions": r["converted"]}
-        for r in window.values("code_id").annotate(
-            clicks=Count("id"), converted=Count("id", filter=converted)
-        )
+        str(r["code_id"]): {
+            "clicks": r["clicks"],
+            "visitors": r["visitors"],
+            "registrations": r["registrations"],
+            "conversions": r["converted"],
+        }
+        for r in window.values("code_id").annotate(**counts)
     }
     by_day = [
         {
             "date": r["day"].isoformat(),
             "clicks": r["clicks"],
+            "visitors": r["visitors"],
+            "registrations": r["registrations"],
             "conversions": r["converted"],
         }
         for r in window.annotate(day=TruncDate("captured_at"))
         .values("day")
-        .annotate(clicks=Count("id"), converted=Count("id", filter=converted))
+        .annotate(**counts)
         .order_by("day")
     ]
-    return {"by_code": by_code, "by_day": by_day}
+    totals = window.aggregate(**counts)
+    return {
+        "by_code": by_code,
+        "by_day": by_day,
+        "totals": {
+            "clicks": totals["clicks"] or 0,
+            "visitors": totals["visitors"] or 0,
+            "registrations": totals["registrations"] or 0,
+            "conversions": totals["converted"] or 0,
+        },
+    }
+
+
+def referral_earnings(
+    partner_id: UUID, start: datetime | None = None, end: datetime | None = None
+) -> dict[str, Any]:
+    """What a partner's referrals sold and earned, from the ledger (ADR-053):
+    per link, per product and in total, by currency. ``sales_minor`` is the
+    sale amount the commission was computed on (first sales and renewals);
+    ``commission_minor`` nets every accrual, reversal and adjustment. Two
+    queries: the ledger rows, and the referrals they name."""
+    from workeasy360.commercial.commissions.models import CommissionAccrual, Referral
+
+    rows = CommissionAccrual.objects.filter(
+        partner_id=partner_id, attribution_kind="referral"
+    )
+    if start is not None:
+        rows = rows.filter(event_at__gte=start)
+    if end is not None:
+        rows = rows.filter(event_at__lt=end)
+    entries = list(
+        rows.values(
+            "kind",
+            "amount_minor",
+            "currency",
+            "basis_minor",
+            "product_code",
+            "attribution_ref",
+        )
+    )
+    refs = [e["attribution_ref"] for e in entries if _is_uuid(e["attribution_ref"])]
+    code_of = {
+        str(r["id"]): str(r["code_id"])
+        for r in Referral.objects.filter(partner_id=partner_id, id__in=refs).values(
+            "id", "code_id"
+        )
+    }
+    by_code: dict[str, dict[str, dict[str, int]]] = {}
+    by_product: dict[str, dict[str, dict[str, int]]] = {}
+    totals: dict[str, dict[str, dict[str, int]]] = {}
+    for e in entries:
+        _bucket(totals, "all", e)
+        if e["product_code"]:
+            _bucket(by_product, e["product_code"], e)
+        code = code_of.get(e["attribution_ref"])
+        if code:
+            _bucket(by_code, code, e)
+    return {
+        "by_code": by_code,
+        "by_product": by_product,
+        "totals": totals.get("all", {}),
+    }
+
+
+def _bucket(
+    table: dict[str, dict[str, dict[str, int]]], key: str, entry: dict[str, Any]
+) -> None:
+    cell = table.setdefault(key, {}).setdefault(
+        entry["currency"], {"sales_minor": 0, "commission_minor": 0, "sales": 0}
+    )
+    cell["commission_minor"] += entry["amount_minor"]
+    if entry["kind"] == AccrualKind.ACCRUAL.value:
+        cell["sales_minor"] += entry["basis_minor"] or 0
+        cell["sales"] += 1
+
+
+def _is_uuid(value: Any) -> bool:
+    try:
+        UUID(str(value))
+    except ValueError:
+        return False
+    return True
+
+
+def campaigns(partner_id: UUID) -> list[dict[str, Any]]:
+    """A partner's campaigns (ADR-053), newest first, with their link counts."""
+    from workeasy360.commercial.commissions.models import ReferralCampaign
+
+    return [
+        {
+            "id": str(c.id),
+            "name": c.name,
+            "status": c.status,
+            "links": c.n,
+            "created_at": c.created_at.isoformat(),
+        }
+        for c in ReferralCampaign.objects.filter(partner_id=partner_id)
+        .annotate(n=Count("codes"))
+        .order_by("-created_at")
+    ]
 
 
 def referral_codes(partner_id: UUID) -> list[dict[str, Any]]:
@@ -517,11 +654,15 @@ def referral_codes(partner_id: UUID) -> list[dict[str, Any]]:
             "code": c.code,
             "label": c.label,
             "status": c.status,
+            "product_code": c.product_code,
+            "plan_code": c.plan_code,
+            "campaign_id": str(c.campaign_id) if c.campaign_id else None,
+            "campaign_name": c.campaign.name if c.campaign_id else None,
             "created_at": c.created_at.isoformat(),
         }
-        for c in ReferralCode.objects.filter(partner_id=partner_id).order_by(
-            "-created_at"
-        )[:50]
+        for c in ReferralCode.objects.filter(partner_id=partner_id)
+        .select_related("campaign")
+        .order_by("-created_at")[:50]
     ]
 
 
@@ -555,8 +696,12 @@ def referrals_page(
                 "id": str(r.id),
                 "code": r.code.code,
                 "label": r.code.label,
+                "product_code": r.code.product_code,
                 "status": r.status,
                 "captured_at": r.captured_at.isoformat(),
+                "registered_at": (
+                    r.registered_at.isoformat() if r.registered_at else None
+                ),
                 "converted_at": r.converted_at.isoformat() if r.converted_at else None,
             }
             for r in rows
@@ -941,16 +1086,40 @@ def partner_conversions_page(
         .values("organization_id", "currency")
         .annotate(total=Sum("amount_minor"))
     }
+    # ADR-053: what each converted customer bought through the referral - the
+    # products and plans on its ledger rows and the sale amounts, never who it is.
+    sold: dict[Any, dict[str, Any]] = {}
+    for a in CommissionAccrual.objects.filter(
+        partner_id=partner_id,
+        kind=AccrualKind.ACCRUAL.value,
+        attribution_kind="referral",
+        organization_id__in=[r.organization_id for r in rows],
+    ).order_by("event_at"):
+        entry = sold.setdefault(a.organization_id, {"products": [], "sales_minor": 0})
+        if a.product_code and a.product_code not in [
+            p["product_code"] for p in entry["products"]
+        ]:
+            entry["products"].append(
+                {"product_code": a.product_code, "plan_code": a.plan_code}
+            )
+        entry["sales_minor"] += a.basis_minor or 0
     items = []
     for r in rows:
         amount, currency = earned.get(r.organization_id, (0, ""))
+        sale = sold.get(r.organization_id, {"products": [], "sales_minor": 0})
         items.append(
             {
                 "id": str(r.id),
                 "code": r.code.code,
                 "code_label": r.code.label,
                 "captured_at": r.captured_at.isoformat(),
+                "registered_at": (
+                    r.registered_at.isoformat() if r.registered_at else None
+                ),
                 "converted_at": r.converted_at.isoformat() if r.converted_at else None,
+                "products": sale["products"],
+                "sales_minor": sale["sales_minor"],
+                "status": "purchased" if sale["products"] else "signed_up",
                 "commission_minor": amount,
                 "currency": currency,
             }
@@ -962,3 +1131,35 @@ def partner_conversions_page(
         ),
         has_more=has_more,
     )
+
+
+def earnings_by_item(partner_id: UUID, item_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """What each subscription line has earned this partner on the ledger
+    (ADR-053): net amount (accruals less reversals), the partner's cost for a
+    margin sale, and which earning model applied - by subscription line id."""
+    from workeasy360.commercial.commissions.models import CommissionAccrual
+
+    if not item_ids:
+        return {}
+    refs = {f"subscriptions.item:{i}": i for i in item_ids}
+    rows = list(
+        CommissionAccrual.objects.filter(
+            partner_id=partner_id, kind=AccrualKind.ACCRUAL.value, source_ref__in=refs
+        ).values("id", "source_ref", "amount_minor", "currency", "earning", "cost_minor")
+    )
+    reversed_by = {
+        r["reverses_id"]: r["total"]
+        for r in CommissionAccrual.objects.filter(reverses_id__in=[r["id"] for r in rows])
+        .values("reverses_id")
+        .annotate(total=Sum("amount_minor"))
+    }
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        item = refs[r["source_ref"]]
+        out[item] = {
+            "earning": r["earning"],
+            "amount_minor": r["amount_minor"] + (reversed_by.get(r["id"]) or 0),
+            "cost_minor": r["cost_minor"],
+            "currency": r["currency"],
+        }
+    return out

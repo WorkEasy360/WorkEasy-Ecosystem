@@ -116,7 +116,16 @@ function Kpis({ d }: { d: DashboardData }) {
       />
       <Kpi icon="receipt" label="Total transactions" value={d.sales?.transactions} note="Sales on which you earn" unavailable={d.sales ? undefined : noMoney} />
       <Kpi icon="chart" label="Gross sales" value={<Amounts amounts={d.sales?.gross} />} unavailable={d.sales ? undefined : noMoney} />
-      <Kpi icon="tag" label="Partner cost" unavailable={d.not_implemented.partner_cost} />
+      <Kpi
+        icon="tag"
+        label="How you earn"
+        value={d.earning?.model === "margin" ? "Margin" : "Commission"}
+        note={
+          d.earning?.model === "margin"
+            ? `Your cost is list price less ${((d.earning.discount_bp ?? 0) / 100).toFixed(2)}%`
+            : "A commission on each paid sale"
+        }
+      />
       <Kpi icon="currency" label="Commission earned" value={<Amounts amounts={d.sales?.commission_earned} />} unavailable={d.sales ? undefined : noMoney} />
       <Kpi
         icon="history"

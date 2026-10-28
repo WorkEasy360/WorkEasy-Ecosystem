@@ -42,7 +42,16 @@ PORTAL_ROOT: Final = {ADMIN: "/admin", PARTNER: "/partner", APP: "/dashboard"}
 PORTAL_PATH_PREFIXES: Final = {
     ADMIN: ("/admin",),
     PARTNER: ("/partner",),
-    APP: ("/dashboard", "/o", "/organizations", "/onboarding", "/billing", "/settings"),
+    APP: (
+        "/dashboard",
+        "/o",
+        "/organizations",
+        "/onboarding",
+        "/billing",
+        "/settings",
+        # ADR-053: a partner's branded Store, where a buyer returns after sign-in.
+        "/store",
+    ),
 }
 
 #: The longest ``next`` accepted. Anything longer is ignored, not truncated.

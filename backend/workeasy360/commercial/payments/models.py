@@ -107,6 +107,9 @@ class Order(TenantScopedModel):
         BUNDLE = "bundle", "Bundle"
         #: Converting a trial to paid.
         ACTIVATION = "activation", "Activation"
+        #: Several products' plans in one order and one payment (the Store's
+        #: cart, ADR-052); each becomes its own subscription line.
+        CART = "cart", "Cart"
 
     class Status(models.TextChoices):
         PENDING_PAYMENT = "pending_payment", "Awaiting payment"
@@ -164,8 +167,22 @@ class Order(TenantScopedModel):
     amount_due_minor = models.BigIntegerField(default=0)
     #: ``PriceQuote.as_snapshot()`` at placement - what fulfilment charges.
     price_snapshot = models.JSONField(default=dict, blank=True)
+    #: A cart's lines (ADR-052), each priced by the server at placement:
+    #: ``plan_version_id``, ``product_code``, ``plan_code``, ``plan_name``,
+    #: ``quantity``, ``recurring_amount_minor``, ``amount_due_minor``,
+    #: ``snapshot`` and, once fulfilled, ``subscription_item_id``. Empty for
+    #: every other kind.
+    lines = models.JSONField(default=list, blank=True, db_default=[])
     is_trial = models.BooleanField(default=False)
     placed_by_user_id = models.UUIDField(null=True, blank=True)
+    #: ADR-053: who sold it. ``direct`` (the customer in the Store), ``partner``
+    #: (a reseller placing it for its customer) or ``storefront`` (the customer
+    #: in a white-label partner's branded Store). ``partner_id`` is that partner
+    #: (a soft reference, like the ledger's); it priced the order from its book.
+    channel = models.CharField(
+        max_length=16, blank=True, default="direct", db_default="direct"
+    )
+    partner_id = models.UUIDField(null=True, blank=True)
     idempotency_key = models.CharField(max_length=128)
     expires_at = models.DateTimeField(null=True, blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
@@ -202,6 +219,11 @@ class Order(TenantScopedModel):
                     models.Q(kind="plan", plan_version__isnull=False)
                     | models.Q(kind="bundle", bundle_version__isnull=False)
                     | models.Q(kind="activation", subscription__isnull=False)
+                    | models.Q(
+                        kind="cart",
+                        plan_version__isnull=True,
+                        bundle_version__isnull=True,
+                    )
                 ),
                 name="ck_order_names_what_it_buys",
             ),
@@ -242,6 +264,14 @@ class OrderSummary(models.Model):
     product_codes = models.JSONField(default=list, blank=True)
     currency = models.CharField(max_length=3)
     amount_due_minor = models.BigIntegerField(default=0)
+    #: ADR-053: the price per period, who sold it, what it sold (plan names,
+    #: per line) and the subscription lines it made - so a partner's Sales &
+    #: Orders can show each order with the margin or commission it earned.
+    recurring_amount_minor = models.BigIntegerField(default=0, db_default=0)
+    channel = models.CharField(max_length=16, default="direct", db_default="direct")
+    partner_id = models.UUIDField(null=True, blank=True)
+    plan_names = models.JSONField(default=list, blank=True, db_default=[])
+    subscription_item_ids = models.JSONField(default=list, blank=True, db_default=[])
     created_at = models.DateTimeField()
     paid_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)

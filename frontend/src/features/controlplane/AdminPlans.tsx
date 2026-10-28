@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   adminConsoleApi,
   INTERVAL_LABELS,
@@ -58,16 +59,27 @@ function isPlanRow(row: Row): row is PlanRow {
   return "product" in row;
 }
 
-function rowsOf(overview: CatalogOverview, kind: BuilderKind): Row[] {
-  if (kind === "bundle") return overview.bundles;
-  return overview.plans.filter((p) => p.kind === (kind === "addon" ? "add_on" : "standard"));
+function rowsOf(overview: CatalogOverview, kind: BuilderKind, productCode?: string): Row[] {
+  if (kind === "bundle") {
+    // A suite is shown for a product when its latest version includes it.
+    return productCode
+      ? overview.bundles.filter((b) => b.versions[0]?.items.some((i) => i.product_code === productCode))
+      : overview.bundles;
+  }
+  return overview.plans.filter(
+    (p) =>
+      p.kind === (kind === "addon" ? "add_on" : "standard") &&
+      (!productCode || p.product.code === productCode || p.addon_for?.code === productCode),
+  );
 }
 
-export function PlansScreen() {
+/** `productCode` (the Product Manager's "Manage Plans", ADR-051) narrows every
+ * tab to that product; it opens on its product packages. */
+export function PlansScreen({ productCode }: { productCode?: string } = {}) {
   const { permissions } = useAdmin();
   const manage = can(permissions, "platform.staff_catalog.manage");
   const [load, reload] = useLoad(() => adminConsoleApi.catalogOverview(), []);
-  const [tab, setTab] = useState<BuilderKind>("bundle");
+  const [tab, setTab] = useState<BuilderKind>(productCode ? "package" : "bundle");
   const [panel, setPanel] = useState<Panel | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeRef = useRef<HTMLParagraphElement | null>(null);
@@ -99,6 +111,12 @@ export function PlansScreen() {
       <LoadGate load={load} what="the catalog">
         {(overview) => (
           <div>
+            {productCode && (
+              <p className={cp.muted}>
+                Showing {overview.products.find((p) => p.code === productCode)?.name ?? productCode} only.{" "}
+                <Link href="/admin/plans">Show all products</Link>
+              </p>
+            )}
             <Tabs
               label="Catalog offers"
               items={(["bundle", "package", "addon"] as const).map((key) => ({ key, label: TAB_TITLE[key] }))}
@@ -113,6 +131,7 @@ export function PlansScreen() {
               <OfferTab
                 kind={tab}
                 overview={overview}
+                productCode={productCode}
                 manage={manage}
                 panel={panel}
                 open={(p) => {
@@ -132,6 +151,7 @@ export function PlansScreen() {
 function OfferTab({
   kind,
   overview,
+  productCode,
   manage,
   panel,
   open,
@@ -139,12 +159,13 @@ function OfferTab({
 }: {
   kind: BuilderKind;
   overview: CatalogOverview;
+  productCode?: string;
   manage: boolean;
   panel: Panel | null;
   open: (panel: Panel) => void;
   onClose: (outcome: BuilderOutcome) => void;
 }) {
-  const rows = rowsOf(overview, kind);
+  const rows = rowsOf(overview, kind, productCode);
   const noun = NOUN[kind];
   const row = panel && panel.mode !== "new" ? rows.find((r) => r.id === panel.id) : undefined;
   const productColumn = kind === "bundle" ? [] : [kind === "addon" ? "Product / add-on for" : "Product"];

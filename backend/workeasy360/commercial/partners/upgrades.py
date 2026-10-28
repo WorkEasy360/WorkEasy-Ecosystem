@@ -192,6 +192,16 @@ def request_dict(row: Any, *, staff: bool = False) -> dict[str, Any]:
         "products_granted": row.products_granted,
         "version": row.version,
         "editable": row.status in EDITABLE,
+        # ADR-053: the set-up fee fixed when the request opened, if any.
+        "setup_fee": (
+            {
+                "amount_minor": row.fee_amount_minor,
+                "currency": row.fee_currency,
+                "settled": row.fee_settled_at is not None,
+            }
+            if row.fee_amount_minor
+            else None
+        ),
     }
     if staff:
         out["requested_by"] = row.requested_by.email
@@ -241,6 +251,10 @@ def state(ctx: TenantContext) -> dict[str, Any]:
         },
         "products": [],
         "checklist": [],
+        # What each target would cost to start now (ADR-053); None is no fee.
+        "fees": {
+            t: program_fee(t) for t in (capabilities.RESELLER, capabilities.WHITE_LABEL)
+        },
     }
     if current is not None:
         out["products"] = product_options()
@@ -351,6 +365,7 @@ def start(ctx: TenantContext, *, to: Any) -> dict[str, Any]:
                 "This partner cannot ask for that upgrade from where it is.",
                 field="experience",
             )
+        fee = program_fee(target)
         row = _model().objects.create(
             partner_id=partner_id,
             from_experience=selectors.landing_workspace(partner_id) or "",
@@ -359,6 +374,8 @@ def start(ctx: TenantContext, *, to: Any) -> dict[str, Any]:
             requested_by_id=ctx.user_id,
             requested_at=timezone.now(),
             correlation_id=current_correlation_id(),
+            fee_amount_minor=fee["amount_minor"] if fee else None,
+            fee_currency=fee["currency"] if fee else "",
         )
         audit.record(
             ctx,
@@ -792,6 +809,124 @@ def _close(ctx: TenantContext, row: Any, status: str, note: str) -> None:
     )
 
 
+# --- set-up fees (ADR-053) ---------------------------------------------------
+
+
+def program_fee(experience: str) -> dict[str, Any] | None:
+    """The set-up fee for becoming ``experience`` now, or ``None``."""
+    from workeasy360.commercial.partners.models import PartnerProgramFee
+
+    row = PartnerProgramFee.objects.filter(experience=experience).first()
+    if row is None or row.amount_minor <= 0:
+        return None
+    return {"amount_minor": row.amount_minor, "currency": row.currency}
+
+
+@in_scope
+def set_program_fee(
+    ctx: TenantContext,
+    *,
+    experience: Any,
+    currency: Any,
+    amount_minor: Any = None,
+    amount: Any = None,
+) -> dict[str, Any] | None:
+    """Set (or, with zero, remove) the set-up fee for a target experience.
+    Requests already open keep the fee they started with. The amount is either
+    whole minor units or the decimal text a person typed (``"25000.00"``),
+    converted here for the currency - never by a browser."""
+    from workeasy360.commercial.partners.models import PartnerProgramFee
+    from workeasy360.contracts.values.money import CurrencyCode
+
+    authz.require(ctx, STAFF_MANAGE)
+    target = str(experience or "")
+    if target not in (capabilities.RESELLER, capabilities.WHITE_LABEL):
+        raise PartnerValidationError(
+            "A set-up fee is for becoming a reseller or a white-label partner.",
+            field="experience",
+        )
+    try:
+        code = CurrencyCode(str(currency))
+    except ValueError as exc:
+        raise PartnerValidationError("Unsupported currency.", field="currency") from exc
+    if amount is not None:
+        amount_minor = _minor_units(amount, code)
+    if (
+        isinstance(amount_minor, bool)
+        or not isinstance(amount_minor, int)
+        or not 0 <= amount_minor <= 10**12
+    ):
+        raise PartnerValidationError(
+            "amount_minor must be a whole number of minor units, zero or more.",
+            field="amount_minor",
+        )
+    with transaction.atomic():
+        previous = (
+            PartnerProgramFee.objects.select_for_update()
+            .filter(experience=target)
+            .first()
+        )
+        before = (
+            {"amount_minor": previous.amount_minor, "currency": previous.currency}
+            if previous is not None
+            else None
+        )
+        PartnerProgramFee.objects.update_or_create(
+            experience=target,
+            defaults={
+                "amount_minor": amount_minor,
+                "currency": code.value,
+                "updated_by_id": ctx.user_id,
+            },
+        )
+        audit.record(
+            ctx,
+            "partner.program_fee_set",
+            resource_type="partners.program_fee",
+            resource_id=target,
+            changes={
+                "experience": target,
+                "before": before,
+                "after": {"amount_minor": amount_minor, "currency": code.value},
+            },
+        )
+    return program_fee(target)
+
+
+def _minor_units(text: Any, currency: Any) -> int:
+    """``"25000.00"`` in INR -> 2500000. Decimal, never float; at most the
+    currency's own number of decimals."""
+    from decimal import Decimal, InvalidOperation
+
+    raw = str(text or "").strip()
+    try:
+        value = Decimal(raw)
+    except InvalidOperation as exc:
+        raise PartnerValidationError("Enter an amount.", field="amount") from exc
+    exponent = currency.exponent
+    if (
+        not value.is_finite() or value < 0 or value.as_tuple().exponent < -exponent  # type: ignore[operator]
+    ):
+        raise PartnerValidationError(
+            f"Enter an amount with at most {exponent} decimals.", field="amount"
+        )
+    return int(value.scaleb(exponent))
+
+
+def require_fee_settled(row: Any, reference: str) -> bool:
+    """Approval's fee rule: a request that carries a set-up fee is approved
+    only with the payment's reference. Returns whether a fee was settled."""
+    if not row.fee_amount_minor:
+        return False
+    if not reference:
+        raise PartnerValidationError(
+            "This upgrade has a set-up fee. Record the payment reference "
+            "(the invoice or transfer) before approving.",
+            field="commercial_reference",
+        )
+    return True
+
+
 def record_approval(
     ctx: TenantContext,
     row: Any,
@@ -805,17 +940,21 @@ def record_approval(
     """Stamp a request approved, after the transition service has granted the
     bundle. Called by the staff approval command in its transaction, so the
     grants and this stamp commit or roll back together."""
+    fee_settled = require_fee_settled(row, commercial_reference)
     _close(ctx, row, APPROVED, note)
     row.capabilities_added = added
     row.capabilities_removed = removed
     row.products_granted = products
     row.commercial_reference = commercial_reference
+    if fee_settled:
+        row.fee_settled_at = timezone.now()
     row.save(
         update_fields=[
             "capabilities_added",
             "capabilities_removed",
             "products_granted",
             "commercial_reference",
+            "fee_settled_at",
         ]
     )
     audit.record(
@@ -835,6 +974,12 @@ def record_approval(
             "capabilities_removed": removed,
             "products_granted": products,
             "commercial_reference": commercial_reference,
+            "setup_fee": {
+                "amount_minor": row.fee_amount_minor,
+                "currency": row.fee_currency,
+            }
+            if row.fee_amount_minor
+            else None,
             "request_correlation_id": str(row.correlation_id)
             if row.correlation_id
             else None,

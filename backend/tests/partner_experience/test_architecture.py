@@ -99,6 +99,8 @@ def test_the_partner_models_are_unchanged_by_this_work():
         # ADR-049: the one table the upgrade workflow needed - a request record,
         # not a kind of partner (tests/partner_upgrade pins what it may do).
         "PartnerUpgradeRequest",
+        # ADR-053: the set-up fee setting (one row per target experience).
+        "PartnerProgramFee",
     }
 
 

@@ -39,7 +39,17 @@ FLAG_DEFAULTS: Final[dict[str, bool]] = {
 }
 
 #: The addresses, each with its own rule.
-OTHER_FIELDS: Final = ("support_phone", "website_url", "reply_to_email")
+OTHER_FIELDS: Final = (
+    "support_phone",
+    "website_url",
+    "reply_to_email",
+    # ADR-053: the partner's own legal pages, linked from its branded Store.
+    "terms_url",
+    "privacy_url",
+)
+
+#: The plain ``https`` addresses (displayed as links, never fetched).
+URL_FIELDS: Final = ("website_url", "terms_url", "privacy_url")
 
 PORTAL_FIELDS: Final = (*TEXT_FIELDS, *OTHER_FIELDS, *FLAG_DEFAULTS)
 
@@ -49,6 +59,8 @@ PUBLIC_FIELDS: Final = (
     "support_name",
     "support_phone",
     "website_url",
+    "terms_url",
+    "privacy_url",
     "welcome_message",
     "footer_text",
     "login_show_welcome",
@@ -86,15 +98,16 @@ def parse(raw: Any, problems: Problems) -> dict[str, Any]:
         )
         if value is not None:
             out["support_phone"] = value
-    if "website_url" in raw:
-        value = problems.run(
-            "portal.website_url",
-            inputs.clean_https_url,
-            raw["website_url"],
-            field="website_url",
-        )
-        if value is not None:
-            out["website_url"] = value
+    for key in URL_FIELDS:
+        if key in raw:
+            value = problems.run(
+                f"portal.{key}",
+                inputs.clean_https_url,
+                raw[key],
+                field=key,
+            )
+            if value is not None:
+                out[key] = value
     if "reply_to_email" in raw:
         value = problems.run(
             "portal.reply_to_email",

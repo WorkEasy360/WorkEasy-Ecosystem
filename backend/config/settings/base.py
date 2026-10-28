@@ -461,6 +461,25 @@ PORTAL_STATE_COOKIE_NAME = (
     if W360_PORTAL_ORIGINS["auth"].startswith("https://")
     else "w360_portal_state"
 )
+# ADR-052: a followed referral link, kept by the browser until the referred
+# sign-up converts it - so attribution survives the verification email opening
+# a new tab. HttpOnly, host-only and as opaque as the token it carries (the
+# server stores only a hash). Thirty days: the age limit for a referred
+# organization to be attributed at all.
+REFERRAL_COOKIE_NAME = (
+    "__Host-w360_ref"
+    if W360_PORTAL_ORIGINS["auth"].startswith("https://")
+    else "w360_ref"
+)
+REFERRAL_COOKIE_MAX_AGE = 30 * 24 * 3600
+# ADR-053: a random first-party visitor id, so a referral link counts unique
+# visitors. Only its hash is stored; it identifies a browser, never a person.
+REFERRAL_VISITOR_COOKIE_NAME = (
+    "__Host-w360_vid"
+    if W360_PORTAL_ORIGINS["auth"].startswith("https://")
+    else "w360_vid"
+)
+REFERRAL_VISITOR_COOKIE_MAX_AGE = 365 * 24 * 3600
 
 # --- Content Security Policy (Phase 4) ------------------------------------
 #
@@ -917,6 +936,9 @@ CONTROL_PLANE_RATE_LIMITS = {
     "public_branding_ip": (env.int("W360_RL_PUBLIC_BRANDING_IP", 120), 60),
     "public_referral_ip": (env.int("W360_RL_PUBLIC_REFERRAL_IP", 20), 60),
     "referral_convert_user": (env.int("W360_RL_REFERRAL_CONVERT_USER", 10), 60),
+    # ADR-053: a partner's support request is an email to the platform.
+    "partner_support_user": (env.int("W360_RL_PARTNER_SUPPORT_USER", 5), 300),
+    "partner_support_ip": (env.int("W360_RL_PARTNER_SUPPORT_IP", 20), 300),
     # ADR-046: partner API keys. Managing them (create / rotate / revoke) is a
     # dangerous action and is limited tightly; the key-authenticated read API has
     # a per-address ceiling here and a per-key one in the view.
@@ -1348,6 +1370,9 @@ CONTROL_PLANE_RATE_LIMITS.update(
         # press makes one outbound request to a third party's server.
         "product_health_check_user": (env.int("W360_RL_PRODUCT_HEALTH_USER", 10), 60),
         "product_health_check_ip": (env.int("W360_RL_PRODUCT_HEALTH_IP", 30), 60),
+        # ADR-051: Product Manager image uploads (each stores and scans a file).
+        "product_media_upload_user": (env.int("W360_RL_PRODUCT_MEDIA_USER", 60), 60),
+        "product_media_upload_ip": (env.int("W360_RL_PRODUCT_MEDIA_IP", 120), 60),
     }
 )
 

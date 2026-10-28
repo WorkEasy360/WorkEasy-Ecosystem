@@ -187,6 +187,8 @@ def test_the_partner_models_are_the_frozen_set():
         # Reseller / White-label request needed. tests/partner_upgrade pins what
         # it may never become (no kind of partner, no grant, no amount).
         "PartnerUpgradeRequest",
+        # ADR-053: the set-up fee setting.
+        "PartnerProgramFee",
     }
 
 
@@ -211,6 +213,10 @@ def test_the_commission_and_pricing_models_are_the_frozen_set():
         "CommissionAccrual",
         "Payout",
         "PayoutLine",
+        # ADR-053: the partner discount off list (a versioned rule, like
+        # CommissionRule) and the partner's own grouping of its links.
+        "MarginRule",
+        "ReferralCampaign",
     }
     assert _model_names("pricing") == {
         "PriceBook",
@@ -429,4 +435,7 @@ def test_phase_10_leaves_the_legacy_catalog_alone():
         "0002_plan_builder.py",
         "0003_product_presentation.py",
         "0004_product_category_icon_trial_config.py",
+        # ADR-051: the Product Manager's listing columns and ProductMedia, added
+        # through the catalog's own services (tests/product_manager pins them).
+        "0005_product_manager.py",
     ]

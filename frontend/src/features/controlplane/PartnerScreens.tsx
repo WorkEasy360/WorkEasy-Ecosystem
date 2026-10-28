@@ -3,8 +3,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { partnerApi, newKey, type Brand, type Diagnosis } from "@/lib/api/controlPlane";
-import { panelApi } from "@/lib/api/partnerPanel";
+import { partnerApi, newKey, type Brand, type CustomerSubscription, type Diagnosis } from "@/lib/api/controlPlane";
+import { panelApi, type CustomerOrderQuote } from "@/lib/api/partnerPanel";
 import { portalOwnerInvitationApi } from "@/lib/api/partnerConsole";
 import { usePartner } from "./ControlShell";
 import { ActivationBadge, OwnerInvitationActions } from "./PartnerCustomers";
@@ -209,6 +209,9 @@ export function PartnerCustomers() {
                       {has("subscription.sell") && active && c.link_status === "active" && (
                         <SellForm partnerId={id} organizationId={c.organization_id} onDone={paged.reload} />
                       )}
+                      {has("subscription.manage") && active && c.link_status === "active" && (
+                        <ManageSubscription partnerId={id} organizationId={c.organization_id} onDone={paged.reload} />
+                      )}
                       {has("customer.provision") && active && !ended && (
                         <OwnerInvitationActions
                           activation={c.owner_activation.activation}
@@ -286,21 +289,36 @@ export function PartnerCustomers() {
   );
 }
 
+/**
+ * Sell to a customer (ADR-053): a central Order, priced by the server from the
+ * partner's book. A customer on automatic collection pays the order in its own
+ * console before anything is granted; a partner-billed account is an approved
+ * sale, fulfilled at once. The browser sends identifiers only.
+ */
 function SellForm({ partnerId, organizationId, onDone }: { partnerId: string; organizationId: string; onDone: () => void }) {
   const [open, setOpen] = useState(false);
   const [catalog] = useLoad(() => (open ? partnerApi.catalog(partnerId) : Promise.resolve({ results: [] })), [open, partnerId]);
   const { act, busy, feedback } = useAction(onDone);
   const planId = useId();
   const qtyId = useId();
+  const intervalId = useId();
   const [plan, setPlan] = useState("");
   const [quantity, setQuantity] = useState("1");
+  const [interval, setInterval] = useState("monthly");
+  const [quote, setQuote] = useState<CustomerOrderQuote | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
   const key = useRef(newKey());
+  const request = { plan_version_id: plan, quantity: Number(quantity), billing_interval: interval };
 
   if (!open) {
+    // The outcome of the last order stays on screen after the form closes.
     return (
-      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setOpen(true)}>
-        Sell a plan
-      </button>
+      <>
+        {feedback}
+        <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setOpen(true)}>
+          Sell a plan
+        </button>
+      </>
     );
   }
   return (
@@ -309,10 +327,12 @@ function SellForm({ partnerId, organizationId, onDone }: { partnerId: string; or
       onSubmit={(e) => {
         e.preventDefault();
         void act(async () => {
-          await partnerApi.sell(partnerId, organizationId, plan, Number(quantity), key.current);
+          const placed = await panelApi.placeCustomerOrder(partnerId, organizationId, request, key.current);
           key.current = newKey();
           setOpen(false);
-        }, "Plan sold. The price was set by the server from your approved price book.");
+          setQuote(null);
+          return placed;
+        }, "Order created. If the customer pays by card, its owner pays the order in their console; access starts once the payment is confirmed.");
       }}
     >
       {feedback}
@@ -323,25 +343,84 @@ function SellForm({ partnerId, organizationId, onDone }: { partnerId: string; or
               <label className="w360-label" htmlFor={planId}>
                 Plan
               </label>
-              <select id={planId} className="w360-input" required value={plan} onChange={(e) => setPlan(e.target.value)}>
+              <select
+                id={planId}
+                className="w360-input"
+                required
+                value={plan}
+                onChange={(e) => {
+                  setPlan(e.target.value);
+                  setQuote(null);
+                }}
+              >
                 <option value="">Choose…</option>
                 {d.results.map((p) => (
                   <option key={p.plan_version_id} value={p.plan_version_id}>
                     {p.product_name} — {p.plan_name}
-                    {p.price ? ` (${money(p.price.total_amount_minor, p.price.currency)} / ${p.price.interval})` : ""}
                   </option>
                 ))}
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={intervalId}>
+                Billing
+              </label>
+              <select
+                id={intervalId}
+                className="w360-input"
+                value={interval}
+                onChange={(e) => {
+                  setInterval(e.target.value);
+                  setQuote(null);
+                }}
+              >
+                <option value="monthly">Monthly</option>
+                <option value="annual">Yearly</option>
               </select>
             </div>
             <div className={styles.field}>
               <label className="w360-label" htmlFor={qtyId}>
                 Seats
               </label>
-              <input id={qtyId} className="w360-input" inputMode="numeric" pattern="[0-9]{1,5}" required value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+              <input
+                id={qtyId}
+                className="w360-input"
+                inputMode="numeric"
+                pattern="[0-9]{1,5}"
+                required
+                value={quantity}
+                onChange={(e) => {
+                  setQuantity(e.target.value);
+                  setQuote(null);
+                }}
+              />
             </div>
+            {quote && (
+              <p aria-live="polite">
+                {quote.description}: {money(quote.recurring_amount_minor, quote.currency)} per period
+                {quote.requires_payment
+                  ? ` — the customer pays ${money(quote.amount_due_minor, quote.currency)} now.`
+                  : " — nothing is charged now (an approved sale)."}
+              </p>
+            )}
+            {quoteError && <p role="alert">{quoteError}</p>}
             <div className={styles.row}>
-              <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !plan}>
-                Confirm sale
+              <button
+                type="button"
+                className="w360-btn w360-btn-secondary"
+                disabled={busy || !plan}
+                onClick={() => {
+                  setQuoteError(null);
+                  panelApi.quoteCustomerOrder(partnerId, organizationId, request).then(setQuote, (err: unknown) => {
+                    setQuote(null);
+                    setQuoteError(err instanceof Error ? err.message : "Couldn't price this order.");
+                  });
+                }}
+              >
+                Get price
+              </button>
+              <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !plan || !quote}>
+                Create order
               </button>
               <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setOpen(false)}>
                 Cancel
@@ -351,6 +430,122 @@ function SellForm({ partnerId, organizationId, onDone }: { partnerId: string; or
         )}
       </LoadGate>
     </form>
+  );
+}
+
+/** A related customer's subscription: change a line's plan (to another plan of
+ * the same product the partner may sell) or cancel at the end of the period.
+ * Renewal is automatic; a partner never manufactures access - every change goes
+ * through the subscription services and is re-authorized there. */
+function ManageSubscription({ partnerId, organizationId, onDone }: { partnerId: string; organizationId: string; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [load, reload] = useLoad(
+    () => (open ? partnerApi.customerSubscription(partnerId, organizationId) : Promise.resolve([] as CustomerSubscription[])),
+    [open, partnerId, organizationId],
+  );
+  const [catalog] = useLoad(() => (open ? partnerApi.catalog(partnerId) : Promise.resolve({ results: [] })), [open, partnerId]);
+  const { act, busy, feedback } = useAction(() => {
+    reload();
+    onDone();
+  });
+  const [target, setTarget] = useState<Record<string, string>>({});
+  if (!open) {
+    return (
+      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setOpen(true)}>
+        Manage subscription
+      </button>
+    );
+  }
+  return (
+    <div className={styles.form}>
+      {feedback}
+      <LoadGate load={load} what="the subscription">
+        {(subs) =>
+          subs.length === 0 ? (
+            <p>This customer has no subscription yet.</p>
+          ) : (
+            <>
+              {subs.map((sub) => (
+                <div key={sub.subscription_id} className={styles.stack}>
+                  <p>
+                    <Status value={sub.status} />{" "}
+                    {sub.cancel_at
+                      ? `Ends ${when(sub.cancel_at)}.`
+                      : `Renews automatically on ${when(sub.current_period_end)} (${sub.billing_interval}).`}
+                  </p>
+                  {sub.items
+                    .filter((i) => !i.removed_at && !i.is_derived && i.product_code)
+                    .map((item) => {
+                      const options =
+                        catalog.status === "ready"
+                          ? catalog.data.results.filter((p) => p.product_code === item.product_code && p.plan_code !== item.plan_code)
+                          : [];
+                      return (
+                        <div key={item.item_id} className={styles.row}>
+                          <span>
+                            {item.product_code} · {item.plan_code} × {item.quantity}
+                          </span>
+                          {options.length > 0 && (
+                            <>
+                              <label className="w360-visually-hidden" htmlFor={`to-${item.item_id}`}>
+                                New plan for {item.product_code}
+                              </label>
+                              <select
+                                id={`to-${item.item_id}`}
+                                className="w360-input"
+                                value={target[item.item_id] ?? ""}
+                                onChange={(e) => setTarget({ ...target, [item.item_id]: e.target.value })}
+                              >
+                                <option value="">Change plan…</option>
+                                {options.map((p) => (
+                                  <option key={p.plan_version_id} value={p.plan_version_id}>
+                                    {p.plan_name}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                className="w360-btn w360-btn-secondary"
+                                disabled={busy || !target[item.item_id]}
+                                onClick={() =>
+                                  void act(
+                                    () => partnerApi.changeCustomerPlan(partnerId, organizationId, item.item_id, target[item.item_id], sub.version, newKey()),
+                                    "Plan changed. An upgrade applies now; a downgrade at the end of the period.",
+                                  )
+                                }
+                              >
+                                Apply
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  {!sub.cancel_at && sub.status !== "cancelled" && (
+                    <button
+                      type="button"
+                      className="w360-btn w360-btn-secondary"
+                      disabled={busy}
+                      onClick={() =>
+                        void act(
+                          () => partnerApi.cancelCustomerSubscription(partnerId, organizationId, sub.subscription_id, sub.version, newKey()),
+                          "Cancellation scheduled for the end of the period. The customer keeps access until then.",
+                        )
+                      }
+                    >
+                      Cancel at period end
+                    </button>
+                  )}
+                </div>
+              ))}
+            </>
+          )
+        }
+      </LoadGate>
+      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setOpen(false)}>
+        Close
+      </button>
+    </div>
   );
 }
 

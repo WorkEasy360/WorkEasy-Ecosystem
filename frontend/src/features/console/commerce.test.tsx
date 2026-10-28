@@ -276,6 +276,69 @@ describe("checkout", () => {
   });
 });
 
+describe("the cart (ADR-052)", () => {
+  const PV2 = "33333333-3333-4333-8333-333333333333";
+  const CART_QUOTE = {
+    ...QUOTE,
+    kind: "cart",
+    description: "CRM Pro, Books Plus (monthly)",
+    product_codes: ["books", "crm"],
+    recurring_amount_minor: 149800,
+    amount_due_minor: 149800,
+    lines: [
+      { product_code: "crm", plan_name: "CRM Pro", quantity: 1, recurring_amount_minor: 99900, amount_due_minor: 99900 },
+      { product_code: "books", plan_name: "Books Plus", quantity: 1, recurring_amount_minor: 49900, amount_due_minor: 49900 },
+    ],
+  };
+
+  it("reads a cart from the address only when every id is valid and there are 2 to 10", () => {
+    expect(orderRequestFrom(new URLSearchParams(`cart=${PV},${PV2}&interval=monthly&trial=1`))).toEqual({
+      cart_items: [{ plan_version_id: PV }, { plan_version_id: PV2 }],
+      billing_interval: "monthly",
+    });
+    expect(orderRequestFrom(new URLSearchParams(`cart=${PV},../x`))).toBeNull();
+    expect(orderRequestFrom(new URLSearchParams(`cart=${PV}&plan=${PV2}`))).toEqual({ plan_version_id: PV2 });
+  });
+
+  it("shows each product's server price, places one order, then empties the cart", async () => {
+    window.sessionStorage.setItem(
+      "w360.cart.acme",
+      JSON.stringify({
+        interval: "monthly",
+        items: [
+          { plan_version_id: PV, product_code: "crm", product_name: "CRM", plan_name: "CRM Pro" },
+          { plan_version_id: PV2, product_code: "books", product_name: "Books", plan_name: "Books Plus" },
+        ],
+      }),
+    );
+    nav.search = new URLSearchParams(`cart=${PV},${PV2}&interval=monthly`);
+    const assign = vi.spyOn(checkoutNavigation, "assign").mockImplementation(() => undefined);
+    const calls = mockApi({
+      [`GET ${ORG}/billing-account`]: [{ status: 200, body: { billing_account: { id: "b1", currency: "INR", collection_mode: "automatic", billing_email: "", billing_region: "" } } }],
+      [`POST ${ORG}/orders/quote`]: [{ status: 200, body: CART_QUOTE }],
+      [`POST ${ORG}/orders`]: [{ status: 201, body: { ...ORDER, kind: "cart", amount_due_minor: 149800 } }],
+      [`POST ${ORG}/billing/invoices/inv1/pay`]: [
+        {
+          status: 202,
+          body: { attempt_id: "a1", invoice_id: "inv1", status: "awaiting_payment", amount_minor: 149800, currency: "INR", provider: "stripe", checkout_url: "https://checkout.example.com/pay/2", failure_code: null, expires_at: "2026-09-26T11:00:00Z" },
+        },
+      ],
+    });
+    const { container } = renderOrg(<CheckoutScreen />, OWNER);
+    const table = await screen.findByRole("table", { name: "Products in this order" });
+    expect(within(table).getByRole("rowheader", { name: "CRM Pro" })).toBeInTheDocument();
+    expect(within(table).getByRole("rowheader", { name: "Books Plus" })).toBeInTheDocument();
+    await expectNoViolations(container);
+    fireEvent.click(screen.getByRole("button", { name: "Place order and pay" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://checkout.example.com/pay/2"));
+    const expected = { cart_items: [{ plan_version_id: PV }, { plan_version_id: PV2 }], billing_interval: "monthly" };
+    expect(calls.find((c) => c.key === `POST ${ORG}/orders/quote`)?.body).toEqual(expected);
+    expect(calls.find((c) => c.key === `POST ${ORG}/orders`)?.body).toEqual(expected);
+    expect(window.sessionStorage.getItem("w360.cart.acme")).toBeNull();
+    assign.mockRestore();
+  });
+});
+
 describe("orders", () => {
   it("lists orders and cancels one awaiting payment", async () => {
     const calls = mockApi({

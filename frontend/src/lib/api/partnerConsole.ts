@@ -1017,6 +1017,8 @@ export interface UpgradeRequestRow {
   decided_by?: string | null;
   commercial_reference?: string;
   correlation_id?: string | null;
+  /** ADR-053: the set-up fee fixed when the request opened; null is no fee. */
+  setup_fee?: { amount_minor: number; currency: string; settled: boolean } | null;
 }
 
 /** What the request still needs, decided by the server. */

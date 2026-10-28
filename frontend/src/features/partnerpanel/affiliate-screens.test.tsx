@@ -45,6 +45,8 @@ function inWorkspace(ui: React.ReactNode, permissions?: string[], base = BASE, s
   return render(<PartnerContext.Provider value={{ partner: partner(permissions, status), base }}>{ui}</PartnerContext.Provider>);
 }
 
+const EARN = [{ currency: "INR", sales_minor: 200000, commission_minor: 20000, sales: 2 }];
+
 const LINK = {
   id: "c1",
   code: "K7Q2M9AB",
@@ -52,27 +54,67 @@ const LINK = {
   status: "active",
   created_at: "2026-10-01T10:00:00Z",
   campaign: "LinkedIn",
-  url: "https://auth.example.com/signup?ref=K7Q2M9AB",
+  campaign_id: null,
+  campaign_name: null,
+  product_code: "easy_crm",
+  product_name: "Easy CRM",
+  plan_code: "",
+  url: "https://app.example.com/r/K7Q2M9AB",
   clicks: 8,
+  visitors: 6,
+  registrations: 3,
   conversions: 2,
+  earnings: EARN,
+};
+
+const PRODUCT = {
+  code: "easy_crm",
+  name: "Easy CRM",
+  slug: "easy-crm",
+  tagline: "Sell more",
+  summary: "The approved Easy CRM summary.",
+  description: "Full description.",
+  category: "crm",
+  icon: "",
+  plans: [{ plan_code: "crm_basic", plan_name: "Basic" }],
+  media: [{ id: "m1", kind: "logo", width: 64, height: 64, content_type: "image/png", caption: "Easy CRM logo", url: "/api/v1/public/products/easy-crm/media/m1" }],
 };
 
 const OVERVIEW = {
   partner: { id: ID, name: "Aff Co", currency: "INR", status: "active" },
   range: { key: "30d", from: "2026-09-22T00:00:00Z", to: "2026-10-22T00:00:00Z" },
-  kpis: { clicks: 8, signups: null, conversions: 2, conversion_rate_bp: 2500 },
+  kpis: { clicks: 8, unique_visitors: 6, signups: 3, conversions: 2, conversion_rate_bp: 2500 },
   primary_link: LINK,
   links: [
     LINK,
-    { ...LINK, id: "c2", code: "ZZZZ2222", label: "Email", campaign: "Email", url: null, status: "revoked", clicks: 0, conversions: 0 },
+    {
+      ...LINK,
+      id: "c2",
+      code: "ZZZZ2222",
+      label: "Email",
+      campaign: "Email",
+      product_code: "",
+      product_name: null,
+      url: null,
+      status: "revoked",
+      clicks: 0,
+      visitors: 0,
+      registrations: 0,
+      conversions: 0,
+      earnings: [],
+    },
   ],
   campaigns: [
-    { campaign: "Email", links: 1, clicks: 0, conversions: 0, conversion_rate_bp: null },
-    { campaign: "LinkedIn", links: 1, clicks: 8, conversions: 2, conversion_rate_bp: 2500 },
+    { campaign: "Email", campaign_id: null, links: 1, clicks: 0, visitors: 0, registrations: 0, conversions: 0, conversion_rate_bp: null, earnings: [] },
+    { campaign: "LinkedIn", campaign_id: null, links: 1, clicks: 8, visitors: 6, registrations: 3, conversions: 2, conversion_rate_bp: 2500, earnings: EARN },
   ],
+  campaign_list: [{ id: "cmp1", name: "CRM October", status: "active", links: 0, created_at: "2026-10-05T10:00:00Z" }],
   campaign_presets: ["General", "LinkedIn", "YouTube", "Email", "Website"],
+  products: [PRODUCT],
+  top_products: [{ product_code: "easy_crm", product_name: "Easy CRM", sales: 2, earnings: EARN }],
   series: [],
   money: {
+    sales: [{ currency: "INR", amount_minor: 200000, sales: 2 }],
     earned: [{ currency: "INR", amount_minor: 120000 }],
     pending: [{ currency: "INR", amount_minor: 30000 }],
     available: [],
@@ -80,12 +122,24 @@ const OVERVIEW = {
     balances: [],
   },
   recent: {
-    conversions: [{ id: "r1", code: "K7Q2M9AB", code_label: "LinkedIn", captured_at: "2026-10-02T10:00:00Z", converted_at: "2026-10-03T10:00:00Z", commission_minor: 5000, currency: "INR" }],
+    conversions: [
+      {
+        id: "r1",
+        code: "K7Q2M9AB",
+        code_label: "LinkedIn",
+        captured_at: "2026-10-02T10:00:00Z",
+        registered_at: "2026-10-02T11:00:00Z",
+        converted_at: "2026-10-03T10:00:00Z",
+        products: [{ product_code: "easy_crm", plan_code: "crm_basic" }],
+        sales_minor: 100000,
+        status: "purchased",
+        commission_minor: 5000,
+        currency: "INR",
+      },
+    ],
     payouts: [],
   },
   not_implemented: {
-    affiliate_signups: "No separate sign-up step is recorded, so Signups would only repeat Conversions.",
-    marketing_materials: "There is no shared marketing library yet.",
     promo_discount_codes: "A referral code gives the visitor no discount.",
   },
 };
@@ -122,24 +176,28 @@ describe("the affiliate dashboard", () => {
     expect(await screen.findByText(/Could not copy - select the text and copy it/)).toBeInTheDocument();
   });
 
-  it("shows the figures the server computed, with Signups stated as not recorded", async () => {
+  it("shows the figures the server computed: clicks, visitors, registrations, sales and commission", async () => {
     mockApi(route(overview()));
     inWorkspace(<AffiliateDashboard />);
     const kpis = await screen.findByRole("list", { name: "Key figures" });
     const text = (label: string) => within(kpis).getByText(label).closest("li")!.textContent;
-    expect(text("Clicks")).toMatch(/8/);
+    expect(text("Referral clicks")).toMatch(/8/);
+    expect(text("Unique visitors")).toMatch(/6/);
+    expect(text("Registrations")).toMatch(/3/);
     expect(text("Conversions")).toMatch(/2/);
     expect(text("Conversion rate")).toMatch(/25\.00%/);
-    expect(text("Signups")).toMatch(/No separate sign-up step is recorded/);
-    expect(text("Commission earned")).toMatch(/1,200\.00/);
+    expect(text("Sales attributed")).toMatch(/2,000\.00/);
     expect(text("Pending commission")).toMatch(/300\.00/);
+    expect(text("Approved commission")).toMatch(/—/);
     expect(text("Paid commission")).toMatch(/900\.00/);
     // The browser does no arithmetic: the rate shown is the server's basis points.
     expect(text("Conversion rate")).not.toMatch(/Infinity|NaN/);
+    expect(await screen.findByRole("table", { name: "The products your referrals bought most" })).toHaveTextContent(/Easy CRM/);
+    expect(screen.getByRole("table", { name: "Your latest conversions" })).toHaveTextContent(/easy_crm \(crm_basic\)/);
   });
 
   it("shows a dash, not 0%, when there were no clicks", async () => {
-    mockApi(route(overview({ kpis: { clicks: 0, signups: null, conversions: 0, conversion_rate_bp: null }, primary_link: null, links: [], campaigns: [] })));
+    mockApi(route(overview({ kpis: { clicks: 0, unique_visitors: 0, signups: 0, conversions: 0, conversion_rate_bp: null }, primary_link: null, links: [], campaigns: [] })));
     inWorkspace(<AffiliateDashboard />);
     const kpis = await screen.findByRole("list", { name: "Key figures" });
     const rate = within(kpis).getByText("Conversion rate").closest("li")!;
@@ -149,10 +207,11 @@ describe("the affiliate dashboard", () => {
   });
 
   it("does not show money to someone without the commission view", async () => {
-    mockApi(route(overview({ money: null })));
+    mockApi(route(overview({ money: null, top_products: null })));
     inWorkspace(<AffiliateDashboard />, perm("dashboard.view", "referral.view"));
     const kpis = await screen.findByRole("list", { name: "Key figures" });
-    expect(within(kpis).getByText("Commission earned").closest("li")!.textContent).toMatch(/Needs commission access/);
+    expect(within(kpis).getByText("Pending commission").closest("li")!.textContent).toMatch(/Needs commission access/);
+    expect(within(kpis).getByText("Sales attributed").closest("li")!.textContent).toMatch(/Needs commission access/);
   });
 
   it("asks the server for the range chosen and for nothing it was not shown", async () => {
@@ -191,45 +250,47 @@ describe("the custom date range", () => {
 });
 
 describe("referral links", () => {
-  it("creates a tracking link under a preset campaign, sending only the label", async () => {
+  it("creates a link for a product, a campaign and a code of the partner's choosing - identifiers only", async () => {
     const calls = mockApi({
       ...route([overview(), overview()]),
-      [`POST ${API}/referrals`]: [{ status: 201, body: { id: "c9", code: "NEW12345", label: "YouTube" } }],
+      [`POST ${API}/referrals`]: [{ status: 201, body: { id: "c9", code: "AMAN360", label: "CRM October", url: "https://app.example.com/r/AMAN360" } }],
     });
     inWorkspace(<ReferralLinks />);
-    await screen.findByRole("heading", { name: "Create a tracking link" });
-    fireEvent.change(screen.getByLabelText("Campaign"), { target: { value: "YouTube" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create tracking link" }));
-    expect(await screen.findByText("Tracking link created for YouTube.")).toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Create a referral link" });
+    fireEvent.change(screen.getByLabelText("Product"), { target: { value: "easy_crm" } });
+    fireEvent.change(screen.getByLabelText("Plan (optional)"), { target: { value: "crm_basic" } });
+    fireEvent.change(screen.getByLabelText("Campaign (optional)"), { target: { value: "cmp1" } });
+    fireEvent.change(screen.getByLabelText("Your own code (optional)"), { target: { value: "aman360" } });
+    fireEvent.click(screen.getByRole("button", { name: "Generate link" }));
+    expect(await screen.findByText("Referral link created.")).toBeInTheDocument();
     const post = calls.find((c) => c.key === `POST ${API}/referrals`) as Call;
-    expect(post.body).toEqual({ label: "YouTube" });
+    expect(post.body).toEqual({ product_code: "easy_crm", plan_code: "crm_basic", campaign_id: "cmp1", code: "AMAN360" });
   });
 
-  it("accepts another campaign name, bounded", async () => {
+  it("creates a general link when nothing is chosen", async () => {
     const calls = mockApi({
       ...route([overview(), overview()]),
-      [`POST ${API}/referrals`]: [{ status: 201, body: { id: "c9", code: "NEW12345", label: "Podcast" } }],
+      [`POST ${API}/referrals`]: [{ status: 201, body: { id: "c9", code: "NEW12345", label: "", url: "https://app.example.com/r/NEW12345" } }],
     });
     inWorkspace(<ReferralLinks />);
-    await screen.findByRole("heading", { name: "Create a tracking link" });
-    fireEvent.change(screen.getByLabelText("Campaign"), { target: { value: "__other" } });
-    const name = screen.getByLabelText("Campaign name");
-    expect(name).toHaveAttribute("maxlength", "64");
-    expect(screen.getByRole("button", { name: "Create tracking link" })).toBeDisabled();
-    fireEvent.change(name, { target: { value: "Podcast" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create tracking link" }));
-    await screen.findByText("Tracking link created for Podcast.");
-    expect((calls.find((c) => c.key === `POST ${API}/referrals`) as Call).body).toEqual({ label: "Podcast" });
+    await screen.findByRole("heading", { name: "Create a referral link" });
+    expect(screen.getByLabelText("Plan (optional)")).toBeDisabled();
+    expect(screen.getByLabelText("Your own code (optional)")).toHaveAttribute("maxlength", "16");
+    fireEvent.click(screen.getByRole("button", { name: "Generate link" }));
+    await screen.findByText("Referral link created.");
+    expect((calls.find((c) => c.key === `POST ${API}/referrals`) as Call).body).toEqual({});
   });
 
-  it("lists each link with its address, clicks and conversions; a switched-off link has no address to copy", async () => {
+  it("lists each link with its address, product and results; a switched-off link has no address to copy", async () => {
     mockApi(route(overview()));
     inWorkspace(<ReferralLinks />);
-    const table = await screen.findByRole("table", { name: "Your tracking links" });
+    const table = await screen.findByRole("table", { name: "Your referral links" });
     const rows = within(table).getAllByRole("row").slice(1);
     expect(rows[0].textContent).toContain(LINK.url);
-    expect(within(rows[0]).getByRole("button", { name: "Copy LinkedIn link" })).toBeInTheDocument();
-    expect(rows[1].textContent).toContain("Switched off");
+    expect(rows[0].textContent).toContain("Easy CRM");
+    expect(rows[0].textContent).toMatch(/2,000\.00/);
+    expect(within(rows[0]).getByRole("button", { name: "Copy link K7Q2M9AB" })).toBeInTheDocument();
+    expect(rows[1].textContent).toContain("switched off");
     expect(within(rows[1]).queryByRole("button", { name: /Copy/ })).not.toBeInTheDocument();
   });
 
@@ -247,16 +308,16 @@ describe("referral links", () => {
   it("offers no creating or switching off to someone who may only view", async () => {
     mockApi(route(overview()));
     inWorkspace(<ReferralLinks />, perm("dashboard.view", "referral.view"));
-    await screen.findByRole("table", { name: "Your tracking links" });
-    expect(screen.queryByRole("heading", { name: "Create a tracking link" })).not.toBeInTheDocument();
+    await screen.findByRole("table", { name: "Your referral links" });
+    expect(screen.queryByRole("heading", { name: "Create a referral link" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Switch off/ })).not.toBeInTheDocument();
   });
 
   it("offers no creating when the partner is not active", async () => {
     mockApi(route(overview()));
     inWorkspace(<ReferralLinks />, AFFILIATE, BASE, "suspended");
-    await screen.findByRole("table", { name: "Your tracking links" });
-    expect(screen.queryByRole("heading", { name: "Create a tracking link" })).not.toBeInTheDocument();
+    await screen.findByRole("table", { name: "Your referral links" });
+    expect(screen.queryByRole("heading", { name: "Create a referral link" })).not.toBeInTheDocument();
   });
 });
 
@@ -270,23 +331,56 @@ describe("codes, campaigns, materials and leads", () => {
     expect(screen.getByText("A referral code gives the visitor no discount.")).toBeInTheDocument();
   });
 
-  it("campaigns show the server's rate per campaign and call a campaign a label", async () => {
-    mockApi(route(overview()));
+  it("referral codes: a partner creates its own code, sending only the code", async () => {
+    const calls = mockApi({
+      ...route([overview(), overview()]),
+      [`POST ${API}/referrals`]: [{ status: 201, body: { id: "c9", code: "AMAN360", label: "", url: "https://app.example.com/r/AMAN360" } }],
+    });
+    inWorkspace(<ReferralCodes />);
+    fireEvent.change(await screen.findByLabelText("Code"), { target: { value: "aman360" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create code" }));
+    expect(await screen.findByText("Referral code created.")).toBeInTheDocument();
+    expect((calls.find((c) => c.key === `POST ${API}/referrals`) as Call).body).toEqual({ code: "AMAN360" });
+  });
+
+  it("campaigns: create, archive, and the server's rate and earnings per campaign", async () => {
+    const calls = mockApi({
+      ...route([overview(), overview(), overview()]),
+      [`POST ${API}/campaigns`]: [{ status: 201, body: { id: "cmp2", name: "Diwali", status: "active" } }],
+      [`POST ${API}/campaigns/cmp1/status`]: [ok({ id: "cmp1", status: "revoked" })],
+    });
     inWorkspace(<Campaigns />);
     const table = await screen.findByRole("table", { name: "Campaign results" });
     const rows = within(table).getAllByRole("row").slice(1);
-    expect(rows[0].textContent).toMatch(/Email/);
-    expect(rows[0].textContent).toMatch(/—/);
-    expect(rows[1].textContent).toMatch(/LinkedIn/);
-    expect(rows[1].textContent).toMatch(/25\.00%/);
-    expect(screen.getByText(/never changes who earns commission/)).toBeInTheDocument();
+    expect(rows[0].textContent).toMatch(/CRM October/);
+    expect(rows[1].textContent).toMatch(/Email/);
+    expect(rows[1].textContent).toMatch(/—/);
+    expect(rows[2].textContent).toMatch(/LinkedIn/);
+    expect(rows[2].textContent).toMatch(/25\.00%/);
+    expect(rows[2].textContent).toMatch(/2,000\.00/);
+    fireEvent.change(screen.getByLabelText("Campaign name"), { target: { value: "Diwali" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
+    await screen.findByText(/Campaign "Diwali" created/);
+    expect((calls.find((c) => c.key === `POST ${API}/campaigns`) as Call).body).toEqual({ name: "Diwali" });
+    fireEvent.click(await screen.findByRole("button", { name: /Archive/ }));
+    await screen.findByText(/Campaign archived/);
+    expect((calls.find((c) => c.key === `POST ${API}/campaigns/cmp1/status`) as Call).body).toEqual({ active: false });
   });
 
-  it("marketing materials say they are not available yet - with the server's reason", async () => {
-    mockApi(route(overview()));
-    inWorkspace(<MarketingMaterials />);
-    expect(await screen.findByRole("heading", { name: "Not available yet" })).toBeInTheDocument();
-    expect(screen.getByText("There is no shared marketing library yet.")).toBeInTheDocument();
+  it("marketing materials show the approved listing and make a link for the product", async () => {
+    const calls = mockApi({
+      ...route(overview()),
+      [`POST ${API}/referrals`]: [{ status: 201, body: { id: "c9", code: "CRM00001", label: "", url: "https://app.example.com/r/CRM00001" } }],
+    });
+    const { container } = inWorkspace(<MarketingMaterials />);
+    expect(await screen.findByRole("heading", { name: "Easy CRM" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Easy CRM logo" })).toHaveAttribute("src", PRODUCT.media[0].url);
+    expect(screen.getByRole("link", { name: /Download logo/ })).toHaveAttribute("href", `${PRODUCT.media[0].url}?download=1`);
+    expect(screen.getByText("The approved Easy CRM summary.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Create a link for Easy CRM" }));
+    expect(await screen.findByText("https://app.example.com/r/CRM00001")).toBeInTheDocument();
+    expect((calls.find((c) => c.key === `POST ${API}/referrals`) as Call).body).toEqual({ product_code: "easy_crm" });
+    await expectNoViolations(container);
   });
 
   it("leads and referrals show dates, a campaign and a status - never a person", async () => {
@@ -312,6 +406,7 @@ describe("codes, campaigns, materials and leads", () => {
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
       "Followed your link",
       "Campaign",
+      "Signed up",
       "Status",
       "Became a customer",
     ]);

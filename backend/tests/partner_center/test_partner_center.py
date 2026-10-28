@@ -355,6 +355,9 @@ def test_the_referrals_tab_shows_codes_and_counts_and_no_prospect(
         assert set(row) == {
             "id",
             "code",
+            # ADR-053: the link's product and when the visitor signed up - no person.
+            "product_code",
+            "registered_at",
             "label",
             "status",
             "captured_at",

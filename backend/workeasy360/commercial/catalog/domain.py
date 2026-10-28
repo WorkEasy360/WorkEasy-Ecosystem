@@ -7,12 +7,14 @@ services above call in; nothing here calls out.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Final
 
 from workeasy360.contracts.enums import (
     CatalogStatus,
     FeatureKind,
     ProductListing,
+    ProductMediaKind,
     ProductStatus,
     PublicAvailability,
 )
@@ -31,8 +33,13 @@ from workeasy360.contracts.values.identifiers import FeatureKey, ProductCode
 #: a withdrawn SKU under the same code makes historical reporting ambiguous
 #: about which product a subscription referred to. Reintroduction is a new
 #: code.
+#:
+#: ``draft -> deprecated`` is the Product Manager's "Archive" of a product that
+#: never went on sale (ADR-051): reversible, unlike ``retired``.
 PRODUCT_TRANSITIONS: Final[dict[ProductStatus, frozenset[ProductStatus]]] = {
-    ProductStatus.DRAFT: frozenset({ProductStatus.AVAILABLE, ProductStatus.RETIRED}),
+    ProductStatus.DRAFT: frozenset(
+        {ProductStatus.AVAILABLE, ProductStatus.DEPRECATED, ProductStatus.RETIRED}
+    ),
     ProductStatus.AVAILABLE: frozenset({ProductStatus.DEPRECATED}),
     ProductStatus.DEPRECATED: frozenset({ProductStatus.AVAILABLE, ProductStatus.RETIRED}),
     ProductStatus.RETIRED: frozenset(),
@@ -393,11 +400,10 @@ def validate_trial_terms(
             "eligible_plan_codes is a list of plan codes.", field="eligible_plan_codes"
         )
     codes = sorted(set(eligible_plan_codes))
-    if enabled and not codes:
-        raise CatalogValidationError(
-            "A trial that is switched on names at least one eligible plan.",
-            field="eligible_plan_codes",
-        )
+    # ADR-051: a trial may be switched on before the product has a plan. With
+    # no eligible plan nobody can start it (the offer and the start both need
+    # one), so the Product Manager can set a new product's trial up front
+    # without the platform inventing which plans it covers.
     return {
         "enabled": enabled,
         "duration_days": duration_days,
@@ -405,6 +411,33 @@ def validate_trial_terms(
         "payment_method_required": False,
         "eligible_plan_codes": codes,
     }
+
+
+def validate_link_url(raw: Any, *, field: str) -> str:
+    """Empty, or an address a store page may link a browser to (ADR-051).
+
+    The integration registry's own URL gate, so a product link and a launch
+    URL are judged by one rule: ``https`` only (``javascript:``, ``data:``,
+    ``file:`` and plain ``http`` are refused), no credentials, no backslash or
+    percent-encoded host, and never loopback, a private network or a metadata
+    address - in any environment.
+    """
+    from workeasy360.contracts.values.manifest import ManifestError, validate_browser_url
+
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    if len(value) > MAX_MARKETING_URL or any(
+        ch.isspace() or ord(ch) < 32 for ch in value
+    ):
+        raise CatalogValidationError(
+            f"{field} must be an https:// address of at most {MAX_MARKETING_URL} characters.",
+            field=field,
+        )
+    try:
+        return validate_browser_url(value, field=field)
+    except ManifestError as exc:
+        raise CatalogValidationError(str(exc), field=field) from None
 
 
 def validate_marketing_url(raw: Any) -> str:
@@ -435,4 +468,197 @@ def validate_marketing_url(raw: Any) -> str:
         raise CatalogValidationError(
             "The marketing page must be an https:// address.", field="marketing_url"
         )
-    return value
+    # ADR-051: and the registry's gate - no internal or metadata host either.
+    return validate_link_url(value, field="marketing_url")
+
+
+# --- ADR-051: the Product Manager -----------------------------------------------
+
+#: The categories the Product Manager offers. Configuration, not logic: a
+#: category is display text that nothing branches on, and a product may keep
+#: any other plain-text category it already has (``validate_category``).
+PRODUCT_CATEGORIES: Final[tuple[str, ...]] = (
+    "Sales",
+    "Finance",
+    "Project Management",
+    "Customer Support",
+    "Marketing",
+    "Communication",
+    "AI",
+    "HR",
+    "Other",
+)
+MAX_STORE_TITLE: Final = 128
+MAX_STORE_SUMMARY: Final = 200
+
+
+def validate_store_text(raw: Any, *, field: str, maximum: int) -> str:
+    """Single-spaced plain text with no control characters - a store card
+    renders it as text, never as markup."""
+    text = " ".join(str(raw or "").split())
+    if len(text) > maximum or any(ord(ch) < 32 for ch in text):
+        raise CatalogValidationError(
+            f"{field} is at most {maximum} characters of plain text.", field=field
+        )
+    return text
+
+
+def code_for_slug(slug: str) -> ProductCode:
+    """The permanent product code a new product's slug implies
+    (``acme-notes`` -> ``acme_notes``) - the inverse of ``slug_for_code``."""
+    try:
+        return ProductCode(slug.replace("-", "_"))
+    except ValueError:
+        raise CatalogValidationError(
+            "This slug cannot become a product code: use at most 32 characters, "
+            "starting with a letter.",
+            field="slug",
+        ) from None
+
+
+#: The three states the Product Manager shows. ``deprecated`` and ``retired``
+#: are both "archived": no longer sold, history intact.
+MANAGER_STATUS: Final[dict[ProductStatus, str]] = {
+    ProductStatus.DRAFT: "draft",
+    ProductStatus.AVAILABLE: "active",
+    ProductStatus.DEPRECATED: "archived",
+    ProductStatus.RETIRED: "archived",
+}
+
+#: Store-listing images: PNG or JPEG only (SVG can carry script; WebP and GIF
+#: cannot be verified by signature here), bounded in bytes and in pixels.
+MEDIA_CONTENT_TYPES: Final = frozenset({"image/png", "image/jpeg"})
+MAX_SCREENSHOTS: Final = 8
+MAX_MEDIA_CAPTION: Final = 140
+
+
+@dataclass(frozen=True, slots=True)
+class MediaRule:
+    max_bytes: int
+    min_width: int
+    min_height: int
+    max_width: int
+    max_height: int
+
+
+MEDIA_RULES: Final[dict[ProductMediaKind, MediaRule]] = {
+    ProductMediaKind.LOGO: MediaRule(512 * 1024, 64, 64, 2048, 2048),
+    ProductMediaKind.BANNER: MediaRule(2 * 1024 * 1024, 600, 150, 4096, 4096),
+    ProductMediaKind.SCREENSHOT: MediaRule(2 * 1024 * 1024, 320, 200, 4096, 4096),
+}
+
+
+def image_dimensions(data: bytes) -> tuple[int, int] | None:
+    """(width, height) read from a PNG's IHDR or a JPEG's start-of-frame, or
+    ``None`` when the bytes are neither (or are truncated). Pure; no decoder."""
+    if (
+        data.startswith(b"\x89PNG\r\n\x1a\n")
+        and len(data) >= 24
+        and data[12:16] == b"IHDR"
+    ):
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if not data.startswith(b"\xff\xd8"):
+        return None
+    i = 2
+    while i + 4 <= len(data):
+        if data[i] != 0xFF:
+            return None
+        marker = data[i + 1]
+        if marker == 0xFF:  # fill byte
+            i += 1
+            continue
+        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:  # no length
+            i += 2
+            continue
+        length = int.from_bytes(data[i + 2 : i + 4], "big")
+        if length < 2:
+            return None
+        # SOF0-SOF15, except DHT (C4), JPG (C8) and DAC (CC).
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            if i + 9 > len(data):
+                return None
+            height = int.from_bytes(data[i + 5 : i + 7], "big")
+            width = int.from_bytes(data[i + 7 : i + 9], "big")
+            return width, height
+        i += 2 + length
+    return None
+
+
+def validate_media(
+    *, kind: ProductMediaKind, content_type: str, data: bytes
+) -> tuple[str, int, int]:
+    """Type, size and pixel bounds of one store-listing image, judged on the
+    bytes. Returns ``(content type, width, height)``. The files platform checks
+    the signature again when it stores the file."""
+    declared = (content_type or "").split(";")[0].strip().lower()
+    if declared not in MEDIA_CONTENT_TYPES:
+        raise CatalogValidationError(
+            "An image must be a PNG or a JPEG. SVG and other formats are not accepted.",
+            field="content_type",
+        )
+    rule = MEDIA_RULES[kind]
+    if not data or len(data) > rule.max_bytes:
+        raise CatalogValidationError(
+            f"A {kind.value} must be between 1 byte and {rule.max_bytes // 1024} KB.",
+            field="file",
+        )
+    size = image_dimensions(data)
+    sniffed = "image/png" if data.startswith(b"\x89PNG") else "image/jpeg"
+    if size is None or sniffed != declared:
+        raise CatalogValidationError(
+            "The file is not the PNG or JPEG image it claims to be.", field="file"
+        )
+    width, height = size
+    if not (
+        rule.min_width <= width <= rule.max_width
+        and rule.min_height <= height <= rule.max_height
+    ):
+        raise CatalogValidationError(
+            f"A {kind.value} must be from {rule.min_width}x{rule.min_height} to "
+            f"{rule.max_width}x{rule.max_height} pixels; this one is {width}x{height}.",
+            field="file",
+        )
+    return declared, width, height
+
+
+#: What a product needs before it may be published to the store, in the order
+#: the Product Manager lists it. ``launch_url`` is the integration's.
+PUBLISH_REQUIREMENTS: Final[tuple[tuple[str, str], ...]] = (
+    ("name", "Product name"),
+    ("slug", "Slug"),
+    ("category", "Category"),
+    ("tagline", "Short description"),
+    ("logo", "Logo"),
+    ("application_url", "Application URL"),
+    ("launch_url", "Launch URL"),
+    ("status", "Not archived"),
+)
+
+
+def publish_checklist(
+    *,
+    name: str,
+    slug: str,
+    category: str,
+    tagline: str,
+    has_logo: bool,
+    application_url: str,
+    launch_url: str,
+    status: ProductStatus,
+) -> list[dict[str, Any]]:
+    """Each publish requirement and whether it is met. Pure: the caller reads
+    the product, its logo and its integration's launch URL."""
+    met = {
+        "name": bool(name.strip()),
+        "slug": bool(slug.strip()),
+        "category": bool(category.strip()),
+        "tagline": bool(tagline.strip()),
+        "logo": has_logo,
+        "application_url": bool(application_url.strip()),
+        "launch_url": bool(launch_url.strip()),
+        "status": status in (ProductStatus.DRAFT, ProductStatus.AVAILABLE),
+    }
+    return [
+        {"key": key, "label": label, "ok": met[key]}
+        for key, label in PUBLISH_REQUIREMENTS
+    ]

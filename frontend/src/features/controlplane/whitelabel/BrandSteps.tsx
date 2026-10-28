@@ -155,6 +155,24 @@ export function IdentityStep({ ctx }: { ctx: Ctx }) {
         spellCheck={false}
         error={errors.websiteUrl}
       />
+      <TextField
+        label="Terms of service page (https, optional)"
+        value={draft.termsUrl}
+        onChange={(v) => patch({ termsUrl: v })}
+        maxLength={300}
+        autoComplete="off"
+        spellCheck={false}
+        error={errors.termsUrl}
+      />
+      <TextField
+        label="Privacy policy page (https, optional)"
+        value={draft.privacyUrl}
+        onChange={(v) => patch({ privacyUrl: v })}
+        maxLength={300}
+        autoComplete="off"
+        spellCheck={false}
+        error={errors.privacyUrl}
+      />
     </StepFrame>
   );
 }

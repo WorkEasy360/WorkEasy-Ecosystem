@@ -93,10 +93,11 @@ def sub_partner_options(ctx: TenantContext) -> dict[str, Any]:
 
 
 def referral_url(code: str) -> str:
-    """The link a visitor follows: the platform's own sign-up page with the code.
-    The origin comes from configuration, never from a request. A code is public
-    by design and grants nothing."""
-    return f"{portal_links.auth_url()}/signup?ref={code}"
+    """The link a visitor follows (ADR-053): ``/r/<code>`` on the customer
+    portal, which records the visit and opens the link's product page (or
+    sign-up). The origin comes from configuration, never from a request. A
+    code is public by design and grants nothing."""
+    return f"{portal_links.app_url()}/r/{code}"
 
 
 @in_scope

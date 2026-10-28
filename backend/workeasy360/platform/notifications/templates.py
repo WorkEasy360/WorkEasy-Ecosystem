@@ -300,3 +300,41 @@ ACCOUNT_PASSWORD_CHANGED: Final = register(
         samples=(("support_email", "support@example.com"),),
     )
 )
+
+PARTNER_SUPPORT_REQUEST: Final = register(
+    Template(
+        key="platform.partner.support_request",
+        subject="[{priority}] {subject} - {partner_name}",
+        body_text=(
+            "A support request from a partner, sent from its Support page.\n\n"
+            "Partner: {partner_name} ({partner_code})\n"
+            "From: {requester_email}\n"
+            "Priority: {priority}\n"
+            "Workspace: {workspace}\n\n"
+            "{message}\n\n"
+            "Reply to this email to answer the partner."
+        ),
+        required=(
+            "partner_name",
+            "partner_code",
+            "requester_email",
+            "priority",
+            "subject",
+            "message",
+        ),
+        optional=("workspace",),
+        description=(
+            "Sent to the platform's partner-support address when a partner "
+            "member sends a request from the partner portal's Support page."
+        ),
+        samples=(
+            ("partner_name", "Reseller Co"),
+            ("partner_code", "reseller-co"),
+            ("requester_email", "admin@reseller.example.com"),
+            ("priority", "normal"),
+            ("subject", "Question about a customer's renewal"),
+            ("message", "Our customer Acme asked when their plan renews."),
+            ("workspace", "reseller"),
+        ),
+    )
+)

@@ -81,7 +81,8 @@ export function Reports() {
                   <h2 id="rep-referrals">Referrals</h2>
                   <ul className={styles.kpis} aria-label="Referral figures">
                     <Kpi icon="network" label="Clicks" value={d.referrals.clicks} />
-                    <Kpi icon="users" label="Signups" unavailable={d.not_implemented.affiliate_signups} />
+                    <Kpi icon="users" label="Unique visitors" value={d.referrals.unique_visitors} />
+                    <Kpi icon="users" label="Registrations" value={d.referrals.registrations} note="Created a Workeasy360 account" />
                     <Kpi icon="bolt" label="Conversions" value={d.referrals.conversions} />
                     <Kpi icon="chart" label="Conversion rate" value={percent(d.referrals.conversion_rate_bp)} />
                   </ul>

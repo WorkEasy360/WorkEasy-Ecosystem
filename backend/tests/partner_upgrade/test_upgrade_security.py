@@ -100,7 +100,11 @@ def test_submitting_a_request_changes_no_grant(catalog, admin):
     # The white-label status read answers every member, but only with the halves
     # its permissions allow: an affiliate's are both withheld, not zero.
     status = client.get(pp(partner_id, "/white-label/status"))
-    assert status.status_code == 200 and status.json() == {"brand": None, "domain": None}
+    assert status.status_code == 200 and status.json() == {
+        "brand": None,
+        "domain": None,
+        "storefront": None,
+    }
 
 
 def test_a_staff_member_without_the_partner_manage_right_cannot_decide(

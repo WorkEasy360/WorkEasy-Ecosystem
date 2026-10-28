@@ -23,6 +23,10 @@
   color: var(--w360-text);
 }
 
+.wide {
+  width: min(880px, 100%);
+}
+
 .dialogForm {
   display: grid;
 }

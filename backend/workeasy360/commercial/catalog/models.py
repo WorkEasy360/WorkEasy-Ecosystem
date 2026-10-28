@@ -36,6 +36,7 @@ from workeasy360.contracts.enums import (
     PlanBillingType,
     PlanKind,
     ProductListing,
+    ProductMediaKind,
     ProductStatus,
     PublicAvailability,
 )
@@ -93,6 +94,34 @@ class Product(models.Model):
     #: One key of ``domain.PRODUCT_ICON_KEYS`` (empty = a monogram). Never a
     #: URL: the frontend owns the drawing for each key.
     icon = models.CharField(max_length=32, blank=True, default="")
+
+    # --- ADR-051: the Product Manager's store listing. Presentation only, like
+    # the fields above; the images are ``ProductMedia`` rows.
+    #: The title a store card shows; empty = ``name``.
+    store_title = models.CharField(max_length=128, blank=True, default="", db_default="")
+    #: The short card description; empty = ``tagline``.
+    store_summary = models.CharField(
+        max_length=200, blank=True, default="", db_default=""
+    )
+    #: The product's own address, its documentation and its support page -
+    #: ``https`` and publicly routable (validated in the service). Where an
+    #: entitled customer is *sent* is the integration's launch URL, not these.
+    application_url = models.URLField(
+        max_length=500, blank=True, default="", db_default=""
+    )
+    documentation_url = models.URLField(
+        max_length=500, blank=True, default="", db_default=""
+    )
+    support_url = models.URLField(max_length=500, blank=True, default="", db_default="")
+
+    #: Where the product may be offered. Eligibility configuration, never an
+    #: access decision: a partner still needs a ``PartnerProductGrant`` and the
+    #: capability, and a customer still needs an entitlement. True by default so
+    #: products that predate the flags keep selling exactly where they did.
+    customer_store_enabled = models.BooleanField(default=True, db_default=True)
+    reseller_enabled = models.BooleanField(default=True, db_default=True)
+    affiliate_enabled = models.BooleanField(default=True, db_default=True)
+    white_label_enabled = models.BooleanField(default=True, db_default=True)
 
     #: Lifecycle metadata as timestamps rather than inferred from ``status``,
     #: so "when did this become sellable?" survives a later status change and
@@ -175,6 +204,52 @@ class ProductTrialConfig(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"trial config of {self.product_id} (enabled={self.enabled})"
+
+
+class ProductMedia(models.Model):
+    """One image of a product's store listing (ADR-051): its logo, its banner or
+    one of its screenshots.
+
+    The bytes live in the shared files platform (``platform/files``: magic bytes
+    checked against the declared type, scanned before it is servable, stored
+    under the platform organization's key prefix); this row records which file
+    is which product's which image. A file id is never accepted from a request:
+    the row is written by the upload itself, so one product can never attach a
+    file uploaded for another.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="media")
+    kind = models.CharField(max_length=16, choices=_choices(ProductMediaKind))
+    #: ``platform/files`` ``File`` id - an id, not a foreign key, the way every
+    #: module references a file it does not own.
+    file_id = models.UUIDField()
+    width = models.PositiveIntegerField()
+    height = models.PositiveIntegerField()
+    content_type = models.CharField(max_length=32)
+    size_bytes = models.PositiveIntegerField()
+    #: Shown under a screenshot; plain text only.
+    caption = models.CharField(max_length=140, blank=True, default="")
+    sort_order = models.PositiveIntegerField(default=0)
+    uploaded_by_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "catalog_product_media"
+        ordering = ["product", "kind", "sort_order", "created_at"]
+        constraints = [
+            # One logo and one banner per product: replacing one is delete +
+            # insert in one transaction, never a second row.
+            models.UniqueConstraint(
+                fields=["product", "kind"],
+                condition=~models.Q(kind=ProductMediaKind.SCREENSHOT.value),
+                name="uq_product_media_single_kind",
+            ),
+        ]
+        indexes = [models.Index(fields=["product", "kind"], name="ix_productmedia_kind")]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.kind} of {self.product_id}"
 
 
 class Feature(models.Model):

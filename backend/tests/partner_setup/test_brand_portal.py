@@ -23,6 +23,9 @@ PORTAL = {
     "support_name": "Acme Help Desk",
     "support_phone": "+91 20 5555 0100",
     "website_url": "https://acme.example",
+    # ADR-053: the partner's own legal pages (empty until set).
+    "terms_url": "",
+    "privacy_url": "",
     "welcome_message": "Welcome to Acme Cloud. We are glad you are here.",
     "footer_text": "Acme Cloud is operated by Acme Technologies.",
     "sender_name": "Acme Cloud",

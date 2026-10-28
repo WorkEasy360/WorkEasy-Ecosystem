@@ -65,6 +65,13 @@ def codes_starting_with(prefix: str) -> set[str]:
     )
 
 
+def partner_by_code(code: str) -> Any | None:
+    """A partner by its stable code (the storefront address, ADR-053)."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    return PartnerAccount.objects.filter(code=code).first()
+
+
 def partner_row(partner_id: UUID) -> Any | None:
     """The model row, for the services in this module only."""
     from workeasy360.commercial.partners.models import PartnerAccount
@@ -523,14 +530,33 @@ def _activation_of(invite: Any) -> dict[str, Any]:
 # --- product scope --------------------------------------------------------
 
 
+def product_open_to_partner(partner_id: UUID, product_code: str) -> bool:
+    """Whether the product's channel flags (ADR-051) admit this partner: one
+    that presents itself under its own brand (branding or domain capability)
+    needs the product open to **white-label**; any other seller needs it open
+    to **reseller**. Eligibility only - the grant is still the authority."""
+    from workeasy360.commercial.catalog import selectors as catalog
+    from workeasy360.commercial.partners import capabilities
+
+    channels = catalog.channels_open(product_code)
+    branded = bool(
+        active_capabilities(partner_id)
+        & {capabilities.BRANDING_MANAGE, capabilities.DOMAIN_MANAGE}
+    )
+    return ("white_label" if branded else "reseller") in channels
+
+
 def may_sell(partner_id: UUID, *, product_code: str, plan_code: str) -> bool:
-    """Whether an active grant covers this product (and plan) and the partner has
-    not turned the product off for new sales."""
+    """Whether an active grant covers this product (and plan), the product is
+    open to this partner's channel, and the partner has not turned the product
+    off for new sales."""
     from workeasy360.commercial.partners.models import PartnerProductSetting
 
     if not may_sell_ignoring_switch(
         partner_id, product_code=product_code, plan_code=plan_code
     ):
+        return False
+    if not product_open_to_partner(partner_id, product_code):
         return False
     # The partner's own "disable for new sales" switch can only narrow a grant.
     return not PartnerProductSetting.objects.filter(

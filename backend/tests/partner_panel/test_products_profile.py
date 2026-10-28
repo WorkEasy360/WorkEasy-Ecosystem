@@ -375,7 +375,6 @@ def test_features_registry_names_every_gap_with_a_reason(owner):
     client, fx = owner
     body = client.get(api(fx["partner"].id, "features")).json()
     for key in (
-        "partner_cost",
         "customer_limit",
         "recharge",
         "payment_links",

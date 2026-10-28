@@ -361,6 +361,9 @@ class SaleFactDTO:
     subscription_cancelled_at: datetime | None
     subscription_cancel_at: datetime | None
     subscription_activated_at: datetime | None = None
+    #: ADR-053: the catalog versions sold, so a margin can find the list price.
+    plan_version_id: UUID | None = None
+    bundle_version_id: UUID | None = None
 
     @property
     def source_ref(self) -> str:
@@ -435,6 +438,8 @@ def sale_facts(organization_id: UUID) -> tuple[SaleFactDTO, ...]:
                     subscription_cancelled_at=sub.cancelled_at,
                     subscription_cancel_at=sub.cancel_at,
                     subscription_activated_at=sub.activated_at,
+                    plan_version_id=row.plan_version_id,
+                    bundle_version_id=row.bundle_version_id,
                 )
             )
         return tuple(facts)

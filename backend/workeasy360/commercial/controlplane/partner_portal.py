@@ -27,6 +27,8 @@ from uuid import UUID
 from django.utils import timezone as dj_timezone
 
 from workeasy360.commercial.catalog import selectors as catalog
+from workeasy360.commercial.commissions import domain as commission_domain
+from workeasy360.commercial.commissions import margins
 from workeasy360.commercial.commissions import selectors as commission_selectors
 from workeasy360.commercial.controlplane import partner_detail
 from workeasy360.commercial.partners import (
@@ -68,11 +70,6 @@ ACTIVE_SUBSCRIPTION_STATES: Final = ("active", "trialing")
 # exists for it. Remove an entry only when the capability is built and tested.
 
 NOT_IMPLEMENTED: Final[dict[str, str]] = {
-    "partner_cost": (
-        "The platform has no wholesale-cost model: a customer pays the price in "
-        "the partner's price book and the partner earns commission on it. A cost "
-        "to the partner needs a commercial rule the owner has not defined."
-    ),
     "customer_limit": (
         "No customer or user limit exists for a partner in the commercial model, "
         "so none is shown. A limit needs a commercial rule first."
@@ -179,16 +176,6 @@ NOT_IMPLEMENTED: Final[dict[str, str]] = {
         "Desk, where their status, priority and history live."
     ),
     # ADR-047: the affiliate workspace.
-    "affiliate_signups": (
-        "The platform records a visitor when they follow your link and a conversion "
-        "when their new organization is created. It records no sign-up step in "
-        "between, so Signups would only repeat Conversions and is not shown."
-    ),
-    "marketing_materials": (
-        "There is no shared marketing library yet: nowhere to publish product "
-        "logos, banners or approved descriptions for partners to download. Your "
-        "tracking links work today; ask Workeasy360 for brand assets."
-    ),
     "promo_discount_codes": (
         "A referral code identifies you when a visitor signs up. It gives the "
         "visitor no discount: Workeasy360 has no coupon or promo-code system, and "
@@ -293,8 +280,9 @@ def dashboard(
         "charts": None,
         "sub_partners": None,
         "recent": {"customers": None, "commissions": None, "payouts": None},
+        # ADR-053: the margin rule that governs this partner's sales now, if any.
+        "earning": _earning_model(partner_id, now),
         "not_implemented": {
-            "partner_cost": NOT_IMPLEMENTED["partner_cost"],
             "customer_limit": NOT_IMPLEMENTED["customer_limit"],
         },
     }
@@ -336,6 +324,15 @@ def dashboard(
     if SUBPARTNER_VIEW in permissions:
         out["sub_partners"] = sub_partner_counts(partner_id)
     return out
+
+
+def _earning_model(partner_id: UUID, now: Any) -> dict[str, Any]:
+    """``margin`` with the all-products discount when a margin rule governs the
+    partner's sales, else ``commission``."""
+    found = margins.effective_discount(partner_id, product_code="", at=now)
+    if found is None:
+        return {"model": "commission", "discount_bp": None}
+    return {"model": "margin", "discount_bp": found[0]}
 
 
 def _charts(series: list[dict[str, Any]]) -> dict[str, Any]:
@@ -539,9 +536,15 @@ def plans(ctx: TenantContext) -> dict[str, Any]:
         [p["plan_version_id"] for p in visible], ctx.partner_id, partner.payout_currency
     )
     switches = product_settings.settings_by_product_code(ctx.partner_id)
+    discounts = {
+        code: margins.effective_discount(ctx.partner_id, product_code=code, at=now)
+        for code in {p["product_code"] for p in visible}
+    }
+    currency = CurrencyCode(partner.payout_currency)
     items = []
     for plan in visible:
         by_interval = price_map.get(str(plan["plan_version_id"]), {})
+        discount = discounts.get(plan["product_code"])
         items.append(
             {
                 "plan_version_id": str(plan["plan_version_id"]),
@@ -555,23 +558,13 @@ def plans(ctx: TenantContext) -> dict[str, Any]:
                 "enabled_for_sale": switches.get(plan["product_code"], {}).get(
                     "enabled_for_sale", True
                 ),
+                "earning": (
+                    {"model": "margin", "discount_bp": discount[0]}
+                    if discount is not None
+                    else {"model": "commission", "discount_bp": None}
+                ),
                 "prices": [
-                    {
-                        "interval": interval,
-                        "partner_price_minor": slot.get("partner"),
-                        "list_price_minor": slot.get("list"),
-                        # List minus the partner's price, in minor units: the
-                        # server's subtraction. It is the only "margin" the
-                        # platform can state - there is no wholesale cost
-                        # (``NOT_IMPLEMENTED["partner_cost"]``) to subtract.
-                        "difference_minor": (
-                            slot["list"] - slot["partner"]
-                            if slot.get("list") is not None
-                            and slot.get("partner") is not None
-                            else None
-                        ),
-                        "source": "partner_price_book" if "partner" in slot else "list",
-                    }
+                    _price_line(interval, slot, discount, currency)
                     for interval, slot in sorted(by_interval.items())
                 ],
             }
@@ -583,8 +576,47 @@ def plans(ctx: TenantContext) -> dict[str, Any]:
         "not_implemented": {
             "add_ons": NOT_IMPLEMENTED["add_ons"],
             "pricing_rules": NOT_IMPLEMENTED["pricing_rules"],
-            "partner_cost": NOT_IMPLEMENTED["partner_cost"],
         },
+    }
+
+
+def _price_line(
+    interval: str,
+    slot: dict[str, int],
+    discount: tuple[int, Any] | None,
+    currency: CurrencyCode,
+) -> dict[str, Any]:
+    """One plan price as a partner sees it (ADR-053), every figure the
+    server's: list price, the partner's cost under its margin rule (list less
+    the discount), the customer's price (the partner book, else list) and the
+    margin between them. Without a margin rule the partner earns commission and
+    has no cost; the difference to list is still shown."""
+    list_minor = slot.get("list")
+    customer = slot["partner"] if slot.get("partner") is not None else list_minor
+    cost = (
+        commission_domain.partner_cost(
+            list_minor=list_minor, currency=currency, discount_bp=discount[0]
+        )
+        if discount is not None and list_minor is not None
+        else None
+    )
+    margin = customer - cost if customer is not None and cost is not None else None
+    return {
+        "interval": interval,
+        "partner_price_minor": slot.get("partner"),
+        "list_price_minor": list_minor,
+        "customer_price_minor": customer,
+        "partner_cost_minor": cost,
+        "margin_minor": margin,
+        "margin_bp": commission_domain.margin_bp(customer_minor=customer, cost_minor=cost)
+        if margin is not None and customer
+        else None,
+        "difference_minor": (
+            list_minor - slot["partner"]
+            if list_minor is not None and slot.get("partner") is not None
+            else None
+        ),
+        "source": "partner_price_book" if "partner" in slot else "list",
     }
 
 
@@ -1049,9 +1081,52 @@ def orders(ctx: TenantContext, *, limit: Any = 25, cursor: str | None = None) ->
     relationship is live), and nothing from any other partner's customers."""
     authz.require(ctx, CUSTOMER_VIEW)
     assert ctx.partner_id is not None
-    return panel_selectors.orders_page(
+    page = panel_selectors.orders_page(
         ctx.partner_id,
         order_summaries=payment_selectors.order_summaries(),
         limit=limit,
         cursor=cursor,
     )
+    # ADR-053: each order's earning, from the ledger - the margin (with the
+    # partner's cost) or the commission its lines accrued. Money needs the
+    # commission view; without it the figures are None, never zero.
+    money = COMMISSION_VIEW in authz.effective_permissions(ctx)
+    earned = (
+        commission_selectors.earnings_by_item(
+            ctx.partner_id,
+            [i for item in page.items for i in item["subscription_item_ids"]],
+        )
+        if money
+        else {}
+    )
+    for item in page.items:
+        rows = [earned[i] for i in item.pop("subscription_item_ids") if i in earned]
+        item["earning"] = (
+            {
+                "model": "margin"
+                if any(r["earning"] == "margin" for r in rows)
+                else "commission",
+                "amount_minor": sum(r["amount_minor"] for r in rows),
+                "partner_cost_minor": sum(r["cost_minor"] or 0 for r in rows)
+                if any(r["cost_minor"] is not None for r in rows)
+                else None,
+                "currency": rows[0]["currency"],
+            }
+            if money and rows
+            else None
+        )
+        item["payment_status"] = _payment_status(item)
+    return page
+
+
+def _payment_status(order: dict[str, Any]) -> str:
+    """How the order stands for money: awaiting payment, paid, nothing due
+    (a trial, a free plan, a partner-billed account) or not paid."""
+    status = order["status"]
+    if status == "pending_payment":
+        return "awaiting_payment"
+    if order["paid_at"]:
+        return "paid"
+    if status == "fulfilled":
+        return "nothing_due"
+    return "not_paid"

@@ -16,7 +16,7 @@
  * same command.
  */
 
-import { apiFetch } from "./client";
+import { apiFetch, apiUpload } from "./client";
 
 export interface Page<T> {
   results: T[];
@@ -205,6 +205,8 @@ export interface RuleRow {
   partner_id: string | null;
   product_code: string;
   rate_bp: number;
+  /** ADR-052: also earns on each paid renewal of the sale. */
+  recurring: boolean;
   effective_from: string;
   retired_at: string | null;
 }
@@ -235,6 +237,18 @@ export interface ProductChanges {
   marketing_url?: string;
   listing?: CatalogProduct["listing"];
   sort_order?: number;
+  category?: string;
+  icon?: string;
+  // ADR-051: the store listing and where the product may be offered.
+  store_title?: string;
+  store_summary?: string;
+  application_url?: string;
+  documentation_url?: string;
+  support_url?: string;
+  customer_store_enabled?: boolean;
+  reseller_enabled?: boolean;
+  affiliate_enabled?: boolean;
+  white_label_enabled?: boolean;
 }
 
 // --- the products console (Phase 11) ---------------------------------------------
@@ -320,6 +334,25 @@ export interface IssuedConsoleCredential {
   notice?: string;
 }
 
+/** One listing image (ADR-051). The bytes are served same-origin by
+ * {@link productMediaUrl}; a file id never reaches the browser. */
+export interface ProductMediaRow {
+  id: string;
+  kind: "logo" | "banner" | "screenshot";
+  width: number;
+  height: number;
+  content_type: string;
+  size_bytes: number;
+  caption: string;
+  sort_order: number;
+}
+
+export interface ReadinessItem {
+  key: string;
+  label: string;
+  ok: boolean;
+}
+
 export interface ConsoleProduct {
   id: string;
   code: string;
@@ -330,11 +363,29 @@ export interface ConsoleProduct {
   category: string;
   icon: string;
   status: string;
+  /** ADR-051: the three states the Product Manager shows. */
+  manager_status: "draft" | "active" | "archived";
   listing: "listed" | "coming_soon" | "hidden";
   availability: "draft" | "coming_soon" | "available" | "private" | "disabled";
   licensing_mode: string;
   sort_order: number;
   marketing_url: string;
+  store_title: string;
+  store_summary: string;
+  application_url: string;
+  documentation_url: string;
+  support_url: string;
+  customer_store_enabled: boolean;
+  reseller_enabled: boolean;
+  affiliate_enabled: boolean;
+  white_label_enabled: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+  activated_at: string | null;
+  logo_media_id: string | null;
+  media: ProductMediaRow[];
+  /** Where a holder's "Open" goes (the integration's launch URL), or "". */
+  launch_url: string;
   plans: ConsoleProductPlan[];
   channels: {
     direct: { listed: boolean; available: boolean; public_plans: number; priced_plans: number; ready: boolean };
@@ -349,6 +400,52 @@ export interface ConsoleProduct {
 export interface ProductsConsole {
   products: ConsoleProduct[];
   can_see_integrations: boolean;
+  /** The categories the Product Manager offers (server configuration). */
+  categories: string[];
+}
+
+/** One product whole (ADR-051): the console's view plus its publish checklist. */
+export interface ManagedProduct {
+  product: ConsoleProduct & { readiness: ReadinessItem[] };
+  categories: string[];
+  can_see_integrations: boolean;
+  can_see_activity: boolean;
+}
+
+/** What the Add Product wizard sends. `code` is derived from the slug by the server. */
+export interface NewProduct {
+  name: string;
+  slug: string;
+  category?: string;
+  tagline?: string;
+  icon?: string;
+  description?: string;
+  marketing_url?: string;
+  store_title?: string;
+  store_summary?: string;
+  application_url?: string;
+  documentation_url?: string;
+  support_url?: string;
+  customer_store_enabled?: boolean;
+  reseller_enabled?: boolean;
+  affiliate_enabled?: boolean;
+  white_label_enabled?: boolean;
+  integration?: { launch_url: string; sso_enabled: boolean; redirect_uri?: string; health_url?: string } | null;
+  trial?: { enabled: boolean; duration_days: number } | null;
+}
+
+export interface ProductActivityRow {
+  id: string;
+  occurred_at: string;
+  action: string;
+  label: string;
+  summary: string;
+  actor: string;
+}
+
+/** The same-origin address of one listing image (staff only). */
+export function productMediaUrl(productId: string, mediaId: string): string {
+  return `${admin}/products/${productId}/media/${mediaId}`;
 }
 
 export interface CapabilityInfo {
@@ -428,6 +525,34 @@ export const adminApi = {
   // --- the products console (Phase 11) --------------------------------------------
 
   productsConsole: () => apiFetch<ProductsConsole>(`${admin}/products/console`),
+
+  // --- the Product Manager (ADR-051) -------------------------------------------------
+
+  /** The Add Product wizard: a draft, hidden product with its integration and trial. */
+  createManagedProduct: (body: NewProduct) =>
+    apiFetch<ManagedProduct>(`${admin}/products`, { method: "POST", body: json(body) }),
+  managedProduct: (id: string) => apiFetch<ManagedProduct>(`${admin}/products/${id}`),
+  productLifecycle: (id: string, action: "publish" | "unpublish" | "archive" | "restore") =>
+    apiFetch<ManagedProduct>(`${admin}/products/${id}/${action}`, { method: "POST" }),
+  deleteProduct: (id: string) => apiFetch<{ deleted: boolean; code: string }>(`${admin}/products/${id}`, { method: "DELETE" }),
+  productActivity: (id: string, cursor?: string) =>
+    apiFetch<Page<ProductActivityRow>>(`${admin}/products/${id}/activity`, { query: { cursor } }),
+  uploadProductMedia: (
+    id: string,
+    kind: ProductMediaRow["kind"],
+    file: File,
+    options: { caption?: string; onProgress?: (percent: number) => void } = {},
+  ) =>
+    apiUpload<ProductMediaRow>(`${admin}/products/${id}/media`, file, {
+      query: { kind, caption: options.caption || undefined },
+      onProgress: options.onProgress,
+    }),
+  captionProductMedia: (id: string, mediaId: string, caption: string) =>
+    apiFetch<ProductMediaRow>(`${admin}/products/${id}/media/${mediaId}`, { method: "PATCH", body: json({ caption }) }),
+  deleteProductMedia: (id: string, mediaId: string) =>
+    apiFetch<{ deleted: boolean }>(`${admin}/products/${id}/media/${mediaId}`, { method: "DELETE" }),
+  reorderProductMedia: (id: string, order: string[]) =>
+    apiFetch<{ media: ProductMediaRow[] }>(`${admin}/products/${id}/media/reorder`, { method: "POST", body: json({ order }) }),
   setTrialConfig: (productId: string, config: TrialConfig) =>
     apiFetch<TrialConfig>(`${admin}/catalog/products/${productId}/trial`, { method: "PUT", body: json(config) }),
   updateIntegration: (productCode: string, changes: IntegrationChanges) =>
@@ -497,7 +622,7 @@ export const adminApi = {
     }),
 
   rules: () => apiFetch<{ results: RuleRow[] }>(`${admin}/commission/rules`),
-  createRule: (body: { code: string; rate_bp: number; reason: string; product_code?: string; partner_id?: string }) =>
+  createRule: (body: { code: string; rate_bp: number; reason: string; product_code?: string; partner_id?: string; recurring?: boolean }) =>
     apiFetch(`${admin}/commission/rules`, { method: "POST", body: json(body) }),
   /** `unpaid: "1"` keeps only entries that are in no live payout. */
   accruals: (q: { partner_id?: string; cursor?: string; unpaid?: string }) =>
@@ -663,6 +788,9 @@ export interface BrandPortalFields {
   support_name: string;
   support_phone: string;
   website_url: string;
+  /** ADR-053: the partner's own legal pages, linked from its branded Store. */
+  terms_url?: string;
+  privacy_url?: string;
   welcome_message: string;
   footer_text: string;
   sender_name: string;
@@ -718,6 +846,21 @@ export const partnerApi = {
       headers: idem(key),
       body: json({ plan_version_id: planVersionId, quantity }),
     }),
+  /** A related customer's subscription lines (ADR-053's Manage subscription). */
+  customerSubscription: (id: string, orgId: string) =>
+    apiFetch<CustomerSubscription[]>(`${partner(id)}/customers/${orgId}/subscription`),
+  changeCustomerPlan: (id: string, orgId: string, itemId: string, toPlanVersionId: string, expectedVersion: number, key: string) =>
+    apiFetch(`${partner(id)}/customers/${orgId}/items/${itemId}/change-plan`, {
+      method: "POST",
+      headers: idem(key),
+      body: json({ to_plan_version_id: toPlanVersionId, expected_version: expectedVersion }),
+    }),
+  cancelCustomerSubscription: (id: string, orgId: string, subscriptionId: string, expectedVersion: number, key: string) =>
+    apiFetch(`${partner(id)}/customers/${orgId}/subscriptions/${subscriptionId}/cancel`, {
+      method: "POST",
+      headers: idem(key),
+      body: json({ expected_version: expectedVersion }),
+    }),
   diagnose: (id: string, orgId: string, productCode: string, memberEmail?: string) =>
     apiFetch<Diagnosis>(`${partner(id)}/customers/${orgId}/diagnose`, {
       method: "POST",
@@ -742,6 +885,8 @@ export const partnerApi = {
         label: string;
         status: string;
         captured_at: string;
+        /** ADR-053: when the visitor created an account. */
+        registered_at?: string | null;
         converted_at: string | null;
       }>;
     }>(`${partner(id)}/referrals`),
@@ -801,3 +946,23 @@ export const brandingApi = {
    * organization with no white-label partner. */
   own: (slug: string) => apiFetch<{ brand: OwnBrand | null }>(`/api/v1/orgs/${encodeURIComponent(slug)}/brand`),
 };
+
+/** One subscription of a partner's customer, as the partner may act on it. */
+export interface CustomerSubscription {
+  subscription_id: string;
+  status: string;
+  version: number;
+  currency: string;
+  billing_interval: string;
+  current_period_end: string;
+  cancel_at: string | null;
+  items: {
+    item_id: string;
+    product_code: string;
+    plan_code: string;
+    bundle_code: string;
+    quantity: number;
+    is_derived: boolean;
+    removed_at: string | null;
+  }[];
+}

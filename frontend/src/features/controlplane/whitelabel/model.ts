@@ -53,6 +53,8 @@ export interface BrandDraft {
   supportPhone: string;
   supportUrl: string;
   websiteUrl: string;
+  termsUrl: string;
+  privacyUrl: string;
   welcome: string;
   footer: string;
   senderName: string;
@@ -68,7 +70,7 @@ export type Group = "identity" | "portal" | "communication" | "login";
 export const ALL_GROUPS: Group[] = ["identity", "portal", "communication", "login"];
 
 export const GROUP_KEYS: Record<Group, DraftKey[]> = {
-  identity: ["brandName", "shortName", "accent", "supportName", "supportEmail", "supportPhone", "supportUrl", "websiteUrl"],
+  identity: ["brandName", "shortName", "accent", "supportName", "supportEmail", "supportPhone", "supportUrl", "websiteUrl", "termsUrl", "privacyUrl"],
   portal: ["welcome", "footer"],
   communication: ["senderName", "replyTo", "useForInvitations"],
   login: ["loginShowWelcome", "loginShowSupport"],
@@ -83,6 +85,8 @@ export const EMPTY_DRAFT: BrandDraft = {
   supportPhone: "",
   supportUrl: "",
   websiteUrl: "",
+  termsUrl: "",
+  privacyUrl: "",
   welcome: "",
   footer: "",
   senderName: "",
@@ -104,6 +108,8 @@ export function draftOf(brand: StoredBrand | null): BrandDraft {
     supportPhone: p.support_phone ?? "",
     supportUrl: brand.support_url,
     websiteUrl: p.website_url ?? "",
+    termsUrl: p.terms_url ?? "",
+    privacyUrl: p.privacy_url ?? "",
     welcome: p.welcome_message ?? "",
     footer: p.footer_text ?? "",
     senderName: p.sender_name ?? "",
@@ -189,6 +195,8 @@ export function validateGroup(d: BrandDraft, group: Group): FieldErrors {
     }
     if (d.supportUrl.trim() && !isHttpsUrl(d.supportUrl.trim())) put("supportUrl", "The support page must be a plain https:// address, or empty.");
     if (d.websiteUrl.trim() && !isHttpsUrl(d.websiteUrl.trim())) put("websiteUrl", "The company website must be a plain https:// address, or empty.");
+    if (d.termsUrl.trim() && !isHttpsUrl(d.termsUrl.trim())) put("termsUrl", "The terms page must be a plain https:// address, or empty.");
+    if (d.privacyUrl.trim() && !isHttpsUrl(d.privacyUrl.trim())) put("privacyUrl", "The privacy page must be a plain https:// address, or empty.");
   }
   if (group === "portal") {
     put("welcome", plainTextProblem(d.welcome, "The welcome message", 280));
@@ -215,6 +223,8 @@ const PORTAL_OF: Record<Group, (d: BrandDraft) => Partial<BrandPortalFields>> = 
     support_name: d.supportName.trim(),
     support_phone: d.supportPhone.trim(),
     website_url: d.websiteUrl.trim(),
+    terms_url: d.termsUrl.trim(),
+    privacy_url: d.privacyUrl.trim(),
   }),
   portal: (d) => ({ welcome_message: d.welcome.trim(), footer_text: d.footer.trim() }),
   communication: (d) => ({
@@ -264,6 +274,8 @@ const SERVER_FIELDS: Record<string, DraftKey | "logo" | "hostname"> = {
   support_name: "supportName",
   support_phone: "supportPhone",
   website_url: "websiteUrl",
+  terms_url: "termsUrl",
+  privacy_url: "privacyUrl",
   welcome_message: "welcome",
   footer_text: "footer",
   sender_name: "senderName",

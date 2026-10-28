@@ -129,8 +129,53 @@ export const publicApi = {
   forgotPassword: (email: string) => post<{ status: string }>("/api/v1/public/password/forgot", { email }),
   resetPassword: (token: string, password: string) =>
     post<{ status: string }>("/api/v1/public/password/reset", { token, password }),
-  /** A partner's referral link: an opaque token for the signup to convert. */
-  captureReferral: (code: string) => post<{ token: string }>("/api/v1/public/referrals", { code }),
+  /** A partner's referral link: an opaque token for the signup to convert, and
+   * (ADR-053) where the link leads - a platform path the server derived. */
+  captureReferral: (code: string) =>
+    post<{ token: string; destination?: string }>("/api/v1/public/referrals", { code }),
   convertReferral: (token: string, organizationId: string) =>
     post<{ converted: boolean }>("/api/v1/referrals/convert", { token, organization_id: organizationId }),
+  /** ADR-053: a white-label partner's branded Store - presentation only. */
+  storefront: (slug: string) => apiFetch<Storefront>(`/api/v1/public/storefront/${encodeURIComponent(slug)}`),
 };
+
+/** A partner's branded Store: its brand (presentation) over the central
+ * catalog - only the products it may sell, at its prices. */
+export interface Storefront {
+  slug: string;
+  brand: {
+    brand_name: string;
+    logo_url: string | null;
+    accent_color: string;
+    theme: Record<string, string>;
+    support_email: string;
+    support_url: string;
+    portal: {
+      short_name: string;
+      support_name: string;
+      support_phone: string;
+      website_url: string;
+      terms_url: string;
+      privacy_url: string;
+      welcome_message: string;
+      footer_text: string;
+    };
+  };
+  products: {
+    code: string;
+    name: string;
+    slug: string;
+    tagline: string;
+    category: string;
+    icon: string;
+    summary: string;
+    logo_url: string | null;
+    plans: {
+      plan_version_id: string;
+      plan_code: string;
+      plan_name: string;
+      trial_days: number;
+      prices: { currency: string; interval: string; amount_minor: number }[];
+    }[];
+  }[];
+}

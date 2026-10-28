@@ -199,21 +199,21 @@ def test_the_affiliate_overview_counts_clicks_and_conversions_and_builds_the_lin
     assert data["kpis"]["clicks"] == 2
     assert data["kpis"]["conversions"] == 1
     assert data["kpis"]["conversion_rate_bp"] == 5000  # integer basis points: 50.00%
-    assert data["kpis"]["signups"] is None
-    assert "affiliate_signups" in data["not_implemented"]
-    assert "signups" not in data["not_implemented"]
+    # ADR-053: registrations are recorded now (none in this test's journey
+    # verified an account through the link's cookie).
+    assert isinstance(data["kpis"]["signups"], int)
+    assert "affiliate_signups" not in data["not_implemented"]
     assert data["primary_link"]["code"] == code
-    assert data["primary_link"]["url"].endswith(f"/signup?ref={code}")
+    assert data["primary_link"]["url"].endswith(f"/r/{code}")
     assert data["primary_link"]["campaign"] == "LinkedIn"
-    assert data["campaigns"] == [
-        {
-            "campaign": "LinkedIn",
-            "links": 1,
-            "clicks": 2,
-            "conversions": 1,
-            "conversion_rate_bp": 5000,
-        }
-    ]
+    (campaign,) = data["campaigns"]
+    assert {k: campaign[k] for k in ("campaign", "links", "clicks", "conversions")} == {
+        "campaign": "LinkedIn",
+        "links": 1,
+        "clicks": 2,
+        "conversions": 1,
+    }
+    assert campaign["conversion_rate_bp"] == 5000
     assert "General" in data["campaign_presets"]
     assert data["money"] is not None  # commission.view is in the bundle
     # Nothing identifies a visitor or the customer.
@@ -275,7 +275,7 @@ def test_the_white_label_status_is_not_given_to_a_partner_without_brand_grants(
 ):
     for client, pid in (affiliate, reseller):
         status = client.get(api(pid, "white-label/status")).json()
-        assert status == {"brand": None, "domain": None}
+        assert status == {"brand": None, "domain": None, "storefront": None}
 
 
 # --- money belongs to the commission view ---------------------------------------------------------

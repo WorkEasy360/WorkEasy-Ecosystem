@@ -55,6 +55,8 @@ def test_the_partner_models_are_the_frozen_set_plus_the_declared_additions():
         # Reseller / White-label request needed. tests/partner_upgrade pins what
         # it may never become (no kind of partner, no grant, no amount).
         "PartnerUpgradeRequest",
+        # ADR-053: the set-up fee setting.
+        "PartnerProgramFee",
     }
 
 

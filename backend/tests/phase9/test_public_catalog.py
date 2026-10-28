@@ -130,6 +130,9 @@ def test_the_catalog_is_rate_limited(catalog, settings):
 def test_editing_a_product_validates_audits_and_never_touches_its_code(
     catalog, staff_login
 ):
+    from django.utils import timezone
+
+    from workeasy360.commercial.catalog.models import Product
     from workeasy360.contracts.values.control_plane import PLATFORM_ORGANIZATION_ID
     from workeasy360.platform.audit.models import AuditEvent
     from workeasy360.platform.tenancy.db import organization_db_scope
@@ -137,6 +140,9 @@ def test_editing_a_product_validates_audits_and_never_touches_its_code(
 
     staff, _ = staff_login("platform.staff_catalog.manage")
     crm = catalog["products"]["crm"]
+    # ADR-051: a slug is fixed once the product has been on sale, so the slug
+    # edit is made while CRM has never been activated.
+    Product.objects.filter(id=crm.id).update(activated_at=None)
     ok = _edit(
         staff,
         crm.id,
@@ -148,12 +154,15 @@ def test_editing_a_product_validates_audits_and_never_touches_its_code(
     )
     assert ok.status_code == 200, ok.content
     assert ok.json()["code"] == "crm" and ok.json()["slug"] == "workeasy-crm"
+    Product.objects.filter(id=crm.id).update(activated_at=timezone.now())
     refused = {
         "code": _edit(staff, crm.id, code="other"),
         "licensing_mode": _edit(staff, crm.id, licensing_mode="usage"),
         "javascript": _edit(staff, crm.id, marketing_url="javascript:alert(1)"),
         "http": _edit(staff, crm.id, marketing_url="http://example.com"),
+        "internal host": _edit(staff, crm.id, marketing_url="https://169.254.169.254/"),
         "slug": _edit(staff, crm.id, slug="Not A Slug"),
+        "slug after launch": _edit(staff, crm.id, slug="crm-renamed"),
         "listing": _edit(staff, crm.id, listing="everywhere"),
         "duplicate slug": _edit(
             staff, catalog["products"]["books"].id, slug="workeasy-crm"

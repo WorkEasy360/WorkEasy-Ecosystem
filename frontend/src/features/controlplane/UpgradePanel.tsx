@@ -9,7 +9,7 @@ import {
   type UpgradeProposal,
   type UpgradeRequestRow,
 } from "@/lib/api/partnerConsole";
-import { LoadGate, Status, useAction, when, type Load } from "./ui";
+import { LoadGate, Status, money, useAction, when, type Load } from "./ui";
 import { Segmented, TextAreaField, TextField } from "./widgets";
 import styles from "./ControlPlane.module.css";
 import local from "./UpgradePanel.module.css";
@@ -444,11 +444,15 @@ function Decision({
               )}
             </fieldset>
             <TextField
-              label="Commercial reference (optional)"
+              label={open.setup_fee ? "Set-up fee payment reference (required)" : "Commercial reference (optional)"}
               value={reference}
               onChange={setReference}
               maxLength={120}
-              hint="A pointer to the terms agreed, such as a contract number. It is recorded; no amount is stored or charged here."
+              hint={
+                open.setup_fee
+                  ? `This upgrade carries a set-up fee of ${money(open.setup_fee.amount_minor, open.setup_fee.currency)}. Enter the invoice or transfer reference once it is paid; approval is refused without it.`
+                  : "A pointer to the terms agreed, such as a contract number. It is recorded; no amount is stored or charged here."
+              }
             />
           </>
         )}

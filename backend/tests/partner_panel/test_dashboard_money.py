@@ -100,8 +100,9 @@ def test_money_is_integer_minor_units_everywhere(reseller_client):
 def test_gaps_are_declared_not_shown_as_zero(reseller_client):
     client, fx = reseller_client
     body = client.get(api(fx["partner"].id, "dashboard")).json()
-    assert set(body["not_implemented"]) == {"partner_cost", "customer_limit"}
-    assert "partner_cost" not in body["sales"]
+    # ADR-053: the partner's cost is a fact now (its margin rule), not a gap.
+    assert set(body["not_implemented"]) == {"customer_limit"}
+    assert body["earning"] == {"model": "commission", "discount_bp": None}
 
 
 def test_sections_follow_permissions_and_a_hidden_section_is_null_not_zero(

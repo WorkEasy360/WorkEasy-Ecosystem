@@ -14,6 +14,7 @@ import local from "./ConsoleScreens.module.css";
 import { MarkdownLite } from "./MarkdownLite";
 import { PageHeader } from "./consoleUi";
 import { useOrgAccess } from "./OrgAccess";
+import { MAX_CART_ITEMS, checkoutHref, useCart, type CartItem } from "./cart";
 import { trialDenialMessage } from "./trialCopy";
 
 const CYCLES = [
@@ -57,6 +58,7 @@ export function ExploreScreen() {
         title="Explore products"
         lead="Every Workeasy360 product, and what your organization has of each. Prices are in your billing currency, before any tax."
       />
+      {canBuy && <CartBar slug={slug} />}
       <ExploreProducts slug={slug} canBuy={canBuy} />
       <LoadGate load={load} what="plans and bundles">
         {(data) => <Offers data={data} slug={slug} canBuy={canBuy} />}
@@ -71,6 +73,7 @@ function ExploreProducts({ slug, canBuy }: { slug: string; canBuy: boolean }) {
   const router = useRouter();
   const [load, reload] = useLoad(() => consoleApi.explore(slug), [slug]);
   const { act, busy, feedback } = useAction(reload);
+  const cart = useCart(slug);
 
   const startTrial = (product: ExploreProduct, planCode: string) =>
     act(async () => {
@@ -114,6 +117,8 @@ function ExploreProducts({ slug, canBuy }: { slug: string; canBuy: boolean }) {
                   hasAccount={data.billing_account}
                   onStartTrial={(planCode) => startTrial(product, planCode)}
                   onBuy={buy}
+                  inCart={(id) => cart.has(id)}
+                  onAddToCart={(item, interval) => cart.add(item, interval)}
                 />
               ))}
             </div>
@@ -176,6 +181,8 @@ function ExploreProductCard({
   hasAccount,
   onStartTrial,
   onBuy,
+  inCart,
+  onAddToCart,
 }: {
   slug: string;
   product: ExploreProduct;
@@ -184,6 +191,8 @@ function ExploreProductCard({
   hasAccount: boolean;
   onStartTrial: (planCode: string) => void;
   onBuy: (planVersionId: string, interval: string) => void;
+  inCart: (planVersionId: string) => boolean;
+  onAddToCart: (item: CartItem, interval: string) => void;
 }) {
   const titleId = useId();
   const trialPlan =
@@ -277,6 +286,22 @@ function ExploreProductCard({
             {buyLabel}
           </button>
         )}
+        {canBuy && product.availability === "available" && buyPlan && !held && buyPlan.billing_type !== "free_trial" && (
+          <button
+            type="button"
+            className="w360-btn w360-btn-secondary"
+            aria-label={inCart(buyPlan.plan_version_id) ? `In cart: ${product.name}` : `Add to cart: ${product.name}`}
+            disabled={busy || inCart(buyPlan.plan_version_id)}
+            onClick={() =>
+              onAddToCart(
+                { plan_version_id: buyPlan.plan_version_id, product_code: product.code, product_name: product.name, plan_name: buyPlan.name },
+                priceInterval,
+              )
+            }
+          >
+            {inCart(buyPlan.plan_version_id) ? "In cart" : "Add to cart"}
+          </button>
+        )}
         <Link href={`/products/${product.slug}`} className="w360-btn w360-btn-secondary" aria-label={`Learn more: ${product.name}`}>
           Learn more
         </Link>
@@ -296,6 +321,18 @@ function Offers({ data, slug, canBuy }: { data: MarketplaceOffers; slug: string;
   const standard = data.plans.filter((p) => p.kind !== "add_on");
   const addOns = data.plans.filter((p) => p.kind === "add_on");
   const planName = (code: string | null) => data.plans.find((p) => p.plan_code === code)?.name ?? code ?? "";
+  const cart = useCart(slug);
+  const cartFor = (p: Plan): CartControl | undefined =>
+    canBuy && p.billing_type !== "free_trial" && !(p.kind !== "add_on" && held.has(p.product_code))
+      ? {
+          inCart: cart.has(p.plan_version_id),
+          add: () =>
+            cart.add(
+              { plan_version_id: p.plan_version_id, product_code: p.product_code, product_name: p.product_name, plan_name: p.name },
+              cycle.key,
+            ),
+        }
+      : undefined;
 
   /** Open the checkout for this choice - identifiers only in the address. */
   function buy(target: { plan_version_id?: string; bundle_version_id?: string }, _name: string, trial: boolean) {
@@ -361,7 +398,7 @@ function Offers({ data, slug, canBuy }: { data: MarketplaceOffers; slug: string;
       {standard.length > 0 && (
         <OfferSection title="Product packages" lead="One product, at the plan that suits you." anchor={PACKAGES_ANCHOR}>
           {standard.map((p) => (
-            <PlanCard key={p.plan_version_id} plan={p} common={common} held={held} addonFor="" onBuy={buy} />
+            <PlanCard key={p.plan_version_id} plan={p} common={common} held={held} addonFor="" onBuy={buy} cart={cartFor(p)} />
           ))}
         </OfferSection>
       )}
@@ -375,6 +412,7 @@ function Offers({ data, slug, canBuy }: { data: MarketplaceOffers; slug: string;
               held={held}
               addonFor={planName(p.addon_for)}
               onBuy={buy}
+              cart={cartFor(p)}
             />
           ))}
         </OfferSection>
@@ -384,6 +422,7 @@ function Offers({ data, slug, canBuy }: { data: MarketplaceOffers; slug: string;
 }
 
 type Common = { cycle: Cycle; currency: string | null; canBuy: boolean; busy: boolean; hasAccount: boolean };
+type CartControl = { inCart: boolean; add: () => void };
 
 function PlanCard({
   plan: p,
@@ -391,16 +430,19 @@ function PlanCard({
   held,
   addonFor,
   onBuy,
+  cart,
 }: {
   plan: Plan;
   common: Common;
   held: Set<string>;
   addonFor: string;
   onBuy: (target: { plan_version_id: string }, name: string, trial: boolean) => void;
+  cart?: CartControl;
 }) {
   return (
     <OfferCard
       {...common}
+      cart={cart}
       name={p.name}
       caption={p.caption || p.product_name}
       description={p.description}
@@ -476,6 +518,7 @@ function OfferCard({
   busy,
   hasAccount,
   onBuy,
+  cart,
 }: Common & {
   name: string;
   caption: string;
@@ -486,6 +529,7 @@ function OfferCard({
   addonFor?: string;
   extra?: React.ReactNode;
   onBuy: (trial: boolean) => void;
+  cart?: CartControl;
 }) {
   const titleId = useId();
   const price = priceFor(prices, cycle);
@@ -535,8 +579,62 @@ function OfferCard({
           >
             {actionLabel}
           </button>
+          {cart && !trial && (
+            <button
+              type="button"
+              className="w360-btn w360-btn-secondary"
+              aria-label={cart.inCart ? `In cart: ${name}` : `Add to cart: ${name}`}
+              disabled={busy || cart.inCart || (hasAccount && !price)}
+              onClick={cart.add}
+            >
+              {cart.inCart ? "In cart" : "Add to cart"}
+            </button>
+          )}
         </div>
       )}
     </article>
+  );
+}
+
+/** The cart, above the products: what is in it, removal, and one checkout for
+ * all of it. Prices are not shown here - the checkout asks the server. */
+function CartBar({ slug }: { slug: string }) {
+  const { cart, remove, clear } = useCart(slug);
+  const titleId = useId();
+  if (cart.items.length === 0) return null;
+  const count = cart.items.length;
+  return (
+    <section className={`w360-card ${local.notice}`} aria-labelledby={titleId}>
+      <h2 id={titleId} className={local.sectionTitle}>
+        Your cart ({count} product{count === 1 ? "" : "s"})
+      </h2>
+      <ul className={local.includes}>
+        {cart.items.map((item) => (
+          <li key={item.plan_version_id}>
+            {item.product_name} - {item.plan_name}{" "}
+            <button
+              type="button"
+              className="w360-btn w360-btn-secondary"
+              aria-label={`Remove ${item.product_name} from the cart`}
+              onClick={() => remove(item.plan_version_id)}
+            >
+              Remove
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className={cp.muted}>
+        One order and one payment for everything here, billed {cart.interval.replace(/_/g, "-")}. Up to {MAX_CART_ITEMS}{" "}
+        products, one plan each.
+      </p>
+      <div className={local.offerAction}>
+        <Link className="w360-btn w360-btn-primary" href={checkoutHref(slug, cart)}>
+          Checkout ({count})
+        </Link>
+        <button type="button" className="w360-btn w360-btn-secondary" onClick={clear}>
+          Empty cart
+        </button>
+      </div>
+    </section>
   );
 }

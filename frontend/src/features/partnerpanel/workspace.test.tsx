@@ -266,8 +266,9 @@ describe("holding more than one workspace", () => {
     const switcher = await screen.findByRole("navigation", { name: "Workspace" });
     const links = within(switcher).getAllByRole("link");
     expect(links.map((a) => [a.textContent, a.getAttribute("href"), a.getAttribute("aria-current")])).toEqual([
-      ["Reseller", "/partner/reseller/dashboard", null],
+      // ADR-053: in the order a partner grows - Affiliate, Reseller, White-label.
       ["Affiliate", "/partner/affiliate/dashboard", "page"],
+      ["Reseller", "/partner/reseller/dashboard", null],
     ]);
   });
 

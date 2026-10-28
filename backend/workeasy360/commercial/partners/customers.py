@@ -631,3 +631,64 @@ def activate_customer_subscription(
 
 def partner_status(ctx: TenantContext) -> PartnerStatus:
     return selectors.partner_row(ctx.partner_id).status_enum
+
+
+# --- a central order for a customer (ADR-053) ------------------------------
+
+
+def _seller(ctx: TenantContext) -> Any:
+    """This partner as the seller of an order: it may sell what its grants and
+    switches allow (``may_sell``), priced from its own book."""
+    from workeasy360.commercial.payments.orders import Seller
+
+    partner_id = ctx.partner_id
+    assert partner_id is not None
+    return Seller(
+        channel="partner",
+        partner_id=partner_id,
+        may_sell=lambda product_code, plan_code: selectors.may_sell(
+            partner_id, product_code=product_code, plan_code=plan_code
+        ),
+    )
+
+
+@in_scope
+def quote_customer_order(
+    ctx: TenantContext, organization_id: UUID, **request: Any
+) -> dict[str, Any]:
+    """What an order for this customer would cost - priced by the server from
+    the partner's book (else list), nothing taken from the browser."""
+    from workeasy360.commercial.payments import orders
+
+    authz.require(ctx, SELL)
+    customer = access.customer_context(ctx, organization_id, write=False)
+    with acting_scope(customer):
+        return orders.quote(customer, seller=_seller(ctx), **request)
+
+
+@in_scope
+def place_customer_order(
+    ctx: TenantContext,
+    organization_id: UUID,
+    *,
+    idempotency_key: Any,
+    **request: Any,
+) -> dict[str, Any]:
+    """Place a central Order for a related customer (Store Working Flow, page
+    5): the same order, payment, subscription and entitlement path as a direct
+    purchase. A customer on automatic collection pays the order's invoice
+    before anything is granted; a partner-billed or invoiced account is an
+    approved sale, fulfilled at once with nothing charged now. The partner's
+    margin or commission accrues only once the subscription is a paid sale."""
+    from workeasy360.commercial.payments import orders
+
+    authz.require(ctx, SELL)
+    customer = access.customer_context(ctx, organization_id, write=True)
+    key = _scoped_key(ctx, idempotency_key)
+    with acting_scope(customer):
+        access.lock_active_link(ctx, organization_id)
+        order = orders.place(
+            customer, idempotency_key=key, seller=_seller(ctx), **request
+        )
+    metrics.increment("partner_subscription_operations_total", operation="order")
+    return order

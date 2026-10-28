@@ -1233,6 +1233,7 @@ def commission_rules_view(request, ctx, **_kw: Any) -> JsonResponse:
         product_code=body.get("product_code", ""),
         partner_id=_uuid(body, "partner_id", required=False),
         effective_from=start,
+        recurring=body.get("recurring", False),
     )
     return JsonResponse(
         {"id": str(rule.id), "code": rule.code, "version": rule.version}, status=201

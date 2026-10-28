@@ -404,9 +404,30 @@ describe("plans & add-ons and payments", () => {
               trial_days: 0,
               currency: "GBP",
               enabled_for_sale: true,
+              earning: { model: "margin", discount_bp: 2000 },
               prices: [
-                { interval: "monthly", partner_price_minor: 1199, list_price_minor: 1499, difference_minor: 300, source: "partner_price_book" },
-                { interval: "yearly", partner_price_minor: null, list_price_minor: 14990, difference_minor: null, source: "list" },
+                {
+                  interval: "monthly",
+                  partner_price_minor: 1199,
+                  list_price_minor: 1499,
+                  customer_price_minor: 1199,
+                  partner_cost_minor: 1199 - 1,
+                  margin_minor: 1,
+                  margin_bp: 8,
+                  difference_minor: 300,
+                  source: "partner_price_book",
+                },
+                {
+                  interval: "yearly",
+                  partner_price_minor: null,
+                  list_price_minor: 14990,
+                  customer_price_minor: 14990,
+                  partner_cost_minor: null,
+                  margin_minor: null,
+                  margin_bp: null,
+                  difference_minor: null,
+                  source: "list",
+                },
               ],
             },
           ],
@@ -414,15 +435,21 @@ describe("plans & add-ons and payments", () => {
       ],
     });
     shell(<Plans />);
-    const table = await screen.findByRole("table", { name: "Plans you can sell" });
-    expect(within(table).getByRole("columnheader", { name: "Difference from list" })).toBeInTheDocument();
+    const table = await screen.findByRole("table", { name: "Plans you can sell, with your cost and margin" });
+    for (const header of ["List price", "Your cost", "Customer price", "Margin", "Margin %"]) {
+      expect(within(table).getByRole("columnheader", { name: header })).toBeInTheDocument();
+    }
     const [monthly, yearly] = within(table).getAllByRole("row").slice(1);
-    // 14.99 list, 11.99 the partner's price: the 3.00 comes from the server, not from the browser.
-    expect(within(monthly).getByText("£3.00")).toBeInTheDocument();
+    // Every figure is the server's: list 14.99, cost 11.98, customer 11.99, margin 0.01.
+    expect(within(monthly).getByText("£14.99")).toBeInTheDocument();
+    expect(within(monthly).getByText("£11.98")).toBeInTheDocument();
     expect(within(monthly).getByText("£11.99")).toBeInTheDocument();
-    // No partner price: the list price is shown as such and there is no difference to show.
-    expect(within(yearly).getByText("£149.90 (list)")).toBeInTheDocument();
-    expect(within(yearly).getAllByText("—").length).toBeGreaterThanOrEqual(1);
+    expect(within(monthly).getByText("£0.01")).toBeInTheDocument();
+    expect(within(monthly).getByText("0.08%")).toBeInTheDocument();
+    expect(within(monthly).getByText("Margin (20.00% off list)")).toBeInTheDocument();
+    // No cost shown where the server sent none: a dash, never a browser subtraction.
+    expect(within(yearly).getAllByText("£149.90").length).toBe(2);
+    expect(within(yearly).getAllByText("—").length).toBeGreaterThanOrEqual(3);
   });
 
   it("tabs Payments by what the person may read", async () => {
