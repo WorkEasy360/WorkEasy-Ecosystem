@@ -411,7 +411,7 @@ function managed(p = product(), extra: Record<string, unknown> = {}) {
 }
 
 describe("Product detail", () => {
-  it("shows the header, the seven tabs and the publish checklist, and passes axe", async () => {
+  it("shows the header, the eight tabs and the publish checklist, and passes axe", async () => {
     mockApi({ [`GET ${ADMIN}/products/p2`]: [ok(managed(DRAFT))] });
     const { container } = renderAs(MANAGE, <ProductDetail productId="p2" />);
     expect(await screen.findByRole("heading", { level: 1, name: "Draft Tool" })).toBeInTheDocument();
@@ -420,6 +420,7 @@ describe("Product detail", () => {
       "Store Listing",
       "Integration",
       "Availability",
+      "Updates",
       "Plans",
       "Pricing",
       "Activity",

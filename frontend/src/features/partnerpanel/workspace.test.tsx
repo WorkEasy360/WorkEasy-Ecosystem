@@ -109,6 +109,7 @@ describe("the affiliate workspace", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Welcome, Acme Partners" })).toBeInTheDocument();
     expect(sidebar()).toEqual([
       "Dashboard",
+      "My Products",
       "Referral Links",
       "Referral Codes",
       "Campaigns",

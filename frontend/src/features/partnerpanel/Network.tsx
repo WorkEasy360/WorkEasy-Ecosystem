@@ -6,6 +6,7 @@ import { LoadGate, MoreButton, ReasonAction, Status, Table, money, useAction, us
 import { partnerApi } from "@/lib/api/controlPlane";
 import { panelApi, type MemberRow, type SubPartnerRow } from "@/lib/api/partnerPanel";
 import { PartnerCustomers, PartnerPayouts } from "@/features/controlplane/PartnerScreens";
+import { ReferralTrailPanel } from "./AffiliateProducts";
 import { NotAvailable, PageHeader, SubNav, UsersNav, usePanel } from "./PanelKit";
 import styles from "./PartnerPanel.module.css";
 
@@ -401,6 +402,7 @@ export function Affiliates() {
 export function AffiliateConversions() {
   const { id } = usePanel();
   const paged = usePaged((cursor) => panelApi.conversions(id, cursor), [id]);
+  const [trail, setTrail] = useState<string | null>(null);
   return (
     <div className={styles.page}>
       <PageHeader title="Conversions" lead="Visitors who followed your link and became customers. A conversion never shows who the visitor was." />
@@ -410,7 +412,12 @@ export function AffiliateConversions() {
       {paged.state === "error" && <p role="alert">Couldn&apos;t load conversions.</p>}
       {paged.state === "ready" && (
         <>
-          <Table caption="Conversions" head={["Link", "Campaign", "Visited", "Became a customer", "Commission"]} isEmpty={paged.rows.length === 0} empty="No conversions yet.">
+          <Table
+            caption="Conversions"
+            head={["Link", "Campaign", "Visited", "Became a customer", "Commission", "Trail"]}
+            isEmpty={paged.rows.length === 0}
+            empty="No conversions yet."
+          >
             {paged.rows.map((c) => (
               <tr key={c.id}>
                 <th scope="row" className={styles.mono}>
@@ -420,14 +427,21 @@ export function AffiliateConversions() {
                 <td>{when(c.captured_at)}</td>
                 <td>{when(c.converted_at)}</td>
                 <td className={styles.num}>{c.currency && c.commission_minor !== null ? money(c.commission_minor, c.currency) : "—"}</td>
+                <td>
+                  <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setTrail(c.id)}>
+                    View trail<span className="w360-visually-hidden"> for link {c.code}</span>
+                  </button>
+                </td>
               </tr>
             ))}
           </Table>
           <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+          {trail && (
+            <ReferralTrailPanel referralId={trail} fetchTrail={(r) => panelApi.referralTrail(id, r)} onClose={() => setTrail(null)} />
+          )}
           <p className={styles.muted}>
-            Each row is the link, the campaign, the two dates and the commission the customer has earned you so far. The product and
-            plan are not recorded against a referral, so they are not listed here; the commission ledger under Commissions shows what
-            was earned and when it clears.
+            Each row is the link, the campaign, the two dates and the commission the customer has earned you so far. Its trail shows
+            each step, each paid sale and whether its commission is pending, approved, reversed or paid - never who the customer is.
           </p>
         </>
       )}

@@ -287,15 +287,16 @@ describe("the affiliate wizard", () => {
     await expectNoViolations(container);
   });
 
-  it("explains that an affiliate is granted no product", async () => {
+  it("assigns the products an affiliate may promote, never products to sell (ADR-054)", async () => {
     query = "step=products";
     mockApi(
       base(["affiliate"], AFFILIATE, {
-        [`GET /api/v1/admin/partners/${ID}/commission`]: [ok({ rules: [], live_versions: {}, in_force: null, partner_earns: true })],
+        [`GET /api/v1/admin/partners/${ID}/promotions`]: [ok({ grants: [] })],
       }),
     );
     mount();
-    expect(await screen.findByText(/It is granted no product/)).toBeInTheDocument();
+    expect(await screen.findByText(/Promoting a product is not selling it/)).toBeInTheDocument();
+    expect(await screen.findByLabelText("Assign a product to promote")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Allow product" })).not.toBeInTheDocument();
   });
 });

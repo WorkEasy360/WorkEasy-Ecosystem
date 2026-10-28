@@ -179,6 +179,19 @@ def commission_amount(*, basis_minor: int, currency: CurrencyCode, rate_bp: int)
     return Money(basis_minor, currency).apply_rate(rate_bp).minor_units
 
 
+def refund_share(amount_minor: int, *, refunded_minor: int, paid_minor: int) -> int:
+    """The part of a commission a refund takes back (ADR-054): the commission
+    times the refunded share of what was paid, half-up in integers, and never
+    more than the commission. A full refund takes it all."""
+    if paid_minor <= 0 or refunded_minor <= 0:
+        return 0
+    if refunded_minor >= paid_minor:
+        return amount_minor
+    return min(
+        amount_minor, (2 * amount_minor * refunded_minor + paid_minor) // (2 * paid_minor)
+    )
+
+
 def clears_at(event_at: datetime, holdback_days: int) -> datetime:
     """When a commission becomes payable: after the refund window."""
     return event_at + timedelta(days=holdback_days)

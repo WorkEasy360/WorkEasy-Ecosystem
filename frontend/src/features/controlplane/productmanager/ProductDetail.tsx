@@ -14,6 +14,7 @@ import { STATUS_BADGE, STATUS_LABEL, VISIBILITY_BADGE, VISIBILITY_LABEL, dateOnl
 import { listingOf } from "./ProductManager";
 import { ProductMark } from "./ProductMark";
 import { StorePreview } from "./StorePreview";
+import { UpdatesTab } from "./UpdatesTab";
 import styles from "./ProductManager.module.css";
 
 /**
@@ -22,13 +23,14 @@ import styles from "./ProductManager.module.css";
  * and Currency & pricing screens, filtered to this product.
  */
 
-export const TABS = ["overview", "listing", "integration", "availability", "plans", "pricing", "activity"] as const;
+export const TABS = ["overview", "listing", "integration", "availability", "updates", "plans", "pricing", "activity"] as const;
 type TabKey = (typeof TABS)[number];
 const TAB_LABEL: Record<TabKey, string> = {
   overview: "Overview",
   listing: "Store Listing",
   integration: "Integration",
   availability: "Availability",
+  updates: "Updates",
   plans: "Plans",
   pricing: "Pricing",
   activity: "Activity",
@@ -289,6 +291,7 @@ export function ProductDetail({ productId }: { productId: string }) {
                     />
                   )}
                   {tab === "availability" && <AvailabilityTab key={p.updated_at ?? ""} product={p} manage={manageCatalog} busy={busy} act={act} />}
+                  {tab === "updates" && <UpdatesTab product={p} manage={manageCatalog} />}
                   {tab === "plans" && <PlansPanel product={p} />}
                   {tab === "pricing" && <PricingPanel product={p} />}
                   {tab === "activity" && data.can_see_activity && <ActivityPanel productId={p.id} />}

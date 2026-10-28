@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth/useSession";
@@ -11,6 +11,7 @@ import {
   type PublicPlan,
   type PublicPrice,
   type PublicProduct,
+  type PublicProductUpdate,
 } from "@/lib/api/public";
 import { LoadGate, useLoad } from "@/features/controlplane/ui";
 import { MarkdownLite } from "@/features/console/MarkdownLite";
@@ -492,6 +493,12 @@ export function ProductPage({ slug }: { slug: string }) {
   const [currency, setCurrency] = useState<string | undefined>(undefined);
   const [load] = useLoad(() => publicApi.product(slug, currency), [slug, currency]);
   const [cycle, setCycle] = useState("monthly");
+  // ADR-054: an affiliate's pricing link opens `?view=pricing` - straight to the plans.
+  useEffect(() => {
+    if (load.status === "ready" && new URLSearchParams(window.location.search).get("view") === "pricing") {
+      document.getElementById("plans-title")?.scrollIntoView({ block: "start" });
+    }
+  }, [load.status]);
   return (
     <div className={styles.section}>
       <LoadGate load={load} what="this product">
@@ -718,6 +725,51 @@ export function ContactPage() {
           <p className={styles.muted}>Contact details will be published here soon.</p>
         )}
       </div>
+    </div>
+  );
+}
+
+/** `/products/<slug>/updates/<update>` - a published feature or release
+ * (ADR-054): the page an affiliate's update link opens. The text is plain; the
+ * longer announcement, when there is one, is a link on an approved host. */
+export function ProductUpdatePage({ slug, updateSlug }: { slug: string; updateSlug: string }) {
+  const [load] = useLoad(() => publicApi.productUpdate(slug, updateSlug), [slug, updateSlug]);
+  return (
+    <div className={styles.section}>
+      <LoadGate load={load} what="this update">
+        {(u: PublicProductUpdate) => (
+          <article aria-labelledby="update-title">
+            <p className={styles.storeCategory}>
+              <Link href={`/products/${u.product.slug}`}>{u.product.name}</Link> · {u.kind === "feature" ? "New feature" : "Product update"}
+              {u.published_at ? ` · ${new Date(u.published_at).toLocaleDateString()}` : ""}
+            </p>
+            <h1 id="update-title" className={styles.sectionTitle}>
+              {u.title}
+            </h1>
+            {u.summary && <p className={styles.muted}>{u.summary}</p>}
+            {u.banner_url && (
+              // eslint-disable-next-line @next/next/no-img-element -- same-origin listing image
+              <img src={u.banner_url} alt="" style={{ maxWidth: "100%", height: "auto" }} />
+            )}
+            {u.body.split("\n").map((line, i) => (line.trim() ? <p key={i}>{line}</p> : null))}
+            {u.landing_url && (
+              <p>
+                <a href={u.landing_url} rel="noopener noreferrer" target="_blank">
+                  Read the full announcement (opens in a new tab)
+                </a>
+              </p>
+            )}
+            <p>
+              <Link className="w360-btn w360-btn-primary" href={`/products/${u.product.slug}?view=pricing`}>
+                See {u.product.name} plans
+              </Link>{" "}
+              <Link className="w360-btn w360-btn-secondary" href="/signup">
+                Create your account
+              </Link>
+            </p>
+          </article>
+        )}
+      </LoadGate>
     </div>
   );
 }

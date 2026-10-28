@@ -4,11 +4,20 @@
 public codes and see how many converted; it grants no view of any customer and
 no authority over one.
 
-**Attribution rule: first touch, recorded at conversion.** A visitor who
-followed several partners' links holds several captured tokens; the customer is
-attributed to the partner of the token the *browser presents at conversion*
-(the first it kept), that conversion is recorded once and is never re-pointed,
-and ``organization_id`` is unique so no customer is ever attributed twice.
+**Attribution rule: first touch, recorded at conversion.** A browser keeps one
+referral token. While it is live (captured, unconverted, inside the programme's
+attribution window) a later click - on another partner's link, another link of
+the same partner or the same link again - is *counted* as a click on that link
+but does not replace the token (ADR-054; before it, the last click won). Once
+the token expires or converts, the next click starts a new one. The customer is
+attributed to the partner of the token the browser presents at conversion; that
+conversion is recorded once and never re-pointed, and ``organization_id`` is
+unique so no customer is ever attributed twice.
+
+**Product links need a promotion grant (ADR-054).** A link for a product - its
+page, pricing, a feature or an update - is made only while the partner holds
+the product's ``PartnerPromotionGrant``. After a revocation the programme's
+``revoked_links`` policy decides whether existing links still take visitors.
 
 **Nothing personal is stored.** Capture takes only a code. The visitor gets an
 opaque bearer token; only its hash is kept. Conversion links the token to the
@@ -33,10 +42,16 @@ from django.conf import settings
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
-from workeasy360.commercial.commissions import domain, selectors
-from workeasy360.commercial.partners import access, capabilities
+from workeasy360.commercial.commissions import domain, policy, selectors
+from workeasy360.commercial.partners import access, capabilities, promotion
 from workeasy360.commercial.partners import selectors as partner_selectors
-from workeasy360.contracts.enums import GrantStatus, PartnerStatus, ReferralStatus
+from workeasy360.contracts.enums import (
+    GrantStatus,
+    PartnerStatus,
+    ReferralLinkKind,
+    ReferralStatus,
+    RevokedLinkPolicy,
+)
 from workeasy360.contracts.errors import PartnerRecordNotFound, PartnerValidationError
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.audit import services as audit
@@ -53,7 +68,8 @@ _ALPHABET: Final = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 _CODE_RE: Final = re.compile(r"^[A-Z0-9]{4,16}$")
 #: A chosen code must contain a letter, so it never reads as an order or id number.
 _CHOSEN_RE: Final = re.compile(r"^(?=.*[A-Z])[A-Z0-9]{4,16}$")
-MAX_CODES_PER_PARTNER: Final = 20
+#: ADR-054: several links per product (page, pricing, features, updates, campaigns).
+MAX_CODES_PER_PARTNER: Final = 100
 MAX_CAMPAIGNS_PER_PARTNER: Final = 50
 NEW_CUSTOMER_WINDOW: Final = timedelta(days=30)
 
@@ -61,7 +77,8 @@ REFERRAL_EVENTS = "referral_events_total"
 
 
 def capture_window() -> timedelta:
-    return timedelta(days=int(getattr(settings, "W360_REFERRAL_CAPTURE_DAYS", 90)))
+    """How long a new capture may convert: the programme policy (ADR-054)."""
+    return timedelta(days=policy.current().attribution_days)
 
 
 def _new_code() -> str:
@@ -77,13 +94,17 @@ def create_referral_code(
     product_code: Any = "",
     plan_code: Any = "",
     campaign_id: Any = None,
+    link_kind: Any = None,
+    update_id: Any = None,
 ) -> Any:
     """Mint a public referral code (a link) for the acting partner.
 
     ADR-053: the partner may choose the code (``AMAN360``), point the link at
     one product (and plan) of the Store, and put it in one of its campaigns.
-    The product must be published and open to affiliates; the campaign must be
-    the partner's own and active. The destination is derived from the product,
+    ADR-054: the link may open the product's page, its pricing, or one of its
+    published feature or release updates (``link_kind`` + ``update_id``), and
+    any product link needs the partner's promotion grant for the product. The
+    campaign must be the partner's own and active. The destination is derived,
     never typed.
     """
     authz.require(ctx, CREATE)
@@ -94,38 +115,100 @@ def create_referral_code(
         ctx.partner_id,
         label,
         chosen=code,
-        product_code=product_code,
-        plan_code=plan_code,
+        target=_target(
+            ctx.partner_id,
+            link_kind=link_kind,
+            product_code=product_code,
+            plan_code=plan_code,
+            update_id=update_id,
+        ),
         campaign_id=campaign_id,
     )
 
 
-def _target(product_code: Any, plan_code: Any) -> tuple[str, str]:
-    """A link's product and plan: empty, or a published product open to
-    affiliates and (optionally) one of its plans."""
+_GENERAL: Final = (ReferralLinkKind.GENERAL.value, "", "", None)
+
+
+def _target(
+    partner_id: UUID,
+    *,
+    link_kind: Any,
+    product_code: Any,
+    plan_code: Any,
+    update_id: Any,
+) -> tuple[str, str, str, Any]:
+    """A link's ``(kind, product, plan, update)``: a general link, or a link to
+    a Store product open to affiliates that the partner may promote - its page
+    (optionally one plan), its pricing, or one of its published updates."""
     from workeasy360.commercial.catalog import selectors as catalog_selectors
-    from workeasy360.contracts.errors import CatalogValidationError
 
     product = str(product_code or "").strip()
     plan = str(plan_code or "").strip()
+    try:
+        kind = ReferralLinkKind(
+            str(link_kind or "").strip()
+            or (ReferralLinkKind.PRODUCT if product else ReferralLinkKind.GENERAL)
+        )
+    except ValueError:
+        raise PartnerValidationError("Unknown kind of link.", field="link_kind") from None
+    if kind is ReferralLinkKind.GENERAL:
+        if product or plan or update_id not in (None, ""):
+            raise PartnerValidationError(
+                "A general link names no product.", field="product_code"
+            )
+        return _GENERAL
     if not product:
-        if plan:
-            raise PartnerValidationError("Choose the product first.", field="plan_code")
-        return "", ""
+        raise PartnerValidationError("Choose the product first.", field="product_code")
     if product not in {p["code"] for p in catalog_selectors.store_products()} or (
         "affiliate" not in catalog_selectors.channels_open(product)
     ):
         raise PartnerValidationError(
             "That product is not available for referral links.", field="product_code"
         )
+    if not promotion.may_promote(partner_id, product):
+        raise PartnerValidationError(
+            "You are not authorized to promote that product.", field="product_code"
+        )
+    update = None
+    if kind in (ReferralLinkKind.FEATURE, ReferralLinkKind.UPDATE):
+        update = _update(update_id, product, kind)
+    if plan and kind is not ReferralLinkKind.PRODUCT:
+        raise PartnerValidationError(
+            "Only a product page link names a plan.", field="plan_code"
+        )
     if plan:
-        try:
-            catalog_selectors.resolve_product_and_plan(product, plan)
-        except CatalogValidationError as exc:
-            raise PartnerValidationError(
-                "That plan is not one of the product's plans.", field="plan_code"
-            ) from exc
-    return product, plan
+        _check_plan(product, plan)
+    return kind.value, product, plan, update
+
+
+def _update(update_id: Any, product: str, kind: ReferralLinkKind) -> Any:
+    from workeasy360.commercial.catalog import selectors as catalog_selectors
+
+    try:
+        uid = UUID(str(update_id))
+    except ValueError:
+        raise PartnerValidationError(
+            "Choose the update to promote.", field="update_id"
+        ) from None
+    row = catalog_selectors.linkable_update(uid, product_code=product)
+    wanted = "feature" if kind is ReferralLinkKind.FEATURE else "release"
+    if row is None or row.kind != wanted:
+        raise PartnerValidationError(
+            "That update is not a published one of this product.", field="update_id"
+        )
+    return row
+
+
+def _check_plan(product: str, plan: str) -> None:
+    from workeasy360.commercial.catalog import selectors as catalog_selectors
+    from workeasy360.contracts.errors import CatalogValidationError
+
+    try:
+        catalog_selectors.resolve_product_and_plan(product, plan)
+    except CatalogValidationError as exc:
+        raise PartnerValidationError(
+            "That plan is not one of the product's plans.", field="plan_code"
+        ) from exc
 
 
 def _campaign(partner_id: UUID, campaign_id: Any) -> Any:
@@ -273,8 +356,7 @@ def _mint(
     label: Any,
     *,
     chosen: Any = None,
-    product_code: Any = "",
-    plan_code: Any = "",
+    target: tuple[str, str, str, Any] = _GENERAL,
     campaign_id: Any = None,
 ) -> Any:
     from workeasy360.commercial.commissions.models import ReferralCode
@@ -282,7 +364,7 @@ def _mint(
 
     text = clean_text(label, field="label", max_length=64, required=False)
     wanted = _chosen_code(chosen)
-    product, plan = _target(product_code, plan_code)
+    kind, product, plan, update = target
     campaign = _campaign(partner_id, campaign_id)
     if campaign is not None and not text:
         text = campaign.name
@@ -308,8 +390,10 @@ def _mint(
                         partner_id=partner_id,
                         code=wanted or _new_code(),
                         label=text,
+                        link_kind=kind,
                         product_code=product,
                         plan_code=plan,
+                        update=update,
                         campaign=campaign,
                         created_by_id=ctx.user_id,
                     )
@@ -331,8 +415,10 @@ def _mint(
                 "label": text,
                 "partner_id": str(partner_id),
                 "chosen": bool(wanted),
+                "link_kind": kind,
                 "product_code": product,
                 "plan_code": plan,
+                "update_id": str(update.id) if update is not None else None,
                 "campaign_id": str(campaign.id) if campaign else None,
             },
         )
@@ -341,19 +427,104 @@ def _mint(
 
 def destination(code: Any) -> str:
     """Where a referral link sends the visitor: always a path on the
-    platform's own origin, derived from the link's product - the Store's
-    product page, or sign-up for a general link. Never a stored URL, so a link
-    cannot be turned into an open redirect."""
+    platform's own origin, derived when the link is followed from its kind and
+    its product or update - never a stored URL, so a link cannot be turned into
+    an open redirect. A product that has left the Store sends the visitor to
+    sign-up; an archived update, to its product's page. Attribution never
+    depends on which page opens."""
     from workeasy360.commercial.catalog import selectors as catalog_selectors
 
     product = getattr(code, "product_code", "") or ""
-    if product:
-        slugs = {p["code"]: p["slug"] for p in catalog_selectors.store_products()}
-        slug = slugs.get(product)
-        if slug and re.fullmatch(r"[a-z0-9-]{1,64}", slug):
-            suffix = f"?plan={code.plan_code}" if code.plan_code else ""
-            return f"/products/{slug}{suffix}"
-    return "/signup"
+    if not product:
+        return "/signup"
+    slugs = {p["code"]: p["slug"] for p in catalog_selectors.store_products()}
+    slug = slugs.get(product)
+    if not slug or not _SLUG_RE.fullmatch(slug):
+        return "/signup"
+    kind = getattr(code, "link_kind", ReferralLinkKind.PRODUCT.value)
+    if kind in (ReferralLinkKind.FEATURE.value, ReferralLinkKind.UPDATE.value):
+        path = catalog_selectors.update_page_path(code.update_id)
+        if path and _UPDATE_PATH_RE.fullmatch(path):
+            return path
+    if kind == ReferralLinkKind.PRICING.value:
+        return f"/products/{slug}?view=pricing"
+    suffix = f"?plan={code.plan_code}" if code.plan_code else ""
+    return f"/products/{slug}{suffix}"
+
+
+_SLUG_RE: Final = re.compile(r"[a-z0-9-]{1,64}")
+_UPDATE_PATH_RE: Final = re.compile(r"/products/[a-z0-9-]{1,64}/updates/[a-z0-9-]{1,64}")
+
+
+@in_scope
+def update_referral_code(
+    ctx: TenantContext, code_id: UUID, *, label: Any = None, active: Any = None
+) -> Any:
+    """Rename a link, or switch it off or back on (ADR-054). Switching back on
+    is refused for a product the partner may no longer promote, and counts
+    against the active-link limit. Its referrals and earnings are untouched."""
+    from workeasy360.commercial.commissions.models import ReferralCode
+    from workeasy360.commercial.partners.domain import clean_text
+
+    authz.require(ctx, CREATE)
+    if active is not None and not isinstance(active, bool):
+        raise PartnerValidationError("active must be true or false.", field="active")
+    if label is None and active is None:
+        raise PartnerValidationError("Nothing to change.", field="body")
+    with transaction.atomic():
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                [f"refcodes:{ctx.partner_id}"],
+            )
+        code = (
+            ReferralCode.objects.select_for_update()
+            .filter(id=code_id, partner_id=ctx.partner_id)
+            .first()
+        )
+        if code is None:
+            raise PartnerRecordNotFound("No such referral code.", code_id=str(code_id))
+        changed: dict[str, Any] = {}
+        if label is not None:
+            text = clean_text(label, field="label", max_length=64, required=False)
+            if text != code.label:
+                code.label = changed["label"] = text
+        if active is not None:
+            status = GrantStatus.ACTIVE.value if active else GrantStatus.REVOKED.value
+            if status != code.status:
+                if active:
+                    _may_reactivate(ctx, code)
+                code.status = changed["status"] = status
+        if changed:
+            code.save(update_fields=list(changed))
+            audit.record(
+                ctx,
+                "partner.referral_code_changed",
+                resource_type="commissions.referral_code",
+                resource_id=code.id,
+                changes=changed,
+            )
+    return code
+
+
+def _may_reactivate(ctx: TenantContext, code: Any) -> None:
+    from workeasy360.commercial.commissions.models import ReferralCode
+
+    access.require_transacting(ctx)
+    if code.product_code and not promotion.may_promote(
+        code.partner_id, code.product_code
+    ):
+        raise PartnerValidationError(
+            "You are no longer authorized to promote this product.", field="active"
+        )
+    live = ReferralCode.objects.filter(
+        partner_id=code.partner_id, status=GrantStatus.ACTIVE.value
+    ).count()
+    if live >= MAX_CODES_PER_PARTNER:
+        raise PartnerValidationError(
+            f"A partner may hold at most {MAX_CODES_PER_PARTNER} active codes.",
+            field="active",
+        )
 
 
 @in_scope
@@ -386,7 +557,9 @@ def _hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def capture_referral(raw_code: Any, *, visitor_id: Any = None) -> str | None:
+def capture_referral(
+    raw_code: Any, *, visitor_id: Any = None, held_token: Any = None
+) -> str | None:
     """Record that a visitor followed a partner's code. **Public.**
 
     Returns the opaque token for the visitor's browser to keep, or ``None`` when
@@ -397,12 +570,18 @@ def capture_referral(raw_code: Any, *, visitor_id: Any = None) -> str | None:
     ``visitor_id`` is the visitor's first-party cookie id (ADR-053); only its
     hash is stored, to count unique visitors.
     """
-    capture = capture_visit(raw_code, visitor_id=visitor_id)
+    capture = capture_visit(raw_code, visitor_id=visitor_id, held_token=held_token)
     return capture[0] if capture is not None else None
 
 
-def capture_visit(raw_code: Any, *, visitor_id: Any = None) -> tuple[str, str] | None:
-    """:func:`capture_referral` plus the link's destination path."""
+def capture_visit(
+    raw_code: Any, *, visitor_id: Any = None, held_token: Any = None
+) -> tuple[str, str] | None:
+    """:func:`capture_referral` plus the link's destination path.
+
+    ``held_token`` is the referral token the browser already keeps. While it
+    is live, it is what comes back - first touch - and this click is recorded
+    for the link's figures only, under a token nobody is given."""
     from workeasy360.commercial.commissions.models import Referral, ReferralCode
 
     code = str(raw_code or "").strip().upper()
@@ -418,12 +597,14 @@ def capture_visit(raw_code: Any, *, visitor_id: Any = None) -> tuple[str, str] |
         or row.partner.status != PartnerStatus.ACTIVE.value
         or capabilities.REFERRAL_CREATE
         not in partner_selectors.active_capabilities(row.partner_id)
+        or (row.product_code and not _promotion_allows(row))
     ):
         metrics.increment(REFERRAL_EVENTS, outcome="rejected")
         return None
 
     token = secrets.token_urlsafe(24)
     now = timezone.now()
+    held = _live_token(held_token, now)
     visitor = str(visitor_id or "")
     Referral.objects.create(
         code=row,
@@ -433,8 +614,32 @@ def capture_visit(raw_code: Any, *, visitor_id: Any = None) -> tuple[str, str] |
         expires_at=now + capture_window(),
         visitor_hash=_hash(visitor) if 16 <= len(visitor) <= 64 else "",
     )
-    metrics.increment(REFERRAL_EVENTS, outcome="captured")
-    return token, destination(row)
+    metrics.increment(REFERRAL_EVENTS, outcome="kept" if held else "captured")
+    return held or token, destination(row)
+
+
+def _promotion_allows(code: Any) -> bool:
+    """A product link takes visitors while its partner may promote the
+    product, or - after a revocation - while the programme says ``continue``."""
+    return (
+        promotion.may_promote(code.partner_id, code.product_code)
+        or policy.current().revoked_links is RevokedLinkPolicy.CONTINUE
+    )
+
+
+def _live_token(raw: Any, now: Any) -> str | None:
+    """``raw`` if it is a live referral token: captured, unconverted, unexpired."""
+    from workeasy360.commercial.commissions.models import Referral
+
+    text = str(raw or "").strip()
+    if not text or len(text) > 128:
+        return None
+    live = Referral.objects.filter(
+        token_hash=_hash(text),
+        status=ReferralStatus.CAPTURED.value,
+        expires_at__gt=now,
+    ).exists()
+    return text if live else None
 
 
 def record_registration(token: Any) -> bool:
@@ -457,6 +662,31 @@ def record_registration(token: Any) -> bool:
         return False
     if updated:
         metrics.increment(REFERRAL_EVENTS, outcome="registered")
+    return bool(updated)
+
+
+def record_trial(organization_id: UUID) -> bool:
+    """Stamp the Trial step (ADR-054) on the referral that converted this
+    customer, from its first product trial. Idempotent: stamped once. Never
+    raises - it runs beside commission accrual after a commercial change."""
+    from workeasy360.commercial.commissions.models import Referral
+    from workeasy360.commercial.subscriptions.selectors import first_trial_started_at
+
+    try:
+        if not Referral.objects.filter(
+            organization_id=organization_id,
+            status=ReferralStatus.CONVERTED.value,
+            trial_started_at__isnull=True,
+        ).exists():
+            return False
+        started = first_trial_started_at(organization_id)
+        if started is None:
+            return False
+        updated = Referral.objects.filter(
+            organization_id=organization_id, trial_started_at__isnull=True
+        ).update(trial_started_at=started)
+    except Exception:  # pragma: no cover - a funnel figure never breaks a sale
+        return False
     return bool(updated)
 
 

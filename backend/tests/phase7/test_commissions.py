@@ -603,6 +603,10 @@ def test_a_partner_sees_only_its_own_ledger_and_payouts(owed, partner_factory):
         "clears_at",
         "reason_code",
         "reverses",
+        # ADR-054: what the row is now (pending / approved / reversed / paid) -
+        # derived from the ledger and payouts, never the derivation.
+        "status",
+        "reversed_minor",
     }
     payout = _prepare(owed)
     from workeasy360.commercial.commissions.models import Payout

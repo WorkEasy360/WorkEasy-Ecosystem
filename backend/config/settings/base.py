@@ -464,14 +464,13 @@ PORTAL_STATE_COOKIE_NAME = (
 # ADR-052: a followed referral link, kept by the browser until the referred
 # sign-up converts it - so attribution survives the verification email opening
 # a new tab. HttpOnly, host-only and as opaque as the token it carries (the
-# server stores only a hash). Thirty days: the age limit for a referred
-# organization to be attributed at all.
+# server stores only a hash). It lives as long as the referral programme's
+# attribution window (ADR-054: ``commissions.policy``), set per capture.
 REFERRAL_COOKIE_NAME = (
     "__Host-w360_ref"
     if W360_PORTAL_ORIGINS["auth"].startswith("https://")
     else "w360_ref"
 )
-REFERRAL_COOKIE_MAX_AGE = 30 * 24 * 3600
 # ADR-053: a random first-party visitor id, so a referral link counts unique
 # visitors. Only its hash is stored; it identifies a browser, never a person.
 REFERRAL_VISITOR_COOKIE_NAME = (
@@ -995,9 +994,16 @@ W360_DNS_TIMEOUT_SECONDS = env.int("W360_DNS_TIMEOUT_SECONDS", 3)
 W360_DNS_LIFETIME_SECONDS = env.int("W360_DNS_LIFETIME_SECONDS", 5)
 #: Days a commission is held before it is payable (the refund window).
 W360_COMMISSION_HOLDBACK_DAYS = env.int("W360_COMMISSION_HOLDBACK_DAYS", 30)
-#: Retention: unconverted referral captures live this long past expiry.
+#: The attribution window until Super Admin saves a programme policy (ADR-054).
 W360_REFERRAL_CAPTURE_DAYS = env.int("W360_REFERRAL_CAPTURE_DAYS", 90)
+#: Retention: unconverted referral captures live this long past expiry.
 W360_REFERRAL_RETENTION_DAYS = env.int("W360_REFERRAL_RETENTION_DAYS", 180)
+#: ADR-054: domains a product update's "full announcement" link may point at
+#: (the domain or any subdomain), beside the product's own marketing page.
+#: Shown on the page, never redirected to.
+W360_AFFILIATE_LANDING_HOSTS = env.list(
+    "W360_AFFILIATE_LANDING_HOSTS", default=["workeasy360.com"]
+)
 
 # --- Integration platform (Phase 6) ----------------------------------------
 #

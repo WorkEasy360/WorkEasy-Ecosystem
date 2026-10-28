@@ -134,7 +134,10 @@ def referral_capture_view(request: HttpRequest) -> JsonResponse:
     visitor = request.COOKIES.get(settings.REFERRAL_VISITOR_COOKIE_NAME, "")[:64]
     if not 16 <= len(visitor) <= 64:
         visitor = secrets.token_urlsafe(24)
-    captured = referrals.capture_visit(_body(request).get("code"), visitor_id=visitor)
+    held = request.COOKIES.get(settings.REFERRAL_COOKIE_NAME, "")[:200]
+    captured = referrals.capture_visit(
+        _body(request).get("code"), visitor_id=visitor, held_token=held
+    )
     if captured is None:
         # One shape for unknown, disabled and ineligible codes.
         return JsonResponse({"code": "not_found", "detail": "Not found."}, status=404)
@@ -150,12 +153,17 @@ def referral_capture_view(request: HttpRequest) -> JsonResponse:
         httponly=True,
         samesite="Lax",
     )
+    if token == held:
+        # ADR-054 first touch: the browser keeps the referral it already holds;
+        # this click was counted for its link, and the cookie is left alone.
+        return response
     # ADR-052: the same opaque token as an HttpOnly cookie, so the referral is
-    # still there when the verification link opens in another tab.
+    # still there when the verification link opens in another tab. It lives as
+    # long as the programme's attribution window (ADR-054).
     response.set_cookie(
         settings.REFERRAL_COOKIE_NAME,
         token,
-        max_age=settings.REFERRAL_COOKIE_MAX_AGE,
+        max_age=int(referrals.capture_window().total_seconds()),
         path="/",
         secure=settings.SESSION_COOKIE_SECURE,
         httponly=True,

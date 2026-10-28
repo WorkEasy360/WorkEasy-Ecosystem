@@ -8,6 +8,9 @@ live here, each a bounded read over data that already exists:
 - :func:`affiliate_overview` - the affiliate's dashboard: clicks, conversions,
   the conversion rate, commission earned / pending / paid, the referral link and
   how each campaign is doing;
+- :func:`my_products` - ADR-054's My Products: the products the partner may
+  promote, their features and published updates, and every link's figures by
+  product, update and campaign;
 - :func:`reports` - Reports & Analytics for every workspace: factual counts of
   customers, subscriptions per product, sales and commission, and referrals;
 - :func:`white_label_status` - the white-label dashboard's two facts: where the
@@ -36,10 +39,11 @@ from typing import Any, Final
 from django.utils import timezone
 
 from workeasy360.commercial.catalog import selectors as catalog_selectors
+from workeasy360.commercial.commissions import policy as programme_policy
 from workeasy360.commercial.commissions import selectors as commission_selectors
 from workeasy360.commercial.controlplane import partner_network, partner_portal
 from workeasy360.commercial.controlplane.partner_portal import NOT_IMPLEMENTED
-from workeasy360.commercial.partners import panel_selectors
+from workeasy360.commercial.partners import panel_selectors, promotion
 from workeasy360.commercial.partners import selectors as partner_selectors
 from workeasy360.commercial.provisioning import selectors as provisioning_selectors
 from workeasy360.contracts.enums import DomainStatus
@@ -171,30 +175,8 @@ def affiliate_overview(
         if money_visible
         else None
     )
-    products = catalog_selectors.promotable_products(at=now)
-    names = catalog_selectors.product_names(
-        sorted({c["product_code"] for c in codes if c["product_code"]})
-    )
-    zero = {"clicks": 0, "visitors": 0, "registrations": 0, "conversions": 0}
-
-    links = []
-    for code in codes:
-        counts = activity["by_code"].get(code["id"], zero)
-        links.append(
-            {
-                **code,
-                "campaign": code["campaign_name"] or code["label"] or CAMPAIGN_PRESETS[0],
-                "product_name": names.get(code["product_code"]) or None,
-                # A link that no longer takes visitors has no address to copy.
-                "url": partner_network.referral_url(code["code"])
-                if code["status"] == "active"
-                else None,
-                **{k: counts[k] for k in zero},
-                "earnings": _by_currency(earnings["by_code"].get(code["id"], {}))
-                if earnings is not None
-                else None,
-            }
-        )
+    products = _promotable(partner_id, now)
+    links = _link_rows(codes, activity, earnings)
     primary = next((link for link in links if link["status"] == "active"), None)
 
     campaigns: dict[str, dict[str, Any]] = {}
@@ -205,12 +187,12 @@ def affiliate_overview(
                 "campaign": link["campaign"],
                 "campaign_id": link["campaign_id"],
                 "links": 0,
-                **zero,
+                **_ZERO,
                 "earnings": [] if earnings is not None else None,
             },
         )
         entry["links"] += 1
-        for k in zero:
+        for k in _ZERO:
             entry[k] += link[k]
         if earnings is not None:
             entry["earnings"] = _merge(entry["earnings"], link["earnings"])
@@ -278,6 +260,182 @@ def affiliate_overview(
             partner_id=partner_id, for_partner=True, limit=5
         ).items
     return out
+
+
+_ZERO: Final = {
+    "clicks": 0,
+    "visitors": 0,
+    "registrations": 0,
+    "trials": 0,
+    "conversions": 0,
+}
+
+
+def _promotable(partner_id: Any, now: Any) -> list[dict[str, Any]]:
+    """The Store products open to affiliates that this partner holds a
+    promotion grant for (ADR-054) - its Marketing Materials and link targets."""
+    granted = promotion.promotable_codes(partner_id)
+    return [
+        p for p in catalog_selectors.promotable_products(at=now) if p["code"] in granted
+    ]
+
+
+def _link_rows(
+    codes: list[dict[str, Any]],
+    activity: dict[str, Any],
+    earnings: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Each link with its funnel for the period and (with commission view) its
+    sales and commission by currency."""
+    names = catalog_selectors.product_names(
+        sorted({c["product_code"] for c in codes if c["product_code"]})
+    )
+    links = []
+    for code in codes:
+        counts = activity["by_code"].get(code["id"], _ZERO)
+        links.append(
+            {
+                **code,
+                "campaign": code["campaign_name"] or code["label"] or CAMPAIGN_PRESETS[0],
+                "product_name": names.get(code["product_code"]) or None,
+                # A link that no longer takes visitors has no address to copy.
+                "url": partner_network.referral_url(code["code"])
+                if code["status"] == "active"
+                else None,
+                **{k: counts.get(k, 0) for k in _ZERO},
+                "earnings": _by_currency(earnings["by_code"].get(code["id"], {}))
+                if earnings is not None
+                else None,
+            }
+        )
+    return links
+
+
+def _rollup(links: list[dict[str, Any]], money: bool) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "links": len(links),
+        **_ZERO,
+        "earnings": [] if money else None,
+    }
+    for link in links:
+        for k in _ZERO:
+            out[k] += link[k]
+        if money:
+            out["earnings"] = _merge(out["earnings"], link["earnings"])
+    out["conversion_rate_bp"] = rate_bp(out["conversions"], out["clicks"])
+    return out
+
+
+# --- My Products (ADR-054) -------------------------------------------------------------------
+
+
+@in_scope
+def my_products(
+    ctx: TenantContext,
+    *,
+    range_key: Any = "30d",
+    date_from: Any = None,
+    date_to: Any = None,
+) -> dict[str, Any]:
+    """The products this partner may promote, with what it can link to and how
+    its links are doing in the period - per product, per update and per
+    campaign. Products it once promoted and may no longer are listed apart, with
+    their links and history, and the programme policy that now governs them.
+    Figures are the server's: funnel counts from referrals, money from the
+    ledger, and money only with ``commission.view``."""
+    authz.require(ctx, REFERRAL_VIEW)
+    now = timezone.now()
+    key, start, end = partner_portal.parse_range(range_key, date_from, date_to, now=now)
+    partner_id = ctx.partner_id
+    assert partner_id is not None
+    permissions = authz.effective_permissions(ctx)
+    money = COMMISSION_VIEW in permissions
+
+    activity = commission_selectors.referral_activity(partner_id, start, end)
+    earnings = (
+        commission_selectors.referral_earnings(partner_id, start, end) if money else None
+    )
+    links = _link_rows(
+        commission_selectors.referral_codes(partner_id), activity, earnings
+    )
+    products = _promotable(partner_id, now)
+    codes = [p["code"] for p in products]
+    updates = catalog_selectors.published_updates(codes)
+    features = catalog_selectors.public_features(codes)
+    granted_at = {
+        g["product_code"]: g["granted_at"]
+        for g in promotion.grants(partner_id)
+        if g["status"] == "active"
+    }
+
+    def product_card(p: dict[str, Any]) -> dict[str, Any]:
+        mine = [link for link in links if link["product_code"] == p["code"]]
+        by_update = []
+        for u in updates.get(p["code"], []):
+            for_update = [link for link in mine if link["update_id"] == u["id"]]
+            by_update.append({**u, **_rollup(for_update, money)})
+        return {
+            **p,
+            "granted_at": granted_at.get(p["code"]),
+            "features": features.get(p["code"], []),
+            "updates": by_update,
+            "links": mine,
+            "totals": _rollup(mine, money),
+        }
+
+    promotable = set(codes)
+    withdrawn: dict[str, list[dict[str, Any]]] = {}
+    for link in links:
+        if link["product_code"] and link["product_code"] not in promotable:
+            withdrawn.setdefault(link["product_code"], []).append(link)
+    campaigns: dict[str, list[dict[str, Any]]] = {}
+    for link in links:
+        if link["campaign_id"]:
+            campaigns.setdefault(link["campaign_id"], []).append(link)
+    names = {c["id"]: c["name"] for c in commission_selectors.campaigns(partner_id)}
+
+    return {
+        "range": {"key": key, "from": start.isoformat(), "to": end.isoformat()},
+        "can_create": "platform.partner_referral.create" in permissions,
+        "products": [product_card(p) for p in products],
+        "withdrawn": [
+            {
+                "product_code": code,
+                "product_name": rows[0]["product_name"] or code,
+                "links": rows,
+                "totals": _rollup(rows, money),
+            }
+            for code, rows in sorted(withdrawn.items())
+        ],
+        "campaigns": [
+            {"campaign_id": cid, "name": names.get(cid, ""), **_rollup(rows, money)}
+            for cid, rows in campaigns.items()
+        ],
+        "campaign_list": commission_selectors.campaigns(partner_id),
+        "policy": programme_policy.current().as_dict(),
+    }
+
+
+@in_scope
+def referral_trail(ctx: TenantContext, referral_id: Any) -> dict[str, Any]:
+    """ADR-054: the attribution trail of one of the partner's own referrals.
+    Money only with ``commission.view``; never who the customer is."""
+    from uuid import UUID
+
+    from workeasy360.contracts.errors import PartnerRecordNotFound
+
+    authz.require(ctx, REFERRAL_VIEW)
+    assert ctx.partner_id is not None
+    trail = commission_selectors.referral_trail(ctx.partner_id, UUID(str(referral_id)))
+    if trail is None:
+        raise PartnerRecordNotFound("No such referral.", referral_id=str(referral_id))
+    if COMMISSION_VIEW not in authz.effective_permissions(ctx):
+        trail["sales"] = [
+            {**sale, "commission_minor": None, "sale_minor": None, "rate_bp": None}
+            for sale in trail["sales"]
+        ]
+        trail["reversals"] = []
+    return trail
 
 
 # --- Reports & Analytics -----------------------------------------------------------------------

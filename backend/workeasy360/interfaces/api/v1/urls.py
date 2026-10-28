@@ -134,6 +134,11 @@ urlpatterns = [
         name="public-product-media",
     ),
     path(
+        "public/products/<slug:slug>/updates/<slug:update_slug>",
+        public_site_views.product_update_view,
+        name="public-product-update",
+    ),
+    path(
         "public/signup/verify",
         public_site_views.verify_email_view,
         name="public-signup-verify",
@@ -868,6 +873,23 @@ _admin = [
         admin_product_manager_views.media_item_view,
         name="admin-product-media-item",
     ),
+    # ADR-054: a product's updates - features and releases affiliates link to.
+    # Before the lifecycle catch-all, which would take "updates" as an action.
+    path(
+        "admin/products/<uuid:product_id>/updates",
+        admin_product_manager_views.updates_view,
+        name="admin-product-updates",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/updates/<uuid:update_id>",
+        admin_product_manager_views.update_detail_view,
+        name="admin-product-update",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/updates/<uuid:update_id>/<str:action>",
+        admin_product_manager_views.update_lifecycle_view,
+        name="admin-product-update-lifecycle",
+    ),
     path(
         "admin/products/<uuid:product_id>/<str:action>",
         admin_product_manager_views.lifecycle_view,
@@ -1124,6 +1146,27 @@ _admin = [
         "admin/partners/<uuid:partner_id>/referrals",
         admin_views.partner_referrals_view,
         name="admin-partner-referrals",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/referrals/<uuid:referral_id>/trail",
+        admin_views.partner_referral_trail_view,
+        name="admin-partner-referral-trail",
+    ),
+    # ADR-054: which products a partner may promote, and the programme policy.
+    path(
+        "admin/partners/<uuid:partner_id>/promotions",
+        admin_views.partner_promotions_view,
+        name="admin-partner-promotions",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/promotions/<uuid:grant_id>/revoke",
+        admin_views.partner_promotion_revoke_view,
+        name="admin-partner-promotion-revoke",
+    ),
+    path(
+        "admin/affiliate-policy",
+        admin_views.affiliate_policy_view,
+        name="admin-affiliate-policy",
     ),
     path(
         "admin/partners/<uuid:partner_id>/referral-codes",
@@ -1493,6 +1536,21 @@ _partner = [
         "partner/<uuid:partner_id>/referrals",
         partner_views.referrals_view,
         name="partner-referrals",
+    ),
+    path(
+        "partner/<uuid:partner_id>/referral-codes/<uuid:code_id>",
+        partner_views.referral_code_view,
+        name="partner-referral-code",
+    ),
+    path(
+        "partner/<uuid:partner_id>/referrals/<uuid:referral_id>/trail",
+        partner_panel_views.referral_trail_view,
+        name="partner-referral-trail",
+    ),
+    path(
+        "partner/<uuid:partner_id>/affiliate/products",
+        partner_panel_views.affiliate_products_view,
+        name="partner-affiliate-products",
     ),
     path(
         "partner/<uuid:partner_id>/referral-codes/<uuid:code_id>/disable",

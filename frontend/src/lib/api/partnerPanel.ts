@@ -102,11 +102,17 @@ export interface AffiliateLink {
   product_code: string;
   product_name: string | null;
   plan_code: string;
+  /** ADR-054: which page of the product the link opens. */
+  link_kind?: LinkKind;
+  update_id?: string | null;
+  update_title?: string | null;
   /** The address to share; null once the link has been switched off. */
   url: string | null;
   clicks: number;
   visitors: number;
   registrations: number;
+  /** ADR-054: referred customers who started a product trial. */
+  trials?: number;
   conversions: number;
   /** Null for a role that may see referrals but not commission. */
   earnings: Earning[] | null;
@@ -155,6 +161,97 @@ export interface PromotableProduct {
   icon: string;
   plans: { plan_code: string; plan_name: string }[];
   media: ProductMedia[];
+}
+
+// --- My Products (ADR-054) ------------------------------------------------------------
+
+export type LinkKind = "general" | "product" | "pricing" | "feature" | "update";
+
+/** Funnel and money of a group of links (a product, an update, a campaign). */
+export interface LinkRollup {
+  links: number;
+  clicks: number;
+  visitors: number;
+  registrations: number;
+  trials: number;
+  conversions: number;
+  conversion_rate_bp: number | null;
+  earnings: Earning[] | null;
+}
+
+/** A published feature or release of a product, approved for promotion. */
+export interface ProductUpdate {
+  id: string;
+  kind: "feature" | "release";
+  slug: string;
+  title: string;
+  summary: string;
+  body: string;
+  banner_url: string | null;
+  landing_url: string;
+  page_path: string;
+  published_at: string | null;
+}
+
+export interface MyProduct extends PromotableProduct {
+  granted_at: string | null;
+  features: { key: string; name: string; description: string }[];
+  updates: (ProductUpdate & LinkRollup)[];
+  links: AffiliateLink[];
+  totals: LinkRollup;
+}
+
+export interface MyProducts {
+  range: { key: RangeKey; from: string; to: string };
+  can_create: boolean;
+  products: MyProduct[];
+  /** Products the partner promoted before and may no longer: history only. */
+  withdrawn: { product_code: string; product_name: string; links: AffiliateLink[]; totals: LinkRollup }[];
+  campaigns: (LinkRollup & { campaign_id: string; name: string })[];
+  campaign_list: CampaignRow[];
+  policy: {
+    attribution_days: number;
+    revoked_links: "stop" | "continue";
+    attribution_rule: string;
+  };
+}
+
+export type CommissionStatus = "pending" | "approved" | "reversed" | "paid";
+
+/** How one referral became earnings - never who the customer is. */
+export interface ReferralTrail {
+  id: string;
+  customer_ref: string | null;
+  attribution_rule: string;
+  status: string;
+  expires_at: string;
+  link: {
+    id: string;
+    code: string;
+    label: string;
+    link_kind: LinkKind;
+    product_code: string;
+    plan_code: string;
+    update_title: string | null;
+    campaign_name: string | null;
+  };
+  steps: { step: "clicked" | "registered" | "customer" | "trial" | "purchased"; at: string | null }[];
+  sales: {
+    id: string;
+    product_code: string;
+    plan_code: string;
+    renewal: boolean;
+    paid_at: string;
+    payment_verified: boolean;
+    sale_minor: number | null;
+    commission_minor: number | null;
+    currency: string;
+    rate_bp: number | null;
+    clears_at: string;
+    status: CommissionStatus;
+    reversed_minor: number;
+  }[];
+  reversals: { reverses: string; amount_minor: number; currency: string; reason_code: string; at: string }[];
 }
 
 export interface FunnelDay {
@@ -744,7 +841,16 @@ export const panelApi = {
    * address and decides where it leads - the browser never composes either. */
   createTrackingLink: (
     id: string,
-    body: { label?: string; code?: string; product_code?: string; plan_code?: string; campaign_id?: string },
+    body: {
+      label?: string;
+      code?: string;
+      product_code?: string;
+      plan_code?: string;
+      campaign_id?: string;
+      /** ADR-054: product page, pricing, a feature or an update of the product. */
+      link_kind?: LinkKind;
+      update_id?: string;
+    },
   ) =>
     apiFetch<{ id: string; code: string; label: string; url: string }>(`${partner(id)}/referrals`, {
       method: "POST",
@@ -761,6 +867,17 @@ export const panelApi = {
       method: "POST",
       body: json({ active }),
     }),
+  /** ADR-054: the products this partner may promote and how its links do. */
+  myProducts: (id: string, range: RangeKey, from?: string, to?: string) =>
+    apiFetch<MyProducts>(`${partner(id)}/affiliate/products`, { query: { range, from, to } }),
+  /** Rename a link, or switch it off or back on. */
+  updateTrackingLink: (id: string, codeId: string, body: { label?: string; active?: boolean }) =>
+    apiFetch<{ id: string; label: string; status: string }>(
+      `${partner(id)}/referral-codes/${encodeURIComponent(codeId)}`,
+      { method: "PATCH", body: json(body) },
+    ),
+  referralTrail: (id: string, referralId: string) =>
+    apiFetch<ReferralTrail>(`${partner(id)}/referrals/${encodeURIComponent(referralId)}/trail`),
   disableTrackingLink: (id: string, codeId: string) =>
     apiFetch<{ id: string; status: string }>(`${partner(id)}/referral-codes/${encodeURIComponent(codeId)}/disable`, {
       method: "POST",

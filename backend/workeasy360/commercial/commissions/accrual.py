@@ -36,7 +36,7 @@ the platform itself knew never happened.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any, Final
 from uuid import UUID
@@ -93,6 +93,8 @@ class Evaluation:
     margin: domain.MarginView | None = None
     cost_minor: int | None = None
     margin_rate_bp: int = 0
+    #: ADR-054: ``payments.invoice_line:<uuid>`` - the paid transaction.
+    payment_ref: str = ""
 
     @property
     def earning(self) -> str:
@@ -240,9 +242,15 @@ def evaluate_sale(
     now: datetime,
     margins: Iterable[domain.MarginView] = (),
     list_price: ListPrice | None = None,
+    payment: dict[str, Any] | None = None,
 ) -> Evaluation:
     """Decide the commission (or margin) for one sale. Pure given its durable
-    inputs and the list-price resolver."""
+    inputs and the list-price resolver.
+
+    ``payment`` is the sale's first paid invoice line (``paid_item_lines``),
+    or ``None`` while it is unpaid. ADR-054: a **referral** earns only on a
+    paid sale - a commission names the payment it was earned on - and a
+    product link earns only on the product it promoted."""
     moment = sale_moment(fact)
     if moment is None:
         return _skip("not_activated")
@@ -252,13 +260,14 @@ def evaluate_sale(
     attribution = _attribute(fact, moment)
     if attribution is None:
         return _skip("no_attribution")
-    partner_id, kind, ref = attribution
-    if kind == "referral" and "affiliate" not in catalog_selectors.channels_open(
-        fact.product_code
-    ):
-        # ADR-051: Product Manager -> Availability -> Affiliate "Not allowed".
-        # Read when the sale is evaluated; an accrual already written stands.
-        return _skip("product_not_open_to_affiliates")
+    partner_id, kind, ref, promoted = attribution
+    if kind == "referral":
+        problem = _referral_problem(fact.product_code, promoted)
+        if problem is not None:
+            return _skip(problem)
+        if payment is None:
+            return _skip("awaiting_payment")
+    payment_ref = _payment_ref(payment)
 
     problem = _partner_problem(partner_id, moment, fact.currency)
     if problem is not None:
@@ -286,7 +295,7 @@ def evaluate_sale(
         list_price=list_price,
     )
     if margin is not None:
-        return margin
+        return replace(margin, payment_ref=payment_ref) if margin.accrues else margin
 
     rule = domain.select_rule(
         rules, partner_id=partner_id, product_code=fact.product_code, at=moment
@@ -308,7 +317,24 @@ def evaluate_sale(
         currency=fact.currency,
         attribution_kind=kind,
         attribution_ref=ref,
+        payment_ref=payment_ref,
     )
+
+
+def _referral_problem(product_code: str, promoted: str) -> str | None:
+    """Why a referral cannot earn on a sale of ``product_code``, or ``None``."""
+    if "affiliate" not in catalog_selectors.channels_open(product_code):
+        # ADR-051: Product Manager -> Availability -> Affiliate "Not allowed".
+        # Read when the sale is evaluated; an accrual already written stands.
+        return "product_not_open_to_affiliates"
+    if promoted and promoted != product_code:
+        # ADR-054: a product link earns on the product it promoted.
+        return "not_the_promoted_product"
+    return None
+
+
+def _payment_ref(line: dict[str, Any] | None) -> str:
+    return f"payments.invoice_line:{line['line_id']}" if line else ""
 
 
 def _partner_problem(partner_id: UUID, moment: datetime, currency: str) -> str | None:
@@ -347,14 +373,18 @@ class Renewal:
     item_id: str = ""
 
 
-def renewals_of(organization_id: UUID) -> list[Renewal]:
+def renewals_of(
+    organization_id: UUID, lines_by_item: dict[str, list[dict[str, Any]]] | None = None
+) -> list[Renewal]:
     """Every paid renewal of this customer's subscription lines. The first
     paid line of each subscription line is the sale (it earns through
     ``evaluate_sale``); every later one is a renewal."""
     from workeasy360.commercial.payments.selectors import paid_item_lines
 
+    if lines_by_item is None:
+        lines_by_item = paid_item_lines(organization_id)
     out = []
-    for item_id, lines in paid_item_lines(organization_id).items():
+    for item_id, lines in lines_by_item.items():
         for line in lines[1:]:
             if line["paid_at"] is None:
                 continue
@@ -399,10 +429,9 @@ def evaluate_renewal(
         if referral is None:
             return _skip("no_attribution")
         partner_id, kind, ref = referral.partner_id, "referral", str(referral.id)
-    if kind == "referral" and "affiliate" not in catalog_selectors.channels_open(
-        renewal.product_code
-    ):
-        return _skip("product_not_open_to_affiliates")
+        problem = _referral_problem(renewal.product_code, referral.code.product_code)
+        if problem is not None:
+            return _skip(problem)
     problem = _partner_problem(partner_id, moment, renewal.currency)
     if problem is not None:
         return _skip(problem)
@@ -422,7 +451,9 @@ def evaluate_renewal(
         renewal=True,
     )
     if margin is not None:
-        return margin
+        return (
+            replace(margin, payment_ref=renewal.source_ref) if margin.accrues else margin
+        )
     rule = domain.select_rule(
         rules, partner_id=partner_id, product_code=renewal.product_code, at=moment
     )
@@ -446,6 +477,7 @@ def evaluate_renewal(
         currency=renewal.currency,
         attribution_kind=kind,
         attribution_ref=ref,
+        payment_ref=renewal.source_ref,
     )
 
 
@@ -455,12 +487,13 @@ def _accrue_renewals(
     rules: list[domain.RuleView],
     margins: list[domain.MarginView],
     facts: dict[str, Any],
+    lines_by_item: dict[str, list[dict[str, Any]]],
     now: datetime,
     stats: AccrualStats,
 ) -> None:
     from workeasy360.commercial.commissions.models import CommissionAccrual
 
-    renewals = renewals_of(organization_id)
+    renewals = renewals_of(organization_id, lines_by_item)
     for renewal in renewals:
         fact = facts.get(renewal.item_id)
         evaluation = evaluate_renewal(
@@ -499,8 +532,9 @@ def _accrue_renewals(
             stats.reversed += 1
 
 
-def _attribute(fact: Any, moment: datetime) -> tuple[UUID, str, str] | None:
-    """Who earns on this customer at the time of the sale.
+def _attribute(fact: Any, moment: datetime) -> tuple[UUID, str, str, str] | None:
+    """Who earns on this customer at the time of the sale, and - for a
+    product link - the product it promoted (ADR-054; empty otherwise).
 
     A managed partner relationship outranks a referral: a customer is served
     by one partner and pays one commission (Task 89). Both are evaluated
@@ -509,12 +543,17 @@ def _attribute(fact: Any, moment: datetime) -> tuple[UUID, str, str] | None:
     """
     link = partner_selectors.link_at(fact.organization_id, moment)
     if link is not None:
-        return link.partner_id, "managed", str(link.id)
+        return link.partner_id, "managed", str(link.id), ""
     referral = selectors.referral_conversion_for(fact.organization_id, moment)
     if referral is not None and (
         moment - referral.converted_at <= timedelta(days=REFERRAL_EARNING_DAYS)
     ):
-        return referral.partner_id, "referral", str(referral.id)
+        return (
+            referral.partner_id,
+            "referral",
+            str(referral.id),
+            referral.code.product_code,
+        )
     return None
 
 
@@ -539,18 +578,29 @@ def accrue_for_organization(
     sale was cancelled with immediate effect inside its holdback window - the
     one clawback that needs no human judgement.
     """
+    from workeasy360.commercial.commissions.referrals import record_trial
+    from workeasy360.commercial.payments.selectors import paid_item_lines
     from workeasy360.commercial.subscriptions.selectors import sale_facts
 
     moment = now or timezone.now()
     stats = AccrualStats()
+    record_trial(organization_id)
     facts = sale_facts(organization_id)
     if not facts:
         return stats
     rules = selectors.rule_views()
     margins = selectors.margin_views()
+    lines_by_item = paid_item_lines(organization_id)
+    first_paid = {item: lines[0] for item, lines in lines_by_item.items() if lines}
 
     for fact in facts:
-        evaluation = evaluate_sale(fact, rules=rules, now=moment, margins=margins)
+        evaluation = evaluate_sale(
+            fact,
+            rules=rules,
+            now=moment,
+            margins=margins,
+            payment=first_paid.get(str(fact.item_id)),
+        )
         if not evaluation.accrues:
             stats.skip(evaluation.reason)
             continue
@@ -561,12 +611,14 @@ def accrue_for_organization(
             stats.duplicates += 1
 
     stats.reversed += _reverse_cancelled_sales(organization_id, facts, moment)
+    stats.reversed += _reverse_refunded_sales(organization_id, first_paid, moment)
     if _any_recurring(rules, margins):
         _accrue_renewals(
             organization_id,
             rules=rules,
             margins=margins,
             facts={str(f.item_id): f for f in facts},
+            lines_by_item=lines_by_item,
             now=moment,
             stats=stats,
         )
@@ -622,6 +674,7 @@ def _insert_accrual(
                 earning=evaluation.earning,
                 margin_rule_id=evaluation.margin.id if evaluation.margin else None,
                 cost_minor=evaluation.cost_minor,
+                payment_ref=evaluation.payment_ref,
                 idempotency_key=key,
             )
             _announce(row, "commission.accrued", schemas.COMMISSION_ACCRUED_V1)
@@ -669,6 +722,58 @@ def _reverse_cancelled_sales(
         ):
             reversed_count += 1
     return reversed_count
+
+
+def _reverse_refunded_sales(
+    organization_id: UUID, first_paid: dict[str, dict[str, Any]], now: datetime
+) -> int:
+    """ADR-054: reverse the commission on a sale whose paying invoice was
+    refunded while the commission is still in the holdback - in proportion to
+    the refund (a half refund reverses half), topped up as further refunds
+    land. Idempotent per refunded amount. After the holdback a refund is a
+    staff decision (``ledger.reverse_accrual``), reported by ``reconcile``."""
+    from django.db.models import Sum
+
+    from workeasy360.commercial.commissions.models import CommissionAccrual
+
+    refunded = {
+        f"subscriptions.item:{item}": line
+        for item, line in first_paid.items()
+        if line.get("refunded_minor", 0) > 0 and line.get("invoice_paid_minor", 0) > 0
+    }
+    if not refunded:
+        return 0
+    count = 0
+    for accrual in CommissionAccrual.objects.filter(
+        organization_id=organization_id,
+        kind=AccrualKind.ACCRUAL.value,
+        source_ref__in=list(refunded),
+        clears_at__gt=now,
+    ):
+        line = refunded[accrual.source_ref]
+        target = -domain.refund_share(
+            accrual.amount_minor,
+            refunded_minor=line["refunded_minor"],
+            paid_minor=line["invoice_paid_minor"],
+        )
+        already = (
+            CommissionAccrual.objects.filter(
+                reverses_id=accrual.id, reason_code="refund"
+            ).aggregate(total=Sum("amount_minor"))["total"]
+            or 0
+        )
+        if target < already and insert_reversal(
+            accrual,
+            amount_minor=target - already,
+            reason_code="refund",
+            reason="The sale's invoice was refunded inside the holdback window.",
+            created_by_id=None,
+            idempotency_key=(
+                f"{domain.reversal_key(accrual.id, 'refund')}:{line['refunded_minor']}"
+            ),
+        ):
+            count += 1
+    return count
 
 
 def insert_reversal(
@@ -913,6 +1018,7 @@ def reconcile(*, organization_ids: list[UUID] | None = None) -> ReconciliationRe
     row is corrected by the reversal/adjustment commands, never by rewriting.
     """
     from workeasy360.commercial.commissions.models import CommissionAccrual
+    from workeasy360.commercial.payments.selectors import paid_item_lines
     from workeasy360.commercial.subscriptions.selectors import sale_facts
 
     report = ReconciliationReport()
@@ -933,10 +1039,17 @@ def reconcile(*, organization_ids: list[UUID] | None = None) -> ReconciliationRe
 
         expected_refs: set[str] = set()
         facts = sale_facts(organization_id)
+        lines_by_item = paid_item_lines(organization_id)
         evaluated = [
             (
                 fact.source_ref,
-                evaluate_sale(fact, rules=rules, now=now, margins=margins),
+                evaluate_sale(
+                    fact,
+                    rules=rules,
+                    now=now,
+                    margins=margins,
+                    payment=(lines_by_item.get(str(fact.item_id)) or [None])[0],
+                ),
             )
             for fact in facts
         ]
@@ -953,7 +1066,7 @@ def reconcile(*, organization_ids: list[UUID] | None = None) -> ReconciliationRe
                         fact=by_item.get(renewal.item_id),
                     ),
                 )
-                for renewal in renewals_of(organization_id)
+                for renewal in renewals_of(organization_id, lines_by_item)
             ]
         for source_ref, evaluation in evaluated:
             existing = rows.get(source_ref, [])

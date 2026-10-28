@@ -628,6 +628,23 @@ def brand(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
 # --- referrals -------------------------------------------------------------------------------------------
 
 
+def referral_trail(
+    ctx: TenantContext, partner_id: UUID, referral_id: UUID
+) -> dict[str, Any]:
+    """ADR-054: how one of a partner's referrals became earnings - the link,
+    each step and each paid sale with what became of its commission - for staff
+    checking an attribution. The customer is a reference, never named here."""
+    from workeasy360.contracts.errors import PartnerRecordNotFound
+
+    authz.require(ctx, PARTNER_VIEW)
+    authz.require(ctx, "platform.staff_commission.view")
+    console.require_partner(partner_id)
+    trail = commission_selectors.referral_trail(partner_id, referral_id)
+    if trail is None:
+        raise PartnerRecordNotFound("No such referral.", referral_id=str(referral_id))
+    return trail
+
+
 def referrals(
     ctx: TenantContext,
     partner_id: UUID,

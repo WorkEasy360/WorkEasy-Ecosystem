@@ -147,6 +147,24 @@ def catalog_view(request: HttpRequest) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
+def product_update_view(
+    request: HttpRequest, slug: str, update_slug: str
+) -> JsonResponse:
+    """A published feature or release of a Store product (ADR-054): the page an
+    affiliate's update link opens. Drafts, archived updates and products off
+    the Store are a 404."""
+    from workeasy360.commercial.catalog import selectors as catalog_selectors
+
+    blocked = limited(request, "public_catalog")
+    if blocked is not None:
+        return blocked
+    found = catalog_selectors.public_update(slug, update_slug)
+    if found is None:
+        return JsonResponse({"code": "not_found", "detail": "Not found."}, status=404)
+    return JsonResponse(found)
+
+
+@require_http_methods(["GET"])
 def catalog_product_view(request: HttpRequest, slug: str) -> JsonResponse:
     from workeasy360.commercial.subscriptions.marketplace import public_product
 

@@ -75,6 +75,27 @@ def affiliate_overview_view(request: HttpRequest, ctx: TenantContext) -> JsonRes
 
 
 @partner_view(["GET"])
+def affiliate_products_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """ADR-054 My Products: what the partner may promote and how its links do."""
+    return JsonResponse(
+        partner_workspaces.my_products(
+            ctx,
+            range_key=request.GET.get("range"),
+            date_from=request.GET.get("from"),
+            date_to=request.GET.get("to"),
+        )
+    )
+
+
+@partner_view(["GET"])
+def referral_trail_view(
+    request: HttpRequest, ctx: TenantContext, referral_id: UUID
+) -> JsonResponse:
+    """ADR-054: the attribution trail of one of the partner's referrals."""
+    return JsonResponse(partner_workspaces.referral_trail(ctx, referral_id))
+
+
+@partner_view(["GET"])
 def reports_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     """Reports & Analytics: factual counts and ledger sums, each section only
     for the caller who may see it (ADR-047)."""

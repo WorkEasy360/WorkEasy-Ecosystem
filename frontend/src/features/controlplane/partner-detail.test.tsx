@@ -607,22 +607,39 @@ describe("Products", () => {
     expect(screen.queryByRole("button", { name: /^Remove/ })).not.toBeInTheDocument();
   });
 
-  it("shows an affiliate what it promotes instead of product grants", async () => {
-    mockApi(
+  it("lets staff assign the products an affiliate may promote, not products to sell (ADR-054)", async () => {
+    const referral = { capability: "referral.create", granted_at: "2026-01-02T00:00:00Z", expires_at: null, is_effective: true };
+    const calls = mockApi(
       routes({
-        [`GET /api/v1/admin/partners/${ID}`]: [ok({ ...DETAIL, experience: [AFFILIATE], product_grants: [] })],
-        [`GET /api/v1/admin/partners/${ID}/summary`]: [ok({ ...SUMMARY, experience: [AFFILIATE], products: [] })],
-        [`GET /api/v1/admin/partners/${ID}/commission`]: [ok({ ...COMMISSION, rules: [...COMMISSION.rules, { ...COMMISSION.rules[0], id: "r2", product_code: "books" }] })],
+        [`GET /api/v1/admin/partners/${ID}`]: [ok({ ...DETAIL, experience: [AFFILIATE], product_grants: [], capabilities: [referral] })],
+        [`GET /api/v1/admin/partners/${ID}/summary`]: [
+          ok({ ...SUMMARY, experience: [AFFILIATE], products: [], capabilities: [{ key: "referral.create", label: "Referral links", group: "", granted_at: "2026-01-02T00:00:00Z", expires_at: null }] }),
+        ],
+        [`GET /api/v1/admin/partners/${ID}/promotions`]: [
+          ok({
+            grants: [
+              { id: "g1", product_code: "books", product_name: "Books", status: "active", granted_at: "2026-10-01T00:00:00Z", revoked_at: null },
+              { id: "g0", product_code: "crm", product_name: "CRM", status: "revoked", granted_at: "2026-09-01T00:00:00Z", revoked_at: "2026-09-20T00:00:00Z" },
+            ],
+          }),
+        ],
+        [`POST /api/v1/admin/partners/${ID}/promotions`]: [{ status: 201, body: { id: "g2" } }],
       }),
     );
     mount();
     await openTab("Products");
-    const promoted = (await screen.findByRole("heading", { name: "Products this partner promotes" })).closest("section")!;
-    expect(await within(promoted).findByText("All products")).toBeInTheDocument();
-    expect(await within(promoted).findByText("Books")).toBeInTheDocument();
-    expect(promoted).toHaveTextContent(/It is granted no product/);
+    const promoted = (await screen.findByRole("heading", { name: "Products this partner may promote" })).closest("section")!;
+    const table = await within(promoted).findByRole("table", { name: "Promotion grants" });
+    expect(within(table).getByRole("rowheader", { name: "Books" })).toBeInTheDocument();
+    expect(promoted).toHaveTextContent(/Promoting a product is not selling it/);
     expect(screen.queryByRole("table", { name: "Product grants" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Allow a product")).not.toBeInTheDocument();
+    const select = within(promoted).getByLabelText("Assign a product to promote");
+    const options = within(select).getAllByRole("option").map((o) => o.textContent);
+    expect(options).toEqual(["Choose…", "CRM"]); // Books is already assigned
+    fireEvent.change(select, { target: { value: "crm" } });
+    fireEvent.click(within(promoted).getByRole("button", { name: "Assign product" }));
+    await waitFor(() => expect(calls.some((c) => c.key === `POST /api/v1/admin/partners/${ID}/promotions`)).toBe(true));
+    expect(calls.find((c) => c.key === `POST /api/v1/admin/partners/${ID}/promotions`)!.body).toEqual({ product_code: "crm" });
   });
 });
 
@@ -968,7 +985,7 @@ describe("Referrals", () => {
     // Counts by state, in words.
     expect(screen.getByText("Waiting to convert").nextElementSibling?.textContent).toBe("3");
     // No column could hold who was referred.
-    expect(within(referrals).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Code", "Status", "Captured", "Converted"]);
+    expect(within(referrals).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Code", "Status", "Captured", "Converted", "Attribution"]);
     await expectNoViolations(container);
   });
 });

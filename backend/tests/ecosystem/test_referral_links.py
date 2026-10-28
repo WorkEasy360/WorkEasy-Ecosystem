@@ -23,10 +23,16 @@ AFFILIATE = (
 
 
 @pytest.fixture
-def affiliate(partner_factory, catalog):
+def affiliate(partner_factory, catalog, staff_factory):
+    from workeasy360.commercial.partners import promotion
+
     list_products("crm", "books")
     fx = partner_factory(*AFFILIATE)
     fx["catalog"] = catalog
+    # ADR-054: a product link needs the product's promotion grant.
+    _u, staff = staff_factory("platform.staff_partner.manage")
+    for code in ("crm", "books"):
+        promotion.grant_promotion(staff, fx["partner"].id, product_code=code)
     return fx
 
 
@@ -106,6 +112,7 @@ def test_visits_count_clicks_unique_visitors_and_registrations(affiliate):
         "clicks": 3,
         "visitors": 2,
         "registrations": 1,
+        "trials": 0,
         "conversions": 0,
     }
     assert activity["by_code"][str(code.id)]["visitors"] == 2

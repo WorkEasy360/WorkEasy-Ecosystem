@@ -189,6 +189,9 @@ def test_the_partner_models_are_the_frozen_set():
         "PartnerUpgradeRequest",
         # ADR-053: the set-up fee setting.
         "PartnerProgramFee",
+        # ADR-054: which products a partner may promote (a permission, not a
+        # kind of partner; tests/affiliate_products pins it).
+        "PartnerPromotionGrant",
     }
 
 
@@ -217,6 +220,8 @@ def test_the_commission_and_pricing_models_are_the_frozen_set():
         # CommissionRule) and the partner's own grouping of its links.
         "MarginRule",
         "ReferralCampaign",
+        # ADR-054: the referral programme's one-row policy (window, revoked links).
+        "ReferralPolicy",
     }
     assert _model_names("pricing") == {
         "PriceBook",
@@ -438,4 +443,6 @@ def test_phase_10_leaves_the_legacy_catalog_alone():
         # ADR-051: the Product Manager's listing columns and ProductMedia, added
         # through the catalog's own services (tests/product_manager pins them).
         "0005_product_manager.py",
+        # ADR-054: one new table (ProductUpdate) - no catalog row is rewritten.
+        "0006_product_updates.py",
     ]

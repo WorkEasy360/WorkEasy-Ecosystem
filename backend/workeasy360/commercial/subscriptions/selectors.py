@@ -445,6 +445,29 @@ def sale_facts(organization_id: UUID) -> tuple[SaleFactDTO, ...]:
         return tuple(facts)
 
 
+def first_trial_started_at(organization_id: UUID) -> datetime | None:
+    """When this organization started its first product trial, or ``None`` -
+    the Trial step of a referral funnel (ADR-054). Read outside a request, in
+    the organization's own scope, as ``sale_facts`` is."""
+    from django.db.models import Min
+
+    from workeasy360.commercial.subscriptions.models import ProductTrial
+    from workeasy360.platform.tenancy.db import assert_tenant_scope, organization_db_scope
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    with (
+        unscoped_access(
+            reason="Referral funnel reads when a referred customer started a trial",
+            module="commercial.subscriptions.selectors",
+        ),
+        organization_db_scope(organization_id),
+    ):
+        assert_tenant_scope(organization_id, what="first_trial_started_at")
+        return ProductTrial.unscoped.filter(organization_id=organization_id).aggregate(
+            first=Min("started_at")
+        )["first"]
+
+
 def subscriptions_due_for_attention(organization_id: UUID, *, at: datetime) -> list[UUID]:
     """Subscriptions of **one** organization whose timestamps have passed.
 

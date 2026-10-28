@@ -34,7 +34,8 @@ def test_following_a_referral_link_sets_an_httponly_cookie(affiliate):
     cookie = response.cookies[settings.REFERRAL_COOKIE_NAME]
     assert cookie.value == response.json()["token"]
     assert cookie["httponly"] and cookie["samesite"] == "Lax" and cookie["path"] == "/"
-    assert int(cookie["max-age"]) == settings.REFERRAL_COOKIE_MAX_AGE
+    # ADR-054: as long as the programme's attribution window.
+    assert int(cookie["max-age"]) == referrals.capture_window().total_seconds()
 
 
 def test_an_unknown_code_sets_no_cookie():

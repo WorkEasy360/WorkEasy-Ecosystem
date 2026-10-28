@@ -31,7 +31,9 @@ from workeasy360.contracts.enums import (
     AccrualKind,
     GrantStatus,
     PayoutStatus,
+    ReferralLinkKind,
     ReferralStatus,
+    RevokedLinkPolicy,
 )
 from workeasy360.contracts.values.money import CurrencyCode
 
@@ -74,6 +76,45 @@ class ReferralCampaign(models.Model):
         return self.name
 
 
+class ReferralPolicy(models.Model):
+    """The referral programme's global policy (ADR-054). One row, ``id = 1``.
+
+    Super Admin sets it; every change is audited. It governs what happens
+    **from now on**: a referral's expiry is stamped when it is captured, so
+    shortening the window never expires a referral already captured.
+    """
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1)
+    #: How long a captured referral can still be converted (the cookie lives
+    #: as long), in days.
+    attribution_days = models.PositiveSmallIntegerField()
+    #: What a product link does once its partner's promotion grant is revoked.
+    revoked_links = models.CharField(
+        max_length=16,
+        choices=_choices(RevokedLinkPolicy),
+        default=RevokedLinkPolicy.STOP.value,
+    )
+    updated_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "commissions_referral_policy"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(id=1), name="ck_referral_policy_singleton"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(attribution_days__gte=1, attribution_days__lte=365),
+                name="ck_referral_policy_window",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"affiliate policy ({self.attribution_days}d, {self.revoked_links})"
+
+
 class ReferralCode(models.Model):
     """A public referral code belonging to one partner.
 
@@ -105,6 +146,22 @@ class ReferralCode(models.Model):
         on_delete=models.PROTECT,
         related_name="codes",
     )
+    #: ADR-054: which page of the product the link opens. With ``update`` (a
+    #: feature or a release), a link is fixed to that one announcement; editing
+    #: the announcement never changes which partner its clicks belong to.
+    link_kind = models.CharField(
+        max_length=16,
+        choices=_choices(ReferralLinkKind),
+        default=ReferralLinkKind.GENERAL.value,
+        db_default=ReferralLinkKind.GENERAL.value,
+    )
+    update = models.ForeignKey(
+        "catalog.ProductUpdate",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
     status = models.CharField(
         max_length=16, choices=_choices(GrantStatus), default=GrantStatus.ACTIVE.value
     )
@@ -115,6 +172,23 @@ class ReferralCode(models.Model):
 
     class Meta:
         db_table = "commissions_referral_code"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(link_kind="general", product_code="")
+                | (~models.Q(link_kind="general") & ~models.Q(product_code="")),
+                name="ck_refcode_kind_matches_product",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    link_kind__in=["feature", "update"], update__isnull=False
+                )
+                | (
+                    ~models.Q(link_kind__in=["feature", "update"])
+                    & models.Q(update__isnull=True)
+                ),
+                name="ck_refcode_kind_matches_update",
+            ),
+        ]
         indexes = [models.Index(fields=["partner", "status"], name="ix_refcode_partner")]
 
     def __str__(self) -> str:  # pragma: no cover - display only
@@ -162,6 +236,9 @@ class Referral(models.Model):
     #: between a click and a conversion).
     registered_at = models.DateTimeField(null=True, blank=True)
     converted_at = models.DateTimeField(null=True, blank=True)
+    #: ADR-054: when the converted customer first started a product trial -
+    #: the Trial step of the funnel. Stamped once, from the trial record.
+    trial_started_at = models.DateTimeField(null=True, blank=True)
     organization = models.OneToOneField(
         "organizations.Organization",
         null=True,
@@ -397,6 +474,11 @@ class CommissionAccrual(models.Model):
         related_name="accruals",
     )
     cost_minor = models.BigIntegerField(null=True, blank=True)
+    #: ADR-054: the paid transaction behind a sale or renewal -
+    #: ``payments.invoice_line:<uuid>`` - so every earning names the payment it
+    #: was earned on. Empty for an adjustment, and for sales recorded before
+    #: ADR-054 (a managed, invoiced sale may still accrue before payment).
+    payment_ref = models.CharField(max_length=80, blank=True, default="", db_default="")
 
     reverses = models.ForeignKey(
         "self",

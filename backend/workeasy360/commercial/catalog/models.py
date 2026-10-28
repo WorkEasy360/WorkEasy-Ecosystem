@@ -38,6 +38,8 @@ from workeasy360.contracts.enums import (
     ProductListing,
     ProductMediaKind,
     ProductStatus,
+    ProductUpdateKind,
+    ProductUpdateStatus,
     PublicAvailability,
 )
 
@@ -250,6 +252,68 @@ class ProductMedia(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.kind} of {self.product_id}"
+
+
+class ProductUpdate(models.Model):
+    """A feature announcement or a release of one product (ADR-054): the
+    approved marketing content affiliates link to.
+
+    Staff write it and publish it; once published it has a public page on the
+    platform's own origin (``/products/<slug>/updates/<slug>``), which is where
+    an affiliate's update link lands. ``landing_url`` is an optional longer
+    announcement on an approved host, **shown** on that page and never
+    redirected to, so no link can be turned into an open redirect.
+
+    An update is archived, never deleted: a referral link names it, and the
+    link's history must keep its target. Editing the copy or the landing page
+    changes what visitors read, never which partner a click belongs to.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="updates")
+    kind = models.CharField(max_length=16, choices=_choices(ProductUpdateKind))
+    slug = models.SlugField(max_length=64)
+    title = models.CharField(max_length=120)
+    summary = models.CharField(max_length=300, blank=True, default="")
+    #: The approved promotional copy an affiliate may paste. Plain text.
+    body = models.TextField(max_length=4000, blank=True, default="")
+    #: One of the product's own approved listing images, if any.
+    banner = models.ForeignKey(
+        ProductMedia, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    landing_url = models.URLField(max_length=500, blank=True, default="")
+    status = models.CharField(
+        max_length=16,
+        choices=_choices(ProductUpdateStatus),
+        default=ProductUpdateStatus.DRAFT.value,
+    )
+    published_at = models.DateTimeField(null=True, blank=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    created_by_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "catalog_product_update"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["product", "slug"], name="uq_product_update_slug"
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(status="published")
+                | models.Q(published_at__isnull=False),
+                name="ck_product_update_published_stamped",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["product", "status", "-published_at"],
+                name="ix_productupdate_product",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.kind} {self.slug} of {self.product_id}"
 
 
 class Feature(models.Model):

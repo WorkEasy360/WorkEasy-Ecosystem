@@ -110,6 +110,12 @@ def test_an_affiliate_earns_nothing_on_a_product_closed_to_affiliates(
                 plan_version_id=catalog["versions"][plan].id,
                 idempotency_key=f"sale-{plan}",
             )
+        # ADR-054: a referral earns once the sale is paid.
+        from tests.phase7.support import pay_open_invoices
+        from workeasy360.commercial.commissions import accrual
+
+        assert pay_open_invoices(staff_factory, org.id) >= 1
+        accrual.accrue_for_organization(org.id)
         return org.id
 
     closed = referred_customer_buys("crm_professional")

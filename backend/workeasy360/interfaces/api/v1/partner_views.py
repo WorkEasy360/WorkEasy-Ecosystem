@@ -410,14 +410,18 @@ def referrals_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
         product_code=body.get("product_code", ""),
         plan_code=body.get("plan_code", ""),
         campaign_id=body.get("campaign_id"),
+        link_kind=body.get("link_kind"),
+        update_id=body.get("update_id"),
     )
     return JsonResponse(
         {
             "id": str(code.id),
             "code": code.code,
             "label": code.label,
+            "link_kind": code.link_kind,
             "product_code": code.product_code,
             "plan_code": code.plan_code,
+            "update_id": str(code.update_id) if code.update_id else None,
             "campaign_id": str(code.campaign_id) if code.campaign_id else None,
             "url": partner_network.referral_url(code.code),
         },
@@ -446,6 +450,18 @@ def campaign_status_view(
         ctx, campaign_id, active=_body(request).get("active")
     )
     return JsonResponse({"id": str(campaign.id), "status": campaign.status})
+
+
+@partner_view(["PATCH"])
+def referral_code_view(
+    request: HttpRequest, ctx: TenantContext, code_id: UUID
+) -> JsonResponse:
+    """ADR-054: rename a link, or switch it off or back on."""
+    body = _body(request)
+    code = referrals.update_referral_code(
+        ctx, code_id, label=body.get("label"), active=body.get("active")
+    )
+    return JsonResponse({"id": str(code.id), "label": code.label, "status": code.status})
 
 
 @partner_view(["POST"])

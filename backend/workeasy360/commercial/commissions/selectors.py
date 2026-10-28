@@ -118,6 +118,9 @@ def accruals_page(
     has_more = len(rows) > limit
     rows = rows[:limit]
     items = [accrual_dict(r, for_partner=for_partner) for r in rows]
+    statuses = entry_statuses(rows)
+    for row, item in zip(rows, items, strict=True):
+        item.update(statuses[row.id])
     if not for_partner:
         _link_staff_context(rows, items)
     return Page(
@@ -125,6 +128,54 @@ def accruals_page(
         next_cursor=encode_cursor(rows[-1].event_at, rows[-1].id) if has_more else None,
         has_more=has_more,
     )
+
+
+def entry_statuses(
+    rows: list[Any], now: datetime | None = None
+) -> dict[Any, dict[str, Any]]:
+    """What each ledger row is now, for the partner (ADR-054). Two queries.
+
+    - ``paid``: in a payout confirmed as paid;
+    - ``reversed``: an earning reversed in full (``reversed_minor`` shows a
+      partial reversal of one that is otherwise pending or approved);
+    - ``pending``: still inside the holdback - a refund may yet reverse it;
+    - ``approved``: cleared, and payable in the next payout.
+
+    A reversal or adjustment row is itself ``approved`` once cleared - it
+    changes the balance - or ``paid`` when a payout settled it.
+    """
+    from django.utils import timezone
+
+    from workeasy360.commercial.commissions.models import CommissionAccrual, PayoutLine
+
+    moment = now or timezone.now()
+    ids = [r.id for r in rows]
+    paid = set(
+        PayoutLine.objects.filter(
+            accrual_id__in=ids,
+            released_at__isnull=True,
+            payout__status=PayoutStatus.PAID.value,
+        ).values_list("accrual_id", flat=True)
+    )
+    reversed_by = {
+        r["reverses_id"]: r["total"] or 0
+        for r in CommissionAccrual.objects.filter(reverses_id__in=ids)
+        .values("reverses_id")
+        .annotate(total=Sum("amount_minor"))
+    }
+    out: dict[Any, dict[str, Any]] = {}
+    for r in rows:
+        back = -reversed_by.get(r.id, 0)
+        if r.id in paid:
+            status = "paid"
+        elif r.kind == AccrualKind.ACCRUAL.value and back >= r.amount_minor:
+            status = "reversed"
+        elif r.clears_at > moment:
+            status = "pending"
+        else:
+            status = "approved"
+        out[r.id] = {"status": status, "reversed_minor": back}
+    return out
 
 
 def _link_staff_context(rows: list[Any], items: list[dict[str, Any]]) -> None:
@@ -519,6 +570,8 @@ def referral_activity(partner_id: UUID, start: datetime, end: datetime) -> dict[
         "clicks": Count("id"),
         "visitors": Count("visitor_hash", distinct=True, filter=~Q(visitor_hash="")),
         "registrations": Count("id", filter=Q(registered_at__isnull=False) | converted),
+        # ADR-054: a converted customer that has started a product trial.
+        "trials": Count("id", filter=Q(trial_started_at__isnull=False)),
         "converted": Count("id", filter=converted),
     }
     by_code = {
@@ -526,6 +579,7 @@ def referral_activity(partner_id: UUID, start: datetime, end: datetime) -> dict[
             "clicks": r["clicks"],
             "visitors": r["visitors"],
             "registrations": r["registrations"],
+            "trials": r["trials"],
             "conversions": r["converted"],
         }
         for r in window.values("code_id").annotate(**counts)
@@ -536,6 +590,7 @@ def referral_activity(partner_id: UUID, start: datetime, end: datetime) -> dict[
             "clicks": r["clicks"],
             "visitors": r["visitors"],
             "registrations": r["registrations"],
+            "trials": r["trials"],
             "conversions": r["converted"],
         }
         for r in window.annotate(day=TruncDate("captured_at"))
@@ -551,6 +606,7 @@ def referral_activity(partner_id: UUID, start: datetime, end: datetime) -> dict[
             "clicks": totals["clicks"] or 0,
             "visitors": totals["visitors"] or 0,
             "registrations": totals["registrations"] or 0,
+            "trials": totals["trials"] or 0,
             "conversions": totals["converted"] or 0,
         },
     }
@@ -656,13 +712,17 @@ def referral_codes(partner_id: UUID) -> list[dict[str, Any]]:
             "status": c.status,
             "product_code": c.product_code,
             "plan_code": c.plan_code,
+            "link_kind": c.link_kind,
+            "update_id": str(c.update_id) if c.update_id else None,
+            "update_title": c.update.title if c.update_id else None,
             "campaign_id": str(c.campaign_id) if c.campaign_id else None,
             "campaign_name": c.campaign.name if c.campaign_id else None,
             "created_at": c.created_at.isoformat(),
         }
         for c in ReferralCode.objects.filter(partner_id=partner_id)
-        .select_related("campaign")
-        .order_by("-created_at")[:50]
+        .select_related("campaign", "update")
+        # ADR-054: as many as a partner may hold active, plus recent history.
+        .order_by("-created_at")[:200]
     ]
 
 
@@ -713,6 +773,107 @@ def referrals_page(
     )
 
 
+def referral_trail(partner_id: UUID, referral_id: UUID) -> dict[str, Any] | None:
+    """How one referral became earnings, step by step (ADR-054): the link
+    followed (its kind, product, update and campaign), when the visitor
+    clicked, registered, became a customer and started a trial, then each
+    paid sale and what it earned - and what became of the earning. Nothing
+    identifies the customer: it is shown as a short reference derived from
+    the referral, never its name, email or organization id. Three queries."""
+    import hashlib
+
+    from workeasy360.commercial.commissions.models import CommissionAccrual, Referral
+
+    r = (
+        Referral.objects.filter(id=referral_id, partner_id=partner_id)
+        .select_related("code", "code__campaign", "code__update")
+        .first()
+    )
+    if r is None:
+        return None
+    code = r.code
+    entries = (
+        list(
+            CommissionAccrual.objects.filter(
+                partner_id=partner_id, organization_id=r.organization_id
+            ).order_by("event_at", "id")
+        )
+        if r.organization_id
+        else []
+    )
+    # Only earnings this referral produced, and their reversals.
+    own = {
+        e.id
+        for e in entries
+        if e.attribution_kind == "referral" and e.attribution_ref == str(r.id)
+    }
+    statuses = entry_statuses([e for e in entries if e.id in own])
+    sales = [
+        {
+            "id": str(e.id),
+            "product_code": e.product_code,
+            "plan_code": e.plan_code,
+            "renewal": e.source_ref.startswith("payments.invoice_line:"),
+            "paid_at": e.event_at.isoformat(),
+            "payment_verified": bool(e.payment_ref),
+            "sale_minor": e.basis_minor or 0,
+            "commission_minor": e.amount_minor,
+            "currency": e.currency,
+            "rate_bp": e.rate_bp,
+            "rule_version": e.rule_version,
+            "clears_at": e.clears_at.isoformat(),
+            **statuses[e.id],
+        }
+        for e in entries
+        if e.id in own and e.kind == AccrualKind.ACCRUAL.value
+    ]
+    reversals = [
+        {
+            "reverses": str(e.reverses_id),
+            "amount_minor": e.amount_minor,
+            "currency": e.currency,
+            "reason_code": e.reason_code,
+            "at": e.event_at.isoformat(),
+        }
+        for e in entries
+        if e.reverses_id in own
+    ]
+    return {
+        "id": str(r.id),
+        "customer_ref": (
+            "C-" + hashlib.sha256(str(r.id).encode()).hexdigest()[:8].upper()
+            if r.organization_id
+            else None
+        ),
+        "attribution_rule": r.attribution_rule,
+        "link": {
+            "id": str(code.id),
+            "code": code.code,
+            "label": code.label,
+            "link_kind": code.link_kind,
+            "product_code": code.product_code,
+            "plan_code": code.plan_code,
+            "update_title": code.update.title if code.update_id else None,
+            "campaign_name": code.campaign.name if code.campaign_id else None,
+        },
+        "steps": [
+            {"step": "clicked", "at": r.captured_at.isoformat()},
+            {"step": "registered", "at": _iso(r.registered_at)},
+            {"step": "customer", "at": _iso(r.converted_at)},
+            {"step": "trial", "at": _iso(r.trial_started_at)},
+            {"step": "purchased", "at": sales[0]["paid_at"] if sales else None},
+        ],
+        "expires_at": r.expires_at.isoformat(),
+        "status": r.status,
+        "sales": sales,
+        "reversals": reversals,
+    }
+
+
+def _iso(value: Any) -> str | None:
+    return value.isoformat() if value else None
+
+
 def converted_organization_ids() -> list[UUID]:
     """Customers that came in through a referral - candidates for accrual."""
     from workeasy360.commercial.commissions.models import Referral
@@ -728,11 +889,15 @@ def referral_conversion_for(organization_id: UUID, moment: datetime) -> Any | No
     """The converted referral attributing this customer, if it was in force."""
     from workeasy360.commercial.commissions.models import Referral
 
-    return Referral.objects.filter(
-        organization_id=organization_id,
-        status=ReferralStatus.CONVERTED.value,
-        converted_at__lte=moment,
-    ).first()
+    return (
+        Referral.objects.filter(
+            organization_id=organization_id,
+            status=ReferralStatus.CONVERTED.value,
+            converted_at__lte=moment,
+        )
+        .select_related("code")
+        .first()
+    )
 
 
 # --- what the partner consoles show (Phase 10) ------------------------------

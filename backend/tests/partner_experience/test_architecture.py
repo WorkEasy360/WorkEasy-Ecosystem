@@ -101,6 +101,9 @@ def test_the_partner_models_are_unchanged_by_this_work():
         "PartnerUpgradeRequest",
         # ADR-053: the set-up fee setting (one row per target experience).
         "PartnerProgramFee",
+        # ADR-054: which products a partner may promote - a permission, not a
+        # kind of partner (tests/affiliate_products pins what it does).
+        "PartnerPromotionGrant",
     }
 
 

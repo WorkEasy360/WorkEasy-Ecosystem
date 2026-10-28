@@ -57,6 +57,9 @@ def test_the_partner_models_are_the_frozen_set_plus_the_declared_additions():
         "PartnerUpgradeRequest",
         # ADR-053: the set-up fee setting.
         "PartnerProgramFee",
+        # ADR-054: which products a partner may promote (a permission, not a
+        # kind of partner; tests/affiliate_products pins it).
+        "PartnerPromotionGrant",
     }
 
 

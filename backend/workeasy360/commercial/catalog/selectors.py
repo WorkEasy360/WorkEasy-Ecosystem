@@ -29,6 +29,7 @@ from workeasy360.contracts.enums import (
     ProductListing,
     ProductMediaKind,
     ProductStatus,
+    ProductUpdateStatus,
 )
 from workeasy360.contracts.errors import CatalogValidationError
 
@@ -606,6 +607,123 @@ def promotable_products(*, at: Any) -> list[dict[str, Any]]:
     ]
 
 
+def update_row(u: Any, *, slug: str) -> dict[str, Any]:
+    """One product update as staff and partners read it (ADR-054)."""
+    return {
+        "id": str(u.id),
+        "kind": u.kind,
+        "slug": u.slug,
+        "title": u.title,
+        "summary": u.summary,
+        "body": u.body,
+        "banner_id": str(u.banner_id) if u.banner_id else None,
+        "banner_url": media_url(slug, u.banner_id) if u.banner_id else None,
+        "landing_url": u.landing_url,
+        "status": u.status,
+        "page_path": f"/products/{slug}/updates/{u.slug}",
+        "published_at": u.published_at.isoformat() if u.published_at else None,
+        "archived_at": u.archived_at.isoformat() if u.archived_at else None,
+        "created_at": u.created_at.isoformat() if u.created_at else None,
+        "updated_at": u.updated_at.isoformat() if u.updated_at else None,
+    }
+
+
+def product_updates(product_id: Any) -> list[dict[str, Any]]:
+    """Every update of one product, for staff: drafts first, then newest."""
+    from workeasy360.commercial.catalog.models import Product, ProductUpdate
+
+    slug = Product.objects.filter(id=product_id).values_list("slug", flat=True).first()
+    if slug is None:
+        return []
+    order = {"draft": 0, "published": 1, "archived": 2}
+    rows = sorted(
+        ProductUpdate.objects.filter(product_id=product_id),
+        key=lambda u: (
+            order.get(u.status, 9),
+            -(u.published_at or u.created_at).timestamp(),
+        ),
+    )
+    return [update_row(u, slug=slug) for u in rows]
+
+
+def published_updates(product_codes: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """The published updates of these products, newest first, by product code.
+    One query."""
+    from workeasy360.commercial.catalog.models import ProductUpdate
+
+    out: dict[str, list[dict[str, Any]]] = {c: [] for c in product_codes}
+    if not product_codes:
+        return out
+    for u in (
+        ProductUpdate.objects.filter(
+            product__code__in=product_codes, status=ProductUpdateStatus.PUBLISHED.value
+        )
+        .select_related("product")
+        .order_by("-published_at", "id")
+    ):
+        out[u.product.code].append(update_row(u, slug=u.product.slug))
+    return out
+
+
+def linkable_update(update_id: Any, *, product_code: str) -> Any | None:
+    """A published update of ``product_code`` that a new link may name, or
+    ``None``."""
+    from workeasy360.commercial.catalog.models import ProductUpdate
+
+    return ProductUpdate.objects.filter(
+        id=update_id,
+        product__code=product_code,
+        status=ProductUpdateStatus.PUBLISHED.value,
+    ).first()
+
+
+def public_update(slug: str, update_slug: str) -> dict[str, Any] | None:
+    """A published update of a product **on the customer Store**, for its
+    public page - or ``None``: a draft, archived or private one is not public."""
+    from workeasy360.commercial.catalog.models import ProductUpdate
+
+    u = (
+        ProductUpdate.objects.filter(
+            product__slug=str(slug),
+            slug=str(update_slug),
+            status=ProductUpdateStatus.PUBLISHED.value,
+            product__status=ProductStatus.AVAILABLE.value,
+            product__listing=ProductListing.LISTED.value,
+            product__customer_store_enabled=True,
+        )
+        .select_related("product")
+        .first()
+    )
+    if u is None:
+        return None
+    row = update_row(u, slug=u.product.slug)
+    for internal in ("status", "archived_at", "created_at", "updated_at", "banner_id"):
+        row.pop(internal)
+    return {
+        **row,
+        "product": {
+            "code": u.product.code,
+            "name": u.product.name,
+            "slug": u.product.slug,
+            "tagline": u.product.tagline,
+        },
+    }
+
+
+def update_page_path(update_id: Any) -> str | None:
+    """The public page of a published update, or ``None`` once it is not."""
+    from workeasy360.commercial.catalog.models import ProductUpdate
+
+    row = (
+        ProductUpdate.objects.filter(
+            id=update_id, status=ProductUpdateStatus.PUBLISHED.value
+        )
+        .values("slug", "product__slug")
+        .first()
+    )
+    return f"/products/{row['product__slug']}/updates/{row['slug']}" if row else None
+
+
 def product_presentations(codes: list[str]) -> dict[str, dict[str, str]]:
     """How each of these products draws a card: name, slug, tagline, category,
     icon. One query, for the app directory (which renders a card per product)."""
@@ -816,6 +934,23 @@ def bundle_listing() -> list[dict[str, Any]]:
         }
         for b in bundles.order_by("code")[:500]
     ]
+
+
+def public_features(product_codes: list[str]) -> dict[str, list[dict[str, str]]]:
+    """The public features of these products - names and descriptions a partner
+    may mention (ADR-054) - by product code. One query."""
+    from workeasy360.commercial.catalog.models import Feature
+
+    out: dict[str, list[dict[str, str]]] = {c: [] for c in product_codes}
+    for f in (
+        Feature.objects.filter(product__code__in=product_codes, is_public=True)
+        .select_related("product")
+        .order_by("name")
+    ):
+        out[f.product.code].append(
+            {"key": f.key, "name": f.name, "description": f.description}
+        )
+    return out
 
 
 def features_for_product(product_id: UUID) -> list[dict[str, Any]]:

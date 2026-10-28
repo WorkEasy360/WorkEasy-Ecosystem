@@ -167,3 +167,53 @@ def media_reorder_view(
     return JsonResponse(
         {"media": catalog_selectors.media_rows([product_id])[str(product_id)]}
     )
+
+
+# --- ADR-054: product updates (features and releases) --------------------------
+
+
+@staff_view(["GET", "POST"])
+def updates_view(
+    request: HttpRequest, ctx: TenantContext, product_id: UUID
+) -> JsonResponse:
+    """A product's updates; or write a draft one."""
+    from workeasy360.commercial.catalog import updates
+
+    if request.method == "POST":
+        row = updates.create_update(ctx, product_id=product_id, body=_body(request))
+        return JsonResponse({"id": str(row.id), "status": row.status}, status=201)
+    return JsonResponse(updates.list_updates(ctx, product_id=product_id))
+
+
+@staff_view(["PATCH"])
+def update_detail_view(
+    request: HttpRequest, ctx: TenantContext, product_id: UUID, update_id: UUID
+) -> JsonResponse:
+    from workeasy360.commercial.catalog import updates
+
+    updates.require_update_of(product_id, update_id)
+    row = updates.edit_update(ctx, update_id=update_id, body=_body(request))
+    return JsonResponse({"id": str(row.id), "status": row.status})
+
+
+@staff_view(["POST"])
+def update_lifecycle_view(
+    request: HttpRequest,
+    ctx: TenantContext,
+    product_id: UUID,
+    update_id: UUID,
+    action: str,
+) -> JsonResponse:
+    """Publish or archive an update."""
+    from workeasy360.commercial.catalog import updates
+
+    service = {"publish": updates.publish_update, "archive": updates.archive_update}.get(
+        action
+    )
+    if service is None:
+        return JsonResponse(
+            {"code": "not_found", "detail": "No such action."}, status=404
+        )
+    updates.require_update_of(product_id, update_id)
+    row = service(ctx, update_id=update_id)
+    return JsonResponse({"id": str(row.id), "status": row.status})

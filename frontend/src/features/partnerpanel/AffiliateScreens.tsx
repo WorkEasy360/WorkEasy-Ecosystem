@@ -46,7 +46,7 @@ const useOverview = () => {
 const noMoney = "Needs commission access.";
 
 /** Sales and commission per currency, from the server's ledger figures. */
-function EarningCells({ earnings }: { earnings: Earning[] | null }) {
+export function EarningCells({ earnings }: { earnings: Earning[] | null }) {
   if (earnings === null) {
     return (
       <>
@@ -69,7 +69,7 @@ function EarningCells({ earnings }: { earnings: Earning[] | null }) {
   );
 }
 
-const productLabel = (link: AffiliateLink): string =>
+export const productLabel = (link: AffiliateLink): string =>
   link.product_code ? `${link.product_name ?? link.product_code}${link.plan_code ? ` · ${link.plan_code}` : ""}` : "Sign-up page";
 
 // --- the dashboard ------------------------------------------------------------------------------------------------

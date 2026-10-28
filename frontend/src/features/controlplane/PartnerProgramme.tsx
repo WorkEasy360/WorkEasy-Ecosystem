@@ -54,6 +54,7 @@ export function PartnerProgramme({
     <>
       <MarginsSection manage={manage} products={products} />
       <FeesSection manage={manageFees} />
+      <AffiliatePolicySection manage={manageFees} />
     </>
   );
 }
@@ -246,6 +247,82 @@ function FeesSection({ manage }: { manage: boolean }) {
           </div>
         </form>
       )}
+    </section>
+  );
+}
+
+/** ADR-054: the affiliate programme's attribution window and what a product link
+ * does once its affiliate may no longer promote the product. Super Admin only. */
+function AffiliatePolicySection({ manage }: { manage: boolean }) {
+  const [load, reload] = useLoad(() => adminProgrammeApi.affiliatePolicy(), []);
+  const { act, busy, feedback } = useAction(reload);
+  const [days, setDays] = useState("");
+  const [revoked, setRevoked] = useState("");
+  const number = Number(days.trim());
+  const valid = days.trim() !== "" && Number.isInteger(number) && number >= 1 && number <= 365;
+  return (
+    <section className={styles.section} aria-labelledby="affiliate-policy">
+      <h2 id="affiliate-policy" className={styles.sectionTitle}>
+        Affiliate attribution policy
+      </h2>
+      <p className={cp.lead}>
+        A visitor is credited to the first affiliate link they follow, for the attribution window. A later click on another link is
+        counted for that link but never takes the customer. Changes apply to new visits only. Revoking a product from an affiliate
+        always stops new links; this decides whether its existing links keep taking visitors. Earned commission is never touched.
+      </p>
+      {feedback}
+      <LoadGate load={load} what="the affiliate policy">
+        {(d) => (
+          <>
+            <dl className={cp.factsGrid}>
+              <dt>Attribution window</dt>
+              <dd>{d.attribution_days} days, first touch</dd>
+              <dt>After a product is revoked</dt>
+              <dd>{d.revoked_links === "stop" ? "Existing links stop taking new visitors" : "Existing links keep taking visitors"}</dd>
+              <dt>Last changed</dt>
+              <dd>{d.updated_at ? when(d.updated_at) : "Never - the platform default applies"}</dd>
+            </dl>
+            {manage && (
+              <form
+                className={cp.stack}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!valid) return;
+                  void act(
+                    () => adminProgrammeApi.setAffiliatePolicy({ attribution_days: number, revoked_links: revoked || d.revoked_links }),
+                    "Affiliate policy saved.",
+                  );
+                }}
+              >
+                <h3>Change the policy</h3>
+                <TextField
+                  label="Attribution window (days)"
+                  value={days}
+                  onChange={setDays}
+                  inputMode="numeric"
+                  maxLength={3}
+                  hint={`1 to ${d.max_attribution_days}. Now ${d.attribution_days}.`}
+                  error={days && !valid ? `Enter a whole number from 1 to ${d.max_attribution_days}.` : undefined}
+                />
+                <SelectField
+                  label="Existing links after a revocation"
+                  value={revoked || d.revoked_links}
+                  onChange={setRevoked}
+                  options={[
+                    { value: "stop", label: "Stop taking new visitors" },
+                    { value: "continue", label: "Keep taking visitors" },
+                  ]}
+                />
+                <div>
+                  <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !valid}>
+                    Save policy
+                  </button>
+                </div>
+              </form>
+            )}
+          </>
+        )}
+      </LoadGate>
     </section>
   );
 }

@@ -138,6 +138,9 @@ def paid_item_lines(organization_id: UUID) -> dict[str, list[dict[str, Any]]]:
                 "paid_at": line.invoice.paid_at,
                 "period_start": line.invoice.period_start,
                 "refunded": line.invoice.amount_refunded_minor > 0,
+                # ADR-054: a partial refund reverses its share of a commission.
+                "refunded_minor": int(line.invoice.amount_refunded_minor),
+                "invoice_paid_minor": int(line.invoice.amount_paid_minor),
             }
         )
     return out

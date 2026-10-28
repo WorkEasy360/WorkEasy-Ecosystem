@@ -577,6 +577,13 @@ def test_a_referral_earns_commission_and_never_double_pays_with_a_managed_partne
             plan_version_id=catalog["versions"]["crm_professional"].id,
             idempotency_key="direct-sale",
         )
+    # ADR-054: an unpaid sale earns a referral nothing; paid, it earns once.
+    assert not CommissionAccrual.objects.exists()
+    from tests.phase7.support import pay_open_invoices
+    from workeasy360.commercial.commissions import accrual
+
+    assert pay_open_invoices(staff_factory, org.id) >= 1
+    accrual.accrue_for_organization(org.id)
     rows = list(CommissionAccrual.objects.all())
     assert len(rows) == 1
     assert (

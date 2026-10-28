@@ -135,9 +135,31 @@ export const publicApi = {
     post<{ token: string; destination?: string }>("/api/v1/public/referrals", { code }),
   convertReferral: (token: string, organizationId: string) =>
     post<{ converted: boolean }>("/api/v1/referrals/convert", { token, organization_id: organizationId }),
+  /** ADR-054: a published feature or release of a Store product - the page an
+   * affiliate's update link opens. */
+  productUpdate: (slug: string, updateSlug: string) =>
+    apiFetch<PublicProductUpdate>(
+      `/api/v1/public/products/${encodeURIComponent(slug)}/updates/${encodeURIComponent(updateSlug)}`,
+    ),
   /** ADR-053: a white-label partner's branded Store - presentation only. */
   storefront: (slug: string) => apiFetch<Storefront>(`/api/v1/public/storefront/${encodeURIComponent(slug)}`),
 };
+
+/** ADR-054: an approved product announcement. Plain text throughout. */
+export interface PublicProductUpdate {
+  id: string;
+  kind: "feature" | "release";
+  slug: string;
+  title: string;
+  summary: string;
+  body: string;
+  banner_url: string | null;
+  /** An https page on an approved host; shown as a link, never redirected to. */
+  landing_url: string;
+  page_path: string;
+  published_at: string | null;
+  product: { code: string; name: string; slug: string; tagline: string };
+}
 
 /** A partner's branded Store: its brand (presentation) over the central
  * catalog - only the products it may sell, at its prices. */
