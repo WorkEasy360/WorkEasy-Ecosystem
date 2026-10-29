@@ -30,19 +30,20 @@ export function useSignOut() {
   // /login anyway would resume the still-live session for whoever sits down
   // at this browser next.
   const [failed, setFailed] = useState(false);
-  const signOut = () => {
+  const signOutTo = (then: string) => {
     setFailed(false);
     logout().then(
-      () => router.replace("/login"),
+      () => router.replace(then),
       () => setFailed(true),
     );
   };
+  const signOut = () => signOutTo("/login");
   const banner = failed ? (
     <p role="alert" className={consoleStyles.banner}>
       You are still signed in: signing out didn&apos;t complete. Try again, or close this browser.
     </p>
   ) : null;
-  return { signOut, banner };
+  return { signOut, signOutTo, banner };
 }
 
 // --- Super Admin -----------------------------------------------------------------
@@ -62,8 +63,19 @@ export { adminNav };
 
 /** "You don't have administrator access" - the answer for a signed-in account
  * the server refused (no staff identity, or no StaffGrant in force). It names
- * no permission and shows nothing from the console. */
-export function AdminAccessDenied({ onSignOut, banner }: { onSignOut: () => void; banner?: React.ReactNode }) {
+ * no permission and shows nothing from the console. All portals share one
+ * sign-in, so this usually means another account (a partner's, a customer's)
+ * is signed in: the first action switches to the administrator sign-in and
+ * comes back to the page that was asked for. */
+export function AdminAccessDenied({
+  email,
+  onSwitchAccount,
+  banner,
+}: {
+  email?: string;
+  onSwitchAccount: () => void;
+  banner?: React.ReactNode;
+}) {
   const router = usePortalRouter();
   const portals = usePortals();
   // Another portal in multi-portal mode (ADR-043): a full navigation there.
@@ -76,15 +88,24 @@ export function AdminAccessDenied({ onSignOut, banner }: { onSignOut: () => void
       <div className={`w360-card ${loginStyles.card} ${loginStyles.denied}`}>
         <div role="alert" aria-live="assertive">
           <h1>You don&apos;t have administrator access.</h1>
-          <p>This account can&apos;t open the Workeasy360 Admin Console. You can continue to your own organization and products.</p>
+          <p>
+            {email ? (
+              <>
+                You are signed in as <strong>{email}</strong>, which is not an administrator account.
+              </>
+            ) : (
+              "This account is not an administrator account."
+            )}{" "}
+            Sign in with your administrator account to open the Admin Console.
+          </p>
         </div>
         {banner}
         <div className={loginStyles.deniedActions}>
-          <button type="button" className="w360-btn w360-btn-primary" onClick={asUser}>
-            Continue as User
+          <button type="button" className="w360-btn w360-btn-primary" onClick={onSwitchAccount}>
+            Sign in as administrator
           </button>
-          <button type="button" className="w360-btn w360-btn-secondary" onClick={onSignOut}>
-            Sign out
+          <button type="button" className="w360-btn w360-btn-secondary" onClick={asUser}>
+            Continue as User
           </button>
         </div>
       </div>
@@ -100,22 +121,26 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const session = useSession();
   const [state, setState] = useState<AdminState>({ status: "loading" });
-  const { signOut, banner } = useSignOut();
+  const { signOut, signOutTo, banner } = useSignOut();
 
   useEffect(() => {
     if (session.status !== "ready") return;
+    // Sign in as an administrator, then come back to this page. The mode and
+    // the page are in the address only; the console still asks the server
+    // below whether this person may enter.
+    const signIn = () => router.replace(adminSignInUrl(`${pathname ?? "/admin"}${window.location.search}`));
     if (!session.session.authenticated) {
-      // Sign in as an administrator, then come back to this page. The mode
-      // and the page are in the address only; the console still asks the
-      // server below whether this person may enter.
-      router.replace(adminSignInUrl(`${pathname ?? "/admin"}${window.location.search}`));
+      signIn();
       return;
     }
     adminApi
       .session()
       .then((s) => setState({ status: "ready", permissions: s.permissions }))
       .catch((err: unknown) => {
-        setState({ status: err instanceof ApiError && (err.status === 403 || err.status === 401) ? "denied" : "error" });
+        // 401: the session ended (signing out on any portal ends it on all of
+        // them) - that is "sign in again", not "no administrator access".
+        if (err instanceof ApiError && err.status === 401) signIn();
+        else setState({ status: err instanceof ApiError && err.status === 403 ? "denied" : "error" });
       });
   }, [session, router, pathname]);
 
@@ -126,7 +151,13 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     // Signed in, but the server says this account may not use the console.
     // Nothing from the console has been loaded; the person may carry on into
     // their own workspace with the same sign-in.
-    return <AdminAccessDenied onSignOut={signOut} banner={banner} />;
+    return (
+      <AdminAccessDenied
+        email={session.status === "ready" ? session.session.email : undefined}
+        onSwitchAccount={() => signOutTo(adminSignInUrl(`${pathname ?? "/admin"}${window.location.search}`))}
+        banner={banner}
+      />
+    );
   }
   if (state.status === "error") {
     return (

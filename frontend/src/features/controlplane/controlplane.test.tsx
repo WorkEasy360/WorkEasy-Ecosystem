@@ -154,6 +154,48 @@ describe("the Super Admin shell", () => {
     replace.mockRestore();
   });
 
+  it("names the signed-in account and switches to the administrator sign-in in one click", async () => {
+    pathname = "/admin/partners/new";
+    mockApi({
+      "GET /api/v1/auth/session": [{ status: 200, body: { authenticated: true, user_id: "u2", email: "partner@example.com" } }],
+      "GET /api/v1/admin/session": [{ status: 403, body: { code: "permission_denied" } }],
+      "POST /api/v1/auth/logout": [{ status: 200, body: { ok: true } }],
+    });
+    const replace = vi.spyOn(nav.router, "replace");
+    render(
+      <AdminShell>
+        <h1>Secret</h1>
+      </AdminShell>,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(/signed in as partner@example\.com/);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in as administrator" }));
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(`/login?mode=admin&next=${encodeURIComponent("/admin/partners/new")}`),
+    );
+    replace.mockRestore();
+    pathname = "/admin";
+  });
+
+  it("treats an ended session as signed out, not as 'no administrator access'", async () => {
+    pathname = "/admin/partners/new";
+    mockApi({
+      "GET /api/v1/auth/session": [SIGNED_IN],
+      "GET /api/v1/admin/session": [{ status: 401, body: { code: "login_required" } }],
+    });
+    const replace = vi.spyOn(nav.router, "replace");
+    render(
+      <AdminShell>
+        <h1>Secret</h1>
+      </AdminShell>,
+    );
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(`/login?mode=admin&next=${encodeURIComponent("/admin/partners/new")}`),
+    );
+    expect(screen.queryByRole("heading", { name: "You don't have administrator access." })).not.toBeInTheDocument();
+    replace.mockRestore();
+    pathname = "/admin";
+  });
+
   it("sends a signed-out visitor to the Administrator sign-in, remembering the page", async () => {
     pathname = "/admin/partners/resellers";
     mockApi({ "GET /api/v1/auth/session": [{ status: 200, body: { authenticated: false } }] });
