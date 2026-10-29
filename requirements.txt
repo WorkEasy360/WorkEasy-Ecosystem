@@ -44,7 +44,10 @@ cryptography==50.0.1
 # (commercial/partners/domains.py). Behind a swappable `TxtResolver`, with a
 # timeout and a lifetime, so a slow or hostile resolver cannot hold a request.
 # Pure Python; no other dependency.
-dnspython==2.7.0
+# 2.9.0 fixes CVE-2026-114605 but needs Python 3.11+. The images and CI run
+# 3.12; the 3.10 pin only keeps a local 3.10 venv installable.
+dnspython==2.9.0; python_version >= "3.11"
+dnspython==2.7.0; python_version < "3.11"
 
 # --- Production runtime (Phase 12) -------------------------------------------
 #
