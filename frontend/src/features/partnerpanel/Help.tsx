@@ -18,9 +18,10 @@ function safeHttpsUrl(value: string): string | null {
   }
 }
 
-/** Support Manager: where to get help. There is no ticket system on the platform,
- * so there is no list of requests - the page points at the contact address and
- * Easy Help Desk, and says so. */
+/** Support Manager: where to get help. A request is sent by the platform to its
+ * partner-support address (ADR-053) - queued, delivered and audited - with your
+ * address as the reply-to; Easy Help Desk is linked for tracking. There is no
+ * ticket list on the platform itself, and the page says so. */
 export function Support() {
   const { id } = usePanel();
   const [load] = useLoad(() => panelApi.support(id), [id]);
@@ -35,6 +36,8 @@ export function Support() {
 }
 
 function SupportBody({ data }: { data: SupportResponse }) {
+  const { id, base } = usePanel();
+  const { act, busy, feedback } = useAction();
   const subjectId = useId();
   const priorityId = useId();
   const detailsId = useId();
@@ -75,15 +78,34 @@ function SupportBody({ data }: { data: SupportResponse }) {
       </div>
       <section className={styles.panel} aria-labelledby="support-request">
         <h2 id="support-request">Send a support request</h2>
-        {mailto ? (
+        {feedback}
+        {data.can_send || mailto ? (
           <form
             className={styles.page}
             onSubmit={(e) => {
               e.preventDefault();
-              window.location.href = mailto;
+              if (!data.can_send) {
+                if (mailto) window.location.href = mailto;
+                return;
+              }
+              void act(async () => {
+                const sent = await panelApi.sendSupport(id, {
+                  subject: subject.trim(),
+                  message: details.trim(),
+                  priority,
+                  workspace: base.split("/")[2] ?? "",
+                });
+                setSubject("");
+                setDetails("");
+                return sent;
+              }, "Request sent to Workeasy360 support. They will reply to your email address.");
             }}
           >
-            <p className={styles.muted}>This prepares an email to support in your own email app. Nothing is sent or stored from here.</p>
+            <p className={styles.muted}>
+              {data.can_send
+                ? "Sent by Workeasy360 to its partner support team, with your email address to reply to."
+                : "This prepares an email to support in your own email app."}
+            </p>
             <div className={styles.formGrid}>
               <div>
                 <label className="w360-label" htmlFor={subjectId}>
@@ -113,8 +135,8 @@ function SupportBody({ data }: { data: SupportResponse }) {
             </div>
             <p className={styles.muted}>Never include a password, an API key or a card number.</p>
             <div>
-              <button type="submit" className="w360-btn w360-btn-primary" disabled={!subject.trim() || !details.trim()}>
-                Prepare email
+              <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !subject.trim() || !details.trim()}>
+                {data.can_send ? "Send request" : "Prepare email"}
               </button>
             </div>
           </form>

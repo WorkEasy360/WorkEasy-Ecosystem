@@ -17,16 +17,28 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 
+from workeasy360.commercial.catalog.domain import MANAGER_STATUS, publish_checklist
 from workeasy360.contracts.enums import (
     CatalogStatus,
     FeatureKind,
     LicensingMode,
     PlanBillingType,
     PlanKind,
+    ProductListing,
+    ProductMediaKind,
+    ProductStatus,
+    ProductUpdateStatus,
 )
 from workeasy360.contracts.errors import CatalogValidationError
+
+#: The customer store's one rule (ADR-051): active, published and allowed there.
+_ON_CUSTOMER_STORE = Q(
+    status=ProductStatus.AVAILABLE.value,
+    listing=ProductListing.LISTED.value,
+    customer_store_enabled=True,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +238,7 @@ def trial_offer(product_code: str) -> TrialOfferDTO | None:
         on_sale=(
             product.status == ProductStatus.AVAILABLE.value
             and product.listing == ProductListing.LISTED.value
+            and product.customer_store_enabled
         ),
         duration_days=row.duration_days,
         seat_limit=row.seat_limit,
@@ -380,7 +393,335 @@ def product_row(product: Any) -> dict[str, Any]:
         "category": product.category,
         "icon": product.icon,
         "trial": trial_row(product),
+        # ADR-051: the Product Manager's listing and availability fields.
+        "manager_status": MANAGER_STATUS[product.status_enum],
+        "store_title": product.store_title,
+        "store_summary": product.store_summary,
+        "application_url": product.application_url,
+        "documentation_url": product.documentation_url,
+        "support_url": product.support_url,
+        "customer_store_enabled": product.customer_store_enabled,
+        "reseller_enabled": product.reseller_enabled,
+        "affiliate_enabled": product.affiliate_enabled,
+        "white_label_enabled": product.white_label_enabled,
+        "created_at": product.created_at.isoformat() if product.created_at else None,
+        "updated_at": product.updated_at.isoformat() if product.updated_at else None,
+        "activated_at": product.activated_at.isoformat()
+        if product.activated_at
+        else None,
     }
+
+
+def media_rows(product_ids: list[Any]) -> dict[str, list[dict[str, Any]]]:
+    """Every listing image of these products, by product id, in display order
+    (logo, banner, then screenshots by position). One query."""
+    from workeasy360.commercial.catalog.models import ProductMedia
+
+    out: dict[str, list[dict[str, Any]]] = {str(i): [] for i in product_ids}
+    if not product_ids:
+        return out
+    order = {"logo": 0, "banner": 1, "screenshot": 2}
+    rows = sorted(
+        ProductMedia.objects.filter(product_id__in=product_ids),
+        key=lambda m: (order.get(m.kind, 9), m.sort_order, m.created_at),
+    )
+    for m in rows:
+        out[str(m.product_id)].append(
+            {
+                "id": str(m.id),
+                "kind": m.kind,
+                "width": m.width,
+                "height": m.height,
+                "content_type": m.content_type,
+                "size_bytes": m.size_bytes,
+                "caption": m.caption,
+                "sort_order": m.sort_order,
+            }
+        )
+    return out
+
+
+def publish_readiness(
+    product: Any, *, overrides: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """The publish checklist of one product row (``domain.publish_checklist``):
+    its own fields (with ``overrides`` applied, for an edit not yet saved),
+    whether it has a logo, and its integration's launch URL - read through the
+    registry's ungated, narrow ``launch_target``."""
+    from workeasy360.commercial.catalog.models import ProductMedia
+    from workeasy360.platform.ecosystem import selectors as ecosystem_selectors
+
+    fields = ("name", "slug", "category", "tagline", "application_url")
+    values = {**{f: getattr(product, f) for f in fields}, **(overrides or {})}
+    target = ecosystem_selectors.launch_target(product.code)
+    return publish_checklist(
+        name=values["name"],
+        slug=values["slug"],
+        category=values["category"],
+        tagline=values["tagline"],
+        has_logo=ProductMedia.objects.filter(
+            product_id=product.id, kind=ProductMediaKind.LOGO.value
+        ).exists(),
+        application_url=values["application_url"],
+        launch_url=target.launch_url if target is not None else "",
+        status=product.status_enum,
+    )
+
+
+#: Bumped by every catalog write a visitor could see (ADR-052), so the public
+#: catalog's cache - keyed by it - never serves a product that was just hidden
+#: or misses one that was just published.
+PUBLIC_CATALOG_GENERATION_KEY = "w360:catalog:public:generation"
+
+
+def public_catalog_generation() -> int:
+    """The current generation (0 when unknown or the cache is unavailable)."""
+    from django.core.cache import cache
+
+    try:
+        return int(cache.get(PUBLIC_CATALOG_GENERATION_KEY) or 0)
+    except Exception:
+        return 0
+
+
+#: The channels a product may be offered through (ADR-051), by the flag that
+#: opens each one.
+CHANNEL_FLAGS = {
+    "customer_store": "customer_store_enabled",
+    "reseller": "reseller_enabled",
+    "affiliate": "affiliate_enabled",
+    "white_label": "white_label_enabled",
+}
+
+
+def channels_open(product_code: str) -> frozenset[str]:
+    """The channels this product is open to (``customer_store``, ``reseller``,
+    ``affiliate``, ``white_label``); empty for an unknown product. Eligibility
+    only - a partner still needs its grant and capability, a customer an
+    entitlement."""
+    from workeasy360.commercial.catalog.models import Product
+
+    row = (
+        Product.objects.filter(code=str(product_code))
+        .values(*CHANNEL_FLAGS.values())
+        .first()
+    )
+    if row is None:
+        return frozenset()
+    return frozenset(name for name, column in CHANNEL_FLAGS.items() if row[column])
+
+
+def product_facts_by_id(product_id: Any) -> dict[str, Any] | None:
+    """``{code, status}`` of one product by id, or ``None``."""
+    from workeasy360.commercial.catalog.models import Product
+
+    return Product.objects.filter(id=product_id).values("code", "status").first()
+
+
+def readiness_for(product_id: Any) -> list[dict[str, Any]] | None:
+    """``publish_readiness`` by id, or ``None`` for no such product."""
+    from workeasy360.commercial.catalog.models import Product
+
+    product = Product.objects.filter(id=product_id).first()
+    return None if product is None else publish_readiness(product)
+
+
+def media_file_id(product_id: Any, media_id: Any) -> Any | None:
+    """The files-platform id behind one listing image of one product, or
+    ``None`` - never another product's file, whatever id is asked for."""
+    from workeasy360.commercial.catalog.models import ProductMedia
+
+    return (
+        ProductMedia.objects.filter(id=media_id, product_id=product_id)
+        .values_list("file_id", flat=True)
+        .first()
+    )
+
+
+def store_products() -> list[dict[str, Any]]:
+    """What a customer store may list (ADR-051): **active, published and
+    allowed in the customer store**. Being listed here grants nothing: using a
+    product still needs an entitlement, made only by a trial or a purchase."""
+    from workeasy360.commercial.catalog.models import Product
+
+    return [
+        product_row(p)
+        for p in Product.objects.filter(_ON_CUSTOMER_STORE)
+        .select_related("trial_config")
+        .order_by("sort_order", "code")
+    ]
+
+
+def media_url(slug: str, media_id: Any) -> str:
+    """The public address of one listing image of a Store product."""
+    return f"/api/v1/public/products/{slug}/media/{media_id}"
+
+
+def public_media_file_id(slug: str, media_id: Any) -> Any | None:
+    """The file behind one listing image of a product **on the customer
+    Store** (ADR-053), or ``None`` - a draft, private or withdrawn product's
+    images are not public, whatever id is asked for."""
+    from workeasy360.commercial.catalog.models import ProductMedia
+
+    return (
+        ProductMedia.objects.filter(
+            id=media_id,
+            product__slug=str(slug),
+            product__status=ProductStatus.AVAILABLE.value,
+            product__listing=ProductListing.LISTED.value,
+            product__customer_store_enabled=True,
+        )
+        .values_list("file_id", flat=True)
+        .first()
+    )
+
+
+def promotable_products(*, at: Any) -> list[dict[str, Any]]:
+    """What an affiliate may promote (ADR-053): Store products open to the
+    affiliate channel, each with its sellable plans and its approved listing
+    content - the Marketing Materials. Read-only: nothing here lets a partner
+    change the catalog."""
+    rows = [p for p in store_products() if p["affiliate_enabled"]]
+    plans = sellable_plans([p["code"] for p in rows], at=at)
+    media = media_rows([p["id"] for p in rows])
+    return [
+        {
+            "code": p["code"],
+            "name": p["name"],
+            "slug": p["slug"],
+            "tagline": p["tagline"],
+            "summary": p["store_summary"] or p["tagline"],
+            "description": p["description"],
+            "category": p["category"],
+            "icon": p["icon"],
+            "plans": [
+                {"plan_code": v["plan_code"], "plan_name": v["plan_name"]}
+                for v in plans
+                if v["product_code"] == p["code"]
+            ],
+            "media": [
+                {**m, "url": media_url(p["slug"], m["id"])} for m in media[str(p["id"])]
+            ],
+        }
+        for p in rows
+    ]
+
+
+def update_row(u: Any, *, slug: str) -> dict[str, Any]:
+    """One product update as staff and partners read it (ADR-054)."""
+    return {
+        "id": str(u.id),
+        "kind": u.kind,
+        "slug": u.slug,
+        "title": u.title,
+        "summary": u.summary,
+        "body": u.body,
+        "banner_id": str(u.banner_id) if u.banner_id else None,
+        "banner_url": media_url(slug, u.banner_id) if u.banner_id else None,
+        "landing_url": u.landing_url,
+        "status": u.status,
+        "page_path": f"/products/{slug}/updates/{u.slug}",
+        "published_at": u.published_at.isoformat() if u.published_at else None,
+        "archived_at": u.archived_at.isoformat() if u.archived_at else None,
+        "created_at": u.created_at.isoformat() if u.created_at else None,
+        "updated_at": u.updated_at.isoformat() if u.updated_at else None,
+    }
+
+
+def product_updates(product_id: Any) -> list[dict[str, Any]]:
+    """Every update of one product, for staff: drafts first, then newest."""
+    from workeasy360.commercial.catalog.models import Product, ProductUpdate
+
+    slug = Product.objects.filter(id=product_id).values_list("slug", flat=True).first()
+    if slug is None:
+        return []
+    order = {"draft": 0, "published": 1, "archived": 2}
+    rows = sorted(
+        ProductUpdate.objects.filter(product_id=product_id),
+        key=lambda u: (
+            order.get(u.status, 9),
+            -(u.published_at or u.created_at).timestamp(),
+        ),
+    )
+    return [update_row(u, slug=slug) for u in rows]
+
+
+def published_updates(product_codes: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """The published updates of these products, newest first, by product code.
+    One query."""
+    from workeasy360.commercial.catalog.models import ProductUpdate
+
+    out: dict[str, list[dict[str, Any]]] = {c: [] for c in product_codes}
+    if not product_codes:
+        return out
+    for u in (
+        ProductUpdate.objects.filter(
+            product__code__in=product_codes, status=ProductUpdateStatus.PUBLISHED.value
+        )
+        .select_related("product")
+        .order_by("-published_at", "id")
+    ):
+        out[u.product.code].append(update_row(u, slug=u.product.slug))
+    return out
+
+
+def linkable_update(update_id: Any, *, product_code: str) -> Any | None:
+    """A published update of ``product_code`` that a new link may name, or
+    ``None``."""
+    from workeasy360.commercial.catalog.models import ProductUpdate
+
+    return ProductUpdate.objects.filter(
+        id=update_id,
+        product__code=product_code,
+        status=ProductUpdateStatus.PUBLISHED.value,
+    ).first()
+
+
+def public_update(slug: str, update_slug: str) -> dict[str, Any] | None:
+    """A published update of a product **on the customer Store**, for its
+    public page - or ``None``: a draft, archived or private one is not public."""
+    from workeasy360.commercial.catalog.models import ProductUpdate
+
+    u = (
+        ProductUpdate.objects.filter(
+            product__slug=str(slug),
+            slug=str(update_slug),
+            status=ProductUpdateStatus.PUBLISHED.value,
+            product__status=ProductStatus.AVAILABLE.value,
+            product__listing=ProductListing.LISTED.value,
+            product__customer_store_enabled=True,
+        )
+        .select_related("product")
+        .first()
+    )
+    if u is None:
+        return None
+    row = update_row(u, slug=u.product.slug)
+    for internal in ("status", "archived_at", "created_at", "updated_at", "banner_id"):
+        row.pop(internal)
+    return {
+        **row,
+        "product": {
+            "code": u.product.code,
+            "name": u.product.name,
+            "slug": u.product.slug,
+            "tagline": u.product.tagline,
+        },
+    }
+
+
+def update_page_path(update_id: Any) -> str | None:
+    """The public page of a published update, or ``None`` once it is not."""
+    from workeasy360.commercial.catalog.models import ProductUpdate
+
+    row = (
+        ProductUpdate.objects.filter(
+            id=update_id, status=ProductUpdateStatus.PUBLISHED.value
+        )
+        .values("slug", "product__slug")
+        .first()
+    )
+    return f"/products/{row['product__slug']}/updates/{row['slug']}" if row else None
 
 
 def product_presentations(codes: list[str]) -> dict[str, dict[str, str]]:
@@ -595,6 +936,23 @@ def bundle_listing() -> list[dict[str, Any]]:
     ]
 
 
+def public_features(product_codes: list[str]) -> dict[str, list[dict[str, str]]]:
+    """The public features of these products - names and descriptions a partner
+    may mention (ADR-054) - by product code. One query."""
+    from workeasy360.commercial.catalog.models import Feature
+
+    out: dict[str, list[dict[str, str]]] = {c: [] for c in product_codes}
+    for f in (
+        Feature.objects.filter(product__code__in=product_codes, is_public=True)
+        .select_related("product")
+        .order_by("name")
+    ):
+        out[f.product.code].append(
+            {"key": f.key, "name": f.name, "description": f.description}
+        )
+    return out
+
+
 def features_for_product(product_id: UUID) -> list[dict[str, Any]]:
     from workeasy360.commercial.catalog.models import Feature
 
@@ -633,6 +991,7 @@ def marketplace_offers(*, at: Any) -> dict[str, list[dict[str, Any]]]:
             plan__is_public=True,
             plan__product__status=ProductStatus.AVAILABLE.value,
             plan__product__listing=ProductListing.LISTED.value,
+            plan__product__customer_store_enabled=True,
         )
         .select_related("plan", "plan__product", "plan__addon_for")
         .order_by(
@@ -680,6 +1039,7 @@ def marketplace_offers(*, at: Any) -> dict[str, list[dict[str, Any]]]:
         if not products or any(
             p.status != ProductStatus.AVAILABLE.value
             or p.listing != ProductListing.LISTED.value
+            or not p.customer_store_enabled
             for p in products
         ):
             # A bundle that would sell a withdrawn or private product is not
@@ -727,7 +1087,10 @@ def public_products() -> list[dict[str, Any]]:
             | Q(
                 listing=ProductListing.COMING_SOON.value,
                 status__in=[ProductStatus.DRAFT.value, ProductStatus.AVAILABLE.value],
-            )
+            ),
+            # ADR-051: "Customer Store: Not allowed" keeps it off every
+            # customer-facing listing.
+            customer_store_enabled=True,
         )
         .select_related("trial_config")
         .prefetch_related(
@@ -780,3 +1143,29 @@ def product_facts(codes: list[str]) -> dict[str, dict[str, Any]]:
             ),
         }
     return out
+
+
+def product_counts(*, start: Any, end: Any) -> dict[str, int]:
+    """For the Super Admin dashboard: the products that are not retired and
+    existed by ``end`` (``total``), those on sale now (``available``), and how
+    many were added in ``[start, end)``."""
+    from django.db.models import Count, Q
+
+    from workeasy360.commercial.catalog.models import Product
+    from workeasy360.contracts.enums import ProductStatus
+
+    counts = Product.objects.exclude(status=ProductStatus.RETIRED.value).aggregate(
+        total=Count("id", filter=Q(created_at__lt=end)),
+        available=Count("id", filter=Q(status=ProductStatus.AVAILABLE.value)),
+        added=Count("id", filter=Q(created_at__gte=start, created_at__lt=end)),
+    )
+    return {key: int(value or 0) for key, value in counts.items()}
+
+
+def product_names(codes: list[str]) -> dict[str, str]:
+    """Display names by product code (one query)."""
+    from workeasy360.commercial.catalog.models import Product
+
+    if not codes:
+        return {}
+    return dict(Product.objects.filter(code__in=set(codes)).values_list("code", "name"))

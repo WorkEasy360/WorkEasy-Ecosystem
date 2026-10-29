@@ -29,6 +29,14 @@ class PartnersConfig(AppConfig):
 
         authz.register_principal_resolver(PrincipalKind.PARTNER, partner_permissions)
 
+        # ADR-053: a storefront order makes its buyer the partner's customer at
+        # fulfilment. payments sits below partners, so it calls back through
+        # this one registration rather than importing partners.
+        from workeasy360.commercial.partners.storefront import attach_customer
+        from workeasy360.commercial.payments.orders import on_storefront_fulfil
+
+        on_storefront_fulfil(attach_customer)
+
         # Phase 12: custom-domain state for the "custom-domain failures" alert
         # (partner tables are global, D-019, so these are real totals).
         from workeasy360.platform.observability.health import register_gauges

@@ -159,8 +159,16 @@ def test_no_new_tables_for_partners_staff_or_identity():
         # 0008 only back-fills that column (tests/partner_management).
         # 0009 adds the partner upgrade request table (ADR-049); tests/partner_upgrade
         # pins that the migration is that one CreateModel and nothing else.
-        "commercial/partners": "0009_partner_upgrade_request.py",
-        "commercial/commissions": "0003_payout_list_keyset_index.py",
+        # 0010 adds the set-up fee table and three request columns (ADR-053);
+        # tests/ecosystem pins what they do. 0011 adds the promotion grant
+        # (ADR-054); tests/affiliate_products pins what it does.
+        "commercial/partners": "0011_promotion_grants.py",
+        # 0004 adds one column to the rule table (recurring, ADR-052); 0005 the
+        # margin rule, campaigns and the funnel/ledger columns (ADR-053); 0006
+        # the referral policy, link kinds, the trial step and the payment
+        # reference (ADR-054) - tests/store, tests/ecosystem and
+        # tests/affiliate_products pin what they do.
+        "commercial/commissions": "0006_affiliate_products.py",
         "platform/authz": "0009_billing_manage_not_dangerous.py",
         "platform/identity": "0008_password_change_required.py",
     }

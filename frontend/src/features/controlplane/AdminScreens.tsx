@@ -2,150 +2,13 @@
 
 import { useId, useState } from "react";
 import Link from "next/link";
-import { StatTile } from "@/components/charts/Charts";
-import { adminApi, type CustomerDetail, type Dashboard as DashboardSummary, type Diagnosis } from "@/lib/api/controlPlane";
+import { adminApi, type CustomerDetail, type Diagnosis } from "@/lib/api/controlPlane";
 import { adminConsoleApi } from "@/lib/api/adminConsole";
 import { can, useAdmin } from "./ControlShell";
 import { CustomerBilling } from "./AdminBilling";
 import { StaffRolesPanel } from "./AdminCommerce";
-import { LoadGate, MoreButton, ReasonAction, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
+import { LoadGate, MoreButton, ReasonAction, Status, Table, autoReason, useAction, useLoad, usePaged, when } from "./ui";
 import styles from "./ControlPlane.module.css";
-import consoleStyles from "@/features/console/Console.module.css";
-
-// --- dashboard -------------------------------------------------------------------
-
-/** The dashboard's Phase 8 sections, each present only when the caller holds
- * its grant (users: platform.staff_user.view; collections:
- * platform.staff_payment.view). Kept local: controlPlane.ts is the Phase 7
- * contract the backend's tests parse. */
-type DashboardData = DashboardSummary & {
-  users?: { window_days: number; total: number; active: number; new: number; signed_in: number };
-  collections?: { days: number; by_currency: { currency: string; amount_minor: number; payments: number }[] };
-};
-
-const total = (values: Record<string, number>) => Object.values(values).reduce((sum, n) => sum + n, 0);
-const breakdown = (values: Record<string, number>) =>
-  Object.entries(values)
-    .map(([k, n]) => `${n} ${k.replace(/_/g, " ")}`)
-    .join(" · ") || "None yet";
-
-export function Dashboard() {
-  const [load] = useLoad(() => adminApi.dashboard() as Promise<DashboardData>, []);
-  return (
-    <div className={styles.stack}>
-      <h1>Dashboard</h1>
-      <LoadGate load={load} what="the dashboard">
-        {(d) => (
-          <>
-            <section className={styles.stack} aria-labelledby="dash-audience">
-              <h2 id="dash-audience" className={styles.cardTitle}>
-                Audience
-              </h2>
-              <div className={consoleStyles.tiles}>
-                <StatTile label="Customer organizations" value={total(d.organizations)} note={breakdown(d.organizations)} />
-                {d.users && (
-                  <>
-                    <StatTile label="User accounts" value={d.users.total} note={`${d.users.active} active`} />
-                    <StatTile label={`New users (last ${d.users.window_days} days)`} value={d.users.new} />
-                    <StatTile label={`Signed in (last ${d.users.window_days} days)`} value={d.users.signed_in} />
-                  </>
-                )}
-                {d.partners && <StatTile label="Partners" value={total(d.partners)} note={breakdown(d.partners)} />}
-              </div>
-            </section>
-            <section className={styles.stack} aria-labelledby="dash-subs">
-              <h2 id="dash-subs" className={styles.cardTitle}>
-                Subscriptions by status
-              </h2>
-              {Object.keys(d.subscriptions).length === 0 ? (
-                <p className={styles.muted}>No subscriptions yet.</p>
-              ) : (
-                <div className={consoleStyles.tiles}>
-                  {Object.entries(d.subscriptions).map(([status, n]) => (
-                    <StatTile key={status} label={status.replace(/_/g, " ")} value={n} />
-                  ))}
-                </div>
-              )}
-            </section>
-            {d.collections && (
-              <section className={styles.stack} aria-labelledby="dash-collections">
-                <h2 id="dash-collections" className={styles.cardTitle}>
-                  Collected in the last {d.collections.days} days
-                </h2>
-                {d.collections.by_currency.length === 0 ? (
-                  <p className={styles.muted}>No payments collected in this period.</p>
-                ) : (
-                  <div className={consoleStyles.tiles}>
-                    {d.collections.by_currency.map((c) => (
-                      <StatTile
-                        key={c.currency}
-                        label={c.currency}
-                        value={money(c.amount_minor, c.currency)}
-                        note={`${c.payments} ${c.payments === 1 ? "payment" : "payments"}`}
-                      />
-                    ))}
-                  </div>
-                )}
-                <p className={styles.muted}>Per currency, never converted or summed across currencies.</p>
-              </section>
-            )}
-            <section className={styles.grid} aria-label="Platform health">
-              <Stat label="Event outbox" values={d.outbox} />
-            </section>
-            {d.pending_payouts && (
-              <section className={`w360-card ${styles.card}`}>
-                <h2 className={styles.cardTitle}>Payouts awaiting action</h2>
-                <Table
-                  caption="Payouts awaiting action"
-                  head={["Status", "Currency", "Count", "Payable"]}
-                  isEmpty={d.pending_payouts.length === 0}
-                  empty="No payouts are waiting."
-                >
-                  {d.pending_payouts.map((p) => (
-                    <tr key={`${p.status}-${p.currency}`}>
-                      <td>
-                        <Status value={p.status} />
-                      </td>
-                      <td>{p.currency}</td>
-                      <td>{p.count}</td>
-                      <td className={styles.num}>{money(p.payable_minor, p.currency)}</td>
-                    </tr>
-                  ))}
-                </Table>
-              </section>
-            )}
-            <section className={`w360-card ${styles.card}`}>
-              <h2 className={styles.cardTitle}>Recurring revenue</h2>
-              <p className={styles.muted}>
-                {d.mrr.available ? "Available." : `Not shown. ${d.mrr.reason}`}
-              </p>
-            </section>
-          </>
-        )}
-      </LoadGate>
-    </div>
-  );
-}
-
-function Stat({ label, values }: { label: string; values: Record<string, number> }) {
-  const entries = Object.entries(values);
-  return (
-    <div className={`w360-card ${styles.stat}`}>
-      <h2 className={styles.cardTitle}>{label}</h2>
-      {entries.length === 0 ? (
-        <p className={styles.muted}>None</p>
-      ) : (
-        <ul>
-          {entries.map(([k, v]) => (
-            <li key={k}>
-              <span className={styles.statValue}>{v}</span> {k.replace(/_/g, " ")}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
 
 // --- customers --------------------------------------------------------------------
 
@@ -389,11 +252,9 @@ function OverridePanel({
   const kindId = useId();
   const codeId = useId();
   const daysId = useId();
-  const reasonId = useId();
   const [kind, setKind] = useState<"product_code" | "feature_key">("product_code");
   const [code, setCode] = useState("");
   const [days, setDays] = useState(30);
-  const [reason, setReason] = useState("");
 
   return (
     <div className={styles.stack}>
@@ -428,9 +289,8 @@ function OverridePanel({
             e.preventDefault();
             const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
             void act(async () => {
-              await adminApi.grantOverride(organizationId, { [kind]: code.trim(), reason: reason.trim(), expires_at: expires });
+              await adminApi.grantOverride(organizationId, { [kind]: code.trim(), reason: autoReason("Grant override"), expires_at: expires });
               setCode("");
-              setReason("");
             }, "Override granted; access was recomputed.");
           }}
         >
@@ -461,14 +321,8 @@ function OverridePanel({
               ))}
             </select>
           </div>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={reasonId}>
-              Reason (recorded in the audit log)
-            </label>
-            <input id={reasonId} className="w360-input" required minLength={10} maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} />
-          </div>
           <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !code.trim() || reason.trim().length < 10}>
+            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !code.trim()}>
               Grant override
             </button>
           </div>
@@ -688,11 +542,9 @@ export function SecurityScreen() {
   const manage = can(permissions, "platform.staff_security.manage");
   const emailId = useId();
   const permId = useId();
-  const reasonId = useId();
   const expiresId = useId();
   const [email, setEmail] = useState("");
   const [permission, setPermission] = useState("platform.staff_customer.view");
-  const [reason, setReason] = useState("");
   // Optional: the last moment of the chosen (local) day. Empty means no expiry.
   const [expiresOn, setExpiresOn] = useState("");
   const [today] = useState(() => new Date().toISOString().slice(0, 10));
@@ -734,7 +586,7 @@ export function SecurityScreen() {
             e.preventDefault();
             const expiresAt = expiresOn ? new Date(`${expiresOn}T23:59:59`).toISOString() : undefined;
             void act(
-              () => adminApi.grantPermission(email.trim(), permission.trim(), reason.trim(), expiresAt),
+              () => adminApi.grantPermission(email.trim(), permission.trim(), autoReason("Grant permission"), expiresAt),
               "Permission granted.",
             );
           }}
@@ -753,19 +605,13 @@ export function SecurityScreen() {
             <input id={permId} className="w360-input" required value={permission} onChange={(e) => setPermission(e.target.value)} />
           </div>
           <div className={styles.field}>
-            <label className="w360-label" htmlFor={reasonId}>
-              Reason (recorded)
-            </label>
-            <input id={reasonId} className="w360-input" required minLength={10} maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} />
-          </div>
-          <div className={styles.field}>
             <label className="w360-label" htmlFor={expiresId}>
               Expires on (optional)
             </label>
             <input id={expiresId} className="w360-input" type="date" min={today} value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
           </div>
           <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || reason.trim().length < 10}>
+            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
               Grant
             </button>
           </div>

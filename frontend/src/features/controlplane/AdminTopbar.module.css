@@ -1,0 +1,257 @@
+/* The Super Admin's top bar tools, on the navy shell (tokens only). */
+
+.spacer {
+  flex: 1;
+}
+
+.search {
+  position: relative;
+  flex: 0 1 340px;
+  min-width: 0;
+}
+
+.search form {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  height: 42px;
+  padding: 0 var(--w360-space-2) 0 var(--w360-space-3);
+  background: var(--w360-shell-raised);
+  border: 1px solid var(--w360-shell-border);
+  border-radius: var(--w360-radius-sm);
+  color: var(--w360-shell-muted);
+}
+
+.search form:focus-within {
+  border-color: var(--w360-shell-muted);
+}
+
+.searchIcon {
+  display: inline-flex;
+  flex: none;
+}
+
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: var(--w360-shell-text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.searchInput::placeholder {
+  color: var(--w360-shell-muted);
+  opacity: 1;
+}
+
+.searchInput:focus {
+  outline: none;
+}
+
+.kbd {
+  flex: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border: 1px solid var(--w360-shell-border);
+  border-radius: var(--w360-radius-sm);
+  color: var(--w360-shell-muted);
+}
+
+.results {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  list-style: none;
+  margin: 0;
+  padding: var(--w360-space-2);
+  background: var(--w360-surface-raised);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  box-shadow: var(--w360-shadow-md);
+  color: var(--w360-text);
+}
+
+.result {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--w360-space-3);
+  padding: 8px 10px;
+  border-radius: var(--w360-radius-sm);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.result[aria-selected="true"] {
+  background: var(--w360-brand-soft);
+  color: var(--w360-brand);
+  font-weight: 600;
+}
+
+.resultHint {
+  color: var(--w360-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.popoverWrap {
+  position: relative;
+  flex: none;
+}
+
+.newButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  height: 42px;
+  padding: 0 var(--w360-space-4);
+  border: none;
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-shell-marker);
+  color: var(--w360-cta-contrast);
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.newButton:hover {
+  background: var(--w360-cta-hover);
+}
+
+.caret {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.iconButton {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--w360-shell-text);
+  flex: none;
+}
+
+.iconButton:hover {
+  background: var(--w360-shell-raised);
+}
+
+.iconButton svg {
+  width: 22px;
+  height: 22px;
+}
+
+.badge {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--w360-danger);
+  color: var(--w360-danger-contrast);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--w360-shell);
+}
+
+.popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+  min-width: 220px;
+  padding: var(--w360-space-2);
+  display: flex;
+  flex-direction: column;
+  background: var(--w360-surface-raised);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  box-shadow: var(--w360-shadow-md);
+  color: var(--w360-text);
+}
+
+.bellPanel {
+  width: min(320px, 90vw);
+}
+
+.popoverTitle {
+  margin: var(--w360-space-1) 10px var(--w360-space-2);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.empty {
+  margin: 0 10px var(--w360-space-2);
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+.attention {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.menuItem {
+  display: block;
+  padding: 8px 10px;
+  border-radius: var(--w360-radius-sm);
+  color: var(--w360-text);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.menuItem:hover {
+  background: var(--w360-brand-soft);
+}
+
+@media (max-width: 1100px) {
+  .kbd {
+    display: none;
+  }
+}
+
+/* Narrow: the search drops out of the bar (the menu holds every page) and the
+   New button keeps its symbol only. */
+@media (max-width: 700px) {
+  .search {
+    display: none;
+  }
+
+  .newButton {
+    padding: 0 var(--w360-space-3);
+  }
+}
+
+@media (max-width: 480px) {
+  .newButton {
+    font-size: 0;
+  }
+
+  .newButton span:first-child {
+    font-size: 20px;
+  }
+
+  .caret {
+    display: none;
+  }
+
+  /* The settings page is in the menu; on a phone the bar keeps New, the bell
+     and the account. */
+  a.iconButton {
+    display: none;
+  }
+}

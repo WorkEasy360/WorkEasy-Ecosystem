@@ -27,6 +27,10 @@ from django.db import transaction
 from django.utils import timezone
 
 from workeasy360.commercial.catalog.domain import (
+    MAX_MEDIA_CAPTION,
+    MAX_SCREENSHOTS,
+    MAX_STORE_SUMMARY,
+    MAX_STORE_TITLE,
     assert_catalog_transition,
     assert_product_transition,
     slug_for_code,
@@ -34,9 +38,12 @@ from workeasy360.commercial.catalog.domain import (
     validate_feature_key,
     validate_feature_value,
     validate_icon,
+    validate_link_url,
     validate_marketing_url,
+    validate_media,
     validate_product_code,
     validate_slug,
+    validate_store_text,
     validate_tagline,
     validate_trial_terms,
 )
@@ -49,6 +56,7 @@ from workeasy360.contracts.enums import (
     PlanBillingType,
     PlanKind,
     ProductListing,
+    ProductMediaKind,
     ProductStatus,
 )
 from workeasy360.contracts.errors import (
@@ -69,6 +77,29 @@ MANAGE = "commercial.catalog.manage"
 def _authorise(ctx: TenantContext, operation: str) -> None:
     authz.require(ctx, MANAGE)
     authz.require_platform_staff(ctx, operation=operation, permission=MANAGE)
+
+
+def _refresh_public_catalog() -> None:
+    """Once this transaction commits, move the public catalog's cache to a new
+    generation (ADR-052): a product just published shows at once, one just
+    hidden disappears at once, rather than up to a cache lifetime later. A
+    cache outage only means the old entry expires on its own."""
+    from django.core.cache import cache
+
+    from workeasy360.commercial.catalog.selectors import PUBLIC_CATALOG_GENERATION_KEY
+
+    def bump() -> None:
+        try:
+            try:
+                cache.incr(PUBLIC_CATALOG_GENERATION_KEY)
+            except ValueError:  # the key does not exist yet
+                cache.set(PUBLIC_CATALOG_GENERATION_KEY, 1, None)
+        except Exception as exc:
+            logger.warning(
+                "catalog.public.generation_unavailable", error_type=type(exc).__name__
+            )
+
+    transaction.on_commit(bump)
 
 
 def _one(queryset: Any, **lookup: Any) -> Any:
@@ -105,9 +136,14 @@ def create_product(
     listing: ProductListing = ProductListing.LISTED,
     category: str = "",
     icon: str = "",
+    listing_details: dict[str, Any] | None = None,
 ) -> Any:
     """Register a sellable SKU. Starts in ``draft`` - never sellable on
-    creation, because a product with no plan and no price is not a product."""
+    creation, because a product with no plan and no price is not a product.
+
+    ``listing_details`` (ADR-051) carries the Product Manager's store-listing
+    and availability fields (``LISTING_DETAIL_FIELDS``), validated exactly as
+    an edit validates them."""
     from workeasy360.commercial.catalog.models import Product
 
     _authorise(ctx, "catalog.product.create")
@@ -117,6 +153,14 @@ def create_product(
     clean_url = validate_marketing_url(marketing_url)
     clean_category = validate_category(category)
     clean_icon = validate_icon(icon)
+    details = listing_details or {}
+    unknown = sorted(set(details) - set(LISTING_DETAIL_FIELDS))
+    if unknown:
+        raise CatalogValidationError(
+            f"These product fields cannot be set here: {', '.join(unknown)}.",
+            field=unknown[0],
+        )
+    clean_details = _clean_product_changes(details)
 
     with transaction.atomic():
         if Product.objects.filter(code=str(validated)).exists():
@@ -141,6 +185,7 @@ def create_product(
             listing=listing.value,
             category=clean_category,
             icon=clean_icon,
+            **clean_details,
         )
         audit.record(
             ctx,
@@ -152,6 +197,7 @@ def create_product(
                 "licensing_mode": product.licensing_mode,
                 "slug": product.slug,
                 "listing": product.listing,
+                **{k: v for k, v in clean_details.items() if k in _CHANNEL_FLAGS},
             },
         )
     return product
@@ -161,6 +207,29 @@ def create_product(
 #: purpose: it is the stable identity entitlements, integrations and every
 #: historical subscription name the product by. ``licensing_mode`` is absent
 #: too - changing it would change how seats are counted for every customer.
+#: ADR-051: the Product Manager's store listing and where the product may be
+#: offered. Settable at creation as well as by an edit.
+LISTING_DETAIL_FIELDS = (
+    "store_title",
+    "store_summary",
+    "application_url",
+    "documentation_url",
+    "support_url",
+    "customer_store_enabled",
+    "reseller_enabled",
+    "affiliate_enabled",
+    "white_label_enabled",
+)
+_CHANNEL_FLAGS = frozenset(
+    {
+        "customer_store_enabled",
+        "reseller_enabled",
+        "affiliate_enabled",
+        "white_label_enabled",
+    }
+)
+_LINK_FIELDS = ("application_url", "documentation_url", "support_url")
+
 EDITABLE_PRODUCT_FIELDS = (
     "name",
     "description",
@@ -171,6 +240,7 @@ EDITABLE_PRODUCT_FIELDS = (
     "sort_order",
     "category",
     "icon",
+    *LISTING_DETAIL_FIELDS,
 )
 
 
@@ -222,6 +292,22 @@ def _clean_product_changes(changes: dict[str, Any]) -> dict[str, Any]:
                 "sort_order is a whole number from 0 to 10,000.", field="sort_order"
             )
         clean["sort_order"] = order
+    if "store_title" in changes:
+        clean["store_title"] = validate_store_text(
+            changes["store_title"], field="store_title", maximum=MAX_STORE_TITLE
+        )
+    if "store_summary" in changes:
+        clean["store_summary"] = validate_store_text(
+            changes["store_summary"], field="store_summary", maximum=MAX_STORE_SUMMARY
+        )
+    for key in _LINK_FIELDS:
+        if key in changes:
+            clean[key] = validate_link_url(changes[key], field=key)
+    for key in sorted(_CHANNEL_FLAGS):
+        if key in changes:
+            if not isinstance(changes[key], bool):
+                raise CatalogValidationError(f"{key} is true or false.", field=key)
+            clean[key] = changes[key]
     return clean
 
 
@@ -251,10 +337,21 @@ def update_product(
         }
         if not changed:
             return product
+        if "slug" in changed and product.activated_at is not None:
+            # ADR-051: the slug is the product's public address. Once it has
+            # been on sale, links, bookmarks and partner pages use it.
+            raise CatalogValidationError(
+                "The slug is fixed once a product has been on sale: the public "
+                "site, links and partner pages use it.",
+                field="slug",
+            )
+        if changed.get("listing") == ProductListing.LISTED.value:
+            _assert_publishable(product, overrides=changed)
         before = {key: getattr(product, key) for key in changed}
         for key, value in changed.items():
             setattr(product, key, value)
         product.save(update_fields=[*changed, "updated_at"])
+        _refresh_public_catalog()
         audit.record(
             ctx,
             "commercial.product.updated",
@@ -268,6 +365,389 @@ def update_product(
             },
         )
     return product
+
+
+# --- ADR-051: the Product Manager's lifecycle ------------------------------------------
+
+
+def _assert_publishable(product: Any, *, overrides: dict[str, Any] | None = None) -> None:
+    from workeasy360.commercial.catalog.selectors import publish_readiness
+
+    missing = [
+        i["label"] for i in publish_readiness(product, overrides=overrides) if not i["ok"]
+    ]
+    if missing:
+        raise CatalogValidationError(
+            "This product cannot be published yet. Missing: " + ", ".join(missing) + ".",
+            field="listing",
+            missing=missing,
+        )
+
+
+def _move(
+    product: Any,
+    *,
+    status: ProductStatus | None = None,
+    listing: ProductListing | None = None,
+) -> dict[str, Any] | None:
+    """Move one locked product row to ``status`` and/or ``listing``. Returns
+    the audit change set (before and after), or ``None`` when nothing moved -
+    a retry is then a no-op that records nothing. The caller audits."""
+    now = timezone.now()
+    before = {"status": product.status, "listing": product.listing}
+    fields = ["updated_at"]
+    if status is not None and product.status_enum is not status:
+        assert_product_transition(product.status_enum, status)
+        product.status = status.value
+        fields.append("status")
+        stamp = {
+            ProductStatus.AVAILABLE: "activated_at",
+            ProductStatus.DEPRECATED: "deprecated_at",
+            ProductStatus.RETIRED: "retired_at",
+        }.get(status)
+        if stamp is not None and getattr(product, stamp) is None:
+            setattr(product, stamp, now)
+            fields.append(stamp)
+    if listing is not None and product.listing != listing.value:
+        product.listing = listing.value
+        fields.append("listing")
+    if len(fields) == 1:
+        return None
+    product.save(update_fields=fields)
+    return {
+        "code": product.code,
+        "before": before,
+        "after": {"status": product.status, "listing": product.listing},
+    }
+
+
+def publish_product(ctx: TenantContext, *, product_id: UUID) -> Any:
+    """Show the product in the store: active and listed. Refused unless every
+    publish requirement is met. Publishing grants nobody anything - access is
+    an entitlement, made only by a trial or a purchase."""
+    from workeasy360.commercial.catalog.models import Product
+
+    _authorise(ctx, "catalog.product.publish")
+    with transaction.atomic():
+        product = _one(Product.objects.select_for_update(), id=product_id)
+        _assert_publishable(product)
+        changes = _move(
+            product, status=ProductStatus.AVAILABLE, listing=ProductListing.LISTED
+        )
+        if changes is not None:
+            _refresh_public_catalog()
+            audit.record(
+                ctx,
+                "commercial.product.published",
+                resource_type="catalog.product",
+                resource_id=product.id,
+                changes=changes,
+            )
+    return product
+
+
+def unpublish_product(ctx: TenantContext, *, product_id: UUID) -> Any:
+    """Hide the product from the store. Its status, holders and partners are
+    untouched: hidden products are still sold by staff, partners or contract."""
+    from workeasy360.commercial.catalog.models import Product
+
+    _authorise(ctx, "catalog.product.unpublish")
+    with transaction.atomic():
+        product = _one(Product.objects.select_for_update(), id=product_id)
+        changes = _move(product, listing=ProductListing.HIDDEN)
+        if changes is not None:
+            _refresh_public_catalog()
+            audit.record(
+                ctx,
+                "commercial.product.unpublished",
+                resource_type="catalog.product",
+                resource_id=product.id,
+                changes=changes,
+            )
+    return product
+
+
+def archive_product(ctx: TenantContext, *, product_id: UUID) -> Any:
+    """Stop selling the product and hide it, keeping every record: existing
+    subscriptions continue (``deprecated``), nothing is deleted."""
+    from workeasy360.commercial.catalog.models import Product
+
+    _authorise(ctx, "catalog.product.archive")
+    with transaction.atomic():
+        product = _one(Product.objects.select_for_update(), id=product_id)
+        if product.status_enum is ProductStatus.RETIRED:
+            return product
+        changes = _move(
+            product, status=ProductStatus.DEPRECATED, listing=ProductListing.HIDDEN
+        )
+        if changes is not None:
+            _refresh_public_catalog()
+            audit.record(
+                ctx,
+                "commercial.product.archived",
+                resource_type="catalog.product",
+                resource_id=product.id,
+                changes=changes,
+            )
+    return product
+
+
+def restore_product(ctx: TenantContext, *, product_id: UUID) -> Any:
+    """Bring an archived product back as active but hidden; publishing it again
+    is a separate, checked step. A retired product cannot return (its code is
+    spent - see ``PRODUCT_TRANSITIONS``)."""
+    from workeasy360.commercial.catalog.models import Product
+
+    _authorise(ctx, "catalog.product.restore")
+    with transaction.atomic():
+        product = _one(Product.objects.select_for_update(), id=product_id)
+        if product.status_enum is not ProductStatus.DEPRECATED:
+            raise CatalogValidationError(
+                "Only an archived product can be restored.", field="status"
+            )
+        changes = _move(product, status=ProductStatus.AVAILABLE)
+        if changes is not None:
+            _refresh_public_catalog()
+            audit.record(
+                ctx,
+                "commercial.product.restored",
+                resource_type="catalog.product",
+                resource_id=product.id,
+                changes=changes,
+            )
+    return product
+
+
+def delete_product(
+    ctx: TenantContext, *, product_id: UUID, outside_references: list[str]
+) -> str:
+    """Delete a product that was never used. ``outside_references`` names what
+    other modules still hold for it (the caller asks them); this adds what the
+    catalog itself knows. Anything at all, and the answer is Archive.
+    Returns the deleted product's code."""
+    from django.db.models import ProtectedError
+
+    from workeasy360.commercial.catalog.models import Plan, Product
+
+    _authorise(ctx, "catalog.product.delete")
+    with transaction.atomic():
+        product = _one(Product.objects.select_for_update(), id=product_id)
+        reasons = list(outside_references)
+        if (
+            product.activated_at is not None
+            or product.status_enum is not ProductStatus.DRAFT
+        ):
+            reasons.append("it has been active")
+        if (
+            Plan.objects.filter(product_id=product.id).exists()
+            or Plan.objects.filter(addon_for_id=product.id).exists()
+        ):
+            reasons.append("it has plans")
+        if product.features.exists():
+            reasons.append("it has features")
+        if reasons:
+            raise CatalogValidationError(
+                "This product cannot be deleted because "
+                + "; ".join(reasons)
+                + ". Archive it instead: its history is kept.",
+                field="product_id",
+            )
+        code = product.code
+        try:
+            product.delete()
+        except ProtectedError:
+            raise CatalogValidationError(
+                "This product is still referenced. Archive it instead.",
+                field="product_id",
+            ) from None
+        audit.record(
+            ctx,
+            "commercial.product.deleted",
+            resource_type="catalog.product",
+            resource_id=product_id,
+            changes={"code": code},
+        )
+    return code
+
+
+# --- ADR-051: store-listing images -----------------------------------------------------
+
+MEDIA_MODULE = "product_media"
+
+
+def upload_product_media(
+    ctx: TenantContext,
+    *,
+    product_id: UUID,
+    kind: ProductMediaKind,
+    content: bytes,
+    content_type: str,
+    caption: str = "",
+) -> Any:
+    """Store one listing image through the shared files platform and attach it.
+
+    Type, byte size and pixel size are checked on the bytes here; the files
+    platform checks the signature again, stores it under the platform
+    organization's key prefix and scans it before it may be served. A logo or
+    banner replaces the previous one; screenshots append, up to a limit.
+    """
+    import io
+
+    from workeasy360.commercial.catalog.models import Product, ProductMedia
+    from workeasy360.platform.files import services as files
+
+    _authorise(ctx, "catalog.product.media")
+    declared, width, height = validate_media(
+        kind=kind, content_type=content_type, data=content
+    )
+    clean_caption = (
+        validate_store_text(caption, field="caption", maximum=MAX_MEDIA_CAPTION)
+        if kind is ProductMediaKind.SCREENSHOT
+        else ""
+    )
+
+    with transaction.atomic():
+        product = _one(Product.objects.select_for_update(), id=product_id)
+        existing = list(
+            ProductMedia.objects.filter(product_id=product.id, kind=kind.value)
+        )
+        if kind is ProductMediaKind.SCREENSHOT and len(existing) >= MAX_SCREENSHOTS:
+            raise CatalogValidationError(
+                f"A product has at most {MAX_SCREENSHOTS} screenshots.", field="file"
+            )
+        file_id, _grant = files.register_upload(
+            ctx,
+            filename=f"{kind.value}.png"
+            if declared == "image/png"
+            else f"{kind.value}.jpg",
+            content_type=declared,
+            size_bytes=len(content),
+            module=MEDIA_MODULE,
+        )
+        files.store_content(ctx, file_id, io.BytesIO(content))
+        files.scan_now(file_id)
+        replaced = None
+        if kind is not ProductMediaKind.SCREENSHOT and existing:
+            replaced = str(existing[0].file_id)
+            ProductMedia.objects.filter(id=existing[0].id).delete()
+        media = ProductMedia.objects.create(
+            product=product,
+            kind=kind.value,
+            file_id=file_id,
+            width=width,
+            height=height,
+            content_type=declared,
+            size_bytes=len(content),
+            caption=clean_caption,
+            sort_order=max((m.sort_order for m in existing), default=-1) + 1
+            if kind is ProductMediaKind.SCREENSHOT
+            else 0,
+            uploaded_by_id=ctx.user_id,
+        )
+        Product.objects.filter(id=product.id).update(updated_at=timezone.now())
+        audit.record(
+            ctx,
+            "commercial.product.media_added",
+            resource_type="catalog.product",
+            resource_id=product.id,
+            changes={
+                "kind": kind.value,
+                "media_id": str(media.id),
+                "file_id": str(file_id),
+                "replaced_file_id": replaced,
+                "size_bytes": len(content),
+                "dimensions": f"{width}x{height}",
+            },
+        )
+    return media
+
+
+def _media_of(product_id: UUID, media_id: UUID) -> Any:
+    from workeasy360.commercial.catalog.models import ProductMedia
+
+    return _one(
+        ProductMedia.objects.select_for_update(), id=media_id, product_id=product_id
+    )
+
+
+def delete_product_media(ctx: TenantContext, *, product_id: UUID, media_id: UUID) -> None:
+    """Remove one listing image. The file itself stays with the files platform
+    (its retention rules apply); the product simply no longer shows it."""
+    from workeasy360.commercial.catalog.models import Product
+
+    _authorise(ctx, "catalog.product.media")
+    with transaction.atomic():
+        media = _media_of(product_id, media_id)
+        kind, file_id = media.kind, media.file_id
+        media.delete()
+        Product.objects.filter(id=product_id).update(updated_at=timezone.now())
+        audit.record(
+            ctx,
+            "commercial.product.media_removed",
+            resource_type="catalog.product",
+            resource_id=product_id,
+            changes={"kind": kind, "media_id": str(media_id), "file_id": str(file_id)},
+        )
+
+
+def update_media_caption(
+    ctx: TenantContext, *, product_id: UUID, media_id: UUID, caption: Any
+) -> Any:
+    _authorise(ctx, "catalog.product.media")
+    clean = validate_store_text(caption, field="caption", maximum=MAX_MEDIA_CAPTION)
+    with transaction.atomic():
+        media = _media_of(product_id, media_id)
+        if media.kind != ProductMediaKind.SCREENSHOT.value:
+            raise CatalogValidationError(
+                "Only a screenshot has a caption.", field="caption"
+            )
+        if media.caption != clean:
+            media.caption = clean
+            media.save(update_fields=["caption"])
+            audit.record(
+                ctx,
+                "commercial.product.media_captioned",
+                resource_type="catalog.product",
+                resource_id=product_id,
+                changes={"media_id": str(media_id)},
+            )
+    return media
+
+
+def reorder_screenshots(ctx: TenantContext, *, product_id: UUID, order: Any) -> list[Any]:
+    """Put the product's screenshots in exactly the order given: every one of
+    them, each once - never a partial list that silently drops one."""
+    from workeasy360.commercial.catalog.models import Product, ProductMedia
+
+    _authorise(ctx, "catalog.product.media")
+    if not isinstance(order, list) or not all(isinstance(i, str) for i in order):
+        raise CatalogValidationError("order is a list of screenshot ids.", field="order")
+    with transaction.atomic():
+        _one(Product.objects.select_for_update(), id=product_id)
+        shots = {
+            str(m.id): m
+            for m in ProductMedia.objects.select_for_update().filter(
+                product_id=product_id, kind=ProductMediaKind.SCREENSHOT.value
+            )
+        }
+        if sorted(order) != sorted(shots) or len(set(order)) != len(order):
+            raise CatalogValidationError(
+                "order must name every screenshot of this product exactly once.",
+                field="order",
+            )
+        for position, media_id in enumerate(order):
+            media = shots[media_id]
+            if media.sort_order != position:
+                media.sort_order = position
+                media.save(update_fields=["sort_order"])
+        audit.record(
+            ctx,
+            "commercial.product.media_reordered",
+            resource_type="catalog.product",
+            resource_id=product_id,
+            changes={"order": list(order)},
+        )
+    return [shots[i] for i in order]
 
 
 def set_product_status(
@@ -306,6 +786,7 @@ def set_product_status(
             fields.append(stamp)
         product.save(update_fields=fields)
 
+        _refresh_public_catalog()
         audit.record(
             ctx,
             "commercial.product.status_changed",
@@ -382,6 +863,7 @@ def configure_product_trial(
             "eligible_plan_codes": list(config.eligible_plan_codes),
         }
         if before != after:
+            _refresh_public_catalog()
             audit.record(
                 ctx,
                 "commercial.product.trial_configured",

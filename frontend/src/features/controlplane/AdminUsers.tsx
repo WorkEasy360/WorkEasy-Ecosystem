@@ -27,11 +27,13 @@ const LIFECYCLE_LABELS: Record<string, string> = {
  * asks for an audited reason. Nobody is offered "Deactivate" on their own
  * account (the server refuses it too).
  */
-export function Users() {
+/** `initialQuery`: a search arriving in the address (`/admin/users?q=...`, from
+ * the console's search box). */
+export function Users({ initialQuery = "" }: { initialQuery?: string } = {}) {
   const searchId = useId();
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialQuery);
   // Applied on submit, not per keystroke: one bounded request per search.
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [segment, setSegment] = useState("");
   const paged = usePaged(
     (cursor) => adminConsoleApi.users({ q: query || undefined, segment: segment || undefined, cursor }),

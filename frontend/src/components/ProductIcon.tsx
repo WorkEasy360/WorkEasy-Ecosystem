@@ -27,6 +27,9 @@ const PATHS: Record<string, string> = {
   generic: "M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z",
 };
 
+/** Every built-in visual, for a picker (the Product Manager's "Product icon"). */
+export const PRODUCT_ICON_KEYS: readonly string[] = Object.keys(PATHS);
+
 export function productIconKnown(key: string | null | undefined): boolean {
   return !!key && key in PATHS;
 }

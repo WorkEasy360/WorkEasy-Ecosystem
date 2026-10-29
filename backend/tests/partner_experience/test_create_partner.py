@@ -97,8 +97,9 @@ def test_a_white_label_partner_holds_the_commercial_set_plus_brand_and_domain(
     assert held(pid) == set(capabilities.EXPERIENCE_BUNDLES["white_label"])
     me = portal_of(ADMIN_EMAIL)
     assert me["landing"] == "white_label"
-    # The reseller workspace is contained in the white-label one: one workspace.
-    assert [w["key"] for w in me["workspaces"]] == ["white_label"]
+    # ADR-053: additive - the white-label bundle holds the reseller set, so the
+    # Reseller workspace is offered beside the White-label one.
+    assert [w["key"] for w in me["workspaces"]] == ["reseller", "white_label"]
     assert "platform.partner_branding.manage" in me["permissions"]
     assert "platform.partner_domain.manage" in me["permissions"]
     assert "platform.partner_customer.provision" in me["permissions"]

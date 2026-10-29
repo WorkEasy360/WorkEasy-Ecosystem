@@ -97,7 +97,8 @@ def test_the_request_module_touches_only_the_request_table_and_reads_the_profile
             UPGRADES.read_text(encoding="utf-8"),
         )
     )
-    assert models == {"PartnerProfile", "PartnerUpgradeRequest"}
+    # ADR-053: and the set-up fee setting it snapshots onto a request.
+    assert models == {"PartnerProfile", "PartnerUpgradeRequest", "PartnerProgramFee"}
 
 
 def test_approval_grants_through_the_one_transition_service():
@@ -110,12 +111,17 @@ def test_approval_grants_through_the_one_transition_service():
 
 @pytest.mark.parametrize("module", MODULES, ids=lambda p: p.name)
 def test_no_fee_or_amount_is_written_into_the_upgrade(module):
-    """Set-up fees and onboarding prices belong to Super Admin configuration and
-    the billing architecture; this workflow stores a reference and nothing else."""
+    """Set-up fees belong to Super Admin configuration (ADR-053:
+    ``PartnerProgramFee``, read and snapshotted, never written here as a
+    figure); this workflow charges nothing and invents no amount."""
     source = module.read_text(encoding="utf-8")
     assert not re.search(r"lakh|\b(20_?000|30_?000|100_?000|200_?000)\b", source, re.I)
     assert not re.search(r"[₹$£€]", source)
-    assert not re.search(r"amount_minor|setup_fee|onboarding_fee|invoice", source)
+    # No charge is made: nothing here creates an order, an invoice or a payment.
+    assert not re.search(
+        r"payments\.(models|orders|checkout)|Invoice\(|create_invoice|onboarding_fee",
+        source,
+    )
 
 
 def test_no_model_or_column_makes_a_partner_a_reseller_a_white_label_or_an_affiliate():

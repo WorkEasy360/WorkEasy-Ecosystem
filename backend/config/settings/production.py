@@ -145,6 +145,8 @@ for _portal in ("admin", "partner", "app", "auth", "api"):
 SESSION_COOKIE_NAME = "__Host-w360_session"
 CSRF_COOKIE_NAME = "__Host-w360_csrf"
 PORTAL_STATE_COOKIE_NAME = "__Host-w360_portal_state"
+REFERRAL_COOKIE_NAME = "__Host-w360_ref"
+REFERRAL_VISITOR_COOKIE_NAME = "__Host-w360_vid"
 SESSION_COOKIE_DOMAIN = None
 CSRF_COOKIE_DOMAIN = None
 

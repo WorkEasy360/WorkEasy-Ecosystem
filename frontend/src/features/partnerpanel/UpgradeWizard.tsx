@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { LoadGate, useAction, useLoad } from "@/features/controlplane/ui";
+import { LoadGate, money, useAction, useLoad } from "@/features/controlplane/ui";
 import { panelApi, type OwnProfile, type UpgradeRequest, type UpgradeState, type UpgradeTarget } from "@/lib/api/partnerPanel";
 import { workspaceHome } from "./experiences";
 import { PageHeader, usePanel } from "./PanelKit";
@@ -124,6 +124,12 @@ function Intro({ state, target, onStarted }: { state: UpgradeState; target: Upgr
           <li>Your referral links, commissions, payouts and history stay exactly as they are.</li>
           <li>You answer a few questions ({steps.map((s) => s.label.toLowerCase()).join(", ")}). Each step is saved as you go.</li>
           <li>Workeasy360 reviews the request. Nothing about your account changes until it is approved.</li>
+          {state.fees?.[target] && (
+            <li>
+              A one-time set-up fee of {money(state.fees[target]!.amount_minor, state.fees[target]!.currency)} applies. Workeasy360 invoices it and
+              approves the upgrade once it is paid.
+            </li>
+          )}
         </ul>
         {feedback}
         {state.can_request ? (
@@ -310,6 +316,12 @@ function Review({
           ))}
         </ul>
       </section>
+      {request.setup_fee && (
+        <p role="note">
+          Set-up fee: {money(request.setup_fee.amount_minor, request.setup_fee.currency)} -{" "}
+          {request.setup_fee.settled ? "paid." : "Workeasy360 invoices it; the upgrade is approved once it is paid."}
+        </p>
+      )}
       <p className={styles.muted}>
         Workeasy360 reviews every request. Nothing about your account changes until it is approved, and you keep using your current workspace in the
         meantime.

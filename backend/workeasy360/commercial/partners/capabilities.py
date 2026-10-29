@@ -303,11 +303,13 @@ EXPERIENCE_DESCRIPTIONS: Final[dict[str, str]] = {
     AFFILIATE: "Promote Workeasy360 products and earn commission from referrals.",
 }
 
-#: An experience whose workspace shows everything another one does, and more. A
-#: partner that wears both labels is offered the larger workspace only: the
-#: white-label menu holds every entry the reseller menu does (each gated by the
-#: same permission), so a separate Reseller workspace would show it nothing new.
-SUBSUMED_BY: Final[dict[str, str]] = {RESELLER: WHITE_LABEL}
+#: An experience whose workspace another one replaces when both are earned.
+#: Empty since ADR-053: the owner's model is additive - a partner holding the
+#: White-label bundle (which includes the reseller's commercial set) is offered
+#: the Reseller workspace beside the White-label one, and an upgraded affiliate
+#: switches between Affiliate, Reseller and White-label. Switching is
+#: presentation only; every request is authorized again from the grants.
+SUBSUMED_BY: Final[dict[str, str]] = {}
 
 
 def require_experience(key: object) -> str:
@@ -334,13 +336,18 @@ def workspaces(held: frozenset[str] | set[str]) -> list[str]:
     return [key for key in earned if SUBSUMED_BY.get(key) not in earned]
 
 
+#: With no usable preference a partner opens its largest workspace first: the
+#: one whose grants include the others' selling power (ADR-053 keeps them all).
+LANDING_ORDER: Final = (WHITE_LABEL, RESELLER, AFFILIATE)
+
+
 def resolve_landing(stored: str, held: frozenset[str] | set[str]) -> str | None:
     """The workspace a partner opens first: the stored preference when its
     capabilities still allow it, else the workspace that now contains it, else
-    the first workspace there is. ``None`` for a partner that earns no label
-    (the generic portal opens). The preference only ever **selects among**
-    workspaces the grants already allow; it grants nothing and removes
-    nothing."""
+    the largest workspace there is (``LANDING_ORDER``). ``None`` for a partner
+    that earns no label (the generic portal opens). The preference only ever
+    **selects among** workspaces the grants already allow; it grants nothing
+    and removes nothing."""
     options = workspaces(held)
     if not options:
         return None
@@ -349,7 +356,7 @@ def resolve_landing(stored: str, held: frozenset[str] | set[str]) -> str | None:
     inside = SUBSUMED_BY.get(stored)
     if inside is not None and inside in options:
         return inside
-    return options[0]
+    return min(options, key=LANDING_ORDER.index)
 
 
 def experience_keys(label: str) -> frozenset[str]:

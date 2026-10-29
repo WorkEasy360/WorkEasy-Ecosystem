@@ -2,6 +2,8 @@
 
 import { useId, useState } from "react";
 import Link from "next/link";
+import { ReferralTrailPanel } from "@/features/partnerpanel/AffiliateProducts";
+import { adminProgrammeApi } from "@/lib/api/adminProgramme";
 import { adminApi, type PartnerDetail } from "@/lib/api/controlPlane";
 import {
   partnerConsoleApi,
@@ -19,7 +21,7 @@ import { PayoutRowView } from "./AdminMoney";
 import { MembersSection } from "./PartnerMembers";
 import { Section } from "./PartnerSection";
 import { TAB_LABELS, type TabKey, type TabProps } from "./partnerTabs";
-import { LoadGate, MoreButton, ReasonAction, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
+import { LoadGate, MoreButton, ReasonAction, Status, Table, autoReason, money, useAction, useLoad, usePaged, when } from "./ui";
 import { formatBasisPoints, toBasisPoints, toMinor } from "./amounts";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
@@ -441,51 +443,101 @@ export const sellsFrom = (summary: TabProps["summary"], partner: TabProps["partn
   return labels.includes("reseller") || labels.includes("white_label");
 };
 
-/** Products: what this partner may sell (product grants and their two options).
- * An affiliate is granted no product: what it promotes is the scope of its
- * commission, so for a partner that does not sell this says so instead. */
+/** Products: what this partner may sell (product grants and their two options)
+ * and - for a partner holding the referral capability - which products it may
+ * promote with referral links (ADR-054). Selling, promoting and a customer's
+ * use of a product are three separate permissions. */
 export function ProductsTab(props: TabProps) {
-  return sellsFrom(props.summary, props.partner) ? <ProductGrantsPanel {...props} /> : <PromotionPanel {...props} />;
-}
-
-function PromotionPanel({ partnerId, rev }: TabProps) {
-  const [state] = useLoad(() => partnerConsoleApi.commission(partnerId), [partnerId, rev]);
-  const [catalog] = useLoad(() => partnerConsoleApi.products().catch(() => ({ results: [] })), []);
-  const nameOf = (code: string) => (catalog.status === "ready" ? (catalog.data.results.find((p) => p.code === code)?.name ?? code) : code);
+  const promotes =
+    props.summary.status === "ready"
+      ? props.summary.data.capabilities.some((c) => c.key === "referral.create")
+      : props.partner.capabilities.some((c) => c.capability === "referral.create" && c.is_effective);
+  const sells = sellsFrom(props.summary, props.partner);
   return (
     <div className={styles.stack}>
-      <Section title="Products this partner promotes">
-        <p className={styles.muted}>
-          An affiliate promotes Workeasy360 products and earns commission on the customers it refers. It is granted no product: it cannot
-          sell, price or administer anything for a customer. What it promotes is the scope of its commission rate - all products, or one
-          product per rate - set on the Commission step.
-        </p>
-        <LoadGate load={state} what="the commission scope">
-          {(d) => {
-            const scoped = [...new Set(d.rules.filter((r) => r.state !== "superseded").map((r) => r.product_code))];
-            if (scoped.length === 0) return <p>No rate of its own yet: the programme&apos;s default rate applies to every product.</p>;
-            return (
-              <ul className={local.checks}>
-                {scoped.map((code) => (
-                  <li key={code || "all"}>{code ? nameOf(code) : "All products"}</li>
-                ))}
-              </ul>
-            );
-          }}
-        </LoadGate>
-      </Section>
-      {catalog.status === "ready" && (
-        <Section title="Products in the catalog">
-          <ul className={local.checks}>
-            {catalog.data.results
-              .filter((p) => p.status === "available")
-              .map((p) => (
-                <li key={p.code}>{p.name}</li>
-              ))}
-          </ul>
-        </Section>
-      )}
+      {sells && <ProductGrantsPanel {...props} />}
+      {(promotes || !sells) && <PromotionPanel {...props} promotes={promotes} />}
     </div>
+  );
+}
+
+function PromotionPanel({ partnerId, partner, rev, promotes }: TabProps & { promotes: boolean }) {
+  const { permissions } = useAdmin();
+  const manage = can(permissions, "platform.staff_partner.manage") && partner.status !== "terminated" && promotes;
+  const [grants, reload] = useLoad(() => adminProgrammeApi.promotions(partnerId), [partnerId, rev]);
+  const [catalog] = useLoad(() => partnerConsoleApi.products().catch(() => ({ results: [] })), []);
+  const { act, busy, feedback } = useAction(reload);
+  const productId = useId();
+  const [product, setProduct] = useState("");
+  const live = grants.status === "ready" ? grants.data.grants.filter((g) => g.status === "active") : [];
+  const held = new Set(live.map((g) => g.product_code));
+  return (
+    <Section title="Products this partner may promote">
+      <p className={styles.muted}>
+        The partner can create referral links - product page, pricing, features and updates - only for the products assigned here. Promoting
+        a product is not selling it and gives no one access to it. Removing one stops new links at once; its existing links follow the
+        affiliate attribution policy, and referrals and commission already earned are kept.
+      </p>
+      {!promotes && <p className={styles.muted}>This partner does not hold the referral capability, so it cannot promote products.</p>}
+      {feedback}
+      <LoadGate load={grants} what="the promotion grants">
+        {(d) => (
+          <Table caption="Promotion grants" head={["Product", "Since", "Status", ""]} isEmpty={d.grants.length === 0} empty="No product assigned yet.">
+            {d.grants.map((g) => (
+              <tr key={g.id}>
+                <th scope="row">{g.product_name}</th>
+                <td>{when(g.granted_at)}</td>
+                <td>{g.status === "active" ? <Status value="active" /> : `Removed ${when(g.revoked_at)}`}</td>
+                <td>
+                  {manage && g.status === "active" && (
+                    <button
+                      type="button"
+                      className="w360-btn w360-btn-secondary"
+                      disabled={busy}
+                      onClick={() => void act(() => adminProgrammeApi.revokePromotion(partnerId, g.id), "Product removed from promotion.")}
+                    >
+                      Remove<span className="w360-visually-hidden"> {g.product_name}</span>
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </LoadGate>
+      {manage && (
+        <form
+          className={styles.form}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void act(() => adminProgrammeApi.grantPromotion(partnerId, product), "Product assigned for promotion.");
+            setProduct("");
+          }}
+        >
+          <div className={styles.field}>
+            <label className="w360-label" htmlFor={productId}>
+              Assign a product to promote
+            </label>
+            <select id={productId} className="w360-input" required value={product} onChange={(e) => setProduct(e.target.value)}>
+              <option value="">Choose…</option>
+              {catalog.status === "ready" &&
+                catalog.data.results
+                  .filter((p) => p.status === "available" && !held.has(p.code))
+                  .map((p) => (
+                    <option key={p.code} value={p.code}>
+                      {p.name}
+                    </option>
+                  ))}
+            </select>
+          </div>
+          <div>
+            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !product}>
+              Assign product
+            </button>
+          </div>
+        </form>
+      )}
+    </Section>
   );
 }
 
@@ -814,11 +866,9 @@ function CommissionSection({
 }) {
   const [state] = useLoad(() => partnerConsoleApi.commission(partnerId), [partnerId, rev]);
   const rateId = useId();
-  const reasonId = useId();
   const scopeId = useId();
   const fromId = useId();
   const [rate, setRate] = useState("");
-  const [reason, setReason] = useState("");
   const [scope, setScope] = useState("");
   const [from, setFrom] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
@@ -867,7 +917,7 @@ function CommissionSection({
                     () =>
                       partnerConsoleApi.assignCommission(partnerId, {
                         rate_bp: bp,
-                        reason: reason.trim(),
+                        reason: autoReason("Assign commission rate"),
                         expected_version: d.live_versions[scope] ?? 0,
                         product_code: scope || undefined,
                         effective_from: from ? new Date(from).toISOString() : undefined,
@@ -903,19 +953,13 @@ function CommissionSection({
                   </label>
                   <input id={fromId} className="w360-input" type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
                 </div>
-                <div className={styles.field}>
-                  <label className="w360-label" htmlFor={reasonId}>
-                    Reason (recorded in the audit log)
-                  </label>
-                  <input id={reasonId} className="w360-input" required minLength={10} maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} />
-                </div>
                 {problem && (
                   <p role="alert" className="w360-error-text">
                     {problem}
                   </p>
                 )}
                 <div>
-                  <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !rate.trim() || reason.trim().length < 10}>
+                  <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !rate.trim()}>
                     Assign rate
                   </button>
                 </div>
@@ -1311,6 +1355,7 @@ const REFERRAL_STATES: { key: string; label: string }[] = [
  * referral row identifies nothing about who was referred. */
 export function ReferralsTab({ partnerId, rev }: TabProps) {
   const [head, setHead] = useState<Pick<PartnerReferrals, "summary" | "codes"> | null>(null);
+  const [trail, setTrail] = useState<string | null>(null);
   const paged = usePaged(
     async (cursor?: string) => {
       const page = await partnerConsoleApi.referrals(partnerId, cursor);
@@ -1350,7 +1395,7 @@ export function ReferralsTab({ partnerId, rev }: TabProps) {
               </tr>
             ))}
           </Table>
-          <Table caption="Referrals" head={["Code", "Status", "Captured", "Converted"]} isEmpty={paged.rows.length === 0} empty="No referral has been captured yet.">
+          <Table caption="Referrals" head={["Code", "Status", "Captured", "Converted", "Attribution"]} isEmpty={paged.rows.length === 0} empty="No referral has been captured yet.">
             {paged.rows.map((r) => (
               <tr key={r.id}>
                 <th scope="row" className={styles.mono}>
@@ -1361,10 +1406,22 @@ export function ReferralsTab({ partnerId, rev }: TabProps) {
                 </td>
                 <td>{when(r.captured_at)}</td>
                 <td>{when(r.converted_at)}</td>
+                <td>
+                  <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setTrail(r.id)}>
+                    View trail<span className="w360-visually-hidden"> for referral {r.code}</span>
+                  </button>
+                </td>
               </tr>
             ))}
           </Table>
           <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+          {trail && (
+            <ReferralTrailPanel
+              referralId={trail}
+              fetchTrail={(r) => adminProgrammeApi.referralTrail(partnerId, r)}
+              onClose={() => setTrail(null)}
+            />
+          )}
         </>
       )}
     </div>

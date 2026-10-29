@@ -545,7 +545,7 @@ for (const [key, spec] of Object.entries(SPECS)) spec.password = PARTNER_PASSWOR
 const NAV = {
   reseller: ["Dashboard", "Customers", "Products & Plans", "Pricing & Margins", "Sales & Orders", "Subscriptions", "Commissions", "Payouts", "Sub-Resellers", "Team & Permissions", "Reports & Analytics", "Support", "Settings"],
   whiteLabel: ["Dashboard", "Brand Settings", "Custom Domain", "Website Branding", "Products & Plans", "Pricing & Plans", "Customers", "Subscriptions", "Orders & Billing", "Commissions", "Payouts", "Team & Permissions", "Reports & Analytics", "Support", "Settings"],
-  affiliate: ["Dashboard", "Referral Links", "Referral Codes", "Campaigns", "Marketing Materials", "Leads & Referrals", "Conversions", "Commissions", "Payouts", "Reports & Analytics", "Profile & Settings", "Support"],
+  affiliate: ["Dashboard", "My Products", "Referral Links", "Referral Codes", "Campaigns", "Marketing Materials", "Leads & Referrals", "Conversions", "Commissions", "Payouts", "Reports & Analytics", "Profile & Settings", "Support"],
 };
 
 const made = {}; // key -> { id, href, page? }

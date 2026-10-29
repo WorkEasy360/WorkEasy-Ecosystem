@@ -56,7 +56,7 @@ os.environ["PLATFORM_SUPERADMIN_EMAIL"] = "staff@browser.test"
 os.environ["PLATFORM_SUPERADMIN_PASSWORD"] = PASSWORD
 call_command("bootstrap_superadmin")
 admin = User.objects.get(email="staff@browser.test")
-sctx = platform_context(user_id=admin.id, aal=2)
+sctx = platform_context(user_id=admin.id)
 
 
 def enroll_totp(user):

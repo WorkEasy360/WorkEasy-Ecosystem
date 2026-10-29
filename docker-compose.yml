@@ -6,6 +6,9 @@
 # PgBouncer in transaction mode is present in local and CI for PARITY, not for
 # performance: per 10-performance-concurrency.md §4 it is the highest-risk
 # operational coupling in the design, so it must be exercised everywhere.
+#
+# restart: unless-stopped brings the stack back after Docker Desktop or the
+# PC restarts; without it Django times out connecting to 6442.
 
 name: workeasy360
 
@@ -17,6 +20,7 @@ services:
     # -trixie tag matches the Debian release (and glibc collations) the
     # previous postgres:16 image used, so existing text indexes stay valid.
     image: pgvector/pgvector:pg16-trixie
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -38,6 +42,7 @@ services:
 
   pgbouncer:
     image: edoburu/pgbouncer:v1.23.1-p2
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,6 +59,7 @@ services:
 
   redis:
     image: redis:7
+    restart: unless-stopped
     command: redis-server --save "" --appendonly no
     ports:
       - "6392:6379"
@@ -65,6 +71,7 @@ services:
 
   rabbitmq:
     image: rabbitmq:3.13-management
+    restart: unless-stopped
     environment:
       RABBITMQ_DEFAULT_USER: w360
       RABBITMQ_DEFAULT_PASS: w360_pw

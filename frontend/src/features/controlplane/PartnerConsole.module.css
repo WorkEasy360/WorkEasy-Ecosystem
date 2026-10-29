@@ -709,16 +709,6 @@
   background: var(--w360-brand-soft);
 }
 
-.promptRow > td {
-  background: var(--w360-bg-soft);
-}
-
-.promptForm {
-  display: grid;
-  gap: 0.5rem;
-  max-width: 40rem;
-}
-
 .createdBanner {
   padding: 0.75rem 1rem;
   border: 1px solid var(--w360-success);

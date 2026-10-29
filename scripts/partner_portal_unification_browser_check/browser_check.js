@@ -860,7 +860,7 @@ let browser;
     const { page } = await openWorkspaceAsPartner("affiliate", "/partner/affiliate/dashboard", { audited: true });
     made.affiliatePage = page;
     const menu = menus.affiliate;
-    const expected = ["Dashboard", "Referral Links", "Referral Codes", "Campaigns", "Marketing Materials", "Leads & Referrals", "Conversions", "Commissions", "Payouts", "Reports & Analytics", "Profile & Settings", "Support"];
+    const expected = ["Dashboard", "My Products", "Referral Links", "Referral Codes", "Campaigns", "Marketing Materials", "Leads & Referrals", "Conversions", "Commissions", "Payouts", "Reports & Analytics", "Profile & Settings", "Support"];
     expectThat(JSON.stringify(menu) === JSON.stringify(expected), `the affiliate menu: ${menu.join(" | ")}`);
     return `landed on ${ORIGIN.partner}/partner/affiliate/dashboard; menu: ${menu.join(", ")}`;
   });

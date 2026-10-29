@@ -28,6 +28,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from workeasy360.commercial.catalog import selectors as catalog_selectors
+from workeasy360.commercial.catalog.domain import PRODUCT_CATEGORIES
 from workeasy360.commercial.commissions import selectors as commission_selectors
 from workeasy360.commercial.controlplane import catalog as plan_builder
 from workeasy360.commercial.partners import console_reads as partner_reads
@@ -67,6 +69,37 @@ _OPTIONAL = frozenset({"health_url", "contact_email", "login_url"})
 
 #: The fields a new integration may be registered with from the console.
 REGISTRATION_FIELDS = (*EDITABLE_INTEGRATION_FIELDS, "token_endpoint_auth_method")
+
+#: The catalog fields each console product carries (ADR-051 added the store
+#: listing, the channel flags and the timestamps).
+PRODUCT_FIELDS = (
+    "code",
+    "name",
+    "slug",
+    "tagline",
+    "description",
+    "category",
+    "icon",
+    "status",
+    "manager_status",
+    "listing",
+    "availability",
+    "licensing_mode",
+    "sort_order",
+    "marketing_url",
+    "store_title",
+    "store_summary",
+    "application_url",
+    "documentation_url",
+    "support_url",
+    "customer_store_enabled",
+    "reseller_enabled",
+    "affiliate_enabled",
+    "white_label_enabled",
+    "created_at",
+    "updated_at",
+    "activated_at",
+)
 
 
 def _direct_readiness(
@@ -151,34 +184,25 @@ def console(ctx: TenantContext) -> dict[str, Any]:
         if may_see_integrations
         else {}
     )
+    # ADR-051: the Product Manager's list - each product's images and the
+    # launch URL a holder's "Open" goes to (one query each, not one per row).
+    media = catalog_selectors.media_rows([p["id"] for p in built["products"]])
+    launch_urls = ecosystem_selectors.launch_urls(p["code"] for p in built["products"])
 
     products = []
     for product in built["products"]:
         code = product["code"]
         plans = plans_by_product.get(code, [])
         link = integrations.get(code)
+        images = media[str(product["id"])]
+        logo = next((m for m in images if m["kind"] == "logo"), None)
         products.append(
             {
-                **{
-                    k: product[k]
-                    for k in (
-                        "id",
-                        "code",
-                        "name",
-                        "slug",
-                        "tagline",
-                        "description",
-                        "category",
-                        "icon",
-                        "status",
-                        "listing",
-                        "availability",
-                        "licensing_mode",
-                        "sort_order",
-                        "marketing_url",
-                    )
-                },
+                **{k: product[k] for k in PRODUCT_FIELDS},
                 "id": str(product["id"]),
+                "logo_media_id": logo["id"] if logo else None,
+                "media": images,
+                "launch_url": launch_urls.get(code, ""),
                 "plans": [
                     {
                         "code": p["code"],
@@ -205,7 +229,17 @@ def console(ctx: TenantContext) -> dict[str, Any]:
                 "integration": _integration_json(link) if link is not None else None,
             }
         )
-    return {"products": products, "can_see_integrations": may_see_integrations}
+    in_use = {p["category"] for p in products if p["category"]}
+    return {
+        "products": products,
+        "can_see_integrations": may_see_integrations,
+        # Offered in the Product Manager; a category a product already has
+        # stays selectable even when it is not one of the defaults.
+        "categories": [
+            *PRODUCT_CATEGORIES,
+            *sorted(in_use - set(PRODUCT_CATEGORIES)),
+        ],
+    }
 
 
 @in_scope

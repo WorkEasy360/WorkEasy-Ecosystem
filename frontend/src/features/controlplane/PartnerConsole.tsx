@@ -13,8 +13,8 @@ import {
   type SetupStatus,
 } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
-import { ExperienceLabels, TypeBadges } from "./labels";
-import { LoadGate, MoreButton, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
+import { ExperienceLabels, PrimaryType, TypeBadges } from "./labels";
+import { LoadGate, MoreButton, Status, Table, autoReason, money, useAction, useLoad, usePaged, when } from "./ui";
 import { NavIcon } from "@/components/sidebar/icons";
 import { usePortals } from "@/lib/portalContext";
 import { portalHref } from "@/lib/portals";
@@ -354,6 +354,7 @@ export function AllPartnersList() {
               "Panel",
               "Partner ID",
               "Name",
+              "Partner Type",
               "Email",
               "Phone",
               "Country",
@@ -441,7 +442,15 @@ function Copyable({ value, shown, what }: { value: string; shown?: string; what:
   );
 }
 
-type Prompt = null | "status" | "guest";
+/** The reason recorded when the switch changes a partner's status. The switch
+ * asks nothing (the owner's call, 2026-10-27); the server still requires a
+ * reason, so the switch states where the action came from, and the audit entry
+ * records who and when. */
+const SWITCH_REASON = {
+  activate: "Activated from All Partners",
+  reactivate: "Reactivated from All Partners",
+  suspend: "Suspended from All Partners",
+};
 
 function PartnerRow({
   row: r,
@@ -459,9 +468,6 @@ function PartnerRow({
   onGuest: (reason: string) => void;
 }) {
   const portals = usePortals();
-  const reasonId = useId();
-  const [prompt, setPrompt] = useState<Prompt>(null);
-  const [reason, setReason] = useState("");
   const href = `/admin/partners/${r.id}`;
   const setupHref = `/admin/partners/${r.id}/profile`;
   const panelPath = `/partner/${r.id}`;
@@ -484,14 +490,6 @@ function PartnerRow({
               ? "Activate this partner"
               : "Reactivate this partner";
   const complete = r.profile_completion.complete;
-  const target = on ? "suspended" : "active";
-  const verb = on ? "Suspend" : draft ? "Activate" : "Reactivate";
-  const minLength = prompt === "guest" ? 3 : 10;
-
-  function open(next: Prompt) {
-    setPrompt((current) => (current === next ? null : next));
-    setReason("");
-  }
 
   return (
     <>
@@ -502,11 +500,14 @@ function PartnerRow({
             role="switch"
             aria-checked={on}
             aria-label={`${r.display_name} active`}
-            aria-expanded={prompt === "status"}
             title={toggleNote}
             className={local.switch}
             disabled={!canToggle || busy}
-            onClick={() => open("status")}
+            onClick={() =>
+              on
+                ? onStatus("suspended", SWITCH_REASON.suspend)
+                : onStatus("active", draft ? SWITCH_REASON.activate : SWITCH_REASON.reactivate)
+            }
           >
             <span className={local.switchKnob} />
           </button>
@@ -526,10 +527,9 @@ function PartnerRow({
                 type="button"
                 className={local.iconButton}
                 aria-label={`Guest login to ${r.display_name}`}
-                aria-expanded={prompt === "guest"}
                 title="Guest login (read-only)"
                 disabled={busy}
-                onClick={() => open("guest")}
+                onClick={() => onGuest(autoReason("Guest login", "All Partners"))}
               >
                 <NavIcon name="login" />
               </button>
@@ -545,7 +545,6 @@ function PartnerRow({
         <th scope="row">
           <Link href={href}>{r.display_name}</Link>
           <div className={local.nameMeta}>
-            <TypeBadges labels={r.experience} />
             <SetupStatusBadge value={r.profile_completion.setup_status} />
             {r.upgrade && (
               <Link
@@ -558,6 +557,9 @@ function PartnerRow({
             )}
           </div>
         </th>
+        <td>
+          <PrimaryType value={r.primary_experience} />
+        </td>
         <td>
           {r.administrator?.email ? (
             <Copyable value={r.administrator.email} what={`email of ${r.display_name}`} />
@@ -572,56 +574,6 @@ function PartnerRow({
         <td>{r.administrator?.last_login_at ? when(r.administrator.last_login_at) : <span className={styles.muted}>Never</span>}</td>
         <td>{when(r.created_at)}</td>
       </tr>
-      {prompt !== null && (
-        <tr className={local.promptRow}>
-          <td colSpan={12}>
-            <form
-              className={local.promptForm}
-              onSubmit={(e) => {
-                e.preventDefault();
-                const text = reason.trim();
-                setPrompt(null);
-                setReason("");
-                if (prompt === "guest") onGuest(text);
-                else onStatus(target, text);
-              }}
-            >
-              <label className="w360-label" htmlFor={reasonId}>
-                {prompt === "guest"
-                  ? `Why are you opening the portal of ${r.display_name}? (recorded, and shown in the partner's activity)`
-                  : `Reason to ${verb.toLowerCase()} ${r.display_name} (recorded in the audit log)`}
-              </label>
-              <input
-                id={reasonId}
-                className="w360-input"
-                autoFocus
-                required
-                minLength={minLength}
-                maxLength={200}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-              />
-              {prompt === "guest" && (
-                <p className={styles.muted}>
-                  Read-only: you see the portal as the partner does but cannot change anything. It ends after 30 minutes.
-                </p>
-              )}
-              <div className={styles.row}>
-                <button
-                  type="submit"
-                  className={`w360-btn ${prompt === "status" && on ? "w360-btn-danger" : "w360-btn-primary"}`}
-                  disabled={busy || reason.trim().length < minLength}
-                >
-                  {prompt === "guest" ? "Open guest view" : verb}
-                </button>
-                <button type="button" className="w360-btn w360-btn-secondary" onClick={() => open(null)}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </td>
-        </tr>
-      )}
     </>
   );
 }

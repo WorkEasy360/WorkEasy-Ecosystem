@@ -68,3 +68,11 @@
 .logo[data-on-band] .full.onDark {
   display: block;
 }
+
+/* Compact on the band too (the Super Admin's navy bar): the mark alone on
+   narrow screens. Last, so it wins over the band rule above. */
+@media (max-width: 480px) {
+  .logo[data-compact][data-on-band] .full {
+    display: none;
+  }
+}

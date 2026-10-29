@@ -301,6 +301,12 @@ def test_the_frontend_contains_no_product_screens():
         # catalog, never a screen of its own), the self-service account pages
         # and /dashboard, which only decides where a signed-in person lands.
         "(site)",
+        # ADR-052: /store only decides where the Store opens (an organization's
+        # Explore); the catalog it shows is data, never a product's screen.
+        "store",
+        # ADR-053: /r/<code>, a partner's referral link - it records the visit
+        # and opens the platform path the server derives. Not a product screen.
+        "r",
         "signup",
         "verify-email",
         "forgot-password",

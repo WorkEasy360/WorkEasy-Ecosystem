@@ -169,7 +169,6 @@ def test_a_trial_whose_plan_is_not_on_sale_is_not_offered(catalog):
         ({"seat_limit": True}, "seat_limit"),
         ({"seat_limit": 10**9}, "seat_limit"),
         ({"payment_method_required": True}, "payment_method_required"),
-        ({"eligible_plan_codes": []}, "eligible_plan_codes"),
         ({"eligible_plan_codes": "crm_starter"}, "eligible_plan_codes"),
         ({"eligible_plan_codes": [1]}, "eligible_plan_codes"),
         ({"eligible_plan_codes": ["nope"]}, "eligible_plan_codes"),
@@ -186,6 +185,17 @@ def test_bad_trial_terms_are_refused_and_nothing_is_stored(catalog, terms, field
             configure(ctx, crm, **terms)
     assert field in repr(raised.value.__dict__) or field in str(raised.value)
     assert not ProductTrialConfig.objects.exists()
+
+
+def test_a_trial_switched_on_with_no_eligible_plan_is_stored_but_never_offered(catalog):
+    """ADR-051: the Product Manager sets a new product's trial before it has a
+    plan. Nobody can start it until staff name an eligible plan - the platform
+    never decides which plans a trial covers."""
+    crm = catalog["products"]["crm"]
+    with staff_scope(*CATALOG_STAFF) as ctx:
+        config = configure(ctx, crm, eligible_plan_codes=[])
+    assert config.enabled is True and config.eligible_plan_codes == []
+    assert public_product("crm")["trial"]["available"] is False
 
 
 def test_a_payment_method_requirement_is_refused_honestly(catalog):

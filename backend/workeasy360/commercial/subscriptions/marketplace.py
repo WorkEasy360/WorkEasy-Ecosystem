@@ -33,7 +33,9 @@ from workeasy360.platform.observability.logging import get_logger
 logger = get_logger(__name__)
 
 PUBLIC_CACHE_SECONDS = 60
-_PUBLIC_CACHE_KEY = "w360:catalog:public:v1:{currency}"
+#: Keyed by the catalog's generation too (ADR-052): a catalog write moves every
+#: reader to a fresh entry at once, without enumerating currencies to delete.
+_PUBLIC_CACHE_KEY = "w360:catalog:public:v1:{generation}:{currency}"
 
 
 def _attach_prices(
@@ -318,7 +320,9 @@ def public_catalog(*, currency: Any = None) -> dict[str, Any]:
     ``PUBLIC_CACHE_SECONDS``; a cache outage falls back to the database."""
     available = pricing.direct_currencies()
     chosen = _currency_for(currency, available)
-    key = _PUBLIC_CACHE_KEY.format(currency=chosen or "none")
+    key = _PUBLIC_CACHE_KEY.format(
+        currency=chosen or "none", generation=catalog.public_catalog_generation()
+    )
     try:
         cached = cache.get(key)
     except Exception:

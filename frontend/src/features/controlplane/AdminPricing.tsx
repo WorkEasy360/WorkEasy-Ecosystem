@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   adminConsoleApi,
   INTERVAL_LABELS,
@@ -10,6 +11,7 @@ import {
 import { can, useAdmin } from "./ControlShell";
 import { LoadGate, Table, money, useAction, useLoad, when } from "./ui";
 import { DEFAULT_INTERVALS } from "./catalogUi";
+import { PartnerProgramme } from "./PartnerProgramme";
 import { ErrorSummary, SelectField, TextField } from "./widgets";
 import cp from "./ControlPlane.module.css";
 import styles from "./AdminConsole.module.css";
@@ -20,7 +22,9 @@ import styles from "./AdminConsole.module.css";
  * Prices themselves are published from the plan builder, one per billing
  * cycle; a book is the (channel, currency, region) segment they belong to.
  */
-export function PricingScreen() {
+/** `productCode` (the Product Manager's "Manage Pricing", ADR-051) narrows the
+ * current prices to that product's plans and the suites that include it. */
+export function PricingScreen({ productCode }: { productCode?: string } = {}) {
   const { permissions } = useAdmin();
   const manage = can(permissions, "platform.staff_pricing.manage");
   const [load, reload] = useLoad(() => adminConsoleApi.catalogOverview(), []);
@@ -68,7 +72,18 @@ export function PricingScreen() {
                 <p className={cp.muted}>Creating price books needs the platform.staff_pricing.manage permission.</p>
               )}
             </section>
-            <CurrentPrices overview={overview} />
+            {productCode && (
+              <p className={cp.muted}>
+                Showing prices for {overview.products.find((p) => p.code === productCode)?.name ?? productCode} only.{" "}
+                <Link href="/admin/pricing">Show all products</Link>
+              </p>
+            )}
+            <CurrentPrices overview={overview} productCode={productCode} />
+            <PartnerProgramme
+              manage={can(permissions, "platform.staff_commission.manage")}
+              manageFees={can(permissions, "platform.staff_partner.manage")}
+              products={overview.products.map((p) => ({ code: p.code, name: p.name }))}
+            />
           </>
         )}
       </LoadGate>
@@ -172,9 +187,10 @@ function sortLines(lines: PriceLine[]): PriceLine[] {
 
 /** Prices in force for each offer's latest published version, grouped by
  * product (packages and add-ons) and then plans (bundles). Read-only. */
-function CurrentPrices({ overview }: { overview: CatalogOverview }) {
+function CurrentPrices({ overview, productCode }: { overview: CatalogOverview; productCode?: string }) {
   const groups: { title: string; lines: PriceLine[] }[] = [];
   for (const product of overview.products) {
+    if (productCode && product.code !== productCode) continue;
     const lines: PriceLine[] = [];
     for (const plan of overview.plans) {
       if (plan.product.id !== product.id) continue;
@@ -190,6 +206,7 @@ function CurrentPrices({ overview }: { overview: CatalogOverview }) {
   for (const bundle of overview.bundles) {
     const version = bundle.versions.find((v) => v.published_at);
     if (!version) continue;
+    if (productCode && !version.items.some((i) => i.product_code === productCode)) continue;
     for (const price of version.prices) bundleLines.push({ offer: bundle.name, version: version.version, price });
   }
   if (bundleLines.length > 0) groups.push({ title: "Plans (suites)", lines: sortLines(bundleLines) });

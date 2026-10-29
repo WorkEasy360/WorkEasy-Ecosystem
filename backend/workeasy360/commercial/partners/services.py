@@ -1289,6 +1289,15 @@ def _grant_product(
             raise PartnerValidationError(
                 "A terminated partner cannot be granted anything.", field="partner_id"
             )
+        if not selectors.product_open_to_partner(partner_id, str(product_code)):
+            # ADR-051: Product Manager -> Availability decides which channels
+            # a product may be offered through; a grant cannot widen that.
+            raise PartnerValidationError(
+                "This product is not open to this partner's channel. Allow "
+                "Reseller (or White-label, for a branded partner) in the "
+                "product's Availability first.",
+                field="product_code",
+            )
         existing = (
             PartnerProductGrant.objects.select_for_update()
             .filter(

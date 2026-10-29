@@ -253,7 +253,12 @@ def test_affiliate_goes_straight_to_white_label_without_being_a_reseller_first(
     again, _ = sign_in(EMAIL, PASSWORD)
     entry = portal(again)[0]
     assert entry["landing"] == "white_label"
-    assert [w["key"] for w in entry["workspaces"]] == ["white_label", "affiliate"]
+    # ADR-053: additive - Reseller is offered beside White-label.
+    assert [w["key"] for w in entry["workspaces"]] == [
+        "reseller",
+        "white_label",
+        "affiliate",
+    ]
 
 
 # --- Reseller -> White-label ----------------------------------------------------------------------
@@ -277,8 +282,8 @@ def test_reseller_upgrades_to_white_label_on_the_same_login(catalog, admin):
     again, _ = sign_in("owner@rs-up.example.com", PASSWORD)
     entry = portal(again)[0]
     assert entry["landing"] == "white_label"
-    # The Reseller workspace is contained in White-label's: one workspace, not two.
-    assert [w["key"] for w in entry["workspaces"]] == ["white_label"]
+    # ADR-053: additive - the Reseller workspace stays beside White-label.
+    assert [w["key"] for w in entry["workspaces"]] == ["reseller", "white_label"]
 
 
 def test_after_an_upgrade_the_upgrade_options_move_up_with_it(catalog, admin):

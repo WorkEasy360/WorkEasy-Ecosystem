@@ -1,7 +1,7 @@
 "use client";
 
-import { ProductsConsole } from "@/features/controlplane/AdminMoney";
+import { ProductManager } from "@/features/controlplane/productmanager/ProductManager";
 
 export default function Page() {
-  return <ProductsConsole />;
+  return <ProductManager />;
 }

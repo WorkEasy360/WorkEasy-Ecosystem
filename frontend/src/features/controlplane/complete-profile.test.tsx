@@ -287,21 +287,22 @@ describe("the affiliate wizard", () => {
     await expectNoViolations(container);
   });
 
-  it("explains that an affiliate is granted no product", async () => {
+  it("assigns the products an affiliate may promote, never products to sell (ADR-054)", async () => {
     query = "step=products";
     mockApi(
       base(["affiliate"], AFFILIATE, {
-        [`GET /api/v1/admin/partners/${ID}/commission`]: [ok({ rules: [], live_versions: {}, in_force: null, partner_earns: true })],
+        [`GET /api/v1/admin/partners/${ID}/promotions`]: [ok({ grants: [] })],
       }),
     );
     mount();
-    expect(await screen.findByText(/It is granted no product/)).toBeInTheDocument();
+    expect(await screen.findByText(/Promoting a product is not selling it/)).toBeInTheDocument();
+    expect(await screen.findByLabelText("Assign a product to promote")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Allow product" })).not.toBeInTheDocument();
   });
 });
 
 describe("the review step", () => {
-  it("offers Activate with a recorded reason once the profile is complete", async () => {
+  it("offers Activate once the profile is complete, recording a reason without asking", async () => {
     query = "step=review";
     const calls = mockApi(
       base(
@@ -320,10 +321,9 @@ describe("the review step", () => {
     );
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Activate partner" }));
-    fireEvent.change(screen.getByLabelText(/Reason for/), { target: { value: "Profile complete and checked" } });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(screen.queryByLabelText(/Reason for/)).not.toBeInTheDocument();
     await waitFor(() => expect(calls.some((c) => c.key.endsWith("/status"))).toBe(true));
-    expect(calls.find((c) => c.key.endsWith("/status"))!.body).toEqual({ status: "active", reason: "Profile complete and checked", expected_version: 2 });
+    expect(calls.find((c) => c.key.endsWith("/status"))!.body).toEqual({ status: "active", reason: "Activate partner - Super Admin console", expected_version: 2 });
   });
 
   it("does not offer activation while something required is missing", async () => {

@@ -260,6 +260,24 @@ def launch_target(product_code: str) -> LaunchTargetDTO | None:
     )
 
 
+def launch_urls(product_codes: Iterable[str]) -> dict[str, str]:
+    """``{product_code: launch_url}`` for the registered integrations of these
+    products, in one query (the Product Manager's list, ADR-051). Ungated for
+    the reason ``launch_target`` is: a launch URL is where any member's browser
+    is sent, not a secret. Nothing else of the registration is returned."""
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    codes = sorted({str(c) for c in product_codes})
+    if not codes:
+        return {}
+    return {
+        row["product_code"]: str(from_stored_manifest(row["manifest"]).launch_url)
+        for row in ProductIntegration.objects.filter(product_code__in=codes).values(
+            "product_code", "manifest"
+        )
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class IntegrationPresenceDTO:
     """What a member may be shown about a product's connection - nothing that

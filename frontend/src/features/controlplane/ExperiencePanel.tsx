@@ -3,7 +3,7 @@
 import { useId, useMemo, useState } from "react";
 import type { PartnerDetail } from "@/lib/api/controlPlane";
 import { partnerConsoleApi } from "@/lib/api/partnerConsole";
-import { useAction, useLoad } from "./ui";
+import { autoReason, useAction, useLoad } from "./ui";
 import { Segmented } from "./widgets";
 import styles from "./ControlPlane.module.css";
 import wizard from "./AddReseller.module.css";
@@ -18,10 +18,17 @@ import wizard from "./AddReseller.module.css";
  * withdraws only what no remaining experience needs, never the money views; the
  * **primary** choice only selects among the workspaces the grants already open.
  * Referrals, commissions, payouts and customers are untouched by all three, and
- * each is audited with the reason typed here.
+ * each is audited (the recorded reason names the change; nobody types one).
  */
 
 type Action = "default" | "grant" | "retire";
+
+/** What the recorded reason says for each change. */
+const REASON: Record<Action, string> = {
+  grant: "Add an experience",
+  default: "Set the primary experience",
+  retire: "Retire an experience",
+};
 
 const LABEL: Record<string, string> = { reseller: "Reseller", white_label: "White-label", affiliate: "Affiliate" };
 
@@ -31,12 +38,10 @@ export function ExperiencePanel({ partner, manage, onChanged }: { partner: Partn
   const [products] = useLoad(() => partnerConsoleApi.products().catch(() => ({ results: [] })), []);
   const [action, setAction] = useState<Action>("grant");
   const [experience, setExperience] = useState("");
-  const [reason, setReason] = useState("");
   const [makePrimary, setMakePrimary] = useState(true);
   const [chosen, setChosen] = useState<string[]>([]);
   // Only a change that went through clears the form; a refusal keeps what was typed.
   const { act, busy, feedback } = useAction(() => {
-    setReason("");
     setChosen([]);
     setExperience("");
     onChanged();
@@ -58,12 +63,12 @@ export function ExperiencePanel({ partner, manage, onChanged }: { partner: Partn
   const canRetire = held.length > 1;
   const ended = partner.status === "terminated" || !manage;
 
-  const valid = Boolean(experience) && reason.trim().length >= 10 && (action !== "retire" || canRetire);
+  const valid = Boolean(experience) && (action !== "retire" || canRetire);
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!valid || busy) return;
-    const why = reason.trim();
+    const why = autoReason(REASON[action]);
     const run = () =>
       partnerConsoleApi.changeExperience(partner.id, {
         action,
@@ -152,20 +157,6 @@ export function ExperiencePanel({ partner, manage, onChanged }: { partner: Partn
               </ul>
             </fieldset>
           )}
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={`${id}-why`}>
-              Why the experience is changing (recorded)
-            </label>
-            <input
-              id={`${id}-why`}
-              className="w360-input"
-              required
-              minLength={10}
-              maxLength={200}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            />
-          </div>
           <div>
             <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !valid}>
               Apply

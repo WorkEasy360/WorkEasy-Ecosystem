@@ -94,3 +94,53 @@ def order_summaries() -> Any:
     from workeasy360.commercial.payments.models import OrderSummary
 
     return OrderSummary.objects.all()
+
+
+def paid_item_lines(organization_id: UUID) -> dict[str, list[dict[str, Any]]]:
+    """Every paid invoice line naming a subscription line, grouped by that
+    subscription line and ordered by billing period - what recurring
+    commission reads (ADR-052). Read in the organization's scope; amounts are
+    the invoice's own, never re-derived."""
+    from workeasy360.commercial.payments.models import Invoice, InvoiceLine
+    from workeasy360.platform.tenancy.db import assert_tenant_scope, organization_db_scope
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    # Commission accrual runs outside a request (a listener, the sweep): both
+    # isolation layers are bound here, as ``subscriptions.sale_facts`` does.
+    with (
+        unscoped_access(
+            reason="Commission accrual reads paid renewal invoice lines",
+            module="commercial.payments.selectors",
+        ),
+        organization_db_scope(organization_id),
+    ):
+        assert_tenant_scope(organization_id, what="paid_item_lines")
+        rows = list(
+            InvoiceLine.unscoped.filter(
+                organization_id=organization_id,
+                invoice__status=Invoice.Status.PAID,
+                subscription_item_id__isnull=False,
+            )
+            .select_related("invoice")
+            .order_by(
+                "subscription_item_id", "invoice__period_start", "invoice__paid_at", "id"
+            )
+        )
+    out: dict[str, list[dict[str, Any]]] = {}
+    for line in rows:
+        out.setdefault(str(line.subscription_item_id), []).append(
+            {
+                "line_id": str(line.id),
+                "invoice_id": str(line.invoice_id),
+                "product_code": line.product_code,
+                "amount_minor": int(line.amount_minor),
+                "currency": line.invoice.currency,
+                "paid_at": line.invoice.paid_at,
+                "period_start": line.invoice.period_start,
+                "refunded": line.invoice.amount_refunded_minor > 0,
+                # ADR-054: a partial refund reverses its share of a commission.
+                "refunded_minor": int(line.invoice.amount_refunded_minor),
+                "invoice_paid_minor": int(line.invoice.amount_paid_minor),
+            }
+        )
+    return out

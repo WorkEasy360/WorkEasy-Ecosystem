@@ -432,8 +432,8 @@ const SEED = {
   reseller: "reseller.one@browser.test",
 };
 
-const AFFILIATE_MENU = ["Dashboard", "Referral Links", "Referral Codes", "Campaigns", "Marketing Materials", "Leads & Referrals", "Conversions", "Commissions", "Payouts", "Reports & Analytics", "Profile & Settings", "Support"];
-const AFFILIATE_ONLY = ["Referral Links", "Referral Codes", "Campaigns", "Marketing Materials", "Leads & Referrals", "Conversions", "Profile & Settings"];
+const AFFILIATE_MENU = ["Dashboard", "My Products", "Referral Links", "Referral Codes", "Campaigns", "Marketing Materials", "Leads & Referrals", "Conversions", "Commissions", "Payouts", "Reports & Analytics", "Profile & Settings", "Support"];
+const AFFILIATE_ONLY = ["My Products", "Referral Links", "Referral Codes", "Campaigns", "Marketing Materials", "Leads & Referrals", "Conversions", "Profile & Settings"];
 const RESELLER_MENU = ["Dashboard", "Customers", "Products & Plans", "Pricing & Margins", "Sales & Orders", "Subscriptions", "Commissions", "Payouts", "Sub-Resellers", "Referrals", "Team & Permissions", "Reports & Analytics", "Support", "Settings"];
 const WHITE_LABEL_MENU = ["Dashboard", "Brand Settings", "Custom Domain", "Website Branding", "Products & Plans", "Pricing & Plans", "Customers", "Subscriptions", "Orders & Billing", "Commissions", "Payouts", "Referrals", "Team & Permissions", "Reports & Analytics", "Support", "Settings"];
 

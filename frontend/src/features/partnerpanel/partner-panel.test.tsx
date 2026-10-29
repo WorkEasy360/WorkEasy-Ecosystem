@@ -91,7 +91,6 @@ const DASHBOARD = {
     payouts: [],
   },
   not_implemented: {
-    partner_cost: "The platform has no wholesale-cost model.",
     customer_limit: "No customer or user limit exists for a partner in the commercial model.",
   },
 };
@@ -203,7 +202,8 @@ describe("the dashboard", () => {
     expect(within(figures).getByText(/14,990\.00/)).toBeInTheDocument(); // gross, formatted from minor units
     expect(within(figures).getByText(/1,499\.00/)).toBeInTheDocument(); // commission
     // No cost and no limit model exists: the card says so, never "0".
-    expect(within(figures).getByText(/no wholesale-cost model/i)).toBeInTheDocument();
+    // ADR-053: how the partner earns is a fact (margin or commission), not a gap.
+    expect(within(figures).getByText("How you earn").closest("li")!.textContent).toMatch(/Commission/);
     expect(within(figures).getByText(/No customer or user limit/i)).toBeInTheDocument();
     // Reading sends nothing but the range.
     expect(calls.filter((c) => c.key.startsWith("GET /api/v1/partner/") && c.url.includes("dashboard")).length).toBe(1);

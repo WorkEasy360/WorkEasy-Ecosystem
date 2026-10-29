@@ -252,6 +252,31 @@ class PublicAvailability(_StrEnum):
         return self in (PublicAvailability.AVAILABLE, PublicAvailability.COMING_SOON)
 
 
+class ProductMediaKind(_StrEnum):
+    """An image a product's store listing shows (ADR-051). One logo and one
+    banner per product; screenshots are an ordered list."""
+
+    LOGO = "logo"
+    BANNER = "banner"
+    SCREENSHOT = "screenshot"
+
+
+class ProductUpdateKind(_StrEnum):
+    """What a product update announces (ADR-054): one feature, or a release."""
+
+    FEATURE = "feature"
+    RELEASE = "release"
+
+
+class ProductUpdateStatus(_StrEnum):
+    """``draft -> published -> archived``. Only a published update is public and
+    may be the target of a new referral link; an archived one keeps its links."""
+
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    ARCHIVED = "archived"
+
+
 class LicensingMode(_StrEnum):
     """How a product's value is consumed, and therefore how it is licensed.
 
@@ -668,6 +693,27 @@ class ReferralStatus(_StrEnum):
     CAPTURED = "captured"
     CONVERTED = "converted"
     EXPIRED = "expired"
+
+
+class ReferralLinkKind(_StrEnum):
+    """Where a referral link sends its visitor (ADR-054). The destination is
+    derived from the kind and the link's product or update when the link is
+    followed - never stored, never typed."""
+
+    GENERAL = "general"
+    PRODUCT = "product"
+    PRICING = "pricing"
+    FEATURE = "feature"
+    UPDATE = "update"
+
+
+class RevokedLinkPolicy(_StrEnum):
+    """What a product link does after its partner loses the product's promotion
+    grant (ADR-054). Referrals already captured and commission already earned
+    are never touched by either."""
+
+    STOP = "stop"
+    CONTINUE = "continue"
 
 
 class AccrualKind(_StrEnum):

@@ -230,8 +230,8 @@ function CommunicationNav() {
       items={[
         { href: `${base}/communication/channel`, label: "Channel" },
         { href: `${base}/communication/templates`, label: "Templates" },
-        { href: `${base}/communication/alerts`, label: "Alerts" },
-        { href: `${base}/communication/logs`, label: "Logs" },
+        // ADR-053: Alerts and Logs have no capability behind them yet, so no tab
+        // leads to a page that could only say so.
       ]}
     />
   );

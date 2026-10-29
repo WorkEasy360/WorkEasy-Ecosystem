@@ -133,7 +133,13 @@ def session_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
 
 @staff_view(["GET"])
 def dashboard_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
-    return JsonResponse(cp_dashboard.summary(ctx))
+    return JsonResponse(cp_dashboard.summary(ctx, month=request.GET.get("month") or None))
+
+
+@staff_view(["GET"])
+def attention_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """What is waiting for staff - the console's notification bell."""
+    return JsonResponse(cp_dashboard.attention(ctx))
 
 
 @staff_view(["GET"])
@@ -531,6 +537,57 @@ def partner_referrals_view(
     return JsonResponse(
         partner_detail.referrals(ctx, partner_id, **query_page_args(request))
     )
+
+
+@staff_view(["GET"])
+def partner_referral_trail_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID, referral_id: UUID
+) -> JsonResponse:
+    """ADR-054: how one referral became earnings, for staff."""
+    return JsonResponse(partner_detail.referral_trail(ctx, partner_id, referral_id))
+
+
+@staff_view(["GET", "POST"])
+def partner_promotions_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID
+) -> JsonResponse:
+    """ADR-054: the products a partner may promote - list, or grant one."""
+    from workeasy360.commercial.partners import promotion
+
+    if request.method == "POST":
+        grant = promotion.grant_promotion(
+            ctx, partner_id, product_code=_body(request).get("product_code")
+        )
+        return JsonResponse({"id": str(grant.id), "status": grant.status}, status=201)
+    return JsonResponse({"grants": promotion.list_grants(ctx, partner_id)})
+
+
+@staff_view(["POST"])
+def partner_promotion_revoke_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID, grant_id: UUID
+) -> JsonResponse:
+    from workeasy360.commercial.partners import promotion
+
+    grant = promotion.revoke_promotion(ctx, partner_id, grant_id=grant_id)
+    return JsonResponse({"id": str(grant.id), "status": grant.status})
+
+
+@staff_view(["GET", "PUT"])
+def affiliate_policy_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """ADR-054: the referral programme's attribution window and what a
+    product link does after its promotion grant is revoked."""
+    from workeasy360.commercial.commissions import policy
+
+    if request.method == "PUT":
+        body = _body(request)
+        return JsonResponse(
+            policy.update(
+                ctx,
+                attribution_days=body.get("attribution_days"),
+                revoked_links=body.get("revoked_links"),
+            )
+        )
+    return JsonResponse(policy.view(ctx))
 
 
 @staff_view(["POST"])
@@ -1227,6 +1284,7 @@ def commission_rules_view(request, ctx, **_kw: Any) -> JsonResponse:
         product_code=body.get("product_code", ""),
         partner_id=_uuid(body, "partner_id", required=False),
         effective_from=start,
+        recurring=body.get("recurring", False),
     )
     return JsonResponse(
         {"id": str(rule.id), "code": rule.code, "version": rule.version}, status=201

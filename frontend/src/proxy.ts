@@ -49,6 +49,8 @@ const PUBLIC_PATHS = [
   "/services",
   "/contact",
   "/signup",
+  // ADR-053: a partner's referral link, followed by a visitor with no account.
+  "/r",
   "/verify-email",
   "/forgot-password",
   "/reset-password",
@@ -58,8 +60,15 @@ const PUBLIC_PATHS = [
   "/sign-out",
 ];
 
+/** ADR-053: a partner's branded Store (`/store/<partner>`) is browsable signed
+ * out; buying signs in first. `/store` itself still needs a session. */
+const PUBLIC_PREFIXES = ["/store/"];
+
 export function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  return (
+    PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
+    PUBLIC_PREFIXES.some((p) => pathname.startsWith(p) && pathname.length > p.length)
+  );
 }
 
 /** Where a portal host lands a sign-in hand-off (ADR-043): reached before

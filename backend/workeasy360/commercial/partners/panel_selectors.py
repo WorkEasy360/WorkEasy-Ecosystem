@@ -261,8 +261,10 @@ def orders_page(
         organization_id=OuterRef("organization_id"),
         started_at__lte=OuterRef("created_at"),
     ).filter(Q(ended_at__isnull=True) | Q(ended_at__gt=OuterRef("created_at")))
+    # ADR-053: and every order this partner sold - a storefront order is placed
+    # before its buyer becomes the partner's customer (at fulfilment).
     queryset = (
-        order_summaries.filter(Exists(related))
+        order_summaries.filter(Q(Exists(related)) | Q(partner_id=partner_id))
         .select_related("organization")
         .order_by("-created_at", "-order_id")
     )
@@ -290,6 +292,11 @@ def orders_page(
             "products": list(r.product_codes or []),
             "currency": r.currency,
             "amount_due_minor": r.amount_due_minor,
+            "recurring_amount_minor": r.recurring_amount_minor,
+            "channel": r.channel,
+            "sold_by_you": r.partner_id == partner_id,
+            "plans": list(r.plan_names or []),
+            "subscription_item_ids": list(r.subscription_item_ids or []),
             "customer": r.organization.display_name if r.organization_id in live else "",
             "created_at": r.created_at.isoformat(),
             "paid_at": r.paid_at.isoformat() if r.paid_at else None,

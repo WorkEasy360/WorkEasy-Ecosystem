@@ -17,7 +17,9 @@ import { AdminContextForTest, expectNoViolations, mockApi, type Call, type Reply
  * - an address that already has an account is never overwritten - the form
  *   offers to link it (no password sent) or to cancel;
  * - the type is sent as `experience` and nothing names a capability;
- * - after creating, it opens the partner's page with the created flag.
+ * - after creating, it opens the partner's page with the created flag;
+ * - it is a modal dialog over All Partners (2026-10-26): focus starts inside,
+ *   Escape, Close and × all return to the list.
  */
 
 let query = "";
@@ -63,15 +65,15 @@ function mount(permissions = MANAGE) {
 
 const field = (name: RegExp) => screen.getByLabelText(name, { selector: "input, select" }) as HTMLInputElement;
 
-function fill({ name = "ABC Technologies", email = "admin@abctech.example", password = PASSWORD, confirm = PASSWORD, type = /^Reseller/ } = {}) {
+function fill({ name = "ABC Technologies", email = "admin@abctech.example", password = PASSWORD, confirm = PASSWORD, type = "reseller" } = {}) {
   fireEvent.change(field(/^Partner name/), { target: { value: name } });
   fireEvent.change(field(/^Admin email/), { target: { value: email } });
   if (password !== null) fireEvent.change(field(/^Password/), { target: { value: password } });
   if (confirm !== null) fireEvent.change(field(/^Confirm password/), { target: { value: confirm } });
-  if (type) fireEvent.click(screen.getByRole("radio", { name: type }));
+  if (type) fireEvent.change(field(/^Partner type/), { target: { value: type } });
 }
 
-const create = () => fireEvent.click(screen.getByRole("button", { name: "Create Partner" }));
+const create = () => fireEvent.click(screen.getByRole("button", { name: "Add Partner" }));
 const createCalls = (calls: Call[]) => calls.filter((c) => c.key === "POST /api/v1/admin/partners/create");
 
 describe("the short form", () => {
@@ -79,31 +81,42 @@ describe("the short form", () => {
   it("asks only for the name, the admin email and password, the type and an optional country", async () => {
     mockApi({});
     const { container } = mount();
-    expect(screen.getByRole("heading", { level: 1, name: "Add Partner" })).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "Add New Partner" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(within(dialog).getByRole("heading", { level: 2, name: "Add New Partner" })).toBeInTheDocument();
+    expect(field(/^Partner name/)).toHaveAttribute("placeholder", "Enter partner name");
     expect(field(/^Partner name/)).toBeRequired();
     expect(field(/^Admin email/)).toBeRequired();
     expect(field(/^Password/)).toHaveAttribute("type", "password");
     expect(field(/^Password/)).toHaveAttribute("autocomplete", "new-password");
     expect(field(/^Confirm password/)).toHaveAttribute("autocomplete", "new-password");
-    expect(screen.getByLabelText(/^Country \(optional\)/)).not.toBeRequired();
-    const types = screen.getAllByRole("radio");
-    expect(types.map((r) => r.getAttribute("value"))).toEqual(["reseller", "white_label", "affiliate"]);
-    expect(screen.getByText("Sell Workeasy360 products and manage customers.")).toBeInTheDocument();
-    expect(screen.getByText("Sell Workeasy360 products using your own brand and domain.")).toBeInTheDocument();
-    expect(screen.getByText("Promote Workeasy360 products and earn commissions.")).toBeInTheDocument();
+    expect(field(/^Country/)).not.toBeRequired();
+    const type = field(/^Partner type/) as unknown as HTMLSelectElement;
+    expect(type).toBeRequired();
+    expect([...type.options].map((o) => o.value)).toEqual(["", "reseller", "white_label", "affiliate"]);
+    // The chosen type is described under the list.
+    for (const [key, text] of [
+      ["reseller", "Sell Workeasy360 products and manage customers."],
+      ["white_label", "Sell Workeasy360 products using your own brand and domain."],
+      ["affiliate", "Promote Workeasy360 products and earn commissions."],
+    ]) {
+      fireEvent.change(type, { target: { value: key } });
+      expect(screen.getByText(text)).toBeInTheDocument();
+    }
     // Nothing about the business, products, prices or commission is asked here.
     for (const absent of [/business email/i, /products?/i, /price/i, /commission rate/i, /legal/i, /partner code/i]) {
       expect(screen.queryByLabelText(absent)).not.toBeInTheDocument();
     }
-    expect(screen.getAllByRole("textbox").length + screen.getAllByRole("combobox").length).toBeLessThanOrEqual(3);
+    // Two text inputs (name, email) and two lists (type, country); the passwords are not textboxes.
+    expect(screen.getAllByRole("textbox").length + screen.getAllByRole("combobox").length).toBeLessThanOrEqual(4);
     await expectNoViolations(container);
   }, 60_000);
 
-  it("preselects the card named in the address without choosing a capability", () => {
+  it("preselects the type named in the address without choosing a capability", () => {
     query = "type=white-label";
     mockApi({});
     mount();
-    expect(screen.getByRole("radio", { name: /^White-label/ })).toBeChecked();
+    expect(field(/^Partner type/).value).toBe("white_label");
   });
 
   it("says what is missing and sends nothing", async () => {
@@ -137,12 +150,39 @@ describe("the short form", () => {
   });
 });
 
+describe("the dialog", () => {
+  it("starts on the first field and keeps the keyboard inside", () => {
+    mockApi({});
+    mount();
+    expect(field(/^Partner name/)).toHaveFocus();
+    const dialog = screen.getByRole("dialog");
+    const add = within(dialog).getByRole("button", { name: "Add Partner" });
+    add.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it.each([
+    ["Escape", () => fireEvent.keyDown(document, { key: "Escape" })],
+    // The × in the title bar and the Close button at the bottom.
+    ["×", () => fireEvent.click(screen.getAllByRole("button", { name: "Close" })[0])],
+    ["Close", () => fireEvent.click(screen.getAllByRole("button", { name: "Close" })[1])],
+  ])("%s returns to All Partners and sends nothing", (_name, act) => {
+    const calls = mockApi({});
+    mount();
+    fill();
+    act();
+    expect(push).toHaveBeenCalledWith("/admin/partners/all");
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe("creating", () => {
   it("sends only the few fields, then opens All Partners with the new row marked", async () => {
     const calls = mockApi({ "POST /api/v1/admin/partners/create": [{ status: 201, body: CREATED }] });
     mount();
-    fill({ type: /^Reseller/ });
-    fireEvent.change(screen.getByLabelText(/^Country \(optional\)/), { target: { value: "IN" } });
+    fill({ type: "reseller" });
+    fireEvent.change(field(/^Country/), { target: { value: "IN" } });
     create();
     await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/partners/all?created=p-new"));
     const [call] = createCalls(calls);
@@ -160,7 +200,7 @@ describe("creating", () => {
   it("leaves the country out when none is chosen", async () => {
     const calls = mockApi({ "POST /api/v1/admin/partners/create": [{ status: 201, body: CREATED }] });
     mount();
-    fill({ type: /^Affiliate/ });
+    fill({ type: "affiliate" });
     create();
     await waitFor(() => expect(push).toHaveBeenCalled());
     expect((createCalls(calls)[0].body as { partner: unknown }).partner).toEqual({ display_name: "ABC Technologies" });

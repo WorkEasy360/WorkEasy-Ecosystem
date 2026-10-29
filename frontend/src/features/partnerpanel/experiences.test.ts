@@ -71,6 +71,7 @@ describe("what each workspace offers", () => {
   it("Affiliate is the short list", () => {
     expect(labels("affiliate")).toEqual([
       "Dashboard",
+      "My Products",
       "Referral Links",
       "Referral Codes",
       "Campaigns",

@@ -289,10 +289,28 @@ export interface OrderRequest {
   billing_interval?: string;
   quantity?: number;
   with_trial?: boolean;
+  /** ADR-052: several products in one order - plan ids only, never a price. */
+  cart_items?: { plan_version_id: string; quantity?: number }[];
+  /** ADR-053: bought in a white-label partner's branded Store (its address,
+   * e.g. `acme-partners`). The server verifies the store and prices from the
+   * partner's book; nothing about the partner is trusted from here. */
+  storefront?: string;
+}
+
+/** One product's line in a cart quote or order, priced by the server. */
+export interface OrderLine {
+  product_code: string;
+  plan_name: string;
+  quantity: number;
+  recurring_amount_minor: number;
+  amount_due_minor: number;
+  subscription_item_id?: string | null;
 }
 
 export interface OrderQuote {
-  kind: "plan" | "bundle" | "activation";
+  kind: "plan" | "bundle" | "activation" | "cart";
+  /** ADR-053: `direct`, or `storefront` when sold through a partner's branded Store. */
+  channel?: string;
   description: string;
   product_codes: string[];
   currency: string;
@@ -304,6 +322,8 @@ export interface OrderQuote {
   is_trial: boolean;
   trial_days: number;
   requires_payment: boolean;
+  /** A cart's lines (empty for every other kind). */
+  lines?: OrderLine[];
 }
 
 export type OrderStatus = "pending_payment" | "paid" | "fulfilled" | "cancelled" | "expired" | "failed";
@@ -311,7 +331,7 @@ export type OrderStatus = "pending_payment" | "paid" | "fulfilled" | "cancelled"
 export interface Order {
   order_id: string;
   number: string;
-  kind: "plan" | "bundle" | "activation";
+  kind: "plan" | "bundle" | "activation" | "cart";
   status: OrderStatus;
   description: string;
   product_codes: string[];
@@ -330,6 +350,7 @@ export interface Order {
   fulfilled_at: string | null;
   cancelled_at: string | null;
   failure_reason: string;
+  lines?: OrderLine[];
 }
 
 // --- product trials (Phase 11) ----------------------------------------------------------

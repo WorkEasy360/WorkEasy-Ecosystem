@@ -484,7 +484,7 @@ def test_staff_can_give_an_affiliate_its_referral_code(catalog, admin):
     code = response.json()["code"]
     read = admin.get(admin_path(created["id"], "/referrals")).json()
     assert read["codes"][0]["code"] == code
-    assert read["codes"][0]["url"].endswith(f"/signup?ref={code}")
+    assert read["codes"][0]["url"].endswith(f"/r/{code}")  # ADR-053
     assert read["attribution_window_days"] > 0
     assert read["can_create"] is True
 

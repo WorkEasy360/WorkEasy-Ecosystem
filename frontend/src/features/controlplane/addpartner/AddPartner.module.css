@@ -108,78 +108,6 @@
   margin: 0;
 }
 
-/* --- the type cards ----------------------------------------------------------------------- */
-
-.cards {
-  display: grid;
-  gap: var(--w360-space-3);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-@media (min-width: 900px) {
-  .cards {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-.card {
-  position: relative;
-  display: grid;
-  gap: var(--w360-space-2);
-  align-content: start;
-  min-width: 0;
-  height: 100%;
-  padding: var(--w360-space-4);
-  border: 2px solid var(--w360-border);
-  border-radius: var(--w360-radius-md);
-  background: var(--w360-surface);
-  cursor: pointer;
-}
-
-/* The whole card selects its radio: the label stretches over the card, and the
-   "what this grants" disclosure sits above it so it still opens. */
-.cardHead::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-}
-
-.card:hover {
-  border-color: var(--w360-border-strong);
-}
-
-/* A selected card: a heavier brand border, a tint and a word - not colour alone. */
-.card:has(input:checked) {
-  border-color: var(--w360-brand);
-  background: var(--w360-brand-soft);
-}
-
-.card:has(input:focus-visible) {
-  outline: 3px solid var(--w360-focus-ring);
-  outline-offset: 2px;
-}
-
-.cardHead {
-  display: flex;
-  align-items: center;
-  gap: var(--w360-space-2);
-}
-
-.cardTitle {
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.cardText {
-  margin: 0;
-  color: var(--w360-text-secondary);
-}
-
 .cardGrants {
   position: relative;
   z-index: 1;
@@ -197,19 +125,6 @@
 .cardGrants ul {
   margin: var(--w360-space-1) 0 0;
   padding-left: var(--w360-space-5);
-}
-
-.selectedMark {
-  margin-left: auto;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--w360-brand);
-}
-
-@media (forced-colors: active) {
-  .card:has(input:checked) {
-    border-color: Highlight;
-  }
 }
 
 /* --- the review ------------------------------------------------------------------------------ */
@@ -266,14 +181,34 @@
   background: var(--w360-bg-soft);
 }
 
-/* The short Add Partner form (ADR-048): one column, readable width. */
-.shortForm {
-  max-width: 46rem;
+/* --- inside the Add New Partner dialog (Modal.module.css draws the dialog) ------ */
+
+.passwordRow :global(.w360-btn) {
+  min-height: 40px;
+  padding: 0 12px;
+  font-size: 13px;
 }
 
-.typeFieldset {
-  border: 0;
+.guidanceCompact {
+  display: grid;
+  gap: 2px;
+  margin-top: calc(-1 * var(--w360-space-1));
+  font-size: 12px;
+  color: var(--w360-text-muted);
+}
+
+.guidanceCompact p,
+.guidanceCompact ul {
   margin: 0;
-  padding: 0;
-  min-width: 0;
+}
+
+.guidanceCompact .strengthBar > span {
+  width: 16px;
+  height: 6px;
+}
+
+.note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--w360-text-muted);
 }

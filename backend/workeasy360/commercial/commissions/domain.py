@@ -46,6 +46,8 @@ class RuleView:
     rate_bp: int
     effective_from: datetime
     retired_at: datetime | None
+    #: Also earns on paid renewals (ADR-052).
+    recurring: bool = False
 
     def applies_at(self, moment: datetime) -> bool:
         return self.effective_from <= moment and (
@@ -85,6 +87,79 @@ def select_rule(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class MarginView:
+    """The columns of a margin rule that selection needs (ADR-053)."""
+
+    id: UUID
+    code: str
+    version: int
+    experience: str
+    partner_id: UUID | None
+    product_code: str
+    discount_bp: int
+    effective_from: datetime
+    retired_at: datetime | None
+    recurring: bool = True
+
+    def applies_at(self, moment: datetime) -> bool:
+        return self.effective_from <= moment and (
+            self.retired_at is None or self.retired_at > moment
+        )
+
+
+def select_margin(
+    margins: Iterable[MarginView],
+    *,
+    partner_id: UUID,
+    experience: str,
+    product_code: str,
+    at: datetime,
+) -> MarginView | None:
+    """The one margin rule for a partner's sale, or ``None``.
+
+    Precedence like :func:`select_rule`: the partner's own override over the
+    programme default of the experience it sells under, a product-specific
+    rule over an all-products one, then the latest version.
+    """
+    candidates = [
+        m
+        for m in margins
+        if m.applies_at(at)
+        and (
+            m.partner_id == partner_id
+            or (m.partner_id is None and m.experience == experience)
+        )
+        and m.product_code in ("", product_code)
+    ]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda m: (
+            m.partner_id is not None,
+            m.product_code != "",
+            m.effective_from,
+            m.version,
+            str(m.id),
+        ),
+    )
+
+
+def partner_cost(*, list_minor: int, currency: CurrencyCode, discount_bp: int) -> int:
+    """The partner's cost: list price less its discount, rounded half-up."""
+    return Money(list_minor, currency).apply_rate(10000 - discount_bp).minor_units
+
+
+def margin_bp(*, customer_minor: int, cost_minor: int) -> int:
+    """The margin as basis points of the customer price (half-up), for display
+    and for earning on a part of a sale (a plan upgrade's increase)."""
+    if customer_minor <= 0:
+        return 0
+    margin = customer_minor - cost_minor
+    return (margin * 10000 * 2 + customer_minor) // (customer_minor * 2)
+
+
 def sale_basis(*, total_minor: int, predecessor_total_minor: int | None) -> int:
     """The amount a sale earns commission on.
 
@@ -102,6 +177,19 @@ def sale_basis(*, total_minor: int, predecessor_total_minor: int | None) -> int:
 def commission_amount(*, basis_minor: int, currency: CurrencyCode, rate_bp: int) -> int:
     """``basis * rate``, rounded half-up to a whole minor unit."""
     return Money(basis_minor, currency).apply_rate(rate_bp).minor_units
+
+
+def refund_share(amount_minor: int, *, refunded_minor: int, paid_minor: int) -> int:
+    """The part of a commission a refund takes back (ADR-054): the commission
+    times the refunded share of what was paid, half-up in integers, and never
+    more than the commission. A full refund takes it all."""
+    if paid_minor <= 0 or refunded_minor <= 0:
+        return 0
+    if refunded_minor >= paid_minor:
+        return amount_minor
+    return min(
+        amount_minor, (2 * amount_minor * refunded_minor + paid_minor) // (2 * paid_minor)
+    )
 
 
 def clears_at(event_at: datetime, holdback_days: int) -> datetime:

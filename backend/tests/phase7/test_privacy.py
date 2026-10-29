@@ -93,7 +93,9 @@ def test_the_public_referral_endpoints_reveal_nothing_about_partners(
         json.dumps({"code": code.code}),
         content_type="application/json",
     )
-    assert ok.status_code == 201 and set(ok.json()) == {"token"}
+    # ADR-053: and where the link leads - a platform path, never a partner fact.
+    assert ok.status_code == 201 and set(ok.json()) == {"token", "destination"}
+    assert ok.json()["destination"].startswith("/")
     text = ok.content.decode().lower()
     assert str(fx["partner"].id) not in text and "private label" not in text
     missing = client.post(

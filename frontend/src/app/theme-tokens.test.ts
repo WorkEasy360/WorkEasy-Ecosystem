@@ -85,6 +85,28 @@ const PAIRS: [string, string, number][] = [
   ["--w360-text", "--w360-cream", 4.5],
   ["--w360-text-muted", "--w360-cream", 4.5],
   ["--w360-brand", "--w360-cream", 4.5],
+  // The Super Admin shell: navy top bar and sidebar, the current page, the canvas.
+  ["--w360-shell-text", "--w360-shell", 4.5],
+  ["--w360-shell-muted", "--w360-shell", 4.5],
+  ["--w360-shell-text", "--w360-shell-raised", 4.5],
+  ["--w360-shell-muted", "--w360-shell-raised", 4.5],
+  ["--w360-shell-text", "--w360-shell-active", 4.5],
+  ["--w360-shell-marker", "--w360-shell-active", 3],
+  ["--w360-shell-border", "--w360-shell", 1],
+  ["--w360-text", "--w360-shell-canvas", 4.5],
+  ["--w360-text-muted", "--w360-shell-canvas", 4.5],
+  ["--w360-brand", "--w360-shell-canvas", 4.5],
+  ["--w360-cta-contrast", "--w360-shell-marker", 4.5], // the green "New" button
+  // The dashboard's tiles (icons) and charts.
+  ["--w360-tile-blue", "--w360-tile-blue-bg", 3],
+  ["--w360-tile-green", "--w360-tile-green-bg", 3],
+  ["--w360-tile-purple", "--w360-tile-purple-bg", 3],
+  ["--w360-tile-orange", "--w360-tile-orange-bg", 3],
+  ["--w360-tile-red", "--w360-tile-red-bg", 3],
+  ["--w360-chart-3", "--w360-surface", 3],
+  ["--w360-chart-4", "--w360-surface", 3],
+  ["--w360-chart-5", "--w360-surface", 3],
+  ["--w360-chart-6", "--w360-surface", 3],
 ];
 
 describe("WorkEasy360 colour tokens", () => {

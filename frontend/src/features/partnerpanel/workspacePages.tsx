@@ -14,6 +14,7 @@ import {
   SharedResources,
 } from "./Account";
 import { Roles } from "./Access";
+import { MyProducts } from "./AffiliateProducts";
 import { AffiliateDashboard, Campaigns, Leads, MarketingMaterials, ReferralCodes, ReferralLinks } from "./AffiliateScreens";
 import { BrandSettings, UrlManager } from "./Brand";
 import {
@@ -90,6 +91,7 @@ const PAGES: Record<string, ReactElement> = {
   "brand-settings": <BrandSettings />,
   "brand-settings/url-manager": <UrlManager />,
   "brand-settings/white-label-setup": <PortalWhiteLabelScreen />,
+  "my-products": <MyProducts />,
   "referral-links": <ReferralLinks />,
   "referral-codes": <ReferralCodes />,
   campaigns: <Campaigns />,

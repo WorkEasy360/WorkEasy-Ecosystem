@@ -45,6 +45,7 @@ and bundles of listed products.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -84,12 +85,69 @@ VIEW_ANY = ("platform.billing.view", "commercial.subscription.view")
 STAFF_VIEW = "platform.staff_payment.view"
 
 MAX_QUANTITY = 100_000
+#: A cart holds one plan per product (ADR-052); ten is far past the catalog.
+MAX_CART_ITEMS = 10
 PAGE_SIZE = 25
 MAX_PAGE = 50
 
 _CLOSED_FOR_ORDERS = frozenset(
     {SubscriptionStatus.PAST_DUE, SubscriptionStatus.GRACE, SubscriptionStatus.SUSPENDED}
 )
+
+
+# --- who is selling (ADR-053) ------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Seller:
+    """Who sells an order, decided by the layer that verified it (partners sit
+    above payments, so they pass this in rather than being imported here).
+
+    ``direct`` is the customer in the Store: it buys what Explore lists, at the
+    direct price. ``partner`` is a reseller placing an order for its customer,
+    and ``storefront`` the customer in a white-label partner's branded Store:
+    both buy only what ``may_sell(product_code, plan_code)`` - the partner's
+    grants and switches - allows, priced from that partner's book.
+    """
+
+    channel: str = "direct"
+    partner_id: UUID | None = None
+    may_sell: Callable[[str, str], bool] | None = None
+
+    @property
+    def is_partner(self) -> bool:
+        return self.partner_id is not None and self.channel in ("partner", "storefront")
+
+
+DIRECT = Seller()
+
+#: ADR-053: called inside fulfilment's transaction, before anything is added,
+#: for an order sold through a partner's storefront - the partners module makes
+#: the customer that partner's customer (or refuses, failing the order). One
+#: registrant, set from ``partners``' ``AppConfig.ready``.
+_storefront_attacher: list[Callable[[UUID, UUID, UUID | None], None]] = []
+
+
+def on_storefront_fulfil(attacher: Callable[[UUID, UUID, UUID | None], None]) -> None:
+    _storefront_attacher[:] = [attacher]
+
+
+def _attach_storefront(order: Any, organization_id: UUID) -> None:
+    if order.channel == "storefront" and order.partner_id and _storefront_attacher:
+        _storefront_attacher[0](
+            order.partner_id, organization_id, order.placed_by_user_id
+        )
+
+
+def _partner_offer(seller: Seller, plan: Any, *, at: datetime) -> bool:
+    """Whether a partner seller may sell this plan version now: a live,
+    published version the partner's grants cover."""
+    if seller.may_sell is None or not seller.may_sell(plan.product_code, plan.plan_code):
+        return False
+    return str(plan.id) in {
+        str(p["plan_version_id"])
+        for p in catalog.sellable_plans([plan.product_code], at=at)
+    }
 
 
 # --- what is being bought ---------------------------------------------------------
@@ -109,6 +167,31 @@ class _Target:
 
 
 @dataclass(frozen=True)
+class _CartLine:
+    """One product's plan in a cart, priced on its own (ADR-052)."""
+
+    plan: Any
+    quantity: int
+    recurring_amount_minor: int
+    amount_due_minor: int
+    snapshot: dict[str, Any]
+
+    def as_record(self) -> dict[str, Any]:
+        """The line as the order stores it (``Order.lines``)."""
+        return {
+            "plan_version_id": str(self.plan.id),
+            "product_code": self.plan.product_code,
+            "plan_code": self.plan.plan_code,
+            "plan_name": self.plan.plan_name,
+            "is_add_on": self.plan.plan_kind is PlanKind.ADD_ON,
+            "quantity": self.quantity,
+            "recurring_amount_minor": self.recurring_amount_minor,
+            "amount_due_minor": self.amount_due_minor,
+            "snapshot": self.snapshot,
+        }
+
+
+@dataclass(frozen=True)
 class Quote:
     """What placing this order would do. Informational until placed; placing
     re-derives every figure."""
@@ -125,6 +208,9 @@ class Quote:
     collection_mode: str
     snapshot: dict[str, Any] = field(default_factory=dict)
     open_subscription: Any = None
+    #: A cart's lines, base plans before add-ons; empty for every other kind.
+    lines: tuple[_CartLine, ...] = ()
+    seller: Seller = DIRECT
 
     @property
     def requires_payment(self) -> bool:
@@ -143,6 +229,9 @@ class Quote:
     def description(self) -> str:
         if self.target.kind == "activation":
             return f"Activate subscription ({self.billing_interval.value})"[:255]
+        if self.target.kind == "cart":
+            names = ", ".join(line.plan.plan_name for line in self.lines)
+            return f"{names} ({self.billing_interval.value})"[:255]
         suffix = f" x{self.quantity}" if self.target.kind == "plan" else ""
         return f"{self.target.name}{suffix} ({self.billing_interval.value})"[:255]
 
@@ -160,6 +249,20 @@ class Quote:
             "is_trial": self.is_trial,
             "trial_days": self.trial_days,
             "requires_payment": self.requires_payment,
+            "channel": self.seller.channel,
+            "lines": [
+                {
+                    "plan_version_id": str(line.plan.id),
+                    "product_code": line.plan.product_code,
+                    "plan_name": line.plan.plan_name,
+                    "quantity": line.quantity,
+                    "recurring_amount_minor": line.recurring_amount_minor,
+                    "amount_due_minor": line.amount_due_minor
+                    if self.requires_payment
+                    else 0,
+                }
+                for line in self.lines
+            ],
         }
 
 
@@ -210,6 +313,7 @@ def _target(
     declined_plan_version_ids: Any,
     open_subscription: Any,
     at: datetime,
+    seller: Seller = DIRECT,
 ) -> _Target:
     plan_id = _uuid(plan_version_id, "plan_version_id")
     bundle_id = _uuid(bundle_version_id, "bundle_version_id")
@@ -239,6 +343,24 @@ def _target(
             name="Subscription",
         )
 
+    if seller.is_partner:
+        # ADR-053: a partner sells what its grants cover - plans only.
+        if plan_id is None:
+            raise OrderNotAllowed(
+                "A partner sells plans; choose a plan.", reason="not_for_sale"
+            )
+        plan = catalog.require_plan_version(plan_id)
+        if not _partner_offer(seller, plan, at=at):
+            raise OrderNotAllowed(
+                "This plan is not for sale here.", reason="not_for_sale"
+            )
+        return _Target(
+            kind="plan",
+            plan=plan,
+            product_codes=(plan.product_code,),
+            name=plan.plan_name,
+            free_trial=plan.billing_type is PlanBillingType.FREE_TRIAL,
+        )
     # A self-serve order buys exactly what Explore lists - never a private,
     # draft or withdrawn offer named by a guessed id.
     offers = catalog.marketplace_offers(at=at)
@@ -314,6 +436,7 @@ def _price(
     quantity: int,
     region: str,
     at: datetime,
+    seller: Seller = DIRECT,
 ) -> Any:
     from workeasy360.commercial.pricing.resolution import resolve_price
     from workeasy360.contracts.values.money import CurrencyCode
@@ -327,7 +450,195 @@ def _price(
         quantity=quantity,
         region=region,
         at=at,
-        partner_id=ctx.partner_id,
+        # The selling partner's book (ADR-053), else the acting partner's.
+        partner_id=seller.partner_id if seller.is_partner else ctx.partner_id,
+    )
+
+
+def _assert_open_for(subscription: Any, product_codes: Any, *, at: datetime) -> None:
+    """The running subscription (if any) can take these products: it is not
+    owing money or ending, and holds none of them already."""
+    if subscription is None:
+        return
+    if subscription.status in _CLOSED_FOR_ORDERS:
+        raise OrderNotAllowed(
+            "Pay the open invoice before buying anything else.",
+            reason="outstanding_balance",
+        )
+    if subscription.status not in (
+        SubscriptionStatus.ACTIVE,
+        SubscriptionStatus.TRIALING,
+    ):
+        raise OrderNotAllowed(
+            "The subscription is ending; nothing can be added to it.",
+            reason="subscription_not_open",
+        )
+    held = {i.product_code for i in subscription.effective_items(at)}
+    if held & set(product_codes):
+        raise OrderNotAllowed(
+            "This organization already has that product.",
+            reason="already_owned",
+            product_codes=sorted(held & set(product_codes)),
+        )
+
+
+def _cart_items(raw: Any) -> list[tuple[UUID, int]]:
+    """``[{"plan_version_id", "quantity"?}, ...]``: 2 to ``MAX_CART_ITEMS``
+    distinct plans. Identifiers and counts only - never a price."""
+    if not isinstance(raw, list) or not 2 <= len(raw) <= MAX_CART_ITEMS:
+        raise CatalogValidationError(
+            f"A cart holds 2 to {MAX_CART_ITEMS} plans; buy a single plan directly.",
+            field="cart_items",
+        )
+    items: list[tuple[UUID, int]] = []
+    for entry in raw:
+        if not isinstance(entry, dict) or set(entry) - {"plan_version_id", "quantity"}:
+            raise CatalogValidationError(
+                "Each cart item names a plan_version_id and, optionally, a quantity.",
+                field="cart_items",
+            )
+        plan_id = _uuid(entry.get("plan_version_id"), "cart_items")
+        quantity = entry.get("quantity", 1)
+        if plan_id is None:
+            raise CatalogValidationError(
+                "Each cart item names a plan_version_id.", field="cart_items"
+            )
+        if (
+            isinstance(quantity, bool)
+            or not isinstance(quantity, int)
+            or not (1 <= quantity <= MAX_QUANTITY)
+        ):
+            raise CatalogValidationError(
+                f"Quantity must be between 1 and {MAX_QUANTITY:,}.", field="cart_items"
+            )
+        items.append((plan_id, quantity))
+    if len({plan_id for plan_id, _ in items}) != len(items):
+        raise CatalogValidationError(
+            "The same plan is in the cart twice.", field="cart_items"
+        )
+    return items
+
+
+def _quote_cart(
+    ctx: TenantContext,
+    *,
+    items: list[tuple[UUID, int]],
+    interval: BillingInterval,
+    account: Any,
+    subscription: Any,
+    at: datetime,
+    seller: Seller = DIRECT,
+) -> Quote:
+    """Several products in one order (PDF "Multi-Product Cart"): each plan is
+    checked as Explore would sell it on its own, priced on its own from the
+    server's price books, and prorated on its own when it joins a running
+    subscription. A trial starts one product at a time, so a cart starts none."""
+    from workeasy360.commercial.subscriptions.domain import prorate
+
+    offers = (
+        set()
+        if seller.is_partner
+        else {p["plan_version_id"] for p in catalog.marketplace_offers(at=at)["plans"]}
+    )
+    plans = []
+    for plan_id, quantity in items:
+        plan = (
+            catalog.plan_version(plan_id)
+            if seller.is_partner or str(plan_id) in offers
+            else None
+        )
+        if plan is None or (
+            seller.is_partner and not _partner_offer(seller, plan, at=at)
+        ):
+            raise OrderNotAllowed(
+                "A plan in the cart is not for sale.",
+                reason="not_for_sale",
+                plan_version_id=str(plan_id),
+            )
+        if plan.billing_type is PlanBillingType.FREE_TRIAL:
+            raise OrderNotAllowed(
+                f"{plan.plan_name} is a free trial, which starts on its own - "
+                f"remove it from the cart.",
+                reason="trial_not_in_cart",
+            )
+        plans.append((plan, quantity))
+    codes = [plan.product_code for plan, _ in plans]
+    if len(set(codes)) != len(codes):
+        raise OrderNotAllowed(
+            "A cart holds one plan per product.", reason="duplicate_product"
+        )
+    _assert_open_for(subscription, codes, at=at)
+    held = (
+        {i.product_code for i in subscription.effective_items(at)}
+        if subscription is not None
+        else set()
+    )
+    for plan, _ in plans:
+        if plan.plan_kind is PlanKind.ADD_ON and plan.addon_for_code not in (
+            held | set(codes)
+        ):
+            raise OrderNotAllowed(
+                f"{plan.plan_name} is an add-on for {plan.addon_for_code!r}, which "
+                f"is neither held nor in the cart.",
+                reason="add_on_requires_base",
+                requires=plan.addon_for_code,
+            )
+
+    currency = subscription.currency if subscription is not None else account.currency
+    chosen = subscription.billing_interval if subscription is not None else interval
+    running = (
+        subscription is not None and subscription.status is SubscriptionStatus.ACTIVE
+    )
+    lines = []
+    # Base plans first: fulfilment adds them in this order, so an add-on's
+    # base is always already on the subscription when the add-on joins.
+    for plan, quantity in sorted(plans, key=lambda p: p[0].plan_kind is PlanKind.ADD_ON):
+        target = _Target(kind="plan", plan=plan, product_codes=(plan.product_code,))
+        priced = _price(
+            ctx,
+            target,
+            currency=currency,
+            interval=chosen,
+            quantity=quantity,
+            region=account.billing_region,
+            at=at,
+            seller=seller,
+        )
+        recurring = int(priced.total.minor_units)
+        due = (
+            prorate(
+                recurring,
+                period_start=subscription.current_period_start,
+                period_end=subscription.current_period_end,
+                at=at,
+            )
+            if running
+            else recurring
+        )
+        lines.append(
+            _CartLine(
+                plan=plan,
+                quantity=quantity,
+                recurring_amount_minor=recurring,
+                amount_due_minor=due,
+                snapshot=priced.as_snapshot(),
+            )
+        )
+    return Quote(
+        target=_Target(kind="cart", product_codes=tuple(sorted(codes)), name="Cart"),
+        currency=currency,
+        billing_interval=chosen,
+        quantity=1,
+        recurring_amount_minor=sum(line.recurring_amount_minor for line in lines),
+        amount_due_minor=sum(line.amount_due_minor for line in lines),
+        prorated=running,
+        is_trial=False,
+        trial_days=0,
+        collection_mode=account.collection_mode,
+        snapshot={"currency": currency, "lines": len(lines)},
+        open_subscription=subscription,
+        lines=tuple(lines),
+        seller=seller,
     )
 
 
@@ -341,7 +652,9 @@ def _quote(
     billing_interval: Any = None,
     quantity: Any = 1,
     with_trial: Any = False,
+    cart_items: Any = None,
     at: datetime,
+    seller: Seller = DIRECT,
 ) -> Quote:
     from workeasy360.commercial.billing.services import billing_account_or_none
     from workeasy360.commercial.subscriptions.domain import prorate
@@ -378,6 +691,28 @@ def _quote(
             reason="billing_account_required",
         )
     subscription = _open_subscription()
+    if cart_items is not None:
+        if any(
+            v not in (None, "")
+            for v in (plan_version_id, bundle_version_id, activate_subscription_id)
+        ):
+            raise CatalogValidationError(
+                "A cart order names its plans in cart_items only.", field="cart_items"
+            )
+        if with_trial:
+            raise OrderNotAllowed(
+                "A trial starts one product at a time; a cart starts none.",
+                reason="trial_not_in_cart",
+            )
+        return _quote_cart(
+            ctx,
+            items=_cart_items(cart_items),
+            interval=interval,
+            account=account,
+            subscription=subscription,
+            at=at,
+            seller=seller,
+        )
     target = _target(
         plan_version_id=plan_version_id,
         bundle_version_id=bundle_version_id,
@@ -385,6 +720,7 @@ def _quote(
         declined_plan_version_ids=declined_plan_version_ids,
         open_subscription=subscription,
         at=at,
+        seller=seller,
     )
 
     if target.kind == "activation":
@@ -408,6 +744,7 @@ def _quote(
             trial_days=0,
             collection_mode=account.collection_mode,
             open_subscription=subscription,
+            seller=seller,
         )
 
     if target.free_trial and subscription is not None:
@@ -430,27 +767,7 @@ def _quote(
                 reason="add_on_requires_base",
                 requires=target.plan.addon_for_code,
             )
-    if subscription is not None:
-        if subscription.status in _CLOSED_FOR_ORDERS:
-            raise OrderNotAllowed(
-                "Pay the open invoice before buying anything else.",
-                reason="outstanding_balance",
-            )
-        if subscription.status not in (
-            SubscriptionStatus.ACTIVE,
-            SubscriptionStatus.TRIALING,
-        ):
-            raise OrderNotAllowed(
-                "The subscription is ending; nothing can be added to it.",
-                reason="subscription_not_open",
-            )
-        held = {i.product_code for i in subscription.effective_items(at)}
-        if held & set(target.product_codes):
-            raise OrderNotAllowed(
-                "This organization already has that product.",
-                reason="already_owned",
-                product_codes=sorted(held & set(target.product_codes)),
-            )
+    _assert_open_for(subscription, target.product_codes, at=at)
 
     trial_days = 0
     if subscription is None and (with_trial or target.free_trial):
@@ -471,6 +788,7 @@ def _quote(
         quantity=quantity if target.kind == "plan" else 1,
         region=account.billing_region,
         at=at,
+        seller=seller,
     )
     recurring = int(quote.total.minor_units)
     running = (
@@ -499,14 +817,17 @@ def _quote(
         collection_mode=account.collection_mode,
         snapshot=quote.as_snapshot(),
         open_subscription=subscription,
+        seller=seller,
     )
 
 
-def quote(ctx: TenantContext, **request: Any) -> dict[str, Any]:
+def quote(
+    ctx: TenantContext, *, seller: Seller = DIRECT, **request: Any
+) -> dict[str, Any]:
     """What placing this order would cost and do - for the checkout page.
     Placing it re-derives every figure; nothing here is a commitment."""
     authz.require(ctx, MANAGE)
-    return _quote(ctx, at=timezone.now(), **request).as_dict()
+    return _quote(ctx, at=timezone.now(), seller=seller, **request).as_dict()
 
 
 # --- placing ---------------------------------------------------------------------
@@ -539,7 +860,13 @@ def _refuse_while_pending() -> None:
         )
 
 
-def place(ctx: TenantContext, *, idempotency_key: str, **request: Any) -> dict[str, Any]:
+def place(
+    ctx: TenantContext,
+    *,
+    idempotency_key: str,
+    seller: Seller = DIRECT,
+    **request: Any,
+) -> dict[str, Any]:
     """Place an order. Returns the order; ``requires_payment`` says whether the
     browser goes on to pay its invoice. Replays with the same key return the
     same order."""
@@ -558,7 +885,7 @@ def place(ctx: TenantContext, *, idempotency_key: str, **request: Any) -> dict[s
     _refuse_while_pending()
 
     now = timezone.now()
-    q = _quote(ctx, at=now, **request)
+    q = _quote(ctx, at=now, seller=seller, **request)
     if q.requires_payment:
         order = _place_payable(ctx, q, idempotency_key=idempotency_key, request=request)
     else:
@@ -613,8 +940,11 @@ def _new_order(ctx: TenantContext, q: Quote, *, key: str, status: str) -> Any:
         recurring_amount_minor=q.recurring_amount_minor,
         amount_due_minor=q.amount_due_minor if q.requires_payment else 0,
         price_snapshot=q.snapshot,
+        lines=[line.as_record() for line in q.lines],
         is_trial=q.is_trial,
         placed_by_user_id=ctx.user_id,
+        channel=q.seller.channel,
+        partner_id=q.seller.partner_id if q.seller.is_partner else None,
         idempotency_key=key,
     )
 
@@ -672,16 +1002,33 @@ def _place_payable(
             issued_at=now,
             due_at=expires,
         )
-        InvoiceLine.objects.create(
-            invoice=invoice,
-            subscription_item_id=None,
-            description=q.description,
-            product_code=q.target.product_codes[0] if q.target.kind == "plan" else "",
-            plan_code=q.target.plan.plan_code if q.target.kind == "plan" else "",
-            bundle_code=q.target.bundle.bundle_code if q.target.kind == "bundle" else "",
-            quantity=q.quantity,
-            amount_minor=q.amount_due_minor,
-        )
+        if q.target.kind == "cart":
+            # One invoice line per product: one payment, an itemised invoice.
+            for line in q.lines:
+                InvoiceLine.objects.create(
+                    invoice=invoice,
+                    subscription_item_id=None,
+                    description=f"{line.plan.plan_name} x{line.quantity} "
+                    f"({q.billing_interval.value})"[:255],
+                    product_code=line.plan.product_code,
+                    plan_code=line.plan.plan_code,
+                    bundle_code="",
+                    quantity=line.quantity,
+                    amount_minor=line.amount_due_minor,
+                )
+        else:
+            InvoiceLine.objects.create(
+                invoice=invoice,
+                subscription_item_id=None,
+                description=q.description,
+                product_code=q.target.product_codes[0] if q.target.kind == "plan" else "",
+                plan_code=q.target.plan.plan_code if q.target.kind == "plan" else "",
+                bundle_code=q.target.bundle.bundle_code
+                if q.target.kind == "bundle"
+                else "",
+                quantity=q.quantity,
+                amount_minor=q.amount_due_minor,
+            )
         _sync_summary(order)
         audit.record(
             ctx,
@@ -712,7 +1059,27 @@ def _place_fulfilled(
 
     inner_key = f"order:{idempotency_key}"[:128]
     line_id: UUID | None = None
-    if q.target.kind == "activation":
+    records = [line.as_record() for line in q.lines]
+    if q.seller.channel == "storefront" and q.seller.partner_id and _storefront_attacher:
+        # Nothing is owed (a trial, a free plan): the customer becomes the
+        # storefront partner's now, before the line exists (ADR-053).
+        _storefront_attacher[0](q.seller.partner_id, ctx.organization_id, ctx.user_id)
+    if q.target.kind == "cart":
+        # All lines or none: one transaction around each line's own
+        # idempotent purchase, base plans first (the quote's order).
+        with transaction.atomic():
+            for n, (line, record) in enumerate(zip(q.lines, records, strict=True)):
+                bought = subscriptions.purchase_plan(
+                    ctx,
+                    plan_version_id=line.plan.id,
+                    idempotency_key=f"order:{idempotency_key}:{n}"[:128],
+                    quantity=line.quantity,
+                    with_trial=False,
+                    billing_interval=q.billing_interval,
+                )
+                record["subscription_item_id"] = str(bought.id)
+                line_id, subscription_id = line_id or bought.id, bought.subscription_id
+    elif q.target.kind == "activation":
         subscription = subscriptions.activate_subscription(
             ctx, subscription_id=q.target.subscription.id, idempotency_key=inner_key
         )
@@ -751,6 +1118,7 @@ def _place_fulfilled(
         order = _new_order(ctx, q, key=idempotency_key, status=Order.Status.FULFILLED)
         order.subscription_id = subscription_id
         order.subscription_item_id = line_id
+        order.lines = records
         order.fulfilled_at = now
         order.save()
         _sync_summary(order)
@@ -863,6 +1231,7 @@ def order_view(order: Any) -> dict[str, Any]:
         "recurring_amount_minor": order.recurring_amount_minor,
         "amount_due_minor": order.amount_due_minor,
         "is_trial": order.is_trial,
+        "channel": order.channel or "direct",
         "requires_payment": order.status == order.Status.PENDING_PAYMENT,
         "invoice_id": str(invoice.id) if invoice is not None else None,
         "invoice_number": invoice.number if invoice is not None else None,
@@ -872,7 +1241,22 @@ def order_view(order: Any) -> dict[str, Any]:
         "fulfilled_at": order.fulfilled_at.isoformat() if order.fulfilled_at else None,
         "cancelled_at": order.cancelled_at.isoformat() if order.cancelled_at else None,
         "failure_reason": order.failure_reason,
+        "lines": [
+            {key: line.get(key) for key in _LINE_VIEW_KEYS}
+            for line in (order.lines or [])
+        ],
     }
+
+
+#: What a cart line shows a reader (its price snapshot stays server-side).
+_LINE_VIEW_KEYS = (
+    "product_code",
+    "plan_name",
+    "quantity",
+    "recurring_amount_minor",
+    "amount_due_minor",
+    "subscription_item_id",
+)
 
 
 def orders(
@@ -961,9 +1345,28 @@ def fulfil(organization_id: UUID, order_id: UUID) -> str:
         if order is None or order.status != Order.Status.PAID:
             return "noop"
         now = timezone.now()
+        added: dict[str, Any] = {}
         try:
             with transaction.atomic():
-                if order.kind == Order.Kind.ACTIVATION:
+                _attach_storefront(order, organization_id)
+                if order.kind == Order.Kind.CART:
+                    # Every line or none: a line that can no longer be added
+                    # fails the whole order, which is then refunded in full.
+                    line = None
+                    for record in order.lines:
+                        subscription, item = system.add_paid_line(
+                            ctx,
+                            plan_version_id=UUID(record["plan_version_id"]),
+                            bundle_version_id=None,
+                            declined_plan_version_ids=[],
+                            quantity=int(record["quantity"]),
+                            billing_interval=BillingInterval(order.billing_interval),
+                            snapshot=record["snapshot"],
+                            order_number=order.number,
+                        )
+                        added[record["product_code"]] = item
+                        line = line or item
+                elif order.kind == Order.Kind.ACTIVATION:
                     subscription = system.activate_paid(
                         ctx,
                         subscription_id=order.subscription_id,
@@ -1002,11 +1405,16 @@ def fulfil(organization_id: UUID, order_id: UUID) -> str:
             refund_attempt = _succeeded_attempt(invoice)
             outcome = "failed"
         else:
-            _link_invoice(invoice, order, subscription, line)
+            _link_invoice(invoice, order, subscription, line, by_product=added)
             order.status = Order.Status.FULFILLED
             order.fulfilled_at = now
             order.subscription_id = subscription.id
             order.subscription_item_id = line.id if line is not None else None
+            if added:
+                order.lines = [
+                    {**r, "subscription_item_id": str(added[r["product_code"]].id)}
+                    for r in order.lines
+                ]
             order.version += 1
             order.save(
                 update_fields=[
@@ -1014,6 +1422,7 @@ def fulfil(organization_id: UUID, order_id: UUID) -> str:
                     "fulfilled_at",
                     "subscription",
                     "subscription_item_id",
+                    "lines",
                     "version",
                     "updated_at",
                 ]
@@ -1061,11 +1470,19 @@ def _succeeded_attempt(invoice: Any) -> UUID | None:
     )
 
 
-def _link_invoice(invoice: Any, order: Any, subscription: Any, line: Any) -> None:
+def _link_invoice(
+    invoice: Any,
+    order: Any,
+    subscription: Any,
+    line: Any,
+    *,
+    by_product: dict[str, Any] | None = None,
+) -> None:
     """Name the subscription the order's invoice paid for. When the order
     opened the subscription (or converted a trial), its invoice *is* the first
     period's: it takes that period, so the period invoicing finds it invoiced
-    and paid and never bills it again."""
+    and paid and never bills it again. A cart's invoice lines are each linked
+    to the subscription line of their own product (``by_product``)."""
     from workeasy360.commercial.payments.models import InvoiceLine
 
     if invoice is None:
@@ -1079,6 +1496,12 @@ def _link_invoice(invoice: Any, order: Any, subscription: Any, line: Any) -> Non
     if fields:
         invoice.version += 1
         invoice.save(update_fields=[*fields, "version", "updated_at"])
+    if by_product:
+        for code, item in by_product.items():
+            InvoiceLine.objects.filter(
+                invoice=invoice, subscription_item_id__isnull=True, product_code=code
+            ).update(subscription_item_id=item.id)
+        return
     if line is not None:
         InvoiceLine.objects.filter(
             invoice=invoice, subscription_item_id__isnull=True
@@ -1163,10 +1586,38 @@ def _sync_summary(order: Any) -> None:
             "product_codes": list(order.product_codes or []),
             "currency": order.currency,
             "amount_due_minor": order.amount_due_minor,
+            "recurring_amount_minor": order.recurring_amount_minor,
+            "channel": order.channel or "direct",
+            "partner_id": order.partner_id,
+            "plan_names": _plan_names(order),
+            "subscription_item_ids": _item_ids(order),
             "created_at": order.created_at or timezone.now(),
             "paid_at": order.paid_at,
         },
     )
+
+
+def _plan_names(order: Any) -> list[str]:
+    """The plans an order sells, by name (a cart's lines; a plan's own name;
+    a bundle's or an activation's description)."""
+    if order.lines:
+        return [str(line.get("plan_name") or "") for line in order.lines]
+    if order.plan_version_id:
+        plan = catalog.plan_version(order.plan_version_id)
+        if plan is not None:
+            return [plan.plan_name]
+    return [order.description]
+
+
+def _item_ids(order: Any) -> list[str]:
+    ids = [
+        str(line["subscription_item_id"])
+        for line in (order.lines or [])
+        if line.get("subscription_item_id")
+    ]
+    if not ids and order.subscription_item_id:
+        ids = [str(order.subscription_item_id)]
+    return ids
 
 
 def on_invoice_voided(invoice: Any, *, at: datetime) -> None:
@@ -1243,6 +1694,33 @@ def staff_orders(
         else None,
         "has_more": more,
     }
+
+
+def paid_orders_by_product(*, start: Any, end: Any) -> dict[str, Any]:
+    """Orders paid in ``[start, end)``: how many, and per product code (a bundle
+    order counts once for each of its products, so the per-product figures can
+    add up to more than ``orders``). For the Super Admin dashboard, whose
+    caller has already authorized. Codes and counts only."""
+    from collections import Counter
+
+    from workeasy360.commercial.payments.models import OrderSummary
+
+    per_product: Counter[str] = Counter()
+    orders = 0
+    rows = OrderSummary.objects.filter(paid_at__gte=start, paid_at__lt=end).values_list(
+        "product_codes", flat=True
+    )
+    for codes in rows.iterator():
+        orders += 1
+        per_product.update(set(codes or []))
+    return {"orders": orders, "by_product": dict(per_product)}
+
+
+def paid_order_count(*, start: Any, end: Any) -> int:
+    """How many orders were paid in ``[start, end)``."""
+    from workeasy360.commercial.payments.models import OrderSummary
+
+    return OrderSummary.objects.filter(paid_at__gte=start, paid_at__lt=end).count()
 
 
 def recent_orders_for_organizations(

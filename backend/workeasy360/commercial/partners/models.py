@@ -531,6 +531,70 @@ class PartnerProductGrant(models.Model):
         return f"{self.partner_id} may sell {self.product_id}"
 
 
+class PartnerPromotionGrant(models.Model):
+    """A product a partner may **promote** with referral links (ADR-054).
+
+    Separate on purpose from ``PartnerProductGrant`` (may *sell*) and from any
+    customer entitlement (may *use*): an affiliate given a product here can
+    make product, pricing, feature and update links for it, and nothing else.
+    Without an active row the partner cannot make a new link for the product.
+
+    Revoking stops new links at once. What the partner's existing links do
+    afterwards is the programme's ``revoked_links`` policy; referrals already
+    captured and commission already earned are never touched. Rows are never
+    deleted - a grant given again is a new row - so the history of who could
+    promote what, and when, stays readable.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="promotion_grants"
+    )
+    product = models.ForeignKey(
+        "catalog.Product", on_delete=models.PROTECT, related_name="+"
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=_choices(GrantStatus),
+        default=GrantStatus.ACTIVE.value,
+    )
+    granted_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    granted_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        "identity.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+
+    class Meta:
+        db_table = "partners_promotion_grant"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["partner", "product"],
+                condition=models.Q(status="active"),
+                name="uq_partner_promotion_grant_active",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status="active", revoked_at__isnull=True)
+                | models.Q(status="revoked", revoked_at__isnull=False),
+                name="ck_promotion_grant_status_matches_revocation",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["partner", "status", "product"], name="ix_promotiongrant_partner"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.partner_id} may promote {self.product_id}"
+
+
 class PartnerHierarchyLink(models.Model):
     """One partner (the parent) delegating to another (the sub-partner).
 
@@ -1121,6 +1185,14 @@ class PartnerUpgradeRequest(models.Model):
     #: number). A reference only: no amount is stored or charged here.
     commercial_reference = models.CharField(max_length=120, blank=True, default="")
     correlation_id = models.UUIDField(null=True, blank=True)
+    #: ADR-053: the programme's set-up fee for the target, fixed when the
+    #: request opened (a later fee change does not move it). ``None`` is "no
+    #: fee". When there is one, approval needs the payment's reference, and
+    #: ``fee_settled_at`` records when staff confirmed it - money is collected
+    #: outside the platform (an offline invoice), never charged here.
+    fee_amount_minor = models.BigIntegerField(null=True, blank=True)
+    fee_currency = models.CharField(max_length=3, blank=True, default="", db_default="")
+    fee_settled_at = models.DateTimeField(null=True, blank=True)
 
     #: Optimistic token: two administrators editing one draft must not silently
     #: overwrite each other.
@@ -1179,3 +1251,38 @@ class PartnerUpgradeRequest(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.partner_id}: {self.from_experience or '-'} -> {self.to_experience} [{self.status}]"
+
+
+class PartnerProgramFee(models.Model):
+    """The set-up fee for becoming a Reseller or a White-label partner
+    (ADR-053, the owner's "setup fee if configured"). One row per target
+    experience, set by Super Admin; no row, or a zero amount, is "no fee".
+
+    A request snapshots the fee when it opens, so changing it here never moves
+    a request already in progress. Settlement is offline: staff record the
+    payment's reference when approving.
+    """
+
+    experience = models.CharField(max_length=16, unique=True)
+    amount_minor = models.BigIntegerField()
+    currency = models.CharField(max_length=3, choices=_choices(CurrencyCode))
+    updated_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "partners_program_fee"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(experience__in=["reseller", "white_label"]),
+                name="ck_program_fee_experience",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount_minor__gte=0),
+                name="ck_program_fee_not_negative",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.experience}: {self.amount_minor} {self.currency}"

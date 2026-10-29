@@ -243,16 +243,10 @@ function PreviewList({ label, items, empty }: { label: string; items: ManagedPro
 
 // --- plans ------------------------------------------------------------------------------------
 
+/** ADR-053: the catalog has no purchasable add-on for partners, so Pricing &
+ * Margins has no Add-ons tab (the old address still answers and says why). */
 function PlansNav() {
-  const { base } = usePanel();
-  return (
-    <SubNav
-      items={[
-        { href: `${base}/plans`, label: "Plans" },
-        { href: `${base}/plans/add-ons`, label: "Add-ons" },
-      ]}
-    />
-  );
+  return null;
 }
 
 export function Plans() {
@@ -260,37 +254,53 @@ export function Plans() {
   const [load] = useLoad(() => panelApi.plans(id), [id]);
   return (
     <div className={styles.page}>
-      <PageHeader title="Plans & Add-ons" lead="The plans you may sell, at the price your customers pay. Workeasy360 sets the plans and your prices." />
+      <PageHeader
+        title="Pricing & Margins"
+        lead="The plans you may sell: list price, your cost, what your customer pays and your margin. Every figure is calculated by Workeasy360."
+      />
       <PlansNav />
       <LoadGate load={load} what="your plans">
         {(d) => (
           <>
             <Table
-              caption="Plans you can sell"
-              head={["Plan", "Product", "Billing", "Your price", "List price", "Difference from list", "Seats", "Trial", "For sale"]}
+              caption="Plans you can sell, with your cost and margin"
+              head={["Plan", "Product", "Billing", "List price", "Your cost", "Customer price", "Margin", "Margin %", "You earn", "Seats", "Trial", "For sale"]}
               isEmpty={d.plans.length === 0}
               empty="Nothing has been approved for your account yet."
             >
               {d.plans.flatMap((p) =>
-                (p.prices.length ? p.prices : [null]).map((price, n) => (
-                  <tr key={`${p.plan_version_id}-${price?.interval ?? n}`}>
-                    <th scope="row">{p.plan_name}</th>
-                    <td>{p.product_name}</td>
-                    <td>{price ? (INTERVALS[price.interval] ?? price.interval) : "—"}</td>
-                    <td className={styles.num}>{price ? (price.partner_price_minor != null ? money(price.partner_price_minor, p.currency) : price.list_price_minor != null ? `${money(price.list_price_minor, p.currency)} (list)` : "—") : "Not priced"}</td>
-                    <td className={styles.num}>{price?.list_price_minor != null ? money(price.list_price_minor, p.currency) : "—"}</td>
-                    <td className={styles.num}>{price?.difference_minor != null ? money(price.difference_minor, p.currency) : "—"}</td>
-                    <td className={styles.num}>{p.included_seats}</td>
-                    <td>{p.trial_days ? `${p.trial_days} days` : "—"}</td>
-                    <td>
-                      <Status value={p.enabled_for_sale ? "enabled" : "disabled"} />
-                    </td>
-                  </tr>
-                )),
+                (p.prices.length ? p.prices : [null]).map((price, n) => {
+                  const cash = (value: number | null | undefined) => (value != null ? money(value, p.currency) : "—");
+                  return (
+                    <tr key={`${p.plan_version_id}-${price?.interval ?? n}`}>
+                      <th scope="row">{p.plan_name}</th>
+                      <td>{p.product_name}</td>
+                      <td>{price ? (INTERVALS[price.interval] ?? price.interval) : "Not priced"}</td>
+                      <td className={styles.num}>{cash(price?.list_price_minor)}</td>
+                      <td className={styles.num}>{cash(price?.partner_cost_minor)}</td>
+                      <td className={styles.num}>{cash(price?.customer_price_minor ?? price?.partner_price_minor ?? price?.list_price_minor)}</td>
+                      <td className={styles.num}>{cash(price?.margin_minor)}</td>
+                      <td className={styles.num}>{price?.margin_bp != null ? `${(price.margin_bp / 100).toFixed(2)}%` : "—"}</td>
+                      <td>
+                        {p.earning?.model === "margin"
+                          ? `Margin (${((p.earning.discount_bp ?? 0) / 100).toFixed(2)}% off list)`
+                          : "Commission"}
+                      </td>
+                      <td className={styles.num}>{p.included_seats}</td>
+                      <td>{p.trial_days ? `${p.trial_days} days` : "—"}</td>
+                      <td>
+                        <Status value={p.enabled_for_sale ? "enabled" : "disabled"} />
+                      </td>
+                    </tr>
+                  );
+                }),
               )}
             </Table>
+            <p className={styles.muted}>
+              Your cost is the list price less the discount Workeasy360 set for you; your margin is what your customer pays
+              less your cost, earned on the ledger once the sale is paid. Without a discount you earn commission instead.
+            </p>
             <NotAvailable title="Creating plans" reasons={["You cannot create a global plan. Workeasy360 creates plans and sets your prices; you see and sell the ones approved for your account."]} />
-            {d.not_implemented.partner_cost && <NotAvailable title="Margin over cost" reasons={[d.not_implemented.partner_cost]} />}
           </>
         )}
       </LoadGate>
@@ -548,20 +558,35 @@ export function Payments() {
       {paged.state === "error" && <p role="alert">Couldn&apos;t load orders.</p>}
       {paged.state === "ready" && (
         <>
-          <Table caption="Customer orders" head={["Order", "Customer", "Description", "Status", "Amount", "Placed", "Paid"]} isEmpty={paged.rows.length === 0} empty="No orders yet.">
+          <Table
+            caption="Customer orders"
+            head={["Order", "Customer", "Plans", "Price / period", "Amount due", "Your cost", "You earned", "Payment", "Order status", "Placed"]}
+            isEmpty={paged.rows.length === 0}
+            empty="No orders yet."
+          >
             {paged.rows.map((o) => (
               <tr key={o.id}>
                 <th scope="row" className={styles.mono}>
                   {o.number}
+                  {o.sold_by_you && <span className={styles.muted}> · by you</span>}
                 </th>
                 <td>{o.customer || <span className={styles.muted}>Former customer</span>}</td>
-                <td>{o.description}</td>
+                <td>{(o.plans && o.plans.length ? o.plans : [o.description]).join(", ")}</td>
+                <td className={styles.num}>{o.recurring_amount_minor != null ? money(o.recurring_amount_minor, o.currency) : "—"}</td>
+                <td className={styles.num}>{money(o.amount_due_minor, o.currency)}</td>
+                <td className={styles.num}>
+                  {o.earning?.partner_cost_minor != null ? money(o.earning.partner_cost_minor, o.earning.currency) : "—"}
+                </td>
+                <td className={styles.num}>
+                  {o.earning ? `${money(o.earning.amount_minor, o.earning.currency)} (${o.earning.model})` : "—"}
+                </td>
+                <td>
+                  <Status value={o.payment_status ?? (o.paid_at ? "paid" : "")} />
+                </td>
                 <td>
                   <Status value={o.status} />
                 </td>
-                <td className={styles.num}>{money(o.amount_due_minor, o.currency)}</td>
                 <td>{when(o.created_at)}</td>
-                <td>{when(o.paid_at)}</td>
               </tr>
             ))}
           </Table>

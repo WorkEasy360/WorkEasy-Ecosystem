@@ -55,17 +55,23 @@ def create_rule_version(
     product_code: Any = "",
     partner_id: UUID | None = None,
     effective_from: datetime | None = None,
+    recurring: Any = False,
 ) -> Any:
     """Create the next version of a rule, retiring the one it replaces.
 
     Sales made before ``effective_from`` keep the version they were computed
     under; nothing already accrued is recalculated. ``rate_bp`` is integer
     basis points (1500 = 15%) - a float, a bool or a string is refused.
+    ``recurring`` (ADR-052) also earns on each paid renewal of the sale.
     """
     from workeasy360.commercial.commissions.models import CommissionRule
 
     authz.require(ctx, MANAGE)
     why = clean_reason(reason)
+    if not isinstance(recurring, bool):
+        raise PartnerValidationError(
+            "recurring must be true or false.", field="recurring"
+        )
     clean_code = str(code or "").strip().lower()
     if (
         not clean_code
@@ -134,6 +140,7 @@ def create_rule_version(
             partner_id=partner_id,
             product_code=product,
             rate_bp=rate_bp,
+            recurring=recurring,
             effective_from=start,
             reason=why,
             created_by_id=ctx.user_id,
@@ -147,6 +154,7 @@ def create_rule_version(
                 "code": rule.code,
                 "version": rule.version,
                 "rate_bp": rule.rate_bp,
+                "recurring": rule.recurring,
                 "partner_id": str(partner_id) if partner_id else None,
                 "product_code": product,
                 "effective_from": start.isoformat(),
@@ -319,6 +327,8 @@ def assign_partner_commission(
             product_code=product,
             partner_id=partner_id,
             effective_from=effective_from,
+            # A new rate keeps the rule's recurring choice (ADR-052).
+            recurring=current.recurring if current is not None else False,
         )
         audit.record(
             ctx,

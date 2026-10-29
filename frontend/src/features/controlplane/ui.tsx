@@ -143,75 +143,59 @@ export function useAction(after?: () => void) {
   return { act, busy, feedback };
 }
 
-/** A button that asks for the *reason* an auditor will read, then confirms.
- * `danger` marks a destructive confirmation (suspend, remove): it is drawn in
- * the semantic red, never the brand green. */
+/** The reason recorded for an audited action. Nobody is asked to type one (the
+ * owner's call, 2026-10-27); the server still requires a reason, so the action
+ * states what was done and where, and the audit entry keeps who and when. */
+export function autoReason(action: string, where = "Super Admin console"): string {
+  return `${action} - ${where}`.slice(0, 200);
+}
+
+/** A button for an audited action. It asks for no reason (`autoReason` is
+ * sent). `danger` marks a destructive action (suspend, remove, revoke): it asks
+ * once to confirm, drawn in the semantic red, never the brand green. */
 export function ReasonAction({
   label,
   confirmLabel,
   onConfirm,
   busy,
-  minLength = 10,
   danger = false,
+  where,
 }: {
   label: string;
   confirmLabel?: string;
   onConfirm: (reason: string) => void;
   busy?: boolean;
-  minLength?: number;
   danger?: boolean;
+  /** Where the action is taken, for the recorded reason (default: the Super Admin console). */
+  where?: string;
 }) {
-  const id = useId();
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const run = () => {
+    setConfirming(false);
+    onConfirm(autoReason(label, where));
+  };
 
-  if (!open) {
+  if (!danger || !confirming) {
     return (
       <button
         type="button"
         className="w360-btn w360-btn-secondary"
-        onClick={() => setOpen(true)}
+        disabled={busy}
+        onClick={() => (danger ? setConfirming(true) : run())}
       >
         {label}
       </button>
     );
   }
   return (
-    <form
-      className={styles.field}
-      onSubmit={(e) => {
-        e.preventDefault();
-        onConfirm(reason.trim());
-        setOpen(false);
-        setReason("");
-      }}
-    >
-      <label className="w360-label" htmlFor={id}>
-        Reason for “{label}” (recorded in the audit log)
-      </label>
-      <input
-        id={id}
-        className="w360-input"
-        autoFocus
-        required
-        minLength={minLength}
-        maxLength={200}
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-      />
-      <div className={styles.row}>
-        <button
-          type="submit"
-          className={`w360-btn ${danger ? "w360-btn-danger" : "w360-btn-primary"}`}
-          disabled={busy || reason.trim().length < minLength}
-        >
-          {confirmLabel ?? "Confirm"}
-        </button>
-        <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setOpen(false)}>
-          Cancel
-        </button>
-      </div>
-    </form>
+    <div className={styles.row} role="group" aria-label={`Confirm ${label}`}>
+      <button type="button" className="w360-btn w360-btn-danger" disabled={busy} onClick={run} autoFocus>
+        {confirmLabel ?? `Confirm ${label.toLowerCase()}`}
+      </button>
+      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setConfirming(false)}>
+        Cancel
+      </button>
+    </div>
   );
 }
 

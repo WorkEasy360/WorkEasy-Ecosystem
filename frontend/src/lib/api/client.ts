@@ -107,3 +107,43 @@ export async function apiFetch<T>(path: string, options: ApiOptions = {}): Promi
   }
   return body as T;
 }
+
+/**
+ * Sends one file as the raw request body (its type as `Content-Type`), with
+ * the same CSRF header, same-origin credentials and {@link ApiError} semantics
+ * as {@link apiFetch}. The one place `XMLHttpRequest` is used: `fetch` reports
+ * no upload progress, and an image upload shows a progress bar (ADR-051).
+ */
+export function apiUpload<T>(
+  path: string,
+  file: Blob,
+  options: { query?: ApiOptions["query"]; onProgress?: (percent: number) => void } = {},
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", buildUrl(path, options.query));
+    xhr.setRequestHeader("Accept", "application/json");
+    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    const token = readCookie(HOST_CSRF_COOKIE) ?? readCookie(CSRF_COOKIE);
+    if (token) xhr.setRequestHeader("X-CSRFToken", token);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && options.onProgress) options.onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onerror = () => reject(new ApiError(0, undefined));
+    xhr.onload = () => {
+      let body: unknown;
+      try {
+        body = (xhr.getResponseHeader("content-type") ?? "").includes("application/json") ? JSON.parse(xhr.responseText) : undefined;
+      } catch {
+        body = undefined;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        options.onProgress?.(100);
+        resolve(body as T);
+      } else {
+        reject(new ApiError(xhr.status, body));
+      }
+    };
+    xhr.send(file);
+  });
+}

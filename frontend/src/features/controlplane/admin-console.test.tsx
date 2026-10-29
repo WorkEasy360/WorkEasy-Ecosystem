@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import axe, { type Result } from "axe-core";
 
 import { AdminContext, AdminShell } from "./ControlShell";
-import { CustomerDetailScreen, Dashboard } from "./AdminScreens";
+import { CustomerDetailScreen } from "./AdminScreens";
 import { PlansScreen } from "./AdminPlans";
 import { PricingScreen } from "./AdminPricing";
 import { PaymentsScreen } from "./AdminPayments";
@@ -85,8 +85,13 @@ beforeEach(() => {
 // --- navigation ------------------------------------------------------------------------
 
 describe("the Super Admin navigation", () => {
-  function navLabels(): string[] {
-    return within(screen.getByRole("navigation")).getAllByRole("link").map((a) => a.textContent ?? "");
+  /** The menu's sections, then every page in it with each section opened. */
+  function openMenu(): { sections: string[]; links: string[] } {
+    const nav = screen.getByRole("navigation");
+    const buttons = within(nav).queryAllByRole("button");
+    const sections = buttons.map((b) => (b.textContent ?? "").replace("›", "").trim());
+    for (const b of buttons) if (b.getAttribute("aria-expanded") === "false") fireEvent.click(b);
+    return { sections, links: within(nav).getAllByRole("link").map((a) => a.textContent ?? "") };
   }
 
   it("shows the new areas to staff holding their grants", async () => {
@@ -114,17 +119,19 @@ describe("the Super Admin navigation", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(navLabels()).toEqual([
+    const menu = openMenu();
+    expect(menu.sections).toEqual(["User", "Product Store", "Communication"]);
+    expect(menu.links).toEqual([
       "Dashboard",
       "Users",
-      "Orders",
       "Subscriptions",
       "Entitlements",
+      "Product manager",
       "Plans & add-ons",
       "Currency & pricing",
+      "Orders",
       "Payments",
-      "Product manager",
-      "Communication",
+      "Email & templates",
     ]);
   });
 
@@ -141,54 +148,9 @@ describe("the Super Admin navigation", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(navLabels()).toEqual(["Dashboard", "Subscriptions", "Entitlements"]);
-  });
-});
-
-// --- dashboard ----------------------------------------------------------------------------
-
-describe("the dashboard", () => {
-  const base = {
-    organizations: { active: 3, suspended: 1 },
-    subscriptions: { active: 2, past_due: 1 },
-    mrr: { available: false, reason: "No safe global figure exists." },
-    outbox: { pending: 0 },
-  };
-
-  it("shows accounts and collections when the backend includes them", async () => {
-    mockApi({
-      "GET /api/v1/admin/dashboard": [
-        {
-          status: 200,
-          body: {
-            ...base,
-            users: { window_days: 7, total: 40, active: 38, new: 5, signed_in: 21 },
-            collections: { days: 30, by_currency: [{ currency: "INR", amount_minor: 4999900, payments: 12 }] },
-            pending_payouts: [],
-          },
-        },
-      ],
-    });
-    const { container } = asStaff([], <Dashboard />);
-    expect(await screen.findByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument();
-    // The heading is there at once; the figures arrive with the response.
-    expect(await screen.findByText("User accounts")).toBeInTheDocument();
-    expect(screen.getByText("38 active")).toBeInTheDocument();
-    expect(screen.getByText("New users (last 7 days)")).toBeInTheDocument();
-    expect(screen.getByText("Collected in the last 30 days")).toBeInTheDocument();
-    expect(screen.getByText("12 payments")).toBeInTheDocument();
-    expect(screen.getByText("3 active · 1 suspended")).toBeInTheDocument();
-    expect(screen.getByText("Payouts awaiting action")).toBeInTheDocument();
-    await expectNoViolations(container);
-  });
-
-  it("leaves out the sections a staff member isn't granted", async () => {
-    mockApi({ "GET /api/v1/admin/dashboard": [{ status: 200, body: base }] });
-    const { container } = asStaff([], <Dashboard />);
-    await screen.findByText(/No safe global figure/);
-    expect(screen.queryByText("User accounts")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Collected in the last/)).not.toBeInTheDocument();
-    await expectNoViolations(container);
+    const menu = openMenu();
+    expect(menu.sections).toEqual(["User"]);
+    expect(menu.links).toEqual(["Dashboard", "Subscriptions", "Entitlements"]);
   });
 });
 
@@ -832,12 +794,16 @@ function billingRoutes(): Record<string, Reply[]> {
   };
 }
 
-async function confirmReason(label: string, reason = "Customer confirmed by phone.") {
+/** Runs an audited action: no reason is typed (the button records one), and a
+ * destructive action is confirmed once. */
+async function confirmReason(label: string) {
   fireEvent.click(await screen.findByRole("button", { name: label }));
-  const input = screen.getByLabelText(new RegExp(`Reason for “${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}”`));
-  fireEvent.change(input, { target: { value: reason } });
-  fireEvent.submit(input.closest("form")!);
+  const confirm = screen.queryByRole("group", { name: `Confirm ${label}` });
+  if (confirm) fireEvent.click(within(confirm).getAllByRole("button")[0]);
+  expect(screen.queryByLabelText(/^Reason/)).not.toBeInTheDocument();
 }
+
+const recorded = (action: string) => `${action} - Super Admin console`;
 
 describe("a customer's billing", () => {
   it("lists invoices with attempts and refunds, and passes axe", async () => {
@@ -868,31 +834,31 @@ describe("a customer's billing", () => {
     expect(screen.queryByRole("button", { name: /Void|Mark|Refund/ })).not.toBeInTheDocument();
   });
 
-  it("mark paid sends the reference, the reason and the invoice version", async () => {
+  it("mark paid sends the reference, a recorded reason and the invoice version", async () => {
     const calls = mockApi(billingRoutes());
     asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
     fireEvent.change(await screen.findByLabelText("Payment reference for INV-1"), { target: { value: "TRF-2026-001" } });
-    await confirmReason("Mark INV-1 paid", "Bank transfer received on the 3rd.");
+    await confirmReason("Mark INV-1 paid");
     await screen.findByText("Invoice INV-1 is marked paid.");
     expect(bodyOf(calls, `POST /api/v1/admin/customers/${ORG}/invoices/inv-1/mark-paid`)).toEqual({
       reference: "TRF-2026-001",
-      reason: "Bank transfer received on the 3rd.",
+      reason: recorded("Mark INV-1 paid"),
       version: 3,
     });
   });
 
-  it("void sends the reason and the invoice version", async () => {
+  it("void sends a recorded reason and the invoice version", async () => {
     const calls = mockApi(billingRoutes());
     asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
-    await confirmReason("Void INV-1", "Raised in error for a cancelled order.");
+    await confirmReason("Void INV-1");
     await screen.findByText("Invoice INV-1 is void.");
     expect(bodyOf(calls, `POST /api/v1/admin/customers/${ORG}/invoices/inv-1/void`)).toEqual({
-      reason: "Raised in error for a cancelled order.",
+      reason: recorded("Void INV-1"),
       version: 3,
     });
   });
 
-  it("refund sends integer minor units within what remains, with a reason and a command id", async () => {
+  it("refund sends integer minor units within what remains, with a recorded reason and a command id", async () => {
     const calls = mockApi(billingRoutes());
     asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
     const amount = await screen.findByLabelText("Refund amount (INR) on INV-2");
@@ -900,20 +866,20 @@ describe("a customer's billing", () => {
     fireEvent.change(amount, { target: { value: "900" } });
     expect(screen.getByText(/no more than/)).toBeInTheDocument();
     fireEvent.change(amount, { target: { value: "10.50" } });
-    await confirmReason("Refund on INV-2", "Goodwill credit for the outage.");
+    await confirmReason("Refund on INV-2");
     await screen.findByText(/Refund of .* requested/);
     const refund = calls.find((c) => c.key === `POST /api/v1/admin/customers/${ORG}/payments/att-1/refund`)!;
-    expect(refund.body).toEqual({ amount_minor: 1050, reason: "Goodwill credit for the outage." });
+    expect(refund.body).toEqual({ amount_minor: 1050, reason: recorded("Refund on INV-2") });
     expect(refund.headers["idempotency-key"]).toBeTruthy();
   });
 
-  it("the network break-glass asks for a reason", async () => {
+  it("the network break-glass records a reason without asking for one", async () => {
     const calls = mockApi(billingRoutes());
     asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
-    await confirmReason("Reset network allow-list", "Owner locked out after an ISP change.");
+    await confirmReason("Reset network allow-list");
     await screen.findByText(/allow-list is off/);
     expect(bodyOf(calls, `POST /api/v1/admin/customers/${ORG}/network-policy/reset`)).toEqual({
-      reason: "Owner locked out after an ISP change.",
+      reason: recorded("Reset network allow-list"),
     });
   });
 });
@@ -999,7 +965,7 @@ describe("users", () => {
     await expectNoViolations(container);
   });
 
-  it("offers Unlock and Deactivate on someone else's locked account, with a reason", async () => {
+  it("offers Unlock and Deactivate on someone else's locked account, recording a reason", async () => {
     const calls = mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/admin/users/u2": [{ status: 200, body: userDetail("u2", { locked: true }) }],
@@ -1009,9 +975,9 @@ describe("users", () => {
     expect(await screen.findByRole("button", { name: "Unlock" })).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Signed-in sessions" })).toHaveTextContent("Firefox on Linux");
     expect(screen.getByText("Acme Ltd").closest("li")).toHaveTextContent("Owner");
-    await confirmReason("Deactivate", "Reported compromised by the owner.");
+    await confirmReason("Deactivate");
     await screen.findByText(/deactivated and signed out everywhere/);
-    expect(bodyOf(calls, "POST /api/v1/admin/users/u2/disable")).toEqual({ reason: "Reported compromised by the owner." });
+    expect(bodyOf(calls, "POST /api/v1/admin/users/u2/disable")).toEqual({ reason: recorded("Deactivate") });
   });
 
   it("shows no account actions to view-only staff", async () => {
@@ -1267,7 +1233,7 @@ describe("platform settings", () => {
 });
 
 describe("staff roles", () => {
-  it("shows each role's holders and grants a role with a reason", async () => {
+  it("shows each role's holders and grants a role without asking a reason", async () => {
     const calls = mockApi({
       "GET /api/v1/admin/security/roles": [
         {
@@ -1292,13 +1258,13 @@ describe("staff roles", () => {
     expect(table).toHaveTextContent("sam@example.com");
     await expectNoViolations(container);
     fireEvent.change(screen.getByLabelText(/Staff member.s email/), { target: { value: "new@example.com" } });
-    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Joined the support desk" } });
+    expect(screen.queryByLabelText(/^Reason/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Grant role" }));
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/security/roles")).toBe(true));
     expect(calls.find((c) => c.key === "POST /api/v1/admin/security/roles")?.body).toEqual({
       email: "new@example.com",
       role: "SUPPORT_ADMIN",
-      reason: "Joined the support desk",
+      reason: recorded("Grant role"),
     });
   });
 });

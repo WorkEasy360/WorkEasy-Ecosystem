@@ -913,6 +913,14 @@ def test_the_staff_dashboard_totals_collections(
     assert collections["by_currency"] == [
         {"currency": "GBP", "amount_minor": 4999, "payments": 1}
     ]
+    # The month overview draws the same collection on the day it arrived.
+    from django.utils import timezone
+
+    revenue = staff.get("/api/v1/admin/dashboard").json()["overview"]["revenue"]
+    assert [(r["currency"], r["amount_minor"], r["payments"]) for r in revenue] == [
+        ("GBP", 4999, 1)
+    ]
+    assert revenue[0]["daily"][timezone.now().day - 1] == 4999
 
 
 # --- races (real threads, real commits) ------------------------------------------------------

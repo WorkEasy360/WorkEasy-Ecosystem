@@ -3,10 +3,11 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import axe, { type Result } from "axe-core";
 
 import { AdminContext, AdminShell, PartnerShell } from "./ControlShell";
-import { Customers, Dashboard } from "./AdminScreens";
+import { Customers } from "./AdminScreens";
 import { PayoutsTab, type TabProps } from "./ResellerTabs";
 import { PartnerBranding, PartnerCustomers, PartnerDomains } from "./PartnerScreens";
 import { applyAccent, contrastOn, safeColor } from "./useBranding";
+import { ReasonAction, useAction } from "./ui";
 
 /**
  * Phase 7 screens: behaviour the backend cannot enforce for the browser
@@ -101,8 +102,11 @@ function portal(capabilities: string[], status = "active", role = "admin"): Repl
   };
 }
 
+/** Every page in the menu, each collapsible section opened first. */
 function navLabels(): string[] {
-  return within(screen.getByRole("navigation")).queryAllByRole("link").map((a) => a.textContent ?? "");
+  const nav = screen.getByRole("navigation");
+  for (const b of within(nav).queryAllByRole("button")) if (b.getAttribute("aria-expanded") === "false") fireEvent.click(b);
+  return within(nav).queryAllByRole("link").map((a) => a.textContent ?? "");
 }
 
 beforeEach(() => {
@@ -148,6 +152,48 @@ describe("the Super Admin shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue as User" }));
     expect(replace).toHaveBeenCalledWith("/dashboard?mode=user");
     replace.mockRestore();
+  });
+
+  it("names the signed-in account and switches to the administrator sign-in in one click", async () => {
+    pathname = "/admin/partners/new";
+    mockApi({
+      "GET /api/v1/auth/session": [{ status: 200, body: { authenticated: true, user_id: "u2", email: "partner@example.com" } }],
+      "GET /api/v1/admin/session": [{ status: 403, body: { code: "permission_denied" } }],
+      "POST /api/v1/auth/logout": [{ status: 200, body: { ok: true } }],
+    });
+    const replace = vi.spyOn(nav.router, "replace");
+    render(
+      <AdminShell>
+        <h1>Secret</h1>
+      </AdminShell>,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(/signed in as partner@example\.com/);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in as administrator" }));
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(`/login?mode=admin&next=${encodeURIComponent("/admin/partners/new")}`),
+    );
+    replace.mockRestore();
+    pathname = "/admin";
+  });
+
+  it("treats an ended session as signed out, not as 'no administrator access'", async () => {
+    pathname = "/admin/partners/new";
+    mockApi({
+      "GET /api/v1/auth/session": [SIGNED_IN],
+      "GET /api/v1/admin/session": [{ status: 401, body: { code: "login_required" } }],
+    });
+    const replace = vi.spyOn(nav.router, "replace");
+    render(
+      <AdminShell>
+        <h1>Secret</h1>
+      </AdminShell>,
+    );
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(`/login?mode=admin&next=${encodeURIComponent("/admin/partners/new")}`),
+    );
+    expect(screen.queryByRole("heading", { name: "You don't have administrator access." })).not.toBeInTheDocument();
+    replace.mockRestore();
+    pathname = "/admin";
   });
 
   it("sends a signed-out visitor to the Administrator sign-in, remembering the page", async () => {
@@ -270,29 +316,6 @@ describe("Super Admin screens", () => {
     await waitFor(() => expect(calls.length).toBe(before + 1));
   });
 
-  it("the dashboard is honest that recurring revenue is unavailable", async () => {
-    mockApi({
-      "GET /api/v1/admin/dashboard": [
-        {
-          status: 200,
-          body: {
-            organizations: { active: 3 },
-            subscriptions: { active: 2 },
-            mrr: { available: false, reason: "No invoicing data exists yet." },
-            outbox: { pending: 0 },
-          },
-        },
-      ],
-    });
-    const { container } = render(
-      <main>
-        <Dashboard />
-      </main>,
-    );
-    await screen.findByText(/No invoicing data exists yet/);
-    await expectNoViolations(container);
-  });
-
   it("preparing a payout sends only a partner and a date - never an amount", async () => {
     const calls = mockApi({
       "GET /api/v1/admin/payouts": [{ status: 200, body: { results: [], next_cursor: null, has_more: false } }],
@@ -347,7 +370,7 @@ describe("Super Admin screens", () => {
     expect(await screen.findByRole("button", { name: "Approve" })).toBeInTheDocument();
   });
 
-  it("a recorded reason must be long enough before a dangerous action can be confirmed", async () => {
+  it("approves a payout in one click, recording a reason without asking", async () => {
     const ready = {
       id: "p1",
       status: "ready",
@@ -359,22 +382,44 @@ describe("Super Admin screens", () => {
       line_count: 1,
       version: 1,
     };
-    mockApi({ "GET /api/v1/admin/payouts": [{ status: 200, body: { results: [ready], next_cursor: null, has_more: false } }] });
+    const calls = mockApi({
+      "GET /api/v1/admin/payouts": [{ status: 200, body: { results: [ready], next_cursor: null, has_more: false } }],
+      "POST /api/v1/admin/payouts/p1/approve": [{ status: 200, body: { ...ready, status: "approved", version: 2 } }],
+    });
     render(
       <AdminContextForTest permissions={["platform.staff_payout.approve"]}>
         <PayoutsFor />
       </AdminContextForTest>,
     );
     fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
-    const confirm = screen.getByRole("button", { name: "Confirm" });
-    expect(confirm).toBeDisabled();
-    fireEvent.change(screen.getByLabelText(/Reason for/), { target: { value: "short" } });
-    expect(confirm).toBeDisabled();
-    fireEvent.change(screen.getByLabelText(/Reason for/), { target: { value: "Reviewed the ledger lines." } });
-    expect(confirm).toBeEnabled();
+    expect(screen.queryByLabelText(/Reason for/)).not.toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent(/Payout approved/);
+    expect(calls.find((c) => c.key === "POST /api/v1/admin/payouts/p1/approve")!.body).toMatchObject({
+      reason: "Approve - Super Admin console",
+    });
   });
 
-  it("puts keyboard focus on the outcome when the prompt that started the action is gone", async () => {
+  it("a destructive action asks once to confirm, then puts keyboard focus on the outcome", async () => {
+    function Harness() {
+      const { act, feedback } = useAction();
+      return (
+        <>
+          {feedback}
+          <ReasonAction label="Suspend" danger onConfirm={(reason) => void act(async () => void reason, "Suspended.")} />
+        </>
+      );
+    }
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
+    const confirm = within(screen.getByRole("group", { name: "Confirm Suspend" })).getByRole("button", { name: "Confirm suspend" });
+    expect(screen.queryByLabelText(/Reason for/)).not.toBeInTheDocument();
+    fireEvent.click(confirm);
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("Suspended.");
+    await waitFor(() => expect(status).toHaveFocus());
+  });
+
+  it("puts keyboard focus nowhere new when the button that started the action is still there", async () => {
     const ready = {
       id: "p1",
       status: "ready",
@@ -395,12 +440,12 @@ describe("Super Admin screens", () => {
         <PayoutsFor />
       </AdminContextForTest>,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
-    fireEvent.change(screen.getByLabelText(/Reason for/), { target: { value: "Reviewed the ledger lines." } });
-    fireEvent.submit(screen.getByLabelText(/Reason for/).closest("form")!);
+    const approve = await screen.findByRole("button", { name: "Approve" });
+    approve.focus();
+    fireEvent.click(approve);
     const status = await screen.findByRole("status");
     expect(status).toHaveTextContent(/Payout approved/);
-    await waitFor(() => expect(status).toHaveFocus());
+    expect(status).not.toHaveFocus();
   });
 });
 

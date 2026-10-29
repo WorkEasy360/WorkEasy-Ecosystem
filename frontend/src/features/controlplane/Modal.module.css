@@ -1,0 +1,110 @@
+/* The console's modal dialog (2026-10-26, the owner's reference design): a
+   compact card over the page - title and close, stacked fields with small
+   labels, the actions at the bottom right. Tokens only. */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: var(--w360-space-6) var(--w360-space-4);
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--w360-navy) 45%, transparent);
+}
+
+.dialog {
+  width: min(460px, 100%);
+  margin: auto 0;
+  background: var(--w360-surface);
+  border-radius: var(--w360-radius-md);
+  box-shadow: var(--w360-shadow-md);
+  color: var(--w360-text);
+}
+
+.wide {
+  width: min(880px, 100%);
+}
+
+.dialogForm {
+  display: grid;
+}
+
+.dialogHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-3) var(--w360-space-4) var(--w360-space-3) var(--w360-space-5);
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.dialogTitle {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.closeButton {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--w360-text-muted);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.closeButton:hover {
+  background: var(--w360-bg-soft);
+  color: var(--w360-text);
+}
+
+.dialogBody {
+  display: grid;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-4) var(--w360-space-5);
+}
+
+.dialogBody :global(.w360-label) {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dialogBody :global(.w360-input) {
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+.dialogBody :global(.w360-input)::placeholder {
+  color: var(--w360-text-muted);
+  opacity: 1;
+}
+
+.dialogBody :global(.w360-hint) {
+  font-size: 12px;
+}
+
+.dialogFoot {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  padding: var(--w360-space-3) var(--w360-space-5) var(--w360-space-4);
+  border-top: 1px solid var(--w360-border);
+}
+
+@media (max-width: 480px) {
+  .backdrop {
+    padding: var(--w360-space-3) var(--w360-space-2);
+  }
+
+  .dialogBody {
+    padding: var(--w360-space-3) var(--w360-space-4);
+  }
+}

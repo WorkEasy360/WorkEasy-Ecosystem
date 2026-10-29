@@ -192,3 +192,36 @@ def account_statistics(*, since: Any) -> dict[str, int]:
         signed_in=Count("id", filter=Q(last_login_at__gte=since)),
     )
     return {key: int(value or 0) for key, value in counts.items()}
+
+
+def signups_by_day(*, start: Any, end: Any) -> dict[str, int]:
+    """New accounts per UTC day in ``[start, end)`` for the Super Admin
+    dashboard's chart. Counts only; the control-plane system user is excluded."""
+    from django.db.models import Count
+    from django.db.models.functions import TruncDate
+
+    from workeasy360.contracts.values.control_plane import PLATFORM_SYSTEM_USER_EMAIL
+    from workeasy360.platform.identity.models import User
+
+    rows = (
+        User.objects.exclude(email=PLATFORM_SYSTEM_USER_EMAIL)
+        .filter(created_at__gte=start, created_at__lt=end)
+        .annotate(day=TruncDate("created_at"))
+        .values("day")
+        .annotate(n=Count("id"))
+    )
+    return {row["day"].isoformat(): int(row["n"]) for row in rows}
+
+
+def accounts_created(*, start: Any | None, end: Any) -> int:
+    """How many accounts were created in ``[start, end)`` - from the very first
+    when ``start`` is ``None`` (system user excluded)."""
+    from workeasy360.contracts.values.control_plane import PLATFORM_SYSTEM_USER_EMAIL
+    from workeasy360.platform.identity.models import User
+
+    rows = User.objects.exclude(email=PLATFORM_SYSTEM_USER_EMAIL).filter(
+        created_at__lt=end
+    )
+    if start is not None:
+        rows = rows.filter(created_at__gte=start)
+    return rows.count()

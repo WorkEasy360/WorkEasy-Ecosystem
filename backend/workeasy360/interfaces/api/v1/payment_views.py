@@ -61,6 +61,8 @@ _ORDER_FIELDS = (
     "billing_interval",
     "quantity",
     "with_trial",
+    # ADR-052: a cart - plan ids and quantities, never a price.
+    "cart_items",
 )
 
 
@@ -68,11 +70,25 @@ def _order_request(body: dict[str, Any]) -> dict[str, Any]:
     return {key: body[key] for key in _ORDER_FIELDS if key in body}
 
 
+def _seller(ctx: TenantContext, body: dict[str, Any]) -> orders.Seller:
+    """ADR-053: an order placed in a white-label partner's branded Store names
+    that store; the partner is verified here, never trusted from the body."""
+    slug = body.get("storefront")
+    if slug in (None, ""):
+        return orders.DIRECT
+    from workeasy360.commercial.partners import storefront
+
+    return storefront.seller_for(ctx, slug)
+
+
 @require_http_methods(["POST"])
 def order_quote_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     """What an order would cost now - the checkout page's summary."""
     ctx = request.tenant_context  # type: ignore[attr-defined]
-    return JsonResponse(orders.quote(ctx, **_order_request(_body(request))))
+    body = _body(request)
+    return JsonResponse(
+        orders.quote(ctx, seller=_seller(ctx, body), **_order_request(body))
+    )
 
 
 @require_http_methods(["GET", "POST"])
@@ -96,6 +112,7 @@ def orders_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     placed = orders.place(
         ctx,
         idempotency_key=str(request.headers.get("Idempotency-Key") or ""),
+        seller=_seller(ctx, body),
         **_order_request(body),
     )
     return JsonResponse(placed, status=201)

@@ -20,7 +20,9 @@ from workeasy360.interfaces.api.v1 import (
     account_views,
     admin_catalog_views,
     admin_console_views,
+    admin_product_manager_views,
     admin_product_views,
+    admin_programme_views,
     admin_views,
     auth_views,
     commercial_views,
@@ -116,6 +118,26 @@ urlpatterns = [
         name="public-catalog-product",
     ),
     path("public/signup", public_site_views.signup_view, name="public-signup"),
+    path(
+        "public/storefront/<slug:slug>",
+        public_views.storefront_view,
+        name="public-storefront",
+    ),
+    path(
+        "public/storefront/<slug:slug>/logo",
+        public_views.storefront_logo_view,
+        name="public-storefront-logo",
+    ),
+    path(
+        "public/products/<slug:slug>/media/<uuid:media_id>",
+        public_site_views.product_media_view,
+        name="public-product-media",
+    ),
+    path(
+        "public/products/<slug:slug>/updates/<slug:update_slug>",
+        public_site_views.product_update_view,
+        name="public-product-update",
+    ),
     path(
         "public/signup/verify",
         public_site_views.verify_email_view,
@@ -702,6 +724,7 @@ urlpatterns = [
 _admin = [
     path("admin/session", admin_views.session_view, name="admin-session"),
     path("admin/dashboard", admin_views.dashboard_view, name="admin-dashboard"),
+    path("admin/attention", admin_views.attention_view, name="admin-attention"),
     path("admin/audit", admin_views.audit_view, name="admin-audit"),
     path("admin/customers", admin_views.customers_view, name="admin-customers"),
     # Phase 8: the AI registry, provider status and organization AI policy.
@@ -817,6 +840,60 @@ _admin = [
     # Phase 11: the products console - each product whole, and its integration.
     path(
         "admin/products/console", admin_product_views.console_view, name="admin-products"
+    ),
+    # ADR-051: the Product Manager - add (wizard), one product, its lifecycle,
+    # its listing images and its activity. Edits reuse admin/catalog/products.
+    path(
+        "admin/products",
+        admin_product_manager_views.create_view,
+        name="admin-product-create",
+    ),
+    path(
+        "admin/products/<uuid:product_id>",
+        admin_product_manager_views.detail_view,
+        name="admin-product-detail",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/activity",
+        admin_product_manager_views.activity_view,
+        name="admin-product-activity",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/media",
+        admin_product_manager_views.media_upload_view,
+        name="admin-product-media",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/media/reorder",
+        admin_product_manager_views.media_reorder_view,
+        name="admin-product-media-reorder",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/media/<uuid:media_id>",
+        admin_product_manager_views.media_item_view,
+        name="admin-product-media-item",
+    ),
+    # ADR-054: a product's updates - features and releases affiliates link to.
+    # Before the lifecycle catch-all, which would take "updates" as an action.
+    path(
+        "admin/products/<uuid:product_id>/updates",
+        admin_product_manager_views.updates_view,
+        name="admin-product-updates",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/updates/<uuid:update_id>",
+        admin_product_manager_views.update_detail_view,
+        name="admin-product-update",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/updates/<uuid:update_id>/<str:action>",
+        admin_product_manager_views.update_lifecycle_view,
+        name="admin-product-update-lifecycle",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/<str:action>",
+        admin_product_manager_views.lifecycle_view,
+        name="admin-product-lifecycle",
     ),
     path(
         "admin/products/<str:product_code>/integration",
@@ -1071,6 +1148,27 @@ _admin = [
         name="admin-partner-referrals",
     ),
     path(
+        "admin/partners/<uuid:partner_id>/referrals/<uuid:referral_id>/trail",
+        admin_views.partner_referral_trail_view,
+        name="admin-partner-referral-trail",
+    ),
+    # ADR-054: which products a partner may promote, and the programme policy.
+    path(
+        "admin/partners/<uuid:partner_id>/promotions",
+        admin_views.partner_promotions_view,
+        name="admin-partner-promotions",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/promotions/<uuid:grant_id>/revoke",
+        admin_views.partner_promotion_revoke_view,
+        name="admin-partner-promotion-revoke",
+    ),
+    path(
+        "admin/affiliate-policy",
+        admin_views.affiliate_policy_view,
+        name="admin-affiliate-policy",
+    ),
+    path(
         "admin/partners/<uuid:partner_id>/referral-codes",
         admin_views.partner_referral_code_create_view,
         name="admin-partner-referral-code-create",
@@ -1150,6 +1248,17 @@ _admin = [
         "admin/partners/<uuid:partner_id>/experience",
         admin_views.partner_experience_view,
         name="admin-partner-experience",
+    ),
+    path("admin/margins", admin_programme_views.margins_view, name="admin-margins"),
+    path(
+        "admin/margins/end",
+        admin_programme_views.margin_end_view,
+        name="admin-margin-end",
+    ),
+    path(
+        "admin/partner-programme/fees",
+        admin_programme_views.program_fees_view,
+        name="admin-program-fees",
     ),
     path(
         "admin/partner-upgrades",
@@ -1429,9 +1538,44 @@ _partner = [
         name="partner-referrals",
     ),
     path(
+        "partner/<uuid:partner_id>/referral-codes/<uuid:code_id>",
+        partner_views.referral_code_view,
+        name="partner-referral-code",
+    ),
+    path(
+        "partner/<uuid:partner_id>/referrals/<uuid:referral_id>/trail",
+        partner_panel_views.referral_trail_view,
+        name="partner-referral-trail",
+    ),
+    path(
+        "partner/<uuid:partner_id>/affiliate/products",
+        partner_panel_views.affiliate_products_view,
+        name="partner-affiliate-products",
+    ),
+    path(
         "partner/<uuid:partner_id>/referral-codes/<uuid:code_id>/disable",
         partner_views.referral_code_disable_view,
         name="partner-referral-code-disable",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/orders/quote",
+        partner_views.customer_order_quote_view,
+        name="partner-customer-order-quote",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/orders",
+        partner_views.customer_order_view,
+        name="partner-customer-order",
+    ),
+    path(
+        "partner/<uuid:partner_id>/campaigns",
+        partner_views.campaigns_view,
+        name="partner-campaigns",
+    ),
+    path(
+        "partner/<uuid:partner_id>/campaigns/<uuid:campaign_id>/status",
+        partner_views.campaign_status_view,
+        name="partner-campaign-status",
     ),
     path(
         "partner/<uuid:partner_id>/branding",

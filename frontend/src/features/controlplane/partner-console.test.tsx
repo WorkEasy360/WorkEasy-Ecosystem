@@ -113,22 +113,28 @@ describe("the Super Admin sidebar", () => {
     return within(screen.getByRole("navigation", { name: /Super Admin/ })).getAllByRole("link");
   }
 
-  it("has one Partners entry", async () => {
-    const links = await sidebarLinks([VIEW, MONEY]);
-    expect(links.map((a) => a.textContent)).toEqual(["Dashboard", "Partners"]);
+  it("has one Partner section holding the Partners area's pages", async () => {
+    await sidebarLinks([VIEW, MONEY]);
+    const nav = screen.getByRole("navigation", { name: /Super Admin/ });
+    const section = within(nav).getByRole("button", { name: /Partner/ });
+    if (section.getAttribute("aria-expanded") === "false") fireEvent.click(section);
+    const links = within(nav).getAllByRole("link");
+    expect(links.map((a) => a.textContent)).toEqual(["Dashboard", "Partner dashboard", "All Partners"]);
     expect(links[1]).toHaveAttribute("href", "/admin/partners");
   });
 
   it("stays current on a partner's own page", async () => {
     pathname = "/admin/partners/0b8f6a52-6c1e-4f39-9d55-1f0f6f0e2a11/profile";
     const links = await sidebarLinks([VIEW]);
-    expect(links.find((a) => a.textContent === "Partners")).toHaveAttribute("aria-current", "page");
+    expect(links.find((a) => a.textContent === "All Partners")).toHaveAttribute("aria-current", "page");
+    expect(links.find((a) => a.textContent === "Partner dashboard")).not.toHaveAttribute("aria-current");
   });
 
   it("is absent for someone who may not view partners", async () => {
     for (const permissions of [["platform.staff_customer.view"], [MONEY]]) {
       const links = await sidebarLinks(permissions);
-      expect(links.map((a) => a.textContent)).not.toContain("Partners");
+      expect(links.map((a) => a.textContent)).not.toContain("All Partners");
+      expect(within(screen.getByRole("navigation", { name: /Super Admin/ })).queryByRole("button", { name: /Partner/ })).toBeNull();
     }
   });
 });
@@ -255,7 +261,7 @@ function renderList(permissions = [VIEW, MANAGE]) {
 }
 
 describe("All Partners", () => {
-  it("shows the agency-style columns, the type badges the server derived and the setup state", async () => {
+  it("shows the agency-style columns, one partner type per row and the setup state", async () => {
     mockApi(
       listRoutes([
         row(),
@@ -267,6 +273,7 @@ describe("All Partners", () => {
             { key: "white_label", label: "White-label" },
             { key: "affiliate", label: "Affiliate" },
           ],
+          primary_experience: "white_label",
           status: "draft",
           administrator: null,
           phone: "",
@@ -284,6 +291,7 @@ describe("All Partners", () => {
       "Panel",
       "Partner ID",
       "Name",
+      "Partner Type",
       "Email",
       "Phone",
       "Country",
@@ -305,8 +313,12 @@ describe("All Partners", () => {
     expect(acme).toHaveTextContent("35.54");
     expect(acme).toHaveTextContent("active");
     const combo = within(table).getByRole("row", { name: /Combo Co/ });
-    const badges = within(combo).getByRole("list", { name: /Partner type/ });
-    expect(within(badges).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Reseller", "White-label", "Affiliate"]);
+    // One type, the partner's current workspace - never all it holds.
+    const typeCell = (r: HTMLElement) => within(r).getAllByRole("cell")[4];
+    expect(typeCell(combo)).toHaveTextContent(/^White-label$/);
+    expect(typeCell(acme)).toHaveTextContent(/^Reseller$/);
+    expect(within(combo).queryByRole("list", { name: /Partner type/ })).not.toBeInTheDocument();
+    expect(combo).not.toHaveTextContent("Affiliate");
     expect(within(combo).getByRole("link", { name: "Complete setup of Combo Co" })).toHaveAttribute("href", "/admin/partners/p2/profile");
     // A draft nobody can act for is not offered activation (the server refuses it).
     const comboSwitch = within(combo).getByRole("switch", { name: "Combo Co active" });
@@ -328,7 +340,7 @@ describe("All Partners", () => {
     expect(await within(table).findByRole("button", { name: "Copied email of Acme Partners" })).toBeInTheDocument();
   });
 
-  it("guest login asks why, opens the partner's portal read-only and says so", async () => {
+  it("guest login opens the partner's portal read-only at once, recording where it came from", async () => {
     const assign = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign, origin: "http://localhost:3000" });
     const calls = mockApi(
@@ -341,12 +353,9 @@ describe("All Partners", () => {
     renderList();
     const table = await screen.findByRole("table", { name: "Partners" });
     fireEvent.click(within(table).getByRole("button", { name: "Guest login to Acme Partners" }));
-    const why = within(table).getByLabelText(/Why are you opening the portal of Acme Partners/);
-    expect(within(table).getByRole("button", { name: "Open guest view" })).toBeDisabled();
-    fireEvent.change(why, { target: { value: "Support ticket 42" } });
-    fireEvent.click(within(table).getByRole("button", { name: "Open guest view" }));
+    expect(within(table).queryByLabelText(/Why are you opening/)).not.toBeInTheDocument();
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/partner/p1"));
-    expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p1/guest-view")!.body).toEqual({ reason: "Support ticket 42" });
+    expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p1/guest-view")!.body).toEqual({ reason: "Guest login - All Partners" });
     vi.unstubAllGlobals();
   });
 
@@ -405,7 +414,7 @@ describe("All Partners", () => {
     expect(screen.getByLabelText("Partner type")).toHaveValue("white_label");
   });
 
-  it("offers Suspend or Reactivate with a recorded reason, sending the row's version", async () => {
+  it("reactivates from the switch at once, recording where it came from and sending the row's version", async () => {
     const calls = mockApi(
       listRoutes([row(), row({ id: "p3", display_name: "Paused Co", status: "suspended", version: 7 })], {
         "POST /api/v1/admin/partners/p3/status": [ok({ id: "p3" })],
@@ -417,18 +426,35 @@ describe("All Partners", () => {
     const toggle = within(paused).getByRole("switch", { name: "Paused Co active" });
     expect(toggle).toHaveAttribute("aria-checked", "false");
     fireEvent.click(toggle);
-    fireEvent.change(within(table).getByLabelText(/Reason to reactivate Paused Co/), { target: { value: "Review finished, back on" } });
-    fireEvent.click(within(table).getByRole("button", { name: "Reactivate" }));
+    // No reason is asked for turning a partner on.
+    expect(within(table).queryByLabelText(/Reason to/)).not.toBeInTheDocument();
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p3/status")).toBe(true));
     expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p3/status")!.body).toEqual({
       status: "active",
-      reason: "Review finished, back on",
+      reason: "Reactivated from All Partners",
       expected_version: 7,
     });
     expect(await screen.findByText("Paused Co reactivated.")).toBeInTheDocument();
   });
 
-  it("activates a draft with an administrator from its switch, with a recorded reason", async () => {
+  it("suspends an active partner from its switch at once", async () => {
+    const calls = mockApi(
+      listRoutes([row()], {
+        "POST /api/v1/admin/partners/p1/status": [ok({ id: "p1" })],
+      }),
+    );
+    renderList();
+    const table = await screen.findByRole("table", { name: "Partners" });
+    fireEvent.click(within(table).getByRole("switch", { name: "Acme Partners active" }));
+    expect(within(table).queryByLabelText(/Reason to/)).not.toBeInTheDocument();
+    await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p1/status")).toBe(true));
+    expect((calls.find((c) => c.key === "POST /api/v1/admin/partners/p1/status")!.body as { status: string; reason: string })).toMatchObject({
+      status: "suspended",
+      reason: "Suspended from All Partners",
+    });
+  });
+
+  it("activates a draft with an administrator from its switch at once", async () => {
     const calls = mockApi(
       listRoutes([row({ id: "p5", display_name: "Draft Co", status: "draft", version: 2 })], {
         "POST /api/v1/admin/partners/p5/status": [ok({ id: "p5" })],
@@ -440,12 +466,11 @@ describe("All Partners", () => {
     expect(toggle).toHaveAttribute("aria-checked", "false");
     expect(toggle).toBeEnabled();
     fireEvent.click(toggle);
-    fireEvent.change(within(table).getByLabelText(/Reason to activate Draft Co/), { target: { value: "Agreement signed today" } });
-    fireEvent.click(within(table).getByRole("button", { name: "Activate" }));
+    expect(within(table).queryByLabelText(/Reason to/)).not.toBeInTheDocument();
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p5/status")).toBe(true));
     expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p5/status")!.body).toEqual({
       status: "active",
-      reason: "Agreement signed today",
+      reason: "Activated from All Partners",
       expected_version: 2,
     });
     expect(await screen.findByText("Draft Co activated.")).toBeInTheDocument();

@@ -316,6 +316,15 @@ export const WORKSPACES: Record<ExperienceKey, WorkspaceDef> = {
       {
         title: "Promote",
         entries: [
+          // ADR-054: the products this affiliate may promote, and a link for each
+          // page, feature and update of them.
+          {
+            key: "my-products",
+            label: "My Products",
+            icon: "store",
+            path: "my-products",
+            needs: (can) => can("referral.view"),
+          },
           {
             key: "referral-links",
             label: "Referral Links",

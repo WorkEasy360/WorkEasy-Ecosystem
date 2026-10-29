@@ -91,9 +91,9 @@ def test_the_money_capabilities_are_in_every_bundle():
     [
         (set(), []),
         (set(caps.EXPERIENCE_BUNDLES[RESELLER]), [RESELLER]),
-        # White-label holds the commercial set too; its workspace contains the
-        # reseller's, so it is the one workspace.
-        (set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL]), [WHITE_LABEL]),
+        # ADR-053: White-label holds the commercial set too, and the Reseller
+        # workspace is offered beside it (additive, no subsumption).
+        (set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL]), [RESELLER, WHITE_LABEL]),
         (set(caps.EXPERIENCE_BUNDLES[AFFILIATE]), [AFFILIATE]),
         (
             set(caps.EXPERIENCE_BUNDLES[RESELLER])
@@ -103,7 +103,7 @@ def test_the_money_capabilities_are_in_every_bundle():
         (
             set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL])
             | set(caps.EXPERIENCE_BUNDLES[AFFILIATE]),
-            [WHITE_LABEL, AFFILIATE],
+            [RESELLER, WHITE_LABEL, AFFILIATE],
         ),
         ({caps.SUPPORT_ACCESS}, []),
     ],
@@ -139,8 +139,10 @@ def test_workspaces_are_a_pure_function_of_the_grants(held, expected):
         ("white_label", set(AFFILIATE_CAPS), "affiliate"),
         # Unset: the first workspace there is.
         ("", set(caps.EXPERIENCE_BUNDLES[RESELLER]) | set(AFFILIATE_CAPS), "reseller"),
-        # Reseller preference after white-label was added: the larger workspace.
-        ("reseller", set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL]), "white_label"),
+        # ADR-053: Reseller stays a workspace of a white-label partner, so the
+        # preference for it is honoured; unset opens the largest one.
+        ("reseller", set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL]), "reseller"),
+        ("", set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL]), "white_label"),
         ("affiliate", set(), None),
         ("nonsense", set(AFFILIATE_CAPS), "affiliate"),
     ],
@@ -319,14 +321,14 @@ def test_reseller_to_white_label_adds_the_brand_and_drops_only_the_sub_partner_c
     assert selectors.active_capabilities(fx["partner"].id) == set(
         caps.EXPERIENCE_BUNDLES[WHITE_LABEL]
     )
-    assert workspace_keys(fx["user"].id) == ["white_label"]
+    assert workspace_keys(fx["user"].id) == ["reseller", "white_label"]
 
 
 def test_retiring_white_label_keeps_the_reseller_set_the_partner_also_wears(
     catalog, partner_factory, manager
 ):
     """A partner created as Reseller, then given White-label and Affiliate, shows
-    two workspaces (White-label, Affiliate) but wears three experiences. Retiring
+    three workspaces (ADR-053: Reseller, White-label, Affiliate). Retiring
     White-label must withdraw the brand and the domain and nothing the Reseller
     set needs - the customers it serves keep their partner."""
     everything = (
@@ -335,7 +337,7 @@ def test_retiring_white_label_keeps_the_reseller_set_the_partner_also_wears(
         | set(caps.EXPERIENCE_BUNDLES[AFFILIATE])
     )
     fx = partner_factory(*everything, code="rs-wl-aff")
-    assert workspace_keys(fx["user"].id) == ["white_label", "affiliate"]
+    assert workspace_keys(fx["user"].id) == ["reseller", "white_label", "affiliate"]
     result = experience.retire_experience(
         manager, fx["partner"].id, experience=WHITE_LABEL, reason="The brand ended"
     )
