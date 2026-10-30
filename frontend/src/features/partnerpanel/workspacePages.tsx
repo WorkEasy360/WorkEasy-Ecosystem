@@ -91,9 +91,9 @@ const PAGES: Record<string, ReactElement> = {
   "brand-settings": <BrandSettings />,
   "brand-settings/url-manager": <UrlManager />,
   "brand-settings/white-label-setup": <PortalWhiteLabelScreen />,
-  "store-console": <StoreConsole tab="mine" />,
-  "store-console/explore": <StoreConsole tab="explore" />,
-  "store-console/requests": <StoreConsole tab="requests" />,
+  "store-console": <StoreConsole tab="mine" kind="promote" />,
+  "store-console/explore": <StoreConsole tab="explore" kind="promote" />,
+  "store-console/requests": <StoreConsole tab="requests" kind="promote" />,
   "referral-links": <ReferralLinks />,
   "referral-codes": <ReferralCodes />,
   campaigns: <Campaigns />,
@@ -113,9 +113,18 @@ const DASHBOARDS: Record<ExperienceKey, ReactElement> = {
   affiliate: <AffiliateDashboard grow={<UpgradeGrow workspace="affiliate" />} />,
 };
 
+/** The Store Console asks for the right kind of permission in each workspace
+ * (ADR-055): an affiliate asks to promote, a reseller to sell. */
+const SELLER_PAGES: Record<string, ReactElement> = {
+  "store-console": <StoreConsole tab="mine" kind="sell" />,
+  "store-console/explore": <StoreConsole tab="explore" kind="sell" />,
+  "store-console/requests": <StoreConsole tab="requests" kind="sell" />,
+};
+
 /** The page of a workspace, or null when there is none. */
 export function pageFor(experience: ExperienceKey, path: string): ReactElement | null {
   if (path === "dashboard") return DASHBOARDS[experience];
+  if (experience !== "affiliate" && SELLER_PAGES[path]) return SELLER_PAGES[path];
   return PAGES[path] ?? null;
 }
 

@@ -104,6 +104,24 @@ def affiliate_product_request_view(
 
 
 @partner_view(["GET"])
+def reseller_store_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """ADR-055 Store Console for sellers: Explore Products and My Requests."""
+    return JsonResponse(partner_workspaces.store_console(ctx, kind="sell"))
+
+
+@partner_view(["POST"])
+def reseller_product_request_view(
+    request: HttpRequest, ctx: TenantContext
+) -> JsonResponse:
+    """ADR-055: ask to sell one Store product. Grants nothing; staff decide."""
+    from workeasy360.commercial.partners import promotion_requests
+
+    return JsonResponse(
+        promotion_requests.submit(ctx, body=_body(request), kind="sell"), status=201
+    )
+
+
+@partner_view(["GET"])
 def referral_trail_view(
     request: HttpRequest, ctx: TenantContext, referral_id: UUID
 ) -> JsonResponse:

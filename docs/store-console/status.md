@@ -1,4 +1,4 @@
-# Affiliate Store Console: status
+# Store Console (affiliates and resellers): status
 
 Brief: *Implement Affiliate Store Console with Admin-Controlled Product Approval* (2026-10-30). Decisions: `docs/architecture/adrs/ADR-055-affiliate-store-console.md`.
 
@@ -51,3 +51,22 @@ Server-side, fail-closed: a request grants nothing; links still need the grant. 
 | eslint, tsc (typegen), `next build`, dynamic-rendering assertion, `npm audit --omit=dev` | clean, clean, built, pass, 0 vulnerabilities |
 | Migration rehearsal (`prepare.py`) | PASS - 7 tables identical, table starts empty, reversible |
 | Real browser (`browser_check.js`) | PASS - 7/7 journeys, 7 pages axe-clean, 30 viewport checks, 0 CSP/console errors |
+
+## 6. Resellers (2026-10-30, ADR-055 addendum)
+
+"Do same for reseller": the Reseller workspace's Products & Plans entry became the Store Console; a reseller asks to **sell** a product and staff approve it in the same Product Requests queue (Type filter). Approval makes the ordinary product grant, so every sale keeps checking `may_sell`.
+
+- Backend: `PartnerPromotionRequest.kind` + `product_grant`, migration `partners.0013_product_request_kind`; `promotion_requests` takes the kind throughout; `services.revoke_product_grant(reason=)` closes the sell request; `selectors.seller_channel`; `catalog_selectors.promotable_products(channel=)`; `commissions.selectors.effective_margins`; routes `partner/<id>/reseller/store`, `partner/<id>/reseller/product-requests`; admin queue `?kind=`.
+- Frontend: `StoreConsole` takes `kind`; reseller My Products = `GrantedProducts` (split out of Partner Products) + shortcuts; `experiences.ts` reseller entry; `pageFor` picks the sell console outside the affiliate workspace; admin Type filter/column and kind wording.
+- Tests: `tests/store_console/test_reseller_store_console.py` (9: Explore + margin, ask grants nothing and a sale is refused, approval lets `sell_plan` succeed for that product only, rejection, revocation keeps the existing subscription, kinds independent, only sellers ask to sell, API journey with other partner refused); vitest +4.
+
+### Reseller verification (2026-10-30)
+
+| Gate | Result |
+|---|---|
+| Full backend suite (bare `pytest`) | 4962 passed, 0 failed (2 h 11 min) |
+| `tests/store_console` | 23 affiliate + 9 reseller passed |
+| ruff / format / import contracts / mypy / bandit / check / makemigrations | clean / 18 kept / clean / 0 medium-high / clean / no changes |
+| vitest / eslint / tsc (typegen) / `next build` / dynamic-rendering | 992 passed / clean / clean / built / pass |
+| Migration rehearsal (from deployed 9c56564, `partners.0013`) | PASS - 10 tables identical, existing requests `promote`, reversible |
+| Real browser | PASS - 11/11 journeys (G-J reseller), 11 pages axe-clean, 48 viewport checks, 0 CSP/console errors |

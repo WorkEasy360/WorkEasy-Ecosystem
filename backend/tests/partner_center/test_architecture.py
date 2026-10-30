@@ -162,8 +162,9 @@ def test_no_new_tables_for_partners_staff_or_identity():
         # 0010 adds the set-up fee table and three request columns (ADR-053);
         # tests/ecosystem pins what they do. 0011 adds the promotion grant
         # (ADR-054); tests/affiliate_products pins what it does. 0012 adds the
-        # promotion request (ADR-055); tests/store_console exercises it.
-        "commercial/partners": "0012_promotion_requests.py",
+        # promotion request (ADR-055) and 0013 its kind (promote or sell);
+        # tests/store_console exercises both.
+        "commercial/partners": "0013_product_request_kind.py",
         # 0004 adds one column to the rule table (recurring, ADR-052); 0005 the
         # margin rule, campaigns and the funnel/ledger columns (ADR-053); 0006
         # the referral policy, link kinds, the trial step and the payment

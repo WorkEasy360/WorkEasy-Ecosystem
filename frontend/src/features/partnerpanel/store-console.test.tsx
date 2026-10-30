@@ -45,6 +45,7 @@ const product = (code: string, name: string, status: string, extra: Record<strin
   plans: [],
   starting_price: { amount_minor: 99900, currency: "INR", interval: "monthly" },
   commission: { rate_bp: 1000, recurring: false },
+  margin: null,
   status,
   request: null,
   ...extra,
@@ -69,6 +70,7 @@ const REJECTED = {
 };
 
 const STORE = {
+  kind: "promote",
   products: [
     product("crm", "Easy CRM", "approved"),
     product("books", "Easy Books", "rejected", { request: REJECTED }),
@@ -102,7 +104,7 @@ describe("Store Console - Explore Products", () => {
     expect(within(crm).getByText(/From .*99.*month/)).toBeInTheDocument();
     // An approved product is promoted, never requested again.
     expect(within(crm).queryByRole("button", { name: /Request/ })).not.toBeInTheDocument();
-    expect(within(crm).getByRole("link", { name: "Promote Easy CRM in My Products" })).toHaveAttribute("href", "/partner/affiliate/store-console");
+    expect(within(crm).getByRole("link", { name: "Open Easy CRM in My Products" })).toHaveAttribute("href", "/partner/affiliate/store-console");
     const books = cards.find((c) => within(c).queryByRole("heading", { name: "Easy Books" }))!;
     expect(within(books).getByText("Reason: Not a fit for finance buyers.")).toBeInTheDocument();
     expect(within(books).getByRole("button", { name: "Request again to Easy Books" })).toBeInTheDocument();
@@ -170,6 +172,60 @@ describe("Store Console - Explore Products", () => {
     mockApi({ [`GET ${API}/affiliate/store`]: [{ status: 500, body: { code: "server_error", detail: "Boom" } }] });
     mount(<StoreConsole tab="explore" />);
     expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
+});
+
+describe("Store Console - a reseller asks to sell", () => {
+  const SELL_STORE = {
+    ...STORE,
+    kind: "sell",
+    products: [
+      product("crm", "Easy CRM", "approved", { margin: { discount_bp: 2000 } }),
+      product("desk", "Help Desk", "not_requested", { margin: { discount_bp: null } }),
+    ],
+    requests: [],
+    counts: { approved: 1, explore: 1, pending: 0 },
+    channels: { existing_customers: "My existing customers", direct_sales: "Direct sales team" },
+    prefill: { website: "" },
+  };
+  const RESELLER = perm("dashboard.view", "product.view", "product.manage", "pricing.view", "customer.view", "commission.view");
+
+  it("reads and writes the reseller endpoints, shows the margin and words the form for selling", async () => {
+    pathname = "/partner/reseller/store-console/explore";
+    const calls = mockApi({
+      [`GET ${API}/reseller/store`]: [ok(SELL_STORE), ok(SELL_STORE)],
+      [`POST ${API}/reseller/product-requests`]: [{ status: 201, body: { ...REJECTED, id: "r7", kind: "sell", status: "pending" } }],
+    });
+    const { container } = mount(<StoreConsole tab="explore" kind="sell" />, RESELLER);
+    const list = await screen.findByRole("list", { name: "Products" });
+    expect(within(list).getByText("Your margin: 20.00% off the list price")).toBeInTheDocument();
+    // No margin rule: the commission a sale would earn instead.
+    expect(within(list).getByText(/Commission: 10.00% of each paid sale/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Store Console");
+    fireEvent.click(within(list).getByRole("button", { name: "Request access to Help Desk" }));
+    const form = screen.getByRole("form", { name: "Request access to Help Desk" });
+    fireEvent.change(within(form).getByLabelText("Sales channel"), { target: { value: "existing_customers" } });
+    fireEvent.change(within(form).getByLabelText("Target customers"), { target: { value: "Our accounting clients" } });
+    fireEvent.change(within(form).getByLabelText("How you will sell it"), { target: { value: "Bundle it with our support plans." } });
+    fireEvent.click(within(form).getByRole("button", { name: "Send request" }));
+    await waitFor(() => expect(calls.some((c) => c.key === `POST ${API}/reseller/product-requests`)).toBe(true));
+    expect(calls.some((c) => c.key.includes("/affiliate/"))).toBe(false);
+    await expectNoViolations(container);
+  });
+
+  it("shows the products it may sell in My Products, with the pages that sell them", async () => {
+    pathname = "/partner/reseller/store-console";
+    mockApi({
+      [`GET ${API}/reseller/store`]: [ok(SELL_STORE)],
+      [`GET ${API}/products`]: [
+        ok({ currency: "INR", products: [], available: [], can_manage: true, not_implemented: { custom_css: { feature: "", reason: "" } } }),
+      ],
+    });
+    mount(<StoreConsole tab="mine" kind="sell" />, RESELLER);
+    expect(await screen.findByText("No approved products yet. Request access to one in Explore Products.")).toBeInTheDocument();
+    const shortcuts = screen.getByRole("list", { name: "Sell your products" });
+    for (const name of ["Customers", "Sales & Orders", "Pricing & Margins", "Product Billing"])
+      expect(within(shortcuts).getByRole("link", { name })).toBeInTheDocument();
   });
 });
 

@@ -530,20 +530,26 @@ def _activation_of(invite: Any) -> dict[str, Any]:
 # --- product scope --------------------------------------------------------
 
 
-def product_open_to_partner(partner_id: UUID, product_code: str) -> bool:
-    """Whether the product's channel flags (ADR-051) admit this partner: one
-    that presents itself under its own brand (branding or domain capability)
-    needs the product open to **white-label**; any other seller needs it open
-    to **reseller**. Eligibility only - the grant is still the authority."""
-    from workeasy360.commercial.catalog import selectors as catalog
+def seller_channel(partner_id: UUID) -> str:
+    """The catalog channel this partner sells through: one that presents
+    itself under its own brand (branding or domain capability) sells through
+    **white-label**; any other seller through **reseller**."""
     from workeasy360.commercial.partners import capabilities
 
-    channels = catalog.channels_open(product_code)
     branded = bool(
         active_capabilities(partner_id)
         & {capabilities.BRANDING_MANAGE, capabilities.DOMAIN_MANAGE}
     )
-    return ("white_label" if branded else "reseller") in channels
+    return "white_label" if branded else "reseller"
+
+
+def product_open_to_partner(partner_id: UUID, product_code: str) -> bool:
+    """Whether the product's channel flags (ADR-051) admit this partner's
+    channel (:func:`seller_channel`). Eligibility only - the grant is still
+    the authority."""
+    from workeasy360.commercial.catalog import selectors as catalog
+
+    return seller_channel(partner_id) in catalog.channels_open(product_code)
 
 
 def may_sell(partner_id: UUID, *, product_code: str, plan_code: str) -> bool:

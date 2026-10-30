@@ -220,9 +220,13 @@ export interface MyProducts {
 
 export type ProductAccess = "not_requested" | "pending" | "approved" | "rejected" | "revoked";
 
+/** `promote`: an affiliate's referral links; `sell`: a reseller selling to customers. */
+export type RequestKind = "promote" | "sell";
+
 /** One request to promote a product, as its partner reads it. */
 export interface PromotionRequest {
   id: string;
+  kind: RequestKind;
   product_code: string;
   product_name: string;
   status: "pending" | "approved" | "rejected" | "revoked";
@@ -253,11 +257,14 @@ export interface StoreProduct {
   starting_price: { amount_minor: number; currency: string; interval: string } | null;
   /** `null`: not disclosed to this member; `rate_bp: null`: no rule yet. */
   commission: { rate_bp: number | null; recurring: boolean } | null;
+  /** Sellers only. `null`: not disclosed; `discount_bp: null`: no margin, a sale earns commission. */
+  margin: { discount_bp: number | null } | null;
   status: ProductAccess;
   request: PromotionRequest | null;
 }
 
 export interface StoreConsole {
+  kind: RequestKind;
   products: StoreProduct[];
   requests: PromotionRequest[];
   counts: { approved: number; explore: number; pending: number };
@@ -930,11 +937,15 @@ export const panelApi = {
   /** ADR-054: the products this partner may promote and how its links do. */
   myProducts: (id: string, range: RangeKey, from?: string, to?: string) =>
     apiFetch<MyProducts>(`${partner(id)}/affiliate/products`, { query: { range, from, to } }),
-  /** ADR-055: Explore Products and My Requests. */
-  storeConsole: (id: string) => apiFetch<StoreConsole>(`${partner(id)}/affiliate/store`),
-  /** ADR-055: ask to promote a product. Grants nothing until staff approve. */
-  requestProduct: (id: string, body: PromotionRequestBody) =>
-    apiFetch<PromotionRequest>(`${partner(id)}/affiliate/product-requests`, { method: "POST", body: json(body) }),
+  /** ADR-055: Explore Products and My Requests - an affiliate's (`promote`) or a reseller's (`sell`). */
+  storeConsole: (id: string, kind: RequestKind) =>
+    apiFetch<StoreConsole>(`${partner(id)}/${kind === "sell" ? "reseller" : "affiliate"}/store`),
+  /** ADR-055: ask to promote or sell a product. Grants nothing until staff approve. */
+  requestProduct: (id: string, kind: RequestKind, body: PromotionRequestBody) =>
+    apiFetch<PromotionRequest>(`${partner(id)}/${kind === "sell" ? "reseller" : "affiliate"}/product-requests`, {
+      method: "POST",
+      body: json(body),
+    }),
   /** Rename a link, or switch it off or back on. */
   updateTrackingLink: (id: string, codeId: string, body: { label?: string; active?: boolean }) =>
     apiFetch<{ id: string; label: string; status: string }>(

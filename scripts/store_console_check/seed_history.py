@@ -1,4 +1,5 @@
-"""History made by the COMMITTED code (ADR-054), before ADR-055.
+"""History made by the COMMITTED code (ADR-055 as first released: affiliate
+requests only), before requests had a kind.
 
 Run by ``prepare.py`` with ``PYTHONPATH`` pointing at a ``git archive HEAD``
 export. It replays the ecosystem history seed and adds what ADR-054 makes and
@@ -56,4 +57,42 @@ link = ReferralCode.objects.create(
     created_by_id=general.created_by_id,
 )
 referrals.capture_referral(link.code)
+
+# ADR-055 as first released: an approved and a pending affiliate request.
+from workeasy360.commercial.partners.models import (  # noqa: E402
+    PartnerProductGrant,
+    PartnerPromotionRequest,
+)
+
+crm_grant = PartnerPromotionGrant.objects.get(partner=aff, status="active")
+answers = {
+    "channel": "website",
+    "audience": "Small agencies",
+    "strategy": "A comparison article on our blog.",
+    "requested_by_id": general.created_by_id,
+}
+PartnerPromotionRequest.objects.create(
+    partner=aff,
+    product=crm_grant.product,
+    status="approved",
+    requested_at=now,
+    decided_at=now,
+    decided_by_id=general.created_by_id,
+    grant=crm_grant,
+    **answers,
+)
+PartnerPromotionRequest.objects.create(
+    partner=aff,
+    product=Product.objects.get(code="easy_project"),
+    requested_at=now,
+    **answers,
+)
+# A reseller's product grant, made by hand - no request behind it.
+seller = PartnerAccount.objects.exclude(id=aff.id).order_by("code").first()
+PartnerProductGrant.objects.create(
+    partner=seller,
+    product=Product.objects.get(code="easy_helpdesk"),
+    granted_by_id=general.created_by_id,
+    granted_at=now,
+)
 print("HISTORY_PROMOTION", link.code)

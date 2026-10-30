@@ -1,27 +1,36 @@
-"""Asking to promote a product, and deciding (ADR-055).
+"""Asking for a product, and deciding (ADR-055).
 
-An affiliate finds a Store product in its Store Console, asks to promote it,
-and staff approve or refuse. **A request is a request**: it grants nothing.
-Approving one makes the ordinary promotion grant through
-``promotion.grant_locked`` - the same command staff use by hand on the
-partner's page - so every link, campaign, capture and commission check keeps
-reading the one grant table and nothing here can open a second way in.
+A partner finds a Store product in its Store Console and asks for it; staff
+approve or refuse. Two kinds of ask, one workflow:
+
+- ``promote`` - an affiliate asks to promote the product with referral links.
+  Approval makes the ordinary promotion grant (``promotion.grant_locked``).
+- ``sell`` - a reseller (or white-label partner) asks to sell the product to
+  customers. Approval makes the ordinary product grant
+  (``services._grant_product``).
+
+**A request is a request**: it grants nothing. Approving one calls the same
+grant command staff use by hand on the partner's page, so every link, sale,
+capture and commission check keeps reading the one grant table and nothing
+here can open a second way in.
 
 What this module owns:
 
 - the request table and its lifecycle: ``pending`` -> ``approved`` |
   ``rejected``; ``approved`` -> ``revoked`` when the grant it produced is
-  withdrawn (``promotion.revoke_promotion`` marks it, whichever screen staff
-  use). Rows are never deleted or reopened, so the history of one partner and
-  product is its rows in order;
+  withdrawn (the grant's revoke command marks it, whichever screen staff use).
+  Rows are never deleted or reopened, so the history of one partner, product
+  and kind is its rows in order;
 - the product state the partner sees (``not_requested``, ``pending``,
   ``approved``, ``rejected``, ``revoked``), derived from requests and grants,
   never stored;
 - the notice to the staff who can decide, queued after the request commits.
 
-Who may do what: a partner member holding ``platform.partner_referral.create``
-asks for its own partner only (``ctx.partner_id``; there is no partner id to
-send). Staff holding ``platform.staff_partner.view`` read the queue; only
+Who may do what: a partner member asks for its own partner only
+(``ctx.partner_id``; there is no partner id to send) - with
+``platform.partner_referral.create`` to promote, with
+``platform.partner_product.manage`` to sell. Staff holding
+``platform.staff_partner.view`` read the queue; only
 ``platform.staff_partner.manage`` approves, refuses or revokes. Every command
 locks the partner row first and the request row second, so two members asking
 at once, two administrators deciding at once, or an approval racing a
@@ -31,6 +40,7 @@ requests is the last word if anything slips past.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Final
 from uuid import UUID
 
@@ -39,7 +49,13 @@ from django.db.models import Count, Q
 from django.utils import timezone
 
 from workeasy360.commercial.catalog import selectors as catalog_selectors
-from workeasy360.commercial.partners import access, capabilities, inputs, promotion
+from workeasy360.commercial.partners import (
+    access,
+    capabilities,
+    inputs,
+    promotion,
+    services,
+)
 from workeasy360.commercial.partners import selectors as partner_selectors
 from workeasy360.commercial.partners.services import MANAGE, _lock_partner
 from workeasy360.contracts.enums import GrantStatus
@@ -57,8 +73,6 @@ from workeasy360.platform.observability.logging import get_logger
 
 logger = get_logger(__name__)
 
-OWN_CREATE: Final = "platform.partner_referral.create"
-OWN_VIEW: Final = "platform.partner_referral.view"
 STAFF_VIEW: Final = "platform.staff_partner.view"
 
 PENDING: Final = "pending"
@@ -68,18 +82,61 @@ REVOKED: Final = "revoked"
 STATES: Final = (PENDING, APPROVED, REJECTED, REVOKED)
 NOT_REQUESTED: Final = "not_requested"
 
-#: How the partner means to reach people. A closed list, so the queue can be
-#: filtered and nothing free-form hides in it.
-CHANNELS: Final[dict[str, str]] = {
-    "website": "Website or blog",
-    "social_media": "Social media",
-    "email": "Email newsletter",
-    "video": "Video or podcast",
-    "community": "Community or forum",
-    "paid_ads": "Paid advertising",
-    "events": "Events or webinars",
-    "other": "Other",
+PROMOTE: Final = "promote"
+SELL: Final = "sell"
+KINDS: Final = (PROMOTE, SELL)
+
+#: The capabilities that make a partner a seller - the Reseller label's set.
+SELLING_CAPABILITIES: Final = capabilities.EXPERIENCES[capabilities.RESELLER][1]
+
+
+@dataclass(frozen=True, slots=True)
+class Kind:
+    key: str
+    #: The member permission that may ask.
+    permission: str
+    verb: str
+    #: How the partner means to reach people. A closed list, so the queue can
+    #: be filtered and nothing free-form hides in it.
+    channels: dict[str, str]
+    audit_prefix: str
+
+
+KIND: Final[dict[str, Kind]] = {
+    PROMOTE: Kind(
+        PROMOTE,
+        "platform.partner_referral.create",
+        "promote",
+        {
+            "website": "Website or blog",
+            "social_media": "Social media",
+            "email": "Email newsletter",
+            "video": "Video or podcast",
+            "community": "Community or forum",
+            "paid_ads": "Paid advertising",
+            "events": "Events or webinars",
+            "other": "Other",
+        },
+        "partner.promotion",
+    ),
+    SELL: Kind(
+        SELL,
+        "platform.partner_product.manage",
+        "sell",
+        {
+            "existing_customers": "My existing customers",
+            "direct_sales": "Direct sales team",
+            "online_store": "Website or online store",
+            "marketplace": "Marketplace",
+            "events": "Events or demos",
+            "other": "Other",
+        },
+        "partner.sell",
+    ),
 }
+#: ADR-055's first release named only the affiliate's list; kept for callers.
+CHANNELS: Final = KIND[PROMOTE].channels
+
 FIELDS: Final = ("product_code", "channel", "website", "audience", "strategy", "notes")
 MAX_AUDIENCE: Final = 300
 MAX_TEXT: Final = 1000
@@ -90,9 +147,9 @@ TEMPLATE_KEY: Final = "platform.partner.promotion_requested"
 PROMOTION_REQUESTED = register(
     Template(
         key=TEMPLATE_KEY,
-        subject="{partner_name} asks to promote {product_name}",
+        subject="{partner_name} asks to {action} {product_name}",
         body_text=(
-            "An affiliate asked to promote a product from its Store Console.\n\n"
+            "A partner asked to {action} a product from its Store Console.\n\n"
             "Partner: {partner_name} ({partner_code})\n"
             "Product: {product_name}\n"
             "Channel: {channel}\n\n"
@@ -103,22 +160,31 @@ PROMOTION_REQUESTED = register(
             "partner_name",
             "partner_code",
             "product_name",
+            "action",
             "channel",
             "review_url",
         ),
         description=(
             "Sent to the staff who can approve partner products when an "
-            "affiliate requests permission to promote one."
+            "affiliate asks to promote one, or a reseller asks to sell one."
         ),
         samples=(
             ("partner_name", "Acme Media"),
             ("partner_code", "ACME"),
             ("product_name", "Easy CRM"),
+            ("action", "promote"),
             ("channel", "Website or blog"),
             ("review_url", "https://admin.example.com/admin/partners/product-requests"),
         ),
     )
 )
+
+
+def _kind(value: Any) -> Kind:
+    found = KIND.get(str(value or ""))
+    if found is None:
+        raise PartnerValidationError(f"kind must be one of {list(KINDS)}.", field="kind")
+    return found
 
 
 def _model() -> Any:
@@ -127,17 +193,39 @@ def _model() -> Any:
     return PartnerPromotionRequest
 
 
-def _grants() -> Any:
-    from workeasy360.commercial.partners.models import PartnerPromotionGrant
+def _grants(kind: str) -> Any:
+    from workeasy360.commercial.partners.models import (
+        PartnerProductGrant,
+        PartnerPromotionGrant,
+    )
 
-    return PartnerPromotionGrant
+    return PartnerPromotionGrant if kind == PROMOTE else PartnerProductGrant
 
 
-def eligible_codes() -> frozenset[str]:
+def channel_for(kind: str, partner_id: UUID) -> str:
+    """The catalog channel a request of ``kind`` by this partner needs open."""
+    return (
+        "affiliate" if kind == PROMOTE else partner_selectors.seller_channel(partner_id)
+    )
+
+
+def eligible_codes(kind: str = PROMOTE, partner_id: UUID | None = None) -> frozenset[str]:
     """The products a request may name now: on the Store (active, published,
-    listed) and open to the affiliate channel - the same list Explore shows."""
-    return frozenset(
-        p["code"] for p in catalog_selectors.store_products() if p["affiliate_enabled"]
+    listed) and open to the partner's channel - the same list Explore shows."""
+    channel = "affiliate" if partner_id is None else channel_for(kind, partner_id)
+    column = catalog_selectors.CHANNEL_FLAGS[channel]
+    return frozenset(p["code"] for p in catalog_selectors.store_products() if p[column])
+
+
+def _holds(kind: str, partner_id: UUID, code: str) -> bool:
+    if kind == PROMOTE:
+        return promotion.may_promote(partner_id, code)
+    return (
+        _grants(SELL)
+        .objects.filter(
+            partner_id=partner_id, product__code=code, status=GrantStatus.ACTIVE.value
+        )
+        .exists()
     )
 
 
@@ -147,13 +235,15 @@ def eligible_codes() -> frozenset[str]:
 def request_dict(row: Any, *, staff: bool = False) -> dict[str, Any]:
     """One request as the partner (or, with ``staff``, the console) reads it.
     The partner is told when and why, never which administrator decided."""
+    kind = KIND.get(row.kind, KIND[PROMOTE])
     out: dict[str, Any] = {
         "id": str(row.id),
+        "kind": row.kind,
         "product_code": row.product.code,
         "product_name": row.product.name,
         "status": row.status,
         "channel": row.channel,
-        "channel_label": CHANNELS.get(row.channel, row.channel),
+        "channel_label": kind.channels.get(row.channel, row.channel),
         "website": row.website,
         "audience": row.audience,
         "strategy": row.strategy,
@@ -165,13 +255,14 @@ def request_dict(row: Any, *, staff: bool = False) -> dict[str, Any]:
         "revoke_reason": row.revoke_reason,
     }
     if staff:
+        grant_id = row.grant_id if row.kind == PROMOTE else row.product_grant_id
         out.update(
             {
                 "partner_id": str(row.partner_id),
                 "requested_by": row.requested_by.email,
                 "decided_by": row.decided_by.email if row.decided_by_id else None,
                 "revoked_by": row.revoked_by.email if row.revoked_by_id else None,
-                "grant_id": str(row.grant_id) if row.grant_id else None,
+                "grant_id": str(grant_id) if grant_id else None,
             }
         )
     return out
@@ -184,29 +275,33 @@ def _rows(queryset: Any, *, staff: bool = False) -> Any:
     return queryset.select_related(*related)
 
 
-def partner_requests(partner_id: UUID, *, limit: int = 200) -> list[dict[str, Any]]:
-    """The partner's requests, newest first - its My Requests tab."""
-    rows = _rows(_model().objects.filter(partner_id=partner_id)).order_by("-requested_at")
+def partner_requests(
+    partner_id: UUID, *, kind: str = PROMOTE, limit: int = 200
+) -> list[dict[str, Any]]:
+    """The partner's requests of one kind, newest first - its My Requests tab."""
+    rows = _rows(_model().objects.filter(partner_id=partner_id, kind=kind)).order_by(
+        "-requested_at"
+    )
     return [request_dict(r) for r in rows[: max(1, limit)]]
 
 
-def product_states(partner_id: UUID) -> dict[str, dict[str, Any]]:
+def product_states(partner_id: UUID, *, kind: str = PROMOTE) -> dict[str, dict[str, Any]]:
     """``{product_code: {status, request}}`` for every product the partner has
-    asked for or been granted - two queries for the lot.
+    asked for or been granted, for one kind - two queries for the lot.
 
     ``approved`` means a live grant, however it was made. Otherwise the most
     recent event decides: the newest request's state, unless a grant was
     revoked after it (a product staff assigned by hand and later withdrew).
     """
     latest: dict[str, Any] = {}
-    for row in _rows(_model().objects.filter(partner_id=partner_id)).order_by(
+    for row in _rows(_model().objects.filter(partner_id=partner_id, kind=kind)).order_by(
         "-requested_at"
     ):
         latest.setdefault(row.product.code, row)
     live: set[str] = set()
     last_revoked: dict[str, Any] = {}
     for code, status, revoked_at in (
-        _grants()
+        _grants(kind)
         .objects.filter(partner_id=partner_id)
         .values_list("product__code", "status", "revoked_at")
     ):
@@ -230,16 +325,20 @@ def product_states(partner_id: UUID) -> dict[str, dict[str, Any]]:
     return out
 
 
-def may_request(partner_id: UUID, permissions: frozenset[str]) -> str | None:
+def may_request(
+    partner_id: UUID, permissions: frozenset[str], *, kind: str = PROMOTE
+) -> str | None:
     """Why this member cannot ask for a product now, or ``None`` if it can."""
+    spec = _kind(kind)
     row = partner_selectors.partner_row(partner_id)
     if row is None or not row.status_enum.may_transact:
         return "This partner account is not active, so it cannot request products."
-    if capabilities.REFERRAL_CREATE not in partner_selectors.active_capabilities(
-        partner_id
-    ):
+    held = partner_selectors.active_capabilities(partner_id)
+    if kind == PROMOTE and capabilities.REFERRAL_CREATE not in held:
         return "This partner account does not hold the referral capability."
-    if OWN_CREATE not in permissions:
+    if kind == SELL and not held & SELLING_CAPABILITIES:
+        return "This partner account does not hold a selling capability."
+    if spec.permission not in permissions:
         return "Your role cannot request products. Ask the account owner."
     return None
 
@@ -259,7 +358,7 @@ def profile_website(partner_id: UUID) -> str:
 # --- the partner asks --------------------------------------------------------------------
 
 
-def _clean(body: Any) -> dict[str, str]:
+def _clean(body: Any, spec: Kind) -> dict[str, str]:
     raw = inputs.mapping(body)
     unknown = sorted(set(raw) - set(FIELDS))
     if unknown:
@@ -267,8 +366,10 @@ def _clean(body: Any) -> dict[str, str]:
             f"Unknown fields {unknown}. Allowed: {list(FIELDS)}.", field=unknown[0]
         )
     channel = str(raw.get("channel") or "").strip()
-    if channel not in CHANNELS:
-        raise PartnerValidationError("Choose how you will promote it.", field="channel")
+    if channel not in spec.channels:
+        raise PartnerValidationError(
+            f"Choose how you will {spec.verb} it.", field="channel"
+        )
     audience = inputs.clean_markup_free(
         raw.get("audience"), field="audience", max_length=MAX_AUDIENCE
     )
@@ -279,7 +380,7 @@ def _clean(body: Any) -> dict[str, str]:
         raise PartnerValidationError("Describe who you will reach.", field="audience")
     if len(strategy) < 10:
         raise PartnerValidationError(
-            "Describe how you will promote it (at least 10 characters).",
+            f"Describe how you will {spec.verb} it (at least 10 characters).",
             field="strategy",
         )
     return {
@@ -293,36 +394,36 @@ def _clean(body: Any) -> dict[str, str]:
 
 
 @in_scope
-def submit(ctx: TenantContext, *, body: Any) -> dict[str, Any]:
-    """Ask to promote one Store product. Refused for a product the partner may
-    already promote or has already asked for, and for one not open to
-    affiliates. Staff who can decide are notified once the request commits."""
+def submit(ctx: TenantContext, *, body: Any, kind: str = PROMOTE) -> dict[str, Any]:
+    """Ask to promote (or sell) one Store product. Refused for a product the
+    partner already holds or has already asked for, and for one not open to
+    its channel. Staff who can decide are notified once the request commits."""
+    spec = _kind(kind)
     if ctx.partner_id is None:
         raise PartnerRecordNotFound("No such partner.")
-    authz.require(ctx, OWN_CREATE)
+    authz.require(ctx, spec.permission)
     access.require_transacting(ctx)
     partner_id = ctx.partner_id
-    data = _clean(body)
+    data = _clean(body, spec)
     code = data["product_code"]
-    if code not in eligible_codes():
+    if code not in eligible_codes(spec.key, partner_id):
         raise PartnerValidationError(
-            "That product is not open for promotion requests.", field="product_code"
+            f"That product is not open for {spec.verb} requests.", field="product_code"
         )
     product_id, _plan = catalog_selectors.resolve_product_and_plan(code, None)
     with transaction.atomic():
         _lock_partner(partner_id)
-        reason = may_request(partner_id, authz.effective_permissions(ctx))
+        reason = may_request(partner_id, authz.effective_permissions(ctx), kind=spec.key)
         if reason:
             raise PartnerValidationError(reason, field="product_code")
-        if promotion.may_promote(partner_id, code):
+        if _holds(spec.key, partner_id, code):
             raise PartnerRequestConflict(
-                "You may already promote this product.", status=APPROVED
+                f"You may already {spec.verb} this product.", status=APPROVED
             )
-        if (
-            _model()
-            .objects.filter(partner_id=partner_id, product_id=product_id, status=PENDING)
-            .exists()
-        ):
+        pending = _model().objects.filter(
+            partner_id=partner_id, product_id=product_id, kind=spec.key, status=PENDING
+        )
+        if pending.exists():
             raise PartnerRequestConflict(
                 "A request for this product is already waiting for approval.",
                 status=PENDING,
@@ -332,6 +433,7 @@ def submit(ctx: TenantContext, *, body: Any) -> dict[str, Any]:
                 row = _model().objects.create(
                     partner_id=partner_id,
                     product_id=product_id,
+                    kind=spec.key,
                     channel=data["channel"],
                     website=data["website"],
                     audience=data["audience"],
@@ -347,13 +449,14 @@ def submit(ctx: TenantContext, *, body: Any) -> dict[str, Any]:
             ) from None
         audit.record(
             ctx,
-            "partner.promotion_requested",
+            f"{spec.audit_prefix}_requested",
             resource_type="partners.promotion_request",
             resource_id=row.id,
             # Which product and channel - never the partner's words.
             changes={
                 "partner_id": str(partner_id),
                 "product_code": code,
+                "kind": spec.key,
                 "channel": row.channel,
             },
         )
@@ -377,6 +480,7 @@ def notify_staff(request_id: UUID) -> int:
         row = _rows(_model().objects.filter(id=request_id), staff=True).first()
         if row is None or row.status != PENDING:
             return 0
+        spec = KIND[row.kind]
         review = (
             f"{portal_links.origin(portals.ADMIN)}/admin/partners/product-requests"
             f"?request={row.id}"
@@ -390,7 +494,8 @@ def notify_staff(request_id: UUID) -> int:
                     "partner_name": row.partner.display_name,
                     "partner_code": row.partner.code,
                     "product_name": row.product.name,
-                    "channel": CHANNELS.get(row.channel, row.channel),
+                    "action": spec.verb,
+                    "channel": spec.channels.get(row.channel, row.channel),
                     "review_url": review,
                 },
             )
@@ -409,7 +514,7 @@ def notify_staff(request_id: UUID) -> int:
 
 def _locked_for_decision(request_id: UUID) -> tuple[Any, Any]:
     """Lock the request's partner, then the request - the order every command
-    here and ``promotion`` uses, so no two of them deadlock."""
+    here and the grant commands use, so no two of them deadlock."""
     partner_id = (
         _model()
         .objects.filter(id=request_id)
@@ -435,40 +540,56 @@ def _decided(row: Any, ctx: TenantContext, status: str, *, reason: str = "") -> 
     row.decided_at = timezone.now()
     row.decision_reason = reason
     row.save(
-        update_fields=["status", "decided_by", "decided_at", "decision_reason", "grant"]
+        update_fields=[
+            "status",
+            "decided_by",
+            "decided_at",
+            "decision_reason",
+            "grant",
+            "product_grant",
+        ]
     )
 
 
 @in_scope
 def approve(ctx: TenantContext, request_id: UUID) -> dict[str, Any]:
-    """Approve a pending request: the partner gets the promotion grant for the
-    product (or keeps the one it already holds) and the product moves to its
-    My Products. Refused if the product has left the Store or the affiliate
-    channel since, or the partner can no longer hold the grant."""
+    """Approve a pending request: the partner gets the grant for the product -
+    promotion or sale, by the request's kind - (or keeps the one it already
+    holds), and the product moves to its My Products. Refused if the product
+    has left the Store or the partner's channel since, or the partner can no
+    longer hold the grant."""
     authz.require(ctx, MANAGE)
     with transaction.atomic():
         partner, row = _locked_for_decision(request_id)
+        spec = KIND[row.kind]
         if row.status != PENDING:
             raise PartnerRequestConflict(
                 "This request was already decided.", status=row.status
             )
-        if row.product.code not in eligible_codes():
+        code = row.product.code
+        if code not in eligible_codes(spec.key, partner.id):
             raise PartnerValidationError(
-                "This product is no longer on the Store for affiliates. Reject the "
-                "request, or list the product and allow Affiliate first.",
+                "This product is no longer on the Store for this partner's channel. "
+                "Reject the request, or list the product and open its channel first.",
                 field="product_code",
             )
-        row.grant = promotion.grant_locked(ctx, partner, product_code=row.product.code)
+        if spec.key == PROMOTE:
+            row.grant = promotion.grant_locked(ctx, partner, product_code=code)
+        else:
+            row.product_grant = services._grant_product(
+                ctx, partner.id, product_code=code
+            )
         _decided(row, ctx, APPROVED)
         audit.record(
             ctx,
-            "partner.promotion_request_approved",
+            f"{spec.audit_prefix}_request_approved",
             resource_type="partners.promotion_request",
             resource_id=row.id,
             changes={
                 "partner_id": str(row.partner_id),
-                "product_code": row.product.code,
-                "grant_id": str(row.grant_id),
+                "product_code": code,
+                "kind": spec.key,
+                "grant_id": str(row.grant_id or row.product_grant_id),
             },
         )
     return request_dict(row, staff=True)
@@ -498,10 +619,14 @@ def reject(ctx: TenantContext, request_id: UUID, *, reason: Any) -> dict[str, An
         _decided(row, ctx, REJECTED, reason=text)
         audit.record(
             ctx,
-            "partner.promotion_request_rejected",
+            f"{KIND[row.kind].audit_prefix}_request_rejected",
             resource_type="partners.promotion_request",
             resource_id=row.id,
-            changes={"partner_id": str(row.partner_id), "product_code": row.product.code},
+            changes={
+                "partner_id": str(row.partner_id),
+                "product_code": row.product.code,
+                "kind": row.kind,
+            },
             reason=text,
         )
     return request_dict(row, staff=True)
@@ -509,22 +634,30 @@ def reject(ctx: TenantContext, request_id: UUID, *, reason: Any) -> dict[str, An
 
 @in_scope
 def revoke(ctx: TenantContext, request_id: UUID, *, reason: Any = "") -> dict[str, Any]:
-    """Withdraw what an approved request granted - the one revocation command
-    (``promotion.revoke_promotion``), which also marks this request. New links
-    stop at once; earned commission and recorded referrals are untouched."""
+    """Withdraw what an approved request granted - through the grant's one
+    revocation command (``promotion.revoke_promotion`` or
+    ``services.revoke_product_grant``), which also marks this request. New
+    links or sales stop at once; earned commission, recorded referrals and
+    customers' existing subscriptions are untouched."""
     authz.require(ctx, MANAGE)
     text = _reason(reason, required=False)
     row = _rows(_model().objects.filter(id=request_id)).first()
     if row is None:
         raise PartnerRecordNotFound("No such request.", request_id=str(request_id))
-    if row.status != APPROVED or row.grant_id is None:
+    grant_id = row.grant_id if row.kind == PROMOTE else row.product_grant_id
+    if row.status != APPROVED or grant_id is None:
         raise PartnerRequestConflict(
             "Only an approved request can be revoked.", status=row.status
         )
     try:
-        promotion.revoke_promotion(
-            ctx, row.partner_id, grant_id=row.grant_id, reason=text
-        )
+        if row.kind == PROMOTE:
+            promotion.revoke_promotion(
+                ctx, row.partner_id, grant_id=grant_id, reason=text
+            )
+        else:
+            services.revoke_product_grant(
+                ctx, row.partner_id, grant_id=grant_id, reason=text
+            )
     except PartnerRecordNotFound:
         # Revoked a moment ago on another screen: the request says so already.
         raise PartnerRequestConflict(
@@ -547,15 +680,17 @@ def staff_queue(
     ctx: TenantContext,
     *,
     status: Any = None,
+    kind: Any = None,
     search: Any = None,
     partner_id: Any = None,
     limit: Any = 50,
     offset: Any = 0,
 ) -> dict[str, Any]:
     """The review queue across partners, newest first: one status (default
-    ``pending``) or ``all``, optionally one partner, optionally a search over
-    the partner's name or code and the product's name or code. Bounded and
-    paged; the counts per status are one aggregate query."""
+    ``pending``) or ``all``, optionally one kind, optionally one partner,
+    optionally a search over the partner's name or code and the product's
+    name or code. Bounded and paged; the counts per status are one aggregate
+    query."""
     authz.require(ctx, STAFF_VIEW)
     wanted = str(status or PENDING)
     if wanted != "all" and wanted not in STATES:
@@ -570,6 +705,8 @@ def staff_queue(
             "limit and offset must be numbers.", field="limit"
         ) from None
     queryset = _model().objects.all()
+    if kind:
+        queryset = queryset.filter(kind=_kind(kind).key)
     if partner_id:
         try:
             queryset = queryset.filter(partner_id=UUID(str(partner_id)))
@@ -606,15 +743,24 @@ def staff_queue(
         "total": total,
         "limit": size,
         "offset": start,
-        "channels": CHANNELS,
     }
+
+
+def _granted_codes(kind: str, partner_id: UUID) -> list[str]:
+    return sorted(
+        set(
+            _grants(kind)
+            .objects.filter(partner_id=partner_id, status=GrantStatus.ACTIVE.value)
+            .values_list("product__code", flat=True)
+        )
+    )
 
 
 @in_scope
 def staff_detail(ctx: TenantContext, request_id: UUID) -> dict[str, Any]:
     """One request with what a decision needs: the partner, the product as the
     catalog has it now, whether it is still eligible, and the history of this
-    partner and product - every request and every grant, oldest last."""
+    partner, product and kind - every request and every grant, oldest last."""
     authz.require(ctx, STAFF_VIEW)
     row = _rows(_model().objects.filter(id=request_id), staff=True).first()
     if row is None:
@@ -622,14 +768,18 @@ def staff_detail(ctx: TenantContext, request_id: UUID) -> dict[str, Any]:
     partner = row.partner
     product = row.product
     history = _rows(
-        _model().objects.filter(partner_id=partner.id, product_id=product.id), staff=True
+        _model().objects.filter(
+            partner_id=partner.id, product_id=product.id, kind=row.kind
+        ),
+        staff=True,
     ).order_by("-requested_at")
     grants = (
-        _grants()
+        _grants(row.kind)
         .objects.filter(partner_id=partner.id, product_id=product.id)
         .select_related("granted_by", "revoked_by")
         .order_by("-granted_at")
     )
+    held = partner_selectors.active_capabilities(partner.id)
     return {
         "request": request_dict(row, staff=True),
         "partner": {
@@ -638,15 +788,17 @@ def staff_detail(ctx: TenantContext, request_id: UUID) -> dict[str, Any]:
             "code": partner.code,
             "status": partner.status,
             "website": profile_website(partner.id),
-            "referral_capability": capabilities.REFERRAL_CREATE
-            in partner_selectors.active_capabilities(partner.id),
+            "referral_capability": capabilities.REFERRAL_CREATE in held,
+            "selling_capability": bool(held & SELLING_CAPABILITIES),
+            "channel": channel_for(row.kind, partner.id),
             "promotes": sorted(promotion.promotable_codes(partner.id)),
+            "sells": _granted_codes(SELL, partner.id),
         },
         "product": {
             "code": product.code,
             "name": product.name,
             "status": product.status,
-            "eligible": product.code in eligible_codes(),
+            "eligible": product.code in eligible_codes(row.kind, partner.id),
         },
         "history": [request_dict(r, staff=True) for r in history],
         "grants": [

@@ -36,22 +36,36 @@ function firstPrice(p: ManagedProduct, currency: string): string {
  * belongs - the sale switch in Product Billing, the customer-facing order and
  * visibility in Product Manager. */
 export function PartnerProducts() {
-  const { id, base } = usePanel();
-  const [load] = useLoad(() => panelApi.products(id), [id]);
   return (
     <div className={styles.page}>
       <PageHeader
         title="Partner Products"
         lead="The products Workeasy360 has granted to your account. New products appear here as soon as they are granted; you cannot grant a product to yourself."
       />
-      <LoadGate load={load} what="your products">
+      <GrantedProducts />
+    </div>
+  );
+}
+
+/** The granted products table - the Partner Products page and, with `explore`
+ * (Explore Products replaces the catalog list), the reseller Store Console's
+ * My Products tab (ADR-055). */
+export function GrantedProducts({ explore }: { explore?: string }) {
+  const { id, base } = usePanel();
+  const [load] = useLoad(() => panelApi.products(id), [id]);
+  return (
+    <LoadGate load={load} what="your products">
         {(d) => (
           <>
             <Table
               caption="Products granted to your account"
               head={["Product", "Access", "Sell access", "Pricing", "Trial", "Customers"]}
               isEmpty={d.products.length === 0}
-              empty="Workeasy360 has not granted you a product yet. Contact us to set up your programme."
+              empty={
+                explore
+                  ? "No approved products yet. Request access to one in Explore Products."
+                  : "Workeasy360 has not granted you a product yet. Contact us to set up your programme."
+              }
             >
               {d.products.map((p) => (
                 <tr key={p.code}>
@@ -82,7 +96,11 @@ export function PartnerProducts() {
               Turn a product on or off for new sales in <Link href={`${base}/product-billing`}>Product Billing</Link>; arrange what customers see in{" "}
               <Link href={`${base}/product-manager`}>Product Manager</Link>.
             </p>
-            {d.available.length > 0 && (
+            {explore ? (
+              <p className={styles.muted}>
+                Not selling a product you want? Find it in <Link href={explore}>Explore Products</Link> and request access.
+              </p>
+            ) : d.available.length > 0 && (
               <section className={styles.panel} aria-labelledby="avail">
                 <h2 id="avail">Available from Workeasy360</h2>
                 <p className={styles.muted}>Products in the catalog that your account is not yet approved to sell. Ask Workeasy360 to grant one.</p>
@@ -98,8 +116,7 @@ export function PartnerProducts() {
             )}
           </>
         )}
-      </LoadGate>
-    </div>
+    </LoadGate>
   );
 }
 

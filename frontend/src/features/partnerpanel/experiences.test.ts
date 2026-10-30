@@ -30,7 +30,7 @@ describe("what each workspace offers", () => {
     expect(labels("reseller")).toEqual([
       "Dashboard",
       "Customers",
-      "Products & Plans",
+      "Store Console",
       "Pricing & Margins",
       "Sales & Orders",
       "Subscriptions",
@@ -84,6 +84,16 @@ describe("what each workspace offers", () => {
       "Profile & Settings",
       "Support",
     ]);
+  });
+
+  it("the reseller's Store Console replaces Products & Plans and keeps its pages (ADR-055)", () => {
+    const served = servedPaths(WORKSPACES.reseller);
+    for (const path of ["store-console", "store-console/explore", "store-console/requests", "partner-products", "product-manager", "product-billing"])
+      expect(served.has(path)).toBe(true);
+    expect(WORKSPACES.reseller.aliases.products).toBe("store-console");
+    // White-label is unchanged.
+    expect(labels("white_label")).toContain("Products & Plans");
+    expect(servedPaths(WORKSPACES.white_label).has("store-console")).toBe(false);
   });
 
   it("the Store Console's three tabs are one entry, and the old My Products address opens it (ADR-055)", () => {

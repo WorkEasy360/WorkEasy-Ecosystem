@@ -576,12 +576,14 @@ def public_media_file_id(slug: str, media_id: Any) -> Any | None:
     )
 
 
-def promotable_products(*, at: Any) -> list[dict[str, Any]]:
-    """What an affiliate may promote (ADR-053): Store products open to the
-    affiliate channel, each with its sellable plans and its approved listing
-    content - the Marketing Materials. Read-only: nothing here lets a partner
-    change the catalog."""
-    rows = [p for p in store_products() if p["affiliate_enabled"]]
+def promotable_products(*, at: Any, channel: str = "affiliate") -> list[dict[str, Any]]:
+    """What an affiliate may promote (ADR-053) - or, with another ``channel``,
+    what a reseller or white-label partner may ask to sell (ADR-055): Store
+    products open to that channel, each with its sellable plans and its
+    approved listing content. Read-only: nothing here lets a partner change
+    the catalog."""
+    column = CHANNEL_FLAGS[channel]
+    rows = [p for p in store_products() if p[column]]
     plans = sellable_plans([p["code"] for p in rows], at=at)
     media = media_rows([p["id"] for p in rows])
     return [

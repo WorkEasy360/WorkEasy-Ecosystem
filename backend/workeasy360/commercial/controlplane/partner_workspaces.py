@@ -47,6 +47,7 @@ from workeasy360.commercial.partners import panel_selectors, promotion
 from workeasy360.commercial.partners import selectors as partner_selectors
 from workeasy360.commercial.provisioning import selectors as provisioning_selectors
 from workeasy360.contracts.enums import DomainStatus
+from workeasy360.contracts.errors import PartnerValidationError
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.authz import services as authz
 from workeasy360.platform.authz.control_plane import in_scope
@@ -420,25 +421,34 @@ def my_products(
 
 
 @in_scope
-def store_console(ctx: TenantContext) -> dict[str, Any]:
-    """Explore Products and My Requests: every Store product open to
-    affiliates, each with this partner's state for it (not requested, pending,
-    approved, rejected, revoked), its listing content, its starting price as
-    the public Store shows it and - only for a member who may see commission -
-    the rate a sale of it would earn this partner. Then the partner's requests,
+def store_console(ctx: TenantContext, *, kind: str = "promote") -> dict[str, Any]:
+    """Explore Products and My Requests (ADR-055) for one kind of ask:
+    ``promote`` (an affiliate) or ``sell`` (a reseller or white-label partner).
+
+    Every Store product open to the partner's channel, each with this
+    partner's state for it (not requested, pending, approved, rejected,
+    revoked), its listing content, its starting price as the public Store
+    shows it and - only for a member allowed to see it - what a sale would
+    earn: the commission rate (``commission.view``) and, for a seller, its
+    margin off list price (``pricing.view``). Then the partner's requests,
     newest first. The catalog is the one source: a product staff publish
     appears here, one they withdraw disappears, and an edit shows at once."""
     from workeasy360.commercial.partners import promotion_requests
     from workeasy360.commercial.subscriptions import marketplace
 
-    authz.require(ctx, REFERRAL_VIEW)
+    selling = kind == promotion_requests.SELL
+    if kind not in promotion_requests.KINDS:
+        raise PartnerValidationError("Unknown kind of request.", field="kind")
+    authz.require(ctx, partner_portal.PRODUCT_VIEW if selling else REFERRAL_VIEW)
     partner_id = ctx.partner_id
     assert partner_id is not None
     now = timezone.now()
     permissions = authz.effective_permissions(ctx)
-    products = catalog_selectors.promotable_products(at=now)
+    products = catalog_selectors.promotable_products(
+        at=now, channel=promotion_requests.channel_for(kind, partner_id)
+    )
     codes = [p["code"] for p in products]
-    states = promotion_requests.product_states(partner_id)
+    states = promotion_requests.product_states(partner_id, kind=kind)
     prices = {
         p["code"]: p.get("starting_price")
         for p in marketplace.public_catalog()["products"]
@@ -448,7 +458,12 @@ def store_console(ctx: TenantContext) -> dict[str, Any]:
         if COMMISSION_VIEW in permissions
         else None
     )
-    blocked = promotion_requests.may_request(partner_id, permissions)
+    margins = (
+        commission_selectors.effective_margins(partner_id, codes, at=now)
+        if selling and partner_portal.PRICING_VIEW in permissions
+        else None
+    )
+    blocked = promotion_requests.may_request(partner_id, permissions, kind=kind)
 
     def card(p: dict[str, Any]) -> dict[str, Any]:
         state = states.get(
@@ -473,13 +488,19 @@ def store_console(ctx: TenantContext) -> dict[str, Any]:
                 if rates is not None
                 else None
             ),
+            # Sellers only. None: not disclosed; {"discount_bp": None}: no margin
+            # rule, so a sale earns commission instead.
+            "margin": (
+                {"discount_bp": margins.get(p["code"])} if margins is not None else None
+            ),
             "status": state["status"],
             "request": state["request"],
         }
 
     cards = [card(p) for p in products]
-    requests = promotion_requests.partner_requests(partner_id)
+    requests = promotion_requests.partner_requests(partner_id, kind=kind)
     return {
+        "kind": kind,
         "products": cards,
         "requests": requests,
         "counts": {
@@ -489,7 +510,7 @@ def store_console(ctx: TenantContext) -> dict[str, Any]:
         },
         "can_request": blocked is None,
         "cannot_request_reason": blocked,
-        "channels": promotion_requests.CHANNELS,
+        "channels": promotion_requests.KIND[kind].channels,
         "prefill": {"website": promotion_requests.profile_website(partner_id)},
     }
 

@@ -1575,6 +1575,16 @@ _partner = [
         name="partner-affiliate-product-requests",
     ),
     path(
+        "partner/<uuid:partner_id>/reseller/store",
+        partner_panel_views.reseller_store_view,
+        name="partner-reseller-store",
+    ),
+    path(
+        "partner/<uuid:partner_id>/reseller/product-requests",
+        partner_panel_views.reseller_product_request_view,
+        name="partner-reseller-product-requests",
+    ),
+    path(
         "partner/<uuid:partner_id>/affiliate/products",
         partner_panel_views.affiliate_products_view,
         name="partner-affiliate-products",

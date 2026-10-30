@@ -7,26 +7,29 @@ import {
   panelApi,
   type ProductAccess,
   type PromotionRequest,
+  type RequestKind,
   type StoreConsole as StoreConsoleData,
   type StoreProduct,
 } from "@/lib/api/partnerPanel";
 import { MyProductsTab } from "./AffiliateProducts";
+import { GrantedProducts } from "./Catalog";
 import { EmptyState, PageHeader, SubNav, monogram, usePanel } from "./PanelKit";
 import { percent } from "./workspaceKit";
 import styles from "./PartnerPanel.module.css";
 
 /**
- * The Store Console (ADR-055): the affiliate's view of the one Admin product
- * catalog, in three tabs.
+ * The Store Console (ADR-055): a partner's view of the one Admin product
+ * catalog, in three tabs - for an affiliate (`promote`) or a reseller (`sell`).
  *
- * - **My Products** - what Workeasy360 has approved this affiliate to promote,
- *   with the link generator and figures (ADR-054's page, unchanged).
- * - **Explore Products** - every Store product open to affiliates, with this
- *   affiliate's status for each and a Request Access form.
+ * - **My Products** - what Workeasy360 has approved this partner to promote
+ *   (ADR-054's page: link generator and figures) or to sell (the granted
+ *   products table of Partner Products).
+ * - **Explore Products** - every Store product open to the partner's channel,
+ *   with its status for each and a Request Access form.
  * - **My Requests** - every request it made and what became of it.
  *
  * Nothing here is a gate. A request grants nothing until staff approve it, and
- * the server refuses a link for a product without approval whatever this page
+ * the server refuses a link or a sale without approval whatever this page
  * shows. Every figure, price, rate and status is the server's.
  */
 
@@ -66,16 +69,42 @@ function commissionText(p: StoreProduct): string | null {
   return `Commission: ${percent(p.commission.rate_bp)} of each paid sale${p.commission.recurring ? ", renewals too" : ""}`;
 }
 
-export function StoreConsole({ tab }: { tab: StoreTab }) {
+/** What a sale earns: a seller's margin when it has one, else the commission. */
+function earningText(p: StoreProduct): string | null {
+  if (p.margin?.discount_bp != null) return `Your margin: ${percent(p.margin.discount_bp)} off the list price`;
+  return commissionText(p);
+}
+
+/** The words that differ between promoting and selling; everything else is shared. */
+const WORDS: Record<RequestKind, { verb: string; lead: string; nobody: string; channel: string; audience: string; how: string }> = {
+  promote: {
+    verb: "promote",
+    lead: "Products from the Workeasy360 Store. Promote the ones you are approved for, and request access to the others.",
+    nobody: "No products are open to affiliates yet",
+    channel: "Promotion channel",
+    audience: "Target audience",
+    how: "How you will promote it",
+  },
+  sell: {
+    verb: "sell",
+    lead: "Products from the Workeasy360 Store. Sell the ones you are approved for, and request access to the others.",
+    nobody: "No products are open to resellers yet",
+    channel: "Sales channel",
+    audience: "Target customers",
+    how: "How you will sell it",
+  },
+};
+
+export function StoreConsole({ tab, kind = "promote" }: { tab: StoreTab; kind?: RequestKind }) {
   const { id, base } = usePanel();
-  const [load, reload] = useLoad(() => panelApi.storeConsole(id), [id]);
+  const [load, reload] = useLoad(() => panelApi.storeConsole(id, kind), [id, kind]);
   const counts = load.status === "ready" ? load.data.counts : null;
   const n = (value: number | undefined) => (value === undefined ? "" : ` (${value})`);
   return (
     <div className={styles.page}>
       <PageHeader
         title="Store Console"
-        lead="Products from the Workeasy360 Store. Promote the ones you are approved for, and request access to the others."
+        lead={WORDS[kind].lead}
       />
       <SubNav
         items={[
@@ -88,19 +117,54 @@ export function StoreConsole({ tab }: { tab: StoreTab }) {
         ]}
       />
       {tab === "mine" ? (
-        <MyProductsTab exploreHref={`${base}/store-console/explore`} />
+        kind === "sell" ? (
+          <SellerProducts />
+        ) : (
+          <MyProductsTab exploreHref={`${base}/store-console/explore`} />
+        )
       ) : (
         <LoadGate load={load} what="the Store">
-          {(d) => (tab === "explore" ? <Explore data={d} onChanged={reload} /> : <Requests data={d} />)}
+          {(d) => (tab === "explore" ? <Explore data={d} kind={kind} onChanged={reload} /> : <Requests data={d} />)}
         </LoadGate>
       )}
     </div>
   );
 }
 
+/** A reseller's My Products: the products it may sell (Partner Products' table)
+ * and the existing pages where it sells them - no copy of any of them. */
+function SellerProducts() {
+  const { base, can } = usePanel();
+  return (
+    <>
+      <GrantedProducts explore={`${base}/store-console/explore`} />
+      <ul className={styles.quick} aria-label="Sell your products">
+        {can("customer.view") && (
+          <li>
+            <Link href={`${base}/users`}>Customers</Link>
+          </li>
+        )}
+        {can("customer.view") && (
+          <li>
+            <Link href={`${base}/payments`}>Sales &amp; Orders</Link>
+          </li>
+        )}
+        {can("pricing.view") && (
+          <li>
+            <Link href={`${base}/plans`}>Pricing &amp; Margins</Link>
+          </li>
+        )}
+        <li>
+          <Link href={`${base}/product-billing`}>Product Billing</Link>
+        </li>
+      </ul>
+    </>
+  );
+}
+
 // --- Explore Products ------------------------------------------------------------------
 
-function Explore({ data, onChanged }: { data: StoreConsoleData; onChanged: () => void }) {
+function Explore({ data, kind, onChanged }: { data: StoreConsoleData; kind: RequestKind; onChanged: () => void }) {
   const { base } = usePanel();
   const searchId = useId();
   const categoryId = useId();
@@ -133,6 +197,7 @@ function Explore({ data, onChanged }: { data: StoreConsoleData; onChanged: () =>
       {asking && (
         <RequestForm
           product={asking}
+          kind={kind}
           data={data}
           onCancel={() => setAsking(null)}
           onSent={(name) => {
@@ -179,8 +244,8 @@ function Explore({ data, onChanged }: { data: StoreConsoleData; onChanged: () =>
         </div>
       </div>
       {data.products.length === 0 ? (
-        <EmptyState title="No products are open to affiliates yet" icon="store">
-          <p className={styles.muted}>Products appear here as soon as Workeasy360 publishes them on the Store for affiliates.</p>
+        <EmptyState title={WORDS[kind].nobody} icon="store">
+          <p className={styles.muted}>Products appear here as soon as Workeasy360 publishes them on the Store for your channel.</p>
         </EmptyState>
       ) : shown.length === 0 ? (
         <p className={styles.muted}>No product matches these filters.</p>
@@ -217,7 +282,7 @@ function ProductCard({
 }) {
   const headingId = useId();
   const price = priceText(p);
-  const rate = commissionText(p);
+  const rate = earningText(p);
   const again = p.status === "rejected" || p.status === "revoked";
   return (
     <li className={styles.card} aria-labelledby={headingId}>
@@ -246,8 +311,8 @@ function ProductCard({
       {p.status === "revoked" && p.request?.revoke_reason && <p className={styles.muted}>Reason: {p.request.revoke_reason}</p>}
       <div className={styles.actions}>
         {p.status === "approved" ? (
-          <Link className="w360-btn w360-btn-secondary" href={myProductsHref} aria-label={`Promote ${p.name} in My Products`}>
-            Promote in My Products
+          <Link className="w360-btn w360-btn-secondary" href={myProductsHref} aria-label={`Open ${p.name} in My Products`}>
+            Open in My Products
           </Link>
         ) : p.status === "pending" ? null : (
           canRequest && (
@@ -268,11 +333,13 @@ function ProductCard({
 
 function RequestForm({
   product,
+  kind,
   data,
   onCancel,
   onSent,
 }: {
   product: StoreProduct;
+  kind: RequestKind;
   data: StoreConsoleData;
   onCancel: () => void;
   onSent: (name: string) => void;
@@ -295,7 +362,7 @@ function RequestForm({
       onSubmit={(e) => {
         e.preventDefault();
         void act(async () => {
-          await panelApi.requestProduct(id, {
+          await panelApi.requestProduct(id, kind, {
             product_code: product.code,
             channel,
             website: website.trim() || undefined,
@@ -311,13 +378,13 @@ function RequestForm({
         Request access to {product.name}
       </h2>
       <p className={styles.muted}>
-        Tell Workeasy360 how you will promote it. Your partner profile is used for everything else; do not include anyone
+        Tell Workeasy360 how you will {WORDS[kind].verb} it. Your partner profile is used for everything else; do not include anyone
         else&apos;s personal details.
       </p>
       <div className={styles.formGrid}>
         <div>
           <label className="w360-label" htmlFor={`${formId}-channel`}>
-            Promotion channel
+            {WORDS[kind].channel}
           </label>
           <select id={`${formId}-channel`} className="w360-input" required value={channel} onChange={(e) => setChannel(e.target.value)}>
             <option value="">Choose…</option>
@@ -346,7 +413,7 @@ function RequestForm({
         </div>
         <div>
           <label className="w360-label" htmlFor={`${formId}-audience`}>
-            Target audience
+            {WORDS[kind].audience}
           </label>
           <input
             id={`${formId}-audience`}
@@ -361,7 +428,7 @@ function RequestForm({
       </div>
       <div>
         <label className="w360-label" htmlFor={`${formId}-strategy`}>
-          How you will promote it
+          {WORDS[kind].how}
         </label>
         <textarea
           id={`${formId}-strategy`}

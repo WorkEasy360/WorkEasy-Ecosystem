@@ -355,6 +355,26 @@ def effective_rates(
     return out
 
 
+def effective_margins(
+    partner_id: UUID, product_codes: list[str], *, at: datetime
+) -> dict[str, int | None]:
+    """``{product_code: discount_bp | None}``: the margin (a discount off the
+    list price) a sale of each product by this partner would earn at ``at``
+    (ADR-055's reseller Explore) - the accrual's own choice, the margin rules
+    read once. ``None``: no margin rule, the partner earns commission."""
+    from workeasy360.commercial.commissions import accrual, domain
+
+    views = margin_views()
+    experience = accrual._experience_at(partner_id, at)
+    out: dict[str, int | None] = {}
+    for code in product_codes:
+        chosen = domain.select_margin(
+            views, partner_id=partner_id, experience=experience, product_code=code, at=at
+        )
+        out[code] = chosen.discount_bp if chosen is not None else None
+    return out
+
+
 def _rules_in_force(now: datetime) -> Any:
     from workeasy360.commercial.commissions.models import CommissionRule
 

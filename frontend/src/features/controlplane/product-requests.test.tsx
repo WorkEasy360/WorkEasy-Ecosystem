@@ -24,6 +24,7 @@ const MANAGE = ["platform.staff_partner.view", "platform.staff_partner.manage"];
 
 const REQUEST = {
   id: "req1",
+  kind: "promote",
   partner_id: "p1",
   product_code: "crm",
   product_name: "Easy CRM",
@@ -56,7 +57,18 @@ const QUEUE = {
 
 const DETAIL = {
   request: REQUEST,
-  partner: { id: "p1", name: "Acme Media", code: "ACME", status: "active", website: "https://acme.example.com", referral_capability: true, promotes: [] },
+  partner: {
+    id: "p1",
+    name: "Acme Media",
+    code: "ACME",
+    status: "active",
+    website: "https://acme.example.com",
+    referral_capability: true,
+    selling_capability: false,
+    channel: "affiliate",
+    promotes: [],
+    sells: [],
+  },
   product: { code: "crm", name: "Easy CRM", status: "available", eligible: true },
   history: [REQUEST],
   grants: [],
@@ -133,6 +145,29 @@ describe("Product Requests", () => {
     expect(await screen.findByText("Small agencies")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+  });
+
+  it("words a reseller's request for selling and filters the queue by type", async () => {
+    const sellDetail = {
+      ...DETAIL,
+      request: { ...REQUEST, kind: "sell", channel: "existing_customers", channel_label: "My existing customers" },
+      partner: { ...DETAIL.partner, referral_capability: false, selling_capability: true, channel: "reseller", sells: ["books"] },
+    };
+    const calls = mockApi(
+      routes({
+        [`GET ${API}/req1`]: [ok(sellDetail), ok(sellDetail)],
+        [`POST ${API}/req1/approve`]: [ok({ ...REQUEST, kind: "sell", status: "approved", grant_id: "pg1" })],
+      }),
+    );
+    mount();
+    expect(await screen.findByText("What the reseller wrote")).toBeInTheDocument();
+    expect(screen.getByText("Selling capability")).toBeInTheDocument();
+    expect(screen.getByText("books")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(calls.some((c) => c.key === `POST ${API}/req1/approve`)).toBe(true));
+    expect(await screen.findByText(/Approved: Acme Media may sell Easy CRM/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "sell" } });
+    expect(push).toHaveBeenCalledWith("/admin/partners/product-requests?request=req1&kind=sell");
   });
 
   it("searches through the address", async () => {

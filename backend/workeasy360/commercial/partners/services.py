@@ -1397,14 +1397,27 @@ def update_product_grant(
 
 
 @in_scope
-def revoke_product_grant(ctx: TenantContext, partner_id: UUID, *, grant_id: UUID) -> Any:
+def revoke_product_grant(
+    ctx: TenantContext, partner_id: UUID, *, grant_id: UUID, reason: Any = ""
+) -> Any:
     """Withdraw a product grant (staff): see ``_revoke_product_grant``."""
     authz.require(ctx, MANAGE)
-    return _revoke_product_grant(ctx, partner_id, grant_id=grant_id)
+    return _revoke_product_grant(ctx, partner_id, grant_id=grant_id, reason=reason)
 
 
-def _revoke_product_grant(ctx: TenantContext, partner_id: UUID, *, grant_id: UUID) -> Any:
-    from workeasy360.commercial.partners.models import PartnerProductGrant
+def _revoke_product_grant(
+    ctx: TenantContext, partner_id: UUID, *, grant_id: UUID, reason: Any = ""
+) -> Any:
+    """Withdraw a product grant. The approved sell request that produced it,
+    if any, is marked revoked with it (ADR-055), whichever path revokes, so
+    the partner's Store Console says why it lost the product."""
+    from workeasy360.commercial.partners.inputs import clean_note
+    from workeasy360.commercial.partners.models import (
+        PartnerProductGrant,
+        PartnerPromotionRequest,
+    )
+
+    why = clean_note(reason, field="reason", max_length=500)
 
     with transaction.atomic():
         _lock_partner(partner_id)
@@ -1419,12 +1432,21 @@ def _revoke_product_grant(ctx: TenantContext, partner_id: UUID, *, grant_id: UUI
         grant.revoked_at = timezone.now()
         grant.revoked_by_id = ctx.user_id
         grant.save(update_fields=["status", "revoked_at", "revoked_by"])
+        PartnerPromotionRequest.objects.filter(
+            product_grant=grant, status="approved"
+        ).update(
+            status="revoked",
+            revoked_at=grant.revoked_at,
+            revoked_by_id=ctx.user_id,
+            revoke_reason=why,
+        )
         audit.record(
             ctx,
             "partner.product_grant_revoked",
             resource_type="partners.product_grant",
             resource_id=grant.id,
             changes={"partner_id": str(partner_id)},
+            reason=why,
         )
     return grant
 

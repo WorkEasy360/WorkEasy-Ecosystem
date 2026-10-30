@@ -107,6 +107,18 @@ const productsAndPlans = (label: string): WorkspaceEntry => ({
   needs: (can) => can("product.view"),
 });
 
+/** ADR-055: the Store Console - My Products, Explore Products and My Requests,
+ * as tabs of one entry. An affiliate asks to promote a product, a reseller to
+ * sell one; `also` keeps the pages the entry replaces in the workspace. */
+const storeConsole = (needs: (can: Can) => boolean, also: string[] = []): WorkspaceEntry => ({
+  key: "store-console",
+  label: "Store Console",
+  icon: "store",
+  path: "store-console",
+  also: ["store-console/explore", "store-console/requests", ...also],
+  needs,
+});
+
 const pricing = (label: string): WorkspaceEntry => ({
   key: "pricing",
   label,
@@ -218,14 +230,20 @@ export const WORKSPACES: Record<ExperienceKey, WorkspaceDef> = {
     slug: "reseller",
     label: "Reseller",
     lead: "Sell Workeasy360 products to customers.",
-    aliases: COMMERCE_ALIASES,
+    aliases: {
+      ...COMMERCE_ALIASES,
+      // ADR-055: Products & Plans became the Store Console's My Products tab.
+      products: "store-console",
+      store: "store-console",
+      "explore-products": "store-console/explore",
+    },
     groups: [
       { title: "Menu", entries: [dashboard()] },
       {
         title: "Customers and sales",
         entries: [
           customers(),
-          productsAndPlans("Products & Plans"),
+          storeConsole((can) => can("product.view"), ["partner-products", "product-manager", "product-billing"]),
           pricing("Pricing & Margins"),
           orders("Sales & Orders"),
           subscriptions(),
@@ -323,14 +341,7 @@ export const WORKSPACES: Record<ExperienceKey, WorkspaceDef> = {
           // ADR-055: the Store Console - My Products (ADR-054's page: what this
           // affiliate is approved to promote, a link for each page, feature and
           // update), Explore Products and My Requests, as tabs of one entry.
-          {
-            key: "store-console",
-            label: "Store Console",
-            icon: "store",
-            path: "store-console",
-            also: ["store-console/explore", "store-console/requests"],
-            needs: (can) => can("referral.view"),
-          },
+          storeConsole((can) => can("referral.view")),
           {
             key: "referral-links",
             label: "Referral Links",
