@@ -595,6 +595,118 @@ class PartnerPromotionGrant(models.Model):
         return f"{self.partner_id} may promote {self.product_id}"
 
 
+class PartnerPromotionRequest(models.Model):
+    """A partner asking to promote one Store product (ADR-055).
+
+    **A workflow record, never a permission.** Holding a request - pending,
+    approved or otherwise - lets the partner do nothing. Approving one creates
+    the ordinary ``PartnerPromotionGrant`` (through the one grant command) and
+    links it here; every link, campaign and commission check keeps reading
+    the grant, so there is no second gate to drift from the first.
+
+    Lifecycle: ``pending`` -> ``approved`` | ``rejected``; ``approved`` ->
+    ``revoked`` when staff withdraw the grant it produced. Rows are never
+    deleted and never reopened: asking again after a refusal or a revocation
+    is a new row, so the requests of one partner and product, read in order,
+    are the history of who asked, who decided, when and why. A partial unique
+    index allows one pending request per partner and product, so two clicks,
+    two tabs or two members cannot raise two.
+
+    The answers describe how the partner means to promote the product -
+    channel, an optional public page, audience, approach and a note. Business
+    data, no personal data beyond what the partner chooses to write, and never
+    copied into an audit entry.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="promotion_requests"
+    )
+    product = models.ForeignKey(
+        "catalog.Product", on_delete=models.PROTECT, related_name="+"
+    )
+    status = models.CharField(max_length=16, default="pending")
+    channel = models.CharField(max_length=24)
+    website = models.CharField(max_length=300, blank=True, default="")
+    audience = models.CharField(max_length=300)
+    strategy = models.TextField()
+    notes = models.TextField(blank=True, default="")
+
+    requested_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    requested_at = models.DateTimeField()
+    decided_by = models.ForeignKey(
+        "identity.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    #: Why it was refused; shown to the partner.
+    decision_reason = models.CharField(max_length=500, blank=True, default="")
+    #: The grant approval produced (or found already live).
+    grant = models.ForeignKey(
+        PartnerPromotionGrant,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="requests",
+    )
+    revoked_by = models.ForeignKey(
+        "identity.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoke_reason = models.CharField(max_length=500, blank=True, default="")
+
+    class Meta:
+        db_table = "partners_promotion_request"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["partner", "product"],
+                condition=models.Q(status="pending"),
+                name="uq_promotion_request_pending",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    status__in=["pending", "approved", "rejected", "revoked"]
+                ),
+                name="ck_promotion_request_status",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status="pending", decided_at__isnull=True)
+                | (~models.Q(status="pending") & models.Q(decided_at__isnull=False)),
+                name="ck_promotion_request_decided",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(status__in=["approved", "revoked"])
+                | models.Q(grant__isnull=False),
+                name="ck_promotion_request_grant",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status="revoked", revoked_at__isnull=False)
+                | (~models.Q(status="revoked") & models.Q(revoked_at__isnull=True)),
+                name="ck_promotion_request_revoked",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["status", "-requested_at"], name="ix_promoreq_status_time"
+            ),
+            models.Index(
+                fields=["partner", "product", "-requested_at"], name="ix_promoreq_partner"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.partner_id} asks to promote {self.product_id} ({self.status})"
+
+
 class PartnerHierarchyLink(models.Model):
     """One partner (the parent) delegating to another (the sub-partner).
 

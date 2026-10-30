@@ -14,7 +14,6 @@ import {
   SharedResources,
 } from "./Account";
 import { Roles } from "./Access";
-import { MyProducts } from "./AffiliateProducts";
 import { AffiliateDashboard, Campaigns, Leads, MarketingMaterials, ReferralCodes, ReferralLinks } from "./AffiliateScreens";
 import { BrandSettings, UrlManager } from "./Brand";
 import {
@@ -35,6 +34,7 @@ import { PartnerDashboard } from "./Dashboard";
 import { Notifications, Support } from "./Help";
 import { Affiliates, AffiliateConversions, AffiliatePayouts, AffiliateSettings, Agency, Team, Users } from "./Network";
 import { Reports } from "./Reports";
+import { StoreConsole } from "./StoreConsole";
 import { UpgradeGrow } from "./UpgradeGrow";
 import { UpgradePage } from "./UpgradeWizard";
 import { ApiKeys, ChannelManager, Translations } from "./Tools";
@@ -91,7 +91,9 @@ const PAGES: Record<string, ReactElement> = {
   "brand-settings": <BrandSettings />,
   "brand-settings/url-manager": <UrlManager />,
   "brand-settings/white-label-setup": <PortalWhiteLabelScreen />,
-  "my-products": <MyProducts />,
+  "store-console": <StoreConsole tab="mine" />,
+  "store-console/explore": <StoreConsole tab="explore" />,
+  "store-console/requests": <StoreConsole tab="requests" />,
   "referral-links": <ReferralLinks />,
   "referral-codes": <ReferralCodes />,
   campaigns: <Campaigns />,

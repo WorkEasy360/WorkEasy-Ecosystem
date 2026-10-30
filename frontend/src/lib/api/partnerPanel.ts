@@ -216,6 +216,66 @@ export interface MyProducts {
   };
 }
 
+// --- Store Console (ADR-055) ------------------------------------------------------------
+
+export type ProductAccess = "not_requested" | "pending" | "approved" | "rejected" | "revoked";
+
+/** One request to promote a product, as its partner reads it. */
+export interface PromotionRequest {
+  id: string;
+  product_code: string;
+  product_name: string;
+  status: "pending" | "approved" | "rejected" | "revoked";
+  channel: string;
+  channel_label: string;
+  website: string;
+  audience: string;
+  strategy: string;
+  notes: string;
+  requested_at: string;
+  decided_at: string | null;
+  decision_reason: string;
+  revoked_at: string | null;
+  revoke_reason: string;
+}
+
+export interface StoreProduct {
+  code: string;
+  name: string;
+  slug: string;
+  tagline: string;
+  summary: string;
+  description: string;
+  category: string;
+  icon: string;
+  logo_url: string | null;
+  plans: { plan_code: string; plan_name: string }[];
+  starting_price: { amount_minor: number; currency: string; interval: string } | null;
+  /** `null`: not disclosed to this member; `rate_bp: null`: no rule yet. */
+  commission: { rate_bp: number | null; recurring: boolean } | null;
+  status: ProductAccess;
+  request: PromotionRequest | null;
+}
+
+export interface StoreConsole {
+  products: StoreProduct[];
+  requests: PromotionRequest[];
+  counts: { approved: number; explore: number; pending: number };
+  can_request: boolean;
+  cannot_request_reason: string | null;
+  channels: Record<string, string>;
+  prefill: { website: string };
+}
+
+export interface PromotionRequestBody {
+  product_code: string;
+  channel: string;
+  website?: string;
+  audience: string;
+  strategy: string;
+  notes?: string;
+}
+
 export type CommissionStatus = "pending" | "approved" | "reversed" | "paid";
 
 /** How one referral became earnings - never who the customer is. */
@@ -870,6 +930,11 @@ export const panelApi = {
   /** ADR-054: the products this partner may promote and how its links do. */
   myProducts: (id: string, range: RangeKey, from?: string, to?: string) =>
     apiFetch<MyProducts>(`${partner(id)}/affiliate/products`, { query: { range, from, to } }),
+  /** ADR-055: Explore Products and My Requests. */
+  storeConsole: (id: string) => apiFetch<StoreConsole>(`${partner(id)}/affiliate/store`),
+  /** ADR-055: ask to promote a product. Grants nothing until staff approve. */
+  requestProduct: (id: string, body: PromotionRequestBody) =>
+    apiFetch<PromotionRequest>(`${partner(id)}/affiliate/product-requests`, { method: "POST", body: json(body) }),
   /** Rename a link, or switch it off or back on. */
   updateTrackingLink: (id: string, codeId: string, body: { label?: string; active?: boolean }) =>
     apiFetch<{ id: string; label: string; status: string }>(

@@ -1163,6 +1163,22 @@ _admin = [
         admin_views.partner_promotion_revoke_view,
         name="admin-partner-promotion-revoke",
     ),
+    # ADR-055: affiliate product requests - the queue, one request, a decision.
+    path(
+        "admin/partner-product-requests",
+        admin_views.promotion_requests_view,
+        name="admin-promotion-requests",
+    ),
+    path(
+        "admin/partner-product-requests/<uuid:request_id>",
+        admin_views.promotion_request_view,
+        name="admin-promotion-request",
+    ),
+    path(
+        "admin/partner-product-requests/<uuid:request_id>/<str:action>",
+        admin_views.promotion_request_action_view,
+        name="admin-promotion-request-action",
+    ),
     path(
         "admin/affiliate-policy",
         admin_views.affiliate_policy_view,
@@ -1546,6 +1562,17 @@ _partner = [
         "partner/<uuid:partner_id>/referrals/<uuid:referral_id>/trail",
         partner_panel_views.referral_trail_view,
         name="partner-referral-trail",
+    ),
+    # ADR-055: the Store Console - Explore, My Requests, and asking for a product.
+    path(
+        "partner/<uuid:partner_id>/affiliate/store",
+        partner_panel_views.affiliate_store_view,
+        name="partner-affiliate-store",
+    ),
+    path(
+        "partner/<uuid:partner_id>/affiliate/product-requests",
+        partner_panel_views.affiliate_product_request_view,
+        name="partner-affiliate-product-requests",
     ),
     path(
         "partner/<uuid:partner_id>/affiliate/products",

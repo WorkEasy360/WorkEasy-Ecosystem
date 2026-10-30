@@ -293,6 +293,33 @@ def security_administrator_exists() -> bool:
     )
 
 
+def holders(permission: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    """The active staff members who hold ``permission`` now - directly or
+    through a key that implies it - as ``{user_id, email}``, by address.
+
+    For routing a notice to the people who can act on it (ADR-055), never for
+    deciding anything: the check stays :func:`staff_permissions` on the
+    request itself. One query over the grants in force; staff are few.
+    """
+    from workeasy360.platform.authz.models import StaffGrant
+
+    keys: dict[UUID, set[str]] = {}
+    emails: dict[UUID, str] = {}
+    rows = StaffGrant.objects.filter(
+        _in_force(timezone.now()), _held_by_active_staff()
+    ).values_list("user_id", "user__email", "permission")
+    for user_id, email, key in rows:
+        if _is_grantable(key):
+            keys.setdefault(user_id, set()).add(key)
+            emails[user_id] = email
+    found = [
+        {"user_id": user_id, "email": emails[user_id]}
+        for user_id, held in keys.items()
+        if permission in permission_registry.expand(held) and emails[user_id]
+    ]
+    return sorted(found, key=lambda h: h["email"])[: max(1, limit)]
+
+
 def live_grants(*, user_id: UUID | None = None, limit: int = 200) -> list[dict[str, Any]]:
     """Grants in force, bounded, for the security screen. No secrets involved."""
     from workeasy360.platform.authz.models import StaffGrant

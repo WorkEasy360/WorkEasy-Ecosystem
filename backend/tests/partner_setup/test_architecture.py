@@ -60,6 +60,9 @@ def test_the_partner_models_are_the_frozen_set_plus_the_declared_additions():
         # ADR-054: which products a partner may promote (a permission, not a
         # kind of partner; tests/affiliate_products pins it).
         "PartnerPromotionGrant",
+        # ADR-055: a partner's request to promote a product - a workflow record
+        # that grants nothing (tests/store_console pins what it does).
+        "PartnerPromotionRequest",
     }
 
 

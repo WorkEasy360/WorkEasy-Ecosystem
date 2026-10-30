@@ -479,6 +479,12 @@ function PromotionPanel({ partnerId, partner, rev, promotes }: TabProps & { prom
         affiliate attribution policy, and referrals and commission already earned are kept.
       </p>
       {!promotes && <p className={styles.muted}>This partner does not hold the referral capability, so it cannot promote products.</p>}
+      {promotes && (
+        <p className={styles.muted}>
+          The affiliate can also ask for a product from its Store Console. Review those in{" "}
+          <Link href={`/admin/partners/product-requests?status=all&q=${encodeURIComponent(partner.code)}`}>Product Requests</Link>.
+        </p>
+      )}
       {feedback}
       <LoadGate load={grants} what="the promotion grants">
         {(d) => (

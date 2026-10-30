@@ -87,67 +87,84 @@ def list_grants(ctx: TenantContext, partner_id: UUID) -> list[dict[str, Any]]:
 def grant_promotion(ctx: TenantContext, partner_id: UUID, *, product_code: Any) -> Any:
     """Let a partner promote a product. Idempotent: granting a product the
     partner already holds returns the live grant."""
+    authz.require(ctx, MANAGE)
+    with transaction.atomic():
+        partner = _lock_partner(partner_id)
+        return grant_locked(ctx, partner, product_code=product_code)
+
+
+def grant_locked(ctx: TenantContext, partner: Any, *, product_code: Any) -> Any:
+    """The one way a promotion grant is made - by hand on the partner's page
+    or by approving its request (ADR-055). The caller holds ``MANAGE`` and the
+    partner's row lock, inside its transaction."""
     from workeasy360.commercial.catalog import selectors as catalog
     from workeasy360.commercial.partners.models import PartnerPromotionGrant
 
-    authz.require(ctx, MANAGE)
     code = str(product_code or "").strip()
     product_id, _plan = catalog.resolve_product_and_plan(code, None)
-    with transaction.atomic():
-        partner = _lock_partner(partner_id)
-        if partner.status_enum is PartnerStatus.TERMINATED:
-            raise PartnerValidationError(
-                "A terminated partner cannot be granted anything.", field="partner_id"
-            )
-        if capabilities.REFERRAL_CREATE not in partner_selectors.active_capabilities(
-            partner_id
-        ):
-            raise PartnerValidationError(
-                "This partner does not hold the referral capability, so it cannot "
-                "promote products.",
-                field="partner_id",
-            )
-        if "affiliate" not in catalog.channels_open(code):
-            raise PartnerValidationError(
-                "This product is not open to affiliates. Allow Affiliate in the "
-                "product's Availability first.",
-                field="product_code",
-            )
-        existing = (
-            PartnerPromotionGrant.objects.select_for_update()
-            .filter(
-                partner_id=partner_id,
-                product_id=product_id,
-                status=GrantStatus.ACTIVE.value,
-            )
-            .first()
+    partner_id = partner.id
+    if partner.status_enum is PartnerStatus.TERMINATED:
+        raise PartnerValidationError(
+            "A terminated partner cannot be granted anything.", field="partner_id"
         )
-        if existing is not None:
-            return existing
-        grant = PartnerPromotionGrant.objects.create(
+    if capabilities.REFERRAL_CREATE not in partner_selectors.active_capabilities(
+        partner_id
+    ):
+        raise PartnerValidationError(
+            "This partner does not hold the referral capability, so it cannot "
+            "promote products.",
+            field="partner_id",
+        )
+    if "affiliate" not in catalog.channels_open(code):
+        raise PartnerValidationError(
+            "This product is not open to affiliates. Allow Affiliate in the "
+            "product's Availability first.",
+            field="product_code",
+        )
+    existing = (
+        PartnerPromotionGrant.objects.select_for_update()
+        .filter(
             partner_id=partner_id,
             product_id=product_id,
-            granted_by_id=ctx.user_id,
-            granted_at=timezone.now(),
+            status=GrantStatus.ACTIVE.value,
         )
-        audit.record(
-            ctx,
-            "partner.promotion_granted",
-            resource_type="partners.promotion_grant",
-            resource_id=grant.id,
-            changes={"partner_id": str(partner_id), "product_code": code},
-        )
+        .first()
+    )
+    if existing is not None:
+        return existing
+    grant = PartnerPromotionGrant.objects.create(
+        partner_id=partner_id,
+        product_id=product_id,
+        granted_by_id=ctx.user_id,
+        granted_at=timezone.now(),
+    )
+    audit.record(
+        ctx,
+        "partner.promotion_granted",
+        resource_type="partners.promotion_grant",
+        resource_id=grant.id,
+        changes={"partner_id": str(partner_id), "product_code": code},
+    )
     return grant
 
 
 @in_scope
-def revoke_promotion(ctx: TenantContext, partner_id: UUID, *, grant_id: UUID) -> Any:
+def revoke_promotion(
+    ctx: TenantContext, partner_id: UUID, *, grant_id: UUID, reason: Any = ""
+) -> Any:
     """Withdraw a promotion grant. New links for the product are refused at
     once; existing links follow the programme's ``revoked_links`` policy.
-    Referrals and commission already recorded are untouched."""
-    from workeasy360.commercial.partners.models import PartnerPromotionGrant
+    Referrals and commission already recorded are untouched. The approved
+    request that produced the grant, if any, is marked revoked with it
+    (ADR-055), so the partner's Store Console says why it lost the product."""
+    from workeasy360.commercial.partners.inputs import clean_note
+    from workeasy360.commercial.partners.models import (
+        PartnerPromotionGrant,
+        PartnerPromotionRequest,
+    )
 
     authz.require(ctx, MANAGE)
+    why = clean_note(reason, field="reason", max_length=500)
     with transaction.atomic():
         _lock_partner(partner_id)
         grant = (
@@ -164,11 +181,18 @@ def revoke_promotion(ctx: TenantContext, partner_id: UUID, *, grant_id: UUID) ->
         grant.revoked_at = timezone.now()
         grant.revoked_by_id = ctx.user_id
         grant.save(update_fields=["status", "revoked_at", "revoked_by"])
+        PartnerPromotionRequest.objects.filter(grant=grant, status="approved").update(
+            status="revoked",
+            revoked_at=grant.revoked_at,
+            revoked_by_id=ctx.user_id,
+            revoke_reason=why,
+        )
         audit.record(
             ctx,
             "partner.promotion_revoked",
             resource_type="partners.promotion_grant",
             resource_id=grant.id,
             changes={"partner_id": str(partner_id), "product_code": grant.product.code},
+            reason=why,
         )
     return grant

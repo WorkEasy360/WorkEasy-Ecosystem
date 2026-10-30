@@ -453,6 +453,17 @@ class PartnerUpgradeConflict(PartnerError):
     http_status = 409
 
 
+class PartnerRequestConflict(PartnerError):
+    """A promotion request is not in a state that allows what was asked (ADR-055).
+
+    409: the product is already requested or already granted, or the request
+    was already decided. Re-read it and decide again.
+    """
+
+    code = "partner_request_conflict"
+    http_status = 409
+
+
 class PartnerNotActive(PartnerError):
     """A new commercial action was attempted for a partner that may not transact.
 

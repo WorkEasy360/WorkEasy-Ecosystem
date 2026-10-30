@@ -16,6 +16,7 @@ class PartnersConfig(AppConfig):
         # an event that is not declared here cannot be granted or published.
         from workeasy360.commercial.partners import (
             permissions,  # noqa: F401
+            promotion_requests,  # noqa: F401 - registers its email template
             tasks,  # noqa: F401
         )
 
