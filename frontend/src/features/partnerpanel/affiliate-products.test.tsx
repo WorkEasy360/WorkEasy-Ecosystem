@@ -4,7 +4,9 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { PartnerContext } from "@/features/controlplane/ControlShell";
 import { expectNoViolations, mockApi, ok, type Reply } from "@/features/controlplane/testSupport";
 import type { PortalPartner } from "@/lib/api/controlPlane";
-import { MyProducts, ReferralTrailPanel } from "./AffiliateProducts";
+import { MyProductsTab, ReferralTrailPanel } from "./AffiliateProducts";
+
+const MyProducts = () => <MyProductsTab exploreHref="/partner/affiliate/store-console/explore" />;
 import { panelApi } from "@/lib/api/partnerPanel";
 
 /**
@@ -17,7 +19,7 @@ import { panelApi } from "@/lib/api/partnerPanel";
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
-  usePathname: () => "/partner/affiliate/my-products",
+  usePathname: () => "/partner/affiliate/store-console",
 }));
 
 const ID = "33333333-3333-3333-3333-333333333333";

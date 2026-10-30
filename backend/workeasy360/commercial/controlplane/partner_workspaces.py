@@ -416,6 +416,84 @@ def my_products(
     }
 
 
+# --- Store Console (ADR-055) ------------------------------------------------------------------
+
+
+@in_scope
+def store_console(ctx: TenantContext) -> dict[str, Any]:
+    """Explore Products and My Requests: every Store product open to
+    affiliates, each with this partner's state for it (not requested, pending,
+    approved, rejected, revoked), its listing content, its starting price as
+    the public Store shows it and - only for a member who may see commission -
+    the rate a sale of it would earn this partner. Then the partner's requests,
+    newest first. The catalog is the one source: a product staff publish
+    appears here, one they withdraw disappears, and an edit shows at once."""
+    from workeasy360.commercial.partners import promotion_requests
+    from workeasy360.commercial.subscriptions import marketplace
+
+    authz.require(ctx, REFERRAL_VIEW)
+    partner_id = ctx.partner_id
+    assert partner_id is not None
+    now = timezone.now()
+    permissions = authz.effective_permissions(ctx)
+    products = catalog_selectors.promotable_products(at=now)
+    codes = [p["code"] for p in products]
+    states = promotion_requests.product_states(partner_id)
+    prices = {
+        p["code"]: p.get("starting_price")
+        for p in marketplace.public_catalog()["products"]
+    }
+    rates = (
+        commission_selectors.effective_rates(partner_id, codes, at=now)
+        if COMMISSION_VIEW in permissions
+        else None
+    )
+    blocked = promotion_requests.may_request(partner_id, permissions)
+
+    def card(p: dict[str, Any]) -> dict[str, Any]:
+        state = states.get(
+            p["code"], {"status": promotion_requests.NOT_REQUESTED, "request": None}
+        )
+        logo = next((m for m in p["media"] if m["kind"] == "logo"), None)
+        return {
+            "code": p["code"],
+            "name": p["name"],
+            "slug": p["slug"],
+            "tagline": p["tagline"],
+            "summary": p["summary"],
+            "description": p["description"],
+            "category": p["category"],
+            "icon": p["icon"],
+            "logo_url": logo["url"] if logo else None,
+            "plans": p["plans"],
+            "starting_price": prices.get(p["code"]),
+            # None: not disclosed to this member. {"rate_bp": None}: no rule yet.
+            "commission": (
+                (rates.get(p["code"]) or {"rate_bp": None, "recurring": False})
+                if rates is not None
+                else None
+            ),
+            "status": state["status"],
+            "request": state["request"],
+        }
+
+    cards = [card(p) for p in products]
+    requests = promotion_requests.partner_requests(partner_id)
+    return {
+        "products": cards,
+        "requests": requests,
+        "counts": {
+            "approved": sum(1 for c in cards if c["status"] == "approved"),
+            "explore": sum(1 for c in cards if c["status"] != "approved"),
+            "pending": sum(1 for r in requests if r["status"] == "pending"),
+        },
+        "can_request": blocked is None,
+        "cannot_request_reason": blocked,
+        "channels": promotion_requests.CHANNELS,
+        "prefill": {"website": promotion_requests.profile_website(partner_id)},
+    }
+
+
 @in_scope
 def referral_trail(ctx: TenantContext, referral_id: Any) -> dict[str, Any]:
     """ADR-054: the attribution trail of one of the partner's own referrals.

@@ -568,8 +568,58 @@ def partner_promotion_revoke_view(
 ) -> JsonResponse:
     from workeasy360.commercial.partners import promotion
 
-    grant = promotion.revoke_promotion(ctx, partner_id, grant_id=grant_id)
+    grant = promotion.revoke_promotion(
+        ctx, partner_id, grant_id=grant_id, reason=_body(request).get("reason")
+    )
     return JsonResponse({"id": str(grant.id), "status": grant.status})
+
+
+@staff_view(["GET"])
+def promotion_requests_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """ADR-055: the affiliate product request queue."""
+    from workeasy360.commercial.partners import promotion_requests
+
+    return JsonResponse(
+        promotion_requests.staff_queue(
+            ctx,
+            status=request.GET.get("status"),
+            search=request.GET.get("q"),
+            partner_id=request.GET.get("partner_id"),
+            limit=request.GET.get("limit", 50),
+            offset=request.GET.get("offset", 0),
+        )
+    )
+
+
+@staff_view(["GET"])
+def promotion_request_view(
+    request: HttpRequest, ctx: TenantContext, request_id: UUID
+) -> JsonResponse:
+    """ADR-055: one request, its partner and product, and their history."""
+    from workeasy360.commercial.partners import promotion_requests
+
+    return JsonResponse(promotion_requests.staff_detail(ctx, request_id))
+
+
+@staff_view(["POST"])
+def promotion_request_action_view(
+    request: HttpRequest, ctx: TenantContext, request_id: UUID, action: str
+) -> JsonResponse:
+    """ADR-055: approve, reject (with a reason) or revoke one request."""
+    from workeasy360.commercial.partners import promotion_requests
+
+    body = _body(request)
+    if action == "approve":
+        row = promotion_requests.approve(ctx, request_id)
+    elif action == "reject":
+        row = promotion_requests.reject(ctx, request_id, reason=body.get("reason"))
+    elif action == "revoke":
+        row = promotion_requests.revoke(ctx, request_id, reason=body.get("reason"))
+    else:
+        return JsonResponse(
+            {"code": "not_found", "detail": "No such action."}, status=404
+        )
+    return JsonResponse(row)
 
 
 @staff_view(["GET", "PUT"])

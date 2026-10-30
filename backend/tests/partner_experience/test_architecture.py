@@ -104,6 +104,9 @@ def test_the_partner_models_are_unchanged_by_this_work():
         # ADR-054: which products a partner may promote - a permission, not a
         # kind of partner (tests/affiliate_products pins what it does).
         "PartnerPromotionGrant",
+        # ADR-055: a partner's request to promote a product - a workflow record
+        # that grants nothing (tests/store_console pins what it does).
+        "PartnerPromotionRequest",
     }
 
 

@@ -301,6 +301,10 @@ export const WORKSPACES: Record<ExperienceKey, WorkspaceDef> = {
     lead: "Promote Workeasy360 and earn commission.",
     aliases: {
       "referral-link": "referral-links",
+      // ADR-055: My Products became the Store Console's first tab.
+      "my-products": "store-console",
+      store: "store-console",
+      "explore-products": "store-console/explore",
       links: "referral-links",
       codes: "referral-codes",
       materials: "marketing-materials",
@@ -316,13 +320,15 @@ export const WORKSPACES: Record<ExperienceKey, WorkspaceDef> = {
       {
         title: "Promote",
         entries: [
-          // ADR-054: the products this affiliate may promote, and a link for each
-          // page, feature and update of them.
+          // ADR-055: the Store Console - My Products (ADR-054's page: what this
+          // affiliate is approved to promote, a link for each page, feature and
+          // update), Explore Products and My Requests, as tabs of one entry.
           {
-            key: "my-products",
-            label: "My Products",
+            key: "store-console",
+            label: "Store Console",
             icon: "store",
-            path: "my-products",
+            path: "store-console",
+            also: ["store-console/explore", "store-console/requests"],
             needs: (can) => can("referral.view"),
           },
           {

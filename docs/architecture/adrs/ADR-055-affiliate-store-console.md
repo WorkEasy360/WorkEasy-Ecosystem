@@ -1,0 +1,23 @@
+# ADR-055: Affiliate Store Console - requesting and approving products to promote
+
+Status: accepted, 2026-10-30. Builds on ADR-054 (promotion grants) and ADR-047 (partner workspaces). Status and traceability: `docs/store-console/status.md`.
+
+Nothing here adds a second catalog, permission system, link generator or ledger. The Store Console reads the one Admin catalog; approving a request makes the existing ADR-054 promotion grant, and every link, capture and commission check keeps reading that grant.
+
+## Decisions
+
+1. **A request is a workflow record, never a permission.** `partners.PartnerPromotionRequest` (partner, product, `pending` -> `approved` | `rejected`, `approved` -> `revoked`; the partner's answers; who decided, when, why; the grant it produced). Holding a request lets the partner do nothing. Rows are never deleted or reopened: asking again after a rejection or revocation is a new row, so a partner's rows for one product are its history. A partial unique index allows one pending request per partner and product.
+2. **Approval is the one grant command.** `promotion.grant_promotion`'s body became `promotion.grant_locked`, called by hand on the partner's page and by `promotion_requests.approve`. Approval also requires the product to still be on the Store (`active`, published, listed, customer store) and open to the affiliate channel - the list Explore shows.
+3. **Revocation is the one revoke command.** `promotion.revoke_promotion` (optionally with a reason the partner reads) also marks the approved request that produced the grant as `revoked`, whichever screen staff use. ADR-054's rules are unchanged: new links stop at once, existing links follow `revoked_links`, referrals and earned commission are untouched.
+4. **The partner's status per product is derived, never stored**: `approved` = a live grant (however made); otherwise the newest event - the newest request's state, or `revoked` when a grant was revoked after it; `not_requested` when there is nothing.
+5. **Who may do what.** A partner member holding `platform.partner_referral.create`, on an active partner holding the `referral.create` capability, asks for its own partner only (`ctx.partner_id`; no partner id is sent). Staff with `platform.staff_partner.view` read the queue; only `platform.staff_partner.manage` approves, rejects or revokes. Every command locks the partner row, then the request row, so concurrent asks, decisions and revocations serialize.
+6. **Answers are business data, never logged.** Channel (a closed list), an optional `https` page, audience, approach and a note; unknown fields are refused. Audit entries name the product and channel, never the partner's words. The form starts from the partner profile's website.
+7. **Notification.** After a request commits, every active staff member holding `platform.staff_partner.manage` (directly or by implication, `authz.staff.holders`) gets the email `platform.partner.promotion_requested` through `notify_account` (queued, retried, idempotent per request and recipient, editable in Communication). Best effort: a notice that cannot be queued never undoes the request.
+8. **Disclosure.** Explore shows the starting price the public Store shows (`marketplace.public_catalog`, generation-keyed, so a catalog edit shows at once). The commission rate a sale would earn (`commissions.selectors.effective_rates`, the accrual's own rule choice) is shown only to members holding `platform.partner_commission.view` - the permission that already discloses the partner's commission rules.
+9. **Screens.** Affiliate workspace: the "My Products" entry becomes **Store Console** with tabs My Products (ADR-054's page, plus shortcuts to the existing Referral Codes, Campaigns, Marketing Materials, Conversions and Commissions pages), Explore Products and My Requests; `/my-products` redirects. Admin: Partners -> **Product Requests** (queue by status, search, review with partner, product, answers and history; approve, reject with reason, revoke). ADR-048's Partners navigation gains this one entry, because the queue spans partners and has no one partner's page to live on.
+
+## Consequences
+
+- Migration `partners.0012_promotion_requests`: one new table, no change to existing rows; reversible.
+- New 409 error `partner_request_conflict` (already requested, already approved, already decided).
+- Not built: an affiliate withdrawing a pending request; a request-volume rate limit (one pending request per product bounds it).

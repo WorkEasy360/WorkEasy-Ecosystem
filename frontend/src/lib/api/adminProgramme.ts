@@ -6,7 +6,7 @@
  */
 
 import { apiFetch } from "./client";
-import type { ReferralTrail } from "./partnerPanel";
+import type { PromotionRequest, ReferralTrail } from "./partnerPanel";
 
 const admin = "/api/v1/admin";
 const json = (body: unknown): string => JSON.stringify(body);
@@ -57,6 +57,43 @@ export interface PromotionGrant {
   revoked_at: string | null;
 }
 
+// --- ADR-055: affiliate product requests ------------------------------------------------
+
+export type PromotionRequestStatus = PromotionRequest["status"];
+
+export interface AdminPromotionRequest extends PromotionRequest {
+  partner_id: string;
+  requested_by: string;
+  decided_by: string | null;
+  revoked_by: string | null;
+  grant_id: string | null;
+}
+
+export interface PromotionRequestQueue {
+  items: (AdminPromotionRequest & { partner_name: string; partner_code: string; partner_status: string })[];
+  counts: Record<PromotionRequestStatus, number>;
+  total: number;
+  limit: number;
+  offset: number;
+  channels: Record<string, string>;
+}
+
+export interface PromotionRequestDetail {
+  request: AdminPromotionRequest;
+  partner: {
+    id: string;
+    name: string;
+    code: string;
+    status: string;
+    website: string;
+    referral_capability: boolean;
+    promotes: string[];
+  };
+  product: { code: string; name: string; status: string; eligible: boolean };
+  history: AdminPromotionRequest[];
+  grants: { id: string; status: "active" | "revoked"; granted_at: string; granted_by: string; revoked_at: string | null; revoked_by: string | null }[];
+}
+
 export interface AdminProductUpdate {
   id: string;
   kind: "feature" | "release";
@@ -103,6 +140,15 @@ export const adminProgrammeApi = {
     }),
   revokePromotion: (partnerId: string, grantId: string) =>
     apiFetch<{ id: string }>(`${admin}/partners/${partnerId}/promotions/${grantId}/revoke`, { method: "POST", body: json({}) }),
+  promotionRequests: (query: { status?: string; q?: string; partner_id?: string; offset?: number }) =>
+    apiFetch<PromotionRequestQueue>(`${admin}/partner-product-requests`, { query }),
+  promotionRequest: (requestId: string) => apiFetch<PromotionRequestDetail>(`${admin}/partner-product-requests/${requestId}`),
+  /** Approve, reject (a reason the partner reads is required) or revoke. */
+  decidePromotionRequest: (requestId: string, action: "approve" | "reject" | "revoke", reason?: string) =>
+    apiFetch<AdminPromotionRequest>(`${admin}/partner-product-requests/${requestId}/${action}`, {
+      method: "POST",
+      body: json(reason ? { reason } : {}),
+    }),
   /** How one of a partner's referrals became earnings; never names the customer. */
   referralTrail: (partnerId: string, referralId: string) =>
     apiFetch<ReferralTrail>(`${admin}/partners/${partnerId}/referrals/${referralId}/trail`),

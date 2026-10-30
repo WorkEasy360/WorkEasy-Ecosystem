@@ -333,6 +333,28 @@ def effective_rule(
     }
 
 
+def effective_rates(
+    partner_id: UUID, product_codes: list[str], *, at: datetime
+) -> dict[str, dict[str, Any] | None]:
+    """``{product_code: {rate_bp, recurring} | None}``: what a sale of each
+    product by this partner would earn at ``at`` (ADR-055's Explore), chosen
+    by the same pure function accrual uses. The rules are read once."""
+    from workeasy360.commercial.commissions import domain
+
+    views = rule_views()
+    out: dict[str, dict[str, Any] | None] = {}
+    for code in product_codes:
+        chosen = domain.select_rule(
+            views, partner_id=partner_id, product_code=code, at=at
+        )
+        out[code] = (
+            {"rate_bp": chosen.rate_bp, "recurring": bool(chosen.recurring)}
+            if chosen is not None
+            else None
+        )
+    return out
+
+
 def _rules_in_force(now: datetime) -> Any:
     from workeasy360.commercial.commissions.models import CommissionRule
 

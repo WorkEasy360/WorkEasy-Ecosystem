@@ -327,3 +327,9 @@
   color: var(--w360-danger);
   font-weight: 600;
 }
+
+/* ADR-055: what a partner wrote, line breaks kept. */
+.preWrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

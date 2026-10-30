@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useId, useState } from "react";
 import { LoadGate, Status, Table, money, useAction, useLoad, when } from "@/features/controlplane/ui";
 import {
@@ -12,13 +13,13 @@ import {
   type ReferralTrail,
 } from "@/lib/api/partnerPanel";
 import { EarningCells, productLabel } from "./AffiliateScreens";
-import { Amounts, Kpi, PageHeader, usePanel } from "./PanelKit";
+import { Amounts, EmptyState, Kpi, usePanel } from "./PanelKit";
 import { CopyButton, percent, useRangeControls } from "./workspaceKit";
 import styles from "./PartnerPanel.module.css";
 
 /**
- * My Products (ADR-054): the products Workeasy360 has allowed this affiliate to
- * promote, what each can be linked to - its page, its pricing, its published
+ * My Products (ADR-054; the Store Console's first tab since ADR-055): the
+ * products Workeasy360 has approved this affiliate to promote, what each can be linked to - its page, its pricing, its published
  * features and updates - and how every link is doing.
  *
  * The browser sends a kind, a product code, an update id, a campaign id and an
@@ -329,7 +330,7 @@ function NoLinkForm({ product, canCreate }: { product: MyProduct; canCreate: boo
 }
 
 function ProductSection({ product, data, onChanged }: { product: MyProduct; data: MyProductsData; onChanged: () => void }) {
-  const { partner, active } = usePanel();
+  const { partner, active, base, can } = usePanel();
   const headingId = useId();
   const [preset, setPreset] = useState<{ kind: LinkKind; updateId: string } | undefined>();
   const manage = data.can_create && active;
@@ -338,15 +339,35 @@ function ProductSection({ product, data, onChanged }: { product: MyProduct; data
     <section className={styles.panel} aria-labelledby={headingId}>
       <div className={styles.cardHead}>
         <h2 id={headingId}>{product.name}</h2>
-        <span className="w360-badge w360-badge-success">May promote</span>
+        <span className="w360-badge w360-badge-success">Approved</span>
       </div>
       {product.tagline && <p className={styles.muted}>{product.tagline}</p>}
-      {product.granted_at && <p className={styles.muted}>Assigned to you on {when(product.granted_at)}.</p>}
+      {product.granted_at && <p className={styles.muted}>Approved for you on {when(product.granted_at)}.</p>}
       {banner && (
         // eslint-disable-next-line @next/next/no-img-element -- same-origin listing image, sized by CSS
         <img className={styles.mediaThumb} src={banner.url} alt={banner.caption || `${product.name} ${banner.kind}`} loading="lazy" />
       )}
       <RollupKpis totals={product.totals} label={`${product.name} totals`} />
+      {/* The existing pages, not copies of them: each re-checks this product's approval. */}
+      <ul className={styles.quick} aria-label={`More for ${product.name}`}>
+        <li>
+          <Link href={`${base}/referral-codes`}>Referral codes</Link>
+        </li>
+        <li>
+          <Link href={`${base}/campaigns`}>Campaigns</Link>
+        </li>
+        <li>
+          <Link href={`${base}/marketing-materials`}>Marketing materials</Link>
+        </li>
+        <li>
+          <Link href={`${base}/conversions`}>Conversions</Link>
+        </li>
+        {can("commission.view") && (
+          <li>
+            <Link href={`${base}/payments/commissions`}>Commissions</Link>
+          </li>
+        )}
+      </ul>
 
       {product.features.length > 0 && (
         <>
@@ -421,7 +442,8 @@ function ProductSection({ product, data, onChanged }: { product: MyProduct; data
   );
 }
 
-export function MyProducts() {
+/** The Store Console's My Products tab (ADR-055; ADR-054's page). */
+export function MyProductsTab({ exploreHref }: { exploreHref: string }) {
   const { id, active } = usePanel();
   const controls = useRangeControls();
   const [load, reload] = useLoad(
@@ -429,12 +451,8 @@ export function MyProducts() {
     [id, controls.range, controls.from ?? "", controls.to ?? ""],
   );
   return (
-    <div className={styles.page}>
-      <PageHeader
-        title="My Products"
-        lead="The products Workeasy360 has assigned you to promote. Create a link for a product, its pricing, a feature or an update, and see how each one does."
-        actions={controls.node}
-      />
+    <>
+      <div className={styles.actions}>{controls.node}</div>
       <LoadGate load={load} what="your products">
         {(d) => (
           <>
@@ -443,7 +461,12 @@ export function MyProducts() {
               only when a referred customer pays, and only on the product a product link promotes.
             </p>
             {d.products.length === 0 ? (
-              <p>No products have been assigned to you yet. Workeasy360 assigns the products you may promote.</p>
+              <EmptyState title="No approved products yet" icon="store">
+                <p className={styles.muted}>
+                  Find a product in <Link href={exploreHref}>Explore Products</Link> and request access. Once Workeasy360 approves
+                  it, it appears here with its links, codes and campaigns.
+                </p>
+              </EmptyState>
             ) : (
               d.products.map((p) => <ProductSection key={p.code} product={p} data={d} onChanged={reload} />)
             )}
@@ -485,7 +508,7 @@ export function MyProducts() {
           </>
         )}
       </LoadGate>
-    </div>
+    </>
   );
 }
 

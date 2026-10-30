@@ -71,7 +71,7 @@ describe("what each workspace offers", () => {
   it("Affiliate is the short list", () => {
     expect(labels("affiliate")).toEqual([
       "Dashboard",
-      "My Products",
+      "Store Console",
       "Referral Links",
       "Referral Codes",
       "Campaigns",
@@ -84,6 +84,13 @@ describe("what each workspace offers", () => {
       "Profile & Settings",
       "Support",
     ]);
+  });
+
+  it("the Store Console's three tabs are one entry, and the old My Products address opens it (ADR-055)", () => {
+    const served = servedPaths(WORKSPACES.affiliate);
+    for (const path of ["store-console", "store-console/explore", "store-console/requests"]) expect(served.has(path)).toBe(true);
+    expect(served.has("my-products")).toBe(false);
+    expect(WORKSPACES.affiliate.aliases["my-products"]).toBe("store-console");
   });
 
   it("the affiliate workspace serves none of the customer, pricing, brand or sub-partner pages", () => {
