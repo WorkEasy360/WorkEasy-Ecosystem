@@ -1,7 +1,6 @@
 "use client";
 
 import { useId, useState } from "react";
-import Link from "next/link";
 import { ASSIGNABLE_ROLES, consoleApi } from "@/lib/api/console";
 import { MoreButton, Status, Table, useAction, usePaged, when } from "@/features/controlplane/ui";
 import cp from "@/features/controlplane/ControlPlane.module.css";
@@ -43,16 +42,10 @@ export function InvitationsScreen() {
 
   return (
     <div className={styles.page}>
+      {/* Members and Invitations are tabs of Organization & Team (2026-11-03): no header link between them. */}
       <PageHeader
         title="Invitations"
         lead="Invite people to this organization by email. An invitation lasts a week; resending it sends a new link and the old one stops working."
-        actions={
-          can("platform.member.view") ? (
-            <Link className="w360-btn w360-btn-secondary" href={`/o/${slug}/settings/members`}>
-              Members
-            </Link>
-          ) : undefined
-        }
       />
       {feedback}
       {canInvite && (

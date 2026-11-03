@@ -271,6 +271,17 @@ def had_capability_at(partner_id: UUID, capability: str, moment: datetime) -> bo
     )
 
 
+def selling_experience_at(partner_id: UUID, moment: datetime) -> str:
+    """The programme a partner sells under at ``moment`` (ADR-053/056):
+    White-label while it holds the brand capability, else Reseller. One answer
+    for the margin a sale earns and the price range a partner may set."""
+    from workeasy360.commercial.partners import capabilities
+
+    if had_capability_at(partner_id, capabilities.BRANDING_MANAGE, moment):
+        return capabilities.WHITE_LABEL
+    return capabilities.RESELLER
+
+
 # --- members --------------------------------------------------------------
 
 
@@ -353,6 +364,9 @@ def _portal_entry(partner: Any, role: str, permissions: frozenset[str]) -> dict[
         ],
         "default_experience": partner.default_experience,
         "landing": capabilities.resolve_landing(partner.default_experience, held),
+        # 2026-11-03: the level the unified dashboard shows (Level 1
+        # Affiliate, 2 Reseller, 3 White-label) - the largest workspace.
+        "level": capabilities.partner_level(held),
         # What the server will let this person do right now. The
         # portal's navigation is drawn from it; every request is
         # still authorized again by the service it reaches.

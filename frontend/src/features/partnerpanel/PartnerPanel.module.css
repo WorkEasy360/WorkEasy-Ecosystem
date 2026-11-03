@@ -810,3 +810,623 @@
   background: var(--w360-surface);
   object-fit: contain;
 }
+
+/* 2026-11-03: paying an upgrade's set-up fee. */
+.choices {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.choices legend {
+  margin-bottom: var(--w360-space-2);
+  font-weight: 600;
+}
+
+.choices label {
+  display: flex;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.instructions {
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-bg-soft);
+}
+
+.instructions p {
+  margin: 0;
+}
+
+.instructions p + p {
+  margin-top: var(--w360-space-2);
+}
+
+.preWrap {
+  white-space: pre-wrap;
+}
+
+/* --- The unified partner dashboard (2026-11-03) --------------------------------- */
+
+/* The top bar: the level badge and the persistent Upgrade Plan action. */
+.levelTools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.levelBadge {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 10px;
+  border: 1px solid var(--w360-border-strong);
+  border-radius: 999px;
+  background: var(--w360-surface);
+  color: var(--w360-text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.levelBadge strong {
+  color: var(--w360-brand);
+}
+
+.upgradeButton {
+  white-space: nowrap;
+}
+
+.upgradeWord {
+  display: inline;
+}
+
+/* A phone's top bar has room for the button only: the level is on the
+ * dashboard's level card, and the button says "Upgrade". */
+@media (max-width: 640px) {
+  .levelBadge {
+    display: none;
+  }
+
+  .upgradeWord {
+    display: none;
+  }
+
+  .levelTools {
+    flex-wrap: nowrap;
+    gap: 0;
+  }
+
+  .upgradeButton {
+    min-height: 32px;
+    padding: 4px 8px;
+    font-size: 13px;
+  }
+}
+
+/* Two columns: the business on the left, the partner level on the right. */
+.dashGrid {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+@media (min-width: 1200px) {
+  .dashGrid {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  }
+}
+
+.dashMain,
+.dashSide {
+  display: grid;
+  gap: var(--w360-space-4);
+  min-width: 0;
+}
+
+.dashRow {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+}
+
+@media (min-width: 1100px) {
+  .dashRow {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
+}
+
+.rangePicker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3);
+  align-items: flex-end;
+}
+
+/* The metric ribbon. */
+.ribbon {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w360-space-2);
+  align-items: flex-start;
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-lg);
+  background: var(--w360-surface);
+  box-shadow: var(--w360-shadow-sm);
+  min-width: 0;
+}
+
+.metricIcon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-brand-soft);
+  color: var(--w360-brand);
+}
+
+.metricBody {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.metricLabel {
+  color: var(--w360-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.metricValue {
+  color: var(--w360-text);
+  font-size: clamp(17px, 1.5vw, 20px);
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.metricDelta {
+  justify-self: start;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--w360-neutral-bg);
+  color: var(--w360-text-secondary);
+}
+
+.metricDelta[data-tone="up"] {
+  background: var(--w360-success-bg);
+  color: var(--w360-success);
+}
+
+.metricDelta[data-tone="down"] {
+  background: var(--w360-danger-bg);
+  color: var(--w360-danger);
+}
+
+.metricNote {
+  color: var(--w360-text-muted);
+  font-size: 12px;
+}
+
+.panelHead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--w360-space-2);
+}
+
+.panelHead h2 {
+  margin: 0;
+}
+
+/* Charts: a legend always present for two series; text in text tokens. */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-4);
+  margin: 0 0 var(--w360-space-2);
+  padding: 0;
+  list-style: none;
+  color: var(--w360-text-secondary);
+  font-size: 13px;
+}
+
+.legend li,
+.splitLegend li {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.swatch {
+  display: inline-block;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.trend figure {
+  position: relative;
+}
+
+.crosshair {
+  stroke: var(--w360-text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.tooltip {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  gap: 2px;
+  padding: var(--w360-space-2) var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-surface);
+  box-shadow: var(--w360-shadow-md);
+  color: var(--w360-text);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.splitTotal {
+  margin: 0 0 var(--w360-space-2);
+}
+
+/* The product-wise split: one segmented bar, a 2px surface gap between parts. */
+.segmented {
+  display: block;
+  width: 100%;
+  height: 16px;
+  margin-bottom: var(--w360-space-3);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.splitLegend {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+
+.splitLegend li {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto auto;
+  gap: var(--w360-space-2);
+}
+
+.splitName {
+  overflow-wrap: anywhere;
+}
+
+/* Quick actions: one row of tiles. */
+.quickActions {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
+}
+
+.quickAction {
+  display: grid;
+  gap: var(--w360-space-2);
+  justify-items: center;
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-lg);
+  background: var(--w360-surface);
+  color: var(--w360-text);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+.quickAction:hover {
+  border-color: var(--w360-brand);
+}
+
+.quickIcon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--w360-brand-soft);
+  color: var(--w360-brand);
+}
+
+/* Label / amount pairs (earnings, withdrawal, margin). */
+.earnings {
+  display: grid;
+  gap: 0;
+  margin: 0 0 var(--w360-space-3);
+}
+
+.earnings > div {
+  display: flex;
+  gap: var(--w360-space-3);
+  justify-content: space-between;
+  padding: var(--w360-space-2) 0;
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.earnings dt {
+  color: var(--w360-text-secondary);
+}
+
+.earnings dd {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.earnings > div[data-strong] dd {
+  color: var(--w360-brand);
+  font-size: 18px;
+}
+
+.facts {
+  display: grid;
+  gap: var(--w360-space-2);
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  margin: 0;
+}
+
+.facts dt {
+  color: var(--w360-text-muted);
+  font-size: 13px;
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.wide {
+  display: block;
+  width: 100%;
+  text-align: center;
+}
+
+/* The partner level card, the level list and the feature matrix. */
+.levelCard {
+  border-top: 4px solid var(--w360-brand);
+}
+
+.levelHead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+  margin: 0;
+  font-size: 18px;
+}
+
+.levelFee {
+  margin: var(--w360-space-2) 0;
+  font-weight: 700;
+  color: var(--w360-text);
+}
+
+.levelList {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.levelItem {
+  display: grid;
+  gap: 2px;
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+}
+
+.levelItem[data-current] {
+  border-color: var(--w360-brand);
+  background: var(--w360-bg-soft);
+}
+
+.levelItem .levelFee {
+  margin: 0;
+}
+
+.levelNumber {
+  color: var(--w360-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.levelName {
+  font-weight: 700;
+}
+
+.levelLead {
+  color: var(--w360-text-secondary);
+  font-size: 13px;
+}
+
+.matrixWrap {
+  overflow-x: auto;
+}
+
+.matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.matrix th,
+.matrix td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--w360-border);
+  text-align: center;
+  vertical-align: middle;
+}
+
+.matrix th[scope="row"] {
+  text-align: left;
+  font-weight: 600;
+}
+
+.matrix [data-current] {
+  background: var(--w360-bg-soft);
+}
+
+.matrixFeature {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.matrixFeature svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--w360-text-muted);
+}
+
+.markYes {
+  color: var(--w360-success);
+  font-weight: 800;
+}
+
+.markNo {
+  color: var(--w360-text-muted);
+}
+
+.markText {
+  color: var(--w360-text-secondary);
+}
+
+/* Forms in the new pages. */
+.form {
+  display: grid;
+  gap: var(--w360-space-3);
+  max-width: 720px;
+}
+
+.formRow {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  align-items: end;
+}
+
+.actionsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.check {
+  display: flex;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--w360-brand);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.clip {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A ticket's conversation. */
+.ticketMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+}
+
+.thread {
+  display: grid;
+  gap: var(--w360-space-3);
+  margin: var(--w360-space-3) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.message {
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+}
+
+.message[data-mine] {
+  background: var(--w360-bg-soft);
+}
+
+.message[data-internal] {
+  border-style: dashed;
+  background: var(--w360-warning-bg);
+}
+
+.messageHead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+  margin: 0 0 var(--w360-space-1);
+}
+
+.messageBody {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media print {
+  .noPrint {
+    display: none !important;
+  }
+}

@@ -10,13 +10,29 @@ import cp from "@/features/controlplane/ControlPlane.module.css";
 import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
 
-type CheckoutLink = { reference: string; org: string };
+/** `org` is empty for a fee a partner pays (2026-11-03), which belongs to no
+ * organization; `back` is then the partner's upgrade page to return to. */
+type CheckoutLink = { reference: string; org: string; back: string | null };
+
+/** Only a page of the partner portal, never another site (a link, not a redirect). */
+function partnerPage(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw, window.location.origin);
+    const sameSite = url.origin === window.location.origin || url.hostname.startsWith("partner.");
+    return sameSite && /^https?:$/.test(url.protocol) && url.pathname.startsWith("/partner/") ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
 
 function readCheckoutLink(): CheckoutLink | null {
   const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
   const reference = params.get("reference") ?? "";
   const org = params.get("org") ?? "";
-  return reference && org && reference.length <= 128 && org.length <= 64 ? { reference, org } : null;
+  const back = partnerPage(params.get("return"));
+  if (!reference || reference.length > 128 || org.length > 64) return null;
+  return org || back ? { reference, org, back } : null;
 }
 
 /**
@@ -51,9 +67,13 @@ export function TestCheckout() {
     try {
       await accountApi.completeTestCheckout(link.reference, link.org, outcome);
       setDone(
-        outcome === "succeeded"
-          ? "Test payment succeeded. The invoice is marked as paid once the confirmation is processed."
-          : "Test payment failed. Nothing was paid; the invoice stays open.",
+        link.org
+          ? outcome === "succeeded"
+            ? "Test payment succeeded. The invoice is marked as paid once the confirmation is processed."
+            : "Test payment failed. Nothing was paid; the invoice stays open."
+          : outcome === "succeeded"
+            ? "Test payment succeeded. Your upgrade request is sent for review once the confirmation is processed."
+            : "Test payment failed. Nothing was paid; your upgrade request is unchanged.",
       );
     } catch (err) {
       setError(
@@ -117,9 +137,15 @@ export function TestCheckout() {
             {error}
           </p>
         )}
-        <p>
-          <Link href="/">Return to Workeasy360</Link> and open your organization&apos;s billing page to see the result.
-        </p>
+        {link?.back ? (
+          <p>
+            <a href={link.back}>Return to your upgrade</a> to see the result.
+          </p>
+        ) : (
+          <p>
+            <Link href="/">Return to Workeasy360</Link> and open your organization&apos;s billing page to see the result.
+          </p>
+        )}
       </div>
     </main>
   );

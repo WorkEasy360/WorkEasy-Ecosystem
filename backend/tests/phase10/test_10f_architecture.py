@@ -189,12 +189,21 @@ def test_the_partner_models_are_the_frozen_set():
         "PartnerUpgradeRequest",
         # ADR-053: the set-up fee setting.
         "PartnerProgramFee",
+        # ADR-057 (2026-11-03): the helpdesk, payout details and withdrawals.
+        "PartnerTicket",
+        "PartnerTicketMessage",
+        "PartnerCannedResponse",
+        "PartnerPayoutMethod",
+        "PartnerWithdrawalRequest",
         # ADR-054: which products a partner may promote (a permission, not a
         # kind of partner; tests/affiliate_products pins it).
         "PartnerPromotionGrant",
         # ADR-055: a partner's request to promote a product - a workflow record
         # that grants nothing (tests/store_console pins what it does).
         "PartnerPromotionRequest",
+        # ADR-056: Super Admin's bounds on a selling partner's own price - a
+        # boundary, never a price (tests/store_upgrade pins what it allows).
+        "SellingPriceRange",
     }
 
 
@@ -448,4 +457,7 @@ def test_phase_10_leaves_the_legacy_catalog_alone():
         "0005_product_manager.py",
         # ADR-054: one new table (ProductUpdate) - no catalog row is rewritten.
         "0006_product_updates.py",
+        # ADR-056: presentation columns (merchandising, recommended plan) with
+        # database defaults - no catalog row is rewritten (tests/store_upgrade).
+        "0007_store_merchandising.py",
     ]

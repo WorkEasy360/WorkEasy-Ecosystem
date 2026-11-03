@@ -263,6 +263,10 @@ def rules_list(*, live_only: bool = True) -> list[dict[str, Any]]:
             "product_code": r.product_code,
             "rate_bp": r.rate_bp,
             "recurring": r.recurring,
+            "plan_code": r.plan_code,
+            "fixed_amount_minor": r.fixed_amount_minor,
+            "fixed_currency": r.fixed_currency,
+            "recurring_months": r.recurring_months,
             "effective_from": r.effective_from.isoformat(),
             "retired_at": r.retired_at.isoformat() if r.retired_at else None,
         }
@@ -440,6 +444,10 @@ def rule_views() -> list[Any]:
             effective_from=r.effective_from,
             retired_at=r.retired_at,
             recurring=r.recurring,
+            plan_code=r.plan_code,
+            fixed_amount_minor=r.fixed_amount_minor,
+            fixed_currency=r.fixed_currency,
+            recurring_months=r.recurring_months,
         )
         for r in CommissionRule.objects.all()
     ]
@@ -1260,6 +1268,60 @@ def partner_sales_by_day(
     ]
 
 
+def payout_states(payout_ids: list[Any]) -> dict[str, dict[str, Any]]:
+    """Status and amounts of some payouts, by id (one query) - what a
+    withdrawal request linked to one shows (2026-11-03)."""
+    from workeasy360.commercial.commissions.models import Payout
+
+    wanted = [p for p in payout_ids if p]
+    if not wanted:
+        return {}
+    return {
+        str(p["id"]): {
+            "status": p["status"],
+            "payable_minor": p["payable_minor"],
+            "paid_at": p["paid_at"].isoformat() if p["paid_at"] else None,
+        }
+        for p in Payout.objects.filter(id__in=wanted).values(
+            "id", "status", "payable_minor", "paid_at"
+        )
+    }
+
+
+def partner_sales_by_product(
+    partner_id: UUID, start: datetime, end: datetime
+) -> list[dict[str, Any]]:
+    """Sales and commission per product and currency inside ``[start, end)``,
+    from the ledger - the dashboard's product-wise split (2026-11-03). One query.
+
+    Same rules as ``partner_sales_by_day``: a sale is an ``accrual`` row and its
+    amount the snapshotted basis; the commission is net of reversals and
+    adjustments in the window. A row with no product (an older general
+    accrual) is reported under the empty code, never dropped."""
+    from workeasy360.commercial.commissions.models import CommissionAccrual
+
+    return [
+        {
+            "product_code": r["product_code"] or "",
+            "currency": r["currency"],
+            "basis_currency": r["basis_currency"],
+            "sales": r["sales"] or 0,
+            "gross_minor": r["gross"] or 0,
+            "commission_minor": r["commission"] or 0,
+        }
+        for r in CommissionAccrual.objects.filter(
+            partner_id=partner_id, event_at__gte=start, event_at__lt=end
+        )
+        .values("product_code", "currency", "basis_currency")
+        .annotate(
+            sales=Count("id", filter=Q(kind=AccrualKind.ACCRUAL.value)),
+            gross=Sum("basis_minor", filter=Q(kind=AccrualKind.ACCRUAL.value)),
+            commission=Sum("amount_minor"),
+        )
+        .order_by("product_code", "currency")
+    ]
+
+
 def partner_conversions_page(
     partner_id: UUID, *, limit: int = 25, cursor: str | None = None
 ) -> Page:
@@ -1370,3 +1432,30 @@ def earnings_by_item(partner_id: UUID, item_ids: list[str]) -> dict[str, dict[st
             "currency": r["currency"],
         }
     return out
+
+
+def referral_sales(*, start: Any, end: Any) -> list[dict[str, Any]]:
+    """Affiliate sales in ``[start, end)``: commission accruals earned through a
+    referral (never a click - an accrual exists only after a verified payment),
+    by currency - how many, their sale basis and the commission. One query."""
+    from django.db.models import Count, Sum
+
+    from workeasy360.commercial.commissions.models import CommissionAccrual
+    from workeasy360.contracts.enums import AccrualKind
+
+    return [
+        {
+            "currency": row["currency"],
+            "sales": row["n"],
+            "basis_minor": int(row["basis"] or 0),
+            "commission_minor": int(row["amount"] or 0),
+        }
+        for row in CommissionAccrual.objects.filter(
+            kind=AccrualKind.ACCRUAL.value,
+            attribution_kind="referral",
+            event_at__gte=start,
+            event_at__lt=end,
+        )
+        .values("currency")
+        .annotate(n=Count("id"), basis=Sum("basis_minor"), amount=Sum("amount_minor"))
+    ]

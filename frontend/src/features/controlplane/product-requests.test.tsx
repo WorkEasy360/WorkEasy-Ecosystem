@@ -89,7 +89,7 @@ const mount = (permissions: string[] = MANAGE) =>
 
 describe("Product Requests", () => {
   it("is a Partner Control Center section for anyone who may view partners", () => {
-    expect(CENTER_ITEMS.map((i) => i.label)).toEqual(["Dashboard", "All Partners", "Add Partner", "Product Requests"]);
+    expect(CENTER_ITEMS.map((i) => i.label)).toEqual(["Dashboard", "All Partners", "Add Partner", "Product Requests", "Upgrade Fees", "Partner Tickets", "Withdrawals"]);
     expect(centerItems(["platform.staff_partner.view"]).map((i) => i.label)).toContain("Product Requests");
   });
 

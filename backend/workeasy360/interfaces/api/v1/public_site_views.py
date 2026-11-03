@@ -147,6 +147,46 @@ def catalog_view(request: HttpRequest) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
+def store_view(request: HttpRequest) -> JsonResponse:
+    """The public Store (2026-11-02): the public catalog as a marketplace page
+    - categories, filters with counts, sorting, product cards - filtered on
+    the server. Anonymous; an unknown filter value is a 400."""
+    from workeasy360.commercial.controlplane import portal_store
+
+    blocked = limited(request, "public_catalog")
+    if blocked is not None:
+        return blocked
+    return JsonResponse(
+        portal_store.public_store(
+            currency=request.GET.get("currency"),
+            q=request.GET.get("q"),
+            category=request.GET.get("category"),
+            status=request.GET.getlist("status"),
+            plan_type=request.GET.getlist("plan_type"),
+            price_min=request.GET.get("price_min"),
+            price_max=request.GET.get("price_max"),
+            sort=request.GET.get("sort"),
+            collection=request.GET.get("collection"),
+        )
+    )
+
+
+@require_http_methods(["GET"])
+def store_product_view(request: HttpRequest, slug: str) -> JsonResponse:
+    """One product of the public Store: its full listing, plan comparison and
+    related products. Anonymous; a product off the public catalog is a 404."""
+    from workeasy360.commercial.controlplane import portal_store
+
+    blocked = limited(request, "public_catalog")
+    if blocked is not None:
+        return blocked
+    found = portal_store.public_product(slug, currency=request.GET.get("currency"))
+    if found is None:
+        return JsonResponse({"code": "not_found", "detail": "Not found."}, status=404)
+    return JsonResponse(found)
+
+
+@require_http_methods(["GET"])
 def product_update_view(
     request: HttpRequest, slug: str, update_slug: str
 ) -> JsonResponse:

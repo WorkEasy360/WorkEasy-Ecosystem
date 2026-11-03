@@ -813,3 +813,17 @@ def staff_detail(ctx: TenantContext, request_id: UUID) -> dict[str, Any]:
             for g in grants
         ],
     }
+
+
+def pending_request_count() -> dict[str, int]:
+    """Open promote / sell requests waiting for staff, by kind - for the Super
+    Admin Store dashboard (ADR-056). One query."""
+    from django.db.models import Count
+
+    return {
+        row["kind"]: row["n"]
+        for row in _model()
+        .objects.filter(status=PENDING)
+        .values("kind")
+        .annotate(n=Count("id"))
+    }

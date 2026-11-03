@@ -190,3 +190,53 @@ describe("a white-label customer's console", () => {
     expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
   });
 });
+
+describe("the consolidated sidebar (2026-11-03)", () => {
+  const SESSION = { authenticated: true, user_id: "u1", email: "ada@example.com", name: "Ada Lovelace" };
+  const withPermissions = (...permissions: string[]) => ({ ...ACCESS, permissions: ["platform.organization.view", ...permissions] });
+
+  async function openAt(path: string, access: unknown) {
+    pathname = path;
+    const { releaseSession } = heldSessionFetch(SESSION, { status: 200, body: access });
+    render(
+      <Shell>
+        <h1>Page</h1>
+      </Shell>,
+    );
+    releaseSession();
+    await screen.findByRole("heading", { name: "Page" });
+  }
+
+  beforeEach(() => replace.mockReset());
+
+  it("opens an old address under its parent entry, with that entry's tabs above the page", async () => {
+    await openAt("/o/acme/settings/invitations", withPermissions("platform.member.view", "platform.member.invite"));
+    const nav = screen.getByRole("navigation", { name: "Organization" });
+    expect(within(nav).getByRole("link", { name: "Organization & Team" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).queryByRole("link", { name: "Invitations" })).toBeNull();
+    const tabs = screen.getByRole("navigation", { name: "Sections" });
+    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["Organization", "Members", "Invitations"]);
+    expect(within(tabs).getByRole("link", { name: "Invitations" })).toHaveAttribute("aria-current", "page");
+    expect(within(tabs).getByRole("link", { name: "Members" })).toHaveAttribute("href", "/o/acme/settings/members");
+    expect(within(tabs).getByRole("link", { name: "Members" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("draws no tab the member's permissions do not open, and no strip for a single page", async () => {
+    await openAt("/o/acme/settings/organization", ACCESS);
+    expect(screen.queryByRole("navigation", { name: "Sections" })).toBeNull();
+    const nav = screen.getByRole("navigation", { name: "Organization" });
+    expect(within(nav).queryByRole("link", { name: "Billing & Orders" })).toBeNull();
+    expect(within(nav).queryByRole("link", { name: "Activity & Audit" })).toBeNull();
+    expect(within(nav).getAllByRole("link")).toHaveLength(7);
+  });
+
+  it("marks only My Security current on its page, not Network Access beneath it", async () => {
+    await openAt("/o/acme/settings/security", withPermissions("platform.security.view"));
+    const nav = screen.getByRole("navigation", { name: "Organization" });
+    expect(within(nav).getByRole("link", { name: "Security Center" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "Login & Authentication" })).not.toHaveAttribute("aria-current");
+    const tabs = screen.getByRole("navigation", { name: "Sections" });
+    expect(within(tabs).getByRole("link", { name: "My Security" })).toHaveAttribute("aria-current", "page");
+    expect(within(tabs).getByRole("link", { name: "Network Access" })).not.toHaveAttribute("aria-current");
+  });
+});

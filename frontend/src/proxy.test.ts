@@ -94,6 +94,13 @@ describe("public paths (no session cookie needed)", () => {
     expect(isPublicPath("/owner-invitations/acceptx")).toBe(false);
   });
 
+  it("lets anyone browse the public Store and a partner's branded Store", () => {
+    expect(isPublicPath("/store")).toBe(true);
+    expect(isPublicPath("/store/acme-partner")).toBe(true);
+    expect(isPublicPath("/storex")).toBe(false);
+    expect(isPublicPath("/o/acme/store")).toBe(false);
+  });
+
   it("keeps everything else behind the session check, including look-alike paths", () => {
     for (const path of ["/", "/o/acme", "/o/acme/settings/members", "/invitations", "/invitations/acceptx", "/billing/test-checkout", "/admin"]) {
       expect(isPublicPath(path), path).toBe(false);

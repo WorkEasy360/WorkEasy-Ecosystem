@@ -59,6 +59,28 @@ def link_counts(partner_id: UUID) -> dict[str, int]:
     }
 
 
+def links_started(partner_id: UUID, start: Any, end: Any) -> int:
+    """Customers whose relationship with the partner began inside ``[start,
+    end)`` - the dashboard's "new customers" and its previous-period figure."""
+    from workeasy360.commercial.partners.models import PartnerOrganizationLink
+
+    return PartnerOrganizationLink.objects.filter(
+        partner_id=partner_id, started_at__gte=start, started_at__lt=end
+    ).count()
+
+
+def partner_timezone(partner_id: UUID) -> str:
+    """The time zone on the partner's profile ("" when none is set)."""
+    from workeasy360.commercial.partners.models import PartnerProfile
+
+    return (
+        PartnerProfile.objects.filter(partner_id=partner_id)
+        .values_list("timezone", flat=True)
+        .first()
+        or ""
+    )
+
+
 def hierarchy_counts(partner_id: UUID) -> dict[str, int]:
     from workeasy360.commercial.partners.models import PartnerHierarchyLink
 

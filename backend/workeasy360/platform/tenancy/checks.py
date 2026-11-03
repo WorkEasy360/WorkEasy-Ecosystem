@@ -157,6 +157,16 @@ TENANT_SCOPE_EXEMPT = frozenset(
         "provisioning.CustomerSummary",
         "commissions.Referral",
         "commissions.CommissionAccrual",
+        # 2026-11-03 (partner helpdesk). A customer's ticket to its partner is
+        # the partner's desk: one partner answers tickets from many customer
+        # organizations, so the desk could never run under one tenant variable
+        # either. ``organization_id`` is a plain UUID naming the customer that
+        # asked. The customer reaches its own tickets only through
+        # ``partners.tickets`` functions that take the organization from the
+        # verified org context *and* require a live partner link; the partner
+        # only through its verified partner id. Isolation tests per direction
+        # (tests/partner_dashboard/test_tickets.py).
+        "partners.PartnerTicket",
         # Phase 8 extension. The log of payment provider callbacks: a callback
         # arrives before anyone knows whose it is, is de-duplicated across all
         # tenants by (provider, event id), and records only identifiers and an

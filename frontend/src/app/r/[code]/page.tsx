@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { getSession } from "@/lib/api/auth";
 import { publicApi } from "@/lib/api/public";
 import { REFERRAL_TOKEN } from "@/features/auth/SelfService";
+import { withUtm } from "@/lib/utm";
 
 /**
  * A partner's referral link (ADR-053): `/r/<code>`. Public, and served by the
@@ -22,7 +23,10 @@ export default function ReferralLinkPage() {
 
   useEffect(() => {
     const code = String(params?.code ?? "");
-    const go = (path: string) => window.location.replace(SAFE_PATH.test(path) ? path : "/signup");
+    const go = (path: string) => {
+      const target = withUtm(path, window.location.search);
+      window.location.replace(SAFE_PATH.test(target) ? target : "/signup");
+    };
     if (!/^[A-Za-z0-9]{4,16}$/.test(code)) {
       go("/signup");
       return;

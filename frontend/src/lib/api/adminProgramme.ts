@@ -34,8 +34,15 @@ export interface SetMarginBody {
   reason?: string;
 }
 
+/** A set-up fee, with how to pay it offline (2026-11-03). */
+export interface ProgramFee {
+  amount_minor: number;
+  currency: string;
+  instructions?: string;
+}
+
 export interface ProgramFees {
-  fees: { reseller: { amount_minor: number; currency: string } | null; white_label: { amount_minor: number; currency: string } | null };
+  fees: { reseller: ProgramFee | null; white_label: ProgramFee | null };
 }
 
 // --- ADR-054: the affiliate programme ------------------------------------------------
@@ -130,7 +137,7 @@ export const adminProgrammeApi = {
   endMargin: (code: string) => apiFetch<MarginRule>(`${admin}/margins/end`, { method: "POST", body: json({ code }) }),
   fees: () => apiFetch<ProgramFees>(`${admin}/partner-programme/fees`),
   /** `amount` is the decimal text typed ("25000.00"); the server converts it. */
-  setFee: (body: { experience: string; amount: string; currency: string }) =>
+  setFee: (body: { experience: string; amount: string; currency: string; instructions?: string }) =>
     apiFetch<ProgramFees>(`${admin}/partner-programme/fees`, { method: "PUT", body: json(body) }),
   affiliatePolicy: () => apiFetch<AffiliatePolicy>(`${admin}/affiliate-policy`),
   setAffiliatePolicy: (body: { attribution_days: number; revoked_links: string }) =>

@@ -70,13 +70,13 @@ function commissionText(p: StoreProduct): string | null {
 }
 
 /** What a sale earns: a seller's margin when it has one, else the commission. */
-function earningText(p: StoreProduct): string | null {
+export function earningText(p: StoreProduct): string | null {
   if (p.margin?.discount_bp != null) return `Your margin: ${percent(p.margin.discount_bp)} off the list price`;
   return commissionText(p);
 }
 
 /** The words that differ between promoting and selling; everything else is shared. */
-const WORDS: Record<RequestKind, { verb: string; lead: string; nobody: string; channel: string; audience: string; how: string }> = {
+export const WORDS: Record<RequestKind, { verb: string; lead: string; nobody: string; channel: string; audience: string; how: string; mine: string }> = {
   promote: {
     verb: "promote",
     lead: "Products from the Workeasy360 Store. Promote the ones you are approved for, and request access to the others.",
@@ -84,6 +84,8 @@ const WORDS: Record<RequestKind, { verb: string; lead: string; nobody: string; c
     channel: "Promotion channel",
     audience: "Target audience",
     how: "How you will promote it",
+    // The affiliate workspace's tab for it (2026-11-02).
+    mine: "Approved / Promoting",
   },
   sell: {
     verb: "sell",
@@ -92,14 +94,17 @@ const WORDS: Record<RequestKind, { verb: string; lead: string; nobody: string; c
     channel: "Sales channel",
     audience: "Target customers",
     how: "How you will sell it",
+    mine: "Approved / Reselling",
   },
 };
 
-export function StoreConsole({ tab, kind = "promote" }: { tab: StoreTab; kind?: RequestKind }) {
+/** `root` is where the Console lives in its workspace: `store-console`, or
+ * `promote/store-console` for an upgraded affiliate in a higher one (2026-11-03). */
+export function StoreConsole({ tab, kind = "promote", root = "store-console" }: { tab: StoreTab; kind?: RequestKind; root?: string }) {
   const { id, base } = usePanel();
   const [load, reload] = useLoad(() => panelApi.storeConsole(id, kind), [id, kind]);
   const counts = load.status === "ready" ? load.data.counts : null;
-  const n = (value: number | undefined) => (value === undefined ? "" : ` (${value})`);
+  const n = (value: number | undefined) => (value === undefined ? "" : `(${value})`);
   return (
     <div className={styles.page}>
       <PageHeader
@@ -108,11 +113,12 @@ export function StoreConsole({ tab, kind = "promote" }: { tab: StoreTab; kind?: 
       />
       <SubNav
         items={[
-          { href: `${base}/store-console`, label: `My Products${n(counts?.approved)}` },
-          { href: `${base}/store-console/explore`, label: `Explore Products${n(counts?.explore)}` },
+          { href: `${base}/${root}`, label: WORDS[kind].mine, note: n(counts?.approved) },
+          { href: `${base}/${root}/explore`, label: "Explore Products", note: n(counts?.explore) },
           {
-            href: `${base}/store-console/requests`,
-            label: `My Requests${counts && counts.pending > 0 ? ` (${counts.pending} pending)` : ""}`,
+            href: `${base}/${root}/requests`,
+            label: "My Requests",
+            note: counts && counts.pending > 0 ? `(${counts.pending} pending)` : "",
           },
         ]}
       />
@@ -120,11 +126,11 @@ export function StoreConsole({ tab, kind = "promote" }: { tab: StoreTab; kind?: 
         kind === "sell" ? (
           <SellerProducts />
         ) : (
-          <MyProductsTab exploreHref={`${base}/store-console/explore`} />
+          <MyProductsTab exploreHref={`${base}/${root}/explore`} />
         )
       ) : (
         <LoadGate load={load} what="the Store">
-          {(d) => (tab === "explore" ? <Explore data={d} kind={kind} onChanged={reload} /> : <Requests data={d} />)}
+          {(d) => (tab === "explore" ? <Explore data={d} kind={kind} root={root} onChanged={reload} /> : <Requests data={d} kind={kind} root={root} />)}
         </LoadGate>
       )}
     </div>
@@ -164,7 +170,7 @@ function SellerProducts() {
 
 // --- Explore Products ------------------------------------------------------------------
 
-function Explore({ data, kind, onChanged }: { data: StoreConsoleData; kind: RequestKind; onChanged: () => void }) {
+function Explore({ data, kind, root, onChanged }: { data: StoreConsoleData; kind: RequestKind; root: string; onChanged: () => void }) {
   const { base } = usePanel();
   const searchId = useId();
   const categoryId = useId();
@@ -256,7 +262,8 @@ function Explore({ data, kind, onChanged }: { data: StoreConsoleData; kind: Requ
               key={p.code}
               product={p}
               canRequest={data.can_request}
-              myProductsHref={`${base}/store-console`}
+              myProductsHref={`${base}/${root}`}
+              mineLabel={WORDS[kind].mine}
               onRequest={() => {
                 setDone(null);
                 setAsking(p);
@@ -273,11 +280,13 @@ function ProductCard({
   product: p,
   canRequest,
   myProductsHref,
+  mineLabel,
   onRequest,
 }: {
   product: StoreProduct;
   canRequest: boolean;
   myProductsHref: string;
+  mineLabel: string;
   onRequest: () => void;
 }) {
   const headingId = useId();
@@ -311,8 +320,8 @@ function ProductCard({
       {p.status === "revoked" && p.request?.revoke_reason && <p className={styles.muted}>Reason: {p.request.revoke_reason}</p>}
       <div className={styles.actions}>
         {p.status === "approved" ? (
-          <Link className="w360-btn w360-btn-secondary" href={myProductsHref} aria-label={`Open ${p.name} in My Products`}>
-            Open in My Products
+          <Link className="w360-btn w360-btn-secondary" href={myProductsHref} aria-label={`Open ${p.name} in ${mineLabel}`}>
+            Open in {mineLabel}
           </Link>
         ) : p.status === "pending" ? null : (
           canRequest && (
@@ -331,7 +340,7 @@ function ProductCard({
   );
 }
 
-function RequestForm({
+export function RequestForm({
   product,
   kind,
   data,
@@ -340,7 +349,7 @@ function RequestForm({
 }: {
   product: StoreProduct;
   kind: RequestKind;
-  data: StoreConsoleData;
+  data: Pick<StoreConsoleData, "channels" | "prefill">;
   onCancel: () => void;
   onSent: (name: string) => void;
 }) {
@@ -462,7 +471,7 @@ function RequestForm({
 
 // --- My Requests --------------------------------------------------------------------------
 
-function Requests({ data }: { data: StoreConsoleData }) {
+function Requests({ data, kind, root }: { data: StoreConsoleData; kind: RequestKind; root: string }) {
   const { base } = usePanel();
   const statusId = useId();
   const [status, setStatus] = useState<"" | PromotionRequest["status"]>("");
@@ -471,7 +480,7 @@ function Requests({ data }: { data: StoreConsoleData }) {
     return (
       <EmptyState title="No requests yet" icon="store">
         <p className={styles.muted}>
-          Find a product in <Link href={`${base}/store-console/explore`}>Explore Products</Link> and request access to promote it.
+          Find a product in <Link href={`${base}/${root}/explore`}>Explore Products</Link> and request access to promote it.
         </p>
       </EmptyState>
     );
@@ -512,7 +521,7 @@ function Requests({ data }: { data: StoreConsoleData }) {
         ))}
       </Table>
       <p className={styles.muted}>
-        Approved products are in My Products. Commission you earned before a permission was revoked is kept.
+        Approved products are in {WORDS[kind].mine}. Commission you earned before a permission was revoked is kept.
       </p>
     </>
   );

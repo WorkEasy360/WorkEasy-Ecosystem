@@ -275,6 +275,13 @@ def public_plan_version(
     return _to_plan_version_dto(row) if row is not None else None
 
 
+def plan_exists(plan_id: UUID) -> bool:
+    """Whether a plan with this id exists (any status)."""
+    from workeasy360.commercial.catalog.models import Plan
+
+    return Plan.objects.filter(id=plan_id).exists()
+
+
 def require_plan_version(plan_version_id: UUID) -> PlanVersionDTO:
     dto = plan_version(plan_version_id)
     if dto is None:
@@ -374,6 +381,21 @@ def trial_row(product: Any) -> dict[str, Any] | None:
     }
 
 
+def merchandising(product: Any) -> dict[str, Any]:
+    """A product's ADR-056 store content: subcategory, tags, its three bullet
+    lists and the hand-set badges. Presentation only."""
+    return {
+        "subcategory": product.subcategory,
+        "tags": list(product.tags or []),
+        "highlights": list(product.highlights or []),
+        "benefits": list(product.benefits or []),
+        "use_cases": list(product.use_cases or []),
+        "featured": product.featured,
+        "popular": product.popular,
+        "badge_new": product.badge_new,
+    }
+
+
 def product_row(product: Any) -> dict[str, Any]:
     """One product as the catalog screens show it, with its derived public
     availability (Phase 9)."""
@@ -404,6 +426,7 @@ def product_row(product: Any) -> dict[str, Any]:
         "reseller_enabled": product.reseller_enabled,
         "affiliate_enabled": product.affiliate_enabled,
         "white_label_enabled": product.white_label_enabled,
+        **merchandising(product),
         "created_at": product.created_at.isoformat() if product.created_at else None,
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
         "activated_at": product.activated_at.isoformat()
@@ -512,10 +535,10 @@ def channels_open(product_code: str) -> frozenset[str]:
 
 
 def product_facts_by_id(product_id: Any) -> dict[str, Any] | None:
-    """``{code, status}`` of one product by id, or ``None``."""
+    """``{code, name, status}`` of one product by id, or ``None``."""
     from workeasy360.commercial.catalog.models import Product
 
-    return Product.objects.filter(id=product_id).values("code", "status").first()
+    return Product.objects.filter(id=product_id).values("code", "name", "status").first()
 
 
 def readiness_for(product_id: Any) -> list[dict[str, Any]] | None:
@@ -803,6 +826,7 @@ def sellable_plans(product_codes: list[str], *, at: Any) -> list[dict[str, Any]]
         result.append(
             {
                 "plan_version_id": row.id,
+                "plan_id": row.plan_id,
                 "plan_code": row.plan.code,
                 "plan_name": row.plan.name,
                 "product_code": row.plan.product.code,
@@ -862,6 +886,7 @@ def plan_listing(*, product_code: str | None = None) -> list[dict[str, Any]]:
             "sort_order": p.sort_order,
             "billing_type": p.billing_type,
             "kind": p.kind,
+            "recommended": p.product.recommended_plan_id == p.id,
             "product": {
                 "id": str(p.product_id),
                 "code": p.product.code,
@@ -967,6 +992,8 @@ def features_for_product(product_id: UUID) -> list[dict[str, Any]]:
             "unit": f.unit,
             "default_value": f.default_value,
             "enum_ordering": f.enum_ordering,
+            "is_public": f.is_public,
+            "description": f.description,
         }
         for f in Feature.objects.filter(product_id=product_id).order_by("key")
     ]
@@ -1022,6 +1049,8 @@ def marketplace_offers(*, at: Any) -> dict[str, list[dict[str, Any]]]:
                 "included_seats": v.included_seats,
                 "max_seats": v.max_seats,
                 "trial_days": v.trial_days,
+                "recommended": v.plan.product.recommended_plan_id == v.plan_id,
+                "sort_order": v.plan.sort_order,
             }
         )
     bundle_rows = (
@@ -1115,6 +1144,8 @@ def public_products() -> list[dict[str, Any]]:
             "availability": p.availability.value,
             "category": p.category,
             "icon": p.icon,
+            **merchandising(p),
+            "activated_at": p.activated_at.isoformat() if p.activated_at else None,
             "trial_config": trial_row(p),
             "features": [
                 {"name": f.name, "description": f.description} for f in p.public_features
@@ -1171,3 +1202,38 @@ def product_names(codes: list[str]) -> dict[str, str]:
     if not codes:
         return {}
     return dict(Product.objects.filter(code__in=set(codes)).values_list("code", "name"))
+
+
+def store_counts() -> dict[str, int]:
+    """For the Super Admin Store dashboard (ADR-056): products by Product
+    Manager status and listing, and plans on sale. Two queries."""
+    from django.db.models import Count, Q
+
+    from workeasy360.commercial.catalog.models import Plan, Product
+    from workeasy360.contracts.enums import ProductListing, ProductStatus
+
+    products = Product.objects.aggregate(
+        published=Count(
+            "id",
+            filter=Q(
+                status=ProductStatus.AVAILABLE.value, listing=ProductListing.LISTED.value
+            ),
+        ),
+        draft=Count("id", filter=Q(status=ProductStatus.DRAFT.value)),
+        coming_soon=Count("id", filter=Q(listing=ProductListing.COMING_SOON.value)),
+        archived=Count(
+            "id",
+            filter=Q(
+                status__in=[ProductStatus.DEPRECATED.value, ProductStatus.RETIRED.value]
+            ),
+        ),
+        total=Count("id"),
+    )
+    plans = Plan.objects.aggregate(
+        active=Count("id", filter=Q(status=CatalogStatus.AVAILABLE.value)),
+        draft=Count("id", filter=Q(status=CatalogStatus.DRAFT.value)),
+    )
+    return {
+        **{f"products_{k}": int(v or 0) for k, v in products.items()},
+        **{f"plans_{k}": int(v or 0) for k, v in plans.items()},
+    }

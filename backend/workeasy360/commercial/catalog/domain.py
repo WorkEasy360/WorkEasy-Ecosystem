@@ -333,6 +333,62 @@ def validate_category(raw: Any) -> str:
     return text
 
 
+#: ADR-056 merchandising: the store's tags and the listing's bullet lists.
+MAX_TAGS: Final = 12
+MAX_TAG: Final = 32
+MAX_LIST_ITEMS: Final = 12
+MAX_LIST_ITEM: Final = 200
+#: The listing's bullet lists, in the order a product page shows them.
+MERCHANDISING_LISTS: Final = ("highlights", "benefits", "use_cases")
+#: The store's hand-set badges (``New`` is also shown for 30 days after launch).
+MERCHANDISING_FLAGS: Final = ("featured", "popular", "badge_new")
+
+
+def validate_subcategory(raw: Any) -> str:
+    """A second, narrower category (``Invoicing`` under ``Finance``): the same
+    plain-text rules as the category."""
+    try:
+        return validate_category(raw)
+    except CatalogValidationError as exc:
+        raise CatalogValidationError(
+            f"The subcategory is at most {MAX_CATEGORY} characters of plain text.",
+            field="subcategory",
+        ) from exc
+
+
+def _plain(item: Any, *, field: str, maximum: int) -> str:
+    text = " ".join(str(item if item is not None else "").split())
+    if not text or len(text) > maximum or any(ord(ch) < 32 for ch in text):
+        raise CatalogValidationError(
+            f"Each {field} entry is 1 to {maximum} characters of plain text.",
+            field=field,
+        )
+    return text
+
+
+def validate_tags(raw: Any) -> list[str]:
+    """Up to ``MAX_TAGS`` short search tags, lower-cased, duplicates dropped."""
+    if not isinstance(raw, list) or len(raw) > MAX_TAGS:
+        raise CatalogValidationError(
+            f"tags is a list of at most {MAX_TAGS} entries.", field="tags"
+        )
+    seen: list[str] = []
+    for item in raw:
+        tag = _plain(item, field="tags", maximum=MAX_TAG).lower()
+        if tag not in seen:
+            seen.append(tag)
+    return seen
+
+
+def validate_bullets(raw: Any, *, field: str) -> list[str]:
+    """One of the listing's bullet lists: up to ``MAX_LIST_ITEMS`` lines."""
+    if not isinstance(raw, list) or len(raw) > MAX_LIST_ITEMS:
+        raise CatalogValidationError(
+            f"{field} is a list of at most {MAX_LIST_ITEMS} entries.", field=field
+        )
+    return [_plain(item, field=field, maximum=MAX_LIST_ITEM) for item in raw]
+
+
 def validate_icon(raw: Any) -> str:
     """Empty (the frontend then draws a monogram) or one allow-listed key."""
     key = str(raw or "").strip().lower()

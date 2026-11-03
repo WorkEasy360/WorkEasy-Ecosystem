@@ -1338,6 +1338,11 @@ def commission_rules_view(request, ctx, **_kw: Any) -> JsonResponse:
         partner_id=_uuid(body, "partner_id", required=False),
         effective_from=start,
         recurring=body.get("recurring", False),
+        # ADR-056: plan-specific, fixed-amount and limited-duration rules.
+        plan_code=body.get("plan_code", ""),
+        fixed_amount_minor=body.get("fixed_amount_minor"),
+        fixed_currency=body.get("fixed_currency", ""),
+        recurring_months=body.get("recurring_months"),
     )
     return JsonResponse(
         {"id": str(rule.id), "code": rule.code, "version": rule.version}, status=201

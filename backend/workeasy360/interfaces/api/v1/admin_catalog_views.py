@@ -41,6 +41,7 @@ def _plan_json(plan: Any) -> dict[str, Any]:
         "sort_order": plan.sort_order,
         "billing_type": plan.billing_type,
         "kind": plan.kind,
+        "recommended": plan.product.recommended_plan_id == plan.id,
     }
 
 
@@ -136,6 +137,7 @@ def plan_detail_view(
             is_public=body.get("is_public"),
             sort_order=body.get("sort_order"),
             billing_type=_optional_billing_type(body),
+            recommended=body.get("recommended"),
         )
     return JsonResponse(_plan_json(plan))
 

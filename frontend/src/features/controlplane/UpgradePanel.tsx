@@ -339,7 +339,8 @@ function Decision({
   const id = useId();
   const [action, setAction] = useState<UpgradeAction>(waiting ? "approve" : "reject");
   const [note, setNote] = useState("");
-  const [reference, setReference] = useState("");
+  // 2026-11-03: the partner's own transfer reference, to verify and keep.
+  const [reference, setReference] = useState(open.setup_fee?.payment_reference ?? "");
   // Ticked: what the partner asked for. The offered list is the catalogue; a
   // code the partner asked for that is not on it is still shown, so nothing it
   // asked for is hidden, and the server refuses what cannot be granted.
@@ -443,15 +444,20 @@ function Decision({
                 </ul>
               )}
             </fieldset>
+            {open.setup_fee && <FeeStatus fee={open.setup_fee} />}
             <TextField
-              label={open.setup_fee ? "Set-up fee payment reference (required)" : "Commercial reference (optional)"}
+              label={
+                open.setup_fee && !open.setup_fee.paid_online ? "Set-up fee payment reference (required)" : "Commercial reference (optional)"
+              }
               value={reference}
               onChange={setReference}
               maxLength={120}
               hint={
-                open.setup_fee
-                  ? `This upgrade carries a set-up fee of ${money(open.setup_fee.amount_minor, open.setup_fee.currency)}. Enter the invoice or transfer reference once it is paid; approval is refused without it.`
-                  : "A pointer to the terms agreed, such as a contract number. It is recorded; no amount is stored or charged here."
+                open.setup_fee?.paid_online
+                  ? "The set-up fee was paid online and confirmed by the payment provider. A reference is optional."
+                  : open.setup_fee
+                    ? `This upgrade carries a set-up fee of ${money(open.setup_fee.amount_minor, open.setup_fee.currency)}. Check the partner's transfer, then keep its reference; approval is refused without it.`
+                    : "A pointer to the terms agreed, such as a contract number. It is recorded; no amount is stored or charged here."
               }
             />
           </>
@@ -486,5 +492,31 @@ function Decision({
         )}
       </div>
     </div>
+  );
+}
+
+/** How the partner paid an upgrade's set-up fee (2026-11-03): online, confirmed by
+ * the payment provider, or offline, with the reference staff must verify. */
+function FeeStatus({ fee }: { fee: NonNullable<UpgradeRequestRow["setup_fee"]> }) {
+  const amount = money(fee.amount_minor, fee.currency);
+  if (fee.paid_online) {
+    return (
+      <p role="status" className="w360-badge w360-badge-success">
+        Set-up fee {amount}: paid online, confirmed by the payment provider{fee.online_payment?.test_mode ? " (test mode)" : ""}.
+      </p>
+    );
+  }
+  if (fee.payment_method === "offline") {
+    return (
+      <p role="status" className="w360-badge w360-badge-warning">
+        Set-up fee {amount}: the partner says it paid offline, reference {fee.payment_reference || "not given"}. Verify the transfer before
+        approving.
+      </p>
+    );
+  }
+  return (
+    <p role="status" className="w360-badge w360-badge-warning">
+      Set-up fee {amount}: not paid yet.
+    </p>
   );
 }

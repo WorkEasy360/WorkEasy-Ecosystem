@@ -23,6 +23,7 @@ from workeasy360.interfaces.api.v1 import (
     admin_product_manager_views,
     admin_product_views,
     admin_programme_views,
+    admin_store_views,
     admin_views,
     auth_views,
     commercial_views,
@@ -34,6 +35,7 @@ from workeasy360.interfaces.api.v1 import (
     intelligence_views,
     launcher_views,
     partner_api_views,
+    partner_desk_views,
     partner_panel_views,
     partner_views,
     payment_views,
@@ -112,6 +114,12 @@ urlpatterns = [
     # Anonymous, rate-limited, never CSRF-exempt; tokens travel in the body.
     path("public/site", public_site_views.site_view, name="public-site"),
     path("public/catalog", public_site_views.catalog_view, name="public-catalog"),
+    path("public/store", public_site_views.store_view, name="public-store"),
+    path(
+        "public/store/products/<slug:slug>",
+        public_site_views.store_product_view,
+        name="public-store-product",
+    ),
     path(
         "public/catalog/products/<slug:slug>",
         public_site_views.catalog_product_view,
@@ -353,7 +361,25 @@ urlpatterns = [
     # commercial/subscriptions/models.py ProductTrial).
     path("orgs/<slug:org_slug>/trials", trial_views.trials_view, name="trials"),
     path("orgs/<slug:org_slug>/explore", trial_views.explore_view, name="explore"),
+    path("orgs/<slug:org_slug>/store", trial_views.store_view, name="org-store"),
+    # ADR-056: one product of the organization's Store, with its plan comparison.
+    path(
+        "orgs/<slug:org_slug>/store/<slug:product_code>",
+        trial_views.store_product_view,
+        name="org-store-product",
+    ),
     path("orgs/<slug:org_slug>/brand", trial_views.brand_view, name="org-brand"),
+    # 2026-11-03: the organization's tickets to its partner (partner helpdesk).
+    path(
+        "orgs/<slug:org_slug>/provider-tickets",
+        partner_desk_views.org_tickets_view,
+        name="org-support-tickets",
+    ),
+    path(
+        "orgs/<slug:org_slug>/provider-tickets/<uuid:ticket_id>",
+        partner_desk_views.org_ticket_view,
+        name="org-support-ticket",
+    ),
     path(
         "orgs/<slug:org_slug>/brand/logo",
         trial_views.brand_logo_view,
@@ -841,6 +867,60 @@ _admin = [
     path(
         "admin/products/console", admin_product_views.console_view, name="admin-products"
     ),
+    # The Super Admin Store: the catalog as a marketplace page (read only).
+    path(
+        "admin/products/store",
+        admin_product_views.store_view,
+        name="admin-products-store",
+    ),
+    # ADR-056: Store management - dashboard, product-wise commercial rules,
+    # plans & pricing, the central engine's preview and partner price ranges.
+    path(
+        "admin/store/dashboard",
+        admin_store_views.dashboard_view,
+        name="admin-store-dashboard",
+    ),
+    path(
+        "admin/store/commercial-rules",
+        admin_store_views.commercial_rules_view,
+        name="admin-store-commercial-rules",
+    ),
+    path(
+        "admin/store/commission",
+        admin_store_views.product_commission_view,
+        name="admin-store-commission",
+    ),
+    path("admin/store/quote", admin_store_views.quote_view, name="admin-store-quote"),
+    path(
+        "admin/store/products/<uuid:product_id>/plans",
+        admin_store_views.plan_board_view,
+        name="admin-store-plan-board",
+    ),
+    path(
+        "admin/store/plans/<uuid:plan_id>/duplicate",
+        admin_store_views.plan_duplicate_view,
+        name="admin-store-plan-duplicate",
+    ),
+    path(
+        "admin/store/prices/<uuid:price_id>/close",
+        admin_store_views.price_close_view,
+        name="admin-store-price-close",
+    ),
+    path(
+        "admin/store/prices/<uuid:price_id>/cancel",
+        admin_store_views.price_cancel_view,
+        name="admin-store-price-cancel",
+    ),
+    path(
+        "admin/store/price-ranges",
+        admin_store_views.price_ranges_view,
+        name="admin-store-price-ranges",
+    ),
+    path(
+        "admin/store/price-ranges/<uuid:range_id>",
+        admin_store_views.price_range_view,
+        name="admin-store-price-range",
+    ),
     # ADR-051: the Product Manager - add (wizard), one product, its lifecycle,
     # its listing images and its activity. Edits reuse admin/catalog/products.
     path(
@@ -1272,6 +1352,31 @@ _admin = [
         name="admin-margin-end",
     ),
     path(
+        "admin/partner-tickets",
+        partner_desk_views.staff_tickets_view,
+        name="admin-partner-tickets",
+    ),
+    path(
+        "admin/partner-tickets/<uuid:ticket_id>",
+        partner_desk_views.staff_ticket_view,
+        name="admin-partner-ticket",
+    ),
+    path(
+        "admin/partner-withdrawals",
+        partner_desk_views.staff_withdrawals_view,
+        name="admin-partner-withdrawals",
+    ),
+    path(
+        "admin/partner-withdrawals/<uuid:withdrawal_id>",
+        partner_desk_views.staff_withdrawal_action_view,
+        name="admin-partner-withdrawal",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/payout-method",
+        partner_desk_views.staff_payout_method_view,
+        name="admin-partner-payout-method",
+    ),
+    path(
         "admin/partner-programme/fees",
         admin_programme_views.program_fees_view,
         name="admin-program-fees",
@@ -1570,6 +1675,16 @@ _partner = [
         name="partner-affiliate-store",
     ),
     path(
+        "partner/<uuid:partner_id>/affiliate/marketplace",
+        partner_panel_views.affiliate_marketplace_view,
+        name="partner-affiliate-marketplace",
+    ),
+    path(
+        "partner/<uuid:partner_id>/reseller/marketplace",
+        partner_panel_views.reseller_marketplace_view,
+        name="partner-reseller-marketplace",
+    ),
+    path(
         "partner/<uuid:partner_id>/affiliate/product-requests",
         partner_panel_views.affiliate_product_request_view,
         name="partner-affiliate-product-requests",
@@ -1676,6 +1791,11 @@ _partner = [
         name="partner-upgrade-submit",
     ),
     path(
+        "partner/<uuid:partner_id>/upgrade/requests/<uuid:request_id>/pay",
+        partner_panel_views.upgrade_pay_view,
+        name="partner-upgrade-pay",
+    ),
+    path(
         "partner/<uuid:partner_id>/upgrade/requests/<uuid:request_id>/cancel",
         partner_panel_views.upgrade_cancel_view,
         name="partner-upgrade-cancel",
@@ -1734,6 +1854,12 @@ _partner = [
         "partner/<uuid:partner_id>/plans",
         partner_panel_views.plans_view,
         name="partner-plans",
+    ),
+    # ADR-056: the partner's own price inside Super Admin's allowed range.
+    path(
+        "partner/<uuid:partner_id>/own-price",
+        partner_panel_views.own_price_view,
+        name="partner-own-price",
     ),
     path(
         "partner/<uuid:partner_id>/packages",
@@ -1874,6 +2000,47 @@ _partner = [
         "partner/<uuid:partner_id>/support",
         partner_panel_views.support_view,
         name="partner-support",
+    ),
+    # 2026-11-03: the helpdesk and Wallet & Payouts (unified partner dashboard).
+    path(
+        "partner/<uuid:partner_id>/tickets",
+        partner_desk_views.tickets_view,
+        name="partner-tickets",
+    ),
+    path(
+        "partner/<uuid:partner_id>/tickets/<uuid:ticket_id>",
+        partner_desk_views.ticket_view,
+        name="partner-ticket",
+    ),
+    path(
+        "partner/<uuid:partner_id>/canned-responses",
+        partner_desk_views.canned_responses_view,
+        name="partner-canned-responses",
+    ),
+    path(
+        "partner/<uuid:partner_id>/canned-responses/<uuid:response_id>",
+        partner_desk_views.canned_response_view,
+        name="partner-canned-response",
+    ),
+    path(
+        "partner/<uuid:partner_id>/withdrawals",
+        partner_desk_views.wallet_view,
+        name="partner-wallet",
+    ),
+    path(
+        "partner/<uuid:partner_id>/withdrawals/method",
+        partner_desk_views.payout_method_view,
+        name="partner-payout-method",
+    ),
+    path(
+        "partner/<uuid:partner_id>/withdrawals/request",
+        partner_desk_views.withdrawals_view,
+        name="partner-withdrawals",
+    ),
+    path(
+        "partner/<uuid:partner_id>/withdrawals/<uuid:withdrawal_id>/cancel",
+        partner_desk_views.withdrawal_cancel_view,
+        name="partner-withdrawal-cancel",
     ),
 ]
 

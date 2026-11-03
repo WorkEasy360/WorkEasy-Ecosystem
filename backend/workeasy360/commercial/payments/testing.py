@@ -38,6 +38,10 @@ def complete(
         raise PaymentValidationError(
             "outcome must be succeeded or failed.", field="outcome"
         )
+    if not organization_id:
+        return _complete_partner_fee(
+            reference=reference, outcome=outcome, user_id=user_id
+        )
     try:
         organization = UUID(str(organization_id))
     except ValueError as exc:
@@ -71,6 +75,43 @@ def complete(
         currency=attempt.currency,
         attempt_id=str(attempt.id),
         organization_id=str(organization),
+    )
+    secret = credentials.webhook_secret(provider.webhook_secret_ref, adapter="fake")
+    signature = fake.sign(body, secret)
+    del secret
+    return webhooks.process(provider.key, {fake.SIGNATURE_HEADER: signature}, body)
+
+
+def _complete_partner_fee(
+    *, reference: str, outcome: str, user_id: Any
+) -> dict[str, Any]:
+    """A partner fee's test checkout (2026-11-03): only the person who started
+    it may complete it. The callback names no organization, like a real one."""
+    from workeasy360.commercial.payments.models import PartnerFeePayment, PaymentProvider
+
+    payment = (
+        PartnerFeePayment.objects.filter(
+            provider_reference=reference[:128], created_by_user_id=user_id
+        ).first()
+        if reference
+        else None
+    )
+    provider = (
+        PaymentProvider.objects.filter(key=payment.provider_key, adapter="fake").first()
+        if payment is not None
+        else None
+    )
+    if payment is None or provider is None:
+        raise PaymentRecordNotFound("No such payment.")
+    body = fake.event_body(
+        id=f"evt_test_{uuid.uuid4().hex}",
+        type=_KINDS[outcome],
+        reference=reference,
+        payment_id=f"fake_pay_{payment.id.hex}",
+        amount_minor=payment.amount_minor,
+        currency=payment.currency,
+        attempt_id=str(payment.id),
+        organization_id="",
     )
     secret = credentials.webhook_secret(provider.webhook_secret_ref, adapter="fake")
     signature = fake.sign(body, secret)

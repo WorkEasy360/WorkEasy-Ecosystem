@@ -127,6 +127,7 @@ describe("the Super Admin navigation", () => {
       "Subscriptions",
       "Entitlements",
       "Product manager",
+      "Store",
       "Plans & add-ons",
       "Currency & pricing",
       "Orders",

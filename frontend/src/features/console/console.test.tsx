@@ -281,7 +281,8 @@ describe("members", () => {
     expect(screen.getByRole("button", { name: "Suspend Bob Jones" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reactivate sue@acme.test" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Suspend sue@acme.test" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Invitations" })).toHaveAttribute("href", "/o/acme/settings/invitations");
+    // Invitations is a tab of Organization & Team (the shell draws it, orgNav.test.ts), not a link on this page.
+    expect(screen.queryByRole("link", { name: "Invitations" })).not.toBeInTheDocument();
     await expectNoViolations(container);
   });
 

@@ -120,6 +120,28 @@ class Product(models.Model):
     #: access decision: a partner still needs a ``PartnerProductGrant`` and the
     #: capability, and a customer still needs an entitlement. True by default so
     #: products that predate the flags keep selling exactly where they did.
+    #: ADR-056 merchandising - presentation only, never an access decision.
+    subcategory = models.CharField(max_length=64, blank=True, default="", db_default="")
+    tags = models.JSONField(default=list, blank=True, db_default=[])
+    #: The listing's bullet lists: key features, benefits and use cases.
+    highlights = models.JSONField(default=list, blank=True, db_default=[])
+    benefits = models.JSONField(default=list, blank=True, db_default=[])
+    use_cases = models.JSONField(default=list, blank=True, db_default=[])
+    #: Hand-set store badges. ``badge_new`` shows "New" whatever the launch date.
+    featured = models.BooleanField(default=False, db_default=False)
+    popular = models.BooleanField(default=False, db_default=False)
+    badge_new = models.BooleanField(default=False, db_default=False)
+    #: The plan a store's comparison highlights (ADR-056) - at most one per
+    #: product by construction. A reference, not a column on the plan tables,
+    #: which carry no booleans (features live in ``PlanFeature``).
+    recommended_plan = models.ForeignKey(
+        "catalog.Plan",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
     customer_store_enabled = models.BooleanField(default=True, db_default=True)
     reseller_enabled = models.BooleanField(default=True, db_default=True)
     affiliate_enabled = models.BooleanField(default=True, db_default=True)
@@ -406,7 +428,6 @@ class Plan(models.Model):
     #: listing, and purchase is authorised separately.
     is_public = models.BooleanField(default=True)
     sort_order = models.IntegerField(default=100)
-
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

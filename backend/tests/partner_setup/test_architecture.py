@@ -57,12 +57,21 @@ def test_the_partner_models_are_the_frozen_set_plus_the_declared_additions():
         "PartnerUpgradeRequest",
         # ADR-053: the set-up fee setting.
         "PartnerProgramFee",
+        # ADR-057 (2026-11-03): the helpdesk, payout details and withdrawals.
+        "PartnerTicket",
+        "PartnerTicketMessage",
+        "PartnerCannedResponse",
+        "PartnerPayoutMethod",
+        "PartnerWithdrawalRequest",
         # ADR-054: which products a partner may promote (a permission, not a
         # kind of partner; tests/affiliate_products pins it).
         "PartnerPromotionGrant",
         # ADR-055: a partner's request to promote a product - a workflow record
         # that grants nothing (tests/store_console pins what it does).
         "PartnerPromotionRequest",
+        # ADR-056: Super Admin's bounds on a selling partner's own price - a
+        # boundary, never a price (tests/store_upgrade pins what it allows).
+        "SellingPriceRange",
     }
 
 

@@ -18,6 +18,7 @@ import { useCart } from "./cart";
 import { AdminInsights } from "./DashboardScreen";
 import { PageHeader, Panel, UUID_RE, intervalLabel } from "./consoleUi";
 import { useOrgAccess } from "./OrgAccess";
+import { ProviderSupport } from "./ProviderSupport";
 
 /**
  * The customer's side of the ecosystem (Phase 9): the dashboard every member
@@ -582,6 +583,7 @@ export function HelpScreen() {
           </div>
         </dl>
       </Panel>
+      <ProviderSupport slug={slug} />
       <Panel title="Common questions">
         <ul className={local.includes}>
           <li>

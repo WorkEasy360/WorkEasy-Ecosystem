@@ -717,6 +717,7 @@ def test_the_product_manager_branches_on_no_product_code():
     one go through exactly the same code."""
     files = [
         ROOT / "backend/workeasy360/commercial/controlplane/product_manager.py",
+        ROOT / "backend/workeasy360/commercial/controlplane/store.py",
         ROOT / "backend/workeasy360/interfaces/api/v1/admin_product_manager_views.py",
         *(ROOT / "frontend/src/features/controlplane/productmanager").glob("*.tsx"),
         *(ROOT / "frontend/src/features/controlplane/productmanager").glob("*.ts"),

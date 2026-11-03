@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { adminProgrammeApi, type MarginRule } from "@/lib/api/adminProgramme";
 import { partnerConsoleApi } from "@/lib/api/partnerConsole";
+import { can, useAdmin } from "./ControlShell";
 import { LoadGate, Table, money, useAction, useLoad, when } from "./ui";
-import { SelectField, TextField } from "./widgets";
+import { SelectField, TextAreaField, TextField } from "./widgets";
 import cp from "./ControlPlane.module.css";
 import styles from "./AdminConsole.module.css";
 
@@ -175,12 +176,29 @@ function MarginsSection({ manage, products }: { manage: boolean; products: { cod
   );
 }
 
+/** Partners → Upgrade Fees (2026-11-03): the set-up fees alone, where staff look
+ * for them. Super Admin's Partner Programme shows the same section. */
+export function UpgradeFeesScreen() {
+  const { permissions } = useAdmin();
+  return (
+    <div className={cp.stack}>
+      <h1>Upgrade fees</h1>
+      <p className={cp.lead}>
+        What a partner pays to upgrade - Affiliate to Reseller, or to White-label - and how to pay it offline. Upgrade requests and their
+        payments are on each partner&apos;s Upgrade panel.
+      </p>
+      <FeesSection manage={can(permissions, "platform.staff_partner.manage")} />
+    </div>
+  );
+}
+
 function FeesSection({ manage }: { manage: boolean }) {
   const [load, reload] = useLoad(() => adminProgrammeApi.fees(), []);
   const { act, busy, feedback } = useAction(reload);
   const [target, setTarget] = useState("reseller");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("INR");
+  const [instructions, setInstructions] = useState("");
   // The amount travels as the decimal text typed; the server converts it to
   // minor units for the currency (no money arithmetic in the browser).
   const valid = /^\d{1,10}(\.\d{1,2})?$/.test(amount.trim());
@@ -190,17 +208,19 @@ function FeesSection({ manage }: { manage: boolean }) {
         Partner set-up fees
       </h2>
       <p className={cp.lead}>
-        An optional one-time fee for becoming a Reseller or White-label partner. Workeasy360 invoices it; an upgrade with a fee is
-        approved only with the payment reference. Zero removes the fee. Requests already open keep the fee they started with.
+        An optional one-time fee for becoming a Reseller or White-label partner. The partner pays it online (when a payment provider
+        takes the currency) or offline, giving the transfer&apos;s reference, which you verify before approving. Zero removes the fee.
+        Requests already open keep the fee they started with.
       </p>
       {feedback}
       <LoadGate load={load} what="set-up fees">
         {(d) => (
-          <Table caption="Set-up fees" head={["Becoming", "Fee"]}>
+          <Table caption="Set-up fees" head={["Becoming", "Fee", "How to pay offline"]}>
             {(["reseller", "white_label"] as const).map((key) => (
               <tr key={key}>
                 <th scope="row">{key === "reseller" ? "Reseller" : "White-label"}</th>
                 <td className={cp.num}>{d.fees[key] ? money(d.fees[key]!.amount_minor, d.fees[key]!.currency) : "No fee"}</td>
+                <td className={cp.preWrap}>{d.fees[key]?.instructions || "—"}</td>
               </tr>
             ))}
           </Table>
@@ -212,7 +232,10 @@ function FeesSection({ manage }: { manage: boolean }) {
           onSubmit={(e) => {
             e.preventDefault();
             if (!valid) return;
-            void act(() => adminProgrammeApi.setFee({ experience: target, amount: amount.trim(), currency }), "Set-up fee saved.");
+            void act(
+              () => adminProgrammeApi.setFee({ experience: target, amount: amount.trim(), currency, instructions: instructions.trim() }),
+              "Set-up fee saved.",
+            );
           }}
         >
           <h3>Set a fee</h3>
@@ -239,6 +262,13 @@ function FeesSection({ manage }: { manage: boolean }) {
             maxLength={13}
             hint="For example 25000 or 25000.00. Zero removes the fee."
             error={amount && !valid ? "Enter an amount with at most two decimals." : undefined}
+          />
+          <TextAreaField
+            label="How to pay offline"
+            value={instructions}
+            onChange={setInstructions}
+            maxLength={1000}
+            hint="Shown to the partner beside the fee: bank account, IFSC, UPI ID. The partner then gives the transfer's reference."
           />
           <div>
             <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !valid}>

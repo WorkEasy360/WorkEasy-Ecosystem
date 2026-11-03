@@ -339,3 +339,16 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* 2026-11-03: a ticket to the organization's support provider. */
+.ticketForm {
+  display: grid;
+  gap: var(--w360-space-3);
+  max-width: 640px;
+}
+
+.messageBody {
+  margin: 4px 0 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -321,7 +321,8 @@ def test_support_points_at_the_contact_and_the_help_desk_and_lists_no_tickets(
     body = owner_client.get(api(pid, "support")).json()
     assert body["contact"] == {"email": "partners@workeasy360.example", "available": True}
     assert body["requests"] is None
-    assert body["not_implemented"]["partner_tickets"]
+    # 2026-11-03: tickets are built (the partner helpdesk), so no gap is named.
+    assert body["tickets"] is True and "partner_tickets" not in body["not_implemented"]
     assert body["partner"]["name"] == seller["partner"].display_name
     assert body["priorities"] == ["low", "normal", "high", "urgent"]
     assert (
@@ -355,7 +356,9 @@ def test_support_without_an_address_offers_none(seller, owner_client, settings):
     }
 
 
-def test_no_endpoint_creates_a_ticket():
+def test_tickets_are_the_helpdesk_s_own_routes_only():
+    """ADR-057 built the helpdesk: a partner's ticket routes are exactly the
+    two of ``partner_desk_views`` - no other module invents a ticket store."""
     import pathlib
     import re
 
@@ -367,7 +370,11 @@ def test_no_endpoint_creates_a_ticket():
         / "v1"
         / "urls.py"
     ).read_text(encoding="utf-8")
-    assert not re.search(r'"partner/[^"]*(ticket|helpdesk|case)', urls)
+    routes = re.findall(r'"(partner/[^"]*(?:ticket|helpdesk|case)[^"]*)"', urls)
+    assert routes == [
+        "partner/<uuid:partner_id>/tickets",
+        "partner/<uuid:partner_id>/tickets/<uuid:ticket_id>",
+    ]
 
 
 # --- users search --------------------------------------------------------------------------------

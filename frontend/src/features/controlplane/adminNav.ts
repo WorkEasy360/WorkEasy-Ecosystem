@@ -40,6 +40,7 @@ export function adminNav(p: string[]): SidebarGroup[] {
         ),
         section("store", "Product Store", "store", [
           { href: "/admin/products", label: "Product manager", when: can(p, "platform.staff_catalog.view") },
+          { href: "/admin/store", label: "Store", when: can(p, "platform.staff_catalog.view") },
           { href: "/admin/plans", label: "Plans & add-ons", when: can(p, "platform.staff_catalog.view") },
           { href: "/admin/pricing", label: "Currency & pricing", when: can(p, "platform.staff_catalog.view") },
           { href: "/admin/orders", label: "Orders", when: can(p, "platform.staff_payment.view") },

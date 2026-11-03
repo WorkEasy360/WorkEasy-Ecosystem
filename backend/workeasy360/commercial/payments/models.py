@@ -596,3 +596,80 @@ class PaymentWebhookEvent(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.provider_key}:{self.event_id}"
+
+
+class PartnerFeePayment(models.Model):
+    """One online attempt to pay a fee a **partner** owes the platform
+    (2026-11-03): today, the set-up fee of a partner upgrade. **Control plane**:
+    a partner is not an organization, so this is not an invoice attempt.
+
+    The same hosted checkout as an invoice (``checkout.choose_provider``, the
+    provider adapters, the signed webhook), the same rule: only a verified
+    provider callback marks it paid - never the browser's return. ``purpose``
+    and ``subject_id`` say what it pays for (``partner_upgrade`` and the
+    request's id); what a payment *does* belongs to the module that registered
+    for the purpose (``partner_fees.register``). No card data.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        AWAITING_PAYMENT = "awaiting_payment", "Awaiting payment"
+        SUCCEEDED = "succeeded", "Succeeded"
+        FAILED = "failed", "Failed"
+        EXPIRED = "expired", "Expired"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    purpose = models.CharField(max_length=32)
+    subject_id = models.UUIDField()
+    partner_id = models.UUIDField()
+    provider_key = models.CharField(max_length=32)
+    provider_mode = models.CharField(max_length=8, blank=True, default="")
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True
+    )
+    amount_minor = models.BigIntegerField()
+    currency = models.CharField(max_length=3)
+    provider_reference = models.CharField(max_length=128, blank=True, default="")
+    provider_payment_id = models.CharField(max_length=128, blank=True, default="")
+    checkout_url = models.TextField(blank=True, default="")
+    failure_code = models.CharField(max_length=64, blank=True, default="")
+    created_by_user_id = models.UUIDField(null=True, blank=True)
+    expires_at = models.DateTimeField()
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "payments_partner_fee_payment"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider_key", "provider_reference"],
+                condition=~models.Q(provider_reference=""),
+                name="uq_partner_fee_provider_reference",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount_minor__gt=0),
+                name="ck_partner_fee_amount_positive",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    status__in=[
+                        "pending",
+                        "awaiting_payment",
+                        "succeeded",
+                        "failed",
+                        "expired",
+                    ]
+                ),
+                name="ck_partner_fee_status",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["purpose", "subject_id", "status"],
+                name="ix_partner_fee_subject",
+            )
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.purpose}:{self.status}"

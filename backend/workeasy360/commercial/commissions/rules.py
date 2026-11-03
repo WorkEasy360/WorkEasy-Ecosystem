@@ -31,6 +31,7 @@ from workeasy360.commercial.partners.domain import clean_reason
 from workeasy360.contracts.enums import PartnerStatus
 from workeasy360.contracts.errors import PartnerRecordNotFound, PartnerValidationError
 from workeasy360.contracts.values.identifiers import ProductCode
+from workeasy360.contracts.values.money import CurrencyCode
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.audit import services as audit
 from workeasy360.platform.authz import services as authz
@@ -56,8 +57,17 @@ def create_rule_version(
     partner_id: UUID | None = None,
     effective_from: datetime | None = None,
     recurring: Any = False,
+    plan_code: Any = "",
+    fixed_amount_minor: Any = None,
+    fixed_currency: Any = "",
+    recurring_months: Any = None,
 ) -> Any:
     """Create the next version of a rule, retiring the one it replaces.
+
+    ADR-056: ``plan_code`` narrows a product rule to one plan;
+    ``fixed_amount_minor`` + ``fixed_currency`` pay a fixed amount per
+    qualifying payment instead of ``rate_bp``; ``recurring_months`` limits how
+    long a recurring rule keeps earning after the sale.
 
     Sales made before ``effective_from`` keep the version they were computed
     under; nothing already accrued is recalculated. ``rate_bp`` is integer
@@ -98,6 +108,15 @@ def create_rule_version(
             raise PartnerValidationError(
                 "product_code is not valid.", field="product_code"
             ) from exc
+    plan = str(plan_code or "").strip()
+    if plan and (not product or len(plan) > 64):
+        raise PartnerValidationError(
+            "A plan-specific rule names its product, and a plan code of at most "
+            "64 characters.",
+            field="plan_code",
+        )
+    fixed, fixed_cur = _fixed_terms(fixed_amount_minor, fixed_currency)
+    months = _recurring_months(recurring_months, recurring)
     if partner_id is not None and partner_selectors.partner_row(partner_id) is None:
         raise PartnerRecordNotFound("No such partner.", partner_id=str(partner_id))
 
@@ -125,10 +144,13 @@ def create_rule_version(
                 field="effective_from",
             )
         if live is not None and (
-            (live.partner_id != partner_id) or (live.product_code != product)
+            (live.partner_id != partner_id)
+            or (live.product_code != product)
+            or (live.plan_code != plan)
         ):
             raise PartnerValidationError(
-                "A rule's partner and product are fixed; create a new code instead.",
+                "A rule's partner, product and plan are fixed; create a new code "
+                "instead.",
                 field="code",
             )
         if live is not None:
@@ -141,6 +163,10 @@ def create_rule_version(
             product_code=product,
             rate_bp=rate_bp,
             recurring=recurring,
+            plan_code=plan,
+            fixed_amount_minor=fixed,
+            fixed_currency=fixed_cur,
+            recurring_months=months,
             effective_from=start,
             reason=why,
             created_by_id=ctx.user_id,
@@ -157,12 +183,68 @@ def create_rule_version(
                 "recurring": rule.recurring,
                 "partner_id": str(partner_id) if partner_id else None,
                 "product_code": product,
+                "plan_code": plan,
+                "fixed_amount_minor": fixed,
+                "fixed_currency": fixed_cur,
+                "recurring_months": months,
                 "effective_from": start.isoformat(),
+                # The version this replaces - "previous value" in the trail.
+                "previous": {
+                    "version": live.version,
+                    "rate_bp": live.rate_bp,
+                    "fixed_amount_minor": live.fixed_amount_minor,
+                    "recurring": live.recurring,
+                    "recurring_months": live.recurring_months,
+                }
+                if live is not None
+                else None,
             },
             reason=why,
         )
     metrics.increment("commission_rule_changes_total")
     return rule
+
+
+def _fixed_terms(amount: Any, currency: Any) -> tuple[int | None, str]:
+    """A fixed commission is an amount and its currency together, or neither."""
+    if amount is None:
+        if currency:
+            raise PartnerValidationError(
+                "fixed_currency needs fixed_amount_minor.", field="fixed_amount_minor"
+            )
+        return None, ""
+    if (
+        isinstance(amount, bool)
+        or not isinstance(amount, int)
+        or not 0 < amount <= 10**12
+    ):
+        raise PartnerValidationError(
+            "fixed_amount_minor must be a whole number of minor units above zero.",
+            field="fixed_amount_minor",
+        )
+    try:
+        code = CurrencyCode(str(currency or "").upper()).value
+    except ValueError as exc:
+        raise PartnerValidationError(
+            "A fixed commission needs its currency.", field="fixed_currency"
+        ) from exc
+    return amount, code
+
+
+def _recurring_months(value: Any, recurring: bool) -> int | None:
+    if value is None:
+        return None
+    if not recurring:
+        raise PartnerValidationError(
+            "recurring_months applies to a recurring rule only.",
+            field="recurring_months",
+        )
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 120:
+        raise PartnerValidationError(
+            "recurring_months is a whole number of months from 1 to 120.",
+            field="recurring_months",
+        )
+    return value
 
 
 # --- assigning a rule to one partner ----------------------------------------

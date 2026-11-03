@@ -27,7 +27,28 @@ export type NotImplemented = Record<string, string>;
 
 // --- dashboard ------------------------------------------------------------------
 
-export type RangeKey = "7d" | "30d" | "90d" | "custom";
+export type RangeKey = "today" | "yesterday" | "7d" | "30d" | "90d" | "this_month" | "last_month" | "custom";
+
+/** Sales totals of one period (the dashboard's comparison, 2026-11-03). */
+export interface SalesTotals {
+  transactions: number;
+  gross: CurrencyAmount[];
+  commission_earned: CurrencyAmount[];
+}
+
+/** One part of the dashboard's product split: a product, or "Others"
+ * (empty code), with its share in basis points of the currency's total. */
+export type SplitPart = ProductSales & { share_bp: number };
+
+/** One product's share of the period's sales, in one currency. */
+export interface ProductSales {
+  product_code: string;
+  product_name: string;
+  currency: string;
+  sales: number;
+  gross_minor: number;
+  commission_minor: number;
+}
 
 export interface MoneyBalance {
   currency: string;
@@ -42,12 +63,22 @@ export interface MoneyBalance {
 export interface Dashboard {
   partner: { id: string; name: string; currency: string; status: string };
   range: { key: RangeKey; from: string; to: string };
+  /** The period of the same length just before (2026-11-03). */
+  previous?: { from: string; to: string; new_customers: number | null; sales: SalesTotals | null };
+  products?: {
+    active: number;
+    sales: ProductSales[] | null;
+    /** Per currency: the top products and "Others", with shares (server-made). */
+    split?: Record<string, { total_minor: number; products: number; parts: SplitPart[] }> | null;
+  };
+  tickets?: { open: number; breached: number };
   customers: {
     total: number;
     active: number;
     suspended: number;
     ended: number;
     active_subscriptions: number;
+    new?: number;
   } | null;
   sales: {
     transactions: number;
@@ -59,6 +90,14 @@ export interface Dashboard {
     balances: MoneyBalance[];
     pending_commission: CurrencyAmount[];
     pending_payout: CurrencyAmount[];
+    /** Total accrued, cleared (approved), still held (pending), available. */
+    commission?: {
+      currency: string;
+      total_minor: number;
+      approved_minor: number;
+      pending_minor: number;
+      available_minor: number;
+    }[];
   } | null;
   charts: {
     gross: Record<string, { date: string; amount_minor: number }[]>;
@@ -253,6 +292,7 @@ export interface StoreProduct {
   category: string;
   icon: string;
   logo_url: string | null;
+  banner_url?: string | null;
   plans: { plan_code: string; plan_name: string }[];
   starting_price: { amount_minor: number; currency: string; interval: string } | null;
   /** `null`: not disclosed to this member; `rate_bp: null`: no rule yet. */
@@ -268,6 +308,49 @@ export interface StoreConsole {
   products: StoreProduct[];
   requests: PromotionRequest[];
   counts: { approved: number; explore: number; pending: number };
+  can_request: boolean;
+  cannot_request_reason: string | null;
+  channels: Record<string, string>;
+  prefill: { website: string };
+}
+
+/** One product as a card of the partner's Store: its Store Console facts
+ * (status, request, what a sale earns) plus what the Store page shows. */
+export interface PartnerStoreCard extends StoreProduct {
+  title: string;
+  ribbon: { kind: "new" | "trial"; label: string } | null;
+  price: { amount_minor: number; currency: string; interval: string; plan_name: string; list_amount_minor?: number | null; discount_bp?: number } | null;
+  /** ADR-056 merchandising: collections (featured, popular, new), tags, subcategory. */
+  badges?: string[];
+  tags?: string[];
+  subcategory?: string;
+  yearly_deal: { amount_minor: number; compare_at_minor: number; currency: string; save_percent: number } | null;
+  plan_types: string[];
+  trial_days: number | null;
+}
+
+interface PartnerStoreFacet {
+  value: string;
+  label: string;
+  count: number;
+}
+
+/** The partner's Store: Explore Products as a marketplace page. */
+export interface PartnerStorePage {
+  kind: RequestKind;
+  currency: string | null;
+  currencies: string[];
+  count: number;
+  total: number;
+  products: PartnerStoreCard[];
+  facets: {
+    categories: PartnerStoreFacet[];
+    statuses: PartnerStoreFacet[];
+    plan_types: PartnerStoreFacet[];
+    price: { min_minor: number | null; max_minor: number | null };
+  };
+  sorts: { value: string; label: string }[];
+  counts: StoreConsole["counts"];
   can_request: boolean;
   cannot_request_reason: string | null;
   channels: Record<string, string>;
@@ -403,6 +486,7 @@ export interface PartnerReports {
     gross: CurrencyAmount[];
     commission_earned: CurrencyAmount[];
     charts: Dashboard["charts"];
+    by_product?: ProductSales[];
     source: string;
   } | null;
   referrals: {
@@ -499,6 +583,17 @@ export interface PlanRow {
     /** List minus the partner's price, in minor units (the server's subtraction). */
     difference_minor: number | null;
     source: "partner_price_book" | "list";
+    /** ADR-056: the central engine's figures. */
+    list_before_discount_minor?: number | null;
+    discount_bp?: number;
+    commission_minor?: number | null;
+    expected_earning_minor?: number;
+    platform_share_minor?: number;
+    setup_fee_minor?: number | null;
+    /** Super Admin's range for your own price, when there is one. */
+    price_range?: { min_minor: number; max_minor: number | null; partner_may_set: boolean; currency: string } | null;
+    /** Whether you may set your own customer price here (inside the range). */
+    can_set_price?: boolean;
   }[];
 }
 
@@ -861,7 +956,34 @@ export interface UpgradeRequest {
   version: number;
   editable: boolean;
   /** ADR-053: the set-up fee fixed when the request opened; null is no fee. */
-  setup_fee?: { amount_minor: number; currency: string; settled: boolean } | null;
+  setup_fee?: UpgradeFee | null;
+}
+
+/** ADR-053: an upgrade's set-up fee, fixed when the request opened - and
+ * (2026-11-03) how it was paid: offline with the partner's reference, or online,
+ * confirmed by the payment provider (never by the browser). */
+export interface UpgradeFee {
+  amount_minor: number;
+  currency: string;
+  settled: boolean;
+  payment_method?: "offline" | "online" | null;
+  payment_reference?: string;
+  paid_online?: boolean;
+  paid_at?: string | null;
+  online_payment?: FeePayment | null;
+}
+
+/** One online payment of a partner fee, as the server reports it. */
+export interface FeePayment {
+  id: string;
+  status: "pending" | "awaiting_payment" | "succeeded" | "failed" | "expired";
+  amount_minor: number;
+  currency: string;
+  /** The provider's page, only while it can still be paid. */
+  checkout_url: string | null;
+  test_mode: boolean;
+  completed_at: string | null;
+  failure_code: string;
 }
 
 export interface UpgradeChecklistItem {
@@ -885,12 +1007,143 @@ export interface UpgradeState {
   /** The products on sale, offered on the Products step (only while a request is open). */
   products: { code: string; name: string }[];
   checklist: UpgradeChecklistItem[];
-  /** What starting each upgrade would cost now; null is no fee (ADR-053). */
-  fees?: Partial<Record<UpgradeTarget, CurrencyAmount | null>>;
+  /** What starting each upgrade would cost now; null is no fee (ADR-053) -
+   * with how to pay it offline and whether it can be paid online (2026-11-03). */
+  fees?: Partial<Record<UpgradeTarget, (CurrencyAmount & { instructions?: string; online_available?: boolean }) | null>>;
+  /** For the open request's fee: how to pay offline, and whether online is possible. */
+  payment?: { instructions: string; online_available: boolean };
 }
 
 /** The section names the server accepts. The business step is the profile. */
 export type UpgradeSection = "products" | "pricing" | "commercial" | "brand" | "domain";
+
+// --- the helpdesk (2026-11-03) -------------------------------------------------------------
+
+export type TicketStatus = "open" | "in_progress" | "waiting" | "resolved" | "closed";
+export type SlaState = "on_track" | "at_risk" | "breached" | "met";
+
+export interface Ticket {
+  id: string;
+  number: number;
+  reference: string;
+  direction: "platform" | "customer";
+  subject: string;
+  category: string;
+  priority: string;
+  status: TicketStatus;
+  related_ref: string;
+  opened_at: string;
+  updated_at: string;
+  first_response_at: string | null;
+  resolved_at: string | null;
+  closed_at: string | null;
+  sla: {
+    first_response_due_at: string;
+    resolve_due_at: string;
+    first_response: SlaState;
+    resolution: SlaState;
+    state: SlaState;
+  };
+  /** The customer's name, on the partner's desk. */
+  customer?: string;
+  partner_name?: string;
+}
+
+export interface TicketMessage {
+  id: string;
+  side: "partner" | "platform" | "customer";
+  author: string;
+  mine: boolean;
+  body: string;
+  internal: boolean;
+  created_at: string;
+}
+
+export interface TicketDetail extends Ticket {
+  messages: TicketMessage[];
+  may_answer?: boolean;
+  partner?: { id: string; name: string; code: string };
+}
+
+export interface TicketPage {
+  items: Ticket[];
+  counts: Partial<Record<TicketStatus, number>>;
+  total: number;
+  priorities: string[];
+  categories: string[];
+  provider?: { name: string } | null;
+}
+
+export interface NewTicket {
+  subject: string;
+  message: string;
+  category?: string;
+  priority?: string;
+  related_ref?: string;
+}
+
+export interface CannedResponse {
+  id: string;
+  title: string;
+  body: string;
+  updated_at: string;
+}
+
+// --- wallet & payouts (2026-11-03) --------------------------------------------------------
+
+export interface PayoutMethod {
+  method: "bank" | "upi";
+  account_holder: string;
+  bank_name: string;
+  ifsc: string;
+  account_hint: string;
+  upi_vpa: string;
+  pan_on_file: boolean;
+  pan_hint: string;
+  verification: "pending" | "verified" | "rejected";
+  verification_note: string;
+  verified_at: string | null;
+  updated_at: string;
+  destination: string;
+}
+
+export interface Withdrawal {
+  id: string;
+  currency: string;
+  amount_minor: number;
+  tds_rate_bp: number;
+  tds_minor: number;
+  net_minor: number;
+  status: "requested" | "processing" | "paid" | "rejected" | "cancelled";
+  destination: string;
+  requested_at: string;
+  decided_at: string | null;
+  decision_note: string;
+  paid_at: string | null;
+}
+
+export interface Wallet {
+  currency: string;
+  balances: MoneyBalance[];
+  method: PayoutMethod | null;
+  rules: { minimum_minor: number; tds_rate_bp: number; tds_section: string; pan_required: boolean; verification: string };
+  preview: { amount_minor: number; tds_minor: number; net_minor: number };
+  can_manage: boolean;
+  can_request: boolean;
+  blocker: string;
+  withdrawals: Withdrawal[];
+}
+
+export interface PayoutMethodInput {
+  method: "bank" | "upi";
+  account_holder: string;
+  bank_name?: string;
+  ifsc?: string;
+  account_number?: string;
+  account_number_confirm?: string;
+  upi_vpa?: string;
+  pan?: string;
+}
 
 // --- the client --------------------------------------------------------------------------
 
@@ -940,6 +1193,9 @@ export const panelApi = {
   /** ADR-055: Explore Products and My Requests - an affiliate's (`promote`) or a reseller's (`sell`). */
   storeConsole: (id: string, kind: RequestKind) =>
     apiFetch<StoreConsole>(`${partner(id)}/${kind === "sell" ? "reseller" : "affiliate"}/store`),
+  /** The Store: Explore Products filtered, counted and sorted on the server. */
+  marketplace: (id: string, kind: RequestKind, query: Record<string, string | undefined>) =>
+    apiFetch<PartnerStorePage>(`${partner(id)}/${kind === "sell" ? "reseller" : "affiliate"}/marketplace`, { query }),
   /** ADR-055: ask to promote or sell a product. Grants nothing until staff approve. */
   requestProduct: (id: string, kind: RequestKind, body: PromotionRequestBody) =>
     apiFetch<PromotionRequest>(`${partner(id)}/${kind === "sell" ? "reseller" : "affiliate"}/product-requests`, {
@@ -1035,8 +1291,16 @@ export const panelApi = {
       method: "PUT",
       body: json({ data, expected_version: expectedVersion }),
     }),
-  submitUpgrade: (id: string, requestId: string, expectedVersion: number) =>
+  /** `paymentReference`: the offline transfer's reference, when there is a fee (2026-11-03). */
+  submitUpgrade: (id: string, requestId: string, expectedVersion: number, paymentReference?: string) =>
     apiFetch<UpgradeRequest>(`${partner(id)}/upgrade/requests/${requestId}/submit`, {
+      method: "POST",
+      body: json({ expected_version: expectedVersion, ...(paymentReference ? { payment_reference: paymentReference } : {}) }),
+    }),
+  /** 2026-11-03: open the provider's page for the set-up fee. Only the provider's
+   * confirmation pays it and sends the request. */
+  payUpgrade: (id: string, requestId: string, expectedVersion: number) =>
+    apiFetch<{ request: UpgradeRequest; payment: FeePayment }>(`${partner(id)}/upgrade/requests/${requestId}/pay`, {
       method: "POST",
       body: json({ expected_version: expectedVersion }),
     }),
@@ -1072,6 +1336,40 @@ export const panelApi = {
   markNotificationsRead: (id: string, body: { ids: string[] } | { all: true }) =>
     apiFetch<NotificationsResponse>(`${partner(id)}/notifications/read`, { method: "POST", body: json(body) }),
   support: (id: string) => apiFetch<SupportResponse>(`${partner(id)}/support`),
+  // 2026-11-03: the helpdesk.
+  tickets: (id: string, direction: "platform" | "customer", status = "open") =>
+    apiFetch<TicketPage>(`${partner(id)}/tickets`, { query: { direction, status } }),
+  ticket: (id: string, ticketId: string) =>
+    apiFetch<TicketDetail>(`${partner(id)}/tickets/${encodeURIComponent(ticketId)}`),
+  openTicket: (id: string, body: NewTicket) =>
+    apiFetch<TicketDetail>(`${partner(id)}/tickets`, { method: "POST", body: json(body) }),
+  replyTicket: (id: string, ticketId: string, body: { message?: string; internal?: boolean; status?: string }) =>
+    apiFetch<TicketDetail>(`${partner(id)}/tickets/${encodeURIComponent(ticketId)}`, {
+      method: "POST",
+      body: json(body),
+    }),
+  cannedResponses: (id: string) =>
+    apiFetch<{ items: CannedResponse[]; max: number }>(`${partner(id)}/canned-responses`),
+  saveCannedResponse: (id: string, body: { title: string; body: string }, responseId?: string) =>
+    responseId
+      ? apiFetch<CannedResponse>(`${partner(id)}/canned-responses/${encodeURIComponent(responseId)}`, {
+          method: "PUT",
+          body: json(body),
+        })
+      : apiFetch<CannedResponse>(`${partner(id)}/canned-responses`, { method: "POST", body: json(body) }),
+  deleteCannedResponse: (id: string, responseId: string) =>
+    apiFetch<void>(`${partner(id)}/canned-responses/${encodeURIComponent(responseId)}`, { method: "DELETE" }),
+  // 2026-11-03: wallet & payouts.
+  wallet: (id: string) => apiFetch<Wallet>(`${partner(id)}/withdrawals`),
+  savePayoutMethod: (id: string, body: PayoutMethodInput) =>
+    apiFetch<Wallet>(`${partner(id)}/withdrawals/method`, { method: "PUT", body: json(body) }),
+  requestWithdrawal: (id: string) =>
+    apiFetch<Wallet>(`${partner(id)}/withdrawals/request`, { method: "POST", body: json({}) }),
+  cancelWithdrawal: (id: string, withdrawalId: string) =>
+    apiFetch<Wallet>(`${partner(id)}/withdrawals/${encodeURIComponent(withdrawalId)}/cancel`, {
+      method: "POST",
+      body: json({}),
+    }),
   /** ADR-053: a support request, sent by the platform's email to its support address. */
   sendSupport: (id: string, body: { subject: string; message: string; priority: string; workspace?: string }) =>
     apiFetch<{ sent: boolean; reference: string }>(`${partner(id)}/support`, { method: "POST", body: json(body) }),

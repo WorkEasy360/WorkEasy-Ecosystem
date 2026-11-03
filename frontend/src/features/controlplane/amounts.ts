@@ -60,3 +60,14 @@ export function toMajor(minor: number, currency: string): string {
 /** The currencies the platform supports (the backend's CurrencyCode). Used
  * only to offer choices; the server rejects anything else. */
 export const SUPPORTED_CURRENCIES = ["AED", "AUD", "CAD", "EUR", "GBP", "INR", "JPY", "USD"];
+
+/** A typed percentage ("12.5", "30") as whole basis points (1250, 3000), or
+ * `null` when it is not 0-100 with at most two decimals. Parsed as text - never
+ * through a float - so the server receives exactly what was typed (ADR-056). */
+export function percentToBp(value: string): number | null {
+  const text = value.trim();
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(text)) return null;
+  const [whole, fraction = ""] = text.split(".");
+  const bp = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  return bp <= 10000 ? bp : null;
+}

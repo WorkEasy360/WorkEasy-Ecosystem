@@ -119,7 +119,7 @@ describe("the Super Admin sidebar", () => {
     const section = within(nav).getByRole("button", { name: /Partner/ });
     if (section.getAttribute("aria-expanded") === "false") fireEvent.click(section);
     const links = within(nav).getAllByRole("link");
-    expect(links.map((a) => a.textContent)).toEqual(["Dashboard", "Partner dashboard", "All Partners", "Product Requests"]);
+    expect(links.map((a) => a.textContent)).toEqual(["Dashboard", "Partner dashboard", "All Partners", "Product Requests", "Upgrade Fees", "Partner Tickets"]);
     expect(links[1]).toHaveAttribute("href", "/admin/partners");
   });
 
@@ -154,10 +154,10 @@ describe("the Partners navigation", () => {
       .getAllByRole("link")
       .map((a) => a.textContent);
 
-  it("is exactly Dashboard, All Partners, Add Partner and Product Requests (ADR-055)", async () => {
+  it("is exactly Dashboard, All Partners, Add Partner, Product Requests, Upgrade Fees and Partner Tickets (ADR-055, ADR-057)", async () => {
     pathname = "/admin/partners/all";
     const { container } = renderCenter([VIEW, MANAGE, MONEY]);
-    expect(labels()).toEqual(["Dashboard", "All Partners", "Add Partner", "Product Requests"]);
+    expect(labels()).toEqual(["Dashboard", "All Partners", "Add Partner", "Product Requests", "Upgrade Fees", "Partner Tickets"]);
     for (const gone of ["Resellers", "White-label", "Affiliates", "Customers", "Products & Pricing", "Commissions", "Payouts", "Domains", "Branding"]) {
       expect(labels()).not.toContain(gone);
     }
@@ -181,7 +181,7 @@ describe("the Partners navigation", () => {
 
   it("hides Add Partner from someone who may only view", () => {
     renderCenter([VIEW]);
-    expect(labels()).toEqual(["Dashboard", "All Partners", "Product Requests"]);
+    expect(labels()).toEqual(["Dashboard", "All Partners", "Product Requests", "Upgrade Fees", "Partner Tickets"]);
   });
 });
 

@@ -48,6 +48,12 @@ class RuleView:
     retired_at: datetime | None
     #: Also earns on paid renewals (ADR-052).
     recurring: bool = False
+    #: ADR-056: one plan only, a fixed amount instead of a rate, and a limit
+    #: on how long a recurring rule earns.
+    plan_code: str = ""
+    fixed_amount_minor: int | None = None
+    fixed_currency: str = ""
+    recurring_months: int | None = None
 
     def applies_at(self, moment: datetime) -> bool:
         return self.effective_from <= moment and (
@@ -56,12 +62,18 @@ class RuleView:
 
 
 def select_rule(
-    rules: Iterable[RuleView], *, partner_id: UUID, product_code: str, at: datetime
+    rules: Iterable[RuleView],
+    *,
+    partner_id: UUID,
+    product_code: str,
+    at: datetime,
+    plan_code: str = "",
 ) -> RuleView | None:
     """The one rule that governs a sale, or ``None``.
 
     Precedence, most specific first: a partner-specific rule over the
-    programme default, a product-specific rule over an all-products one, then
+    programme default, a product-specific rule over an all-products one, a
+    plan-specific rule over an all-plans one (ADR-056), then
     the latest ``effective_from``, then the highest version, then the id - a
     total order, so two rules can never tie and the answer never depends on
     row order.
@@ -72,6 +84,7 @@ def select_rule(
         if rule.applies_at(at)
         and rule.partner_id in (None, partner_id)
         and rule.product_code in ("", product_code)
+        and rule.plan_code in ("", plan_code)
     ]
     if not candidates:
         return None
@@ -80,6 +93,7 @@ def select_rule(
         key=lambda r: (
             r.partner_id is not None,
             r.product_code != "",
+            r.plan_code != "",
             r.effective_from,
             r.version,
             str(r.id),
@@ -177,6 +191,45 @@ def sale_basis(*, total_minor: int, predecessor_total_minor: int | None) -> int:
 def commission_amount(*, basis_minor: int, currency: CurrencyCode, rate_bp: int) -> int:
     """``basis * rate``, rounded half-up to a whole minor unit."""
     return Money(basis_minor, currency).apply_rate(rate_bp).minor_units
+
+
+def rule_amount(
+    rule: RuleView, *, basis_minor: int, currency: CurrencyCode, whole: bool
+) -> int:
+    """What one qualifying payment earns under ``rule`` (ADR-056).
+
+    A rate earns ``basis * rate``. A fixed rule earns its amount on a whole sale
+    or a renewal (``whole``) and nothing on a plan change's increase - it pays
+    per customer payment, not per upgrade - and nothing on a sale in another
+    currency than its own.
+    """
+    if rule.fixed_amount_minor is not None:
+        if not whole or rule.fixed_currency != currency.value:
+            return 0
+        return rule.fixed_amount_minor
+    return commission_amount(
+        basis_minor=basis_minor, currency=currency, rate_bp=rule.rate_bp
+    )
+
+
+def add_months(moment: datetime, months: int) -> datetime:
+    """``moment`` plus whole calendar months, clamped to the month's last day
+    (31 January + 1 month = 28/29 February)."""
+    index = moment.month - 1 + months
+    year, month = moment.year + index // 12, index % 12 + 1
+    leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+    last = [31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
+    return moment.replace(year=year, month=month, day=min(moment.day, last))
+
+
+def within_recurring_window(
+    rule: RuleView, *, sold_at: datetime | None, paid_at: datetime
+) -> bool:
+    """Whether a renewal paid at ``paid_at`` is inside the rule's recurring
+    duration, counted from the sale. No limit, or an unknown sale date, earns."""
+    if rule.recurring_months is None or sold_at is None:
+        return True
+    return paid_at < add_months(sold_at, rule.recurring_months)
 
 
 def refund_share(amount_minor: int, *, refunded_minor: int, paid_minor: int) -> int:

@@ -6,6 +6,7 @@ import { describeError } from "../ui";
 import { DescriptionField, ErrorSummary, SelectField, TextField } from "../widgets";
 import { IconPicker } from "./IconPicker";
 import { ImagePicker, ScreenshotsField, type ShotItem } from "./ImagePicker";
+import { MerchandisingForm } from "./MerchandisingForm";
 import { SLUG_PATTERN, looksLikeHttps } from "./model";
 import styles from "./ProductManager.module.css";
 
@@ -252,6 +253,7 @@ export function ListingTab({
         </button>
       </div>
       <ListingForm key={product.updated_at ?? ""} product={product} categories={categories} busy={busy} act={act} />
+      <MerchandisingForm key={`m-${product.updated_at ?? ""}`} product={product} busy={busy} act={act} />
       <MediaSection key={mediaKey} product={product} busy={busy} reload={reload} />
     </div>
   );

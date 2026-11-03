@@ -20,14 +20,14 @@ Three rules hold for everything here:
 
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone, tzinfo
 from typing import Any, Final
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.utils import timezone as dj_timezone
 
 from workeasy360.commercial.catalog import selectors as catalog
-from workeasy360.commercial.commissions import domain as commission_domain
 from workeasy360.commercial.commissions import margins
 from workeasy360.commercial.commissions import selectors as commission_selectors
 from workeasy360.commercial.controlplane import partner_detail
@@ -36,6 +36,8 @@ from workeasy360.commercial.partners import (
     hierarchy,
     panel_selectors,
     product_settings,
+    promotion,
+    tickets,
 )
 from workeasy360.commercial.partners import selectors as partner_selectors
 from workeasy360.commercial.payments import selectors as payment_selectors
@@ -60,6 +62,7 @@ REFERRAL_VIEW: Final = "platform.partner_referral.view"
 SUBPARTNER_VIEW: Final = "platform.partner_subpartner.view"
 
 RANGES: Final = {"7d": 7, "30d": 30, "90d": 90}
+CALENDAR_RANGES: Final = ("today", "yesterday", "this_month", "last_month")
 MAX_CUSTOM_DAYS: Final = 366
 ACTIVE_SUBSCRIPTION_STATES: Final = ("active", "trialing")
 
@@ -102,9 +105,10 @@ NOT_IMPLEMENTED: Final[dict[str, str]] = {
         "sale of a bundle by a partner, are not built."
     ),
     "pricing_rules": (
-        "A partner's price is a fixed price in its price book, set by Workeasy360 "
-        "staff. Partner-authored discounts, customer groups and effective-dated "
-        "rules need a pricing model that does not exist."
+        "A partner's price is a fixed price in its price book. Workeasy360 sets "
+        "it, or - where it allows a price range - you set your own inside the "
+        "range on Pricing & Margins. Partner-authored discounts, customer groups "
+        "and effective-dated rules need a pricing model that does not exist."
     ),
     "subpartner_pricing": (
         "A sub-partner sells at list price unless Workeasy360 sets a price book "
@@ -170,11 +174,6 @@ NOT_IMPLEMENTED: Final[dict[str, str]] = {
         "have no storage. The customer portal uses the standard layout with your "
         "brand name, logo and colours."
     ),
-    "partner_tickets": (
-        "Workeasy360 has no ticket system of its own, so open and resolved "
-        "requests are not listed in the portal. Requests are handled in Easy Help "
-        "Desk, where their status, priority and history live."
-    ),
     # ADR-047: the affiliate workspace.
     "promo_discount_codes": (
         "A referral code identifies you when a visitor signs up. It gives the "
@@ -193,20 +192,55 @@ NOT_IMPLEMENTED: Final[dict[str, str]] = {
 # --- the dashboard --------------------------------------------------------------------
 
 
+def _zone(name: str | None) -> tzinfo:
+    """The partner's own time zone (its profile), so "today" is its today; UTC
+    when none is set or the name is not a zone."""
+    if name:
+        try:
+            return ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
+    return timezone.utc
+
+
 def parse_range(
-    key: Any, date_from: Any, date_to: Any, *, now: datetime | None = None
+    key: Any,
+    date_from: Any,
+    date_to: Any,
+    *,
+    now: datetime | None = None,
+    zone: str | None = None,
 ) -> tuple[str, datetime, datetime]:
     """``(key, start, end)`` for a dashboard range, in UTC, ``end`` exclusive.
 
-    ``7d``/``30d``/``90d`` end now; ``custom`` takes two ISO dates (inclusive)
-    spanning at most a year. Anything else is a 400, never a silent default."""
+    ``7d``/``30d``/``90d`` end now. The calendar presets (2026-11-03, the
+    partner dashboard specification) follow the partner's time zone: ``today``
+    and ``this_month`` run from their first local midnight to now,
+    ``yesterday`` and ``last_month`` are whole local days. ``custom`` takes two
+    ISO dates (inclusive) spanning at most a year. Anything else is a 400,
+    never a silent default."""
     now = now or dj_timezone.now()
     chosen = str(key or "30d")
     if chosen in RANGES:
         return chosen, now - timedelta(days=RANGES[chosen]), now
+    tz = _zone(zone)
+    midnight = datetime.combine(now.astimezone(tz).date(), time.min, tzinfo=tz)
+    if chosen in CALENDAR_RANGES:
+        month = midnight.replace(day=1)
+        if chosen == "today":
+            start, end = midnight, now
+        elif chosen == "yesterday":
+            start, end = midnight - timedelta(days=1), midnight
+        elif chosen == "this_month":
+            start, end = month, now
+        else:
+            start, end = (month - timedelta(days=1)).replace(day=1), month
+        return chosen, start.astimezone(timezone.utc), end.astimezone(timezone.utc)
     if chosen != "custom":
         raise PartnerValidationError(
-            "range must be 7d, 30d, 90d or custom.", field="range"
+            "range must be today, yesterday, 7d, 30d, 90d, this_month, "
+            "last_month or custom.",
+            field="range",
         )
     try:
         first = datetime.fromisoformat(str(date_from)).date()
@@ -221,9 +255,15 @@ def parse_range(
         raise PartnerValidationError(
             f"Choose at most {MAX_CUSTOM_DAYS} days.", field="to"
         )
-    start = datetime.combine(first, time.min, tzinfo=timezone.utc)
-    end = datetime.combine(last + timedelta(days=1), time.min, tzinfo=timezone.utc)
-    return "custom", start, end
+    start = datetime.combine(first, time.min, tzinfo=tz)
+    end = datetime.combine(last + timedelta(days=1), time.min, tzinfo=tz)
+    return "custom", start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def previous_window(start: datetime, end: datetime) -> tuple[datetime, datetime]:
+    """The period of the same length just before ``[start, end)`` - what a
+    dashboard figure's change is measured against."""
+    return start - (end - start), start
 
 
 def customer_counts(partner_id: UUID) -> dict[str, int]:
@@ -261,9 +301,16 @@ def dashboard(
     """
     authz.require(ctx, DASHBOARD_VIEW)
     now = dj_timezone.now()
-    key, start, end = parse_range(range_key, date_from, date_to, now=now)
     partner_id = ctx.partner_id
     assert partner_id is not None
+    key, start, end = parse_range(
+        range_key,
+        date_from,
+        date_to,
+        now=now,
+        zone=panel_selectors.partner_timezone(partner_id),
+    )
+    before, _ = previous_window(start, end)
     permissions = authz.effective_permissions(ctx)
     row = partner_selectors.partner_row(partner_id)
     out: dict[str, Any] = {
@@ -274,6 +321,25 @@ def dashboard(
             "status": row.status,
         },
         "range": {"key": key, "from": start.isoformat(), "to": end.isoformat()},
+        # 2026-11-03: what each figure's change is measured against - the
+        # period of the same length just before this one. Same permissions as
+        # the figure itself; ``None`` where the figure is.
+        "previous": {
+            "from": before.isoformat(),
+            "to": start.isoformat(),
+            "new_customers": None,
+            "sales": None,
+        },
+        "products": {
+            "active": active_product_count(partner_id),
+            "sales": None,
+            "split": None,
+        },
+        # The helpdesk (2026-11-03): open tickets to Workeasy360, and the
+        # customers' open tickets for a member of the partner's desk.
+        "tickets": tickets.open_counts(
+            partner_id, desk="platform.partner_desk.view" in permissions
+        ),
         "customers": None,
         "sales": None,
         "money": None,
@@ -287,7 +353,13 @@ def dashboard(
         },
     }
     if CUSTOMER_VIEW in permissions:
-        out["customers"] = customer_counts(partner_id)
+        out["customers"] = {
+            **customer_counts(partner_id),
+            "new": panel_selectors.links_started(partner_id, start, end),
+        }
+        out["previous"]["new_customers"] = panel_selectors.links_started(
+            partner_id, before, start
+        )
         out["recent"]["customers"] = partner_selectors.partner_customers_page(
             partner_id, limit=5
         ).items
@@ -300,6 +372,11 @@ def dashboard(
             "commission_earned": _by_currency(series, "commission_minor", "currency"),
             "source": "commission_ledger",
         }
+        out["previous"]["sales"] = _sales_totals(
+            commission_selectors.partner_sales_by_day(partner_id, before, start)
+        )
+        out["products"]["sales"] = product_sales(partner_id, start, end)
+        out["products"]["split"] = product_split(out["products"]["sales"])
         money = commission_selectors.partner_money(partner_id, now)
         out["money"] = {
             "balances": money,
@@ -314,6 +391,19 @@ def dashboard(
                 }
                 for m in money
             ],
+            # The specification's three-way split, per currency: everything
+            # accrued, what has cleared the holding period (approved), and
+            # what is still in it (pending). Read from the same ledger sums.
+            "commission": [
+                {
+                    "currency": m["currency"],
+                    "total_minor": m["balance_minor"],
+                    "approved_minor": m["balance_minor"] - m["pending_minor"],
+                    "pending_minor": m["pending_minor"],
+                    "available_minor": m["available_minor"],
+                }
+                for m in money
+            ],
         }
         out["recent"]["commissions"] = commission_selectors.accruals_page(
             partner_id=partner_id, for_partner=True, limit=5
@@ -323,6 +413,82 @@ def dashboard(
         ).items
     if SUBPARTNER_VIEW in permissions:
         out["sub_partners"] = sub_partner_counts(partner_id)
+    return out
+
+
+def _sales_totals(series: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "transactions": sum(p["sales"] for p in series),
+        "gross": _by_currency(series, "gross_minor", "basis_currency"),
+        "commission_earned": _by_currency(series, "commission_minor", "currency"),
+    }
+
+
+def active_product_count(partner_id: UUID) -> int:
+    """Products the partner may work with now: those granted for sale and those
+    approved for promotion, each counted once."""
+    sold = {g["product_code"] for g in partner_selectors.granted_products(partner_id)}
+    return len(sold | set(promotion.promotable_codes(partner_id)))
+
+
+def product_sales(partner_id: UUID, start: datetime, end: datetime) -> list[Any]:
+    """The product-wise split of the period's sales, largest first, by product
+    and currency (never summed across currencies): sale count, gross and the
+    partner's net commission, with the catalogue's product name."""
+    rows = commission_selectors.partner_sales_by_product(partner_id, start, end)
+    names = catalog.product_names(
+        sorted({r["product_code"] for r in rows if r["product_code"]})
+    )
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in rows:
+        currency = r["basis_currency"] or r["currency"]
+        item = merged.setdefault(
+            (r["product_code"], currency),
+            {
+                "product_code": r["product_code"],
+                "product_name": names.get(r["product_code"], "") or "Other",
+                "currency": currency,
+                "sales": 0,
+                "gross_minor": 0,
+                "commission_minor": 0,
+            },
+        )
+        item["sales"] += r["sales"]
+        item["gross_minor"] += r["gross_minor"]
+        item["commission_minor"] += r["commission_minor"]
+    return sorted(
+        merged.values(),
+        key=lambda i: (-i["gross_minor"], -i["sales"], i["product_code"]),
+    )
+
+
+def product_split(rows: list[dict[str, Any]], *, top: int = 5) -> dict[str, Any]:
+    """The dashboard's distribution, per currency: the ``top`` products by
+    gross, the rest folded into one "Others" part, each with its share in
+    basis points of that currency's total - summed here, never in the
+    browser."""
+    out: dict[str, Any] = {}
+    for currency in sorted({r["currency"] for r in rows}):
+        mine = [r for r in rows if r["currency"] == currency and r["gross_minor"] > 0]
+        total = sum(r["gross_minor"] for r in mine)
+        if total <= 0:
+            continue
+        parts = [dict(r) for r in mine[:top]]
+        rest = mine[top:]
+        if rest:
+            parts.append(
+                {
+                    "product_code": "",
+                    "product_name": "Others",
+                    "currency": currency,
+                    "sales": sum(r["sales"] for r in rest),
+                    "gross_minor": sum(r["gross_minor"] for r in rest),
+                    "commission_minor": sum(r["commission_minor"] for r in rest),
+                }
+            )
+        for part in parts:
+            part["share_bp"] = round(part["gross_minor"] * 10_000 / total)
+        out[currency] = {"total_minor": total, "products": len(mine), "parts": parts}
     return out
 
 
@@ -517,37 +683,55 @@ def products(ctx: TenantContext) -> dict[str, Any]:
 
 @in_scope
 def plans(ctx: TenantContext) -> dict[str, Any]:
-    """Plans this partner may sell, with the partner's price and the public list
-    price side by side, and what each plan includes."""
+    """Plans this partner may sell, every figure from the central commercial
+    engine (ADR-056, ``channel_pricing``): list price, promotional discount, the
+    partner's cost under its margin rule, the customer's price (its own book,
+    else list), the margin or commission it earns, and - where Super Admin
+    allows it - the range it may set its own price in."""
+    from workeasy360.commercial.commissions import channel_pricing
+    from workeasy360.commercial.partners import price_ranges
+
     authz.require(ctx, PRICING_VIEW)
-    partner = partner_selectors.partner_row(ctx.partner_id)
+    partner_id = ctx.partner_id
+    assert partner_id is not None
+    partner = partner_selectors.partner_row(partner_id)
     now = dj_timezone.now()
-    grants = partner_selectors.granted_products(ctx.partner_id)
+    grants = partner_selectors.granted_products(partner_id)
     codes = sorted({g["product_code"] for g in grants})
     all_plans = catalog.sellable_plans(codes, at=now)
     visible = [
         p
         for p in all_plans
         if partner_selectors.may_sell_ignoring_switch(
-            ctx.partner_id, product_code=p["product_code"], plan_code=p["plan_code"]
+            partner_id, product_code=p["product_code"], plan_code=p["plan_code"]
         )
     ]
-    price_map = _price_rows(
-        [p["plan_version_id"] for p in visible], ctx.partner_id, partner.payout_currency
+    experience = partner_selectors.selling_experience_at(partner_id, now)
+    quotes = channel_pricing.channel_prices(
+        visible,
+        currency=partner.payout_currency,
+        channel=experience,
+        partner_id=partner_id,
+        at=now,
     )
-    switches = product_settings.settings_by_product_code(ctx.partner_id)
-    discounts = {
-        code: margins.effective_discount(ctx.partner_id, product_code=code, at=now)
-        for code in {p["product_code"] for p in visible}
-    }
-    currency = CurrencyCode(partner.payout_currency)
+    may_price = price_ranges.PARTNER_MANAGE in authz.effective_permissions(ctx)
+    switches = product_settings.settings_by_product_code(partner_id)
     items = []
     for plan in visible:
-        by_interval = price_map.get(str(plan["plan_version_id"]), {})
-        discount = discounts.get(plan["product_code"])
+        pid = str(plan["plan_version_id"])
+        lines = sorted(
+            (q for (target, _i), q in quotes.items() if target == pid),
+            key=lambda q: q.interval,
+        )
+        earning = lines[0].earning if lines else "commission"
+        discount = (
+            lines[0].rule["discount_bp"]
+            if lines and lines[0].rule and lines[0].rule["kind"] == "margin"
+            else None
+        )
         items.append(
             {
-                "plan_version_id": str(plan["plan_version_id"]),
+                "plan_version_id": pid,
                 "plan_code": plan["plan_code"],
                 "plan_name": plan["plan_name"],
                 "product_code": plan["product_code"],
@@ -558,65 +742,45 @@ def plans(ctx: TenantContext) -> dict[str, Any]:
                 "enabled_for_sale": switches.get(plan["product_code"], {}).get(
                     "enabled_for_sale", True
                 ),
-                "earning": (
-                    {"model": "margin", "discount_bp": discount[0]}
-                    if discount is not None
-                    else {"model": "commission", "discount_bp": None}
-                ),
-                "prices": [
-                    _price_line(interval, slot, discount, currency)
-                    for interval, slot in sorted(by_interval.items())
-                ],
+                "earning": {
+                    "model": "margin" if earning == "margin" else "commission",
+                    "discount_bp": discount,
+                },
+                "prices": [_price_line(q, may_price=may_price) for q in lines],
             }
         )
     return {
         "currency": partner.payout_currency,
+        "experience": experience,
         "plans": items,
         "can_create_plan": False,
-        "not_implemented": {
-            "add_ons": NOT_IMPLEMENTED["add_ons"],
-            "pricing_rules": NOT_IMPLEMENTED["pricing_rules"],
-        },
+        "not_implemented": {"add_ons": NOT_IMPLEMENTED["add_ons"]},
     }
 
 
-def _price_line(
-    interval: str,
-    slot: dict[str, int],
-    discount: tuple[int, Any] | None,
-    currency: CurrencyCode,
-) -> dict[str, Any]:
-    """One plan price as a partner sees it (ADR-053), every figure the
-    server's: list price, the partner's cost under its margin rule (list less
-    the discount), the customer's price (the partner book, else list) and the
-    margin between them. Without a margin rule the partner earns commission and
-    has no cost; the difference to list is still shown."""
-    list_minor = slot.get("list")
-    customer = slot["partner"] if slot.get("partner") is not None else list_minor
-    cost = (
-        commission_domain.partner_cost(
-            list_minor=list_minor, currency=currency, discount_bp=discount[0]
-        )
-        if discount is not None and list_minor is not None
-        else None
-    )
-    margin = customer - cost if customer is not None and cost is not None else None
+def _price_line(q: Any, *, may_price: bool) -> dict[str, Any]:
+    """One plan price as a partner sees it - the engine's figures, named as the
+    partner screens have always named them."""
+    own = q.price_source == "partner_book"
+    bounds = q.price_range
     return {
-        "interval": interval,
-        "partner_price_minor": slot.get("partner"),
-        "list_price_minor": list_minor,
-        "customer_price_minor": customer,
-        "partner_cost_minor": cost,
-        "margin_minor": margin,
-        "margin_bp": commission_domain.margin_bp(customer_minor=customer, cost_minor=cost)
-        if margin is not None and customer
-        else None,
-        "difference_minor": (
-            list_minor - slot["partner"]
-            if list_minor is not None and slot.get("partner") is not None
-            else None
-        ),
-        "source": "partner_price_book" if "partner" in slot else "list",
+        "interval": q.interval,
+        "partner_price_minor": q.customer_minor if own else None,
+        "list_price_minor": q.base_minor,
+        "list_before_discount_minor": q.list_minor,
+        "discount_bp": q.discount_bp,
+        "customer_price_minor": q.customer_minor,
+        "partner_cost_minor": q.partner_cost_minor,
+        "margin_minor": q.margin_minor,
+        "margin_bp": q.margin_bp,
+        "commission_minor": q.commission_minor,
+        "expected_earning_minor": q.partner_share_minor,
+        "platform_share_minor": q.platform_share_minor,
+        "setup_fee_minor": q.setup_fee_minor,
+        "difference_minor": q.base_minor - q.customer_minor if own else None,
+        "source": "partner_price_book" if own else "list",
+        "price_range": bounds,
+        "can_set_price": bool(may_price and bounds and bounds["partner_may_set"]),
     }
 
 

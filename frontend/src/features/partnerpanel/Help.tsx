@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useId, useState } from "react";
 import { LoadGate, useAction, useLoad, when } from "@/features/controlplane/ui";
 import { panelApi, type NotificationView, type SupportResponse } from "@/lib/api/partnerPanel";
@@ -146,7 +147,9 @@ function SupportBody({ data }: { data: SupportResponse }) {
           </p>
         )}
       </section>
-      <NotAvailable title="Open and resolved requests" reasons={[data.not_implemented.partner_tickets ?? ""]} />
+      <p>
+        <Link href={`${base}/support-manager`}>Open your tickets in the Helpdesk</Link>
+      </p>
     </>
   );
 }

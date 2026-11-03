@@ -148,3 +148,35 @@
     max-width: 140px;
   }
 }
+
+/* A consolidated sidebar entry's tabs above its open page (2026-11-03): the
+   partner workspaces' tab look (PartnerPanel.module.css .tabs) - green text
+   and a green underline for the current tab, soft mint on hover. */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1);
+  margin-bottom: var(--w360-space-5);
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.tabs a {
+  margin-bottom: -1px;
+  padding: var(--w360-space-2) var(--w360-space-3);
+  text-decoration: none;
+  color: var(--w360-text-secondary);
+  border-bottom: 3px solid transparent;
+  border-radius: var(--w360-radius-sm) var(--w360-radius-sm) 0 0;
+  font-weight: 600;
+}
+
+.tabs a:hover {
+  background: var(--w360-brand-soft);
+  color: var(--w360-text);
+}
+
+.tabs a[aria-current="page"] {
+  color: var(--w360-brand);
+  border-bottom-color: var(--w360-indicator);
+  font-weight: 700;
+}

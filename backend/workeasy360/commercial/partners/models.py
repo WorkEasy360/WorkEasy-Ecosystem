@@ -853,6 +853,64 @@ class PartnerProductSetting(models.Model):
         return f"settings of {self.partner_id} for {self.product_id}"
 
 
+class SellingPriceRange(models.Model):
+    """The customer prices a selling partner may set for one plan (ADR-056).
+
+    Super Admin's boundary over partner pricing, per programme: for Resellers or
+    for White-label partners, one plan, one billing cycle and one currency. A
+    partner may publish its own customer price only when ``partner_may_set`` is
+    on and the amount lies in ``[min_minor, max_minor]``; without a row the
+    partner's price is Super Admin's to set (the existing staff path).
+
+    **A boundary, never a price.** The partner's price is still a ``PlanPrice``
+    row in its own price book, resolved by ``pricing.resolve_price`` like every
+    price. Changing a range re-prices nothing already sold - prices are
+    immutable - and only bounds the partner's *next* change. Every change is
+    audited with its previous value.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    #: ``reseller`` or ``white_label``.
+    experience = models.CharField(max_length=16)
+    plan = models.ForeignKey("catalog.Plan", on_delete=models.PROTECT, related_name="+")
+    interval = models.CharField(max_length=16)
+    currency = models.CharField(max_length=3, choices=_choices(CurrencyCode))
+    min_minor = models.BigIntegerField()
+    #: NULL means no upper bound.
+    max_minor = models.BigIntegerField(null=True, blank=True)
+    partner_may_set = models.BooleanField(default=True)
+    updated_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "partners_selling_price_range"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["experience", "plan", "interval", "currency"],
+                name="uq_selling_price_range",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(experience__in=["reseller", "white_label"]),
+                name="ck_selling_range_experience",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(min_minor__gte=0),
+                name="ck_selling_range_min_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(max_minor__isnull=True)
+                | models.Q(max_minor__gte=models.F("min_minor")),
+                name="ck_selling_range_max_at_least_min",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.experience} {self.plan_id} {self.interval} {self.currency}"
+
+
 class PartnerBrand(models.Model):
     """A white-label partner's presentation metadata.
 
@@ -1325,6 +1383,16 @@ class PartnerUpgradeRequest(models.Model):
     fee_amount_minor = models.BigIntegerField(null=True, blank=True)
     fee_currency = models.CharField(max_length=3, blank=True, default="", db_default="")
     fee_settled_at = models.DateTimeField(null=True, blank=True)
+    #: 2026-11-03: how the partner paid the fee - ``offline`` (a transfer whose
+    #: reference it typed; staff verify it before approving) or ``online`` (a
+    #: hosted checkout; ``fee_paid_at`` is set only by the provider's verified
+    #: callback, through ``payments.partner_fees``). Empty while unpaid.
+    payment_method = models.CharField(max_length=8, blank=True, default="", db_default="")
+    payment_reference = models.CharField(
+        max_length=120, blank=True, default="", db_default=""
+    )
+    fee_payment_id = models.UUIDField(null=True, blank=True)
+    fee_paid_at = models.DateTimeField(null=True, blank=True)
 
     #: Optimistic token: two administrators editing one draft must not silently
     #: overwrite each other.
@@ -1391,13 +1459,17 @@ class PartnerProgramFee(models.Model):
     experience, set by Super Admin; no row, or a zero amount, is "no fee".
 
     A request snapshots the fee when it opens, so changing it here never moves
-    a request already in progress. Settlement is offline: staff record the
-    payment's reference when approving.
+    a request already in progress. The partner pays offline (and staff record
+    the reference when approving) or, when a payment provider takes the
+    currency, online (2026-11-03).
     """
 
     experience = models.CharField(max_length=16, unique=True)
     amount_minor = models.BigIntegerField()
     currency = models.CharField(max_length=3, choices=_choices(CurrencyCode))
+    #: 2026-11-03: how to pay it offline (bank transfer, UPI), shown to the
+    #: partner beside the fee. Plain text, set by Super Admin.
+    payment_instructions = models.TextField(blank=True, default="", db_default="")
     updated_by = models.ForeignKey(
         "identity.User", on_delete=models.PROTECT, related_name="+"
     )
@@ -1418,3 +1490,298 @@ class PartnerProgramFee(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.experience}: {self.amount_minor} {self.currency}"
+
+
+# --- Helpdesk, payout method and withdrawals (2026-11-03, unified partner dashboard) ---
+
+
+class PartnerTicket(models.Model):
+    """A support ticket in the partner helpdesk (2026-11-03).
+
+    Two directions, one table:
+
+    - ``platform``: a partner member asks Workeasy360 ("upward" tickets, every
+      partner level). Staff answer from the Super Admin desk.
+    - ``customer``: a member of one of the partner's live customer
+      organizations asks the partner (the reseller / white-label desk). The
+      partner's support staff answer; ``organization_id`` names the customer.
+
+    The conversation is ``PartnerTicketMessage`` rows, appended and never
+    edited. The SLA is two deadlines set when the ticket opens, from its
+    priority (``tickets.SLA_HOURS``); whether one was missed is worked out on
+    read. ``number`` is the partner's own running number (#1, #2, ...), taken
+    under the partner row lock.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="tickets"
+    )
+    number = models.PositiveIntegerField()
+    direction = models.CharField(max_length=8)
+    #: The customer organization of a ``customer`` ticket (a soft reference,
+    #: like the ledger's); empty for a ``platform`` ticket.
+    organization_id = models.UUIDField(null=True, blank=True)
+    subject = models.CharField(max_length=200)
+    category = models.CharField(max_length=16, default="general")
+    priority = models.CharField(max_length=8, default="normal")
+    status = models.CharField(max_length=12, default="open")
+    #: What the ticket is about, when it is about one record - a commission
+    #: entry being disputed (``commission:<id>``), a payout (``payout:<id>``).
+    related_ref = models.CharField(max_length=80, blank=True, default="")
+    opened_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    opened_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+    first_response_due_at = models.DateTimeField()
+    resolve_due_at = models.DateTimeField()
+    first_response_at = models.DateTimeField(null=True, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "partners_ticket"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["partner", "number"], name="uq_partner_ticket_number"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(direction="platform", organization_id__isnull=True)
+                | models.Q(direction="customer", organization_id__isnull=False),
+                name="ck_partner_ticket_direction",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(priority__in=["low", "normal", "high", "urgent"]),
+                name="ck_partner_ticket_priority",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    status__in=["open", "in_progress", "waiting", "resolved", "closed"]
+                ),
+                name="ck_partner_ticket_status",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    category__in=[
+                        "general",
+                        "technical",
+                        "billing",
+                        "commission",
+                        "payout",
+                        "account",
+                        "product",
+                    ]
+                ),
+                name="ck_partner_ticket_category",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["partner", "direction", "status", "-updated_at"],
+                name="ix_ticket_partner_queue",
+            ),
+            models.Index(
+                fields=["direction", "status", "-updated_at"], name="ix_ticket_desk"
+            ),
+            models.Index(fields=["organization_id", "-updated_at"], name="ix_ticket_org"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"#{self.number} of {self.partner_id} [{self.direction}/{self.status}]"
+
+
+class PartnerTicketMessage(models.Model):
+    """One message of a ticket's conversation. Appended, never edited or
+    deleted. ``side`` says who wrote it: the partner, Workeasy360 staff or the
+    customer. ``internal`` is a note the answering side keeps to itself - never
+    shown to the asking side."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    ticket = models.ForeignKey(
+        PartnerTicket, on_delete=models.PROTECT, related_name="messages"
+    )
+    side = models.CharField(max_length=8)
+    author = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    body = models.TextField()
+    internal = models.BooleanField(default=False)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "partners_ticket_message"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(side__in=["partner", "platform", "customer"]),
+                name="ck_ticket_message_side",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["ticket", "created_at"], name="ix_ticket_message_time")
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.side} on {self.ticket_id}"
+
+
+class PartnerCannedResponse(models.Model):
+    """A saved reply the partner's support staff insert into an answer
+    (2026-11-03). The partner's own text; at most ``tickets.MAX_CANNED`` each."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="canned_responses"
+    )
+    title = models.CharField(max_length=120)
+    body = models.TextField()
+    updated_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "partners_canned_response"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["partner", "title"], name="uq_canned_response_title"
+            )
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.title} ({self.partner_id})"
+
+
+class PartnerPayoutMethod(models.Model):
+    """Where a partner wants its payouts sent, and its PAN (2026-11-03).
+
+    One row per partner. **The account number and the PAN are sealed** (Fernet
+    under ``PARTNER_PAYOUT_SEAL_KEYS``, bound to the partner) and only their
+    last four characters are stored in the clear, for display. A UPI address
+    is a payment handle meant to be shared and is stored as written.
+
+    ``verification`` is a staff decision: the platform has no bank or PAN
+    verification provider (no penny-drop), so a person checks the details and
+    marks them ``verified`` or ``rejected``. Changing any detail sends it back
+    to ``pending``. A withdrawal needs a ``verified`` method.
+    """
+
+    partner = models.OneToOneField(
+        PartnerAccount, on_delete=models.PROTECT, related_name="payout_method"
+    )
+    method = models.CharField(max_length=4)
+    account_holder = models.CharField(max_length=120)
+    bank_name = models.CharField(max_length=120, blank=True, default="")
+    ifsc = models.CharField(max_length=11, blank=True, default="")
+    account_sealed = models.TextField(blank=True, default="")
+    account_hint = models.CharField(max_length=4, blank=True, default="")
+    upi_vpa = models.CharField(max_length=100, blank=True, default="")
+    pan_sealed = models.TextField(blank=True, default="")
+    pan_hint = models.CharField(max_length=4, blank=True, default="")
+    verification = models.CharField(max_length=8, default="pending")
+    verification_note = models.CharField(max_length=500, blank=True, default="")
+    verified_by = models.ForeignKey(
+        "identity.User", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    verified_at = models.DateTimeField(null=True, blank=True)
+    updated_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "partners_payout_method"
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(method="bank", upi_vpa="")
+                    & ~models.Q(account_sealed="")
+                    & ~models.Q(ifsc="")
+                )
+                | (
+                    models.Q(method="upi", account_sealed="", ifsc="")
+                    & ~models.Q(upi_vpa="")
+                ),
+                name="ck_payout_method_shape",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(verification__in=["pending", "verified", "rejected"]),
+                name="ck_payout_method_verification",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.method} for {self.partner_id} [{self.verification}]"
+
+
+class PartnerWithdrawalRequest(models.Model):
+    """A partner asking to be paid its available commission (2026-11-03).
+
+    **A request moves no money and marks no ledger row.** It snapshots what was
+    available, the TDS rate and the payout destination when it was made. Staff
+    turn it into an ordinary payout (``commissions.payouts.prepare_payout``),
+    whose approval by a second person and manual "paid" confirmation are
+    unchanged; ``payout_id`` links the two, and the request's state follows
+    the payout's once linked. Lifecycle: ``requested`` -> ``processing``
+    (payout prepared) | ``rejected`` | ``cancelled`` (by the partner, before
+    processing). One open request per partner.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="withdrawals"
+    )
+    currency = models.CharField(max_length=3, choices=_choices(CurrencyCode))
+    amount_minor = models.BigIntegerField()
+    tds_rate_bp = models.PositiveIntegerField(default=0)
+    tds_minor = models.BigIntegerField(default=0)
+    net_minor = models.BigIntegerField()
+    status = models.CharField(max_length=12, default="requested")
+    #: "bank ****1234 (HDFC0001234)" or "upi name@bank" - where it is to go.
+    destination = models.CharField(max_length=160)
+    requested_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    requested_at = models.DateTimeField()
+    decided_by = models.ForeignKey(
+        "identity.User", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.CharField(max_length=500, blank=True, default="")
+    payout_id = models.UUIDField(null=True, blank=True)
+
+    class Meta:
+        db_table = "partners_withdrawal_request"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["partner"],
+                condition=models.Q(status="requested"),
+                name="uq_withdrawal_one_open",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    status__in=["requested", "processing", "rejected", "cancelled"]
+                ),
+                name="ck_withdrawal_status",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount_minor__gt=0)
+                & models.Q(tds_minor__gte=0)
+                & models.Q(net_minor__gte=0),
+                name="ck_withdrawal_amounts",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(status="processing")
+                | models.Q(payout_id__isnull=False),
+                name="ck_withdrawal_processing_has_payout",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["status", "-requested_at"], name="ix_withdrawal_queue"),
+            models.Index(
+                fields=["partner", "-requested_at"], name="ix_withdrawal_partner"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.partner_id}: {self.amount_minor} {self.currency} [{self.status}]"

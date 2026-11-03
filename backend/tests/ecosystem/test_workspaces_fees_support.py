@@ -63,6 +63,7 @@ def test_a_fee_is_set_by_staff_and_zero_removes_it(fee_staff):
     assert upgrades.program_fee("reseller") == {
         "amount_minor": 2_000_000,
         "currency": "INR",
+        "instructions": "",
     }
     upgrades.set_program_fee(
         fee_staff, experience="reseller", amount_minor=0, currency="INR"
@@ -113,6 +114,12 @@ def test_a_request_keeps_the_fee_it_started_with(fee_staff, partner_factory):
         "amount_minor": 2_000_000,
         "currency": "INR",
         "settled": False,
+        # 2026-11-03: nothing paid yet, either way.
+        "payment_method": None,
+        "payment_reference": "",
+        "paid_online": False,
+        "paid_at": None,
+        "online_payment": None,
     }
     state = upgrades.state(fx["actor"]())
     assert state["open"]["setup_fee"]["amount_minor"] == 2_000_000

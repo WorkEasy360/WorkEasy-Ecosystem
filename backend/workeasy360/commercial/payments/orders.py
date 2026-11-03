@@ -175,6 +175,9 @@ class _CartLine:
     recurring_amount_minor: int
     amount_due_minor: int
     snapshot: dict[str, Any]
+    #: The plan's one-time set-up fee (ADR-056), charged with this purchase on
+    #: top of ``amount_due_minor`` and never on a renewal.
+    setup_fee_minor: int = 0
 
     def as_record(self) -> dict[str, Any]:
         """The line as the order stores it (``Order.lines``)."""
@@ -187,6 +190,7 @@ class _CartLine:
             "quantity": self.quantity,
             "recurring_amount_minor": self.recurring_amount_minor,
             "amount_due_minor": self.amount_due_minor,
+            "setup_fee_minor": self.setup_fee_minor,
             "snapshot": self.snapshot,
         }
 
@@ -211,6 +215,8 @@ class Quote:
     #: A cart's lines, base plans before add-ons; empty for every other kind.
     lines: tuple[_CartLine, ...] = ()
     seller: Seller = DIRECT
+    #: One-time set-up fees included in ``amount_due_minor`` (ADR-056).
+    setup_fee_minor: int = 0
 
     @property
     def requires_payment(self) -> bool:
@@ -249,6 +255,7 @@ class Quote:
             "is_trial": self.is_trial,
             "trial_days": self.trial_days,
             "requires_payment": self.requires_payment,
+            "setup_fee_minor": self.setup_fee_minor if self.requires_payment else 0,
             "channel": self.seller.channel,
             "lines": [
                 {
@@ -258,6 +265,9 @@ class Quote:
                     "quantity": line.quantity,
                     "recurring_amount_minor": line.recurring_amount_minor,
                     "amount_due_minor": line.amount_due_minor
+                    if self.requires_payment
+                    else 0,
+                    "setup_fee_minor": line.setup_fee_minor
                     if self.requires_payment
                     else 0,
                 }
@@ -622,6 +632,7 @@ def _quote_cart(
                 recurring_amount_minor=recurring,
                 amount_due_minor=due,
                 snapshot=priced.as_snapshot(),
+                setup_fee_minor=int(priced.setup_fee_minor or 0),
             )
         )
     return Quote(
@@ -630,7 +641,9 @@ def _quote_cart(
         billing_interval=chosen,
         quantity=1,
         recurring_amount_minor=sum(line.recurring_amount_minor for line in lines),
-        amount_due_minor=sum(line.amount_due_minor for line in lines),
+        amount_due_minor=sum(
+            line.amount_due_minor + line.setup_fee_minor for line in lines
+        ),
         prorated=running,
         is_trial=False,
         trial_days=0,
@@ -639,6 +652,7 @@ def _quote_cart(
         open_subscription=subscription,
         lines=tuple(lines),
         seller=seller,
+        setup_fee_minor=sum(line.setup_fee_minor for line in lines),
     )
 
 
@@ -804,13 +818,17 @@ def _quote(
         if running
         else recurring
     )
+    # A plan's set-up fee comes with its first paid purchase (ADR-056): never
+    # with a trial (nothing is paid yet) and never with a renewal.
+    setup_fee = int(quote.setup_fee_minor or 0) if trial_days == 0 else 0
     return Quote(
         target=target,
         currency=currency,
         billing_interval=chosen,
         quantity=quantity if target.kind == "plan" else 1,
         recurring_amount_minor=recurring,
-        amount_due_minor=due,
+        amount_due_minor=due + setup_fee,
+        setup_fee_minor=setup_fee,
         prorated=running,
         is_trial=trial_days > 0,
         trial_days=trial_days,
@@ -949,6 +967,26 @@ def _new_order(ctx: TenantContext, q: Quote, *, key: str, status: str) -> Any:
     )
 
 
+def _setup_fee_line(invoice: Any, plan_name: str, amount_minor: int) -> None:
+    """A plan's one-time set-up fee as its own invoice line (ADR-056). It names
+    no product or plan on purpose: the fee is the platform's, so the commission
+    ledger - which earns only on product lines - never pays a share of it."""
+    from workeasy360.commercial.payments.models import InvoiceLine
+
+    if amount_minor <= 0:
+        return
+    InvoiceLine.objects.create(
+        invoice=invoice,
+        subscription_item_id=None,
+        description=f"Set-up fee: {plan_name}"[:255],
+        product_code="",
+        plan_code="",
+        bundle_code="",
+        quantity=1,
+        amount_minor=amount_minor,
+    )
+
+
 def _place_payable(
     ctx: TenantContext, q: Quote, *, idempotency_key: str, request: dict[str, Any]
 ) -> Any:
@@ -1016,6 +1054,7 @@ def _place_payable(
                     quantity=line.quantity,
                     amount_minor=line.amount_due_minor,
                 )
+                _setup_fee_line(invoice, line.plan.plan_name, line.setup_fee_minor)
         else:
             InvoiceLine.objects.create(
                 invoice=invoice,
@@ -1027,8 +1066,10 @@ def _place_payable(
                 if q.target.kind == "bundle"
                 else "",
                 quantity=q.quantity,
-                amount_minor=q.amount_due_minor,
+                amount_minor=q.amount_due_minor - q.setup_fee_minor,
             )
+            if q.target.kind == "plan":
+                _setup_fee_line(invoice, q.target.plan.plan_name, q.setup_fee_minor)
         _sync_summary(order)
         audit.record(
             ctx,
@@ -1503,9 +1544,14 @@ def _link_invoice(
             ).update(subscription_item_id=item.id)
         return
     if line is not None:
-        InvoiceLine.objects.filter(
+        unlinked = InvoiceLine.objects.filter(
             invoice=invoice, subscription_item_id__isnull=True
-        ).update(subscription_item_id=line.id)
+        )
+        if order.kind == order.Kind.PLAN:
+            # A plan order's set-up fee line names no product (ADR-056) and
+            # pays for no subscription line: it stays unlinked.
+            unlinked = unlinked.exclude(product_code="")
+        unlinked.update(subscription_item_id=line.id)
 
 
 def process_due(organization_id: UUID, moment: datetime) -> dict[str, int]:
@@ -1747,4 +1793,27 @@ def recent_orders_for_organizations(
         for row in OrderSummary.objects.filter(
             organization_id__in=organization_ids
         ).order_by("-created_at")[: max(1, min(limit, 50))]
+    ]
+
+
+def paid_orders_by_channel(*, start: Any, end: Any) -> list[dict[str, Any]]:
+    """Orders paid in ``[start, end)`` by seller channel (``direct``, ``partner``
+    - a reseller ordering for its customer - and ``storefront`` - a white-label
+    store), partner and currency: count and amount. For the Super Admin Store
+    dashboard, whose caller has authorized. One query."""
+    from django.db.models import Count, Sum
+
+    from workeasy360.commercial.payments.models import OrderSummary
+
+    return [
+        {
+            "channel": row["channel"] or "direct",
+            "partner_id": row["partner_id"],
+            "currency": row["currency"],
+            "orders": row["n"],
+            "amount_minor": int(row["amount"] or 0),
+        }
+        for row in OrderSummary.objects.filter(paid_at__gte=start, paid_at__lt=end)
+        .values("channel", "partner_id", "currency")
+        .annotate(n=Count("order_id"), amount=Sum("amount_due_minor"))
     ]

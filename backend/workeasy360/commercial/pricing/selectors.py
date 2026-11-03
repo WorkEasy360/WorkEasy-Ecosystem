@@ -19,7 +19,28 @@ from uuid import UUID
 from django.db.models import Q
 from django.utils import timezone
 
+from workeasy360.commercial.pricing.domain import apply_discount
 from workeasy360.contracts.enums import PriceBookChannel
+from workeasy360.contracts.values.money import CurrencyCode, Money
+
+
+def _commercial_terms(row: Any) -> dict[str, Any]:
+    """A price row's promotional discount, set-up fee and what the customer
+    pays (ADR-056) - through ``domain.apply_discount``, the function the
+    resolver uses, so a store card and a checkout agree. A tiered price has no
+    single amount and so no net amount here."""
+    discount = int(row.discount_bp or 0)
+    net = None
+    if row.amount_minor is not None:
+        net = apply_discount(
+            Money(int(row.amount_minor), CurrencyCode(row.price_book.currency)), discount
+        ).minor_units
+    return {
+        "discount_bp": discount,
+        "net_amount_minor": net,
+        "setup_fee_minor": row.setup_fee_minor,
+        "tax_behaviour": row.tax_behaviour,
+    }
 
 
 def _live(queryset: Any, at: Any) -> Any:
@@ -49,6 +70,18 @@ def price_books() -> list[dict[str, Any]]:
             :500
         ]
     ]
+
+
+def _customer_terms(row: Any) -> dict[str, Any]:
+    """A price as a customer sees it (ADR-056): ``amount_minor`` is what they
+    pay - after the promotional discount, the amount checkout charges - and
+    ``list_amount_minor`` the price before it, for a struck-through display."""
+    terms = _commercial_terms(row)
+    return {
+        "amount_minor": terms.pop("net_amount_minor"),
+        "list_amount_minor": row.amount_minor,
+        **terms,
+    }
 
 
 def current_prices(
@@ -88,7 +121,48 @@ def current_prices(
             "interval": p.interval,
             "model": p.model,
             "amount_minor": p.amount_minor,
+            **_commercial_terms(p),
             "valid_from": p.valid_from.isoformat(),
+            "valid_to": p.valid_to.isoformat() if p.valid_to else None,
+        }
+        for p in rows
+    ]
+
+
+def price_schedule(
+    *, plan_version_ids: list[UUID], at: Any = None
+) -> list[dict[str, Any]]:
+    """Every published direct-book price of these plan versions that is in
+    force at ``at`` **or scheduled to start later** (ADR-056) - the Plans &
+    Pricing board shows "INR 499 now, INR 599 from 1 December". One query."""
+    from workeasy360.commercial.pricing.models import PlanPrice
+
+    at = at or timezone.now()
+    rows = (
+        PlanPrice.objects.filter(
+            plan_version_id__in=plan_version_ids,
+            published_at__isnull=False,
+            price_book__channel=PriceBookChannel.DIRECT.value,
+        )
+        .filter(Q(valid_to__isnull=True) | Q(valid_to__gt=at))
+        .select_related("price_book")
+        .order_by("price_book__priority", "interval", "valid_from")
+    )
+    return [
+        {
+            "price_id": str(p.id),
+            "plan_version_id": str(p.plan_version_id),
+            "price_book_id": str(p.price_book_id),
+            "price_book_code": p.price_book.code,
+            "region": p.price_book.region,
+            "currency": p.price_book.currency,
+            "interval": p.interval,
+            "model": p.model,
+            "amount_minor": p.amount_minor,
+            **_commercial_terms(p),
+            "valid_from": p.valid_from.isoformat(),
+            "valid_to": p.valid_to.isoformat() if p.valid_to else None,
+            "state": "scheduled" if p.valid_from > at else "current",
         }
         for p in rows
     ]
@@ -106,7 +180,8 @@ def direct_list_prices(
     ``currency``/``region`` would buy from - the regional book first, then the
     default one, lowest priority number winning, exactly the order
     ``resolve_price`` uses for a direct purchase. Flat prices only carry an
-    amount; tiered ones are flagged ``from_tiers``."""
+    amount; tiered ones are flagged ``from_tiers``. ``amount_minor`` is after any
+    promotional discount (ADR-056), ``list_amount_minor`` before it."""
     from workeasy360.commercial.pricing.models import PlanPrice, PriceBook
 
     at = at or timezone.now()
@@ -153,7 +228,7 @@ def direct_list_prices(
             "interval": p.interval,
             "currency": p.price_book.currency,
             "model": p.model,
-            "amount_minor": p.amount_minor,
+            **_customer_terms(p),
             "from_tiers": p.amount_minor is None,
         }
     for value in chosen.values():

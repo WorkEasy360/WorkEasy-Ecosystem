@@ -21,7 +21,7 @@ const DOMAIN: Record<string, string> = {
   active: "Active",
 };
 
-function Status({ s, base }: { s: WhiteLabelStatus; base: string }) {
+export function WhiteLabelStatusSection({ s, base }: { s: WhiteLabelStatus; base: string }) {
   return (
     <section aria-labelledby="wl-status">
       <h2 id="wl-status">White-label status</h2>
@@ -75,5 +75,5 @@ export function WhiteLabelDashboard() {
   const { id, base } = usePanel();
   const [load] = useLoad(() => panelApi.whiteLabelStatus(id), [id]);
   const status = load.status === "ready" && (load.data.brand || load.data.domain) ? load.data : null;
-  return <PartnerDashboard extra={status ? <Status s={status} base={base} /> : undefined} />;
+  return <PartnerDashboard extra={status ? <WhiteLabelStatusSection s={status} base={base} /> : undefined} />;
 }

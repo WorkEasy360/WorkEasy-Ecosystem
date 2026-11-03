@@ -9,6 +9,7 @@
 
 import { apiFetch } from "./client";
 import type { Page } from "./controlPlane";
+import type { NewTicket, TicketDetail, TicketPage } from "./partnerPanel";
 
 const json = (body: unknown): string => JSON.stringify(body);
 const org = (slug: string) => `/api/v1/orgs/${encodeURIComponent(slug)}`;
@@ -212,8 +213,13 @@ export interface ListPrice {
   interval: string;
   currency: string;
   model: string;
+  /** What the customer pays - after any promotional discount (ADR-056). */
   amount_minor: number | null;
   from_tiers: boolean;
+  /** ADR-056: the price before the discount, the discount, a first-purchase fee. */
+  list_amount_minor?: number | null;
+  discount_bp?: number;
+  setup_fee_minor?: number | null;
 }
 
 export interface MarketplaceOffers {
@@ -235,6 +241,8 @@ export interface MarketplaceOffers {
     included_seats: number;
     max_seats: number | null;
     trial_days: number;
+    /** ADR-056: the plan a comparison highlights. */
+    recommended?: boolean;
     prices: ListPrice[];
   }[];
   bundles: {
@@ -403,8 +411,108 @@ export interface ExploreCatalog {
   bundles: MarketplaceOffers["bundles"];
 }
 
+/** One product as a card of the organization's Store: its Explore facts
+ * (so its buttons are Explore's), plus what the Store page shows - every
+ * value the server's. */
+export interface OrgStoreCard extends ExploreProduct {
+  title: string;
+  summary: string;
+  status: "available" | "trial" | "owned" | "coming_soon";
+  ribbon: { kind: "owned" | "trial_active" | "coming_soon" | "expired" | "new" | "trial"; label: string } | null;
+  price: { amount_minor: number; currency: string; interval: string; plan_name: string; list_amount_minor?: number | null; discount_bp?: number } | null;
+  /** ADR-056 merchandising: collections (featured, popular, new), tags, subcategory. */
+  badges?: string[];
+  tags?: string[];
+  subcategory?: string;
+  yearly_deal: { amount_minor: number; compare_at_minor: number; currency: string; save_percent: number } | null;
+  plan_types: string[];
+  trial_days: number | null;
+  logo_url: string | null;
+  banner_url: string | null;
+}
+
+interface StoreFacetRow {
+  value: string;
+  label: string;
+  count: number;
+}
+
+/** One product of the organization's Store (ADR-056): its listing, screenshots,
+ * a plan comparison and what this organization holds - every value the server's. */
+export interface StoreImage {
+  url: string;
+  caption: string;
+  width: number;
+  height: number;
+}
+
+export interface ComparisonRow {
+  key: string;
+  label: string;
+  description?: string;
+  kind: string;
+  unit: string;
+  values: Record<string, unknown>;
+}
+
+export interface StoreProductPage {
+  currency: string | null;
+  billing_account: boolean;
+  product: ExploreProduct & {
+    title: string;
+    summary: string;
+    highlights: string[];
+    benefits: string[];
+    use_cases: string[];
+    tags: string[];
+    subcategory: string;
+    badges: string[];
+    documentation_url: string;
+    support_url: string;
+    status: "available" | "trial" | "owned" | "coming_soon";
+    logo: StoreImage | null;
+    banner: StoreImage | null;
+    screenshots: StoreImage[];
+    price: OrgStoreCard["price"];
+    yearly_deal: OrgStoreCard["yearly_deal"];
+    held_plan_code: string | null;
+    renews_at: string | null;
+  };
+  plans: ExploreProduct["plans"];
+  comparison: ComparisonRow[];
+  related: { code: string; slug: string; name: string; title: string; summary: string; icon: string; category: string; price: OrgStoreCard["price"] }[];
+}
+
+/** The organization's Store: its Explore list as a marketplace page. */
+export interface OrgStorePage {
+  currency: string | null;
+  currencies: string[];
+  count: number;
+  total: number;
+  products: OrgStoreCard[];
+  facets: {
+    categories: StoreFacetRow[];
+    statuses: StoreFacetRow[];
+    plan_types: StoreFacetRow[];
+    price: { min_minor: number | null; max_minor: number | null };
+  };
+  sorts: { value: string; label: string }[];
+  billing_account: boolean;
+}
+
 export const consoleApi = {
   access: (slug: string) => apiFetch<ConsoleAccess>(`${org(slug)}/access`),
+  /** 2026-11-03: tickets to the organization's partner (its support provider). */
+  supportTickets: (slug: string) => apiFetch<TicketPage>(`${org(slug)}/provider-tickets`),
+  supportTicket: (slug: string, ticketId: string) =>
+    apiFetch<TicketDetail>(`${org(slug)}/provider-tickets/${encodeURIComponent(ticketId)}`),
+  openSupportTicket: (slug: string, body: NewTicket) =>
+    apiFetch<TicketDetail>(`${org(slug)}/provider-tickets`, { method: "POST", body: json(body) }),
+  replySupportTicket: (slug: string, ticketId: string, body: { message?: string; status?: string }) =>
+    apiFetch<TicketDetail>(`${org(slug)}/provider-tickets/${encodeURIComponent(ticketId)}`, {
+      method: "POST",
+      body: json(body),
+    }),
   subscriptions: (slug: string) =>
     apiFetch<{ results: OrgSubscription[] }>(`${org(slug)}/subscriptions`),
   /** Cancel at the end of the paid period (owner or billing manager) - never
@@ -508,6 +616,12 @@ export const consoleApi = {
 
   marketplace: (slug: string) => apiFetch<MarketplaceOffers>(`${org(slug)}/marketplace`),
   explore: (slug: string) => apiFetch<ExploreCatalog>(`${org(slug)}/explore`),
+  /** The Store: Explore's products, filtered, counted and sorted on the server
+   * (`status` and `plan_type` comma-separated; price bounds in major units). */
+  store: (slug: string, query: Record<string, string | undefined>) =>
+    apiFetch<OrgStorePage>(`${org(slug)}/store`, { query }),
+  storeProduct: (slug: string, productCode: string) =>
+    apiFetch<StoreProductPage>(`${org(slug)}/store/${encodeURIComponent(productCode)}`),
 
   trials: (slug: string) => apiFetch<{ results: ProductTrial[] }>(`${org(slug)}/trials`),
   /** Start a trial (owner or billing manager). `key` is minted once per click:

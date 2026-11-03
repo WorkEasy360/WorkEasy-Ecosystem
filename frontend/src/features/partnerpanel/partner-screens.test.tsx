@@ -273,7 +273,8 @@ describe("support manager", () => {
     expect(desk).toHaveAttribute("href", "https://help.workeasy360.com/");
     expect(desk).toHaveAttribute("rel", "noopener noreferrer");
     expect(screen.getByRole("link", { name: "partners@workeasy360.example" })).toHaveAttribute("href", "mailto:partners@workeasy360.example");
-    expect(screen.getByText("Workeasy360 has no ticket system of its own.")).toBeInTheDocument();
+    // 2026-11-03: tickets live in the Helpdesk now; this page points there.
+    expect(screen.getByRole("link", { name: "Open your tickets in the Helpdesk" }).getAttribute("href")).toMatch(/\/support-manager$/);
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     await expectNoViolations(container);
   });

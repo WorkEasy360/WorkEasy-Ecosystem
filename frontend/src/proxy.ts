@@ -58,10 +58,12 @@ const PUBLIC_PATHS = [
   // whose session has already gone still gets a page that returns them to
   // the product, rather than a sign-in form they did not ask for.
   "/sign-out",
+  // 2026-11-02: the public Store - browsing is open; buying signs in first.
+  "/store",
 ];
 
 /** ADR-053: a partner's branded Store (`/store/<partner>`) is browsable signed
- * out; buying signs in first. `/store` itself still needs a session. */
+ * out; buying signs in first. */
 const PUBLIC_PREFIXES = ["/store/"];
 
 export function isPublicPath(pathname: string): boolean {

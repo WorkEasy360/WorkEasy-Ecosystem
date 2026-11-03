@@ -104,7 +104,7 @@ describe("Store Console - Explore Products", () => {
     expect(within(crm).getByText(/From .*99.*month/)).toBeInTheDocument();
     // An approved product is promoted, never requested again.
     expect(within(crm).queryByRole("button", { name: /Request/ })).not.toBeInTheDocument();
-    expect(within(crm).getByRole("link", { name: "Open Easy CRM in My Products" })).toHaveAttribute("href", "/partner/affiliate/store-console");
+    expect(within(crm).getByRole("link", { name: "Open Easy CRM in Approved / Promoting" })).toHaveAttribute("href", "/partner/affiliate/store-console");
     const books = cards.find((c) => within(c).queryByRole("heading", { name: "Easy Books" }))!;
     expect(within(books).getByText("Reason: Not a fit for finance buyers.")).toBeInTheDocument();
     expect(within(books).getByRole("button", { name: "Request again to Easy Books" })).toBeInTheDocument();
@@ -114,7 +114,7 @@ describe("Store Console - Explore Products", () => {
     expect(within(proj).getByText("Pending approval")).toBeInTheDocument();
     expect(within(proj).queryByRole("button")).not.toBeInTheDocument();
     // The tabs carry the server's counts.
-    expect(screen.getByRole("link", { name: "My Products (1)" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Approved / Promoting (1)" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "My Requests (1 pending)" })).toBeInTheDocument();
     await expectNoViolations(container);
   });

@@ -1,10 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { LoadGate, MoreButton, Status, Table, money, useAction, useLoad, usePaged, when } from "@/features/controlplane/ui";
 import { partnerApi } from "@/lib/api/controlPlane";
-import { panelApi, type ManagedProduct } from "@/lib/api/partnerPanel";
+import { panelApi, type ManagedProduct, type PlanRow } from "@/lib/api/partnerPanel";
+import { partnerPriceApi } from "@/lib/api/store";
+import { Modal } from "@/features/controlplane/Modal";
+import { TextField } from "@/features/controlplane/widgets";
+import { describeError } from "@/features/controlplane/ui";
+import { toMajor, toMinor } from "@/features/controlplane/amounts";
 import { PartnerCommissions } from "@/features/controlplane/PartnerScreens";
 import { ProductIcon, productIconKnown } from "@/components/ProductIcon";
 import { NotAvailable, PageHeader, SubNav, UsersNav, monogram, usePanel } from "./PanelKit";
@@ -266,9 +271,68 @@ function PlansNav() {
   return null;
 }
 
+type PlanPrice = PlanRow["prices"][number];
+
+/** ADR-056: the partner sets its own customer price, inside Super Admin's
+ * range. The server re-checks the range, the grant and the permission. */
+function OwnPriceDialog({ plan, price, onDone, onCancel }: { plan: PlanRow; price: PlanPrice; onDone: (m: string) => void; onCancel: () => void }) {
+  const { id } = usePanel();
+  const titleId = useId();
+  const range = price.price_range!;
+  const [value, setValue] = useState(price.customer_price_minor != null ? toMajor(price.customer_price_minor, plan.currency) : "");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const top = range.max_minor != null ? money(range.max_minor, plan.currency) : "no upper limit";
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    const amount = toMinor(value, plan.currency);
+    if (amount === null) return setError("Enter the price as an amount, like 699 or 699.00.");
+    if (amount < range.min_minor || (range.max_minor != null && amount > range.max_minor)) {
+      return setError(`The price must be between ${money(range.min_minor, plan.currency)} and ${top}.`);
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await partnerPriceApi.setOwnPrice(id, { plan_version_id: plan.plan_version_id, interval: price.interval, amount_minor: amount });
+      onDone(`Your price for ${plan.plan_name} is now ${money(amount, plan.currency)}. Existing customers keep the price they bought at.`);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <Modal labelledBy={titleId} onClose={onCancel}>
+      <form onSubmit={(e) => void save(e)} noValidate>
+        <h2 id={titleId}>Your price: {plan.plan_name}</h2>
+        <p className={styles.muted}>
+          Allowed by Workeasy360: {money(range.min_minor, plan.currency)} to {top} ({INTERVALS[price.interval] ?? price.interval}). Applies to new sales.
+        </p>
+        {error && (
+          <p className="w360-error-text" role="alert">
+            {error}
+          </p>
+        )}
+        <TextField label={`Customer price (${plan.currency})`} inputMode="decimal" value={value} onChange={setValue} />
+        <div>
+          <button type="submit" className="w360-btn w360-btn-primary" disabled={saving}>
+            Save price
+          </button>{" "}
+          <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export function Plans() {
   const { id } = usePanel();
-  const [load] = useLoad(() => panelApi.plans(id), [id]);
+  const [round, setRound] = useState(0);
+  const [load] = useLoad(() => panelApi.plans(id), [id, round]);
+  const [editing, setEditing] = useState<{ plan: PlanRow; price: PlanPrice } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   return (
     <div className={styles.page}>
       <PageHeader
@@ -276,12 +340,13 @@ export function Plans() {
         lead="The plans you may sell: list price, your cost, what your customer pays and your margin. Every figure is calculated by Workeasy360."
       />
       <PlansNav />
+      {notice && <p role="status">{notice}</p>}
       <LoadGate load={load} what="your plans">
         {(d) => (
           <>
             <Table
               caption="Plans you can sell, with your cost and margin"
-              head={["Plan", "Product", "Billing", "List price", "Your cost", "Customer price", "Margin", "Margin %", "You earn", "Seats", "Trial", "For sale"]}
+              head={["Plan", "Product", "Billing", "List price", "Your cost", "Customer price", "Margin", "Margin %", "You earn", "Allowed price range", "Seats", "Trial", "For sale"]}
               isEmpty={d.plans.length === 0}
               empty="Nothing has been approved for your account yet."
             >
@@ -302,6 +367,25 @@ export function Plans() {
                         {p.earning?.model === "margin"
                           ? `Margin (${((p.earning.discount_bp ?? 0) / 100).toFixed(2)}% off list)`
                           : "Commission"}
+                        {price?.expected_earning_minor != null && price.expected_earning_minor > 0 && (
+                          <div className={styles.muted}>about {cash(price.expected_earning_minor)} per sale</div>
+                        )}
+                      </td>
+                      <td>
+                        {price?.price_range ? (
+                          <>
+                            {cash(price.price_range.min_minor)} to {price.price_range.max_minor != null ? cash(price.price_range.max_minor) : "no limit"}
+                            {price.can_set_price && (
+                              <div>
+                                <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setEditing({ plan: p, price })} aria-label={`Set your price: ${p.plan_name}`}>
+                                  Set my price
+                                </button>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <span className={styles.muted}>Set by Workeasy360</span>
+                        )}
                       </td>
                       <td className={styles.num}>{p.included_seats}</td>
                       <td>{p.trial_days ? `${p.trial_days} days` : "—"}</td>
@@ -317,7 +401,19 @@ export function Plans() {
               Your cost is the list price less the discount Workeasy360 set for you; your margin is what your customer pays
               less your cost, earned on the ledger once the sale is paid. Without a discount you earn commission instead.
             </p>
-            <NotAvailable title="Creating plans" reasons={["You cannot create a global plan. Workeasy360 creates plans and sets your prices; you see and sell the ones approved for your account."]} />
+            <NotAvailable title="Creating plans" reasons={["You cannot create a global plan. Workeasy360 creates plans and sets your prices; where it allows a price range you may set your own price inside it."]} />
+            {editing && (
+              <OwnPriceDialog
+                plan={editing.plan}
+                price={editing.price}
+                onCancel={() => setEditing(null)}
+                onDone={(m) => {
+                  setEditing(null);
+                  setNotice(m);
+                  setRound((n) => n + 1);
+                }}
+              />
+            )}
           </>
         )}
       </LoadGate>

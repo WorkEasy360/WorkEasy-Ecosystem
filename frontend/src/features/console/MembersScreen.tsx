@@ -1,7 +1,6 @@
 "use client";
 
 import { useId, useState } from "react";
-import Link from "next/link";
 import { ASSIGNABLE_ROLES, consoleApi, type MemberRow } from "@/lib/api/console";
 import { MoreButton, Status, Table, useAction, usePaged, when } from "@/features/controlplane/ui";
 import cp from "@/features/controlplane/ControlPlane.module.css";
@@ -44,16 +43,10 @@ export function MembersScreen() {
 
   return (
     <div className={styles.page}>
+      {/* Members and Invitations are tabs of Organization & Team (2026-11-03): no header link between them. */}
       <PageHeader
         title="Members"
         lead="Everyone who belongs to this organization, their role and when they last signed in."
-        actions={
-          can("platform.member.invite") ? (
-            <Link className="w360-btn w360-btn-primary" href={`/o/${slug}/settings/invitations`}>
-              Invitations
-            </Link>
-          ) : undefined
-        }
       />
       <form
         className={local.toolbar}

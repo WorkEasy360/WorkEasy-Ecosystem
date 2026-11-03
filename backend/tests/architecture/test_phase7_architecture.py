@@ -353,6 +353,8 @@ def test_the_exemptions_from_tenant_scoping_are_exactly_the_ones_D019_justifies(
         "provisioning.CustomerSummary",
         "commissions.Referral",
         "commissions.CommissionAccrual",
+        # ADR-057 (2026-11-03): a partner's helpdesk spans its customers.
+        "partners.PartnerTicket",
     }, "adding a control-plane exemption needs an entry in the debt register"
     register = (REPO_ROOT / "docs" / "architecture" / "debt-register.md").read_text(
         encoding="utf-8"

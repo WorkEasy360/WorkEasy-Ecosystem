@@ -249,6 +249,15 @@ export interface ProductChanges {
   reseller_enabled?: boolean;
   affiliate_enabled?: boolean;
   white_label_enabled?: boolean;
+  // ADR-056: store merchandising.
+  subcategory?: string;
+  tags?: string[];
+  highlights?: string[];
+  benefits?: string[];
+  use_cases?: string[];
+  featured?: boolean;
+  popular?: boolean;
+  badge_new?: boolean;
 }
 
 // --- the products console (Phase 11) ---------------------------------------------
@@ -379,6 +388,15 @@ export interface ConsoleProduct {
   reseller_enabled: boolean;
   affiliate_enabled: boolean;
   white_label_enabled: boolean;
+  /** ADR-056: store merchandising - search tags, bullet lists, badges. */
+  subcategory: string;
+  tags: string[];
+  highlights: string[];
+  benefits: string[];
+  use_cases: string[];
+  featured: boolean;
+  popular: boolean;
+  badge_new: boolean;
   created_at: string | null;
   updated_at: string | null;
   activated_at: string | null;
@@ -402,6 +420,76 @@ export interface ProductsConsole {
   can_see_integrations: boolean;
   /** The categories the Product Manager offers (server configuration). */
   categories: string[];
+}
+
+/** One option of a Store filter, with how many products it would show given
+ * the other filters (the server counts). */
+export interface StoreFacet {
+  value: string;
+  label: string;
+  count: number;
+}
+
+/** One product as a Super Admin Store card. Every fact is the server's: the
+ * price is the direct list price a customer would see it from, `null` when the
+ * product is not on sale. */
+export interface StoreCard {
+  id: string;
+  code: string;
+  slug: string;
+  name: string;
+  title: string;
+  summary: string;
+  category: string;
+  icon: string;
+  logo_media_id: string | null;
+  banner_media_id: string | null;
+  manager_status: "draft" | "active" | "archived";
+  listing: string;
+  store_status: "live" | "coming_soon" | "not_listed";
+  ribbon: { kind: "archived" | "coming_soon" | "draft" | "hidden" | "new" | "trial"; label: string } | null;
+  price: { amount_minor: number; currency: string; interval: string; plan_name: string; list_amount_minor?: number | null; discount_bp?: number } | null;
+  /** ADR-056 merchandising: collections (featured, popular, new), tags, subcategory. */
+  badges?: string[];
+  tags?: string[];
+  subcategory?: string;
+  yearly_deal: { amount_minor: number; compare_at_minor: number; currency: string; save_percent: number } | null;
+  trial_days: number | null;
+  plans_on_sale: number;
+  plan_types: string[];
+  programs: string[];
+  activated_at: string | null;
+  created_at: string | null;
+}
+
+export interface StorePage {
+  currency: string | null;
+  currencies: string[];
+  count: number;
+  total: number;
+  products: StoreCard[];
+  facets: {
+    categories: StoreFacet[];
+    programs: StoreFacet[];
+    statuses: StoreFacet[];
+    plan_types: StoreFacet[];
+    price: { min_minor: number | null; max_minor: number | null };
+  };
+  sorts: { value: string; label: string }[];
+}
+
+/** The Store's filters as the server reads them (`status` and `plan_type`
+ * comma-separated; price bounds in major units, converted by the server). */
+export interface StoreQuery {
+  q?: string;
+  category?: string;
+  program?: string;
+  status?: string;
+  plan_type?: string;
+  price_min?: string;
+  price_max?: string;
+  currency?: string;
+  sort?: string;
 }
 
 /** One product whole (ADR-051): the console's view plus its publish checklist. */
@@ -525,6 +613,8 @@ export const adminApi = {
   // --- the products console (Phase 11) --------------------------------------------
 
   productsConsole: () => apiFetch<ProductsConsole>(`${admin}/products/console`),
+  /** The Super Admin Store: every product as a store card (read only). */
+  productStore: (q: StoreQuery) => apiFetch<StorePage>(`${admin}/products/store`, { query: { ...q } }),
 
   // --- the Product Manager (ADR-051) -------------------------------------------------
 
@@ -723,6 +813,9 @@ export interface PortalPartner {
   /** The workspace to open first, resolved by the server; null for a partner
    * whose grants earn none (the generic portal opens). */
   landing?: string | null;
+  /** 2026-11-03: the partner's level on the unified dashboard - its largest
+   * workspace (Level 1 affiliate, 2 reseller, 3 white_label). Presentation. */
+  level?: string | null;
   /** What the server will let this person do right now. Navigation is drawn
    * from it; every request is authorized again by the service it reaches. */
   permissions?: string[];

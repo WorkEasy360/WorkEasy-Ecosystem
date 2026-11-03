@@ -470,6 +470,7 @@ def store_console(ctx: TenantContext, *, kind: str = "promote") -> dict[str, Any
             p["code"], {"status": promotion_requests.NOT_REQUESTED, "request": None}
         )
         logo = next((m for m in p["media"] if m["kind"] == "logo"), None)
+        banner = next((m for m in p["media"] if m["kind"] == "banner"), None)
         return {
             "code": p["code"],
             "name": p["name"],
@@ -480,6 +481,7 @@ def store_console(ctx: TenantContext, *, kind: str = "promote") -> dict[str, Any
             "category": p["category"],
             "icon": p["icon"],
             "logo_url": logo["url"] if logo else None,
+            "banner_url": banner["url"] if banner else None,
             "plans": p["plans"],
             "starting_price": prices.get(p["code"]),
             # None: not disclosed to this member. {"rate_bp": None}: no rule yet.
@@ -605,6 +607,9 @@ def reports(
             ),
             "commission_earned": _commission_by_currency(series),
             "charts": partner_portal.sales_charts(series),
+            # 2026-11-03: the product-wise revenue matrix (unified dashboard
+            # specification, Reports & Analytics) - the dashboard's own split.
+            "by_product": partner_portal.product_sales(partner_id, start, end),
             "source": "commission_ledger",
         }
     if REFERRAL_VIEW in permissions:

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { StatusScreen } from "@/components/StatusScreen";
 import { AccountMenu, SidebarShell, type AccountMenuEntry, type SidebarGroup } from "@/components/sidebar/SidebarShell";
 import { GuestViewBanner, PartnerContext, useSignOut } from "@/features/controlplane/ControlShell";
@@ -13,20 +13,27 @@ import { usePortals } from "@/lib/portalContext";
 import { portalHref } from "@/lib/portals";
 import consoleStyles from "@/features/console/Console.module.css";
 import {
+  CONTAINS,
   WORKSPACES,
   entriesFor,
   experienceFromSlug,
   firstAllowedPath,
   isExperienceKey,
+  isLocked,
+  lockedEntryFor,
   pageAllowed,
   servedPaths,
+  tabbedEntryFor,
+  unlockLevel,
   workspaceBase,
   workspaceHome,
   type Can,
   type ExperienceKey,
   type WorkspaceDef,
+  type WorkspaceEntry,
 } from "./experiences";
-import { usePanel } from "./PanelKit";
+import { LevelTools, UpgradeDialog } from "./levels";
+import { EntryTabs, usePanel } from "./PanelKit";
 import { pageFor } from "./workspacePages";
 import styles from "./PartnerPanel.module.css";
 
@@ -60,20 +67,32 @@ const permissionCheck = (partner: PortalPartner): Can => {
   return (...keys) => keys.some((k) => held.has(`platform.partner_${k}`));
 };
 
-/** The sidebar for one workspace and one person. */
-export function workspaceNav(def: WorkspaceDef, partner: PortalPartner): SidebarGroup[] {
+/** The sidebar for one workspace and one person (2026-11-03: the unified
+ * dashboard's fourteen entries). An entry the level does not include is drawn
+ * locked and opens `onLocked`; one the person's role cannot use is not drawn. */
+export function workspaceNav(
+  def: WorkspaceDef,
+  partner: PortalPartner,
+  onLocked?: (entry: WorkspaceEntry) => void,
+): SidebarGroup[] {
   const can = permissionCheck(partner);
   const base = workspaceBase(def.key);
   return def.groups.map((group) => ({
     title: group.title,
-    items: group.entries.map((entry) => ({
-      href: `${base}/${entry.landing?.(can) ?? entry.path}`,
-      label: entry.label,
-      icon: entry.icon,
-      match: `${base}/${entry.path}`,
-      alsoMatch: (entry.also ?? []).map((p) => `${base}/${p}`),
-      when: entry.needs(can),
-    })),
+    items: group.entries.map((entry) => {
+      const locked = isLocked(def, entry);
+      return {
+        href: `${base}/${entry.landing?.(can) ?? entry.path}`,
+        label: entry.label,
+        icon: entry.icon,
+        // A workspace serves only the pages its entries list, so each entry is
+        // current on exactly its own - never on another entry's deeper address.
+        exactPaths: [entry.path, ...(entry.also ?? [])].map((p) => `${base}/${p}`),
+        when: locked ? true : entry.needs(can),
+        locked,
+        onSelect: locked && onLocked ? () => onLocked(entry) : undefined,
+      };
+    }),
   }));
 }
 
@@ -95,6 +114,8 @@ type State =
 
 export function WorkspaceShell({ experience, children }: { experience: ExperienceKey; children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname() ?? "";
+  const [lockedEntry, setLockedEntry] = useState<WorkspaceEntry | null>(null);
   const portals = usePortals();
   const session = useSession();
   const { signOut, banner } = useSignOut();
@@ -119,7 +140,19 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
     [state, experience],
   );
 
-  if (session.status === "loading" || state.status === "loading") {
+  // One dashboard (2026-11-03): a partner works at its own level. The address
+  // of a level it has grown out of (an upgraded affiliate's old bookmark)
+  // opens the same page at its level, which carries every lower page.
+  const only = candidates.length === 1 ? candidates[0] : null;
+  const higher =
+    only && isExperienceKey(only.level) && only.level !== experience && CONTAINS[only.level].includes(experience) ? only.level : null;
+  useEffect(() => {
+    if (!higher) return;
+    const rest = pathname.slice(workspaceBase(experience).length).replace(/^\/+/, "");
+    router.replace(`${workspaceBase(higher)}/${rest || "dashboard"}`);
+  }, [higher, experience, pathname, router]);
+
+  if (session.status === "loading" || state.status === "loading" || higher) {
     return <StatusScreen>Loading the partner portal…</StatusScreen>;
   }
   if (session.status === "ready" && session.session.password_change_required) return <ForcedPasswordChange />;
@@ -176,8 +209,11 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
   const who = session.status === "ready" ? session.session : null;
   // ADR-053: the switcher reads in the order a partner grows - Affiliate,
   // Reseller, White-label. Presentation only; the server decides which exist.
+  // 2026-11-03: one panel - a workspace this one contains (the Affiliate one of an
+  // upgraded Reseller) is not a second place to go; its pages are here.
   const workspaces = (partner.workspaces ?? [])
     .filter((w): w is { key: ExperienceKey; label: string } => isExperienceKey(w.key))
+    .filter((w) => !CONTAINS[experience].includes(w.key))
     .sort((a, b) => SWITCHER_ORDER.indexOf(a.key) - SWITCHER_ORDER.indexOf(b.key));
   const entries: AccountMenuEntry[] = [
     ...(workspaces.length > 1
@@ -197,7 +233,9 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
             {def.label} · {partner.display_name}
           </span>
         }
-        groups={workspaceNav(def, partner)}
+        navTitle="Partner panel"
+        groups={workspaceNav(def, partner, setLockedEntry)}
+        tools={<LevelTools level={experience} />}
         account={<AccountMenu name={who?.name || who?.email || ""} entries={entries} />}
         banner={
           <>
@@ -222,6 +260,13 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
         }
       >
         {children}
+        {lockedEntry && (
+          <UpgradeDialog
+            current={experience}
+            feature={{ label: lockedEntry.label, pitch: lockedEntry.pitch, level: unlockLevel(lockedEntry) }}
+            onClose={() => setLockedEntry(null)}
+          />
+        )}
       </SidebarShell>
     </PartnerContext.Provider>
   );
@@ -250,6 +295,8 @@ export function WorkspaceContent({ experience, path }: { experience: ExperienceK
 
   if (redirect) return <p aria-live="polite">Opening…</p>;
 
+  const locked = lockedEntryFor(def, clean);
+  if (locked) return <LockedPage experience={experience} entry={locked} />;
   if (!servedPaths(def).has(clean) || entriesFor(def, clean).length === 0) {
     return (
       <div className={styles.denied} role="alert">
@@ -282,7 +329,50 @@ export function WorkspaceContent({ experience, path }: { experience: ExperienceK
       </div>
     );
   }
+  // A consolidated entry (2026-11-02): its pages are tabs of one page.
+  const owner = tabbedEntryFor(def, clean);
+  if (owner?.tabs) {
+    const tabs = owner.tabs
+      .filter((tab) => !tab.needs || tab.needs(can))
+      .map((tab) => ({
+        href: `${base}/${tab.path}`,
+        label: tab.label,
+        current: [tab.path, ...(tab.also ?? [])].map((p) => `${base}/${p}`),
+      }));
+    return <EntryTabs tabs={tabs}>{page}</EntryTabs>;
+  }
   return page;
+}
+
+/** A page of an entry the partner's level does not include: what it is, and
+ * the way to unlock it - never the page itself. */
+function LockedPage({ experience, entry }: { experience: ExperienceKey; entry: WorkspaceEntry }) {
+  const [open, setOpen] = useState(false);
+  const level = unlockLevel(entry);
+  return (
+    <div className={styles.denied}>
+      <h1>
+        <span aria-hidden="true">🔒 </span>
+        {entry.label} is part of the {WORKSPACES[level].label} level
+      </h1>
+      {entry.pitch && <p>{entry.pitch}</p>}
+      <p>
+        You are a {WORKSPACES[experience].level.name}. Upgrade on the same account to unlock it - nothing you have earned is lost.
+      </p>
+      <p>
+        <button type="button" className="w360-btn w360-btn-primary" onClick={() => setOpen(true)}>
+          See upgrade options
+        </button>
+      </p>
+      {open && (
+        <UpgradeDialog
+          current={experience}
+          feature={{ label: entry.label, pitch: entry.pitch, level }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </div>
+  );
 }
 
 /** What each `app/partner/<workspace>/[[...slug]]` route renders. */

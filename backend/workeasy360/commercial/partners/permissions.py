@@ -107,6 +107,20 @@ PARTNER_PERMISSIONS: Final = (
     ),
     _d("platform.partner_commission.view", "View the partner's own commission"),
     _d("platform.partner_payout.view", "View the partner's own payouts"),
+    # 2026-11-03: saving the payout bank/UPI details and PAN, and asking for a
+    # withdrawal. Dangerous: a stolen session could redirect the money.
+    _d(
+        "platform.partner_payout.request",
+        "Set payout details and request withdrawals",
+        implies=("platform.partner_payout.view",),
+        dangerous=True,
+    ),
+    _d("platform.partner_desk.view", "Read tickets from the partner's own customers"),
+    _d(
+        "platform.partner_desk.manage",
+        "Answer tickets from the partner's own customers",
+        implies=("platform.partner_desk.view",),
+    ),
     _d(
         "platform.partner_support.access",
         "Run read-only access diagnostics for related customers",

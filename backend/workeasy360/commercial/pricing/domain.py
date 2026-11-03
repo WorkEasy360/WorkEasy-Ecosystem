@@ -176,3 +176,25 @@ def _volume(
 TIERED_MODELS: Final[frozenset[PriceModel]] = frozenset(
     {PriceModel.TIERED, PriceModel.VOLUME}
 )
+
+
+#: The largest discount a price row may carry: 100% (a free promotional price).
+MAX_DISCOUNT_BP: Final = 10_000
+
+
+def apply_discount(amount: Money, discount_bp: int) -> Money:
+    """``amount`` less a ``discount_bp`` promotional discount, rounded half-up -
+    the rounding every other rate in the platform uses (ADR-056).
+
+    The one place a discount is applied: the resolver (what an order costs) and
+    the list-price reads (what a store shows) both call it, so a card and a
+    checkout can never disagree about a discounted price.
+    """
+    if not 0 <= discount_bp <= MAX_DISCOUNT_BP:
+        raise PriceNotAvailable(
+            f"A discount must be between 0 and {MAX_DISCOUNT_BP} basis points, "
+            f"got {discount_bp}."
+        )
+    if discount_bp == 0:
+        return amount
+    return amount.apply_rate(MAX_DISCOUNT_BP - discount_bp)

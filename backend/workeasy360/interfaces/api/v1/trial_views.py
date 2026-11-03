@@ -100,10 +100,57 @@ def trial_cancel_view(
 def explore_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     """The products this organization can discover, priced in its own currency,
     each with what it may do about it (buy, start a trial, nothing)."""
+    ctx = request.tenant_context  # type: ignore[attr-defined]
+    return JsonResponse(_explore_listing(ctx))
+
+
+@require_http_methods(["GET"])
+def store_view(request: HttpRequest, org_slug: str) -> JsonResponse:
+    """The organization's Store (2026-10-31): its Explore listing, unchanged,
+    as a marketplace page - filtered, counted and sorted on the server."""
+    from workeasy360.commercial.controlplane import portal_store
+
+    ctx = request.tenant_context  # type: ignore[attr-defined]
+    return JsonResponse(
+        portal_store.customer_store(
+            ctx,
+            _explore_listing(ctx),
+            q=request.GET.get("q"),
+            category=request.GET.get("category"),
+            status=request.GET.getlist("status"),
+            plan_type=request.GET.getlist("plan_type"),
+            price_min=request.GET.get("price_min"),
+            price_max=request.GET.get("price_max"),
+            sort=request.GET.get("sort"),
+            collection=request.GET.get("collection"),
+        )
+    )
+
+
+@require_http_methods(["GET"])
+def store_product_view(
+    request: HttpRequest, org_slug: str, product_code: str
+) -> JsonResponse:
+    """One product of the organization's Store (ADR-056): content, screenshots,
+    plan comparison, what the organization holds, related products."""
+    from workeasy360.commercial.controlplane import portal_store
+    from workeasy360.contracts.errors import CommercialRecordNotFound
+
+    ctx = request.tenant_context  # type: ignore[attr-defined]
+    page = portal_store.customer_product(
+        ctx, _explore_listing(ctx), product_code=product_code
+    )
+    if page is None:
+        raise CommercialRecordNotFound("No such product in this store.")
+    return JsonResponse(page)
+
+
+def _explore_listing(ctx: Any) -> dict[str, Any]:
+    """Explore's listing: the organization's products, narrowed and ordered by
+    its partner. The one assembly Explore and the Store both show."""
     from workeasy360.commercial.partners import selectors as partner_selectors
     from workeasy360.commercial.subscriptions.marketplace import explore
 
-    ctx = request.tenant_context  # type: ignore[attr-defined]
     listing = explore(ctx)
     # What this customer's *partner* chose to show and to trial. Presentation
     # and a narrowing of the offer only: nothing here reads or changes an
@@ -131,7 +178,7 @@ def explore_view(request: HttpRequest, org_slug: str) -> JsonResponse:
             shown.append(product)
         listing["products"] = shown
     _apply_portal_presentation(ctx, listing)
-    return JsonResponse(listing)
+    return listing
 
 
 def _apply_portal_presentation(ctx: Any, listing: dict[str, Any]) -> None:

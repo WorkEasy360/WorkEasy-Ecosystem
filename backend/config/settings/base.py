@@ -938,6 +938,12 @@ CONTROL_PLANE_RATE_LIMITS = {
     # ADR-053: a partner's support request is an email to the platform.
     "partner_support_user": (env.int("W360_RL_PARTNER_SUPPORT_USER", 5), 300),
     "partner_support_ip": (env.int("W360_RL_PARTNER_SUPPORT_IP", 20), 300),
+    # 2026-11-03: helpdesk messages (a conversation, so looser than the old
+    # one-shot support form) and payout-detail / withdrawal changes.
+    "partner_ticket_user": (env.int("W360_RL_PARTNER_TICKET_USER", 30), 300),
+    "partner_ticket_ip": (env.int("W360_RL_PARTNER_TICKET_IP", 100), 300),
+    "partner_payout_user": (env.int("W360_RL_PARTNER_PAYOUT_USER", 10), 300),
+    "partner_payout_ip": (env.int("W360_RL_PARTNER_PAYOUT_IP", 30), 300),
     # ADR-046: partner API keys. Managing them (create / rotate / revoke) is a
     # dangerous action and is limited tightly; the key-authenticated read API has
     # a per-address ceiling here and a per-key one in the view.
@@ -996,6 +1002,18 @@ W360_DNS_LIFETIME_SECONDS = env.int("W360_DNS_LIFETIME_SECONDS", 5)
 W360_COMMISSION_HOLDBACK_DAYS = env.int("W360_COMMISSION_HOLDBACK_DAYS", 30)
 #: The attribution window until Super Admin saves a programme policy (ADR-054).
 W360_REFERRAL_CAPTURE_DAYS = env.int("W360_REFERRAL_CAPTURE_DAYS", 90)
+#: 2026-11-03 (unified partner dashboard): the smallest withdrawal a partner
+#: may request, in minor units of its payout currency (100000 = INR 1,000).
+W360_PARTNER_MIN_WITHDRAWAL_MINOR = env.int("W360_PARTNER_MIN_WITHDRAWAL_MINOR", 100_000)
+#: TDS withheld from an INR withdrawal, in basis points (Section 194H; 200 =
+#: 2%). A tax setting: confirm the rate with the company's accountant.
+W360_PARTNER_TDS_RATE_BP = env.int("W360_PARTNER_TDS_RATE_BP", 200)
+#: Staff seats (members besides the owner) by partner level. -1 = unlimited.
+W360_PARTNER_STAFF_SEATS = {
+    "affiliate": env.int("W360_PARTNER_STAFF_SEATS_AFFILIATE", 0),
+    "reseller": env.int("W360_PARTNER_STAFF_SEATS_RESELLER", 5),
+    "white_label": env.int("W360_PARTNER_STAFF_SEATS_WHITE_LABEL", -1),
+}
 #: Retention: unconverted referral captures live this long past expiry.
 W360_REFERRAL_RETENTION_DAYS = env.int("W360_REFERRAL_RETENTION_DAYS", 180)
 #: ADR-054: domains a product update's "full announcement" link may point at
@@ -1254,6 +1272,19 @@ NOTIFICATION_SEAL_KEYS = [
     base64.urlsafe_b64encode(hashlib.sha256(m.strip().encode("utf-8")).digest())
     for m in (
         env.secret("W360_NOTIFICATION_SEAL_KEYS", "") or f"{SECRET_KEY}:notification-seal"
+    ).split(",")
+    if m.strip()
+]
+
+# 2026-11-03: a partner's payout account number and PAN are sealed under this
+# (commercial/controlplane/partner_withdrawals.py). Comma-separated; the first
+# seals, every one opens. Production reads its own key and, without one,
+# refuses to store payout details rather than derive a key.
+PARTNER_PAYOUT_SEAL_KEYS = [
+    base64.urlsafe_b64encode(hashlib.sha256(m.strip().encode("utf-8")).digest())
+    for m in (
+        env.secret("W360_PARTNER_PAYOUT_SEAL_KEYS", "")
+        or f"{SECRET_KEY}:partner-payout-seal"
     ).split(",")
     if m.strip()
 ]

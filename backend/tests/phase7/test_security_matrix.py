@@ -54,6 +54,8 @@ DANGEROUS_PARTNER = frozenset(
         # ADR-046: minting, rotating or revoking a credential that reads the
         # partner's data from outside the portal.
         "platform.partner_apikey.manage",
+        # ADR-057: saying where the money goes and asking for it.
+        "platform.partner_payout.request",
     }
 )
 

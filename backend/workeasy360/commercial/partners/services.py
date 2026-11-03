@@ -768,6 +768,46 @@ def add_member(ctx: TenantContext, partner_id: UUID, *, email: Any, role: Any) -
         return _attach_member(ctx, partner_id, user_id, member_role)
 
 
+def staff_seats(partner_id: UUID) -> dict[str, Any]:
+    """The partner's staff seats (2026-11-03): members besides owners - active,
+    suspended or invited - against its level's allowance
+    (``W360_PARTNER_STAFF_SEATS``: Affiliate none, Reseller 5, White-label
+    unlimited by default). ``limit`` is ``None`` for unlimited."""
+    from django.conf import settings
+
+    from workeasy360.commercial.partners.models import PartnerMember
+
+    level = capabilities.partner_level(selectors.active_capabilities(partner_id))
+    allowance = dict(getattr(settings, "W360_PARTNER_STAFF_SEATS", {}) or {})
+    raw = allowance.get(level or "affiliate", 0)
+    used = (
+        PartnerMember.objects.filter(partner_id=partner_id)
+        .exclude(status="removed")
+        .exclude(role="owner")
+        .count()
+    )
+    limit = None if raw is None or int(raw) < 0 else int(raw)
+    return {"level": level, "used": used, "limit": limit}
+
+
+def _check_seat(ctx: TenantContext, partner_id: UUID, role: str) -> None:
+    """A partner adding a member beyond its level's staff seats is refused.
+    Staff acting on a partner are not limited (they set up its owner, and may
+    make an exception); an owner never takes a staff seat."""
+    if ctx.principal is not PrincipalKind.PARTNER or role == "owner":
+        return
+    seats = staff_seats(partner_id)
+    if seats["limit"] is not None and seats["used"] >= seats["limit"]:
+        if seats["limit"] == 0:
+            message = "Your partner level has no staff seats. Upgrade to add your team."
+        else:
+            message = (
+                f"All {seats['limit']} staff seats of your partner level are in use. "
+                "Remove someone or upgrade to add more."
+            )
+        raise PartnerValidationError(message, field="email")
+
+
 def _attach_member(
     ctx: TenantContext, partner_id: UUID, user_id: UUID, member_role: Any
 ) -> Any:
@@ -777,6 +817,7 @@ def _attach_member(
     one uniform refusal for "already a member"."""
     from workeasy360.commercial.partners.models import PartnerMember
 
+    _check_seat(ctx, partner_id, member_role.value)
     try:
         with transaction.atomic():
             member = PartnerMember.objects.create(
@@ -1042,6 +1083,7 @@ def _invite_member(
                     member=already, account_created=False, setup_link_sent=False
                 )
             raise PartnerValidationError("That account cannot be added.", field="email")
+        _check_seat(ctx, partner_id, member_role.value)
         try:
             with transaction.atomic():
                 member = PartnerMember.objects.create(

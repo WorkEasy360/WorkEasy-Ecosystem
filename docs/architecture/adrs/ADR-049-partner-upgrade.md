@@ -46,3 +46,28 @@ Most of the machinery existed. `experience.transition_experience` already grants
 - One additive table; the previous release neither reads nor writes it, so the migration is overlap-safe.
 - Upgraded partners hold the union of their grants; the Experience panel, the workspace switcher and reports already handle that case.
 - A later change that lets a partner pay for an upgrade attaches to `approve` (a precondition) without touching the request model.
+
+## Addendum (2026-11-03): a paid upgrade, offline or online, and one panel
+
+Owner request: "an affiliate upgrades to reseller and then white-label for an amount the admin sets; the request reaches the admin, who approves; after upgrading, everything is in one panel (the higher one)". The owner chose **both** ways to pay (online when a provider takes the currency, otherwise offline).
+
+**The price** is ADR-053's set-up fee per target (`PartnerProgramFee`), now with `payment_instructions` (bank / UPI text shown to the partner). A request still snapshots the fee when it opens.
+
+**Offline.** On the Review step the partner gives its transfer's reference (`submit(payment_reference=...)`, required while a fee is unpaid). Staff verify the transfer; approval still needs a reference (pre-filled with the partner's).
+
+**Online.** `partners.upgrade_payments.pay_online` opens a hosted checkout through `payments.partner_fees`:
+- **The record.** A new control-plane `PartnerFeePayment` (`payments.0005`). A partner is not an organization, so this is not an invoice attempt.
+- **What it reuses.** The same provider choice, adapters, egress, test provider and signed webhook as an invoice.
+- **How a callback finds it.** `webhooks.process` sends a verified callback that names no organization to `partner_fees.apply_webhook`. That applies it once (`PaymentWebhookEvent`), and only for the exact amount and currency; anything else is recorded as a mismatch.
+- **What a payment does.** It is decided above payments: `partners.apps` registers `upgrades.fee_paid` for the `partner_upgrade` purpose. That stamps `fee_paid_at`, sends the request for review if the partner had not, and audits it as a system action.
+- **Approval.** A fee paid online is settled without a reference. `fee_paid_online` also reads the payment itself, so a failed follow-up never hides a payment.
+
+**Notification.** Every submission, and every online payment that sends a request, emails each staff member holding `platform.staff_partner.manage` (template `platform.partner.upgrade_requested`, idempotent per request version). This is in addition to the existing badge and dashboard count.
+
+**One panel.** Decision 5 above (a partner may sit in two workspaces) is superseded for navigation. The Reseller and White-label workspaces carry the affiliate programme as an "Affiliate programme" group (Promote Products, Referral Tools, Marketing Hub, Referral Performance).
+- **Who sees it.** It is drawn only for a member holding `referral.view`, which only a partner that was an Affiliate keeps.
+- **Where it lives.** The promoting Store is under `promote/`, because a higher workspace's own `store` sells.
+- **The switcher.** It no longer offers a workspace the current one contains (`CONTAINS`).
+- **What is unchanged.** The grants are still additive and the server is unchanged: old `/partner/affiliate/...` links still open.
+
+**Layering** holds (import-linter 18/18): `payments` imports nothing above it; `upgrades` still writes the request table alone, and imports `payments.partner_fees`, never `payments.models`, `orders` or `checkout`.
