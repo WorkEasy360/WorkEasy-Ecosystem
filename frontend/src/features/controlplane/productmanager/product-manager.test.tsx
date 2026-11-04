@@ -578,6 +578,43 @@ describe("Product detail", () => {
     );
   });
 
+  it("merchandising sets the marketplace's product type, best for, integrations and Best Seller", async () => {
+    query = "tab=listing";
+    const calls = mockApi({
+      [`GET ${ADMIN}/products/p1`]: [ok(managed())],
+      [`PATCH ${ADMIN}/catalog/products/p1`]: [ok({})],
+    });
+    renderAs(MANAGE, <ProductDetail productId="p1" />);
+    const form = await screen.findByRole("form", { name: "Store merchandising" });
+    fireEvent.change(within(form).getByLabelText("Product type"), { target: { value: "ai_tool" } });
+    const bestFor = within(form).getByRole("group", { name: "Best for" });
+    fireEvent.click(within(bestFor).getByLabelText("Agencies"));
+    fireEvent.click(within(bestFor).getByLabelText("Startups"));
+    fireEvent.change(within(form).getByLabelText("Integrations"), { target: { value: "WhatsApp, Gmail ," } });
+    fireEvent.click(within(form).getByLabelText(/Best Seller/));
+    fireEvent.click(within(form).getByRole("button", { name: "Save merchandising" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.key === `PATCH ${ADMIN}/catalog/products/p1`)?.body).toEqual({
+        product_type: "ai_tool",
+        // In the fixed list's order, whatever order they were ticked in.
+        best_for: ["startups", "agencies"],
+        integrations: ["WhatsApp", "Gmail"],
+        best_seller: true,
+      }),
+    );
+  });
+
+  it("merchandising refuses an integration name the server would refuse", async () => {
+    query = "tab=listing";
+    const calls = mockApi({ [`GET ${ADMIN}/products/p1`]: [ok(managed())] });
+    renderAs(MANAGE, <ProductDetail productId="p1" />);
+    const form = await screen.findByRole("form", { name: "Store merchandising" });
+    fireEvent.change(within(form).getByLabelText("Integrations"), { target: { value: "x".repeat(33) } });
+    expect(within(form).getByText("Each integration name is at most 32 characters.")).toBeInTheDocument();
+    expect(within(form).getByRole("button", { name: "Save merchandising" })).toBeDisabled();
+    expect(calls.find((c) => c.key.startsWith("PATCH"))).toBeUndefined();
+  });
+
   it("uploads a product video from the computer, and refuses one it cannot play", async () => {
     query = "tab=listing";
     mockApi({ [`GET ${ADMIN}/products/p2`]: [ok(managed(DRAFT)), ok(managed(DRAFT))] });

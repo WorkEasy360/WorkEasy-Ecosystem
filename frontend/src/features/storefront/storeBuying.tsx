@@ -112,7 +112,7 @@ export function PublicCartBar({
   if (cart.items.length === 0) return null;
   const count = cart.items.length;
   return (
-    <section className={styles.cart} aria-labelledby={titleId}>
+    <section id="cart" className={styles.cart} aria-labelledby={titleId}>
       <div className={styles.cartHead}>
         <h2 id={titleId} className={styles.cartTitle}>
           Your cart ({count} product{count === 1 ? "" : "s"})

@@ -231,6 +231,7 @@ def plan_types_of(plans: list[dict[str, Any]], *, trial: bool) -> list[str]:
 #: for a product launched within ``NEW_FOR`` or marked new by hand.
 COLLECTIONS: dict[str, str] = {
     "all": "All products",
+    "best_seller": "Best Seller",
     "featured": "Featured",
     "popular": "Popular",
     "new": "New",
@@ -241,7 +242,7 @@ def badges_of(row: dict[str, Any] | None, now: datetime) -> list[str]:
     """The collections a product belongs to, from its listing row."""
     if row is None:
         return []
-    badges = [key for key in ("featured", "popular") if row.get(key)]
+    badges = [key for key in ("best_seller", "featured", "popular") if row.get(key)]
     activated = row.get("activated_at")
     recent = bool(activated) and now - datetime.fromisoformat(str(activated)) <= NEW_FOR
     if row.get("badge_new") or recent:
@@ -255,7 +256,18 @@ def merchandising_of(row: dict[str, Any] | None, now: datetime) -> dict[str, Any
         "subcategory": (row or {}).get("subcategory", ""),
         "tags": list((row or {}).get("tags", [])),
         "badges": badges_of(row, now),
+        # 2026-11-04 marketplace filters.
+        "product_type": (row or {}).get("product_type") or "saas",
+        "best_for": list((row or {}).get("best_for", [])),
+        "integrations": list((row or {}).get("integrations", [])),
     }
+
+
+#: The marketplace's "Product type" filter: every product, or one kind.
+PRODUCT_TYPES: dict[str, str] = {"all": "All Products", **catalog.PRODUCT_TYPES}
+#: The longest integration name a filter may ask for, and how many at once.
+_MAX_INTEGRATION_FILTER = 32
+_MAX_INTEGRATION_FILTERS = 12
 
 
 def _store_status(product: dict[str, Any]) -> str:
@@ -372,6 +384,25 @@ class Query:
     high: int | None
     sort: str
     collection: str = "all"
+    product_type: str = "all"
+    best_for: tuple[str, ...] = ()
+    #: Lower-cased integration names (matched ignoring case).
+    integrations: tuple[str, ...] = ()
+
+
+def _integrations(raw: list[str]) -> tuple[str, ...]:
+    """Integration names to filter by: free text (the facet lists those the
+    products name), so only their length and number are checked."""
+    values = [v.strip() for item in raw for v in str(item).split(",") if v.strip()]
+    if len(values) > _MAX_INTEGRATION_FILTERS or any(
+        len(v) > _MAX_INTEGRATION_FILTER for v in values
+    ):
+        raise CatalogValidationError(
+            f"integration is at most {_MAX_INTEGRATION_FILTERS} app names of "
+            f"at most {_MAX_INTEGRATION_FILTER} characters.",
+            field="integration",
+        )
+    return tuple(dict.fromkeys(v.lower() for v in values))
 
 
 def parse_query(
@@ -386,6 +417,9 @@ def parse_query(
     currency: str | None,
     statuses: dict[str, str],
     collection: Any = "",
+    product_type: Any = "",
+    best_for: list[str] | None = None,
+    integration: list[str] | None = None,
 ) -> Query:
     """The filters of any Store page (the Super Admin's, a customer's, a
     partner's), refused with a 400 when one is not on offer."""
@@ -409,6 +443,11 @@ def parse_query(
         high=high,
         sort=_choice(sort, SORTS, field="sort", default="recommended"),
         collection=_choice(collection, COLLECTIONS, field="collection", default="all"),
+        product_type=_choice(
+            product_type, PRODUCT_TYPES, field="product_type", default="all"
+        ),
+        best_for=tuple(_choices(best_for or [], catalog.BEST_FOR, field="best_for")),
+        integrations=_integrations(integration or []),
     )
 
 
@@ -460,6 +499,12 @@ def browse(
         "plan_type": lambda c: not query.plan_types
         or any(t in c["plan_types"] for t in query.plan_types),
         "price": priced_within,
+        "product_type": lambda c: query.product_type == "all"
+        or c.get("product_type", "saas") == query.product_type,
+        "best_for": lambda c: not query.best_for
+        or any(b in c.get("best_for", []) for b in query.best_for),
+        "integration": lambda c: not query.integrations
+        or any(i.lower() in query.integrations for i in c.get("integrations", [])),
         **(extra or {}),
     }
 
@@ -471,6 +516,14 @@ def browse(
     by_status = matching(skip="status")
     by_plan_type = matching(skip="plan_type")
     by_collection = matching(skip="collection")
+    by_type = matching(skip="product_type")
+    by_best_for = matching(skip="best_for")
+    by_integration = matching(skip="integration")
+    # Integration names as the products spell them, one per name ignoring case.
+    integration_names: dict[str, str] = {}
+    for card in cards:
+        for name in card.get("integrations", []):
+            integration_names.setdefault(name.lower(), name)
     categories = sorted({c["category"] for c in cards if c["category"]})
     amounts = [c["price"]["amount_minor"] for c in cards if c["price"]]
     page = {
@@ -514,6 +567,38 @@ def browse(
                 }
                 for key, label in COLLECTIONS.items()
             ],
+            "product_types": [
+                {
+                    "value": key,
+                    "label": label,
+                    "count": len(by_type)
+                    if key == "all"
+                    else sum(1 for c in by_type if c.get("product_type", "saas") == key),
+                }
+                for key, label in PRODUCT_TYPES.items()
+            ],
+            "best_for": [
+                {
+                    "value": key,
+                    "label": label,
+                    "count": sum(1 for c in by_best_for if key in c.get("best_for", [])),
+                }
+                for key, label in catalog.BEST_FOR.items()
+            ],
+            "integrations": [
+                {
+                    "value": name,
+                    "label": name,
+                    "count": sum(
+                        1
+                        for c in by_integration
+                        if key in {i.lower() for i in c.get("integrations", [])}
+                    ),
+                }
+                for key, name in sorted(
+                    integration_names.items(), key=lambda kv: kv[1].lower()
+                )
+            ],
             "price": {
                 "min_minor": min(amounts) if amounts else None,
                 "max_minor": max(amounts) if amounts else None,
@@ -527,6 +612,9 @@ def browse(
             "plan_type": query.plan_types,
             "sort": query.sort,
             "collection": query.collection,
+            "product_type": query.product_type,
+            "best_for": list(query.best_for),
+            "integration": list(query.integrations),
         },
     }
     return page, matching
@@ -546,6 +634,9 @@ def store(
     currency: Any = "",
     sort: Any = "",
     collection: Any = "",
+    product_type: Any = "",
+    best_for: list[str] | None = None,
+    integration: list[str] | None = None,
 ) -> dict[str, Any]:
     """The Super Admin Store page: every product, filtered by ``browse`` and
     by the channel ("program") it is open to."""
@@ -564,6 +655,9 @@ def store(
         currency=chosen_currency,
         statuses=STATUSES,
         collection=collection,
+        product_type=product_type,
+        best_for=best_for,
+        integration=integration,
     )
 
     now = timezone.now()

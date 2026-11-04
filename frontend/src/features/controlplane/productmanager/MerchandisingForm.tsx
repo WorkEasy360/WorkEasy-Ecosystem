@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import { adminApi, type ConsoleProduct, type ProductChanges } from "@/lib/api/controlPlane";
+import { adminApi, type ConsoleProduct, type ProductChanges, type ProductType } from "@/lib/api/controlPlane";
 import cp from "../ControlPlane.module.css";
 import { TextField } from "../widgets";
 import styles from "./ProductManager.module.css";
@@ -16,6 +16,7 @@ const LISTS = [
 type ListKey = (typeof LISTS)[number]["key"];
 
 const FLAGS = [
+  { key: "best_seller", label: "Best Seller", hint: "The marketplace's Best Seller tag and collection." },
   { key: "featured", label: "Featured", hint: "Shown in the store's Featured collection." },
   { key: "popular", label: "Popular", hint: "Shown in the Popular collection." },
   { key: "badge_new", label: "New", hint: "Marked New now (a product is also New for 30 days after launch)." },
@@ -23,6 +24,26 @@ const FLAGS = [
 type FlagKey = (typeof FLAGS)[number]["key"];
 
 const MAX_ITEMS = 12;
+
+/** The marketplace's "Product type" and "Best for" choices (2026-11-04) -
+ * the server's own lists (`catalog.domain`), which it checks again. */
+export const PRODUCT_TYPES: { value: ProductType; label: string }[] = [
+  { value: "saas", label: "SaaS product" },
+  { value: "ai_tool", label: "AI tool" },
+  { value: "business_suite", label: "Business suite" },
+];
+export const BEST_FOR: { value: string; label: string }[] = [
+  { value: "startups", label: "Startups" },
+  { value: "small_business", label: "Small businesses" },
+  { value: "agencies", label: "Agencies" },
+  { value: "enterprises", label: "Enterprises" },
+  { value: "freelancers", label: "Freelancers" },
+  { value: "ecommerce", label: "E-commerce" },
+  { value: "education", label: "Education" },
+  { value: "healthcare", label: "Healthcare" },
+  { value: "real_estate", label: "Real estate" },
+];
+const MAX_INTEGRATION = 32;
 
 function lines(text: string): string[] {
   return text
@@ -63,7 +84,12 @@ export function MerchandisingForm({ product: p, busy, act }: { product: ConsoleP
     benefits: (p.benefits ?? []).join("\n"),
     use_cases: (p.use_cases ?? []).join("\n"),
   }));
+  const [productType, setProductType] = useState<ProductType>(p.product_type ?? "saas");
+  const [bestFor, setBestFor] = useState<string[]>(p.best_for ?? []);
+  const [integrations, setIntegrations] = useState((p.integrations ?? []).join(", "));
+  const typeId = useId();
   const [flags, setFlags] = useState<Record<FlagKey, boolean>>(() => ({
+    best_seller: !!p.best_seller,
     featured: !!p.featured,
     popular: !!p.popular,
     badge_new: !!p.badge_new,
@@ -73,7 +99,15 @@ export function MerchandisingForm({ product: p, busy, act }: { product: ConsoleP
     .split(",")
     .map((t) => t.trim().toLowerCase())
     .filter(Boolean);
+  const integrationList = integrations
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const chosenBestFor = BEST_FOR.map((b) => b.value).filter((v) => bestFor.includes(v));
   const changes: ProductChanges = {};
+  if (productType !== (p.product_type ?? "saas")) changes.product_type = productType;
+  if (!same(chosenBestFor, p.best_for ?? [])) changes.best_for = chosenBestFor;
+  if (!same(integrationList, p.integrations ?? [])) changes.integrations = integrationList;
   if (subcategory.trim() !== (p.subcategory ?? "")) changes.subcategory = subcategory.trim();
   if (!same(tagList, p.tags ?? [])) changes.tags = tagList;
   for (const { key } of LISTS) {
@@ -83,7 +117,13 @@ export function MerchandisingForm({ product: p, busy, act }: { product: ConsoleP
     if (flags[key] !== !!p[key]) changes[key] = flags[key];
   }
   const changed = Object.keys(changes).length;
-  const tooMany = tagList.length > MAX_ITEMS || LISTS.some(({ key }) => lines(lists[key]).length > MAX_ITEMS);
+  const integrationProblem =
+    integrationList.length > MAX_ITEMS
+      ? `At most ${MAX_ITEMS} integrations.`
+      : integrationList.some((i) => i.length > MAX_INTEGRATION)
+        ? `Each integration name is at most ${MAX_INTEGRATION} characters.`
+        : undefined;
+  const tooMany = tagList.length > MAX_ITEMS || LISTS.some(({ key }) => lines(lists[key]).length > MAX_ITEMS) || !!integrationProblem;
 
   return (
     <form
@@ -101,6 +141,42 @@ export function MerchandisingForm({ product: p, busy, act }: { product: ConsoleP
       <div className={styles.formGrid}>
         <TextField label="Subcategory" maxLength={64} value={subcategory} hint="Optional, e.g. Invoicing under Finance." onChange={setSubcategory} />
         <TextField label="Search tags" value={tags} hint={`Comma separated, up to ${MAX_ITEMS}. ${tagList.length}/${MAX_ITEMS}`} onChange={setTags} />
+        <div className={cp.field}>
+          <label className="w360-label" htmlFor={typeId}>
+            Product type
+          </label>
+          <select id={typeId} className="w360-input" value={productType} onChange={(e) => setProductType(e.target.value as ProductType)}>
+            {PRODUCT_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+          <p className="w360-hint">The Store&apos;s Product Type filter and the header&apos;s Business Suite and AI Tools menus.</p>
+        </div>
+        <TextField
+          label="Integrations"
+          value={integrations}
+          error={integrationProblem}
+          hint={`The apps it connects to, comma separated (WhatsApp, Gmail, Razorpay). ${integrationList.length}/${MAX_ITEMS}`}
+          onChange={setIntegrations}
+        />
+        <fieldset className={`${cp.field} ${styles.full}`}>
+          <legend className="w360-label">Best for</legend>
+          <div className={styles.choiceGrid}>
+            {BEST_FOR.map((b) => (
+              <label key={b.value} className="w360-label">
+                <input
+                  type="checkbox"
+                  checked={bestFor.includes(b.value)}
+                  onChange={(e) => setBestFor((cur) => (e.target.checked ? [...cur, b.value] : cur.filter((v) => v !== b.value)))}
+                />{" "}
+                {b.label}
+              </label>
+            ))}
+          </div>
+          <p className="w360-hint">The Store&apos;s Best for filter and the header&apos;s Industry Solutions menu.</p>
+        </fieldset>
         {LISTS.map(({ key, label, hint }) => (
           <div key={key} className={styles.full}>
             <ListField label={label} hint={hint} value={lists[key]} onChange={(v) => setLists((cur) => ({ ...cur, [key]: v }))} />

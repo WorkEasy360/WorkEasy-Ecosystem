@@ -165,10 +165,12 @@ export function useSiteSettings(): SiteSettings | null {
   return site;
 }
 
-/** The catalog's products for the header menu - loaded once per page. */
-function useMenuProducts(): PublicProduct[] {
+/** The catalog's products for the header menu - loaded once per page, and
+ * only when the site's own header is shown. */
+function useMenuProducts(enabled: boolean): PublicProduct[] {
   const [products, setProducts] = useState<PublicProduct[]>([]);
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     publicApi.catalog().then(
       (c) => !cancelled && setProducts(c.products),
@@ -177,7 +179,7 @@ function useMenuProducts(): PublicProduct[] {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [enabled]);
   return products;
 }
 
@@ -272,17 +274,19 @@ const NAV = [
  * The public site's frame (Phase 9): the Workeasy360 logo, a Products menu
  * built from the catalog (never a hard-coded list), Services, Pricing and
  * Contact; on the right Sign in / Sign up / Get started - or, for someone
- * already signed in, their dashboard.
+ * already signed in, their dashboard. A page may bring its own `header` (the
+ * Store's marketplace header, 2026-11-04); the footer stays the site's.
  */
-export function SiteShell({ children }: { children: React.ReactNode }) {
+export function SiteShell({ children, header }: { children: React.ReactNode; header?: React.ReactNode }) {
   const pathname = usePathname();
   const session = useSession();
-  const products = useMenuProducts();
+  const products = useMenuProducts(!header);
   const [navOpen, setNavOpen] = useState(false);
   const signedIn = session.status === "ready" && session.session.authenticated;
 
   return (
     <div className={styles.site}>
+      {header ?? (
       <header className={`${styles.header} ${navOpen ? styles.navOpen : ""}`}>
         <div className={styles.headerInner}>
           <Link href="/" className={styles.logo} aria-label="Workeasy360 home">
@@ -330,6 +334,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
+      )}
       <main id="w360-main" className={styles.main}>
         {children}
       </main>

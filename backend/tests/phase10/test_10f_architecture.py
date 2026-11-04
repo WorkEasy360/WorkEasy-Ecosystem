@@ -465,4 +465,7 @@ def test_phase_10_leaves_the_legacy_catalog_alone():
         # rewritten (tests/portal_store, tests/product_manager).
         "0008_product_video.py",
         "0009_product_media_video.py",
+        # 2026-11-04 marketplace: four presentation columns with database
+        # defaults (product type, best for, integrations, Best Seller).
+        "0010_marketplace_filters.py",
     ]

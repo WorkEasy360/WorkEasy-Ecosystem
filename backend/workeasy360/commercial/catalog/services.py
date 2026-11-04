@@ -38,15 +38,18 @@ from workeasy360.commercial.catalog.domain import (
     assert_catalog_transition,
     assert_product_transition,
     slug_for_code,
+    validate_best_for,
     validate_bullets,
     validate_category,
     validate_feature_key,
     validate_feature_value,
     validate_icon,
+    validate_integrations,
     validate_link_url,
     validate_marketing_url,
     validate_media,
     validate_product_code,
+    validate_product_type,
     validate_slug,
     validate_store_text,
     validate_subcategory,
@@ -256,6 +259,9 @@ EDITABLE_PRODUCT_FIELDS = (
     "subcategory",
     "tags",
     "video_url",
+    "product_type",
+    "best_for",
+    "integrations",
     *MERCHANDISING_LISTS,
     *MERCHANDISING_FLAGS,
     *LISTING_DETAIL_FIELDS,
@@ -324,6 +330,12 @@ def _clean_product_changes(changes: dict[str, Any]) -> dict[str, Any]:
         clean["tags"] = validate_tags(changes["tags"])
     if "video_url" in changes:
         clean["video_url"] = validate_video_url(changes["video_url"])
+    if "product_type" in changes:
+        clean["product_type"] = validate_product_type(changes["product_type"])
+    if "best_for" in changes:
+        clean["best_for"] = validate_best_for(changes["best_for"])
+    if "integrations" in changes:
+        clean["integrations"] = validate_integrations(changes["integrations"])
     for key in MERCHANDISING_LISTS:
         if key in changes:
             clean[key] = validate_bullets(changes[key], field=key)

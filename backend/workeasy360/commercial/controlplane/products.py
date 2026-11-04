@@ -106,6 +106,11 @@ PRODUCT_FIELDS = (
     "featured",
     "popular",
     "badge_new",
+    # 2026-11-04 marketplace: badge, product type, best for, integrations.
+    "best_seller",
+    "product_type",
+    "best_for",
+    "integrations",
     "created_at",
     "updated_at",
     "activated_at",

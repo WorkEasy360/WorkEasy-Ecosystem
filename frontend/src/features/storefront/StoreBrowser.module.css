@@ -632,6 +632,17 @@
   background: var(--w360-sun);
 }
 
+/* 2026-11-04 marketplace: "Best Seller" in the brand green, "Popular" amber. */
+.badgeBestSeller {
+  color: #053321;
+  background: #4ade80;
+}
+
+.badgePopular {
+  color: #4a2800;
+  background: #fbbf24;
+}
+
 .badgeNew {
   color: var(--w360-success);
   background: var(--w360-success-bg);

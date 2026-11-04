@@ -109,6 +109,10 @@ export interface PublicStoreCard extends PublicProduct {
   badges?: string[];
   tags?: string[];
   subcategory?: string;
+  /** 2026-11-04 marketplace: SaaS, AI tool or business suite; who it suits; what it connects to. */
+  product_type?: "saas" | "ai_tool" | "business_suite";
+  best_for?: string[];
+  integrations?: string[];
   plan_types: string[];
   trial_days: number | null;
   logo_url: string | null;
@@ -133,6 +137,9 @@ export interface PublicStorePage {
     statuses: PublicStoreFacet[];
     plan_types: PublicStoreFacet[];
     collections?: PublicStoreFacet[];
+    product_types?: PublicStoreFacet[];
+    best_for?: PublicStoreFacet[];
+    integrations?: PublicStoreFacet[];
     price: { min_minor: number | null; max_minor: number | null };
   };
   sorts: { value: string; label: string }[];

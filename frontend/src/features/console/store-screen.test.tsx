@@ -155,7 +155,7 @@ describe("the organization's Store", () => {
       "Monthly",
       "Free trial",
     ]);
-    expect(crm.textContent).toContain("£19.00/month");
+    expect(crm.textContent).toContain("£19/month");
     expect(crm.textContent).toContain("Save 17%");
     expect(crm.querySelector("img")).toHaveAttribute("src", "/api/v1/public/products/harbor-crm/media/b1");
     for (const name of ["Start 14-day free trial: Harbor CRM", "Buy now: Harbor CRM", "Add to cart: Harbor CRM"]) {

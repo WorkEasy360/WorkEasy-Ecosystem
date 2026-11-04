@@ -56,6 +56,9 @@ def store_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             currency=params.get("currency", ""),
             sort=params.get("sort", ""),
             collection=params.get("collection", ""),
+            product_type=params.get("product_type", ""),
+            best_for=params.getlist("best_for"),
+            integration=params.getlist("integration"),
         )
     )
 

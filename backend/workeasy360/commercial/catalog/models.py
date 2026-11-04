@@ -134,6 +134,13 @@ class Product(models.Model):
     featured = models.BooleanField(default=False, db_default=False)
     popular = models.BooleanField(default=False, db_default=False)
     badge_new = models.BooleanField(default=False, db_default=False)
+    #: The marketplace (2026-11-04): "Best Seller" badge, product type, who it
+    #: is best for and the apps it connects to - presentation and filtering
+    #: only (``domain.PRODUCT_TYPES`` / ``domain.BEST_FOR``).
+    best_seller = models.BooleanField(default=False, db_default=False)
+    product_type = models.CharField(max_length=16, default="saas", db_default="saas")
+    best_for = models.JSONField(default=list, blank=True, db_default=[])
+    integrations = models.JSONField(default=list, blank=True, db_default=[])
     #: The plan a store's comparison highlights (ADR-056) - at most one per
     #: product by construction. A reference, not a column on the plan tables,
     #: which carry no booleans (features live in ``PlanFeature``).

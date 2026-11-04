@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { publicApi, type PublicStoreCard, type PublicStorePage } from "@/lib/api/public";
-import { StoreBrowser, StoreCard, storeDetailsClass, type BadgeTone } from "./StoreBrowser";
+import { StoreBrowser, StoreCard, storeDetailsClass, type BadgeTone, type StoreStart } from "./StoreBrowser";
 import { PublicCartBar, useStoreBuy } from "./storeBuying";
 import { StoreIcon } from "./storeIcons";
 import styles from "./PublicStore.module.css";
@@ -29,12 +30,36 @@ const RIBBON: Record<NonNullable<PublicStoreCard["ribbon"]>["kind"], BadgeTone> 
 
 export const productHref = (slug: string) => `/store/product/${slug}`;
 
+/** The filters `/store?…` opens with (the header's menus link here). */
+function startFrom(params: URLSearchParams): StoreStart {
+  const list = (name: string) =>
+    params
+      .getAll(name)
+      .flatMap((v) => v.split(","))
+      .map((v) => v.trim())
+      .filter(Boolean);
+  return {
+    q: params.get("q") ?? undefined,
+    category: params.get("category") ?? undefined,
+    collection: params.get("collection") ?? undefined,
+    productType: params.get("type") ?? undefined,
+    bestFor: list("best_for"),
+    integrations: list("integration"),
+  };
+}
+
 export function PublicStoreScreen() {
   const { buy, busy, signedIn, dialog } = useStoreBuy();
+  const params = useSearchParams();
+  const address = params.toString();
 
   return (
     <div className={styles.wrap}>
       <StoreBrowser<PublicStoreCard, PublicStorePage>
+        // A header link changes the address: the page starts again from it.
+        key={address}
+        start={startFrom(params)}
+        hideSearch
         title="Explore Workeasy360 Products"
         lead="Everything you need to market, sell, manage and grow your business - all in one platform."
         load={(query) => publicApi.store({ ...query })}
@@ -44,19 +69,12 @@ export function PublicStoreScreen() {
         above={() => (
           <>
             <PublicCartBar onCheckout={(intent) => void buy(intent)} busy={busy} />
-            <p className={styles.notice}>
-              {signedIn ? (
-                <>
-                  You are signed in - checkout opens straight away.{" "}
-                  <Link href="/dashboard?mode=user">Go to my dashboard</Link>
-                </>
-              ) : (
-                <>
-                  <Link href="/login?mode=user">Log in</Link> or <Link href="/signup">create a free account</Link> to buy or
-                  start a trial - your choice is kept while you sign up.
-                </>
-              )}
-            </p>
+            {/* Log in and Get Started are in the header; a signed-in buyer is told checkout is one step. */}
+            {signedIn && (
+              <p className={styles.notice}>
+                You are signed in - checkout opens straight away. <Link href="/dashboard?mode=user">Go to my dashboard</Link>
+              </p>
+            )}
           </>
         )}
         renderCard={(card, _page, onCategory) => {
