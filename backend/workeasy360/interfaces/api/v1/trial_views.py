@@ -123,6 +123,9 @@ def store_view(request: HttpRequest, org_slug: str) -> JsonResponse:
             price_max=request.GET.get("price_max"),
             sort=request.GET.get("sort"),
             collection=request.GET.get("collection"),
+            product_type=request.GET.get("product_type", ""),
+            best_for=request.GET.getlist("best_for"),
+            integration=request.GET.getlist("integration"),
         )
     )
 

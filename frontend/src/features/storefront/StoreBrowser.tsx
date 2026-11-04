@@ -37,8 +37,8 @@ export interface StorePrice {
   discount_bp?: number;
 }
 
-/** ADR-056: the curated collections a product belongs to. */
-export const BADGE_LABEL: Record<string, string> = { featured: "Featured", popular: "Popular", new: "New" };
+/** ADR-056: the curated collections a product belongs to ("Best Seller", 2026-11-04). */
+export const BADGE_LABEL: Record<string, string> = { best_seller: "Best Seller", featured: "Featured", popular: "Popular", new: "New" };
 
 export interface StoreDeal {
   amount_minor: number;
@@ -59,8 +59,12 @@ export interface StoreBrowsePage<C> {
     plan_types: StoreFacet[];
     /** The Super Admin's channel filter; other portals have none. */
     programs?: StoreFacet[];
-    /** ADR-056: Featured / Popular / New. */
+    /** ADR-056: Featured / Popular / New (and Best Seller). */
     collections?: StoreFacet[];
+    /** 2026-11-04 marketplace: SaaS / AI tools / business suite, who it suits, what it connects to. */
+    product_types?: StoreFacet[];
+    best_for?: StoreFacet[];
+    integrations?: StoreFacet[];
     price: { min_minor: number | null; max_minor: number | null };
   };
   sorts: { value: string; label: string }[];
@@ -77,6 +81,9 @@ export interface StoreQuery {
   currency?: string;
   sort?: string;
   collection?: string;
+  product_type?: string;
+  best_for?: string;
+  integration?: string;
 }
 
 export const PER: Record<string, string> = {
@@ -97,6 +104,12 @@ const BADGE: Record<BadgeTone, string> = {
   archived: styles.badgeArchived,
   success: styles.badgeNew,
   warning: styles.badgeWarning,
+};
+
+/** A collection's corner tag: Best Seller green, Popular amber, the rest gold. */
+const COLLECTION_TONE: Record<string, string> = {
+  best_seller: styles.badgeBestSeller,
+  popular: styles.badgePopular,
 };
 
 const TONES = [styles.toneBlue, styles.toneGreen, styles.toneOrange, styles.tonePurple, styles.toneRed];
@@ -184,7 +197,7 @@ export function StoreCard(props: StoreCardProps) {
             {shown.length > 0 && (
               <ul className={styles.ribbonList} aria-label="Collections">
                 {shown.map((b) => (
-                  <li key={b} className={`${styles.badge} ${styles.badgeCollection}`}>
+                  <li key={b} className={`${styles.badge} ${COLLECTION_TONE[b] ?? styles.badgeCollection}`}>
                     {BADGE_LABEL[b]}
                   </li>
                 ))}
@@ -225,24 +238,24 @@ export function StoreCard(props: StoreCardProps) {
             <>
               {price.list_amount_minor != null && price.list_amount_minor > price.amount_minor && (
                 <p className={styles.deal}>
-                  <s className={styles.compare} aria-label={`instead of ${money(price.list_amount_minor, price.currency)}`}>
-                    {money(price.list_amount_minor, price.currency)}
+                  <s className={styles.compare} aria-label={`instead of ${shelfPrice(price.list_amount_minor, price.currency)}`}>
+                    {shelfPrice(price.list_amount_minor, price.currency)}
                   </s>{" "}
                   <span className={styles.save}>{Math.round((price.discount_bp ?? 0) / 100)}% off</span>
                 </p>
               )}
               <p className={styles.price}>
                 <span className="w360-visually-hidden">From </span>
-                <strong className={styles.amount}>{money(price.amount_minor, price.currency)}</strong>
+                <strong className={styles.amount}>{shelfPrice(price.amount_minor, price.currency)}</strong>
                 <span className={styles.per}>
                   {PER[price.interval] ?? ` ${price.interval}`} {taxNote(price.currency)}
                 </span>
               </p>
               {deal && (
                 <p className={styles.deal}>
-                  {money(deal.amount_minor, deal.currency)}/year{" "}
-                  <s className={styles.compare} aria-label={`instead of ${money(deal.compare_at_minor, deal.currency)}`}>
-                    {money(deal.compare_at_minor, deal.currency)}
+                  {shelfPrice(deal.amount_minor, deal.currency)}/year{" "}
+                  <s className={styles.compare} aria-label={`instead of ${shelfPrice(deal.compare_at_minor, deal.currency)}`}>
+                    {shelfPrice(deal.compare_at_minor, deal.currency)}
                   </s>{" "}
                   <span className={styles.save}>Save {deal.save_percent}%</span>
                 </p>
@@ -257,6 +270,17 @@ export function StoreCard(props: StoreCardProps) {
       {props.actions && <div className={styles.actions}>{props.actions}</div>}
     </li>
   );
+}
+
+/** A Store price as a shelf shows it (2026-11-04 marketplace): whole amounts
+ * without ".00" ("₹20,000"), anything else exactly as `money` writes it. */
+export function shelfPrice(minor: number, currency: string): string {
+  if (currency === "JPY" || minor % 100 !== 0) return money(minor, currency);
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(minor / 100);
+  } catch {
+    return money(minor, currency);
+  }
 }
 
 /** Store prices are before tax: "+ GST" for rupee prices, "+ tax" otherwise. */
@@ -276,6 +300,9 @@ interface Filters {
   priceMax: string;
   currency: string;
   sort: string;
+  productType: string;
+  bestFor: string[];
+  integrations: string[];
 }
 
 const START: Filters = {
@@ -288,7 +315,22 @@ const START: Filters = {
   priceMax: "",
   currency: "",
   sort: "recommended",
+  productType: "all",
+  bestFor: [],
+  integrations: [],
 };
+
+/** Filters a page opens with - from its address (`/store?category=…`), so a
+ * header menu link lands on the products it names. The server still checks
+ * every value. */
+export interface StoreStart {
+  q?: string;
+  category?: string;
+  collection?: string;
+  productType?: string;
+  bestFor?: string[];
+  integrations?: string[];
+}
 
 function toggle(list: string[], value: string): string[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
@@ -353,6 +395,10 @@ export interface StoreBrowserProps<C, P extends StoreBrowsePage<C>> {
   nothingYet: { title: string; action?: ReactNode };
   /** The refusal shown when the endpoint says no. */
   forbidden: string;
+  /** Filters to open with (read once, when the page mounts). */
+  start?: StoreStart;
+  /** No search box beside the title - the page's header has one. */
+  hideSearch?: boolean;
 }
 
 type Result<P> = { stamp: string; page?: P; error?: string; forbidden?: boolean };
@@ -368,10 +414,21 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
   above,
   nothingYet,
   forbidden,
+  start,
+  hideSearch = false,
 }: StoreBrowserProps<C, P>) {
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(start?.q ?? "");
   const q = useDebounced(search.trim(), 250);
-  const [f, setF] = useState<Filters>(START);
+  const [f, setF] = useState<Filters>(() => ({
+    ...START,
+    category: start?.category ?? "",
+    collection: start?.collection || "all",
+    productType: start?.productType || "all",
+    bestFor: start?.bestFor ?? [],
+    integrations: start?.integrations ?? [],
+  }));
+  // Which folds open first: those the address already filters by.
+  const [opened] = useState(() => ({ bestFor: (start?.bestFor?.length ?? 0) > 0, integrations: (start?.integrations?.length ?? 0) > 0 }));
   const [typedMin, setTypedMin] = useState("");
   const [typedMax, setTypedMax] = useState("");
   const [result, setResult] = useState<Result<P> | null>(null);
@@ -388,6 +445,9 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
     currency: f.currency || undefined,
     sort: f.sort === "recommended" ? undefined : f.sort,
     collection: f.collection === "all" ? undefined : f.collection,
+    product_type: f.productType === "all" ? undefined : f.productType,
+    best_for: f.bestFor.join(",") || undefined,
+    integration: f.integrations.join(",") || undefined,
   };
   const stamp = `${loadKey}|${JSON.stringify(query)}`;
 
@@ -436,6 +496,19 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
       out.push({ key: "collection", label: labelOf(data.facets.collections, f.collection), remove: () => set({ collection: "all" }) });
     }
     if (f.category) out.push({ key: "category", label: f.category, remove: () => set({ category: "" }) });
+    if (f.productType !== "all") {
+      out.push({
+        key: "type",
+        label: labelOf(data.facets.product_types ?? [], f.productType),
+        remove: () => set({ productType: "all" }),
+      });
+    }
+    for (const b of f.bestFor) {
+      out.push({ key: `best-${b}`, label: `For ${labelOf(data.facets.best_for ?? [], b)}`, remove: () => set({ bestFor: toggle(f.bestFor, b) }) });
+    }
+    for (const i of f.integrations) {
+      out.push({ key: `int-${i}`, label: i, remove: () => set({ integrations: toggle(f.integrations, i) }) });
+    }
     if (f.program !== "all" && data.facets.programs) {
       out.push({ key: "program", label: labelOf(data.facets.programs, f.program), remove: () => set({ program: "all" }) });
     }
@@ -488,10 +561,12 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
           <h1 className={styles.pageTitle}>{title}</h1>
           <p className={styles.lead}>{lead}</p>
         </div>
-        <div className={styles.headActions}>
-          {searchBox}
-          {headActions}
-        </div>
+        {(!hideSearch || headActions) && (
+          <div className={styles.headActions}>
+            {!hideSearch && searchBox}
+            {headActions}
+          </div>
+        )}
       </div>
 
       {result?.forbidden && !page ? (
@@ -556,11 +631,71 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
                     </details>
                   )}
 
-                  <details className={styles.fold} open>
+                  {page.facets.product_types && (
+                    <details className={styles.fold} open>
+                      <summary>
+                        <span className={styles.foldTitle}>
+                          <StoreIcon name="box" size={18} />
+                          Product Type
+                        </span>
+                      </summary>
+                      <fieldset className={styles.options}>
+                        <legend className="w360-visually-hidden">Product type</legend>
+                        {page.facets.product_types.map((t) => (
+                          <label key={t.value} className={styles.option}>
+                            <input
+                              type="radio"
+                              name={`${ids.cat}-type`}
+                              value={t.value}
+                              checked={f.productType === t.value}
+                              onChange={() => set({ productType: t.value })}
+                            />
+                            <span className={styles.optionLabel}>{t.label}</span>
+                            <span className={styles.count}>{t.count}</span>
+                          </label>
+                        ))}
+                      </fieldset>
+                    </details>
+                  )}
+
+                  {page.facets.best_for && (
+                    <details className={styles.fold} open={opened.bestFor}>
+                      <summary>
+                        <span className={styles.foldTitle}>
+                          <StoreIcon name="users" size={18} />
+                          Best for
+                        </span>
+                      </summary>
+                      <Checks legend="Best for" facets={page.facets.best_for} chosen={f.bestFor} onToggle={(v) => set({ bestFor: toggle(f.bestFor, v) })} />
+                    </details>
+                  )}
+
+                  {page.facets.integrations && (
+                    <details className={styles.fold} open={opened.integrations}>
+                      <summary>
+                        <span className={styles.foldTitle}>
+                          <StoreIcon name="plug" size={18} />
+                          Integrations
+                        </span>
+                      </summary>
+                      {page.facets.integrations.length > 0 ? (
+                        <Checks
+                          legend="Integrations"
+                          facets={page.facets.integrations}
+                          chosen={f.integrations}
+                          onToggle={(v) => set({ integrations: toggle(f.integrations, v) })}
+                        />
+                      ) : (
+                        <p className={styles.hint}>No integrations are listed yet.</p>
+                      )}
+                    </details>
+                  )}
+
+                  <details className={styles.fold} open={!page.facets.product_types}>
                     <summary>
                       <span className={styles.foldTitle}>
                         <StoreIcon name="tag" size={18} />
-                        Plan type
+                        Plan Type
                       </span>
                     </summary>
                     <Checks legend="Plan type" facets={page.facets.plan_types} chosen={f.planType} onToggle={(v) => set({ planType: toggle(f.planType, v) })} />
@@ -569,7 +704,7 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
                     <summary>
                       <span className={styles.foldTitle}>
                         <StoreIcon name="wallet" size={18} />
-                        Price range
+                        Pricing
                       </span>
                     </summary>
                     <form

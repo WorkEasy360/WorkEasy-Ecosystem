@@ -9,7 +9,7 @@ import { MarkdownLite } from "@/features/console/MarkdownLite";
 import { usePortalRouter } from "@/lib/portalRouter";
 import { MAX_INTENT_QUANTITY } from "@/features/site/SiteShell";
 import { PlanComparison, comparisonCell, type ComparablePlan } from "./PlanComparison";
-import { BADGE_LABEL, PER, StoreCard, storeDetailsClass, taxNote } from "./StoreBrowser";
+import { BADGE_LABEL, PER, StoreCard, shelfPrice, storeDetailsClass, taxNote } from "./StoreBrowser";
 import { AddToCart, PublicCartBar, useStoreBuy } from "./storeBuying";
 import { productHref } from "./PublicStore";
 import { StoreIcon } from "./storeIcons";
@@ -50,14 +50,7 @@ const TERM: Record<string, string> = {
 const MAX_QTY = Math.min(999, MAX_INTENT_QUANTITY);
 
 /** A price as the page shows it: whole amounts without the ".00" (₹8,399), others as `money`. */
-function amount(minor: number, currency: string): string {
-  if (currency === "JPY" || minor % 100 !== 0) return money(minor, currency);
-  try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(minor / 100);
-  } catch {
-    return money(minor, currency);
-  }
-}
+const amount = shelfPrice;
 
 /** The plan's price for one billing period in the page's currency, if it has one. */
 function priceOf(plan: Plan, interval: string, currency: string | null) {

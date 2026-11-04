@@ -1068,3 +1068,10 @@
   gap: var(--w360-space-3);
   font-size: 14px;
 }
+
+/* 2026-11-04: the merchandising form's "Best for" checkboxes. */
+.choiceGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 4px 16px;
+}

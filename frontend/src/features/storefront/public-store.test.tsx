@@ -12,11 +12,11 @@ import { PublicStoreProductScreen } from "./PublicStoreProduct";
  * remembers the choice and signs in, so the organization's checkout opens it.
  */
 
-const nav = vi.hoisted(() => ({ push: vi.fn() }));
+const nav = vi.hoisted(() => ({ push: vi.fn(), params: "" }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: nav.push, replace: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/store",
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(nav.params),
 }));
 
 const STORE = "GET /api/v1/public/store";
@@ -123,6 +123,7 @@ const stored = () => JSON.parse(localStorage.getItem(PURCHASE_INTENT) ?? "{}");
 
 beforeEach(() => {
   nav.push.mockReset();
+  nav.params = "";
   localStorage.clear();
 });
 
@@ -141,14 +142,17 @@ describe("the public Store", () => {
     expect(within(crm).getByRole("link", { name: "Harbor CRM" })).toHaveAttribute("href", "/store/product/harbor-crm");
     expect(within(crm).getByRole("link", { name: "View details: Harbor CRM" })).toHaveAttribute("href", "/store/product/harbor-crm");
     expect(within(crm).getByText("14-day free trial")).toBeInTheDocument();
-    expect(crm.textContent).toContain("£19.00/month + tax");
+    expect(crm.textContent).toContain("£19/month + tax");
     // A card is a shelf label: buying happens on the product's own page.
     expect(within(crm).queryByRole("button", { name: /Buy now|trial|cart/ })).toBeNull();
     expect(within(soon).getByText("Coming soon", { selector: "p" })).toBeInTheDocument();
     const filters = screen.getByRole("complementary", { name: "Store filters" });
     expect(within(filters).getByRole("button", { name: /Finance/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "All Products" })).toHaveAttribute("aria-pressed", "true");
-    expect(await screen.findByRole("link", { name: "Log in" })).toHaveAttribute("href", "/login?mode=user");
+    // Log in and Get Started live in the marketplace header, not the page.
+    expect(screen.queryByRole("link", { name: "Log in" })).toBeNull();
+    // The header has the search; the page does not repeat it.
+    expect(screen.queryByRole("search")).toBeNull();
     await expectNoViolations(container);
   });
 
@@ -167,7 +171,74 @@ describe("the public Store", () => {
     mockApi({ [SESSION]: [SIGNED_OUT], [STORE]: [ok(page([inr]))] });
     render(<PublicStoreScreen />);
     const grid = await screen.findByRole("list", { name: "Products" });
-    expect(grid.textContent).toMatch(/20,000\.00\/year \+ GST/);
+    // A whole amount reads like a price tag, without ".00".
+    expect(grid.textContent).toMatch(/20,000\/year \+ GST/);
+  });
+
+  // --- the marketplace (2026-11-04) ---------------------------------------------------
+
+  function market(products = [card("harbor_crm", "Harbor CRM", { badges: ["best_seller"], product_type: "ai_tool" }), SOON]) {
+    const base = page(products);
+    return {
+      ...base,
+      facets: {
+        ...base.facets,
+        collections: [
+          { value: "all", label: "All products", count: 2 },
+          { value: "best_seller", label: "Best Seller", count: 1 },
+        ],
+        product_types: [
+          { value: "all", label: "All Products", count: 2 },
+          { value: "saas", label: "SaaS Products", count: 1 },
+          { value: "ai_tool", label: "AI Tools", count: 1 },
+          { value: "business_suite", label: "Business Suite", count: 0 },
+        ],
+        best_for: [
+          { value: "startups", label: "Startups", count: 1 },
+          { value: "agencies", label: "Agencies", count: 0 },
+        ],
+        integrations: [{ value: "WhatsApp", label: "WhatsApp", count: 1 }],
+      },
+    };
+  }
+
+  it("filters by product type, best for and integration, and tags a Best Seller", async () => {
+    const calls = mockApi({ [SESSION]: [SIGNED_OUT], [STORE]: [ok(market())] });
+    render(<PublicStoreScreen />);
+    const grid = await screen.findByRole("list", { name: "Products" });
+    expect(within(grid.children[0] as HTMLElement).getByText("Best Seller")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Best Seller/ })).toBeInTheDocument();
+
+    const types = screen.getByRole("group", { name: "Product type" });
+    expect(within(types).getByLabelText(/All Products/)).toBeChecked();
+    fireEvent.click(within(types).getByLabelText(/AI Tools/));
+    await waitFor(() => expect(last(calls).get("product_type")).toBe("ai_tool"));
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Startups/ }));
+    await waitFor(() => expect(last(calls).get("best_for")).toBe("startups"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /WhatsApp/ }));
+    await waitFor(() => expect(last(calls).get("integration")).toBe("WhatsApp"));
+
+    // Each one is a removable chip.
+    fireEvent.click(screen.getByRole("button", { name: "Remove filter: For Startups" }));
+    await waitFor(() => expect(last(calls).get("best_for")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Remove filter: AI Tools" }));
+    await waitFor(() => expect(last(calls).get("product_type")).toBeNull());
+  });
+
+  it("opens filtered by its address - where the header's menus link", async () => {
+    nav.params = "q=crm&category=Sales&type=business_suite&best_for=agencies,startups&collection=best_seller";
+    const calls = mockApi({ [SESSION]: [SIGNED_OUT], [STORE]: [ok(market())] });
+    render(<PublicStoreScreen />);
+    await screen.findByRole("list", { name: "Products" });
+    const first = new URL(calls.find((c) => c.key === STORE)!.url, "http://x").searchParams;
+    expect(Object.fromEntries(first)).toMatchObject({
+      q: "crm",
+      category: "Sales",
+      product_type: "business_suite",
+      best_for: "agencies,startups",
+      collection: "best_seller",
+    });
   });
 });
 

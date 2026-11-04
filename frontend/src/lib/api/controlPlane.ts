@@ -260,7 +260,15 @@ export interface ProductChanges {
   featured?: boolean;
   popular?: boolean;
   badge_new?: boolean;
+  // 2026-11-04 marketplace.
+  best_seller?: boolean;
+  product_type?: ProductType;
+  best_for?: string[];
+  integrations?: string[];
 }
+
+/** The marketplace's product types (2026-11-04); the server checks the value. */
+export type ProductType = "saas" | "ai_tool" | "business_suite";
 
 // --- the products console (Phase 11) ---------------------------------------------
 
@@ -401,6 +409,10 @@ export interface ConsoleProduct {
   featured: boolean;
   popular: boolean;
   badge_new: boolean;
+  best_seller?: boolean;
+  product_type?: ProductType;
+  best_for?: string[];
+  integrations?: string[];
   created_at: string | null;
   updated_at: string | null;
   activated_at: string | null;

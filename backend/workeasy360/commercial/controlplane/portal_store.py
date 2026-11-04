@@ -75,6 +75,9 @@ def _params(params: dict[str, Any]) -> dict[str, Any]:
             "price_max",
             "sort",
             "collection",
+            "product_type",
+            "best_for",
+            "integration",
         )
     }
 

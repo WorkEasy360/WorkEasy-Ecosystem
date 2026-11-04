@@ -342,8 +342,72 @@ MAX_LIST_ITEMS: Final = 12
 MAX_LIST_ITEM: Final = 200
 #: The listing's bullet lists, in the order a product page shows them.
 MERCHANDISING_LISTS: Final = ("highlights", "benefits", "use_cases")
-#: The store's hand-set badges (``New`` is also shown for 30 days after launch).
-MERCHANDISING_FLAGS: Final = ("featured", "popular", "badge_new")
+#: The store's hand-set badges (``New`` is also shown for 30 days after launch;
+#: ``best_seller`` is the marketplace's "Best Seller", 2026-11-04).
+MERCHANDISING_FLAGS: Final = ("featured", "popular", "badge_new", "best_seller")
+
+#: The marketplace's "Product type" (2026-11-04): what kind of offering a
+#: product is. Presentation and filtering only - never an access decision.
+PRODUCT_TYPES: Final[dict[str, str]] = {
+    "saas": "SaaS Products",
+    "ai_tool": "AI Tools",
+    "business_suite": "Business Suite",
+}
+DEFAULT_PRODUCT_TYPE: Final = "saas"
+#: The marketplace's "Best for": who a product suits, from a fixed list so
+#: the Store's filter offers the same words for every product.
+BEST_FOR: Final[dict[str, str]] = {
+    "startups": "Startups",
+    "small_business": "Small businesses",
+    "agencies": "Agencies",
+    "enterprises": "Enterprises",
+    "freelancers": "Freelancers",
+    "ecommerce": "E-commerce",
+    "education": "Education",
+    "healthcare": "Healthcare",
+    "real_estate": "Real estate",
+}
+#: The apps a product connects to ("WhatsApp", "Razorpay"): short plain text.
+MAX_INTEGRATIONS: Final = 12
+MAX_INTEGRATION: Final = 32
+
+
+def validate_product_type(raw: Any) -> str:
+    value = str(raw or "").strip()
+    if value not in PRODUCT_TYPES:
+        raise CatalogValidationError(
+            "product_type is one of: " + ", ".join(PRODUCT_TYPES) + ".",
+            field="product_type",
+        )
+    return value
+
+
+def validate_best_for(raw: Any) -> list[str]:
+    """Some of ``BEST_FOR``'s keys, in that list's order, duplicates dropped."""
+    if not isinstance(raw, list) or any(not isinstance(v, str) for v in raw):
+        raise CatalogValidationError("best_for is a list of choices.", field="best_for")
+    unknown = sorted(set(raw) - set(BEST_FOR))
+    if unknown:
+        raise CatalogValidationError(
+            "best_for entries are among: " + ", ".join(BEST_FOR) + ".", field="best_for"
+        )
+    return [key for key in BEST_FOR if key in raw]
+
+
+def validate_integrations(raw: Any) -> list[str]:
+    """Up to ``MAX_INTEGRATIONS`` app names as typed ("WhatsApp"), duplicates
+    (ignoring case) dropped."""
+    if not isinstance(raw, list) or len(raw) > MAX_INTEGRATIONS:
+        raise CatalogValidationError(
+            f"integrations is a list of at most {MAX_INTEGRATIONS} entries.",
+            field="integrations",
+        )
+    kept: list[str] = []
+    for item in raw:
+        name = _plain(item, field="integrations", maximum=MAX_INTEGRATION)
+        if name.lower() not in {k.lower() for k in kept}:
+            kept.append(name)
+    return kept
 
 
 #: A product page's video (2026-11-04): a YouTube or Vimeo link. The page never

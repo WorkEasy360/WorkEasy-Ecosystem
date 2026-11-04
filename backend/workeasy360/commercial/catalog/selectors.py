@@ -20,8 +20,14 @@ from uuid import UUID
 from django.db.models import Prefetch, Q
 
 from workeasy360.commercial.catalog.domain import (
+    BEST_FOR as BEST_FOR,  # re-exported: the Store's "Best for" choices
+)
+from workeasy360.commercial.catalog.domain import (
     MANAGER_STATUS,
     publish_checklist,
+)
+from workeasy360.commercial.catalog.domain import (
+    PRODUCT_TYPES as PRODUCT_TYPES,  # re-exported: the Store's product types
 )
 from workeasy360.commercial.catalog.domain import (
     VIDEO_CONTENT_TYPES as VIDEO_EXTENSION,
@@ -400,6 +406,10 @@ def merchandising(product: Any) -> dict[str, Any]:
         "featured": product.featured,
         "popular": product.popular,
         "badge_new": product.badge_new,
+        "best_seller": product.best_seller,
+        "product_type": product.product_type,
+        "best_for": list(product.best_for or []),
+        "integrations": list(product.integrations or []),
     }
 
 
