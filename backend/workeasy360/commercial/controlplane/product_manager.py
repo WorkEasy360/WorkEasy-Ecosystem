@@ -317,6 +317,17 @@ MEDIA_MAX_BYTES = 2 * 1024 * 1024
 
 
 @in_scope
+def video_file_id(ctx: TenantContext, product_id: UUID, media_id: UUID) -> Any | None:
+    """The file behind one product's uploaded video, for the staff preview
+    (2026-11-04) - only through the product that owns it; ``None`` when that
+    media is not this product's video."""
+    authz.require(ctx, VIEW)
+    if not catalog_selectors.is_video(product_id, media_id):
+        return None
+    return catalog_selectors.media_file_id(product_id, media_id)
+
+
+@in_scope
 def media_content(
     ctx: TenantContext, product_id: UUID, media_id: UUID
 ) -> tuple[bytes, str] | None:

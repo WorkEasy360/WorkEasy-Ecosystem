@@ -90,6 +90,11 @@ export function codeFrom(slug: string): string {
 
 /** An address a store page may link to: https and a host. The server applies
  * the full gate (no internal, loopback or metadata hosts). */
+/** A YouTube or Vimeo link, as the server accepts it (the server decides). */
+export function looksLikeVideo(value: string): boolean {
+  return /^https:\/\/(?:(?:www\.|m\.)?youtube\.com\/(?:watch\?|shorts\/|embed\/|live\/)|youtu\.be\/|www\.youtube-nocookie\.com\/embed\/|(?:www\.)?vimeo\.com\/\d|player\.vimeo\.com\/video\/\d)/.test(value);
+}
+
 export function looksLikeHttps(value: string): boolean {
   try {
     const url = new URL(value);

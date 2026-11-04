@@ -71,6 +71,16 @@ export interface PurchaseIntent {
   /** The public Store's cart (2026-11-02): several plans bought as one cart
    * order, plan-version ids only. Mutually exclusive with the others. */
   cart?: string[];
+  /** How many of the plan (2026-11-03, the Store's checkout box) - a plan
+   * intent only; the checkout prices that quantity again on the server. */
+  quantity?: number;
+}
+
+/** The checkout's own quantity limit (`payments.orders.MAX_QUANTITY`). */
+export const MAX_INTENT_QUANTITY = 100_000;
+
+function cleanQuantity(raw: unknown): number | undefined {
+  return typeof raw === "number" && Number.isInteger(raw) && raw > 1 && raw <= MAX_INTENT_QUANTITY ? raw : undefined;
 }
 
 /** The most plans one cart intent may carry - the checkout's own cart limit. */
@@ -96,6 +106,7 @@ export function cleanIntent(raw: PurchaseIntent | null | undefined): PurchaseInt
     bundle: plan ? undefined : bundle,
     interval: raw.interval && INTERVALS.has(raw.interval) ? raw.interval : undefined,
     trial: raw.trial === true,
+    quantity: plan ? cleanQuantity(raw.quantity) : undefined,
   };
 }
 
@@ -133,6 +144,7 @@ export function intentQuery(intent: PurchaseIntent): string {
   if (intent.bundle) params.set("bundle", intent.bundle);
   if (intent.interval) params.set("interval", intent.interval);
   if (intent.trial) params.set("trial", "1");
+  if (intent.plan && intent.quantity && intent.quantity > 1) params.set("quantity", String(intent.quantity));
   return params.toString();
 }
 

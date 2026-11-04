@@ -254,11 +254,13 @@ class PublicAvailability(_StrEnum):
 
 class ProductMediaKind(_StrEnum):
     """An image a product's store listing shows (ADR-051). One logo and one
-    banner per product; screenshots are an ordered list."""
+    banner per product; screenshots are an ordered list. ``video`` (2026-11-04)
+    is the product page's one uploaded video (MP4 or WebM)."""
 
     LOGO = "logo"
     BANNER = "banner"
     SCREENSHOT = "screenshot"
+    VIDEO = "video"
 
 
 class ProductUpdateKind(_StrEnum):

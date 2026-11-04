@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { publicApi, type PublicStoreCard, type PublicStorePage } from "@/lib/api/public";
-import { planForStartingPrice, planForTrial } from "@/features/site/SitePages";
-import { StoreBrowser, StoreCard, planTypeLabels, type BadgeTone } from "./StoreBrowser";
-import { AddToCart, PublicCartBar, useStoreBuy } from "./storeBuying";
+import { StoreBrowser, StoreCard, storeDetailsClass, type BadgeTone } from "./StoreBrowser";
+import { PublicCartBar, useStoreBuy } from "./storeBuying";
+import { StoreIcon } from "./storeIcons";
 import styles from "./PublicStore.module.css";
 
 /**
@@ -14,10 +14,11 @@ import styles from "./PublicStore.module.css";
  * The shared Store layout over `GET public/store`; nothing here decides what
  * is for sale or at what price.
  *
- * Each card offers its product's details page, Buy now, Add to cart and its
- * free trial; the cart above the grid buys everything chosen in one checkout.
- * How a purchase reaches the checkout (signing up first, or straight there)
- * is `useStoreBuy`'s.
+ * Each card shows its price and leads to its product's page (2026-11-03,
+ * the owner's marketplace mock-up), where a plan, the quantity and the
+ * checkout are chosen; the cart above the grid buys everything added there in
+ * one checkout. How a purchase reaches the checkout (signing up first, or
+ * straight there) is `useStoreBuy`'s.
  */
 
 const RIBBON: Record<NonNullable<PublicStoreCard["ribbon"]>["kind"], BadgeTone> = {
@@ -34,8 +35,8 @@ export function PublicStoreScreen() {
   return (
     <div className={styles.wrap}>
       <StoreBrowser<PublicStoreCard, PublicStorePage>
-        title="Browse the store"
-        lead="Every Workeasy360 product in one place. Pick one, sign in, and check out - it appears in your dashboard straight away."
+        title="Explore Workeasy360 Products"
+        lead="Everything you need to market, sell, manage and grow your business - all in one platform."
         load={(query) => publicApi.store({ ...query })}
         loadKey="public"
         forbidden="The store is not available right now."
@@ -46,7 +47,7 @@ export function PublicStoreScreen() {
             <p className={styles.notice}>
               {signedIn ? (
                 <>
-                  You are signed in - Buy now goes straight to your checkout.{" "}
+                  You are signed in - checkout opens straight away.{" "}
                   <Link href="/dashboard?mode=user">Go to my dashboard</Link>
                 </>
               ) : (
@@ -58,11 +59,8 @@ export function PublicStoreScreen() {
             </p>
           </>
         )}
-        renderCard={(card, page, onCategory) => {
+        renderCard={(card, _page, onCategory) => {
           const soon = card.status === "coming_soon";
-          const trialPlan = !soon ? planForTrial(card) : undefined;
-          const buyPlan = !soon ? planForStartingPrice(card) : undefined;
-          const interval = card.starting_price?.interval ?? "monthly";
           return (
             <StoreCard
               key={card.code}
@@ -77,57 +75,14 @@ export function PublicStoreScreen() {
               onCategory={onCategory}
               summary={card.summary}
               badges={card.badges}
-              chips={planTypeLabels(card.plan_types, page.facets.plan_types).map((label, i) => ({
-                label,
-                trial: card.plan_types[i] === "free_trial",
-              }))}
               price={card.price}
-              deal={card.yearly_deal}
               noPrice={soon ? "Coming soon" : "Contact sales"}
-              actions={
-                <>
-                  {buyPlan && (
-                    <>
-                      <button
-                        type="button"
-                        className="w360-btn w360-btn-primary"
-                        disabled={busy}
-                        onClick={() => void buy({ plan: buyPlan.plan_version_id, interval, trial: false })}
-                        aria-label={`Buy now: ${card.title}`}
-                      >
-                        Buy now
-                      </button>
-                      <AddToCart
-                        planVersionId={buyPlan.plan_version_id}
-                        productCode={card.code}
-                        productName={card.title}
-                        planName={buyPlan.name}
-                        interval={interval}
-                        label={card.title}
-                      />
-                    </>
-                  )}
-                  {trialPlan && (
-                    <button
-                      type="button"
-                      className={`w360-btn ${buyPlan ? "w360-btn-secondary" : "w360-btn-primary"}`}
-                      disabled={busy}
-                      // The product's own trial (Phase 11) - no checkout.
-                      onClick={() => void buy({ productTrial: { product: card.code, plan: trialPlan.plan_code } })}
-                      aria-label={`Start free trial: ${card.title}`}
-                    >
-                      Start free trial
-                    </button>
-                  )}
-                  {!soon && !buyPlan && !trialPlan && (
-                    <Link href="/contact" className="w360-btn w360-btn-primary" aria-label={`Contact sales about ${card.title}`}>
-                      Contact sales
-                    </Link>
-                  )}
-                  <Link href={productHref(card.slug)} className="w360-btn w360-btn-secondary" aria-label={`View details: ${card.title}`}>
-                    View details
-                  </Link>
-                </>
+              // Like a marketplace shelf: the price and one way in. Choosing a
+              // plan, the quantity and paying happen on the product's page.
+              aside={
+                <Link href={productHref(card.slug)} className={storeDetailsClass} aria-label={`View details: ${card.title}`}>
+                  View Details <StoreIcon name="arrow" size={14} />
+                </Link>
               }
             />
           );

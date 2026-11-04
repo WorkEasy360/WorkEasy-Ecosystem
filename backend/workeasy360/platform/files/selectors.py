@@ -6,7 +6,7 @@ organization's file id simply does not resolve.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, BinaryIO
 from uuid import UUID
 
 
@@ -51,3 +51,29 @@ def servable_content(file_id: UUID, *, max_bytes: int) -> tuple[bytes, str] | No
     if len(data) > max_bytes:
         return None
     return data, row.detected_content_type
+
+
+def servable_size(file_id: UUID) -> tuple[int, str] | None:
+    """(size in bytes, detected content type) of a file that may be served, or
+    ``None`` - the guards of ``servable_content``, without reading any bytes."""
+    from workeasy360.platform.files.models import File
+
+    row = File.objects.filter(id=file_id).first()
+    if row is None or not row.key_belongs_to_tenant() or not row.is_servable:
+        return None
+    if not row.detected_content_type:
+        return None
+    return row.size_bytes, row.detected_content_type
+
+
+def open_servable_range(file_id: UUID, *, start: int, length: int) -> BinaryIO | None:
+    """A stream of ``length`` bytes from ``start`` of a file that may be served
+    (the same guards), for an HTTP ``Range`` response; ``None`` otherwise. The
+    caller closes it."""
+    from workeasy360.platform.files.models import File
+    from workeasy360.platform.files.storage import get_store
+
+    row = File.objects.filter(id=file_id).first()
+    if row is None or not row.key_belongs_to_tenant() or not row.is_servable:
+        return None
+    return get_store().get_range(row.storage_key, start, length)

@@ -64,6 +64,8 @@ describe("contentSecurityPolicy", () => {
     expect(directive(prod, "connect-src")).toBe("connect-src 'self'");
     expect(directive(prod, "object-src")).toBe("object-src 'none'");
     expect(directive(prod, "frame-ancestors")).toBe("frame-ancestors 'none'");
+    // A Store product's video: YouTube's no-cookie player and Vimeo's player only.
+    expect(directive(prod, "frame-src")).toBe("frame-src 'self' https://www.youtube-nocookie.com https://player.vimeo.com");
     expect(directive(prod, "base-uri")).toBe("base-uri 'self'");
     expect(directive(prod, "form-action")).toBe("form-action 'self'");
     expect(prod).not.toContain("*");

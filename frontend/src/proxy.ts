@@ -174,6 +174,12 @@ function randomState(): string {
  * move those attributes into the CSS modules this app already uses, not to
  * ship a policy that only looks strict.
  */
+/*
+ * `frame-src` (2026-11-04): a Store product page plays its video in YouTube's
+ * no-cookie player or Vimeo's player - those two origins only, and the page
+ * frames a player address the server built from a parsed video id, never a
+ * typed link. Nothing else of this app embeds a frame.
+ */
 export function contentSecurityPolicy(nonce: string, isDev: boolean): string {
   return `
     default-src 'self';
@@ -182,6 +188,7 @@ export function contentSecurityPolicy(nonce: string, isDev: boolean): string {
     img-src 'self' data:;
     font-src 'self';
     connect-src 'self';
+    frame-src 'self' https://www.youtube-nocookie.com https://player.vimeo.com;
     object-src 'none';
     base-uri 'self';
     form-action 'self';

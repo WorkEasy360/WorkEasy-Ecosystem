@@ -287,6 +287,9 @@ export function orderRequestFrom(params: URLSearchParams): OrderRequest | null {
   else if (activate && UUID_RE.test(activate)) request.activate_subscription_id = activate;
   else return null;
   if (interval && INTERVALS.has(interval)) request.billing_interval = interval;
+  // 2026-11-03: the Store's checkout box sends how many of one plan.
+  const quantity = Number(params.get("quantity") ?? "1");
+  if (request.plan_version_id && Number.isInteger(quantity) && quantity > 1 && quantity <= 100_000) request.quantity = quantity;
   if (params.get("trial") === "1" && !request.activate_subscription_id && !request.cart_items) request.with_trial = true;
   // ADR-053: a purchase that started in a partner's branded Store says which one.
   const storefront = params.get("storefront");

@@ -625,6 +625,14 @@
   width: 64px;
 }
 
+.videoPreview {
+  flex: none;
+  width: min(100%, 320px);
+  aspect-ratio: 16 / 9;
+  border-radius: var(--w360-radius-sm, 6px);
+  background: #000000;
+}
+
 .previewMeta {
   flex: 1 1 10rem;
   min-width: 0;

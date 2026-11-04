@@ -354,6 +354,22 @@ def customer_product(
     }
 
 
+def _video_of(slug: str, row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A product page's video: its uploaded file when it has one, else its
+    YouTube or Vimeo link, else nothing."""
+    if row is None:
+        return None
+    uploaded = catalog.product_videos([row["id"]]).get(str(row["id"]))
+    if uploaded is not None:
+        return {
+            "provider": "upload",
+            "id": uploaded["id"],
+            "url": catalog.video_url(slug, uploaded),
+            "content_type": uploaded["content_type"],
+        }
+    return catalog.video_embed(row.get("video_url", ""))
+
+
 def _product_page(
     products: list[dict[str, Any]],
     product_code: str,
@@ -430,6 +446,7 @@ def _product_page(
             "highlights": (row or {}).get("highlights", []),
             "benefits": (row or {}).get("benefits", []),
             "use_cases": (row or {}).get("use_cases", []),
+            "video": _video_of(product["slug"], row if on_sale else None),
             "documentation_url": (row or {}).get("documentation_url", ""),
             "support_url": (row or {}).get("support_url", ""),
             **store.merchandising_of(row, now),

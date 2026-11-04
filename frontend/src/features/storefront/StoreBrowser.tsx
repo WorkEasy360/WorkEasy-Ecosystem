@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ApiError } from "@/lib/api/client";
 import { describeError, money } from "@/features/controlplane/ui";
 import { ProductMark } from "@/features/controlplane/productmanager/ProductMark";
+import { StoreIcon, categoryIcon } from "./storeIcons";
 import styles from "./StoreBrowser.module.css";
 
 /**
@@ -102,8 +103,9 @@ const TONES = [styles.toneBlue, styles.toneGreen, styles.toneOrange, styles.tone
 
 /** A product without a banner gets a steady colour of its own. */
 function toneOf(code: string): string {
-  let hash = 0;
-  for (const ch of code) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  // FNV-1a: similar codes (easy_crm, easy_project) still land on different colours.
+  let hash = 2166136261;
+  for (const ch of code) hash = Math.imul(hash ^ ch.charCodeAt(0), 16777619) >>> 0;
   return TONES[hash % TONES.length];
 }
 
@@ -159,39 +161,50 @@ export function StoreCard(props: StoreCardProps) {
   const shown = badges.filter((b) => BADGE_LABEL[b] && !(b === "new" && ribbon?.tone === "new"));
   return (
     <li className={styles.card}>
-      <div className={`${styles.media} ${bannerSrc ? "" : toneOf(code)}`}>
+      <div className={`${styles.media} ${toneOf(code)}`}>
+        {/* The listing's cover: the product's name over its screenshot, like a
+            box on a shelf. Decorative - the title below is the real one. */}
+        <div className={styles.mediaHead} aria-hidden="true">
+          <ProductMark name={title} icon={icon} src={logoSrc} size={32} />
+          <span className={styles.mediaName}>{title}</span>
+        </div>
         {bannerSrc ? (
-          // eslint-disable-next-line @next/next/no-img-element -- a same-origin listing image
-          <img className={styles.banner} src={bannerSrc} alt="" />
+          <div className={styles.shot}>
+            {/* eslint-disable-next-line @next/next/no-img-element -- a same-origin listing image */}
+            <img className={styles.banner} src={bannerSrc} alt="" />
+          </div>
         ) : (
-          <ProductMark name={title} icon={icon} src={logoSrc} size={72} />
+          <div className={styles.markShot}>
+            <ProductMark name={title} icon={icon} src={logoSrc} size={72} />
+          </div>
         )}
-        {ribbon && <span className={`${styles.badge} ${BADGE[ribbon.tone]}`}>{ribbon.label}</span>}
+        {(ribbon || shown.length > 0) && (
+          <div className={styles.ribbons}>
+            {ribbon && <span className={`${styles.badge} ${BADGE[ribbon.tone]}`}>{ribbon.label}</span>}
+            {shown.length > 0 && (
+              <ul className={styles.ribbonList} aria-label="Collections">
+                {shown.map((b) => (
+                  <li key={b} className={`${styles.badge} ${styles.badgeCollection}`}>
+                    {BADGE_LABEL[b]}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
 
       <div className={styles.body}>
         <div className={styles.titleRow}>
-          {/* Without a banner the picture already is the product's mark. */}
-          {bannerSrc && <ProductMark name={title} icon={icon} src={logoSrc} size={40} />}
-          <div className={styles.titleText}>
-            <h3 className={styles.title}>{href ? <Link href={href}>{title}</Link> : title}</h3>
-            {category ? (
-              <button type="button" className={styles.category} onClick={() => onCategory(category)} aria-label={`Show ${category} products`}>
-                {category}
-              </button>
-            ) : (
-              <span className={styles.categoryNone}>No category</span>
-            )}
-          </div>
+          <ProductMark name={title} icon={icon} src={logoSrc} size={32} />
+          <h3 className={styles.title}>{href ? <Link href={href}>{title}</Link> : title}</h3>
         </div>
-        {shown.length > 0 && (
-          <ul className={styles.chips} aria-label="Collections">
-            {shown.map((b) => (
-              <li key={b} className={`${styles.chip} ${styles.chipTrial}`}>
-                {BADGE_LABEL[b]}
-              </li>
-            ))}
-          </ul>
+        {category ? (
+          <button type="button" className={styles.category} onClick={() => onCategory(category)} aria-label={`Show ${category} products`}>
+            {category}
+          </button>
+        ) : (
+          <span className={styles.categoryNone}>No category</span>
         )}
         <p className={summary ? styles.summary : `${styles.summary} ${styles.summaryEmpty}`}>{summary || "No short description yet."}</p>
         {chips.length > 0 && (
@@ -210,11 +223,6 @@ export function StoreCard(props: StoreCardProps) {
         <div className={styles.priceBlock}>
           {price ? (
             <>
-              <span className={styles.priceLabel}>From</span>
-              <p className={styles.price}>
-                <strong className={styles.amount}>{money(price.amount_minor, price.currency)}</strong>
-                <span className={styles.per}>{PER[price.interval] ?? ` ${price.interval}`}</span>
-              </p>
               {price.list_amount_minor != null && price.list_amount_minor > price.amount_minor && (
                 <p className={styles.deal}>
                   <s className={styles.compare} aria-label={`instead of ${money(price.list_amount_minor, price.currency)}`}>
@@ -223,6 +231,13 @@ export function StoreCard(props: StoreCardProps) {
                   <span className={styles.save}>{Math.round((price.discount_bp ?? 0) / 100)}% off</span>
                 </p>
               )}
+              <p className={styles.price}>
+                <span className="w360-visually-hidden">From </span>
+                <strong className={styles.amount}>{money(price.amount_minor, price.currency)}</strong>
+                <span className={styles.per}>
+                  {PER[price.interval] ?? ` ${price.interval}`} {taxNote(price.currency)}
+                </span>
+              </p>
               {deal && (
                 <p className={styles.deal}>
                   {money(deal.amount_minor, deal.currency)}/year{" "}
@@ -234,10 +249,7 @@ export function StoreCard(props: StoreCardProps) {
               )}
             </>
           ) : (
-            <>
-              <span className={styles.priceLabel}>Price</span>
-              <p className={styles.noPrice}>{props.noPrice}</p>
-            </>
+            <p className={styles.noPrice}>{props.noPrice}</p>
           )}
         </div>
         {props.aside}
@@ -245,6 +257,11 @@ export function StoreCard(props: StoreCardProps) {
       {props.actions && <div className={styles.actions}>{props.actions}</div>}
     </li>
   );
+}
+
+/** Store prices are before tax: "+ GST" for rupee prices, "+ tax" otherwise. */
+export function taxNote(currency: string): string {
+  return currency === "INR" ? "+ GST" : "+ tax";
 }
 
 // --- the page -----------------------------------------------------------------------------
@@ -358,7 +375,7 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
   const [typedMin, setTypedMin] = useState("");
   const [typedMax, setTypedMax] = useState("");
   const [result, setResult] = useState<Result<P> | null>(null);
-  const ids = { search: useId(), sort: useId(), currency: useId(), count: useId(), min: useId(), max: useId(), cat: useId(), program: useId(), collection: useId() };
+  const ids = { search: useId(), sort: useId(), currency: useId(), count: useId(), min: useId(), max: useId(), cat: useId() };
 
   const query: StoreQuery = {
     q: q || undefined,
@@ -443,14 +460,38 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
     return out;
   }
 
+  const searchBox = (
+    <div className={styles.search} role="search">
+      <label className="w360-visually-hidden" htmlFor={ids.search}>
+        Search products
+      </label>
+      <svg className={styles.searchIcon} aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" focusable="false">
+        <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2" />
+        <path d="m20 20-4-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+      <input
+        id={ids.search}
+        className={`w360-input ${styles.searchInput}`}
+        type="search"
+        placeholder="Search products, tools & solutions"
+        value={search}
+        maxLength={100}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+    </div>
+  );
+
   return (
     <div className={styles.page}>
       <div className={styles.head}>
-        <div>
+        <div className={styles.headText}>
           <h1 className={styles.pageTitle}>{title}</h1>
           <p className={styles.lead}>{lead}</p>
         </div>
-        {headActions && <div className={styles.headActions}>{headActions}</div>}
+        <div className={styles.headActions}>
+          {searchBox}
+          {headActions}
+        </div>
       </div>
 
       {result?.forbidden && !page ? (
@@ -464,31 +505,18 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
             <aside className={styles.panel} aria-label="Store filters">
               {page ? (
                 <>
-                  {page.facets.collections && (
-                    <section className={styles.section} aria-labelledby={ids.collection}>
-                      <h2 id={ids.collection} className={styles.sectionTitle}>
-                        Collections
-                      </h2>
-                      <ul className={styles.categories}>
-                        {page.facets.collections.map((c) => (
-                          <li key={c.value}>
-                            <button type="button" className={styles.categoryItem} aria-pressed={f.collection === c.value} onClick={() => set({ collection: c.value })}>
-                              <span>{c.label}</span> <span className={styles.count}>{c.count}</span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                  )}
-
-                  <section className={styles.section} aria-labelledby={ids.cat}>
-                    <h2 id={ids.cat} className={styles.sectionTitle}>
-                      Category
-                    </h2>
-                    <ul className={styles.categories}>
+                  <details className={styles.fold} open>
+                    <summary>
+                      <span className={styles.foldTitle}>
+                        <StoreIcon name="layers" size={18} />
+                        <span id={ids.cat}>Shop by Category</span>
+                      </span>
+                    </summary>
+                    <ul className={styles.categories} aria-labelledby={ids.cat}>
                       <li>
                         <button type="button" className={styles.categoryItem} aria-pressed={!f.category} onClick={() => set({ category: "" })}>
-                          <span>All categories</span>
+                          <StoreIcon name="grid" size={18} className={styles.catIcon} />
+                          <span className={styles.catLabel}>All categories</span>
                         </button>
                       </li>
                       {page.facets.categories.map((c) => (
@@ -499,18 +527,22 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
                             aria-pressed={f.category === c.value}
                             onClick={() => set({ category: f.category === c.value ? "" : c.value })}
                           >
-                            <span>{c.label}</span> <span className={styles.count}>{c.count}</span>
+                            <StoreIcon name={categoryIcon(c.label)} size={18} className={styles.catIcon} />
+                            <span className={styles.catLabel}>{c.label}</span> <span className={styles.count}>{c.count}</span>
                           </button>
                         </li>
                       ))}
                     </ul>
-                  </section>
+                  </details>
 
                   {page.facets.programs && (
-                    <section className={styles.section} aria-labelledby={ids.program}>
-                      <h2 id={ids.program} className={styles.sectionTitle}>
-                        Program
-                      </h2>
+                    <details className={styles.fold} open>
+                      <summary>
+                        <span className={styles.foldTitle}>
+                          <StoreIcon name="wallet" size={18} />
+                          Program
+                        </span>
+                      </summary>
                       <fieldset className={styles.options}>
                         <legend className="w360-visually-hidden">Program</legend>
                         {page.facets.programs.map((p) => (
@@ -521,19 +553,25 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
                           </label>
                         ))}
                       </fieldset>
-                    </section>
+                    </details>
                   )}
 
-                  <details className={styles.fold}>
-                    <summary>Plan type</summary>
+                  <details className={styles.fold} open>
+                    <summary>
+                      <span className={styles.foldTitle}>
+                        <StoreIcon name="tag" size={18} />
+                        Plan type
+                      </span>
+                    </summary>
                     <Checks legend="Plan type" facets={page.facets.plan_types} chosen={f.planType} onToggle={(v) => set({ planType: toggle(f.planType, v) })} />
                   </details>
                   <details className={styles.fold}>
-                    <summary>{statusTitle}</summary>
-                    <Checks legend={statusTitle} facets={page.facets.statuses} chosen={f.status} onToggle={(v) => set({ status: toggle(f.status, v) })} />
-                  </details>
-                  <details className={styles.fold}>
-                    <summary>Price range</summary>
+                    <summary>
+                      <span className={styles.foldTitle}>
+                        <StoreIcon name="wallet" size={18} />
+                        Price range
+                      </span>
+                    </summary>
                     <form
                       className={styles.priceForm}
                       onSubmit={(e) => {
@@ -559,6 +597,15 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
                       </p>
                     )}
                   </details>
+                  <details className={styles.fold}>
+                    <summary>
+                      <span className={styles.foldTitle}>
+                        <StoreIcon name="box" size={18} />
+                        {statusTitle === "Status" ? "Availability" : statusTitle}
+                      </span>
+                    </summary>
+                    <Checks legend={statusTitle} facets={page.facets.statuses} chosen={f.status} onToggle={(v) => set({ status: toggle(f.status, v) })} />
+                  </details>
                 </>
               ) : (
                 <p className={styles.hint}>Loading filters…</p>
@@ -567,79 +614,80 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
 
             <section className={styles.results} aria-labelledby={ids.count} aria-busy={pending}>
               <div className={styles.toolbar}>
-                <div className={styles.search} role="search">
-                  <label className="w360-visually-hidden" htmlFor={ids.search}>
-                    Search products
-                  </label>
-                  <svg className={styles.searchIcon} aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" focusable="false">
-                    <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2" />
-                    <path d="m20 20-4-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
-                  <input
-                    id={ids.search}
-                    className={`w360-input ${styles.searchInput}`}
-                    type="search"
-                    placeholder="Search by name, category, tag or description"
-                    value={search}
-                    maxLength={100}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
+                <div className={styles.tabs} role="group" aria-label="Collections">
+                  <button type="button" className={styles.tab} aria-pressed={f.collection === "all"} onClick={() => set({ collection: "all" })}>
+                    All Products
+                  </button>
+                  {(page?.facets.collections ?? [])
+                    // An empty collection is no tab, unless it is the one chosen.
+                    .filter((c) => c.value !== "all" && (c.count > 0 || f.collection === c.value))
+                    .map((c) => (
+                      <button key={c.value} type="button" className={styles.tab} aria-pressed={f.collection === c.value} onClick={() => set({ collection: c.value })}>
+                        {c.label} <span className={styles.tabCount}>{c.count}</span>
+                      </button>
+                    ))}
                 </div>
-                {page && page.currencies.length > 1 && (
+                {page ? (
+                  <p id={ids.count} className={styles.showing} aria-live="polite">
+                    {page.count === page.total ? (
+                      <>
+                        <strong>{page.count}</strong> product{page.count === 1 ? "" : "s"}
+                      </>
+                    ) : (
+                      <>
+                        Showing <strong>{page.count}</strong> of {page.total} products
+                      </>
+                    )}
+                  </p>
+                ) : (
+                  <p id={ids.count} className="w360-visually-hidden" aria-live="polite">
+                    Loading the store…
+                  </p>
+                )}
+                <div className={styles.toolbarEnd}>
+                  {page && page.currencies.length > 1 && (
+                    <div className={styles.control}>
+                      <label htmlFor={ids.currency}>Currency</label>
+                      <select id={ids.currency} className="w360-input" value={page.currency ?? ""} onChange={(e) => set({ currency: e.target.value })}>
+                        {page.currencies.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div className={styles.control}>
-                    <label htmlFor={ids.currency}>Currency</label>
-                    <select id={ids.currency} className="w360-input" value={page.currency ?? ""} onChange={(e) => set({ currency: e.target.value })}>
-                      {page.currencies.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
+                    <label htmlFor={ids.sort}>Sort by:</label>
+                    <select id={ids.sort} className="w360-input" value={f.sort} onChange={(e) => set({ sort: e.target.value })}>
+                      {(page?.sorts ?? [{ value: "recommended", label: "Recommended" }]).map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
                         </option>
                       ))}
                     </select>
                   </div>
-                )}
-                <div className={styles.control}>
-                  <label htmlFor={ids.sort}>Sort by:</label>
-                  <select id={ids.sort} className="w360-input" value={f.sort} onChange={(e) => set({ sort: e.target.value })}>
-                    {(page?.sorts ?? [{ value: "recommended", label: "Recommended" }]).map((s) => (
-                      <option key={s.value} value={s.value}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
                 </div>
               </div>
 
               {page ? (
                 <>
-                  <div className={styles.meta}>
-                    <p id={ids.count} className={styles.showing} aria-live="polite">
-                      {page.count === page.total ? (
-                        <>
-                          <strong>{page.count}</strong> product{page.count === 1 ? "" : "s"}
-                        </>
-                      ) : (
-                        <>
-                          Showing <strong>{page.count}</strong> of {page.total} products
-                        </>
-                      )}
-                    </p>
-                    {chips(page).length > 0 && (
-                      <ul className={styles.active} aria-label="Filters in use">
-                        {chips(page).map((c) => (
-                          <li key={c.key}>
-                            <button type="button" className={styles.activeChip} onClick={c.remove} aria-label={`Remove filter: ${c.label}`}>
-                              {c.label} <span aria-hidden="true">×</span>
-                            </button>
-                          </li>
-                        ))}
-                        <li>
-                          <button type="button" className={styles.clearAll} onClick={clear}>
-                            Clear filters
+                  {chips(page).length > 0 && (
+                    <ul className={styles.active} aria-label="Filters in use">
+                      {chips(page).map((c) => (
+                        <li key={c.key}>
+                          <button type="button" className={styles.activeChip} onClick={c.remove} aria-label={`Remove filter: ${c.label}`}>
+                            {c.label} <span aria-hidden="true">×</span>
                           </button>
                         </li>
-                      </ul>
-                    )}
-                  </div>
+                      ))}
+                      <li>
+                        <button type="button" className={styles.clearAll} onClick={clear}>
+                          Clear filters
+                        </button>
+                      </li>
+                    </ul>
+                  )}
                   {result?.error && (
                     <p role="alert" className={styles.error}>
                       {result.error}
@@ -664,12 +712,7 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
                   )}
                 </>
               ) : (
-                <>
-                  <p id={ids.count} className="w360-visually-hidden" aria-live="polite">
-                    Loading the store…
-                  </p>
-                  <Skeleton />
-                </>
+                <Skeleton />
               )}
             </section>
           </div>
@@ -681,3 +724,6 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
 
 /** The class a portal's own button beside the price uses. */
 export const storeAsideClass = styles.manage;
+
+/** The outlined "View Details" link a portal may put beside a card's price. */
+export const storeDetailsClass = styles.detailsLink;

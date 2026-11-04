@@ -6,8 +6,9 @@ import { describeError } from "../ui";
 import { DescriptionField, ErrorSummary, SelectField, TextField } from "../widgets";
 import { IconPicker } from "./IconPicker";
 import { ImagePicker, ScreenshotsField, type ShotItem } from "./ImagePicker";
+import { VideoPicker } from "./VideoPicker";
 import { MerchandisingForm } from "./MerchandisingForm";
-import { SLUG_PATTERN, looksLikeHttps } from "./model";
+import { SLUG_PATTERN, looksLikeHttps, looksLikeVideo } from "./model";
 import styles from "./ProductManager.module.css";
 
 type Act = (action: () => Promise<unknown>, success: string) => Promise<void>;
@@ -21,6 +22,7 @@ const TEXT_FIELDS = [
   "store_title",
   "store_summary",
   "description",
+  "video_url",
   "marketing_url",
   "documentation_url",
   "support_url",
@@ -45,6 +47,7 @@ function ListingForm({ product: p, categories, busy, act }: { product: ConsolePr
     for (const key of ["marketing_url", "documentation_url", "support_url"] as const) {
       if (draft[key].trim() && !looksLikeHttps(draft[key].trim())) found[key] = "Use an https:// address.";
     }
+    if (draft.video_url.trim() && !looksLikeVideo(draft.video_url.trim())) found.video_url = "Use a YouTube or Vimeo link.";
     setErrors(found);
     if (Object.keys(found).length > 0) return;
     const changes: ProductChanges = Object.fromEntries(changed.map((k) => [k, k === "description" ? draft[k] : draft[k].trim()]));
@@ -89,6 +92,18 @@ function ListingForm({ product: p, categories, busy, act }: { product: ConsolePr
         />
         <div className={styles.full}>
           <DescriptionField label="Full description" value={draft.description} maxLength={4000} onChange={set("description")} />
+        </div>
+        <div className={styles.full}>
+          <TextField
+            label="Product video"
+            type="url"
+            placeholder="https://www.youtube.com/watch?v=..."
+            maxLength={200}
+            value={draft.video_url}
+            error={errors.video_url}
+            hint="Or a YouTube or Vimeo link instead of an upload (an uploaded video below is shown instead of this link). Leave empty for none."
+            onChange={set("video_url")}
+          />
         </div>
         <div className={styles.full}>
           <IconPicker value={draft.icon} onChange={set("icon")} />
@@ -137,7 +152,7 @@ function MediaSection({ product: p, busy, reload }: { product: ConsoleProduct; b
     }
   }
 
-  const upload = (key: string, kind: "logo" | "banner" | "screenshot", file: File, caption = "") =>
+  const upload = (key: string, kind: "logo" | "banner" | "screenshot" | "video", file: File, caption = "") =>
     adminApi.uploadProductMedia(p.id, kind, file, { caption, onProgress: (pct) => setProgress((cur) => ({ ...cur, [key]: pct })) });
 
   const shots: ShotItem[] = [
@@ -147,6 +162,21 @@ function MediaSection({ product: p, busy, reload }: { product: ConsoleProduct; b
   const disabled = busy || working;
 
   return (
+    <>
+    <section className={styles.card} aria-labelledby="video-title">
+      <h2 id="video-title" className={styles.cardTitle}>
+        Video
+      </h2>
+      <VideoPicker
+        currentUrl={p.video ? productMediaUrl(p.id, p.video.id) : null}
+        currentSize={p.video?.size_bytes ?? null}
+        progress={progress.video ?? null}
+        error={problem.video}
+        busy={disabled}
+        onSelect={(file) => void run("video", () => upload("video", "video", file))}
+        onRemove={() => p.video && void run("video", () => adminApi.deleteProductMedia(p.id, p.video!.id))}
+      />
+    </section>
     <section className={styles.card} aria-labelledby="images-title">
       <h2 id="images-title" className={styles.cardTitle}>
         Images
@@ -211,6 +241,7 @@ function MediaSection({ product: p, busy, reload }: { product: ConsoleProduct; b
         </div>
       </div>
     </section>
+    </>
   );
 }
 
@@ -244,7 +275,7 @@ export function ListingTab({
     );
   }
   // Keyed by the stored values, so a reload after a save shows the server's copy.
-  const mediaKey = product.media.map((m) => `${m.id}:${m.sort_order}:${m.caption}`).join("|");
+  const mediaKey = [...product.media.map((m) => `${m.id}:${m.sort_order}:${m.caption}`), product.video?.id ?? ""].join("|");
   return (
     <div className={styles.page}>
       <div className={styles.toolbar}>

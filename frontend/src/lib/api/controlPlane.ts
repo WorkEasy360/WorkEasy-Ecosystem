@@ -255,6 +255,8 @@ export interface ProductChanges {
   highlights?: string[];
   benefits?: string[];
   use_cases?: string[];
+  /** The product page's video: a YouTube or Vimeo link; "" removes it. */
+  video_url?: string;
   featured?: boolean;
   popular?: boolean;
   badge_new?: boolean;
@@ -347,7 +349,7 @@ export interface IssuedConsoleCredential {
  * {@link productMediaUrl}; a file id never reaches the browser. */
 export interface ProductMediaRow {
   id: string;
-  kind: "logo" | "banner" | "screenshot";
+  kind: "logo" | "banner" | "screenshot" | "video";
   width: number;
   height: number;
   content_type: string;
@@ -394,6 +396,8 @@ export interface ConsoleProduct {
   highlights: string[];
   benefits: string[];
   use_cases: string[];
+  /** The product page's video (YouTube or Vimeo link, canonical form), or "". */
+  video_url?: string;
   featured: boolean;
   popular: boolean;
   badge_new: boolean;
@@ -402,6 +406,9 @@ export interface ConsoleProduct {
   activated_at: string | null;
   logo_media_id: string | null;
   media: ProductMediaRow[];
+  /** 2026-11-04: the product page's uploaded video (served at
+   * {@link productMediaUrl}), or null. Absent from an older server. */
+  video?: { id: string; content_type: string; size_bytes: number; extension: string } | null;
   /** Where a holder's "Open" goes (the integration's launch URL), or "". */
   launch_url: string;
   plans: ConsoleProductPlan[];

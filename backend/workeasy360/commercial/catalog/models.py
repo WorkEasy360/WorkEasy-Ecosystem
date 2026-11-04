@@ -127,6 +127,9 @@ class Product(models.Model):
     highlights = models.JSONField(default=list, blank=True, db_default=[])
     benefits = models.JSONField(default=list, blank=True, db_default=[])
     use_cases = models.JSONField(default=list, blank=True, db_default=[])
+    #: The product page's video: a YouTube or Vimeo link in its canonical watch
+    #: form (``domain.validate_video_url``); empty = no video.
+    video_url = models.CharField(max_length=200, blank=True, default="", db_default="")
     #: Hand-set store badges. ``badge_new`` shows "New" whatever the launch date.
     featured = models.BooleanField(default=False, db_default=False)
     popular = models.BooleanField(default=False, db_default=False)

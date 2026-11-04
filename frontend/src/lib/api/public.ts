@@ -146,11 +146,28 @@ export interface PublicStoreImage {
   height: number;
 }
 
+/** A product page's video (2026-11-04). `embed_url` is the server's fixed
+ * player address (YouTube's no-cookie host or Vimeo's player), never the link
+ * an admin typed; the CSP's `frame-src` names exactly those two origins. */
+export type PublicStoreVideo =
+  | {
+      provider: "youtube" | "vimeo";
+      id: string;
+      embed_url: string;
+      watch_url: string;
+    }
+  /** A video uploaded from the admin's computer: same-origin, played by the
+   * browser's own player (`url` answers Range requests). */
+  | { provider: "upload"; id: string; url: string; content_type: string };
+
 /** A plan as the public Store's comparison shows it. */
-export type PublicStorePlan = Omit<PublicPlan, "billing_type" | "kind"> & {
+export type PublicStorePlan = Omit<PublicPlan, "billing_type" | "kind" | "prices"> & {
   billing_type: "paid" | "free_trial";
   kind: "standard" | "add_on";
   recommended?: boolean;
+  /** ADR-056: a promotional discount's list price and a one-time set-up fee
+   * ride on each price row. */
+  prices: (PublicPlan["prices"][number] & { list_amount_minor?: number | null; discount_bp?: number; setup_fee_minor?: number | null })[];
 };
 
 /** One product of the public Store (`/store/product/<slug>`): its full
@@ -182,6 +199,8 @@ export interface PublicStoreProductPage {
     logo: PublicStoreImage | null;
     banner: PublicStoreImage | null;
     screenshots: PublicStoreImage[];
+    /** Absent from an older server's answer. */
+    video?: PublicStoreVideo | null;
     price: PublicStoreCard["price"];
     yearly_deal: PublicStoreCard["yearly_deal"];
   };

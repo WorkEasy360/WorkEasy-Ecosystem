@@ -49,7 +49,8 @@ const CYCLE_LABEL: Record<string, string> = {
   annual: "Yearly",
 };
 
-function cell(row: ComparableRow, value: unknown): string {
+/** One comparison value as text ("Included", "5 (up to 10)", "Unlimited", "—"). */
+export function comparisonCell(row: ComparableRow, value: unknown): string {
   if (row.kind === "seats") {
     const v = value as { included: number; max: number | null } | undefined;
     if (!v) return "—";
@@ -148,7 +149,7 @@ export function PlanComparison({
               <tr key={row.key}>
                 <th scope="row">{row.label}</th>
                 {standard.map((p) => (
-                  <td key={p.plan_version_id}>{cell(row, row.values[p.plan_version_id])}</td>
+                  <td key={p.plan_version_id}>{comparisonCell(row, row.values[p.plan_version_id])}</td>
                 ))}
               </tr>
             ))}

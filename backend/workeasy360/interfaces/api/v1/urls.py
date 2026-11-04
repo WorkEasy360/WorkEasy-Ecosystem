@@ -137,6 +137,11 @@ urlpatterns = [
         name="public-storefront-logo",
     ),
     path(
+        "public/products/<slug:slug>/videos/<uuid:media_id>.<slug:extension>",
+        public_site_views.product_video_view,
+        name="public-product-video",
+    ),
+    path(
         "public/products/<slug:slug>/media/<uuid:media_id>",
         public_site_views.product_media_view,
         name="public-product-media",

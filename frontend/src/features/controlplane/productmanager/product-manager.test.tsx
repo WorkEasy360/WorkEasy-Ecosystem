@@ -558,6 +558,57 @@ describe("Product detail", () => {
     await waitFor(() => expect(calls.find((c) => c.key === `PATCH ${ADMIN}/catalog/products/p1`)?.body).toEqual({ store_title: "Easy Sample Pro" }));
   });
 
+  it("the store listing takes a YouTube or Vimeo video, and refuses any other link", async () => {
+    query = "tab=listing";
+    const calls = mockApi({
+      [`GET ${ADMIN}/products/p1`]: [ok(managed())],
+      [`PATCH ${ADMIN}/catalog/products/p1`]: [ok({})],
+    });
+    renderAs(MANAGE, <ProductDetail productId="p1" />);
+    const field = await screen.findByLabelText("Product video");
+    fireEvent.change(field, { target: { value: "https://example.com/clip.mp4" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save listing" }));
+    expect(await screen.findAllByText("Use a YouTube or Vimeo link.")).not.toHaveLength(0);
+    expect(calls.find((c) => c.key === `PATCH ${ADMIN}/catalog/products/p1`)).toBeUndefined();
+
+    fireEvent.change(field, { target: { value: " https://youtu.be/dQw4w9WgXcQ " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save listing" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.key === `PATCH ${ADMIN}/catalog/products/p1`)?.body).toEqual({ video_url: "https://youtu.be/dQw4w9WgXcQ" }),
+    );
+  });
+
+  it("uploads a product video from the computer, and refuses one it cannot play", async () => {
+    query = "tab=listing";
+    mockApi({ [`GET ${ADMIN}/products/p2`]: [ok(managed(DRAFT)), ok(managed(DRAFT))] });
+    renderAs(MANAGE, <ProductDetail productId="p2" />);
+    const input = await screen.findByLabelText("Product video file");
+    fireEvent.change(input, { target: { files: [new File(["x"], "clip.mov", { type: "video/quicktime" })] } });
+    expect(await screen.findByText(/clip\.mov: Choose an MP4 or WebM video/)).toBeInTheDocument();
+    const huge = new File(["x"], "huge.mp4", { type: "video/mp4" });
+    Object.defineProperty(huge, "size", { value: 91 * 1024 * 1024 });
+    fireEvent.change(input, { target: { files: [huge] } });
+    expect(await screen.findByText(/the limit is 90 MB/)).toBeInTheDocument();
+    expect(uploads).toEqual([]);
+
+    fireEvent.change(input, { target: { files: [new File(["....ftypmp42"], "demo.mp4", { type: "video/mp4" })] } });
+    await waitFor(() => expect(uploads.map((u) => [u.url, u.type])).toEqual([[`${ADMIN}/products/p2/media?kind=video`, "video/mp4"]]));
+  });
+
+  it("shows the stored video with its player and removes it", async () => {
+    query = "tab=listing";
+    const calls = mockApi({
+      [`GET ${ADMIN}/products/p1`]: [ok({ ...managed(), product: { ...managed().product, video: { id: "v1", content_type: "video/mp4", size_bytes: 5 * 1024 * 1024, extension: "mp4" } } }), ok(managed())],
+      [`DELETE ${ADMIN}/products/p1/media/v1`]: [ok({ deleted: true })],
+    });
+    renderAs(MANAGE, <ProductDetail productId="p1" />);
+    const player = await screen.findByLabelText("Current product video");
+    expect(player.getAttribute("src")).toBe(`${ADMIN}/products/p1/media/v1`);
+    expect(screen.getByText(/Current video \(5(\.0)? MB\)/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove video" }));
+    await waitFor(() => expect(calls.some((c) => c.key === `DELETE ${ADMIN}/products/p1/media/v1`)).toBe(true));
+  });
+
   it("uploads a new logo immediately, with progress, to this product only", async () => {
     query = "tab=listing";
     mockApi({ [`GET ${ADMIN}/products/p2`]: [ok(managed(DRAFT))] });

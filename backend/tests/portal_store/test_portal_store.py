@@ -356,3 +356,159 @@ def test_what_the_admin_adds_to_a_product_shows_in_the_public_store_at_once(
         pricing_services.close_price(ctx, price_id=price.id)
     crm = next(p for p in _public()["products"] if p["code"] == "crm")
     assert crm["price"]["amount_minor"] == 1499
+
+
+# --- the product page's video (2026-11-04) --------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "stored"),
+    [
+        (
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        ),
+        ("https://youtu.be/dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+        (
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        ),
+        (
+            "https://m.youtube.com/shorts/dQw4w9WgXcQ",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        ),
+        (
+            "https://www.youtube.com/embed/dQw4w9WgXcQ",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        ),
+        ("https://vimeo.com/76979871", "https://vimeo.com/76979871"),
+        ("https://player.vimeo.com/video/76979871", "https://vimeo.com/76979871"),
+        ("  ", ""),
+    ],
+)
+def test_a_video_link_is_stored_in_its_canonical_form(raw, stored):
+    from workeasy360.commercial.catalog.domain import validate_video_url
+
+    assert validate_video_url(raw) == stored
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "http://www.youtube.com/watch?v=dQw4w9WgXcQ",  # not https
+        "https://www.youtube.com/watch?v=short",  # not an 11-character id
+        "https://evil.example/watch?v=dQw4w9WgXcQ",  # another host
+        "https://www.youtube.com.evil.example/watch?v=dQw4w9WgXcQ",
+        "https://user@www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "https://vimeo.com/channels/staffpicks",
+        "javascript:alert(1)",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ\nhttps://evil.example/",  # two lines
+    ],
+)
+def test_a_video_is_only_a_youtube_or_vimeo_link(raw):
+    from workeasy360.commercial.catalog.domain import validate_video_url
+    from workeasy360.contracts.errors import CatalogValidationError
+
+    with pytest.raises(CatalogValidationError) as exc:
+        validate_video_url(raw)
+    assert exc.value.context["field"] == "video_url"
+
+
+def test_the_admin_sets_a_product_video_and_the_public_page_plays_it(
+    public, django_capture_on_commit_callbacks
+):
+    from tests.extension.conftest import staff_scope
+    from workeasy360.commercial.catalog import services as catalog_services
+    from workeasy360.commercial.catalog.models import Product
+
+    def crm_page() -> dict:
+        response = Client().get(f"{PUBLIC_STORE}/products/crm")
+        assert response.status_code == 200, response.content
+        return response.json()
+
+    assert crm_page()["product"]["video"] is None
+    product = Product.objects.get(code="crm")
+    with (
+        django_capture_on_commit_callbacks(execute=True),
+        staff_scope("platform.staff_catalog.manage") as ctx,
+    ):
+        catalog_services.update_product(
+            ctx,
+            product_id=product.id,
+            changes={"video_url": "https://youtu.be/dQw4w9WgXcQ"},
+        )
+    product.refresh_from_db()
+    assert product.video_url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    # The page frames a fixed player address, never the typed one.
+    assert crm_page()["product"]["video"] == {
+        "provider": "youtube",
+        "id": "dQw4w9WgXcQ",
+        "embed_url": "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+        "watch_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    }
+
+    with (
+        django_capture_on_commit_callbacks(execute=True),
+        staff_scope("platform.staff_catalog.manage") as ctx,
+    ):
+        catalog_services.update_product(
+            ctx, product_id=product.id, changes={"video_url": ""}
+        )
+    assert crm_page()["product"]["video"] is None
+
+
+def test_an_uploaded_video_plays_on_the_public_page_ahead_of_a_link(
+    public, django_capture_on_commit_callbacks
+):
+    import io
+
+    from django.core.cache import cache
+
+    from tests.extension.conftest import staff_scope
+    from workeasy360.commercial.catalog import services as catalog_services
+    from workeasy360.commercial.catalog.models import Product
+
+    video = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + bytes(range(256)) * 400
+    product = Product.objects.get(code="crm")
+    with (
+        django_capture_on_commit_callbacks(execute=True),
+        staff_scope("platform.staff_catalog.manage") as ctx,
+    ):
+        catalog_services.update_product(
+            ctx,
+            product_id=product.id,
+            changes={"video_url": "https://vimeo.com/76979871"},
+        )
+        media = catalog_services.upload_product_video(
+            ctx,
+            product_id=product.id,
+            content=io.BytesIO(video),
+            size_bytes=len(video),
+            content_type="video/mp4",
+        )
+    cache.clear()
+    page = Client().get(f"{PUBLIC_STORE}/products/crm").json()
+    shown = page["product"]["video"]
+    # The uploaded file wins over the link; it is not one of the pictures.
+    assert shown == {
+        "provider": "upload",
+        "id": str(media.id),
+        "url": f"/api/v1/public/products/crm/videos/{media.id}.mp4",
+        "content_type": "video/mp4",
+    }
+    assert str(media.id) not in str(page["product"]["screenshots"])
+
+    whole = Client().get(shown["url"])
+    assert whole.status_code == 200
+    assert whole["Cache-Control"] == "public, max-age=3600"
+    assert b"".join(whole.streaming_content) == video
+    part = Client().get(shown["url"], HTTP_RANGE="bytes=1000-")
+    assert part.status_code == 206
+    assert b"".join(part.streaming_content) == video[1000:]
+    # Not at another extension, not as an image, not once off the Store.
+    assert Client().get(shown["url"].replace(".mp4", ".webm")).status_code == 404
+    assert (
+        Client().get(f"/api/v1/public/products/crm/media/{media.id}").status_code == 404
+    )
+    Product.objects.filter(code="crm").update(customer_store_enabled=False)
+    assert Client().get(shown["url"]).status_code == 404

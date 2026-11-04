@@ -330,6 +330,136 @@ def test_an_oversized_logo_is_refused(manager):
     assert upload(manager, product["id"], big).status_code == 400
 
 
+# --- the product page's video (2026-11-04) ------------------------------------------------
+
+
+def _mp4(size: int = 300 * 1024) -> bytes:
+    """An MP4's first box (``ftyp``, brand ``mp42``) and filler bytes."""
+    head = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+    return head + bytes(i % 251 for i in range(size - len(head)))
+
+
+def test_a_video_is_uploaded_from_the_computer_and_previewed_in_slices(manager):
+    product = _create(manager)
+    video = _mp4()
+    response = upload(
+        manager, product["id"], video, kind="video", content_type="video/mp4"
+    )
+    assert response.status_code == 201, response.content
+    media = response.json()
+    assert (media["kind"], media["content_type"], media["size_bytes"]) == (
+        "video",
+        "video/mp4",
+        len(video),
+    )
+    detail = _detail(manager, product["id"])
+    # The video is not an image: the image list stays as it was.
+    assert detail["media"] == []
+    assert detail["video"]["id"] == media["id"]
+
+    url = f"{API}/{product['id']}/media/{media['id']}"
+    whole = manager.get(url)
+    assert whole.status_code == 200
+    assert whole["Accept-Ranges"] == "bytes"
+    assert whole["Content-Type"] == "video/mp4"
+    assert "sandbox" in whole["Content-Security-Policy"]
+    assert b"".join(whole.streaming_content) == video
+
+    part = manager.get(url, HTTP_RANGE="bytes=100-199")
+    assert part.status_code == 206
+    assert part["Content-Range"] == f"bytes 100-199/{len(video)}"
+    assert b"".join(part.streaming_content) == video[100:200]
+    tail = manager.get(url, HTTP_RANGE="bytes=-10")
+    assert b"".join(tail.streaming_content) == video[-10:]
+    past = manager.get(url, HTTP_RANGE=f"bytes={len(video)}-")
+    assert past.status_code == 416 and past["Content-Range"] == f"bytes */{len(video)}"
+
+
+def test_an_open_ended_range_is_answered_in_slices(manager, settings):
+    from workeasy360.interfaces.api.v1 import video_http
+
+    product = _create(manager)
+    video = _mp4(64 * 1024)
+    media = upload(
+        manager, product["id"], video, kind="video", content_type="video/mp4"
+    ).json()
+    original = video_http.MAX_SLICE
+    video_http.MAX_SLICE = 4096
+    try:
+        part = manager.get(
+            f"{API}/{product['id']}/media/{media['id']}", HTTP_RANGE="bytes=0-"
+        )
+    finally:
+        video_http.MAX_SLICE = original
+    assert part.status_code == 206
+    assert part["Content-Range"] == f"bytes 0-4095/{len(video)}"
+    assert b"".join(part.streaming_content) == video[:4096]
+
+
+def test_a_new_video_replaces_the_old_one_and_a_video_can_be_removed(manager):
+    product = _create(manager)
+    first = upload(
+        manager, product["id"], _mp4(), kind="video", content_type="video/mp4"
+    ).json()
+    webm = b"\x1a\x45\xdf\xa3" + bytes(200 * 1024)
+    second = upload(manager, product["id"], webm, kind="video", content_type="video/webm")
+    assert second.status_code == 201, second.content
+    assert _detail(manager, product["id"])["video"]["id"] == second.json()["id"]
+    assert manager.get(f"{API}/{product['id']}/media/{first['id']}").status_code == 404
+    removed = manager.delete(f"{API}/{product['id']}/media/{second.json()['id']}")
+    assert removed.status_code == 200
+    assert _detail(manager, product["id"])["video"] is None
+
+
+@pytest.mark.parametrize(
+    ("data", "content_type", "why"),
+    [
+        (
+            b"<html><script>alert(1)</script></html>" * 10,
+            "video/mp4",
+            "html posing as mp4",
+        ),
+        (b"\x89PNG\r\n\x1a\n" + bytes(4096), "video/mp4", "png posing as mp4"),
+        (b"\x00\x00\x00\x14ftypqt  " + bytes(4096), "video/quicktime", "quicktime"),
+        (b"\x00\x00\x00\x18ftypheic" + bytes(4096), "video/mp4", "a HEIC image"),
+        (b"MZ\x90\x00executable" + bytes(4096), "video/webm", "executable"),
+        (b"", "video/mp4", "empty"),
+    ],
+    ids=["html", "png", "quicktime", "heic", "executable", "empty"],
+)
+def test_a_bad_video_is_refused_and_nothing_is_attached(manager, data, content_type, why):
+    product = _create(manager)
+    response = upload(
+        manager, product["id"], data, kind="video", content_type=content_type
+    )
+    assert response.status_code == 400, why
+    assert _detail(manager, product["id"])["video"] is None
+
+
+def test_a_video_over_the_limit_is_refused_before_it_is_read(manager, monkeypatch):
+    from workeasy360.commercial.catalog import domain
+    from workeasy360.interfaces.api.v1 import admin_product_manager_views as views
+
+    monkeypatch.setattr(views, "MAX_VIDEO_BYTES", 1024)
+    monkeypatch.setattr(domain, "MAX_VIDEO_BYTES", 1024)
+    product = _create(manager)
+    response = upload(
+        manager, product["id"], _mp4(4096), kind="video", content_type="video/mp4"
+    )
+    assert response.status_code == 400
+    assert "MB" in response.json()["detail"]
+    assert _detail(manager, product["id"])["video"] is None
+
+
+def test_a_video_is_never_taken_as_an_image(manager):
+    product = _create(manager)
+    response = upload(
+        manager, product["id"], _mp4(), kind="screenshot", content_type="video/mp4"
+    )
+    assert response.status_code == 400
+    assert _detail(manager, product["id"])["media"] == []
+
+
 def test_screenshots_append_reorder_caption_delete_and_are_capped(manager):
     product = _create(manager)
     ids = []

@@ -190,3 +190,52 @@ def test_the_factory_returns_the_s3_adapter_when_configured(settings):
 def test_a_missing_bucket_is_refused():
     with pytest.raises(FileError, match="W360_S3_BUCKET"):
         S3FileStore(object(), bucket="")
+
+
+def test_a_byte_range_asks_s3_for_exactly_that_range(client):
+    """A video's ``Range`` request reads only the bytes it needs (2026-11-04)."""
+    store = _store(client)
+    with Stubber(client) as stub:
+        stub.add_response(
+            "get_object",
+            {"Body": StreamingBody(io.BytesIO(PNG[10:20]), 10)},
+            {"Bucket": "w360-files", "Key": f"files/{KEY}", "Range": "bytes=10-19"},
+        )
+        with store.get_range(KEY, 10, 10) as handle:
+            assert handle.read() == PNG[10:20]
+        stub.assert_no_pending_responses()
+    assert store.get_range(KEY, 5, 0).read() == b""
+    with pytest.raises(FileError):
+        store.get_range(KEY, -1, 4)
+
+
+def test_a_local_byte_range_reads_only_that_slice(tmp_path):
+    local = storage.LocalFileStore(tmp_path)
+    local.put(KEY, io.BytesIO(PNG), content_type="image/png")
+    with local.get_range(KEY, 8, 5) as handle:
+        assert handle.read() == PNG[8:13]
+    with local.get_range(KEY, len(PNG) - 3, 100) as handle:
+        assert handle.read() == PNG[-3:]
+
+
+def test_video_is_recognised_by_its_bytes_and_only_where_asked_for():
+    from workeasy360.contracts.errors import UnsupportedFileType
+    from workeasy360.platform.files import services
+
+    mp4 = b"\x00\x00\x00\x18ftypisom" + b"\x00" * 8
+    assert services.detect_content_type(mp4) == "video/mp4"
+    assert (
+        services.detect_content_type(b"\x1a\x45\xdf\xa3" + b"\x00" * 12) == "video/webm"
+    )
+    assert services.detect_content_type(b"\x00\x00\x00\x18ftypheic" + b"\x00" * 8) == ""
+    # Not on the general allowlist: only a caller that asks takes video.
+    with pytest.raises(UnsupportedFileType):
+        services.validate_upload(
+            content_type="video/mp4", size_bytes=10, filename="a.mp4"
+        )
+    services.validate_upload(
+        content_type="video/mp4",
+        size_bytes=10,
+        filename="a.mp4",
+        allowed_types=services.VIDEO_CONTENT_TYPES,
+    )

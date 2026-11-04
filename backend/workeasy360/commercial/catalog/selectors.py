@@ -19,7 +19,13 @@ from uuid import UUID
 
 from django.db.models import Prefetch, Q
 
-from workeasy360.commercial.catalog.domain import MANAGER_STATUS, publish_checklist
+from workeasy360.commercial.catalog.domain import (
+    MANAGER_STATUS,
+    publish_checklist,
+)
+from workeasy360.commercial.catalog.domain import (
+    VIDEO_CONTENT_TYPES as VIDEO_EXTENSION,
+)
 from workeasy360.contracts.enums import (
     CatalogStatus,
     FeatureKind,
@@ -390,6 +396,7 @@ def merchandising(product: Any) -> dict[str, Any]:
         "highlights": list(product.highlights or []),
         "benefits": list(product.benefits or []),
         "use_cases": list(product.use_cases or []),
+        "video_url": product.video_url,
         "featured": product.featured,
         "popular": product.popular,
         "badge_new": product.badge_new,
@@ -437,7 +444,8 @@ def product_row(product: Any) -> dict[str, Any]:
 
 def media_rows(product_ids: list[Any]) -> dict[str, list[dict[str, Any]]]:
     """Every listing image of these products, by product id, in display order
-    (logo, banner, then screenshots by position). One query."""
+    (logo, banner, then screenshots by position). One query. The uploaded
+    video is not an image and is not here (``product_videos``)."""
     from workeasy360.commercial.catalog.models import ProductMedia
 
     out: dict[str, list[dict[str, Any]]] = {str(i): [] for i in product_ids}
@@ -445,7 +453,9 @@ def media_rows(product_ids: list[Any]) -> dict[str, list[dict[str, Any]]]:
         return out
     order = {"logo": 0, "banner": 1, "screenshot": 2}
     rows = sorted(
-        ProductMedia.objects.filter(product_id__in=product_ids),
+        ProductMedia.objects.filter(product_id__in=product_ids).exclude(
+            kind=ProductMediaKind.VIDEO.value
+        ),
         key=lambda m: (order.get(m.kind, 9), m.sort_order, m.created_at),
     )
     for m in rows:
@@ -549,6 +559,15 @@ def readiness_for(product_id: Any) -> list[dict[str, Any]] | None:
     return None if product is None else publish_readiness(product)
 
 
+def is_video(product_id: Any, media_id: Any) -> bool:
+    """Whether this media of this product is its uploaded video."""
+    from workeasy360.commercial.catalog.models import ProductMedia
+
+    return ProductMedia.objects.filter(
+        id=media_id, product_id=product_id, kind=ProductMediaKind.VIDEO.value
+    ).exists()
+
+
 def media_file_id(product_id: Any, media_id: Any) -> Any | None:
     """The files-platform id behind one listing image of one product, or
     ``None`` - never another product's file, whatever id is asked for."""
@@ -575,9 +594,65 @@ def store_products() -> list[dict[str, Any]]:
     ]
 
 
+def video_embed(url: Any) -> dict[str, str] | None:
+    """A stored product video as a page plays it (``domain.video_embed``)."""
+    from workeasy360.commercial.catalog.domain import video_embed as embed
+
+    return embed(url)
+
+
 def media_url(slug: str, media_id: Any) -> str:
     """The public address of one listing image of a Store product."""
     return f"/api/v1/public/products/{slug}/media/{media_id}"
+
+
+def product_videos(product_ids: list[Any]) -> dict[str, dict[str, Any]]:
+    """The uploaded video of each of these products that has one, by product
+    id (2026-11-04). One query."""
+    from workeasy360.commercial.catalog.models import ProductMedia
+
+    if not product_ids:
+        return {}
+    return {
+        str(m.product_id): {
+            "id": str(m.id),
+            "content_type": m.content_type,
+            "size_bytes": m.size_bytes,
+            "extension": VIDEO_EXTENSION.get(m.content_type, "mp4"),
+        }
+        for m in ProductMedia.objects.filter(
+            product_id__in=product_ids, kind=ProductMediaKind.VIDEO.value
+        )
+    }
+
+
+def video_url(slug: str, video: dict[str, Any]) -> str:
+    """The public address of a Store product's uploaded video. It ends in the
+    file's extension, so a CDN in front caches it as the video it is."""
+    return f"/api/v1/public/products/{slug}/videos/{video['id']}.{video['extension']}"
+
+
+def public_video_file_id(slug: str, media_id: Any, extension: str) -> Any | None:
+    """The file behind a Store product's uploaded video - only a product on
+    the customer Store, only its video, only at its own extension - or
+    ``None``."""
+    from workeasy360.commercial.catalog.models import ProductMedia
+
+    row = (
+        ProductMedia.objects.filter(
+            id=media_id,
+            kind=ProductMediaKind.VIDEO.value,
+            product__slug=str(slug),
+            product__status=ProductStatus.AVAILABLE.value,
+            product__listing=ProductListing.LISTED.value,
+            product__customer_store_enabled=True,
+        )
+        .values_list("file_id", "content_type")
+        .first()
+    )
+    if row is None or VIDEO_EXTENSION.get(row[1]) != extension:
+        return None
+    return row[0]
 
 
 def public_media_file_id(slug: str, media_id: Any) -> Any | None:
@@ -589,6 +664,11 @@ def public_media_file_id(slug: str, media_id: Any) -> Any | None:
     return (
         ProductMedia.objects.filter(
             id=media_id,
+            kind__in=[
+                ProductMediaKind.LOGO.value,
+                ProductMediaKind.BANNER.value,
+                ProductMediaKind.SCREENSHOT.value,
+            ],
             product__slug=str(slug),
             product__status=ProductStatus.AVAILABLE.value,
             product__listing=ProductListing.LISTED.value,

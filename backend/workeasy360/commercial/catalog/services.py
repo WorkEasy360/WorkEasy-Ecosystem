@@ -20,7 +20,7 @@ Django's ``is_staff`` flag confers nothing on its own.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, BinaryIO
 from uuid import UUID
 
 from django.db import transaction
@@ -31,8 +31,10 @@ from workeasy360.commercial.catalog.domain import (
     MAX_SCREENSHOTS,
     MAX_STORE_SUMMARY,
     MAX_STORE_TITLE,
+    MAX_VIDEO_BYTES,
     MERCHANDISING_FLAGS,
     MERCHANDISING_LISTS,
+    VIDEO_CONTENT_TYPES,
     assert_catalog_transition,
     assert_product_transition,
     slug_for_code,
@@ -51,6 +53,8 @@ from workeasy360.commercial.catalog.domain import (
     validate_tagline,
     validate_tags,
     validate_trial_terms,
+    validate_video_upload,
+    validate_video_url,
 )
 from workeasy360.contracts.enums import (
     AuditOutcome,
@@ -251,6 +255,7 @@ EDITABLE_PRODUCT_FIELDS = (
     "icon",
     "subcategory",
     "tags",
+    "video_url",
     *MERCHANDISING_LISTS,
     *MERCHANDISING_FLAGS,
     *LISTING_DETAIL_FIELDS,
@@ -317,6 +322,8 @@ def _clean_product_changes(changes: dict[str, Any]) -> dict[str, Any]:
         clean["subcategory"] = validate_subcategory(changes["subcategory"])
     if "tags" in changes:
         clean["tags"] = validate_tags(changes["tags"])
+    if "video_url" in changes:
+        clean["video_url"] = validate_video_url(changes["video_url"])
     for key in MERCHANDISING_LISTS:
         if key in changes:
             clean[key] = validate_bullets(changes[key], field=key)
@@ -685,6 +692,83 @@ def upload_product_media(
                 "dimensions": f"{width}x{height}",
             },
         )
+    return media
+
+
+def upload_product_video(
+    ctx: TenantContext,
+    *,
+    product_id: UUID,
+    content: BinaryIO,
+    size_bytes: int,
+    content_type: str,
+) -> Any:
+    """Store the product page's video (MP4 or WebM) and attach it, replacing the
+    previous one (2026-11-04).
+
+    ``content`` is already on local disk (the view spools the request body
+    before any transaction opens), so the transaction here never waits on a
+    slow client - only on the copy to the store. The type and size are checked
+    on the bytes here, and again by the files platform, which stores the file
+    under the platform organization's key prefix and scans it before it may be
+    served."""
+    from workeasy360.commercial.catalog.models import Product, ProductMedia
+    from workeasy360.platform.files import services as files
+
+    _authorise(ctx, "catalog.product.media")
+    head = content.read(16)
+    content.seek(0)
+    declared = validate_video_upload(
+        content_type=content_type, size_bytes=size_bytes, head=head
+    )
+    with transaction.atomic():
+        product = _one(Product.objects.select_for_update(), id=product_id)
+        existing = list(
+            ProductMedia.objects.filter(
+                product_id=product.id, kind=ProductMediaKind.VIDEO.value
+            )
+        )
+        file_id, _grant = files.register_upload(
+            ctx,
+            filename=f"video.{VIDEO_CONTENT_TYPES[declared]}",
+            content_type=declared,
+            size_bytes=size_bytes,
+            module=MEDIA_MODULE,
+            allowed_types=files.VIDEO_CONTENT_TYPES,
+            max_bytes=MAX_VIDEO_BYTES,
+        )
+        files.store_content(ctx, file_id, content)
+        files.scan_now(file_id)
+        replaced = str(existing[0].file_id) if existing else None
+        if existing:
+            ProductMedia.objects.filter(id=existing[0].id).delete()
+        media = ProductMedia.objects.create(
+            product=product,
+            kind=ProductMediaKind.VIDEO.value,
+            file_id=file_id,
+            width=0,
+            height=0,
+            content_type=declared,
+            size_bytes=size_bytes,
+            caption="",
+            sort_order=0,
+            uploaded_by_id=ctx.user_id,
+        )
+        Product.objects.filter(id=product.id).update(updated_at=timezone.now())
+        audit.record(
+            ctx,
+            "commercial.product.media_added",
+            resource_type="catalog.product",
+            resource_id=product.id,
+            changes={
+                "kind": ProductMediaKind.VIDEO.value,
+                "media_id": str(media.id),
+                "file_id": str(file_id),
+                "replaced_file_id": replaced,
+                "size_bytes": size_bytes,
+            },
+        )
+        refresh_public_catalog()
     return media
 
 
