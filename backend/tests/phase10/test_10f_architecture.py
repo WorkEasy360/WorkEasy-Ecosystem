@@ -460,4 +460,9 @@ def test_phase_10_leaves_the_legacy_catalog_alone():
         # ADR-056: presentation columns (merchandising, recommended plan) with
         # database defaults - no catalog row is rewritten (tests/store_upgrade).
         "0007_store_merchandising.py",
+        # 2026-11-04 product video: one column with a database default
+        # (Product.video_url) and a choices-only kind - no catalog row is
+        # rewritten (tests/portal_store, tests/product_manager).
+        "0008_product_video.py",
+        "0009_product_media_video.py",
     ]

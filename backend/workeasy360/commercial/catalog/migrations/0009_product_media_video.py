@@ -4,6 +4,8 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+    overlap_safety = "choices-only AlterField: no database change (sqlmigrate is a no-op)"
+
     dependencies = [
         ("catalog", "0008_product_video"),
     ]
