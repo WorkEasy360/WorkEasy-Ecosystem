@@ -51,6 +51,7 @@ from workeasy360.commercial.partners import (
     services,
 )
 from workeasy360.commercial.partners.domain import clean_text
+from workeasy360.commercial.payments import partner_fees
 from workeasy360.contracts.errors import (
     PartnerRecordNotFound,
     PartnerUpgradeConflict,
@@ -60,7 +61,11 @@ from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.audit import services as audit
 from workeasy360.platform.authz import services as authz
 from workeasy360.platform.authz.control_plane import in_scope
+from workeasy360.platform.notifications.templates import Template, register
 from workeasy360.platform.observability.correlation import current_correlation_id
+from workeasy360.platform.observability.logging import get_logger
+
+logger = get_logger(__name__)
 
 #: A partner's own administrators raise and edit a request: it is a change to
 #: the partner's business profile, and the baseline already limits that to them.
@@ -81,6 +86,53 @@ OPEN: Final = (REQUESTED, PROFILE_REQUIRED, PENDING_APPROVAL)
 #: States in which the partner may still change what it proposed.
 EDITABLE: Final = (REQUESTED, PROFILE_REQUIRED)
 STATES: Final = (*OPEN, APPROVED, REJECTED, CANCELLED)
+
+#: How a partner paid the set-up fee (2026-11-03).
+OFFLINE: Final = "offline"
+ONLINE: Final = "online"
+EXPERIENCE_LABEL: Final = {
+    capabilities.AFFILIATE: "Affiliate",
+    capabilities.RESELLER: "Reseller",
+    capabilities.WHITE_LABEL: "White-label",
+}
+
+TEMPLATE_KEY: Final = "platform.partner.upgrade_requested"
+
+UPGRADE_REQUESTED = register(
+    Template(
+        key=TEMPLATE_KEY,
+        subject="{partner_name} asks to upgrade to {to_label}",
+        body_text=(
+            "A partner asked to upgrade on its own account.\n\n"
+            "Partner: {partner_name} ({partner_code})\n"
+            "From: {from_label}\n"
+            "To: {to_label}\n"
+            "Set-up fee: {fee_line}\n\n"
+            "Review it here: {review_url}\n\n"
+            "Nothing changes until an administrator approves it."
+        ),
+        required=(
+            "partner_name",
+            "partner_code",
+            "from_label",
+            "to_label",
+            "fee_line",
+            "review_url",
+        ),
+        description=(
+            "Sent to the staff who can approve partner upgrades when a partner "
+            "submits an upgrade request, or pays its set-up fee online."
+        ),
+        samples=(
+            ("partner_name", "Acme Media"),
+            ("partner_code", "ACME"),
+            ("from_label", "Affiliate"),
+            ("to_label", "Reseller"),
+            ("fee_line", "INR 25,000.00 - paid online"),
+            ("review_url", "https://admin.example.com/admin/partners/1"),
+        ),
+    )
+)
 
 #: Where each experience may go. A direct Affiliate -> White-label is allowed:
 #: nothing in the commercial policy requires Reseller first.
@@ -192,12 +244,18 @@ def request_dict(row: Any, *, staff: bool = False) -> dict[str, Any]:
         "products_granted": row.products_granted,
         "version": row.version,
         "editable": row.status in EDITABLE,
-        # ADR-053: the set-up fee fixed when the request opened, if any.
+        # ADR-053: the set-up fee fixed when the request opened, if any - and
+        # (2026-11-03) how it was paid.
         "setup_fee": (
             {
                 "amount_minor": row.fee_amount_minor,
                 "currency": row.fee_currency,
                 "settled": row.fee_settled_at is not None,
+                "payment_method": row.payment_method or None,
+                "payment_reference": row.payment_reference,
+                "paid_online": fee_paid_online(row),
+                "paid_at": row.fee_paid_at.isoformat() if row.fee_paid_at else None,
+                "online_payment": partner_fees.get(row.fee_payment_id),
             }
             if row.fee_amount_minor
             else None
@@ -252,14 +310,28 @@ def state(ctx: TenantContext) -> dict[str, Any]:
         "products": [],
         "checklist": [],
         # What each target would cost to start now (ADR-053); None is no fee.
+        # Each says how to pay it offline and whether it can be paid online.
         "fees": {
-            t: program_fee(t) for t in (capabilities.RESELLER, capabilities.WHITE_LABEL)
+            t: _payable(program_fee(t))
+            for t in (capabilities.RESELLER, capabilities.WHITE_LABEL)
         },
     }
     if current is not None:
         out["products"] = product_options()
         out["checklist"] = checklist(partner_id, current)
+        if current.fee_amount_minor:
+            fee = program_fee(current.to_experience)
+            out["payment"] = {
+                "instructions": fee["instructions"] if fee else "",
+                "online_available": partner_fees.online_available(current.fee_currency),
+            }
     return out
+
+
+def _payable(fee: dict[str, Any] | None) -> dict[str, Any] | None:
+    if fee is None:
+        return None
+    return {**fee, "online_available": partner_fees.online_available(fee["currency"])}
 
 
 def checklist(partner_id: UUID, row: Any) -> list[dict[str, Any]]:
@@ -437,12 +509,32 @@ def save_section(
     return request_dict(row)
 
 
+def _require_complete(partner_id: UUID, row: Any) -> None:
+    missing = [c for c in checklist(partner_id, row) if c["required"] and not c["done"]]
+    if missing:
+        raise PartnerValidationError(
+            "Complete these before submitting: "
+            + ", ".join(c["label"].lower() for c in missing)
+            + ".",
+            field=missing[0]["key"],
+            missing=[c["key"] for c in missing],
+        )
+
+
 @in_scope
 def submit(
-    ctx: TenantContext, request_id: UUID, *, expected_version: Any
+    ctx: TenantContext,
+    request_id: UUID,
+    *,
+    expected_version: Any,
+    payment_reference: Any = "",
 ) -> dict[str, Any]:
     """Send the request for review. Refused with the list of what is missing -
-    the same list the Review step shows - until every required item is done."""
+    the same list the Review step shows - until every required item is done.
+
+    With a set-up fee not yet paid online, this is the **offline** way to pay:
+    the partner gives the reference of its transfer, and staff verify it
+    before approving (2026-11-03). Staff are told by email."""
     partner_id = _own(ctx, OWN_MANAGE)
     access.require_transacting(ctx)
     with transaction.atomic():
@@ -452,30 +544,22 @@ def submit(
                 "This request was already submitted or closed.", status=row.status
             )
         _check_version(row, expected_version)
-        missing = [
-            c for c in checklist(partner_id, row) if c["required"] and not c["done"]
-        ]
-        if missing:
-            raise PartnerValidationError(
-                "Complete these before submitting: "
-                + ", ".join(c["label"].lower() for c in missing)
-                + ".",
-                field=missing[0]["key"],
-                missing=[c["key"] for c in missing],
+        _require_complete(partner_id, row)
+        fields = ["status", "submitted_at", "info_request_note", "version", "updated_at"]
+        if row.fee_amount_minor and not fee_paid_online(row):
+            row.payment_reference = clean_text(
+                payment_reference,
+                field="payment_reference",
+                max_length=120,
+                required=True,
             )
+            row.payment_method = OFFLINE
+            fields += ["payment_reference", "payment_method"]
         row.status = PENDING_APPROVAL
         row.submitted_at = timezone.now()
         row.info_request_note = ""
         row.version += 1
-        row.save(
-            update_fields=[
-                "status",
-                "submitted_at",
-                "info_request_note",
-                "version",
-                "updated_at",
-            ]
-        )
+        row.save(update_fields=fields)
         audit.record(
             ctx,
             "partner.upgrade_submitted",
@@ -487,9 +571,181 @@ def submit(
                 "from": row.from_experience,
                 "to": row.to_experience,
                 "sections": sorted(row.proposal or {}),
+                "payment_method": row.payment_method or None,
             },
         )
+        request_id = row.id
+        transaction.on_commit(lambda: notify_staff(request_id))
     return request_dict(row)
+
+
+# --- paying online (2026-11-03) -------------------------------------------------------
+
+
+@in_scope
+def online_payment_terms(
+    ctx: TenantContext, request_id: UUID, *, expected_version: Any
+) -> dict[str, Any]:
+    """What an online payment of this request's set-up fee is for - checked
+    exactly as submitting is (the partner's own, still editable, current
+    version, every required item done) - for ``upgrade_payments`` to open the
+    checkout. Writes nothing."""
+    partner_id = _own(ctx, OWN_MANAGE)
+    access.require_transacting(ctx)
+    row = _model().objects.filter(id=request_id, partner_id=partner_id).first()
+    if row is None:
+        raise PartnerRecordNotFound("No such upgrade request.")
+    if row.status not in EDITABLE:
+        raise PartnerUpgradeConflict(
+            "This request was already submitted or closed.", status=row.status
+        )
+    _check_version(row, expected_version)
+    if not row.fee_amount_minor:
+        raise PartnerValidationError(
+            "This upgrade has no set-up fee.", field="payment_method"
+        )
+    if fee_paid_online(row):
+        raise PartnerUpgradeConflict("The set-up fee is already paid.", status=row.status)
+    _require_complete(partner_id, row)
+    return {
+        "partner_id": partner_id,
+        "request_id": row.id,
+        "amount_minor": row.fee_amount_minor,
+        "currency": row.fee_currency,
+        "from_experience": row.from_experience,
+        "to_experience": row.to_experience,
+    }
+
+
+@in_scope
+def attach_online_payment(
+    ctx: TenantContext, request_id: UUID, payment_id: UUID
+) -> dict[str, Any]:
+    """Remember the online payment opened for this request. It pays nothing:
+    only the provider's verified callback does (``fee_paid``)."""
+    partner_id = _own(ctx, OWN_MANAGE)
+    with transaction.atomic():
+        row = _locked(request_id, partner_id)
+        row.fee_payment_id = payment_id
+        row.payment_method = ONLINE
+        row.save(update_fields=["fee_payment_id", "payment_method", "updated_at"])
+    return request_dict(row)
+
+
+def fee_paid_online(row: Any) -> bool:
+    """Whether the provider confirmed the set-up fee. Read from the payment
+    itself as well, so a payment whose follow-up failed still counts."""
+    if getattr(row, "fee_paid_at", None) is not None:
+        return True
+    payment = partner_fees.get(getattr(row, "fee_payment_id", None))
+    return payment is not None and payment["status"] == "succeeded"
+
+
+def fee_paid(request_id: UUID, payment_id: UUID) -> None:
+    """The provider confirmed an online set-up fee (``partner_fees`` calls this
+    after the payment commits). The request is stamped paid and, if the partner
+    had not sent it yet, sent for review - and staff are told. Idempotent."""
+    from workeasy360.contracts.values.control_plane import PLATFORM_ORGANIZATION_ID
+    from workeasy360.platform.tenancy.db import organization_db_scope
+
+    payment = partner_fees.get(payment_id)
+    if payment is None or payment["status"] != "succeeded":
+        return
+    with transaction.atomic(), organization_db_scope(PLATFORM_ORGANIZATION_ID):
+        row = _model().objects.select_for_update().filter(id=request_id).first()
+        if row is None or row.fee_paid_at is not None:
+            return
+        if (row.fee_amount_minor, row.fee_currency) != (
+            payment["amount_minor"],
+            payment["currency"],
+        ):
+            logger.warning("partner.upgrade.fee_amount_differs", request_id=str(row.id))
+            return
+        row.fee_paid_at = timezone.now()
+        row.fee_payment_id = payment_id
+        row.payment_method = ONLINE
+        fields = ["fee_paid_at", "fee_payment_id", "payment_method", "updated_at"]
+        sent = row.status in EDITABLE
+        if sent:
+            row.status = PENDING_APPROVAL
+            row.submitted_at = timezone.now()
+            row.info_request_note = ""
+            row.version += 1
+            fields += ["status", "submitted_at", "info_request_note", "version"]
+        row.save(update_fields=fields)
+        audit.record_system(
+            PLATFORM_ORGANIZATION_ID,
+            "partner.upgrade_fee_paid",
+            resource_type="partners.upgrade_request",
+            resource_id=row.id,
+            changes={
+                "partner_id": str(row.partner_id),
+                "from": row.from_experience,
+                "to": row.to_experience,
+                "payment_id": str(payment_id),
+                "amount_minor": row.fee_amount_minor,
+                "currency": row.fee_currency,
+                "submitted": sent,
+            },
+            reason="The payment provider confirmed the upgrade's set-up fee.",
+        )
+        if row.status == PENDING_APPROVAL:
+            request_id = row.id
+            transaction.on_commit(lambda: notify_staff(request_id))
+
+
+def notify_staff(request_id: UUID) -> int:
+    """Email every active staff member who can approve upgrades about one
+    request waiting for them. Best effort: a notice that cannot be queued is
+    logged and skipped - it never undoes the request. Once per recipient per
+    submission. Returns how many were queued."""
+    from workeasy360.contracts.values import portals
+    from workeasy360.platform.authz import staff
+    from workeasy360.platform.identity import portals as portal_links
+    from workeasy360.platform.notifications.services import notify_account
+
+    sent = 0
+    try:
+        row = _model().objects.select_related("partner").filter(id=request_id).first()
+        if row is None or row.status != PENDING_APPROVAL:
+            return 0
+        review = f"{portal_links.origin(portals.ADMIN)}/admin/partners/{row.partner_id}"
+        for holder in staff.holders(STAFF_MANAGE):
+            notify_account(
+                template_key=TEMPLATE_KEY,
+                recipient_email=holder["email"],
+                idempotency_key=f"partner-upgrade:{row.id}:{row.version}:{holder['user_id']}",
+                context={
+                    "partner_name": row.partner.display_name,
+                    "partner_code": row.partner.code,
+                    "from_label": EXPERIENCE_LABEL.get(row.from_experience, "None"),
+                    "to_label": EXPERIENCE_LABEL.get(
+                        row.to_experience, row.to_experience
+                    ),
+                    "fee_line": _fee_line(row),
+                    "review_url": review,
+                },
+            )
+            sent += 1
+    except Exception as exc:  # best effort: the request stands either way
+        logger.warning(
+            "partner.upgrade.notify_failed",
+            request_id=str(request_id),
+            error_type=type(exc).__name__,
+        )
+    return sent
+
+
+def _fee_line(row: Any) -> str:
+    if not row.fee_amount_minor:
+        return "none"
+    from workeasy360.contracts.values.money import CurrencyCode
+
+    code = CurrencyCode(row.fee_currency)
+    amount = f"{row.fee_currency} {row.fee_amount_minor / 10**code.exponent:,.{code.exponent}f}"
+    if fee_paid_online(row):
+        return f"{amount} - paid online (confirmed by the payment provider)"
+    return f"{amount} - paid offline, reference {row.payment_reference or 'not given'} (verify before approving)"
 
 
 @in_scope
@@ -819,7 +1075,11 @@ def program_fee(experience: str) -> dict[str, Any] | None:
     row = PartnerProgramFee.objects.filter(experience=experience).first()
     if row is None or row.amount_minor <= 0:
         return None
-    return {"amount_minor": row.amount_minor, "currency": row.currency}
+    return {
+        "amount_minor": row.amount_minor,
+        "currency": row.currency,
+        "instructions": row.payment_instructions,
+    }
 
 
 @in_scope
@@ -830,6 +1090,7 @@ def set_program_fee(
     currency: Any,
     amount_minor: Any = None,
     amount: Any = None,
+    instructions: Any = None,
 ) -> dict[str, Any] | None:
     """Set (or, with zero, remove) the set-up fee for a target experience.
     Requests already open keep the fee they started with. The amount is either
@@ -860,6 +1121,13 @@ def set_program_fee(
             "amount_minor must be a whole number of minor units, zero or more.",
             field="amount_minor",
         )
+    text = (
+        None
+        if instructions is None
+        else clean_text(
+            instructions, field="instructions", max_length=1000, required=False
+        )
+    )
     with transaction.atomic():
         previous = (
             PartnerProgramFee.objects.select_for_update()
@@ -871,14 +1139,14 @@ def set_program_fee(
             if previous is not None
             else None
         )
-        PartnerProgramFee.objects.update_or_create(
-            experience=target,
-            defaults={
-                "amount_minor": amount_minor,
-                "currency": code.value,
-                "updated_by_id": ctx.user_id,
-            },
-        )
+        defaults: dict[str, Any] = {
+            "amount_minor": amount_minor,
+            "currency": code.value,
+            "updated_by_id": ctx.user_id,
+        }
+        if text is not None:
+            defaults["payment_instructions"] = text
+        PartnerProgramFee.objects.update_or_create(experience=target, defaults=defaults)
         audit.record(
             ctx,
             "partner.program_fee_set",
@@ -888,6 +1156,8 @@ def set_program_fee(
                 "experience": target,
                 "before": before,
                 "after": {"amount_minor": amount_minor, "currency": code.value},
+                "instructions_changed": text is not None
+                and text != (previous.payment_instructions if previous else ""),
             },
         )
     return program_fee(target)
@@ -915,9 +1185,13 @@ def _minor_units(text: Any, currency: Any) -> int:
 
 def require_fee_settled(row: Any, reference: str) -> bool:
     """Approval's fee rule: a request that carries a set-up fee is approved
-    only with the payment's reference. Returns whether a fee was settled."""
+    only once it is paid - online, confirmed by the provider, or offline, with
+    the reference of the payment staff verified. Returns whether a fee was
+    settled."""
     if not row.fee_amount_minor:
         return False
+    if fee_paid_online(row):
+        return True
     if not reference:
         raise PartnerValidationError(
             "This upgrade has a set-up fee. Record the payment reference "
@@ -977,6 +1251,7 @@ def record_approval(
             "setup_fee": {
                 "amount_minor": row.fee_amount_minor,
                 "currency": row.fee_currency,
+                "paid_online": fee_paid_online(row),
             }
             if row.fee_amount_minor
             else None,

@@ -132,6 +132,10 @@ class Migration(migrations.Migration):
         ("notifications", "0001_initial"),
         ("organizations", "0001_initial"),
         ("events", "0001_initial"),
+        # It grants on ``django_session`` below. Declared (ADR-056) once new
+        # migrations depending on tenancy changed the graph's order: until
+        # then this ran after ``sessions`` by accident, not by declaration.
+        ("sessions", "0001_initial"),
     ]
 
     operations = [

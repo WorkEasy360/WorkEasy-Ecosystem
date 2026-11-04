@@ -17,11 +17,13 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 
 from workeasy360.commercial.catalog import selectors as catalog_selectors
 from workeasy360.commercial.catalog import services as catalog_services
+from workeasy360.commercial.catalog.domain import MAX_VIDEO_BYTES
 from workeasy360.commercial.controlplane import product_manager
 from workeasy360.contracts.enums import ProductMediaKind
 from workeasy360.contracts.errors import CatalogValidationError
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.interfaces.api.v1 import commercial_views as legacy
+from workeasy360.interfaces.api.v1 import video_http
 from workeasy360.interfaces.api.v1.control_plane_http import (
     limited,
     page_response,
@@ -109,8 +111,20 @@ def media_upload_view(
         kind = ProductMediaKind(request.GET.get("kind", ""))
     except ValueError:
         raise CatalogValidationError(
-            "kind is logo, banner or screenshot.", field="kind"
+            "kind is logo, banner, screenshot or video.", field="kind"
         ) from None
+    if kind is ProductMediaKind.VIDEO:
+        # Spooled to disk before any transaction opens (video_http).
+        spool, size = video_http.spool_body(request, max_bytes=MAX_VIDEO_BYTES)
+        with spool, acting_scope(ctx):
+            media = catalog_services.upload_product_video(
+                ctx,
+                product_id=product_id,
+                content=spool,
+                size_bytes=size,
+                content_type=request.headers.get("Content-Type", ""),
+            )
+        return JsonResponse(_media_json(media), status=201)
     with acting_scope(ctx):
         media = catalog_services.upload_product_media(
             ctx,
@@ -144,6 +158,21 @@ def media_item_view(
                 caption=_body(request).get("caption", ""),
             )
         return JsonResponse(_media_json(media))
+    video = product_manager.video_file_id(ctx, product_id, media_id)
+    if video is not None:
+        from workeasy360.platform.files import selectors as file_selectors
+
+        # The stream opens inside the scope; sending it needs no database.
+        # A streamed (ranged) response; ``staff_view`` is typed for HttpResponse.
+        with acting_scope(ctx):
+            return video_http.ranged_response(  # type: ignore[return-value]
+                request,
+                facts=file_selectors.servable_size(video),
+                open_range=lambda start, length: file_selectors.open_servable_range(
+                    video, start=start, length=length
+                ),
+                cache_control="private, max-age=300",
+            )
     found = product_manager.media_content(ctx, product_id, media_id)
     if found is None:
         return HttpResponse(status=404)

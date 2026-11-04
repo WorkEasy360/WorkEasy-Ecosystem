@@ -210,6 +210,9 @@ describe("the public site", () => {
     expect(cleanIntent({ plan: "../../admin" })).toBeNull();
     expect(cleanIntent({ plan: PV, interval: "forever" })).toEqual({ plan: PV, bundle: undefined, interval: undefined, trial: false });
     expect(cleanIntent(null)).toBeNull();
+    // The Store's quantity (2026-11-03): a whole number of one plan, else dropped.
+    expect(cleanIntent({ plan: PV, quantity: 3 })?.quantity).toBe(3);
+    for (const quantity of [1, 0, -2, 2.5, 100_001, "4" as never]) expect(cleanIntent({ plan: PV, quantity })?.quantity).toBeUndefined();
   });
 
   it("a product-trial intent is only ever a product code and a plan code (Phase 11)", () => {

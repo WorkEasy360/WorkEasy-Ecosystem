@@ -243,7 +243,7 @@ function ProductTile({ product }: { product: PublicProduct }) {
  * (interval, currency, amount) - so "Buy now" on the storefront buys exactly
  * the plan the price shown belongs to, without recomputing the backend's own
  * cheapest-plan rule (`marketplace._starting_price`) a second time. */
-function planForStartingPrice(product: PublicProduct): PublicPlan | undefined {
+export function planForStartingPrice(product: PublicProduct): PublicPlan | undefined {
   const sp = product.starting_price;
   if (!sp) return undefined;
   return product.plans.find(
@@ -258,7 +258,7 @@ function planForStartingPrice(product: PublicProduct): PublicPlan | undefined {
 /** The first plan the product's *configured* trial (Phase 11) is offered on
  * - never a plan whose own `trial_days` is set, which is the older, separate
  * mechanism `PlanCard` already offers on the detail page. */
-function planForTrial(product: PublicProduct): PublicPlan | undefined {
+export function planForTrial(product: PublicProduct): PublicPlan | undefined {
   if (!product.trial.available) return undefined;
   return product.plans.find((p) => product.trial.plan_codes.includes(p.plan_code));
 }

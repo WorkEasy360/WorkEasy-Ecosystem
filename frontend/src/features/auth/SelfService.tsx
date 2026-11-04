@@ -113,12 +113,7 @@ function Field({
 
 export function SignupScreen() {
   const params = useSearchParams();
-  const site = useSiteSettings();
-  const errorId = useId();
-  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", password: "", company_name: "" });
-  const [problems, setProblems] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
 
   // A partner's referral link (`/signup?ref=CODE`): turned into an opaque
   // token now, attributed once the organization exists. Best effort.
@@ -144,6 +139,27 @@ export function SignupScreen() {
     if (plan) rememberIntent({ plan, interval: params.get("interval") ?? undefined });
   }, [params]);
 
+  return (
+    <AuthFrame title={sent ? "Check your email" : "Create your account"}>
+      <SignupForm onSent={() => setSent(true)} signInHref="/login" />
+    </AuthFrame>
+  );
+}
+
+/**
+ * The signup form itself - the `/signup` page's, and the public Store's
+ * "create your account to continue" dialog's. Once sent it says to check the
+ * inbox; the emailed link signs the person in, and their organization's front
+ * door then acts on whatever they chose before (a purchase intent).
+ */
+export function SignupForm({ onSent, signInHref }: { onSent?: () => void; signInHref: string }) {
+  const site = useSiteSettings();
+  const errorId = useId();
+  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", password: "", company_name: "" });
+  const [problems, setProblems] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null);
+
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -154,6 +170,7 @@ export function SignupScreen() {
     try {
       await publicApi.signup({ ...form, email: form.email.trim(), company_name: form.company_name.trim() || undefined });
       setSentTo(form.email.trim());
+      onSent?.();
     } catch (err) {
       setProblems(err instanceof ApiError && err.code === "signup_closed"
         ? ["Signing up is closed at the moment. Please try again later."]
@@ -163,16 +180,10 @@ export function SignupScreen() {
     }
   }
 
-  if (sentTo) {
-    return (
-      <AuthFrame title="Check your email">
-        <CheckYourEmail email={sentTo} />
-      </AuthFrame>
-    );
-  }
+  if (sentTo) return <CheckYourEmail email={sentTo} />;
 
   return (
-    <AuthFrame title="Create your account">
+    <>
       {site && !site.signup_enabled ? (
         <p role="status">Signing up is closed at the moment. Please try again later.</p>
       ) : (
@@ -206,9 +217,9 @@ export function SignupScreen() {
         </form>
       )}
       <p className={styles.below}>
-        Already have an account? <Link href="/login">Sign in</Link>
+        Already have an account? <Link href={signInHref}>Sign in</Link>
       </p>
-    </AuthFrame>
+    </>
   );
 }
 

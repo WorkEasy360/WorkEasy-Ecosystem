@@ -101,12 +101,21 @@ def test_the_partner_models_are_unchanged_by_this_work():
         "PartnerUpgradeRequest",
         # ADR-053: the set-up fee setting (one row per target experience).
         "PartnerProgramFee",
+        # ADR-057 (2026-11-03): the helpdesk, payout details and withdrawals.
+        "PartnerTicket",
+        "PartnerTicketMessage",
+        "PartnerCannedResponse",
+        "PartnerPayoutMethod",
+        "PartnerWithdrawalRequest",
         # ADR-054: which products a partner may promote - a permission, not a
         # kind of partner (tests/affiliate_products pins what it does).
         "PartnerPromotionGrant",
         # ADR-055: a partner's request to promote a product - a workflow record
         # that grants nothing (tests/store_console pins what it does).
         "PartnerPromotionRequest",
+        # ADR-056: Super Admin's bounds on a selling partner's own price - a
+        # boundary, never a price (tests/store_upgrade pins what it allows).
+        "SellingPriceRange",
     }
 
 

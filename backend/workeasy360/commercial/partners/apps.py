@@ -38,6 +38,13 @@ class PartnersConfig(AppConfig):
 
         on_storefront_fulfil(attach_customer)
 
+        # 2026-11-03: an upgrade's set-up fee paid online stamps the request
+        # paid and sends it for review - payments calls back the same way.
+        from workeasy360.commercial.partners.upgrades import fee_paid
+        from workeasy360.commercial.payments import partner_fees
+
+        partner_fees.register(partner_fees.PARTNER_UPGRADE, fee_paid)
+
         # Phase 12: custom-domain state for the "custom-domain failures" alert
         # (partner tables are global, D-019, so these are real totals).
         from workeasy360.platform.observability.health import register_gauges

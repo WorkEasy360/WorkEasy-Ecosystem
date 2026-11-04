@@ -294,7 +294,17 @@ class CommissionRule(models.Model):
     )
     #: Empty applies to every product.
     product_code = models.CharField(max_length=32, blank=True, default="")
+    #: ADR-056: narrow the rule to one plan of the product ("" = every plan).
+    plan_code = models.CharField(max_length=64, blank=True, default="", db_default="")
     rate_bp = models.PositiveIntegerField()
+    #: ADR-056: a fixed commission per qualifying payment instead of a rate.
+    #: Set together with ``fixed_currency``; a sale in another currency earns
+    #: nothing under it (no conversion is ever guessed).
+    fixed_amount_minor = models.BigIntegerField(null=True, blank=True)
+    fixed_currency = models.CharField(max_length=3, blank=True, default="", db_default="")
+    #: ADR-056: how many months after the sale a recurring rule keeps earning
+    #: on renewals. NULL means for as long as the customer stays.
+    recurring_months = models.PositiveSmallIntegerField(null=True, blank=True)
     #: ADR-052: also earn on every paid renewal of the sale (Store Working Flow,
     #: "Renewal Payment -> Commission Rule -> New Accrual"). Off by default: a
     #: rule earns once per sale unless staff say otherwise.

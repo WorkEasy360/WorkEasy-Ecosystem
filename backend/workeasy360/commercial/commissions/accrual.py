@@ -149,11 +149,7 @@ def list_total(fact: Any, moment: datetime) -> int | None:
 def _experience_at(partner_id: UUID, moment: datetime) -> str:
     """The experience whose margin default applies: White-label when the
     partner held its brand capability at the sale, else Reseller."""
-    if partner_selectors.had_capability_at(
-        partner_id, capabilities.BRANDING_MANAGE, moment
-    ):
-        return capabilities.WHITE_LABEL
-    return capabilities.RESELLER
+    return partner_selectors.selling_experience_at(partner_id, moment)
 
 
 def _margin_evaluation(
@@ -298,13 +294,20 @@ def evaluate_sale(
         return replace(margin, payment_ref=payment_ref) if margin.accrues else margin
 
     rule = domain.select_rule(
-        rules, partner_id=partner_id, product_code=fact.product_code, at=moment
+        rules,
+        partner_id=partner_id,
+        product_code=fact.product_code,
+        plan_code=getattr(fact, "plan_code", "") or "",
+        at=moment,
     )
     if rule is None:
         return _skip("no_rule")
 
-    amount = domain.commission_amount(
-        basis_minor=basis, currency=CurrencyCode(fact.currency), rate_bp=rule.rate_bp
+    amount = domain.rule_amount(
+        rule,
+        basis_minor=basis,
+        currency=CurrencyCode(fact.currency),
+        whole=fact.predecessor_total_minor is None,
     )
     if amount <= 0:
         return _skip("zero_commission")
@@ -455,16 +458,25 @@ def evaluate_renewal(
             replace(margin, payment_ref=renewal.source_ref) if margin.accrues else margin
         )
     rule = domain.select_rule(
-        rules, partner_id=partner_id, product_code=renewal.product_code, at=moment
+        rules,
+        partner_id=partner_id,
+        product_code=renewal.product_code,
+        plan_code=(getattr(fact, "plan_code", "") or "") if fact is not None else "",
+        at=moment,
     )
     if rule is None:
         return _skip("no_rule")
     if not rule.recurring:
         return _skip("not_recurring")
-    amount = domain.commission_amount(
+    if not domain.within_recurring_window(
+        rule, sold_at=sale_moment(fact) if fact is not None else None, paid_at=moment
+    ):
+        return _skip("recurring_period_ended")
+    amount = domain.rule_amount(
+        rule,
         basis_minor=renewal.amount_minor,
         currency=CurrencyCode(renewal.currency),
-        rate_bp=rule.rate_bp,
+        whole=True,
     )
     if amount <= 0:
         return _skip("zero_commission")

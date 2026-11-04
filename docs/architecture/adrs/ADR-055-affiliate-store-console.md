@@ -21,3 +21,13 @@ Nothing here adds a second catalog, permission system, link generator or ledger.
 - Migration `partners.0012_promotion_requests`: one new table, no change to existing rows; reversible.
 - New 409 error `partner_request_conflict` (already requested, already approved, already decided).
 - Not built: an affiliate withdrawing a pending request; a request-volume rate limit (one pending request per product bounds it).
+
+## Addendum (2026-10-30): resellers ask to sell
+
+The same Store Console and workflow serve the Reseller workspace. One table, one queue, one review screen; a request now has a **kind**:
+
+10. `PartnerPromotionRequest.kind` is `promote` (affiliate, as above) or `sell` (reseller). Migration `partners.0013_product_request_kind` adds the column (database default `promote`, so every existing request stays what it was), a nullable `product_grant`, one pending request per partner, product **and kind**, and a check that an approved/revoked `promote` request names a promotion grant and a `sell` request a product grant.
+11. **Approving a sell request is the one product-grant command** (`services._grant_product`, as "Products this partner may sell" uses by hand). Every sale keeps checking `selectors.may_sell`; nothing else changes who may sell what. `services.revoke_product_grant` (optional reason) marks the approved sell request revoked, whichever path revokes - including a downgrade or a hierarchy change. Revoking stops new sales; customers' existing subscriptions are untouched.
+12. **Who may ask to sell**: a member holding `platform.partner_product.manage` (the partner's administrators), on an active partner holding a Reseller capability (`customer.provision`, `customer.manage`, `subscription.sell` or `subscription.manage`). Eligible products are those on the Store open to the partner's channel - `reseller`, or `white_label` for a branded partner (`selectors.seller_channel`, the rule `product_open_to_partner` already applied). The two kinds are separate permissions: approving one grants nothing of the other.
+13. **Disclosure**: beside the starting price, a seller sees its margin off the list price (`commissions.selectors.effective_margins`, the accrual's own choice) with `platform.partner_pricing.view`, and the commission rate with `commission.view`.
+14. **Screens**: the Reseller workspace's "Products & Plans" entry becomes **Store Console** (My Products = the Partner Products table plus shortcuts to Customers, Sales & Orders, Pricing & Margins and Product Billing; Explore Products; My Requests); `products` redirects there and the pages it replaced stay in the workspace. The White-label workspace is unchanged. Admin -> Product Requests gains a Type filter and column and words each review for the kind.

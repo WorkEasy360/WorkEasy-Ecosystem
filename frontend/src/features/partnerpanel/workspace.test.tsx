@@ -85,6 +85,70 @@ const OVERVIEW = {
   not_implemented: { affiliate_signups: "No separate sign-up step is recorded." },
 };
 
+const DASHBOARD = {
+  partner: { id: ID, name: "Acme Partners", currency: "INR", status: "active" },
+  range: { key: "this_month", from: "2026-10-01T00:00:00Z", to: "2026-10-22T00:00:00Z" },
+  previous: { from: "2026-09-09T00:00:00Z", to: "2026-10-01T00:00:00Z", new_customers: null, sales: null },
+  products: { active: 2, sales: null },
+  tickets: { open: 0, breached: 0 },
+  customers: null,
+  sales: null,
+  money: null,
+  charts: null,
+  sub_partners: null,
+  recent: { customers: null, commissions: null, payouts: null },
+  not_implemented: {},
+};
+
+const UPGRADE = {
+  current: "affiliate",
+  eligible: ["reseller", "white_label"],
+  can_request: true,
+  open: null,
+  recent: [],
+  steps: { reseller: [], white_label: [] },
+  products: [],
+  checklist: [],
+  fees: { reseller: { amount_minor: 2000000, currency: "INR" }, white_label: { amount_minor: 10000000, currency: "INR" } },
+};
+
+const NOTIFICATIONS = {
+  view: "unread",
+  items: [],
+  counts: { all: 0, unread: 0, important: 0, important_unread: 0 },
+  window: 100,
+  truncated: false,
+  not_implemented: {},
+};
+
+/** What the unified dashboard (2026-11-03) reads, every level's sections. */
+const dashboardRoutes = (over: Record<string, Reply[]> = {}): Record<string, Reply[]> => ({
+  [`GET /api/v1/partner/${ID}/dashboard`]: [ok(DASHBOARD)],
+  [`GET /api/v1/partner/${ID}/affiliate/overview`]: [ok(OVERVIEW)],
+  [`GET /api/v1/partner/${ID}/upgrade`]: [ok(UPGRADE)],
+  [`GET /api/v1/partner/${ID}/notifications`]: [ok(NOTIFICATIONS)],
+  [`GET /api/v1/partner/${ID}/products`]: [ok({ products: [], not_implemented: {} })],
+  [`GET /api/v1/partner/${ID}/white-label/status`]: [ok({ brand: null, domain: null, storefront: null })],
+  ...over,
+});
+
+const FOURTEEN = [
+  "Dashboard",
+  "Affiliate",
+  "Reseller",
+  "White Label",
+  "Product Store",
+  "Customers",
+  "Sales & Orders",
+  "Commission & Earnings",
+  "Wallet & Payouts",
+  "Communication",
+  "Staff",
+  "Helpdesk",
+  "Reports & Analytics",
+  "Settings",
+];
+
 function mount(slug: string, segments: string[] | undefined, routes: Record<string, Reply[]>): Call[] {
   const calls = mockApi({ "GET /api/v1/auth/session": [SIGNED_IN], ...routes });
   render(<Workspace slug={slug} segments={segments} />);
@@ -92,6 +156,16 @@ function mount(slug: string, segments: string[] | undefined, routes: Record<stri
 }
 
 const sidebar = () => within(screen.getByRole("navigation", { name: /workspace$/ })).getAllByRole("link").map((a) => a.textContent);
+/** Every drawn entry, open (a link) or locked (a button), in order. */
+const entryLabels = () =>
+  [...screen.getByRole("navigation", { name: /workspace$/ }).querySelectorAll("li > a, li > button")].map((el) =>
+    (el.textContent ?? "").replace(" (locked - upgrade to unlock)", ""),
+  );
+const lockedLabels = () =>
+  within(screen.getByRole("navigation", { name: /workspace$/ }))
+    .queryAllByRole("button")
+    .map((b) => (b.textContent ?? "").replace(" (locked - upgrade to unlock)", ""));
+
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -101,42 +175,124 @@ beforeEach(() => {
 });
 
 describe("the affiliate workspace", () => {
-  it("draws its sidebar from the permissions the server resolved, and no customer entry", async () => {
-    mount("affiliate", ["dashboard"], {
-      "GET /api/v1/partner/portal": [portal(partner())],
-      [`GET /api/v1/partner/${ID}/affiliate/overview`]: [ok(OVERVIEW)],
-    });
-    expect(await screen.findByRole("heading", { level: 1, name: "Welcome, Acme Partners" })).toBeInTheDocument();
+  it("draws the fourteen entries: open by permission, locked above its level (2026-11-03)", async () => {
+    mount("affiliate", ["dashboard"], { "GET /api/v1/partner/portal": [portal(partner())], ...dashboardRoutes() });
+    expect(await screen.findByRole("heading", { level: 1, name: "Partner Dashboard" })).toBeInTheDocument();
+    expect(entryLabels()).toEqual(FOURTEEN);
+    expect(lockedLabels()).toEqual(["Reseller", "White Label", "Customers", "Sales & Orders", "Communication", "Staff"]);
     expect(sidebar()).toEqual([
       "Dashboard",
-      "Store Console",
-      "Referral Links",
-      "Referral Codes",
-      "Campaigns",
-      "Marketing Materials",
-      "Leads & Referrals",
-      "Conversions",
-      "Commissions",
-      "Payouts",
+      "Affiliate",
+      "Product Store",
+      "Commission & Earnings",
+      "Wallet & Payouts",
+      "Helpdesk",
       "Reports & Analytics",
-      "Profile & Settings",
-      "Support",
+      "Settings",
     ]);
-    for (const hidden of ["Customers", "Subscriptions", "Pricing & Margins", "Sub-Resellers", "Brand Settings"]) {
-      expect(sidebar()).not.toContain(hidden);
-    }
     const links = within(screen.getByRole("navigation", { name: /workspace$/ })).getAllByRole("link");
     expect(links[0]).toHaveAttribute("href", "/partner/affiliate/dashboard");
     expect(links[0]).toHaveAttribute("aria-current", "page");
+    // The top bar: the level and the persistent Upgrade Plan action.
+    expect(screen.getByText("Partner Level:").parentElement).toHaveTextContent("Affiliate Partner");
+    expect(screen.getByRole("button", { name: /Upgrade Plan/ })).toBeInTheDocument();
   });
 
-  it("refuses a page the workspace does not serve - whatever the person's permissions", async () => {
-    // Even a member holding the customer view is not given customer pages here.
+  it("a locked entry opens the upgrade dialog, never a page", async () => {
+    const calls = mount("affiliate", ["dashboard"], { "GET /api/v1/partner/portal": [portal(partner())], ...dashboardRoutes() });
+    await screen.findByRole("heading", { level: 1, name: "Partner Dashboard" });
+    fireEvent.click(within(screen.getByRole("navigation", { name: /workspace$/ })).getByRole("button", { name: /^Customers/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Unlock Customers" });
+    expect(dialog).toHaveTextContent("Customers is part of the Reseller level");
+    expect(await within(dialog).findByRole("link", { name: "Upgrade to Reseller" })).toHaveAttribute("href", "/partner/affiliate/upgrade/reseller");
+    expect(dialog).toHaveTextContent("one-time");
+    expect(calls.some((c) => c.url.includes("/customers"))).toBe(false);
+    fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("a consolidated entry draws its pages as one row of tabs, with the page's counts (2026-11-02)", async () => {
+    pathname = "/partner/affiliate/store-console/requests";
+    const STORE = {
+      kind: "promote",
+      products: [],
+      requests: [],
+      counts: { approved: 1, explore: 3, pending: 2 },
+      can_request: true,
+      cannot_request_reason: null,
+      channels: {},
+      prefill: {},
+    };
+    mount("affiliate", ["store-console", "requests"], {
+      "GET /api/v1/partner/portal": [portal(partner())],
+      [`GET /api/v1/partner/${ID}/affiliate/store`]: [ok(STORE), ok(STORE)],
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "Store Console" })).toBeInTheDocument();
+    // One row of tabs - the Store Console's own is folded into it.
+    const rows = screen.getAllByRole("navigation", { name: "Sections" });
+    expect(rows).toHaveLength(1);
+    await waitFor(() =>
+      expect(within(rows[0]).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href"), a.getAttribute("aria-current")])).toEqual([
+        ["Explore Products", "/partner/affiliate/store", null],
+        ["Approved / Promoting (1)", "/partner/affiliate/store-console", null],
+        ["Request Access (3)", "/partner/affiliate/store-console/explore", null],
+        ["My Requests (2 pending)", "/partner/affiliate/store-console/requests", "page"],
+      ]),
+    );
+    // The sidebar's Product Store is the current entry.
+    const current = within(screen.getByRole("navigation", { name: /workspace$/ })).getByRole("link", { name: "Product Store" });
+    expect(current).toHaveAttribute("aria-current", "page");
+  });
+
+  it("an old address opens its page under the new entry, and a tab follows its permission (2026-11-02)", async () => {
+    pathname = "/partner/affiliate/affiliates/payouts";
+    mount("affiliate", ["affiliates", "payouts"], {
+      "GET /api/v1/partner/portal": [portal(partner({ permissions: perm("payout.view") }))],
+      [`GET /api/v1/partner/${ID}/payouts`]: [ok({ results: [], next_cursor: null, has_more: false, balances: [], not_implemented: {} })],
+    });
+    expect(await screen.findByRole("link", { name: "Wallet & Payouts" })).toHaveAttribute("aria-current", "page");
+    // Its tabs: the wallet and the payout history (current here).
+    const tabs = screen.getByRole("navigation", { name: "Sections" });
+    expect(within(tabs).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("aria-current")])).toEqual([
+      ["Wallet", null],
+      ["Payout History", "page"],
+    ]);
+    expect(sidebar()).toEqual(["Wallet & Payouts"]);
+  });
+
+  it("a locked page shows what unlocks it - whatever the person's permissions - and loads nothing", async () => {
+    // Even a member holding the customer view is not given customer pages at this level.
     const calls = mount("affiliate", ["users"], {
       "GET /api/v1/partner/portal": [portal(partner({ permissions: [...AFFILIATE_PERMISSIONS, ...perm("customer.view")] }))],
     });
+    expect(await screen.findByRole("heading", { level: 1, name: /Customers is part of the Reseller level/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "See upgrade options" })).toBeInTheDocument();
+    expect(calls.map((c) => c.key)).toEqual(["GET /api/v1/auth/session", "GET /api/v1/partner/portal"]);
+  });
+
+  it("refuses a page the workspace does not serve", async () => {
+    const calls = mount("affiliate", ["no-such-page"], { "GET /api/v1/partner/portal": [portal(partner())] });
     expect(await screen.findByRole("heading", { name: "That page is not part of the Affiliate workspace." })).toBeInTheDocument();
     expect(calls.map((c) => c.key)).toEqual(["GET /api/v1/auth/session", "GET /api/v1/partner/portal"]);
+  });
+
+  it("an upgraded partner's old affiliate address opens the same page at its own level", async () => {
+    pathname = "/partner/affiliate/referral-links";
+    mount("affiliate", ["referral-links"], {
+      "GET /api/v1/partner/portal": [
+        portal(
+          partner({
+            workspaces: [
+              { key: "reseller", label: "Reseller" },
+              { key: "affiliate", label: "Affiliate" },
+            ],
+            level: "reseller",
+            permissions: [...RESELLER_PERMISSIONS, ...perm("referral.view", "referral.create")],
+          }),
+        ),
+      ],
+    });
+    await waitFor(() => expect(nav.replace).toHaveBeenCalledWith("/partner/reseller/referral-links"));
   });
 
   it("refuses a page the person's permissions do not open, before it asks for any data", async () => {
@@ -155,10 +311,10 @@ describe("a staff guest view (Super Admin → Guest login)", () => {
     const guest = { partner_id: ID, reason: "Support ticket 42", expires_at: "2026-03-01T10:30:00Z" };
     const calls = mount("affiliate", ["dashboard"], {
       "GET /api/v1/partner/portal": [portal(partner({ role: "viewer", is_admin: false, guest }))],
-      [`GET /api/v1/partner/${ID}/affiliate/overview`]: [ok(OVERVIEW)],
+      ...dashboardRoutes(),
       "POST /api/v1/partner/guest-view/end": [ok({ ended: true })],
     });
-    expect(await screen.findByRole("heading", { level: 1, name: "Welcome, Acme Partners" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Partner Dashboard" })).toBeInTheDocument();
     const banner = screen.getByText(/Viewing Partner Portal as Acme Partners\./);
     fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Session" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith(`/admin/partners/${ID}`));
@@ -174,7 +330,7 @@ describe("exiting a guest view that cannot be ended", () => {
     const guest = { partner_id: ID, reason: "Support ticket 42", expires_at: "2026-03-01T10:30:00Z" };
     mount("affiliate", ["dashboard"], {
       "GET /api/v1/partner/portal": [portal(partner({ role: "viewer", is_admin: false, guest }))],
-      [`GET /api/v1/partner/${ID}/affiliate/overview`]: [ok(OVERVIEW)],
+      ...dashboardRoutes(),
       "POST /api/v1/partner/guest-view/end": [{ status: 503, body: { code: "unavailable" } }],
     });
     const banner = await screen.findByText(/Viewing Partner Portal as Acme Partners\./);
@@ -211,6 +367,80 @@ describe("a workspace the account does not hold", () => {
   });
 });
 
+const WHITE_LABEL_PERMISSIONS = perm(
+  "dashboard.view",
+  "profile.view",
+  "member.view",
+  "product.view",
+  "customer.view",
+  "pricing.view",
+  "commission.view",
+  "payout.view",
+  "subpartner.view",
+  "referral.view",
+  "branding.view",
+  "domain.view",
+);
+
+describe("the white-label workspace (2026-11-02)", () => {
+  const whiteLabel = (over: Record<string, unknown> = {}) =>
+    partner({
+      workspaces: [{ key: "white_label", label: "White-label" }],
+      default_experience: "white_label",
+      landing: "white_label",
+      permissions: WHITE_LABEL_PERMISSIONS,
+      ...over,
+    });
+  const current = () =>
+    within(screen.getByRole("navigation", { name: /workspace$/ }))
+      .getAllByRole("link")
+      .filter((a) => a.getAttribute("aria-current") === "page")
+      .map((a) => a.textContent);
+
+  it("Custom Domain is a tab of White Label, the only current entry on its page", async () => {
+    pathname = "/partner/white-label/brand-settings/url-manager";
+    mount("white-label", ["brand-settings", "url-manager"], { "GET /api/v1/partner/portal": [portal(whiteLabel())] });
+    await waitFor(() => expect(current()).toEqual(["White Label"]));
+    const tabs = screen.getByRole("navigation", { name: "Sections" });
+    expect(within(tabs).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("aria-current")])).toEqual([
+      ["Brand Settings", null],
+      ["Website Branding", null],
+      ["Custom Domain", "page"],
+      ["Translations", null],
+    ]);
+  });
+
+  it("nothing is locked for a white-label partner, and it is offered no upgrade", async () => {
+    pathname = "/partner/white-label/users";
+    mount("white-label", ["users"], { "GET /api/v1/partner/portal": [portal(whiteLabel())] });
+    await waitFor(() => expect(current()).toEqual(["Customers"]));
+    expect(lockedLabels()).toEqual([]);
+    expect(entryLabels()).toEqual(FOURTEEN);
+    expect(screen.getByText("Partner Level:").parentElement).toHaveTextContent("White Label Partner");
+    expect(screen.queryByRole("button", { name: /Upgrade Plan/ })).toBeNull();
+    const rows = screen.getAllByRole("navigation", { name: "Sections" });
+    expect(rows).toHaveLength(1);
+    expect(within(rows[0]).getAllByRole("link").map((a) => a.textContent)).toEqual(["Customers", "Subscriptions"]);
+  });
+
+  it("Website Branding is current on the setup page", async () => {
+    pathname = "/partner/white-label/brand-settings/white-label-setup";
+    mount("white-label", ["brand-settings", "white-label-setup"], { "GET /api/v1/partner/portal": [portal(whiteLabel())] });
+    await waitFor(() => expect(current()).toEqual(["White Label"]));
+    const tabs = screen.getByRole("navigation", { name: "Sections" });
+    expect(within(tabs).getByRole("link", { name: "Website Branding" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("the referral programme pages are tabs of the Affiliate entry", async () => {
+    pathname = "/partner/white-label/affiliates/settings";
+    mount("white-label", ["affiliates", "settings"], { "GET /api/v1/partner/portal": [portal(whiteLabel())] });
+    await waitFor(() => expect(current()).toEqual(["Affiliate"]));
+    const tabs = screen.getByRole("navigation", { name: "Sections" });
+    expect(within(tabs).getByRole("link", { name: "Programme Settings" })).toHaveAttribute("aria-current", "page");
+    expect(within(tabs).getByRole("link", { name: "Promote Products" })).toHaveAttribute("href", "/partner/white-label/promote/store");
+  });
+});
+
 describe("the reseller workspace", () => {
   const reseller = (over: Record<string, unknown> = {}) =>
     partner({ workspaces: [{ key: "reseller", label: "Reseller" }], default_experience: "reseller", landing: "reseller", permissions: RESELLER_PERMISSIONS, ...over });
@@ -232,7 +462,95 @@ describe("the reseller workspace", () => {
     });
     expect(await screen.findByRole("heading", { name: "You don't have access to this page." })).toBeInTheDocument();
     expect(sidebar()).not.toContain("Customers");
-    expect(sidebar()).toContain("Commissions");
+    expect(sidebar()).toContain("Commission & Earnings");
+  });
+
+  it("an upgraded affiliate works in one panel: the reseller one carries the affiliate programme (2026-11-03)", async () => {
+    pathname = "/partner/reseller/promote/store-console/requests";
+    const upgraded = reseller({
+      workspaces: [
+        { key: "reseller", label: "Reseller" },
+        { key: "affiliate", label: "Affiliate" },
+      ],
+      permissions: [...RESELLER_PERMISSIONS, ...perm("referral.view", "referral.create")],
+    });
+    const STORE = { kind: "promote", products: [], requests: [], counts: { approved: 2, explore: 1, pending: 0 }, can_request: true, cannot_request_reason: null, channels: {}, prefill: {} };
+    mount("reseller", ["promote", "store-console", "requests"], {
+      "GET /api/v1/partner/portal": [portal(upgraded)],
+      [`GET /api/v1/partner/${ID}/affiliate/store`]: [ok(STORE), ok(STORE)],
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "Store Console" })).toBeInTheDocument();
+    // No second panel to switch to.
+    expect(screen.queryByRole("navigation", { name: "Workspace" })).toBeNull();
+    for (const label of ["Affiliate", "Reseller", "Product Store"]) expect(sidebar()).toContain(label);
+    const currentEntry = within(screen.getByRole("navigation", { name: /workspace$/ })).getByRole("link", { name: "Affiliate" });
+    expect(currentEntry).toHaveAttribute("aria-current", "page");
+    // The promoting Store is the Affiliate entry's Promote Products tab; the reseller's Store sells.
+    const tabs = screen.getByRole("navigation", { name: "Sections" });
+    expect(within(tabs).getByRole("link", { name: "Promote Products" })).toHaveAttribute("aria-current", "page");
+    const pages = await screen.findByRole("navigation", { name: "Pages" });
+    await waitFor(() =>
+      expect(within(pages).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual(
+        expect.arrayContaining([
+          "/partner/reseller/promote/store-console",
+          "/partner/reseller/promote/store-console/explore",
+          "/partner/reseller/promote/store-console/requests",
+        ]),
+      ),
+    );
+  });
+
+  it("a reseller that never promoted sees no affiliate programme", async () => {
+    mount("reseller", ["dashboard"], { "GET /api/v1/partner/portal": [portal(reseller())], ...dashboardRoutes() });
+    await waitFor(() => expect(sidebar()).toContain("Product Store"));
+    // The Affiliate entry needs the referral view: not drawn, and not locked either.
+    expect(sidebar()).not.toContain("Affiliate");
+    expect(lockedLabels()).toEqual(["White Label"]);
+  });
+
+  it("the Reseller entry draws its tabs, and a pricing page keeps its own row under them", async () => {
+    pathname = "/partner/reseller/pricing/rules";
+    mount("reseller", ["pricing", "rules"], { "GET /api/v1/partner/portal": [portal(reseller())] });
+    const tabs = await screen.findByRole("navigation", { name: "Sections" });
+    expect(within(tabs).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("aria-current")])).toEqual([
+      ["My Products", null],
+      ["Wholesale Catalogue", null],
+      ["My Requests", null],
+      ["Product Settings", null],
+      ["Pricing & Margins", "page"],
+      ["Margin Calculator", null],
+      ["Downline Partners", null],
+    ]);
+    const pages = await screen.findByRole("navigation", { name: "Pages" });
+    expect(within(pages).getAllByRole("link").map((a) => a.textContent)).toEqual(["Currency", "Package & Pricing", "Pricing Rule"]);
+    expect(within(screen.getByRole("navigation", { name: /workspace$/ })).getByRole("link", { name: "Reseller" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("Commission & Earnings keeps the balance and disputes beside the commissions", async () => {
+    pathname = "/partner/reseller/payments/balance";
+    mount("reseller", ["payments", "balance"], { "GET /api/v1/partner/portal": [portal(reseller())] });
+    const tabs = await screen.findByRole("navigation", { name: "Sections" });
+    expect(within(tabs).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href"), a.getAttribute("aria-current")])).toEqual([
+      ["Commissions", "/partner/reseller/payments/commissions", null],
+      ["Balance", "/partner/reseller/payments/balance", "page"],
+      ["Disputes", "/partner/reseller/disputes", null],
+    ]);
+  });
+
+  it("a reseller sees White Label locked, and the dialog offers White-label", async () => {
+    mount("reseller", ["dashboard"], {
+      "GET /api/v1/partner/portal": [portal(reseller())],
+      ...dashboardRoutes({ [`GET /api/v1/partner/${ID}/upgrade`]: [ok({ ...UPGRADE, current: "reseller", eligible: ["white_label"] })] }),
+    });
+    await screen.findByRole("heading", { level: 1, name: "Partner Dashboard" });
+    expect(lockedLabels()).toEqual(["White Label"]);
+    fireEvent.click(within(screen.getByRole("navigation", { name: /workspace$/ })).getByRole("button", { name: /^White Label/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Unlock White Label" });
+    expect(await within(dialog).findByRole("link", { name: "Upgrade to White-label" })).toHaveAttribute("href", "/partner/reseller/upgrade/white-label");
+    expect(within(dialog).queryByRole("link", { name: "Upgrade to Reseller" })).toBeNull();
   });
 
   it("sends an ended partner to the money it can still read", async () => {
@@ -262,7 +580,7 @@ describe("holding more than one workspace", () => {
   it("offers a switcher, marking the current one, and an account-menu entry for the other", async () => {
     mount("affiliate", ["dashboard"], {
       "GET /api/v1/partner/portal": [portal(both())],
-      [`GET /api/v1/partner/${ID}/affiliate/overview`]: [ok(OVERVIEW)],
+      ...dashboardRoutes(),
     });
     const switcher = await screen.findByRole("navigation", { name: "Workspace" });
     const links = within(switcher).getAllByRole("link");
@@ -276,7 +594,7 @@ describe("holding more than one workspace", () => {
   it("offers none to an account with one", async () => {
     mount("affiliate", ["dashboard"], {
       "GET /api/v1/partner/portal": [portal(partner())],
-      [`GET /api/v1/partner/${ID}/affiliate/overview`]: [ok(OVERVIEW)],
+      ...dashboardRoutes(),
     });
     await screen.findByRole("heading", { level: 1 });
     expect(screen.queryByRole("navigation", { name: "Workspace" })).not.toBeInTheDocument();
@@ -372,9 +690,19 @@ describe("accessibility", () => {
   it("the affiliate dashboard shell has no detectable violations", async () => {
     mount("affiliate", ["dashboard"], {
       "GET /api/v1/partner/portal": [portal(partner())],
-      [`GET /api/v1/partner/${ID}/affiliate/overview`]: [ok(OVERVIEW)],
+      ...dashboardRoutes(),
     });
-    await screen.findByRole("heading", { level: 1, name: "Welcome, Acme Partners" });
+    await screen.findByRole("heading", { level: 1, name: "Partner Dashboard" });
+    await screen.findByRole("heading", { name: "Partner levels" });
+    await expectNoViolations(document.body);
+  });
+
+  it("the upgrade dialog has no detectable violations", async () => {
+    mount("affiliate", ["dashboard"], { "GET /api/v1/partner/portal": [portal(partner())], ...dashboardRoutes() });
+    await screen.findByRole("heading", { level: 1, name: "Partner Dashboard" });
+    fireEvent.click(screen.getByRole("button", { name: /Upgrade Plan/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Upgrade your partnership" });
+    await within(dialog).findByRole("link", { name: "Upgrade to Reseller" });
     await expectNoViolations(document.body);
   });
 

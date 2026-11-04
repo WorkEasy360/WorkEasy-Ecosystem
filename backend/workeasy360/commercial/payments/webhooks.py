@@ -90,6 +90,13 @@ def process(provider_key: str, headers: dict[str, str], body: bytes) -> dict[str
 
     digest = hashlib.sha256(body).hexdigest()
     organization_id = _uuid(event.organization_id)
+    if event.kind != IGNORED and organization_id is None:
+        # A fee a partner pays (2026-11-03) belongs to no organization.
+        from workeasy360.commercial.payments import partner_fees
+
+        applied = partner_fees.apply_webhook(provider, event, digest)
+        if applied is not None:
+            return {"received": True, "outcome": applied}
     if event.kind == IGNORED or organization_id is None:
         outcome = _record_unscoped(provider_key, event, digest, organization_id)
         return {"received": True, "outcome": outcome}

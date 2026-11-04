@@ -514,3 +514,25 @@
     transition: none;
   }
 }
+
+/* 2026-11-03: an entry the partner's level does not include - drawn, muted,
+ * with a lock; choosing it opens the upgrade dialog. */
+.link[data-locked] {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--w360-text-muted);
+}
+
+.lockMark {
+  margin-left: auto;
+  display: inline-flex;
+}
+
+.lockMark svg {
+  width: 14px;
+  height: 14px;
+}

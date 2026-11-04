@@ -421,8 +421,8 @@ describe("Product detail", () => {
       "Integration",
       "Availability",
       "Updates",
-      "Plans",
-      "Pricing",
+      "Plans & Pricing",
+      "Price books",
       "Activity",
     ]);
     expect(screen.getByText("Logo").closest("li")).toHaveTextContent("missing");
@@ -431,13 +431,78 @@ describe("Product detail", () => {
     await expectNoViolations(container);
   });
 
-  it("Plans and Pricing open the shared modules filtered to this product", async () => {
-    mockApi({ [`GET ${ADMIN}/products/p1`]: [ok(managed())] });
+  it("Plans & Pricing shows each plan's prices and publishes a new price with discount and set-up fee", async () => {
+    const board = {
+      product: { id: "p1", code: "easy_sample", name: "Sample" },
+      books: [{ id: "b1", code: "direct_inr", name: "Direct INR", currency: "INR", region: "", priority: 100 }],
+      features: [],
+      can_manage: { catalog: true, pricing: true },
+      plans: [
+        {
+          id: "pl1",
+          code: "sample_team",
+          name: "Sample Team",
+          caption: "",
+          description: "",
+          status: "available",
+          is_public: true,
+          sort_order: 1,
+          billing_type: "paid",
+          kind: "standard",
+          recommended: true,
+          version: { id: "v1", version: 1, published_at: "2026-10-01T00:00:00Z", included_seats: 3, max_seats: null, trial_days: 0, features: {} },
+          draft_version: null,
+          prices: [
+            {
+              price_id: "pr1",
+              plan_version_id: "v1",
+              price_book_id: "b1",
+              price_book_code: "direct_inr",
+              region: "",
+              currency: "INR",
+              interval: "monthly",
+              model: "flat",
+              amount_minor: 49900,
+              discount_bp: 0,
+              net_amount_minor: 49900,
+              setup_fee_minor: null,
+              tax_behaviour: "exclusive",
+              valid_from: "2026-10-01T00:00:00Z",
+              valid_to: null,
+              state: "current",
+            },
+          ],
+        },
+      ],
+    };
+    const calls = mockApi({
+      [`GET ${ADMIN}/products/p1`]: [ok(managed())],
+      [`GET ${ADMIN}/store/products/p1/plans`]: [ok(board), ok(board)],
+      [`POST ${ADMIN}/catalog/prices`]: [ok({ id: "pr2" })],
+    });
     renderAs(MANAGE, <ProductDetail productId="p1" />);
-    fireEvent.click(await screen.findByRole("tab", { name: "Plans" }));
-    expect(screen.getByRole("link", { name: "Manage Plans →" })).toHaveAttribute("href", "/admin/plans?product=easy_sample");
-    expect(screen.getByText("Sample Team")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Pricing" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Plans & Pricing" }));
+    expect(await screen.findByRole("heading", { name: "Sample Team" })).toBeInTheDocument();
+    expect(screen.getByText("Recommended")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit price" }));
+    const dialog = await screen.findByRole("dialog");
+    const monthly = within(dialog).getAllByRole("group")[0];
+    fireEvent.change(within(monthly).getByLabelText(/^Price/), { target: { value: "599" } });
+    fireEvent.change(within(monthly).getByLabelText(/^Discount/), { target: { value: "10" } });
+    fireEvent.change(within(monthly).getByLabelText(/^Set-up fee/), { target: { value: "1000" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save price" }));
+    await waitFor(() => expect(calls.some((c) => c.key === `POST ${ADMIN}/catalog/prices`)).toBe(true));
+    const sent = calls.find((c) => c.key === `POST ${ADMIN}/catalog/prices`);
+    expect(sent?.body).toMatchObject({
+      price_book_id: "b1",
+      plan_version_id: "v1",
+      interval: "monthly",
+      amount_minor: 59900,
+      discount_bp: 1000,
+      setup_fee_minor: 100000,
+      valid_from: null,
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Price books" }));
     expect(screen.getByRole("link", { name: "Manage Pricing →" })).toHaveAttribute("href", "/admin/pricing?product=easy_sample");
   });
 
@@ -491,6 +556,57 @@ describe("Product detail", () => {
     fireEvent.change(screen.getByLabelText("Store title"), { target: { value: "Easy Sample Pro" } });
     fireEvent.click(screen.getByRole("button", { name: "Save listing" }));
     await waitFor(() => expect(calls.find((c) => c.key === `PATCH ${ADMIN}/catalog/products/p1`)?.body).toEqual({ store_title: "Easy Sample Pro" }));
+  });
+
+  it("the store listing takes a YouTube or Vimeo video, and refuses any other link", async () => {
+    query = "tab=listing";
+    const calls = mockApi({
+      [`GET ${ADMIN}/products/p1`]: [ok(managed())],
+      [`PATCH ${ADMIN}/catalog/products/p1`]: [ok({})],
+    });
+    renderAs(MANAGE, <ProductDetail productId="p1" />);
+    const field = await screen.findByLabelText("Product video");
+    fireEvent.change(field, { target: { value: "https://example.com/clip.mp4" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save listing" }));
+    expect(await screen.findAllByText("Use a YouTube or Vimeo link.")).not.toHaveLength(0);
+    expect(calls.find((c) => c.key === `PATCH ${ADMIN}/catalog/products/p1`)).toBeUndefined();
+
+    fireEvent.change(field, { target: { value: " https://youtu.be/dQw4w9WgXcQ " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save listing" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.key === `PATCH ${ADMIN}/catalog/products/p1`)?.body).toEqual({ video_url: "https://youtu.be/dQw4w9WgXcQ" }),
+    );
+  });
+
+  it("uploads a product video from the computer, and refuses one it cannot play", async () => {
+    query = "tab=listing";
+    mockApi({ [`GET ${ADMIN}/products/p2`]: [ok(managed(DRAFT)), ok(managed(DRAFT))] });
+    renderAs(MANAGE, <ProductDetail productId="p2" />);
+    const input = await screen.findByLabelText("Product video file");
+    fireEvent.change(input, { target: { files: [new File(["x"], "clip.mov", { type: "video/quicktime" })] } });
+    expect(await screen.findByText(/clip\.mov: Choose an MP4 or WebM video/)).toBeInTheDocument();
+    const huge = new File(["x"], "huge.mp4", { type: "video/mp4" });
+    Object.defineProperty(huge, "size", { value: 91 * 1024 * 1024 });
+    fireEvent.change(input, { target: { files: [huge] } });
+    expect(await screen.findByText(/the limit is 90 MB/)).toBeInTheDocument();
+    expect(uploads).toEqual([]);
+
+    fireEvent.change(input, { target: { files: [new File(["....ftypmp42"], "demo.mp4", { type: "video/mp4" })] } });
+    await waitFor(() => expect(uploads.map((u) => [u.url, u.type])).toEqual([[`${ADMIN}/products/p2/media?kind=video`, "video/mp4"]]));
+  });
+
+  it("shows the stored video with its player and removes it", async () => {
+    query = "tab=listing";
+    const calls = mockApi({
+      [`GET ${ADMIN}/products/p1`]: [ok({ ...managed(), product: { ...managed().product, video: { id: "v1", content_type: "video/mp4", size_bytes: 5 * 1024 * 1024, extension: "mp4" } } }), ok(managed())],
+      [`DELETE ${ADMIN}/products/p1/media/v1`]: [ok({ deleted: true })],
+    });
+    renderAs(MANAGE, <ProductDetail productId="p1" />);
+    const player = await screen.findByLabelText("Current product video");
+    expect(player.getAttribute("src")).toBe(`${ADMIN}/products/p1/media/v1`);
+    expect(screen.getByText(/Current video \(5(\.0)? MB\)/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove video" }));
+    await waitFor(() => expect(calls.some((c) => c.key === `DELETE ${ADMIN}/products/p1/media/v1`)).toBe(true));
   });
 
   it("uploads a new logo immediately, with progress, to this product only", async () => {

@@ -55,7 +55,7 @@ const PAGE_OWNERS: readonly (readonly [string, Portal])[] = [
   ["/product-access", "auth"],
   ["/sign-out", "auth"],
   ["/dashboard", "app"],
-  // The Store's address (ADR-052): opens the organization's Explore.
+  // The Store (ADR-052): the public Store, on the customer portal.
   ["/store", "app"],
   ["/o", "app"],
   ["/organizations", "app"],

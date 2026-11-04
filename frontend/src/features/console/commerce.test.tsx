@@ -172,6 +172,10 @@ describe("the order request from the address", () => {
     });
     expect(orderRequestFrom(new URLSearchParams("plan=../../x"))).toBeNull();
     expect(orderRequestFrom(new URLSearchParams(`plan=${PV}&interval=weekly`))).toEqual({ plan_version_id: PV });
+    expect(orderRequestFrom(new URLSearchParams(`plan=${PV}&quantity=3`))).toEqual({ plan_version_id: PV, quantity: 3 });
+    for (const q of ["0", "1", "2.5", "x", "100001"]) {
+      expect(orderRequestFrom(new URLSearchParams(`plan=${PV}&quantity=${q}`))).toEqual({ plan_version_id: PV });
+    }
     expect(orderRequestFrom(new URLSearchParams(`activate=${PV}&trial=1`))).toEqual({ activate_subscription_id: PV });
   });
 });

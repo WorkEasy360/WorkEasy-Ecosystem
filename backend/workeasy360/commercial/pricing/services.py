@@ -17,10 +17,12 @@ from typing import Any
 from uuid import UUID
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from workeasy360.commercial.catalog import selectors as catalog
-from workeasy360.commercial.pricing.domain import TIERED_MODELS
+from workeasy360.commercial.catalog import services as catalog_services
+from workeasy360.commercial.pricing.domain import MAX_DISCOUNT_BP, TIERED_MODELS
 from workeasy360.contracts.enums import (
     BillingInterval,
     PriceBookChannel,
@@ -138,7 +140,13 @@ def create_price_book(
 # --- list prices ----------------------------------------------------------
 
 
-def publish_price(
+def publish_price(ctx: TenantContext, **terms: Any) -> Any:
+    """Staff publish a price - see :func:`_publish_price` for every term and rule."""
+    _authorise(ctx, "pricing.price.publish")
+    return _publish_price(ctx, **terms)
+
+
+def _publish_price(
     ctx: TenantContext,
     *,
     price_book_id: UUID,
@@ -152,8 +160,17 @@ def publish_price(
     max_quantity: int | None = None,
     tax_behaviour: TaxBehaviour = TaxBehaviour.EXCLUSIVE,
     valid_from: datetime | None = None,
+    valid_to: datetime | None = None,
+    discount_bp: int = 0,
+    setup_fee_minor: int | None = None,
 ) -> Any:
     """Publish a price, superseding any current one for the same target.
+
+    ``discount_bp`` (a promotional discount) and ``setup_fee_minor`` (a one-time
+    fee with a first purchase) are part of the immutable row (ADR-056): changing
+    either is a new row, exactly like changing the amount. ``valid_to`` ends the
+    row at a known date ("effective until"); without it the row runs until the
+    next price supersedes it.
 
     Create-and-publish in one step is deliberate. A draft price serves no
     review purpose that a draft *plan version* does not already serve, and an
@@ -163,8 +180,6 @@ def publish_price(
     historical amount survives and a past invoice stays reproducible.
     """
     from workeasy360.commercial.pricing.models import PlanPrice, PriceBook, PriceTier
-
-    _authorise(ctx, "pricing.price.publish")
 
     if (plan_version_id is None) == (bundle_version_id is None):
         raise CatalogValidationError(
@@ -198,6 +213,20 @@ def publish_price(
                 "Floats are forbidden in money arithmetic.",
                 field="amount_minor",
             )
+    for value, name in (
+        (discount_bp, "discount_bp"),
+        (setup_fee_minor, "setup_fee_minor"),
+    ):
+        if value is None and name == "setup_fee_minor":
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise CatalogValidationError(
+                f"{name} must be a whole number, zero or more.", field=name
+            )
+    if discount_bp > MAX_DISCOUNT_BP:
+        raise CatalogValidationError(
+            "discount_bp must be at most 10000 (100%).", field="discount_bp"
+        )
     if tiers and not tiered:
         raise CatalogValidationError(
             f"Tiers were supplied for a {price_model.value} price, which does "
@@ -210,6 +239,10 @@ def publish_price(
     # backdating guard.
     now = timezone.now()
     starts_at = valid_from or now
+    if valid_to is not None and valid_to <= starts_at:
+        raise CatalogValidationError(
+            "A price must end after it starts.", field="valid_to"
+        )
 
     # The price's target must exist before it is written. Every FK here is
     # DEFERRABLE INITIALLY DEFERRED, so an unknown id would otherwise pass the
@@ -224,14 +257,17 @@ def publish_price(
         book = _one(PriceBook.objects.select_for_update(), id=price_book_id)
 
         superseded = list(
-            PlanPrice.objects.select_for_update().filter(
+            PlanPrice.objects.select_for_update()
+            .filter(
                 price_book=book,
                 plan_version_id=plan_version_id,
                 bundle_version_id=bundle_version_id,
                 interval=interval.value,
                 published_at__isnull=False,
-                valid_to__isnull=True,
             )
+            # Every row still running when the new one starts - open-ended, or
+            # ending later (ADR-056 "effective until") - is cut back to it.
+            .filter(Q(valid_to__isnull=True) | Q(valid_to__gt=starts_at))
         )
         if superseded and starts_at < now:
             # Backdating a supersession rewrites what a *past* date resolves
@@ -271,6 +307,9 @@ def publish_price(
             max_quantity=max_quantity,
             tax_behaviour=tax_behaviour.value,
             valid_from=starts_at,
+            valid_to=valid_to,
+            discount_bp=discount_bp,
+            setup_fee_minor=setup_fee_minor,
         )
         if tiers:
             PriceTier.objects.bulk_create(
@@ -300,7 +339,20 @@ def publish_price(
                 "interval": interval.value,
                 "model": price_model.value,
                 "amount_minor": price.amount_minor,
+                "discount_bp": price.discount_bp,
+                "setup_fee_minor": price.setup_fee_minor,
+                "valid_from": starts_at.isoformat(),
+                "valid_to": valid_to.isoformat() if valid_to else None,
                 "superseded": [str(p.id) for p in superseded],
+                # The terms this price replaces - "previous value" in the trail.
+                "previous": [
+                    {
+                        "amount_minor": p.amount_minor,
+                        "discount_bp": p.discount_bp,
+                        "setup_fee_minor": p.setup_fee_minor,
+                    }
+                    for p in superseded
+                ],
             },
         )
     logger.info(
@@ -309,7 +361,72 @@ def publish_price(
         currency=book.currency,
         superseded=len(superseded),
     )
+    catalog_services.refresh_public_catalog()
     return price
+
+
+def publish_own_partner_price(
+    ctx: TenantContext,
+    *,
+    partner_id: UUID,
+    book_code: str,
+    book_name: str,
+    currency: CurrencyCode,
+    plan_version_id: UUID,
+    interval: BillingInterval,
+    amount_minor: int,
+) -> Any:
+    """A partner's own customer price for one plan and cycle (ADR-056).
+
+    Called **only** by ``partners.price_ranges.set_own_price``, after it has
+    verified the acting partner, its grant and the range Super Admin allows -
+    partners sit above pricing, so that check cannot live here. What this
+    function guarantees on its own: the price goes into *that partner's* book
+    (found or created, never another book), it is flat, and it is published
+    through the same supersession rules as every price - never backdated,
+    never edited. The same amount again is a no-op, so a retry is safe.
+    """
+    from workeasy360.commercial.pricing.models import PriceBook
+    from workeasy360.commercial.pricing.selectors import (
+        current_price_in_book,
+        partner_book_locked,
+    )
+
+    with transaction.atomic():
+        book = partner_book_locked(partner_id, currency.value)
+        if book is None:
+            book = PriceBook.objects.create(
+                code=book_code,
+                name=book_name[:128],
+                channel=PriceBookChannel.PARTNER.value,
+                partner_id=partner_id,
+                currency=currency.value,
+                priority=50,
+                valid_from=timezone.now(),
+            )
+            audit.record(
+                ctx,
+                "commercial.price_book.created",
+                resource_type="pricing.price_book",
+                resource_id=book.id,
+                changes={
+                    "code": book.code,
+                    "channel": book.channel,
+                    "currency": book.currency,
+                    "partner_id": str(partner_id),
+                    "by_partner": True,
+                },
+            )
+        current = current_price_in_book(book.id, plan_version_id, interval.value)
+        if current is not None and current.amount_minor == amount_minor:
+            return current
+        return _publish_price(
+            ctx,
+            price_book_id=book.id,
+            interval=interval,
+            plan_version_id=plan_version_id,
+            amount_minor=amount_minor,
+        )
 
 
 def close_price(ctx: TenantContext, *, price_id: UUID, at: datetime | None = None) -> Any:
@@ -337,7 +454,71 @@ def close_price(ctx: TenantContext, *, price_id: UUID, at: datetime | None = Non
             resource_id=price.id,
             changes={"valid_to": price.valid_to.isoformat()},
         )
+        catalog_services.refresh_public_catalog()
     return price
+
+
+def cancel_scheduled_price(ctx: TenantContext, *, price_id: UUID) -> None:
+    """Withdraw a price change that has **not started yet** (ADR-056).
+
+    A row whose ``valid_from`` is still in the future has never priced anything
+    - no order, invoice or subscription can reference it - so it is removed,
+    and the row it would have superseded runs on as before (its ``valid_to``
+    goes back to the cancelled row's end). A price that has started is never
+    removed: that is :func:`close_price`.
+    """
+    from workeasy360.commercial.pricing.models import PlanPrice
+
+    _authorise(ctx, "pricing.price.close")
+    now = timezone.now()
+    with transaction.atomic():
+        price = _one(PlanPrice.objects.select_for_update(), id=price_id)
+        if price.valid_from <= now:
+            raise ImmutableRecord(
+                "This price has already started; close it instead.",
+                resource="pricing.plan_price",
+            )
+        previous = (
+            PlanPrice.objects.select_for_update()
+            .filter(
+                price_book_id=price.price_book_id,
+                plan_version_id=price.plan_version_id,
+                bundle_version_id=price.bundle_version_id,
+                interval=price.interval,
+                published_at__isnull=False,
+                valid_to=price.valid_from,
+            )
+            .first()
+        )
+        if price.tiers.exists():
+            # Tier rows of a published price are frozen by trigger, deletes
+            # included; a tiered schedule is closed, not withdrawn.
+            raise ImmutableRecord(
+                "A tiered price change cannot be withdrawn; close it instead.",
+                resource="pricing.plan_price",
+            )
+        snapshot = {
+            "amount_minor": price.amount_minor,
+            "discount_bp": price.discount_bp,
+            "setup_fee_minor": price.setup_fee_minor,
+            "valid_from": price.valid_from.isoformat(),
+        }
+        ended_at = price.valid_to
+        price.delete()
+        if previous is not None:
+            previous.valid_to = ended_at
+            previous.save(update_fields=["valid_to", "updated_at"])
+        audit.record(
+            ctx,
+            "commercial.price.schedule_cancelled",
+            resource_type="pricing.plan_price",
+            resource_id=price_id,
+            changes={
+                "cancelled": snapshot,
+                "restored": str(previous.id) if previous is not None else None,
+            },
+        )
+        catalog_services.refresh_public_catalog()
 
 
 # --- negotiated prices ----------------------------------------------------

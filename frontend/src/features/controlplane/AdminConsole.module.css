@@ -352,3 +352,24 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 2026-11-03: the partner ticket desk and the withdrawal queue. */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-3);
+  align-items: flex-end;
+}
+
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: flex-end;
+}
+
+.messageBody {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

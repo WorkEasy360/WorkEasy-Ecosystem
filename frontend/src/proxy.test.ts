@@ -64,6 +64,8 @@ describe("contentSecurityPolicy", () => {
     expect(directive(prod, "connect-src")).toBe("connect-src 'self'");
     expect(directive(prod, "object-src")).toBe("object-src 'none'");
     expect(directive(prod, "frame-ancestors")).toBe("frame-ancestors 'none'");
+    // A Store product's video: YouTube's no-cookie player and Vimeo's player only.
+    expect(directive(prod, "frame-src")).toBe("frame-src 'self' https://www.youtube-nocookie.com https://player.vimeo.com");
     expect(directive(prod, "base-uri")).toBe("base-uri 'self'");
     expect(directive(prod, "form-action")).toBe("form-action 'self'");
     expect(prod).not.toContain("*");
@@ -92,6 +94,13 @@ describe("public paths (no session cookie needed)", () => {
     expect(isPublicPath("/owner-invitations/accept")).toBe(true);
     expect(isPublicPath("/owner-invitations")).toBe(false);
     expect(isPublicPath("/owner-invitations/acceptx")).toBe(false);
+  });
+
+  it("lets anyone browse the public Store and a partner's branded Store", () => {
+    expect(isPublicPath("/store")).toBe(true);
+    expect(isPublicPath("/store/acme-partner")).toBe(true);
+    expect(isPublicPath("/storex")).toBe(false);
+    expect(isPublicPath("/o/acme/store")).toBe(false);
   });
 
   it("keeps everything else behind the session check, including look-alike paths", () => {

@@ -162,14 +162,22 @@ def test_no_new_tables_for_partners_staff_or_identity():
         # 0010 adds the set-up fee table and three request columns (ADR-053);
         # tests/ecosystem pins what they do. 0011 adds the promotion grant
         # (ADR-054); tests/affiliate_products pins what it does. 0012 adds the
-        # promotion request (ADR-055); tests/store_console exercises it.
-        "commercial/partners": "0012_promotion_requests.py",
+        # promotion request (ADR-055) and 0013 its kind (promote or sell);
+        # tests/store_console exercises both. 0014 adds the selling price range
+        # (ADR-056); tests/store_upgrade pins what it allows. 0015 adds no table:
+        # the fee's offline payment instructions and the request's payment
+        # method, reference, online payment id and paid time (ADR-049 addendum,
+        # 2026-11-03) - tests/partner_upgrade/test_upgrade_payment pins them.
+        # 0016 adds the helpdesk, payout-details and withdrawal tables
+        # (ADR-057) - tests/partner_dashboard pins what they do.
+        "commercial/partners": "0016_helpdesk_payout_method_withdrawals.py",
         # 0004 adds one column to the rule table (recurring, ADR-052); 0005 the
         # margin rule, campaigns and the funnel/ledger columns (ADR-053); 0006
         # the referral policy, link kinds, the trial step and the payment
         # reference (ADR-054) - tests/store, tests/ecosystem and
-        # tests/affiliate_products pin what they do.
-        "commercial/commissions": "0006_affiliate_products.py",
+        # tests/affiliate_products pin what they do. 0007 adds the rule's plan,
+        # fixed amount and recurring duration (ADR-056) - tests/store_upgrade.
+        "commercial/commissions": "0007_rule_plan_fixed_duration.py",
         "platform/authz": "0009_billing_manage_not_dangerous.py",
         "platform/identity": "0008_password_change_required.py",
     }

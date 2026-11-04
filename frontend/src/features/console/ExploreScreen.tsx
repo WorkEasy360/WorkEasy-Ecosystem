@@ -173,28 +173,10 @@ export function trialBadge(product: ExploreProduct, trialOffered: boolean): { la
   return null;
 }
 
-function ExploreProductCard({
-  slug,
-  product,
-  canBuy,
-  busy,
-  hasAccount,
-  onStartTrial,
-  onBuy,
-  inCart,
-  onAddToCart,
-}: {
-  slug: string;
-  product: ExploreProduct;
-  canBuy: boolean;
-  busy: boolean;
-  hasAccount: boolean;
-  onStartTrial: (planCode: string) => void;
-  onBuy: (planVersionId: string, interval: string) => void;
-  inCart: (planVersionId: string) => boolean;
-  onAddToCart: (item: CartItem, interval: string) => void;
-}) {
-  const titleId = useId();
+/** What a product card offers this organization - the trial plan, the plan
+ * "Buy" buys and at which cycle - from the server's facts only. Explore and
+ * the Store both read it, so their buttons can never differ. */
+export function exploreOffer(product: ExploreProduct, hasAccount: boolean) {
   const trialPlan =
     product.trial_state === "available"
       ? product.plans.find((p) => product.trial.plan_codes.includes(p.plan_code))
@@ -213,11 +195,80 @@ function ExploreProductCard({
     buyPlan?.prices.find((p) => p.amount_minor === product.starting_price?.amount_minor)?.interval ??
     buyPlan?.prices[0]?.interval ??
     "monthly";
-
-  const badge = trialBadge(product, Boolean(trialPlan));
-  const days = product.trial.duration_days;
   const expired = product.trial_state === "used" && product.trial_outcome === "expired";
   const buyLabel = product.trial_state === "active" ? "Upgrade" : expired ? "Upgrade / Buy now" : "Buy now";
+  return { trialPlan, held, pricedAtCheckout, buyPlan, priceInterval, buyLabel };
+}
+
+export interface ExploreActionProps {
+  slug: string;
+  product: ExploreProduct;
+  canBuy: boolean;
+  busy: boolean;
+  hasAccount: boolean;
+  onStartTrial: (planCode: string) => void;
+  onBuy: (planVersionId: string, interval: string) => void;
+  inCart: (planVersionId: string) => boolean;
+  onAddToCart: (item: CartItem, interval: string) => void;
+}
+
+/** A product's buttons: Open, Start trial, Buy / Upgrade, Add to cart, Learn more. */
+export function ExploreActions({ slug, product, canBuy, busy, hasAccount, onStartTrial, onBuy, inCart, onAddToCart }: ExploreActionProps) {
+  const { trialPlan, held, buyPlan, priceInterval, buyLabel } = exploreOffer(product, hasAccount);
+  const days = product.trial.duration_days;
+  return (
+    <>
+      {held && <LaunchButton orgSlug={slug} productCode={product.code} productName={product.name} />}
+      {canBuy && product.availability === "available" && !held && trialPlan && (
+        <button
+          type="button"
+          className="w360-btn w360-btn-primary"
+          aria-label={`${days ? `Start ${days}-day free trial` : "Start free trial"}: ${product.name}`}
+          disabled={busy}
+          onClick={() => onStartTrial(trialPlan.plan_code)}
+        >
+          {days ? `Start ${days}-Day Free Trial` : "Start free trial"}
+        </button>
+      )}
+      {canBuy && product.availability === "available" && buyPlan && (
+        <button
+          type="button"
+          className={trialPlan || held ? "w360-btn w360-btn-secondary" : "w360-btn w360-btn-primary"}
+          aria-label={`${buyLabel}: ${product.name}`}
+          disabled={busy}
+          onClick={() => onBuy(buyPlan.plan_version_id, priceInterval)}
+        >
+          {buyLabel}
+        </button>
+      )}
+      {canBuy && product.availability === "available" && buyPlan && !held && buyPlan.billing_type !== "free_trial" && (
+        <button
+          type="button"
+          className="w360-btn w360-btn-secondary"
+          aria-label={inCart(buyPlan.plan_version_id) ? `In cart: ${product.name}` : `Add to cart: ${product.name}`}
+          disabled={busy || inCart(buyPlan.plan_version_id)}
+          onClick={() =>
+            onAddToCart(
+              { plan_version_id: buyPlan.plan_version_id, product_code: product.code, product_name: product.name, plan_name: buyPlan.name },
+              priceInterval,
+            )
+          }
+        >
+          {inCart(buyPlan.plan_version_id) ? "In cart" : "Add to cart"}
+        </button>
+      )}
+      <Link href={`/products/${product.slug}`} className="w360-btn w360-btn-secondary" aria-label={`Learn more: ${product.name}`}>
+        Learn more
+      </Link>
+    </>
+  );
+}
+
+function ExploreProductCard(props: ExploreActionProps) {
+  const { product, hasAccount } = props;
+  const titleId = useId();
+  const { trialPlan, pricedAtCheckout } = exploreOffer(product, hasAccount);
+  const badge = trialBadge(product, Boolean(trialPlan));
 
   return (
     <article className={`w360-card ${local.offer}`} aria-labelledby={titleId}>
@@ -263,48 +314,7 @@ function ExploreProductCard({
         <p className={local.priceNote}>Contact sales for pricing</p>
       )}
       <div className={local.offerAction}>
-        {held && <LaunchButton orgSlug={slug} productCode={product.code} productName={product.name} />}
-        {canBuy && product.availability === "available" && !held && trialPlan && (
-          <button
-            type="button"
-            className="w360-btn w360-btn-primary"
-            aria-label={`${days ? `Start ${days}-day free trial` : "Start free trial"}: ${product.name}`}
-            disabled={busy}
-            onClick={() => onStartTrial(trialPlan.plan_code)}
-          >
-            {days ? `Start ${days}-Day Free Trial` : "Start free trial"}
-          </button>
-        )}
-        {canBuy && product.availability === "available" && buyPlan && (
-          <button
-            type="button"
-            className={trialPlan || held ? "w360-btn w360-btn-secondary" : "w360-btn w360-btn-primary"}
-            aria-label={`${buyLabel}: ${product.name}`}
-            disabled={busy}
-            onClick={() => onBuy(buyPlan.plan_version_id, priceInterval)}
-          >
-            {buyLabel}
-          </button>
-        )}
-        {canBuy && product.availability === "available" && buyPlan && !held && buyPlan.billing_type !== "free_trial" && (
-          <button
-            type="button"
-            className="w360-btn w360-btn-secondary"
-            aria-label={inCart(buyPlan.plan_version_id) ? `In cart: ${product.name}` : `Add to cart: ${product.name}`}
-            disabled={busy || inCart(buyPlan.plan_version_id)}
-            onClick={() =>
-              onAddToCart(
-                { plan_version_id: buyPlan.plan_version_id, product_code: product.code, product_name: product.name, plan_name: buyPlan.name },
-                priceInterval,
-              )
-            }
-          >
-            {inCart(buyPlan.plan_version_id) ? "In cart" : "Add to cart"}
-          </button>
-        )}
-        <Link href={`/products/${product.slug}`} className="w360-btn w360-btn-secondary" aria-label={`Learn more: ${product.name}`}>
-          Learn more
-        </Link>
+        <ExploreActions {...props} />
       </div>
     </article>
   );
@@ -598,7 +608,7 @@ function OfferCard({
 
 /** The cart, above the products: what is in it, removal, and one checkout for
  * all of it. Prices are not shown here - the checkout asks the server. */
-function CartBar({ slug }: { slug: string }) {
+export function CartBar({ slug }: { slug: string }) {
   const { cart, remove, clear } = useCart(slug);
   const titleId = useId();
   if (cart.items.length === 0) return null;

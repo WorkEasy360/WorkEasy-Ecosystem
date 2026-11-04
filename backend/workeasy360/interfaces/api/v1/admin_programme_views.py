@@ -96,6 +96,7 @@ def program_fees_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             amount_minor=body.get("amount_minor"),
             amount=body.get("amount"),
             currency=body.get("currency"),
+            instructions=body.get("instructions"),
         )
     else:
         authz.require(ctx, upgrades.STAFF_VIEW)

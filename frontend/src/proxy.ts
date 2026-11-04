@@ -58,10 +58,12 @@ const PUBLIC_PATHS = [
   // whose session has already gone still gets a page that returns them to
   // the product, rather than a sign-in form they did not ask for.
   "/sign-out",
+  // 2026-11-02: the public Store - browsing is open; buying signs in first.
+  "/store",
 ];
 
 /** ADR-053: a partner's branded Store (`/store/<partner>`) is browsable signed
- * out; buying signs in first. `/store` itself still needs a session. */
+ * out; buying signs in first. */
 const PUBLIC_PREFIXES = ["/store/"];
 
 export function isPublicPath(pathname: string): boolean {
@@ -172,6 +174,12 @@ function randomState(): string {
  * move those attributes into the CSS modules this app already uses, not to
  * ship a policy that only looks strict.
  */
+/*
+ * `frame-src` (2026-11-04): a Store product page plays its video in YouTube's
+ * no-cookie player or Vimeo's player - those two origins only, and the page
+ * frames a player address the server built from a parsed video id, never a
+ * typed link. Nothing else of this app embeds a frame.
+ */
 export function contentSecurityPolicy(nonce: string, isDev: boolean): string {
   return `
     default-src 'self';
@@ -180,6 +188,7 @@ export function contentSecurityPolicy(nonce: string, isDev: boolean): string {
     img-src 'self' data:;
     font-src 'self';
     connect-src 'self';
+    frame-src 'self' https://www.youtube-nocookie.com https://player.vimeo.com;
     object-src 'none';
     base-uri 'self';
     form-action 'self';

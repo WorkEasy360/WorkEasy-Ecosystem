@@ -32,7 +32,12 @@ from uuid import UUID
 
 from django.db.models import Prefetch, Q
 
-from workeasy360.commercial.pricing.domain import Tier, TierCharge, compute_amount
+from workeasy360.commercial.pricing.domain import (
+    Tier,
+    TierCharge,
+    apply_discount,
+    compute_amount,
+)
 from workeasy360.contracts.enums import (
     BillingInterval,
     PriceBookChannel,
@@ -65,6 +70,19 @@ class PriceQuote:
     quantity: int
     tax_behaviour: TaxBehaviour
     tiers: tuple[TierCharge, ...] = ()
+    #: Before the row's promotional discount (ADR-056); ``total`` is after it.
+    #: ``None`` means no discount applied, so the list total is ``total``.
+    list_total_minor: int | None = None
+    discount_bp: int = 0
+    #: The row's one-time set-up fee, charged with a first purchase only.
+    setup_fee_minor: int | None = None
+
+    @property
+    def list_minor(self) -> int:
+        """The total before any promotional discount."""
+        if self.list_total_minor is None:
+            return self.total.minor_units
+        return self.list_total_minor
 
     def as_snapshot(self) -> dict[str, Any]:
         """The commercial facts a subscription item must preserve.
@@ -84,6 +102,9 @@ class PriceQuote:
             "interval": self.interval.value,
             "price_model": self.price_model.value,
             "tax_behaviour": self.tax_behaviour.value,
+            "list_total_minor": self.list_minor,
+            "discount_bp": self.discount_bp,
+            "setup_fee_minor": self.setup_fee_minor,
         }
 
 
@@ -321,16 +342,23 @@ def _book_price(
         ),
     )
 
+    # The row's promotional discount (ADR-056), through the one function every
+    # list-price read uses too.
+    discount_bp = int(row.discount_bp or 0)
+    discounted = apply_discount(total, discount_bp)
     return PriceQuote(
         price_id=row.id,
         price_source=source,
         reason=f"{reason} ({row.price_book.code})",
         unit_amount_minor=row.amount_minor,
-        total=total,
+        total=discounted,
         currency=book_currency,
         interval=interval,
         price_model=price_model,
         quantity=quantity,
         tax_behaviour=TaxBehaviour(row.tax_behaviour),
         tiers=charges,
+        list_total_minor=total.minor_units,
+        discount_bp=discount_bp,
+        setup_fee_minor=row.setup_fee_minor,
     )

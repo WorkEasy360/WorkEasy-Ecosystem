@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useOrgAccess } from "@/features/console/OrgAccess";
+import { clearPublicCart } from "@/features/console/cart";
 import { intentQuery, takeIntent } from "@/features/site/SiteShell";
 import { consoleApi } from "@/lib/api/console";
 import { ApiError } from "@/lib/api/client";
@@ -39,6 +40,8 @@ export default function OrganizationIndexPage() {
         });
       return;
     }
+    // The public Store's cart is now this checkout's order.
+    if (intent?.cart) clearPublicCart();
     router.replace(intent ? `/o/${slug}/checkout?${intentQuery(intent)}` : `/o/${slug}/dashboard`);
   }, [access, router, slug]);
 

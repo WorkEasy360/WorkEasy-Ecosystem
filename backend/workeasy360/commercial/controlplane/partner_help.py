@@ -30,7 +30,6 @@ from uuid import UUID
 from django.conf import settings
 
 from workeasy360.commercial.controlplane import partner_detail
-from workeasy360.commercial.controlplane.partner_portal import NOT_IMPLEMENTED
 from workeasy360.commercial.partners import console_reads, notification_state, selectors
 from workeasy360.contracts.errors import PartnerValidationError
 from workeasy360.contracts.values.tenant import TenantContext
@@ -265,8 +264,11 @@ def support(ctx: TenantContext) -> dict[str, Any]:
         "priorities": list(PRIORITIES),
         # ADR-053: the form sends through the platform when an address is set.
         "can_send": bool(address),
+        # 2026-11-03: requests are tickets now (``partners.tickets``) - the
+        # Helpdesk lists them with their status and SLA.
         "requests": None,
-        "not_implemented": {"partner_tickets": NOT_IMPLEMENTED["partner_tickets"]},
+        "tickets": True,
+        "not_implemented": {},
     }
 
 

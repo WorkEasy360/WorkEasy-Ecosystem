@@ -237,7 +237,8 @@ describe("accessibility, Phase 5 UI (axe-core, WCAG 2.1 A + AA, non-visual rules
     // Visible text is the initials "AG"; the accessible name says what it is.
     const account = await screen.findByRole("button", { name: "Account menu for Aman Gupta" });
     expect(account).toHaveTextContent("AG");
-    expect(screen.getByRole("link", { name: "My products" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Product Hub" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "My Products" })).toHaveAttribute("aria-current", "page");
     // The organization switcher is named for what it does, not only by the
     // organization's name.
     expect(

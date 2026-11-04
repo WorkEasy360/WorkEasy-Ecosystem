@@ -10,6 +10,7 @@ import { Tabs } from "../widgets";
 import { AvailabilityTab } from "./AvailabilityTab";
 import { IntegrationTab } from "./IntegrationTab";
 import { ListingTab } from "./ListingTab";
+import { PlansPricingTab } from "./PlansPricingTab";
 import { STATUS_BADGE, STATUS_LABEL, VISIBILITY_BADGE, VISIBILITY_LABEL, dateOnly, trialLabel, visibilityOf } from "./model";
 import { listingOf } from "./ProductManager";
 import { ProductMark } from "./ProductMark";
@@ -18,9 +19,9 @@ import { UpdatesTab } from "./UpdatesTab";
 import styles from "./ProductManager.module.css";
 
 /**
- * Super Admin → Product Manager → one product (ADR-051). Plans and prices are
- * not managed here: the Plans and Pricing tabs open the shared Plans & add-ons
- * and Currency & pricing screens, filtered to this product.
+ * Super Admin → Product Manager → one product (ADR-051). ADR-056: the Plans &
+ * Pricing tab edits prices, discounts, set-up fees, effective dates and plan
+ * states in place; the plan builder and the price books stay one link away.
  */
 
 export const TABS = ["overview", "listing", "integration", "availability", "updates", "plans", "pricing", "activity"] as const;
@@ -31,8 +32,8 @@ const TAB_LABEL: Record<TabKey, string> = {
   integration: "Integration",
   availability: "Availability",
   updates: "Updates",
-  plans: "Plans",
-  pricing: "Pricing",
+  plans: "Plans & Pricing",
+  pricing: "Price books",
   activity: "Activity",
 };
 
@@ -100,36 +101,6 @@ function Overview({ product: p, readiness }: { product: ConsoleProduct; readines
         {!p.channels.direct.ready && <p className={styles.note}>Plans/Pricing required before final Store sale activation.</p>}
       </section>
     </div>
-  );
-}
-
-function PlansPanel({ product: p }: { product: ConsoleProduct }) {
-  return (
-    <section className={styles.card} aria-labelledby="plans-title">
-      <h2 id="plans-title" className={styles.cardTitle}>
-        Plans
-      </h2>
-      <p className={styles.cardLead}>Plans are built in Plans &amp; add-ons, shared by every product.</p>
-      {p.plans.length === 0 ? (
-        <p className={styles.muted}>No plans yet.</p>
-      ) : (
-        <ul className={styles.checklist}>
-          {p.plans.map((plan) => (
-            <li key={plan.code}>
-              <strong>{plan.name}</strong>
-              <span className={styles.muted}>
-                {plan.kind === "add_on" ? "add-on" : "plan"} · {plan.status} · {plan.is_public ? "public" : "private"}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      <div>
-        <Link className="w360-btn w360-btn-primary" href={`/admin/plans?product=${encodeURIComponent(p.code)}`}>
-          Manage Plans →
-        </Link>
-      </div>
-    </section>
   );
 }
 
@@ -292,7 +263,7 @@ export function ProductDetail({ productId }: { productId: string }) {
                   )}
                   {tab === "availability" && <AvailabilityTab key={p.updated_at ?? ""} product={p} manage={manageCatalog} busy={busy} act={act} />}
                   {tab === "updates" && <UpdatesTab product={p} manage={manageCatalog} />}
-                  {tab === "plans" && <PlansPanel product={p} />}
+                  {tab === "plans" && <PlansPricingTab productId={p.id} />}
                   {tab === "pricing" && <PricingPanel product={p} />}
                   {tab === "activity" && data.can_see_activity && <ActivityPanel productId={p.id} />}
                 </Tabs>

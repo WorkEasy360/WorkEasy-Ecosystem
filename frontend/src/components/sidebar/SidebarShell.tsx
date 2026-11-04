@@ -25,6 +25,19 @@ export interface SidebarItem {
   /** Pages of the section whose addresses no prefix describes (one record's
    * own pages, `/admin/partners/<id>`). */
   alsoMatchPattern?: RegExp;
+  /** When set, the entry is current on exactly these pages and no others - for
+   * an entry whose address prefixes another entry's (a partner workspace's
+   * Brand Studio at `brand-settings`, Custom Domain at `brand-settings/url-manager`). */
+  exactPaths?: string[];
+  /** Whether the entry is current, decided by the caller - for an entry that
+   * knows its own pages (the organization console's tabbed entries). Wins
+   * over every rule above. */
+  current?: boolean;
+  /** Drawn with a lock and opening `onSelect` instead of a page (2026-11-03:
+   * a partner-dashboard entry the partner's level does not include). */
+  locked?: boolean;
+  /** What a locked entry does when chosen (the upgrade dialog). */
+  onSelect?: () => void;
   children?: SidebarItem[];
 }
 
@@ -35,7 +48,9 @@ export interface SidebarGroup {
 }
 
 function isActive(pathname: string, item: SidebarItem): boolean {
+  if (item.current !== undefined) return item.current;
   if (item.exact) return pathname === item.href;
+  if (item.exactPaths) return item.exactPaths.includes(pathname);
   if (item.alsoMatchPattern?.test(pathname)) return true;
   return [item.match ?? item.href, ...(item.alsoMatch ?? [])].some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
@@ -237,6 +252,20 @@ function NavEntry({ item, pathname }: { item: SidebarItem; pathname: string }) {
     );
   }
 
+  if (item.locked && item.onSelect) {
+    return (
+      <li>
+        <button type="button" className={styles.link} data-locked onClick={item.onSelect} aria-haspopup="dialog">
+          <NavIcon name={item.icon} />
+          <span className={styles.linkText}>{item.label}</span>
+          <span className={styles.lockMark}>
+            <NavIcon name="lock" />
+            <span className="w360-visually-hidden"> (locked - upgrade to unlock)</span>
+          </span>
+        </button>
+      </li>
+    );
+  }
   const active = isActive(pathname, item);
   return (
     <li>

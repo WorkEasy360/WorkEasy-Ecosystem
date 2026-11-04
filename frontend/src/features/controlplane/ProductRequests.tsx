@@ -10,6 +10,7 @@ import {
   type PromotionRequestQueue,
   type PromotionRequestStatus,
 } from "@/lib/api/adminProgramme";
+import type { RequestKind } from "@/lib/api/partnerPanel";
 import { can, useAdmin } from "./ControlShell";
 import { Section } from "./PartnerSection";
 import { LoadGate, Status, Table, useAction, useLoad, when } from "./ui";
@@ -18,11 +19,12 @@ import local from "./PartnerConsole.module.css";
 
 /**
  * Partners → Product Requests (ADR-055): affiliates asking to promote a Store
- * product, and the decision.
+ * product and resellers asking to sell one, and the decision.
  *
- * Approving grants the partner that one product's promotion permission - the
- * same grant "Products this partner may promote" makes by hand - and nothing
- * else. Rejecting needs a reason the partner reads. Revoking stops new links at
+ * Approving grants the partner that one product's promotion permission (the
+ * grant "Products this partner may promote" makes by hand) or its sale
+ * permission (the product grant "Products this partner may sell" makes) - and
+ * nothing else. Rejecting needs a reason the partner reads. Revoking stops new links at
  * once; referrals and commission already earned are kept. Every action is
  * checked again on the server (`platform.staff_partner.manage`), and a request
  * someone else decided a moment ago is refused, not decided twice.
@@ -36,6 +38,20 @@ const TABS: { key: PromotionRequestStatus | "all"; label: string }[] = [
   { key: "all", label: "All" },
 ];
 
+const KINDS: { key: "" | RequestKind; label: string }[] = [
+  { key: "", label: "All types" },
+  { key: "promote", label: "Affiliate - promote" },
+  { key: "sell", label: "Reseller - sell" },
+];
+
+/** The words that differ by the kind of request. */
+const KIND_WORDS: Record<RequestKind, { type: string; verb: string; who: string; capability: string; channel: string }> = {
+  promote: { type: "Promote", verb: "promote", who: "affiliate", capability: "Referral capability", channel: "affiliates" },
+  sell: { type: "Sell", verb: "sell", who: "reseller", capability: "Selling capability", channel: "this partner's channel" },
+};
+
+const CHANNEL_NAMES: Record<string, string> = { affiliate: "affiliates", reseller: "resellers", white_label: "white-label partners" };
+
 const PAGE = 50;
 
 export function ProductRequestsConsole() {
@@ -44,11 +60,15 @@ export function ProductRequestsConsole() {
   const pathname = usePathname() ?? "/admin/partners/product-requests";
   const status = (params?.get("status") as PromotionRequestStatus | "all" | null) ?? "pending";
   const q = params?.get("q") ?? "";
+  const kind = (params?.get("kind") as RequestKind | null) ?? "";
+  const kindId = useId();
   const offset = Number(params?.get("offset") ?? 0) || 0;
   const open = params?.get("request") ?? null;
   const searchId = useId();
   const [draft, setDraft] = useState(q);
-  const [load, reload] = useLoad(() => adminProgrammeApi.promotionRequests({ status, q: q || undefined, offset }), [status, q, offset]);
+  const [load, reload] = useLoad(() => adminProgrammeApi.promotionRequests({ status, kind: kind || undefined, q: q || undefined, offset }),
+    [status, kind, q, offset],
+  );
 
   const go = (next: Record<string, string | null>) => {
     const query = new URLSearchParams(params?.toString() ?? "");
@@ -66,8 +86,8 @@ export function ProductRequestsConsole() {
         <h1>Product Requests</h1>
       </div>
       <p className={styles.muted}>
-        Affiliates ask here to promote a product from the Store. Approving lets that partner create links, codes and campaigns for that one
-        product; it gives no other access.
+        Affiliates ask here to promote a product from the Store, and resellers to sell one. Approving lets that partner create links, codes
+        and campaigns for that one product, or sell it to customers; it gives no other access.
       </p>
       <nav aria-label="Request status" className={local.filters}>
         {TABS.map((t) => {
@@ -75,7 +95,7 @@ export function ProductRequestsConsole() {
           return (
             <Link
               key={t.key}
-              href={`${pathname}?status=${t.key}${q ? `&q=${encodeURIComponent(q)}` : ""}`}
+              href={`${pathname}?status=${t.key}${kind ? `&kind=${kind}` : ""}${q ? `&q=${encodeURIComponent(q)}` : ""}`}
               aria-current={status === t.key ? "page" : undefined}
               className={status === t.key ? "w360-btn w360-btn-primary" : "w360-btn w360-btn-secondary"}
             >
@@ -99,6 +119,18 @@ export function ProductRequestsConsole() {
             Search by partner or product
           </label>
           <input id={searchId} type="search" className="w360-input" maxLength={80} value={draft} onChange={(e) => setDraft(e.target.value)} />
+        </div>
+        <div>
+          <label className="w360-label" htmlFor={kindId}>
+            Type
+          </label>
+          <select id={kindId} className="w360-input" value={kind} onChange={(e) => go({ kind: e.target.value || null, offset: null })}>
+            {KINDS.map((k) => (
+              <option key={k.key} value={k.key}>
+                {k.label}
+              </option>
+            ))}
+          </select>
         </div>
         <button type="submit" className="w360-btn w360-btn-secondary">
           Search
@@ -133,7 +165,7 @@ function Queue({
     <>
       <Table
         caption={`Product requests: ${status}`}
-        head={["Partner", "Product", "Channel", "Requested", "Status", ""]}
+        head={["Partner", "Type", "Product", "Channel", "Requested", "Status", ""]}
         isEmpty={data.items.length === 0}
         empty={status === "pending" ? "No request is waiting for a decision." : "No requests."}
       >
@@ -143,6 +175,7 @@ function Queue({
               <Link href={`/admin/partners/${r.partner_id}`}>{r.partner_name}</Link>
               <span className={styles.muted}> · {r.partner_code}</span>
             </th>
+            <td>{KIND_WORDS[r.kind].type}</td>
             <td>{r.product_name}</td>
             <td>{r.channel_label}</td>
             <td>{when(r.requested_at)}</td>
@@ -207,6 +240,8 @@ function RequestReview({ requestId, onClose, onDecided }: { requestId: string; o
       <LoadGate load={load} what="the request">
         {(d: PromotionRequestDetail) => {
           const r = d.request;
+          const words = KIND_WORDS[r.kind];
+          const holding = r.kind === "sell" ? d.partner.sells : d.partner.promotes;
           return (
             <div className={styles.stack}>
               <div className={styles.grid}>
@@ -224,10 +259,14 @@ function RequestReview({ requestId, onClose, onDecided }: { requestId: string; o
                     <dd>{r.requested_by}</dd>
                     <dt>Profile website</dt>
                     <dd>{d.partner.website || "—"}</dd>
-                    <dt>Referral capability</dt>
-                    <dd>{d.partner.referral_capability ? "Held" : "Not held - approval will be refused"}</dd>
-                    <dt>Already promotes</dt>
-                    <dd>{d.partner.promotes.length ? d.partner.promotes.join(", ") : "Nothing yet"}</dd>
+                    <dt>{words.capability}</dt>
+                    <dd>
+                      {(r.kind === "sell" ? d.partner.selling_capability : d.partner.referral_capability)
+                        ? "Held"
+                        : "Not held - approval will be refused"}
+                    </dd>
+                    <dt>Already {r.kind === "sell" ? "sells" : "promotes"}</dt>
+                    <dd>{holding.length ? holding.join(", ") : "Nothing yet"}</dd>
                   </dl>
                 </Section>
                 <Section title="Product">
@@ -240,16 +279,20 @@ function RequestReview({ requestId, onClose, onDecided }: { requestId: string; o
                     <dd>
                       <Status value={d.product.status} />
                     </dd>
-                    <dt>Open to affiliates</dt>
-                    <dd>{d.product.eligible ? "Yes - on the Store for affiliates" : "No - approval will be refused"}</dd>
+                    <dt>Open to {words.channel}</dt>
+                    <dd>{d.product.eligible ? `Yes - on the Store for ${CHANNEL_NAMES[d.partner.channel] ?? d.partner.channel}` : "No - approval will be refused"}</dd>
                   </dl>
                 </Section>
               </div>
-              <Section title="What the affiliate wrote">
+              <Section title={`What the ${words.who} wrote`}>
                 <dl className={styles.factsGrid}>
                   <dt>Status</dt>
                   <dd>
                     <AccessBadge status={r.status} />
+                  </dd>
+                  <dt>Asks to</dt>
+                  <dd>
+                    {words.verb} {d.product.name}
                   </dd>
                   <dt>Channel</dt>
                   <dd>{r.channel_label}</dd>
@@ -274,7 +317,7 @@ function RequestReview({ requestId, onClose, onDecided }: { requestId: string; o
                             type="button"
                             className="w360-btn w360-btn-primary"
                             disabled={busy}
-                            onClick={() => void act(() => adminProgrammeApi.decidePromotionRequest(r.id, "approve"), `Approved: ${d.partner.name} may promote ${d.product.name}.`)}
+                            onClick={() => void act(() => adminProgrammeApi.decidePromotionRequest(r.id, "approve"), `Approved: ${d.partner.name} may ${words.verb} ${d.product.name}.`)}
                           >
                             Approve
                           </button>
@@ -300,12 +343,16 @@ function RequestReview({ requestId, onClose, onDecided }: { requestId: string; o
                           await adminProgrammeApi.decidePromotionRequest(r.id, action, reason.trim() || undefined);
                           setMode(null);
                           setReason("");
-                        }, action === "reject" ? "Request rejected. The affiliate sees your reason." : "Permission revoked. New links stop now; earned commission is kept.");
+                        }, action === "reject"
+                          ? `Request rejected. The ${words.who} sees your reason.`
+                          : r.kind === "sell"
+                            ? "Permission revoked. New sales stop now; existing customers keep their subscriptions."
+                            : "Permission revoked. New links stop now; earned commission is kept.");
                       }}
                     >
                       <div className={styles.field}>
                         <label className="w360-label" htmlFor={reasonId}>
-                          {mode === "reject" ? "Reason (the affiliate reads it)" : "Reason (optional, the affiliate reads it)"}
+                          {mode === "reject" ? `Reason (the ${words.who} reads it)` : `Reason (optional, the ${words.who} reads it)`}
                         </label>
                         <textarea
                           id={reasonId}

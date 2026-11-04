@@ -15,18 +15,14 @@ import {
   type ConsoleAccess,
 } from "@/lib/api/console";
 import { StatusScreen } from "@/components/StatusScreen";
-import {
-  AccountMenu,
-  SidebarShell,
-  type AccountMenuEntry,
-  type SidebarGroup,
-} from "@/components/sidebar/SidebarShell";
+import { AccountMenu, SidebarShell, type AccountMenuEntry } from "@/components/sidebar/SidebarShell";
 import { BrandFooter, DashboardWelcome } from "@/features/controlplane/brandDisplay";
 import { useOrganizationBranding } from "@/features/controlplane/useBranding";
 import { OrgAccessContext } from "@/features/console/OrgAccess";
 import { PolicyGate } from "@/features/console/PolicyGate";
 import consoleStyles from "@/features/console/Console.module.css";
 import { usePortalRouter } from "@/lib/portalRouter";
+import { organizationNav, organizationTabs } from "./orgNav";
 
 type OrgState =
   | { status: "loading" }
@@ -34,105 +30,6 @@ type OrgState =
   | { status: "error" }
   | { status: "policy"; reason: AccessPolicyDenial }
   | { status: "ready"; access: ConsoleAccess };
-
-/** The organization console's navigation (Phase 8 extension, Phase 9): the
- * customer's own pages first - Dashboard, My products, Explore products,
- * billing, orders - then what an administrator manages. Each entry appears
- * only when the member holds the permission its page needs. */
-export function organizationNav(slug: string, can: (permission: string) => boolean): SidebarGroup[] {
-  const base = `/o/${slug}`;
-  const billing = can("platform.billing.view") || can("commercial.subscription.view");
-  return [
-    {
-      items: [
-        { href: `${base}/dashboard`, label: "Dashboard", icon: "dashboard" },
-        { href: `${base}/apps`, label: "My products", icon: "apps" },
-        { href: `${base}/explore`, label: "Explore products", icon: "store" },
-        { href: `${base}/settings/billing`, label: "Subscriptions & billing", icon: "card", when: billing },
-        { href: `${base}/orders`, label: "Orders", icon: "receipt", when: billing },
-      ],
-    },
-    {
-      title: "Organization & team",
-      items: [
-        { href: `${base}/settings/organization`, label: "Organization", icon: "building" },
-        { href: `${base}/settings/members`, label: "Members", icon: "users", when: can("platform.member.view") },
-        {
-          href: `${base}/settings/invitations`,
-          label: "Invitations",
-          icon: "mail",
-          when: can("platform.member.invite"),
-        },
-        { href: `${base}/settings/profile`, label: "Profile", icon: "users" },
-      ],
-    },
-    {
-      title: "App management",
-      items: [
-        {
-          href: `${base}/settings/products`,
-          label: "Product access",
-          icon: "puzzle",
-          when: can("platform.seat.assign"),
-        },
-        {
-          href: `${base}/settings/integrations`,
-          label: "Integrations",
-          icon: "network",
-          when: can("platform.connection.view"),
-        },
-        {
-          href: `${base}/settings/automations`,
-          label: "Automations",
-          icon: "bolt",
-          when: can("platform.automation.view"),
-        },
-        { href: `${base}/settings/ai`, label: "AI", icon: "sparkles", when: can("platform.ai.view") },
-        {
-          href: `${base}/settings/analytics`,
-          label: "Analytics",
-          icon: "chart",
-          when: can("platform.analytics.view"),
-        },
-      ],
-    },
-    {
-      title: "Security",
-      items: [
-        {
-          href: `${base}/settings/security/authentication`,
-          label: "Authentication",
-          icon: "lock",
-          when: can("platform.security.view"),
-        },
-        {
-          href: `${base}/settings/security/network`,
-          label: "Network access",
-          icon: "network",
-          when: can("platform.security.view"),
-        },
-        { href: `${base}/settings/security`, label: "My security", icon: "shield", exact: true },
-        // ADR-044: the person's own product sign-in preferences - every member.
-        { href: `${base}/settings/sign-in-preferences`, label: "Sign-in preferences", icon: "key" },
-      ],
-    },
-    {
-      title: "Audit",
-      items: [
-        { href: `${base}/settings/audit`, label: "Audit log", icon: "audit", when: can("platform.audit.view") },
-        {
-          href: `${base}/settings/sign-ins`,
-          label: "Sign-in activity",
-          icon: "history",
-          when: can("platform.audit.view"),
-        },
-      ],
-    },
-    {
-      items: [{ href: `${base}/help`, label: "Support", icon: "diagnostics" }],
-    },
-  ];
-}
 
 /**
  * The organization console shell: session and membership are confirmed (and
@@ -228,12 +125,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   const { access } = org;
   const can = (permission: string) => access.permissions.includes(permission);
+  // A consolidated entry's pages are tabs above whichever of them is open.
+  const tabs = organizationTabs(orgSlug, can, pathname);
   const who = session.status === "ready" ? session.session : null;
   const consoles = who?.consoles;
   const entries: AccountMenuEntry[] = [
     { label: "Profile", href: `/o/${orgSlug}/settings/profile` },
-    { label: "My security", href: `/o/${orgSlug}/settings/security` },
-    { label: "Sign-in preferences", href: `/o/${orgSlug}/settings/sign-in-preferences` },
+    { label: "My Security", href: `/o/${orgSlug}/settings/security` },
+    { label: "Sign-in Preferences", href: `/o/${orgSlug}/settings/sign-in-preferences` },
     ...(consoles?.staff ? [{ label: "Super Admin console", href: portalHref(portals, "admin", "/admin") }] : []),
     ...(consoles?.partner ? [{ label: "Partner portal", href: portalHref(portals, "partner", "/partner") }] : []),
     { label: "Switch organization", href: "/organizations/select" },
@@ -267,7 +166,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <span aria-hidden="true"> ▾</span>
           </button>
         }
-        groups={organizationNav(orgSlug, can)}
+        groups={organizationNav(orgSlug, can, pathname)}
         account={<AccountMenu name={who?.name || who?.email || ""} entries={entries} />}
         banner={
           <>
@@ -286,6 +185,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </>
         }
       >
+        {tabs.length > 0 && (
+          <nav aria-label="Sections" className={consoleStyles.tabs}>
+            {tabs.map((tab) => (
+              <Link key={tab.href} href={tab.href} aria-current={tab.current ? "page" : undefined}>
+                {tab.label}
+              </Link>
+            ))}
+          </nav>
+        )}
         {children}
         <BrandFooter brand={brand} />
       </SidebarShell>

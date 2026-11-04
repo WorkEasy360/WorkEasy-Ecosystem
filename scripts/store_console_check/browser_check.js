@@ -13,7 +13,12 @@
 //   E  Super Admin revokes Easy CRM -> the affiliate cannot make a new link;
 //      My Products lists it under "No longer assigned"; Explore says Revoked
 //   F  The old My Products address opens the Store Console
-//   R  Responsive: the three tabs and the admin queue at 1920-390 px
+//   G  Reseller: Store Console replaces Products & Plans; My Products lists the
+//      two granted products; Explore offers the others; asks to sell Easy CRM
+//   H  Super Admin filters the queue to resellers and approves it
+//   I  Reseller: Easy CRM is now a product it may sell (the ordinary grant)
+//   J  Super Admin revokes it: no longer sellable, Explore says Revoked
+//   R  Responsive: the tabs (affiliate and reseller) and the admin queue at 1920-390 px
 // On every audited page: CSP violations, console errors, axe WCAG 2.1 A/AA, a
 // visible focus indicator, exactly one h1. Screen readers: NOT EXECUTED.
 const puppeteer = require("puppeteer-core");
@@ -200,8 +205,10 @@ const AFF = "/partner/affiliate";
   const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--no-first-run", "--force-prefers-reduced-motion"] });
   const affCtx = await browser.createBrowserContext();
   const staffCtx = await browser.createBrowserContext();
+  const resCtx = await browser.createBrowserContext();
   const aff = await newPage(affCtx);
   const staff = await newPage(staffCtx);
+  const res = await newPage(resCtx);
   const state = {};
 
   await flow("A Affiliate explores the Store and requests access", async () => {
@@ -255,8 +262,9 @@ const AFF = "/partner/affiliate";
     await click(staff, "Product Requests", { exact: false });
     await waitForText(staff, "Aman Affiliates");
     await audit(staff, "Admin - Product Requests queue");
-    const queue = await api(staff, "GET", "/api/v1/admin/partner-product-requests?status=pending");
-    check(queue.body.counts.pending === 2, `pending ${JSON.stringify(queue.body.counts)}`);
+    const queue = await api(staff, "GET", "/api/v1/admin/partner-product-requests?status=pending&kind=promote&q=aman");
+    // The rehearsal's history holds another partner's pending request; Aman's are these two.
+    check(queue.body.items.length === 2, `pending ${JSON.stringify(queue.body.counts)}`);
     const byCode = Object.fromEntries(queue.body.items.map((r) => [r.product_code, r]));
     await go(staff, `/admin/partners/product-requests?request=${byCode.easy_crm.id}`);
     await waitForText(staff, "What the affiliate wrote");
@@ -332,6 +340,77 @@ const AFF = "/partner/affiliate";
     return aff.url().replace(BASE, "");
   });
 
+  const RES = "/partner/reseller";
+  const sellable = async () => {
+    const r = await api(res, "GET", `/api/v1/partner/${state.resId}/products`);
+    check(r.status === 200, `products ${r.status}`);
+    return r.body.products.map((p) => p.code).sort();
+  };
+
+  await flow("G Reseller explores the Store and asks to sell a product", async () => {
+    await signIn(res, "res@eco.test", "partner");
+    await go(res, `${RES}/dashboard`);
+    const sidebar = await res.evaluate(() => [...document.querySelectorAll("nav a")].map((a) => a.innerText.trim()));
+    check(sidebar.includes("Store Console") && !sidebar.includes("Products & Plans"), `sidebar ${JSON.stringify(sidebar)}`);
+    state.resId = await partnerId(res);
+    await click(res, "Store Console");
+    await waitForText(res, "Products granted to your account");
+    check(JSON.stringify(await sellable()) === JSON.stringify(["easy_helpdesk", "easybook"]), `granted ${await sellable()}`);
+    await audit(res, "Reseller Store Console - My Products");
+    await click(res, "Explore Products", { exact: false });
+    await waitForText(res, "Easy CRM");
+    const store = await api(res, "GET", `/api/v1/partner/${state.resId}/reseller/store`);
+    const status = Object.fromEntries(store.body.products.map((p) => [p.code, p.status]));
+    check(status.easybook === "approved" && status.easy_crm === "not_requested", `statuses ${JSON.stringify(status)}`);
+    const crm = store.body.products.find((p) => p.code === "easy_crm");
+    await audit(res, "Reseller Store Console - Explore");
+    await click(res, `Request access to ${crm.name}`);
+    await waitForText(res, `Request access to ${crm.name}`);
+    await choose(res, "Sales channel", "existing_customers");
+    await type(res, "Target customers", "Our 40 accounting clients");
+    await type(res, "How you will sell it", "Bundle it with our support contracts.");
+    await click(res, "Send request");
+    await waitForText(res, `Request sent for ${crm.name}`);
+    await click(res, "My Requests", { exact: false });
+    await waitForText(res, "Pending approval");
+    await audit(res, "Reseller Store Console - My Requests");
+    return "Easy CRM sell request pending";
+  });
+
+  await flow("H Super Admin approves the reseller's request", async () => {
+    const queue = await api(staff, "GET", "/api/v1/admin/partner-product-requests?status=pending&kind=sell");
+    check(queue.body.items.length === 1 && queue.body.items[0].kind === "sell", `queue ${JSON.stringify(queue.body.counts)}`);
+    state.sellRequest = queue.body.items[0].id;
+    await go(staff, `/admin/partners/product-requests?kind=sell&request=${state.sellRequest}`);
+    await waitForText(staff, "What the reseller wrote");
+    await audit(staff, "Admin - Review reseller request");
+    await click(staff, "Approve");
+    await waitForText(staff, "may sell Easy CRM");
+    return "approved";
+  });
+
+  await flow("I The reseller may now sell Easy CRM", async () => {
+    const codes = await sellable();
+    check(codes.includes("easy_crm"), `granted ${codes}`);
+    await go(res, `${RES}/store-console`);
+    await waitForText(res, "Easy CRM");
+    return codes.join(", ");
+  });
+
+  await flow("J Revocation: no longer sellable", async () => {
+    await go(staff, `/admin/partners/product-requests?status=approved&request=${state.sellRequest}`);
+    await waitForText(staff, "What the reseller wrote");
+    await click(staff, "Revoke permission");
+    await type(staff, "Reason", "Territory reassigned.");
+    await click(staff, "Revoke permission");
+    await waitForText(staff, "New sales stop now");
+    const codes = await sellable();
+    check(!codes.includes("easy_crm"), `still granted ${codes}`);
+    await go(res, `${RES}/store-console/explore`);
+    await waitForText(res, "Reason: Territory reassigned.");
+    return codes.join(", ");
+  });
+
   await flow("R Responsive: 1920-390 px", async () => {
     for (const [page, route, label] of [
       [aff, `${AFF}/store-console`, "my-products"],
@@ -339,6 +418,9 @@ const AFF = "/partner/affiliate";
       [aff, `${AFF}/store-console/requests`, "requests"],
       [staff, "/admin/partners/product-requests?status=all", "admin-queue"],
       [staff, `/admin/partners/product-requests?status=all&request=${state.crmRequest}`, "admin-review"],
+      [res, `${RES}/store-console`, "reseller-my-products"],
+      [res, `${RES}/store-console/explore`, "reseller-explore"],
+      [res, `${RES}/store-console/requests`, "reseller-requests"],
     ]) {
       await go(page, route);
       await reflow(page, label);

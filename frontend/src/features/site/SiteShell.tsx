@@ -68,13 +68,35 @@ export interface PurchaseIntent {
   /** Phase 11: start this product's own trial - no checkout, no price, no
    * plan-version id. Mutually exclusive with `plan`/`bundle`. */
   productTrial?: { product: string; plan: string };
+  /** The public Store's cart (2026-11-02): several plans bought as one cart
+   * order, plan-version ids only. Mutually exclusive with the others. */
+  cart?: string[];
+  /** How many of the plan (2026-11-03, the Store's checkout box) - a plan
+   * intent only; the checkout prices that quantity again on the server. */
+  quantity?: number;
 }
+
+/** The checkout's own quantity limit (`payments.orders.MAX_QUANTITY`). */
+export const MAX_INTENT_QUANTITY = 100_000;
+
+function cleanQuantity(raw: unknown): number | undefined {
+  return typeof raw === "number" && Number.isInteger(raw) && raw > 1 && raw <= MAX_INTENT_QUANTITY ? raw : undefined;
+}
+
+/** The most plans one cart intent may carry - the checkout's own cart limit. */
+export const MAX_INTENT_CART = 10;
 
 export function cleanIntent(raw: PurchaseIntent | null | undefined): PurchaseIntent | null {
   if (!raw) return null;
   if (raw.productTrial) {
     const { product, plan } = raw.productTrial;
     return CODE.test(product ?? "") && CODE.test(plan ?? "") ? { productTrial: { product, plan } } : null;
+  }
+  if (Array.isArray(raw.cart)) {
+    const ids = [...new Set(raw.cart.filter((id) => typeof id === "string" && UUID.test(id)))].slice(0, MAX_INTENT_CART);
+    if (ids.length === 0) return null;
+    const interval = raw.interval && INTERVALS.has(raw.interval) ? raw.interval : undefined;
+    return { cart: ids, interval };
   }
   const plan = raw.plan && UUID.test(raw.plan) ? raw.plan : undefined;
   const bundle = raw.bundle && UUID.test(raw.bundle) ? raw.bundle : undefined;
@@ -84,6 +106,7 @@ export function cleanIntent(raw: PurchaseIntent | null | undefined): PurchaseInt
     bundle: plan ? undefined : bundle,
     interval: raw.interval && INTERVALS.has(raw.interval) ? raw.interval : undefined,
     trial: raw.trial === true,
+    quantity: plan ? cleanQuantity(raw.quantity) : undefined,
   };
 }
 
@@ -114,10 +137,14 @@ export function takeIntent(): PurchaseIntent | null {
  * for a `productTrial` intent, which has no checkout to open. */
 export function intentQuery(intent: PurchaseIntent): string {
   const params = new URLSearchParams();
+  // One plan is an ordinary checkout; two or more go as one cart order.
+  if (intent.cart?.length === 1) params.set("plan", intent.cart[0]);
+  else if (intent.cart) params.set("cart", intent.cart.join(","));
   if (intent.plan) params.set("plan", intent.plan);
   if (intent.bundle) params.set("bundle", intent.bundle);
   if (intent.interval) params.set("interval", intent.interval);
   if (intent.trial) params.set("trial", "1");
+  if (intent.plan && intent.quantity && intent.quantity > 1) params.set("quantity", String(intent.quantity));
   return params.toString();
 }
 
@@ -235,6 +262,7 @@ function ProductsMenu({ products }: { products: PublicProduct[] }) {
 }
 
 const NAV = [
+  { href: "/store", label: "Store" },
   { href: "/services", label: "Services" },
   { href: "/pricing", label: "Pricing" },
   { href: "/contact", label: "Contact" },
@@ -275,7 +303,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
                 key={item.href}
                 href={item.href}
                 className={styles.navLink}
-                aria-current={pathname === item.href ? "page" : undefined}
+                aria-current={pathname === item.href || pathname.startsWith(`${item.href}/`) ? "page" : undefined}
               >
                 {item.label}
               </Link>

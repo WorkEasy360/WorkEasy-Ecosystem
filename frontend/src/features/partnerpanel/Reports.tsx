@@ -1,10 +1,75 @@
 "use client";
 
-import { LoadGate, Table, useLoad } from "@/features/controlplane/ui";
-import { panelApi } from "@/lib/api/partnerPanel";
+import { LoadGate, Table, money, useLoad } from "@/features/controlplane/ui";
+import { panelApi, type PartnerReports } from "@/lib/api/partnerPanel";
 import { Amounts, EmptyState, Kpi, PageHeader, usePanel } from "./PanelKit";
 import { percent, useRangeControls } from "./workspaceKit";
 import styles from "./PartnerPanel.module.css";
+
+/** One CSV cell: quoted, and a leading formula character neutralised so a
+ * spreadsheet never runs it (the same rule as the server's customer export). */
+const cell = (value: string | number): string => {
+  const text = String(value);
+  const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+  return `"${safe.replace(/"/g, '""')}"`;
+};
+
+/** The report's rows as CSV - the server's figures, formatted, nothing added. */
+export function reportCsv(d: PartnerReports): string {
+  const rows: (string | number)[][] = [["Section", "Item", "Value"]];
+  rows.push(["Period", "From", d.range.from], ["Period", "To", d.range.to]);
+  if (d.customers) {
+    for (const [k, v] of Object.entries(d.customers)) rows.push(["Customers", k.replace(/_/g, " "), v]);
+  }
+  for (const p of d.products ?? []) {
+    rows.push(["Products", `${p.product_name} - customers holding`, p.customers_holding ?? ""]);
+    rows.push(["Products", `${p.product_name} - active subscriptions`, p.active_subscriptions ?? ""]);
+  }
+  if (d.sales) {
+    rows.push(["Sales", "transactions", d.sales.transactions]);
+    for (const a of d.sales.gross) rows.push(["Sales", `gross ${a.currency}`, money(a.amount_minor, a.currency)]);
+    for (const a of d.sales.commission_earned) rows.push(["Sales", `commission ${a.currency}`, money(a.amount_minor, a.currency)]);
+    for (const p of d.sales.by_product ?? []) {
+      rows.push(["Revenue by product", `${p.product_name} (${p.currency}) sales`, p.sales]);
+      rows.push(["Revenue by product", `${p.product_name} (${p.currency}) gross`, money(p.gross_minor, p.currency)]);
+      rows.push(["Revenue by product", `${p.product_name} (${p.currency}) commission`, money(p.commission_minor, p.currency)]);
+    }
+  }
+  if (d.referrals) {
+    rows.push(["Referrals", "clicks", d.referrals.clicks], ["Referrals", "conversions", d.referrals.conversions]);
+    for (const c of d.referrals.by_campaign) {
+      rows.push(["Referrals by campaign", `${c.campaign} clicks`, c.clicks]);
+      rows.push(["Referrals by campaign", `${c.campaign} conversions`, c.conversions]);
+    }
+  }
+  return rows.map((r) => r.map(cell).join(",")).join("\r\n");
+}
+
+/** CSV download and the browser's print dialog (Save as PDF). */
+function ExportBar({ d }: { d: PartnerReports }) {
+  return (
+    <p className={`${styles.actionsRow} ${styles.noPrint}`}>
+      <button
+        type="button"
+        className="w360-btn w360-btn-secondary"
+        onClick={() => {
+          const blob = new Blob([reportCsv(d)], { type: "text/csv;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `workeasy360-report-${d.range.from.slice(0, 10)}-${d.range.to.slice(0, 10)}.csv`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }}
+      >
+        Download CSV
+      </button>
+      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => window.print()}>
+        Print / Save as PDF
+      </button>
+    </p>
+  );
+}
 
 /**
  * Reports & Analytics (ADR-047): the same page in every workspace, showing only
@@ -34,6 +99,7 @@ export function Reports() {
           const nothing = !d.customers && !d.products && !d.sales && !d.referrals;
           return (
             <>
+              {!nothing && <ExportBar d={d} />}
               {d.customers && (
                 <section className={styles.panel} aria-labelledby="rep-customers">
                   <h2 id="rep-customers">Customers</h2>
@@ -74,6 +140,24 @@ export function Reports() {
                     <Kpi icon="currency" label="Commission earned" value={<Amounts amounts={d.sales.commission_earned} />} />
                   </ul>
                   <p className={styles.muted}>From the commission ledger. A sale on which nothing is earned is not in it.</p>
+                  {d.sales.by_product && (
+                    <Table
+                      caption="Revenue by product"
+                      head={["Product", "Currency", "Sales", "Gross", "Commission"]}
+                      isEmpty={d.sales.by_product.length === 0}
+                      empty="No product sales in this period."
+                    >
+                      {d.sales.by_product.map((p) => (
+                        <tr key={`${p.product_code}-${p.currency}`}>
+                          <th scope="row">{p.product_name}</th>
+                          <td>{p.currency}</td>
+                          <td className={styles.num}>{p.sales}</td>
+                          <td className={styles.num}>{money(p.gross_minor, p.currency)}</td>
+                          <td className={styles.num}>{money(p.commission_minor, p.currency)}</td>
+                        </tr>
+                      ))}
+                    </Table>
+                  )}
                 </section>
               )}
               {d.referrals && (

@@ -24,6 +24,8 @@ import {
   type PartnerSummary,
 } from "./controlPlane";
 
+import type { UpgradeFee } from "./partnerPanel";
+
 const admin = "/api/v1/admin";
 
 // --- derived labels ---------------------------------------------------------------
@@ -1017,8 +1019,9 @@ export interface UpgradeRequestRow {
   decided_by?: string | null;
   commercial_reference?: string;
   correlation_id?: string | null;
-  /** ADR-053: the set-up fee fixed when the request opened; null is no fee. */
-  setup_fee?: { amount_minor: number; currency: string; settled: boolean } | null;
+  /** ADR-053: the set-up fee fixed when the request opened; null is no fee - and
+   * how the partner paid it (2026-11-03). */
+  setup_fee?: UpgradeFee | null;
 }
 
 /** What the request still needs, decided by the server. */

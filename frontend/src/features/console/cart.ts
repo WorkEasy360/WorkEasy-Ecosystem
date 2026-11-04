@@ -28,12 +28,22 @@ const EMPTY: Cart = { interval: "monthly", items: [] };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHANGED = "w360-cart-changed";
 const key = (slug: string) => `w360.cart.${slug}`;
+
+/** The public Store's cart (`/store`, 2026-11-02), before the buyer has an
+ * organization. Not a valid organization slug, so it never meets one. It
+ * lives in `localStorage`: the signup's emailed link often opens a new tab,
+ * which starts with an empty `sessionStorage`. */
+export const PUBLIC_CART = "~public";
+
+function storage(slug: string): Storage {
+  return slug === PUBLIC_CART ? window.localStorage : window.sessionStorage;
+}
 const cache = new Map<string, { raw: string | null; cart: Cart }>();
 
 function read(slug: string): Cart {
   let raw: string | null = null;
   try {
-    raw = typeof window === "undefined" ? null : window.sessionStorage.getItem(key(slug));
+    raw = typeof window === "undefined" ? null : storage(slug).getItem(key(slug));
   } catch {
     raw = null;
   }
@@ -59,8 +69,8 @@ function read(slug: string): Cart {
 
 function write(slug: string, cart: Cart) {
   try {
-    if (cart.items.length === 0) window.sessionStorage.removeItem(key(slug));
-    else window.sessionStorage.setItem(key(slug), JSON.stringify(cart));
+    if (cart.items.length === 0) storage(slug).removeItem(key(slug));
+    else storage(slug).setItem(key(slug), JSON.stringify(cart));
   } catch {
     // Private mode or storage disabled: the cart simply does not persist.
   }
@@ -106,4 +116,10 @@ export function checkoutHref(slug: string, cart: Cart): string {
   if (cart.items.length === 1) params.set("plan", cart.items[0].plan_version_id);
   else params.set("cart", cart.items.map((i) => i.plan_version_id).join(","));
   return `/o/${slug}/checkout?${params.toString()}`;
+}
+
+/** Empties the public Store's cart once its order is on its way to a checkout. */
+export function clearPublicCart(): void {
+  if (typeof window === "undefined") return;
+  write(PUBLIC_CART, EMPTY);
 }

@@ -108,6 +108,33 @@ env.check(
     "W360_NOTIFICATION_SEAL_KEYS must differ from every other platform key.",
 )
 
+# 2026-11-03. Optional, never derived: without it, saving a partner's payout
+# bank account / PAN is refused (partner_withdrawals.SealUnavailable), so the
+# rest of the platform boots and runs unchanged until the owner sets it.
+_PARTNER_PAYOUT_SEAL_MATERIALS = [
+    m.strip()
+    for m in env.secret("W360_PARTNER_PAYOUT_SEAL_KEYS", "").split(",")
+    if m.strip()
+]
+PARTNER_PAYOUT_SEAL_KEYS = [
+    base64.urlsafe_b64encode(hashlib.sha256(m.encode("utf-8")).digest())
+    for m in _PARTNER_PAYOUT_SEAL_MATERIALS
+]
+env.check(
+    all(len(m) >= 32 for m in _PARTNER_PAYOUT_SEAL_MATERIALS),
+    "Every W360_PARTNER_PAYOUT_SEAL_KEYS entry must be at least 32 characters.",
+)
+env.check(
+    not set(_PARTNER_PAYOUT_SEAL_MATERIALS)
+    & {
+        SECRET_KEY,
+        FILE_URL_SIGNING_KEY,
+        *_INTEGRATION_SECRET_MATERIALS,
+        *_NOTIFICATION_SEAL_MATERIALS,
+    },
+    "W360_PARTNER_PAYOUT_SEAL_KEYS must differ from every other platform key.",
+)
+
 # Outbound HTTP to customer endpoints: https only, never loopback. Pinned,
 # not configurable, in production (integration/egress).
 INTEGRATION_EGRESS_ALLOW_HTTP = False

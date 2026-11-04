@@ -14,6 +14,7 @@ import {
 } from "@/lib/api/partnerPanel";
 import { Amounts, Kpi, NotAvailable, PageHeader, usePanel } from "./PanelKit";
 import { CopyButton, percent, useRangeControls } from "./workspaceKit";
+import { UTM_VALUE, taggedLink, type UtmKey } from "@/lib/utm";
 import styles from "./PartnerPanel.module.css";
 
 /**
@@ -74,7 +75,7 @@ export const productLabel = (link: AffiliateLink): string =>
 
 // --- the dashboard ------------------------------------------------------------------------------------------------
 
-function LinkBlock({ link, createHref }: { link: AffiliateLink | null; createHref: string | null }) {
+export function LinkBlock({ link, createHref }: { link: AffiliateLink | null; createHref: string | null }) {
   const inputId = useId();
   if (!link || !link.url) {
     return (
@@ -223,7 +224,7 @@ function Kpis({ d }: { d: AffiliateOverview }) {
   );
 }
 
-function ConversionTable({
+export function ConversionTable({
   rows,
   fallbackCurrency,
   caption,
@@ -361,6 +362,67 @@ function CreateLinkForm({ d, onCreated }: { d: AffiliateOverview; onCreated: () 
   );
 }
 
+/** The UTM builder (2026-11-03): one of the partner's links with standard
+ * campaign tags added, to copy. The tags travel to the page the link opens;
+ * attribution is still the link's own code. */
+function UtmBuilder({ links }: { links: AffiliateLink[] }) {
+  const usable = links.filter((l) => l.url);
+  const ids = { link: useId(), source: useId(), medium: useId(), campaign: useId(), out: useId() };
+  const [linkId, setLinkId] = useState(usable[0]?.id ?? "");
+  const [tags, setTags] = useState<Partial<Record<UtmKey, string>>>({});
+  const link = usable.find((l) => l.id === linkId) ?? usable[0];
+  if (!link?.url) return null;
+  const tagged = taggedLink(link.url, tags);
+  const bad = (["utm_source", "utm_medium", "utm_campaign"] as UtmKey[]).filter((k) => (tags[k] ?? "").trim() && !UTM_VALUE.test((tags[k] ?? "").trim()));
+  const field = (key: UtmKey, id: string, label: string, hint: string) => (
+    <div>
+      <label className="w360-label" htmlFor={id}>
+        {label}
+      </label>
+      <input
+        id={id}
+        className="w360-input"
+        maxLength={100}
+        placeholder={hint}
+        aria-invalid={bad.includes(key) || undefined}
+        value={tags[key] ?? ""}
+        onChange={(e) => setTags((t) => ({ ...t, [key]: e.target.value }))}
+      />
+    </div>
+  );
+  return (
+    <section className={styles.panel} aria-labelledby={`${ids.link}-h`}>
+      <h2 id={`${ids.link}-h`}>UTM builder</h2>
+      <p className={styles.muted}>Add campaign tags to a link to see where your visitors came from in your own analytics.</p>
+      <div className={styles.formRow}>
+        <div>
+          <label className="w360-label" htmlFor={ids.link}>
+            Link
+          </label>
+          <select id={ids.link} className="w360-input" value={link.id} onChange={(e) => setLinkId(e.target.value)}>
+            {usable.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.code} - {productLabel(l)}
+              </option>
+            ))}
+          </select>
+        </div>
+        {field("utm_source", ids.source, "Source", "facebook")}
+        {field("utm_medium", ids.medium, "Medium", "social")}
+        {field("utm_campaign", ids.campaign, "Campaign", "diwali-offer")}
+      </div>
+      {bad.length > 0 && <p className="w360-error-text">Use letters, digits, dots, dashes or underscores only.</p>}
+      <div className={styles.linkRow}>
+        <label className="w360-visually-hidden" htmlFor={ids.out}>
+          Tagged link
+        </label>
+        <input id={ids.out} className="w360-input" readOnly value={tagged} onFocus={(e) => e.currentTarget.select()} />
+        <CopyButton text={tagged} label="Tagged link" />
+      </div>
+    </section>
+  );
+}
+
 export function ReferralLinks() {
   const { can, active, partner } = usePanel();
   const { id, load, reload, controls } = useOverview();
@@ -378,6 +440,7 @@ export function ReferralLinks() {
         {(d) => (
           <>
             {create && <CreateLinkForm d={d} onCreated={reload} />}
+            {d.links.some((l) => l.url) && <UtmBuilder links={d.links} />}
             <Table
               caption="Your referral links"
               head={["Link", "Opens", "Campaign", "Clicks", "Visitors", "Sign-ups", "Conversions", "Sales", "Commission", "Status", "Actions"]}

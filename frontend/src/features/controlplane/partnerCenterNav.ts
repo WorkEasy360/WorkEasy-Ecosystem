@@ -2,7 +2,8 @@
  * The Partners area's navigation (ADR-048): Dashboard, All Partners, Add
  * Partner and - since ADR-055 - Product Requests, the affiliates' requests to
  * promote a Store product (a queue across partners, so it has no one partner's
- * page to live on). Resellers, White-label and Affiliates are filters on
+ * page to live on), and Upgrade Fees (2026-11-03), what becoming a Reseller or a
+ * White-label partner costs. Resellers, White-label and Affiliates are filters on
  * All Partners (the capabilities a partner holds); products, pricing,
  * commission, payouts, customers, branding and domains belong to one partner and
  * live on its page.
@@ -35,6 +36,13 @@ export const CENTER_ITEMS: CenterItem[] = [
   { href: "/admin/partners/all", label: "All Partners", icon: "handshake", alsoMatches: PARTNER_PAGE, permission: PARTNER_VIEW },
   { href: "/admin/partners/new", label: "Add Partner", icon: "plus", permission: PARTNER_MANAGE },
   { href: "/admin/partners/product-requests", label: "Product Requests", icon: "store", permission: PARTNER_VIEW },
+  // 2026-11-03: what an upgrade to Reseller or White-label costs, and how to pay
+  // it offline - the same fees as Currency & pricing's Partner set-up fees.
+  { href: "/admin/partners/upgrade-fees", label: "Upgrade Fees", icon: "currency", permission: PARTNER_VIEW },
+  // 2026-11-03 (unified partner dashboard): partners' helpdesk tickets to
+  // Workeasy360, and their withdrawal requests and payout details.
+  { href: "/admin/partners/tickets", label: "Partner Tickets", icon: "help", permission: PARTNER_VIEW },
+  { href: "/admin/partners/withdrawals", label: "Withdrawals", icon: "card", permission: "platform.staff_payout.manage" },
 ];
 
 const under = (pathname: string, prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);

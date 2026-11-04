@@ -167,6 +167,15 @@ class PlanPrice(models.Model):
         default=TaxBehaviour.EXCLUSIVE.value,
     )
 
+    #: A promotional discount off ``amount_minor``, in basis points (ADR-056).
+    #: Part of the immutable row: a discount that starts or ends is a new row
+    #: with its own window, so a past order stays reproducible. What the
+    #: customer pays is ``pricing.domain.apply_discount(amount, discount_bp)``.
+    discount_bp = models.PositiveIntegerField(default=0, db_default=0)
+    #: A one-time set-up fee charged with the first purchase of this plan, in
+    #: the book's currency (ADR-056). NULL means none. Never recurring.
+    setup_fee_minor = models.BigIntegerField(null=True, blank=True)
+
     #: Effective window *within* the book. A price rise is a new row starting
     #: where the old one ends, so both the old and the new fact survive and a
     #: historical invoice remains reproducible.
@@ -194,6 +203,15 @@ class PlanPrice(models.Model):
                 condition=models.Q(amount_minor__isnull=True)
                 | models.Q(amount_minor__gte=0),
                 name="ck_price_amount_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(discount_bp__lte=10000),
+                name="ck_price_discount_at_most_100pct",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(setup_fee_minor__isnull=True)
+                | models.Q(setup_fee_minor__gte=0),
+                name="ck_price_setup_fee_non_negative",
             ),
             models.CheckConstraint(
                 condition=models.Q(max_quantity__isnull=True)

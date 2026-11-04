@@ -18,11 +18,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import io
 import re
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import BinaryIO, Final
+from typing import Any, BinaryIO, Final
 
 from workeasy360.contracts.errors import FileError
 from workeasy360.contracts.ports.files import (
@@ -31,6 +32,33 @@ from workeasy360.contracts.ports.files import (
     PresignedUpload,
     StoredObject,
 )
+
+
+class _Limited(io.RawIOBase):
+    """At most ``remaining`` bytes of an open handle, then end of file; closing
+    it closes the handle."""
+
+    def __init__(self, handle: BinaryIO, remaining: int) -> None:
+        self._handle = handle
+        self._remaining = remaining
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        if self._remaining <= 0:
+            return 0
+        data = self._handle.read(min(len(buffer), self._remaining))
+        buffer[: len(data)] = data
+        self._remaining -= len(data)
+        return len(data)
+
+    def close(self) -> None:
+        try:
+            self._handle.close()
+        finally:
+            super().close()
+
 
 #: Keys are server-generated, but this is validated anyway. Defence in depth
 #: costs one regex and removes an entire bug class.
@@ -129,6 +157,13 @@ class LocalFileStore(SignedApplicationUrls):
         if not path.exists():
             raise FileError(f"No stored object for key {key!r}.")
         return path.open("rb")
+
+    def get_range(self, key: str, start: int, length: int) -> BinaryIO:
+        if start < 0 or length < 0:
+            raise FileError("A byte range starts and runs at or after zero.")
+        handle = self.get(key)
+        handle.seek(start)
+        return io.BufferedReader(_Limited(handle, length))  # type: ignore[arg-type]
 
     def delete(self, key: str) -> None:
         path = self._path(key)

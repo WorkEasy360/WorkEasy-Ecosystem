@@ -103,11 +103,16 @@ _SPECS: Final = (
         PAYOUT_VIEW,
         "View payouts",
         view=("platform.partner_payout.view",),
+        # 2026-11-03: asking to be paid, and saying where to.
+        manage=("platform.partner_payout.request",),
     ),
     CapabilitySpec(
         SUPPORT_ACCESS,
         "Run read-only access diagnostics for related customers",
-        manage=("platform.partner_support.access",),
+        # 2026-11-03: the customer helpdesk (tickets from the partner's own
+        # customers) is support work too.
+        view=("platform.partner_desk.view",),
+        manage=("platform.partner_support.access", "platform.partner_desk.manage"),
     ),
     CapabilitySpec(
         REFERRAL_CREATE,
@@ -339,6 +344,15 @@ def workspaces(held: frozenset[str] | set[str]) -> list[str]:
 #: With no usable preference a partner opens its largest workspace first: the
 #: one whose grants include the others' selling power (ADR-053 keeps them all).
 LANDING_ORDER: Final = (WHITE_LABEL, RESELLER, AFFILIATE)
+
+
+def partner_level(held: frozenset[str] | set[str]) -> str | None:
+    """The partner's level for the unified dashboard (2026-11-03): its largest
+    workspace - ``white_label`` (Level 3), ``reseller`` (Level 2) or
+    ``affiliate`` (Level 1) - or ``None`` when its grants earn none. A pure
+    function of the grants, like ``workspaces``: a level is never stored."""
+    options = workspaces(held)
+    return min(options, key=LANDING_ORDER.index) if options else None
 
 
 def resolve_landing(stored: str, held: frozenset[str] | set[str]) -> str | None:

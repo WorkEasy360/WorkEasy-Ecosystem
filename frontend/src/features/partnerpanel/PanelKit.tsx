@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useId } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import { NavIcon } from "@/components/sidebar/icons";
 import { usePartner } from "@/features/controlplane/ControlShell";
@@ -133,18 +133,76 @@ export function Kpi({
   );
 }
 
+/** A workspace entry's tabs, drawn above its page (2026-11-02) - see `EntryTabs`. */
+const EntryTabsContext = createContext<{
+  publish: (notes: Record<string, string>) => void;
+  /** The open tab's pages: a page's own links to them stay, as a second row. */
+  pages: string[];
+} | null>(null);
+
+export interface EntryTab {
+  href: string;
+  label: string;
+  /** Every address the tab is current at (its page's older routes too). */
+  current: string[];
+}
+
+/**
+ * The tabs of one consolidated workspace entry (Product Store: Explore
+ * Products, Approved / Promoting, ...), above whichever of its pages is open.
+ * A page's own `SubNav` lends its counts ("My Requests (2 pending)") to the
+ * matching tab and keeps only its links to the open tab's other pages (Pricing
+ * & Margins: Currency, Package & Pricing, Pricing Rule) as a second row - so no
+ * link is drawn twice. Navigation only: each page is guarded and every request
+ * authorized as before.
+ */
+export function EntryTabs({ tabs, children }: { tabs: EntryTab[]; children: React.ReactNode }) {
+  const pathname = usePathname() ?? "";
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const publish = useCallback(
+    (next: Record<string, string>) => setNotes((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next)),
+    [],
+  );
+  const pages = tabs.find((tab) => tab.current.includes(pathname))?.current;
+  const key = (pages ?? []).join("|");
+  const value = useMemo(() => ({ publish, pages: key ? key.split("|") : [] }), [publish, key]);
+  return (
+    <div className={styles.page}>
+      {tabs.length > 1 && (
+        <nav aria-label="Sections" className={styles.tabs}>
+          {tabs.map((tab) => (
+            <Link key={tab.href} href={tab.href} aria-current={tab.current.includes(pathname) ? "page" : undefined}>
+              {tab.label}
+              {notes[tab.href] ? ` ${notes[tab.href]}` : ""}
+            </Link>
+          ))}
+        </nav>
+      )}
+      <EntryTabsContext.Provider value={value}>{children}</EntryTabsContext.Provider>
+    </div>
+  );
+}
+
 /** The tabs inside a top-level page (Affiliates: Conversions, Payouts, Settings).
  * They are not sidebar items. A tab the person's permissions cannot read is not
- * drawn (`show: false`); the server still authorizes each request. */
-export function SubNav({ items }: { items: { href: string; label: string; show?: boolean }[] }) {
+ * drawn (`show: false`); the server still authorizes each request. `note` is a
+ * count after the label. Under a workspace entry's `EntryTabs` it keeps only the
+ * links to the open tab's pages. */
+export function SubNav({ items }: { items: { href: string; label: string; show?: boolean; note?: string }[] }) {
   const pathname = usePathname() ?? "";
-  const shown = items.filter((item) => item.show !== false);
+  const entry = useContext(EntryTabsContext);
+  const notes = JSON.stringify(Object.fromEntries(items.filter((i) => i.note).map((i) => [i.href, i.note])));
+  useEffect(() => {
+    entry?.publish(JSON.parse(notes) as Record<string, string>);
+  }, [entry, notes]);
+  const shown = items.filter((item) => item.show !== false && (!entry || entry.pages.includes(item.href)));
   if (shown.length < 2) return null;
   return (
-    <nav aria-label="Sections" className={styles.tabs}>
+    <nav aria-label={entry ? "Pages" : "Sections"} className={styles.tabs}>
       {shown.map((item) => (
         <Link key={item.href} href={item.href} aria-current={pathname === item.href ? "page" : undefined}>
           {item.label}
+          {item.note ? ` ${item.note}` : ""}
         </Link>
       ))}
     </nav>

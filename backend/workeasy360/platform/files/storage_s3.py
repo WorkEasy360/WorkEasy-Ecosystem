@@ -136,6 +136,24 @@ class S3FileStore(SignedApplicationUrls):
             raise FileError(f"Could not read object: {type(exc).__name__}.") from exc
         return io.BufferedReader(_Body(response["Body"]))  # type: ignore[return-value]
 
+    def get_range(self, key: str, start: int, length: int) -> BinaryIO:
+        if start < 0 or length < 0:
+            raise FileError("A byte range starts and runs at or after zero.")
+        if length == 0:
+            return io.BytesIO(b"")
+        object_key = self._object_key(key)
+        try:
+            response = self.client.get_object(
+                Bucket=self.bucket,
+                Key=object_key,
+                Range=f"bytes={start}-{start + length - 1}",
+            )
+        except Exception as exc:
+            if self._is_missing(exc):
+                raise FileError(f"No stored object for key {key!r}.") from exc
+            raise FileError(f"Could not read object: {type(exc).__name__}.") from exc
+        return io.BufferedReader(_Body(response["Body"]))  # type: ignore[return-value]
+
     def delete(self, key: str) -> None:
         object_key = self._object_key(key)
         try:

@@ -13,7 +13,7 @@ from typing import Any
 
 from django.http import HttpRequest, JsonResponse
 
-from workeasy360.commercial.controlplane import products
+from workeasy360.commercial.controlplane import products, store
 from workeasy360.contracts.errors import ManifestRejected
 from workeasy360.contracts.values import json_input
 from workeasy360.contracts.values.tenant import TenantContext
@@ -36,6 +36,28 @@ def _body(request: HttpRequest) -> dict[str, Any]:
 @staff_view(["GET"])
 def console_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     return JsonResponse(products.console(ctx))
+
+
+@staff_view(["GET"])
+def store_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """The Super Admin Store: every product as a store card, filtered,
+    faceted and sorted by the query string (read only)."""
+    params = request.GET
+    return JsonResponse(
+        store.store(
+            ctx,
+            q=params.get("q", ""),
+            category=params.get("category", ""),
+            program=params.get("program", ""),
+            status=params.getlist("status"),
+            plan_type=params.getlist("plan_type"),
+            price_min=params.get("price_min", ""),
+            price_max=params.get("price_max", ""),
+            currency=params.get("currency", ""),
+            sort=params.get("sort", ""),
+            collection=params.get("collection", ""),
+        )
+    )
 
 
 @staff_view(["PATCH", "POST"])

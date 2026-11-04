@@ -271,6 +271,17 @@ def had_capability_at(partner_id: UUID, capability: str, moment: datetime) -> bo
     )
 
 
+def selling_experience_at(partner_id: UUID, moment: datetime) -> str:
+    """The programme a partner sells under at ``moment`` (ADR-053/056):
+    White-label while it holds the brand capability, else Reseller. One answer
+    for the margin a sale earns and the price range a partner may set."""
+    from workeasy360.commercial.partners import capabilities
+
+    if had_capability_at(partner_id, capabilities.BRANDING_MANAGE, moment):
+        return capabilities.WHITE_LABEL
+    return capabilities.RESELLER
+
+
 # --- members --------------------------------------------------------------
 
 
@@ -353,6 +364,9 @@ def _portal_entry(partner: Any, role: str, permissions: frozenset[str]) -> dict[
         ],
         "default_experience": partner.default_experience,
         "landing": capabilities.resolve_landing(partner.default_experience, held),
+        # 2026-11-03: the level the unified dashboard shows (Level 1
+        # Affiliate, 2 Reseller, 3 White-label) - the largest workspace.
+        "level": capabilities.partner_level(held),
         # What the server will let this person do right now. The
         # portal's navigation is drawn from it; every request is
         # still authorized again by the service it reaches.
@@ -530,20 +544,26 @@ def _activation_of(invite: Any) -> dict[str, Any]:
 # --- product scope --------------------------------------------------------
 
 
-def product_open_to_partner(partner_id: UUID, product_code: str) -> bool:
-    """Whether the product's channel flags (ADR-051) admit this partner: one
-    that presents itself under its own brand (branding or domain capability)
-    needs the product open to **white-label**; any other seller needs it open
-    to **reseller**. Eligibility only - the grant is still the authority."""
-    from workeasy360.commercial.catalog import selectors as catalog
+def seller_channel(partner_id: UUID) -> str:
+    """The catalog channel this partner sells through: one that presents
+    itself under its own brand (branding or domain capability) sells through
+    **white-label**; any other seller through **reseller**."""
     from workeasy360.commercial.partners import capabilities
 
-    channels = catalog.channels_open(product_code)
     branded = bool(
         active_capabilities(partner_id)
         & {capabilities.BRANDING_MANAGE, capabilities.DOMAIN_MANAGE}
     )
-    return ("white_label" if branded else "reseller") in channels
+    return "white_label" if branded else "reseller"
+
+
+def product_open_to_partner(partner_id: UUID, product_code: str) -> bool:
+    """Whether the product's channel flags (ADR-051) admit this partner's
+    channel (:func:`seller_channel`). Eligibility only - the grant is still
+    the authority."""
+    from workeasy360.commercial.catalog import selectors as catalog
+
+    return seller_channel(partner_id) in catalog.channels_open(product_code)
 
 
 def may_sell(partner_id: UUID, *, product_code: str, plan_code: str) -> bool:

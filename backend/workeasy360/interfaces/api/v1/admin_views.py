@@ -583,6 +583,7 @@ def promotion_requests_view(request: HttpRequest, ctx: TenantContext) -> JsonRes
         promotion_requests.staff_queue(
             ctx,
             status=request.GET.get("status"),
+            kind=request.GET.get("kind"),
             search=request.GET.get("q"),
             partner_id=request.GET.get("partner_id"),
             limit=request.GET.get("limit", 50),
@@ -1265,7 +1266,9 @@ def partner_product_grant_update_view(
 def partner_product_grant_revoke_view(
     request, ctx, partner_id: UUID, grant_id: UUID
 ) -> JsonResponse:
-    grant = partner_services.revoke_product_grant(ctx, partner_id, grant_id=grant_id)
+    grant = partner_services.revoke_product_grant(
+        ctx, partner_id, grant_id=grant_id, reason=_body(request).get("reason")
+    )
     return JsonResponse({"id": str(grant.id), "status": grant.status})
 
 
@@ -1335,6 +1338,11 @@ def commission_rules_view(request, ctx, **_kw: Any) -> JsonResponse:
         partner_id=_uuid(body, "partner_id", required=False),
         effective_from=start,
         recurring=body.get("recurring", False),
+        # ADR-056: plan-specific, fixed-amount and limited-duration rules.
+        plan_code=body.get("plan_code", ""),
+        fixed_amount_minor=body.get("fixed_amount_minor"),
+        fixed_currency=body.get("fixed_currency", ""),
+        recurring_months=body.get("recurring_months"),
     )
     return JsonResponse(
         {"id": str(rule.id), "code": rule.code, "version": rule.version}, status=201

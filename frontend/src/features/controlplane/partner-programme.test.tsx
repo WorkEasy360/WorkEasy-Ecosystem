@@ -31,8 +31,21 @@ const RULE = {
 
 const routes = (over: Record<string, unknown> = {}) => ({
   "GET /api/v1/admin/margins": [ok({ live: [RULE], history: [RULE] })],
-  "GET /api/v1/admin/partners/resellers": [ok({ results: [{ id: "p1", code: "res-one", display_name: "Res One" }], next_cursor: null, has_more: false })],
-  "GET /api/v1/admin/partner-programme/fees": [ok({ fees: { reseller: { amount_minor: 2000000, currency: "INR" }, white_label: null } })],
+  "GET /api/v1/admin/partners/resellers": [
+    ok({
+      results: [{ id: "p1", code: "res-one", display_name: "Res One" }],
+      next_cursor: null,
+      has_more: false,
+    }),
+  ],
+  "GET /api/v1/admin/partner-programme/fees": [
+    ok({
+      fees: {
+        reseller: { amount_minor: 2000000, currency: "INR" },
+        white_label: null,
+      },
+    }),
+  ],
   ...over,
 });
 
@@ -42,18 +55,30 @@ describe("partner margins", () => {
   it("lists the rules in force and saves a new one as whole basis points", async () => {
     const calls = mockApi(
       routes({
-        "POST /api/v1/admin/margins": [{ status: 201, body: { ...RULE, id: "r2", discount_bp: 1250 } }],
+        "POST /api/v1/admin/margins": [
+          { status: 201, body: { ...RULE, id: "r2", discount_bp: 1250 } },
+        ],
       }),
     );
     render(<PartnerProgramme manage manageFees products={PRODUCTS} />);
-    const table = await screen.findByRole("table", { name: "Margin rules in force" });
-    expect(within(table).getByText("Default for Reseller partners")).toBeInTheDocument();
+    const table = await screen.findByRole("table", {
+      name: "Margin rules in force",
+    });
+    expect(
+      within(table).getByText("Default for Reseller partners"),
+    ).toBeInTheDocument();
     expect(within(table).getByText("20.00%")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Discount off list price (%)"), { target: { value: "12.5" } });
-    fireEvent.change(screen.getByLabelText("Product"), { target: { value: "easy_crm" } });
+    fireEvent.change(screen.getByLabelText("Discount off list price (%)"), {
+      target: { value: "12.5" },
+    });
+    fireEvent.change(screen.getByLabelText("Product"), {
+      target: { value: "easy_crm" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Save margin" }));
     expect(await screen.findByText(/Margin saved/)).toBeInTheDocument();
-    expect((calls.find((c) => c.key === "POST /api/v1/admin/margins") as Call).body).toEqual({
+    expect(
+      (calls.find((c) => c.key === "POST /api/v1/admin/margins") as Call).body,
+    ).toEqual({
       discount_bp: 1250,
       recurring: true,
       product_code: "easy_crm",
@@ -65,17 +90,29 @@ describe("partner margins", () => {
     mockApi(routes());
     render(<PartnerProgramme manage manageFees products={PRODUCTS} />);
     await screen.findByRole("table", { name: "Margin rules in force" });
-    fireEvent.change(screen.getByLabelText("Discount off list price (%)"), { target: { value: "150" } });
+    fireEvent.change(screen.getByLabelText("Discount off list price (%)"), {
+      target: { value: "150" },
+    });
     expect(screen.getByRole("button", { name: "Save margin" })).toBeDisabled();
     expect(screen.getByText(/from 0 to 100/)).toBeInTheDocument();
   });
 
   it("shows no controls to staff who may only view", async () => {
     mockApi(routes());
-    render(<PartnerProgramme manage={false} manageFees={false} products={PRODUCTS} />);
+    render(
+      <PartnerProgramme
+        manage={false}
+        manageFees={false}
+        products={PRODUCTS}
+      />,
+    );
     await screen.findByRole("table", { name: "Margin rules in force" });
-    expect(screen.queryByRole("button", { name: "Save margin" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Save fee" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save margin" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save fee" }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -83,21 +120,75 @@ describe("set-up fees", () => {
   it("shows each fee and saves one in minor units", async () => {
     const calls = mockApi(
       routes({
-        "PUT /api/v1/admin/partner-programme/fees": [ok({ fees: { reseller: null, white_label: { amount_minor: 10000000, currency: "INR" } } })],
+        "PUT /api/v1/admin/partner-programme/fees": [
+          ok({
+            fees: {
+              reseller: null,
+              white_label: { amount_minor: 10000000, currency: "INR" },
+            },
+          }),
+        ],
       }),
     );
     render(<PartnerProgramme manage manageFees products={PRODUCTS} />);
     const table = await screen.findByRole("table", { name: "Set-up fees" });
     expect(within(table).getByText(/20,000\.00/)).toBeInTheDocument();
     expect(within(table).getByText("No fee")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Becoming"), { target: { value: "white_label" } });
-    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "100000" } });
+    fireEvent.change(screen.getByLabelText("Becoming"), {
+      target: { value: "white_label" },
+    });
+    fireEvent.change(screen.getByLabelText("Amount"), {
+      target: { value: "100000" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Save fee" }));
     expect(await screen.findByText("Set-up fee saved.")).toBeInTheDocument();
-    expect((calls.find((c) => c.key === "PUT /api/v1/admin/partner-programme/fees") as Call).body).toEqual({
+    expect(
+      (
+        calls.find(
+          (c) => c.key === "PUT /api/v1/admin/partner-programme/fees",
+        ) as Call
+      ).body,
+    ).toEqual({
       experience: "white_label",
       amount: "100000",
       currency: "INR",
+      instructions: "",
     });
+  });
+});
+
+describe("Partners → Upgrade Fees (2026-11-03)", () => {
+  it("shows the fees and how to pay offline, and lets a partner manager set them", async () => {
+    const { AdminContextForTest } = await import("./testSupport");
+    const { UpgradeFeesScreen } = await import("./PartnerProgramme");
+    mockApi({
+      "GET /api/v1/admin/partner-programme/fees": [
+        ok({ fees: { reseller: { amount_minor: 2500000, currency: "INR", instructions: "UPI: pay@workeasy360" }, white_label: null } }),
+      ],
+    });
+    render(
+      <AdminContextForTest permissions={["platform.staff_partner.view", "platform.staff_partner.manage"]}>
+        <UpgradeFeesScreen />
+      </AdminContextForTest>,
+    );
+    expect(screen.getByRole("heading", { level: 1, name: "Upgrade fees" })).toBeInTheDocument();
+    const table = await screen.findByRole("table", { name: "Set-up fees" });
+    expect(within(table).getByText("UPI: pay@workeasy360")).toBeInTheDocument();
+    expect(within(table).getByText("No fee")).toBeInTheDocument();
+    expect(screen.getByLabelText("How to pay offline")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save fee" })).toBeInTheDocument();
+  });
+
+  it("shows a viewer the fees without the form", async () => {
+    const { AdminContextForTest } = await import("./testSupport");
+    const { UpgradeFeesScreen } = await import("./PartnerProgramme");
+    mockApi({ "GET /api/v1/admin/partner-programme/fees": [ok({ fees: { reseller: null, white_label: null } })] });
+    render(
+      <AdminContextForTest permissions={["platform.staff_partner.view"]}>
+        <UpgradeFeesScreen />
+      </AdminContextForTest>,
+    );
+    await screen.findByRole("table", { name: "Set-up fees" });
+    expect(screen.queryByRole("button", { name: "Save fee" })).toBeNull();
   });
 });

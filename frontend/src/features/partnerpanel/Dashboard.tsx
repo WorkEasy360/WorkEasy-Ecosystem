@@ -259,7 +259,7 @@ function BarChart({ points, label, title }: { points: { date: string; value: num
 
 /** Per-product customers and subscriptions, from the same server read the product
  * screens use. A product granted later appears here by itself. */
-function ProductActivity() {
+export function ProductActivity() {
   const { id } = usePanel();
   const [load] = useLoad(() => panelApi.products(id), [id]);
   return (
@@ -291,7 +291,7 @@ function ProductActivity() {
 
 /** The newest unread notifications. The full list, and marking read, is the
  * Notification Center; this only shows that something is waiting. */
-function NotificationsPreview() {
+export function NotificationsPreview() {
   const { id, base } = usePanel();
   const [load] = useLoad(() => panelApi.notifications(id, "unread"), [id]);
   return (

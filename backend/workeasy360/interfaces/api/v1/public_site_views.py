@@ -16,6 +16,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http.response import HttpResponseBase
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods
 
@@ -24,6 +25,7 @@ from workeasy360.commercial.controlplane.product_manager import (
     MEDIA_MAX_BYTES as PRODUCT_MEDIA_MAX_BYTES,
 )
 from workeasy360.interfaces.api.v1 import commercial_views as legacy
+from workeasy360.interfaces.api.v1 import video_http
 from workeasy360.interfaces.api.v1.auth_views import establish_session
 from workeasy360.interfaces.api.v1.control_plane_http import limited
 from workeasy360.platform.administration import self_service, site
@@ -147,6 +149,46 @@ def catalog_view(request: HttpRequest) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
+def store_view(request: HttpRequest) -> JsonResponse:
+    """The public Store (2026-11-02): the public catalog as a marketplace page
+    - categories, filters with counts, sorting, product cards - filtered on
+    the server. Anonymous; an unknown filter value is a 400."""
+    from workeasy360.commercial.controlplane import portal_store
+
+    blocked = limited(request, "public_catalog")
+    if blocked is not None:
+        return blocked
+    return JsonResponse(
+        portal_store.public_store(
+            currency=request.GET.get("currency"),
+            q=request.GET.get("q"),
+            category=request.GET.get("category"),
+            status=request.GET.getlist("status"),
+            plan_type=request.GET.getlist("plan_type"),
+            price_min=request.GET.get("price_min"),
+            price_max=request.GET.get("price_max"),
+            sort=request.GET.get("sort"),
+            collection=request.GET.get("collection"),
+        )
+    )
+
+
+@require_http_methods(["GET"])
+def store_product_view(request: HttpRequest, slug: str) -> JsonResponse:
+    """One product of the public Store: its full listing, plan comparison and
+    related products. Anonymous; a product off the public catalog is a 404."""
+    from workeasy360.commercial.controlplane import portal_store
+
+    blocked = limited(request, "public_catalog")
+    if blocked is not None:
+        return blocked
+    found = portal_store.public_product(slug, currency=request.GET.get("currency"))
+    if found is None:
+        return JsonResponse({"code": "not_found", "detail": "Not found."}, status=404)
+    return JsonResponse(found)
+
+
+@require_http_methods(["GET"])
 def product_update_view(
     request: HttpRequest, slug: str, update_slug: str
 ) -> JsonResponse:
@@ -205,3 +247,31 @@ def product_media_view(request: HttpRequest, slug: str, media_id: UUID) -> HttpR
     download = request.GET.get("download") == "1"
     response["Content-Disposition"] = "attachment" if download else "inline"
     return response
+
+
+@require_http_methods(["GET"])
+def product_video_view(
+    request: HttpRequest, slug: str, media_id: UUID, extension: str
+) -> HttpResponseBase:
+    """A Store product's uploaded video (2026-11-04), with ``Range`` support so
+    a player can start at once and seek. Only a product on the customer Store,
+    only its video at its own extension, only once the files platform scanned
+    it clean; anything else is a 404. The address ends in ``.mp4``/``.webm`` so
+    a CDN in front caches it like any video file."""
+    from workeasy360.commercial.catalog import selectors as catalog_selectors
+    from workeasy360.platform.files import selectors as file_selectors
+
+    blocked = limited(request, "public_catalog")
+    if blocked is not None:
+        return blocked
+    file_id = catalog_selectors.public_video_file_id(slug, media_id, extension)
+    if file_id is None:
+        return HttpResponse(status=404)
+    return video_http.ranged_response(
+        request,
+        facts=video_http.platform_read(file_selectors.servable_size, file_id),
+        open_range=lambda start, length: video_http.platform_read(
+            file_selectors.open_servable_range, file_id, start=start, length=length
+        ),
+        cache_control="public, max-age=3600",
+    )

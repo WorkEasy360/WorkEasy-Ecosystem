@@ -19,7 +19,13 @@ from uuid import UUID
 
 from django.db.models import Prefetch, Q
 
-from workeasy360.commercial.catalog.domain import MANAGER_STATUS, publish_checklist
+from workeasy360.commercial.catalog.domain import (
+    MANAGER_STATUS,
+    publish_checklist,
+)
+from workeasy360.commercial.catalog.domain import (
+    VIDEO_CONTENT_TYPES as VIDEO_EXTENSION,
+)
 from workeasy360.contracts.enums import (
     CatalogStatus,
     FeatureKind,
@@ -275,6 +281,13 @@ def public_plan_version(
     return _to_plan_version_dto(row) if row is not None else None
 
 
+def plan_exists(plan_id: UUID) -> bool:
+    """Whether a plan with this id exists (any status)."""
+    from workeasy360.commercial.catalog.models import Plan
+
+    return Plan.objects.filter(id=plan_id).exists()
+
+
 def require_plan_version(plan_version_id: UUID) -> PlanVersionDTO:
     dto = plan_version(plan_version_id)
     if dto is None:
@@ -374,6 +387,22 @@ def trial_row(product: Any) -> dict[str, Any] | None:
     }
 
 
+def merchandising(product: Any) -> dict[str, Any]:
+    """A product's ADR-056 store content: subcategory, tags, its three bullet
+    lists and the hand-set badges. Presentation only."""
+    return {
+        "subcategory": product.subcategory,
+        "tags": list(product.tags or []),
+        "highlights": list(product.highlights or []),
+        "benefits": list(product.benefits or []),
+        "use_cases": list(product.use_cases or []),
+        "video_url": product.video_url,
+        "featured": product.featured,
+        "popular": product.popular,
+        "badge_new": product.badge_new,
+    }
+
+
 def product_row(product: Any) -> dict[str, Any]:
     """One product as the catalog screens show it, with its derived public
     availability (Phase 9)."""
@@ -404,6 +433,7 @@ def product_row(product: Any) -> dict[str, Any]:
         "reseller_enabled": product.reseller_enabled,
         "affiliate_enabled": product.affiliate_enabled,
         "white_label_enabled": product.white_label_enabled,
+        **merchandising(product),
         "created_at": product.created_at.isoformat() if product.created_at else None,
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
         "activated_at": product.activated_at.isoformat()
@@ -414,7 +444,8 @@ def product_row(product: Any) -> dict[str, Any]:
 
 def media_rows(product_ids: list[Any]) -> dict[str, list[dict[str, Any]]]:
     """Every listing image of these products, by product id, in display order
-    (logo, banner, then screenshots by position). One query."""
+    (logo, banner, then screenshots by position). One query. The uploaded
+    video is not an image and is not here (``product_videos``)."""
     from workeasy360.commercial.catalog.models import ProductMedia
 
     out: dict[str, list[dict[str, Any]]] = {str(i): [] for i in product_ids}
@@ -422,7 +453,9 @@ def media_rows(product_ids: list[Any]) -> dict[str, list[dict[str, Any]]]:
         return out
     order = {"logo": 0, "banner": 1, "screenshot": 2}
     rows = sorted(
-        ProductMedia.objects.filter(product_id__in=product_ids),
+        ProductMedia.objects.filter(product_id__in=product_ids).exclude(
+            kind=ProductMediaKind.VIDEO.value
+        ),
         key=lambda m: (order.get(m.kind, 9), m.sort_order, m.created_at),
     )
     for m in rows:
@@ -512,10 +545,10 @@ def channels_open(product_code: str) -> frozenset[str]:
 
 
 def product_facts_by_id(product_id: Any) -> dict[str, Any] | None:
-    """``{code, status}`` of one product by id, or ``None``."""
+    """``{code, name, status}`` of one product by id, or ``None``."""
     from workeasy360.commercial.catalog.models import Product
 
-    return Product.objects.filter(id=product_id).values("code", "status").first()
+    return Product.objects.filter(id=product_id).values("code", "name", "status").first()
 
 
 def readiness_for(product_id: Any) -> list[dict[str, Any]] | None:
@@ -524,6 +557,15 @@ def readiness_for(product_id: Any) -> list[dict[str, Any]] | None:
 
     product = Product.objects.filter(id=product_id).first()
     return None if product is None else publish_readiness(product)
+
+
+def is_video(product_id: Any, media_id: Any) -> bool:
+    """Whether this media of this product is its uploaded video."""
+    from workeasy360.commercial.catalog.models import ProductMedia
+
+    return ProductMedia.objects.filter(
+        id=media_id, product_id=product_id, kind=ProductMediaKind.VIDEO.value
+    ).exists()
 
 
 def media_file_id(product_id: Any, media_id: Any) -> Any | None:
@@ -552,9 +594,65 @@ def store_products() -> list[dict[str, Any]]:
     ]
 
 
+def video_embed(url: Any) -> dict[str, str] | None:
+    """A stored product video as a page plays it (``domain.video_embed``)."""
+    from workeasy360.commercial.catalog.domain import video_embed as embed
+
+    return embed(url)
+
+
 def media_url(slug: str, media_id: Any) -> str:
     """The public address of one listing image of a Store product."""
     return f"/api/v1/public/products/{slug}/media/{media_id}"
+
+
+def product_videos(product_ids: list[Any]) -> dict[str, dict[str, Any]]:
+    """The uploaded video of each of these products that has one, by product
+    id (2026-11-04). One query."""
+    from workeasy360.commercial.catalog.models import ProductMedia
+
+    if not product_ids:
+        return {}
+    return {
+        str(m.product_id): {
+            "id": str(m.id),
+            "content_type": m.content_type,
+            "size_bytes": m.size_bytes,
+            "extension": VIDEO_EXTENSION.get(m.content_type, "mp4"),
+        }
+        for m in ProductMedia.objects.filter(
+            product_id__in=product_ids, kind=ProductMediaKind.VIDEO.value
+        )
+    }
+
+
+def video_url(slug: str, video: dict[str, Any]) -> str:
+    """The public address of a Store product's uploaded video. It ends in the
+    file's extension, so a CDN in front caches it as the video it is."""
+    return f"/api/v1/public/products/{slug}/videos/{video['id']}.{video['extension']}"
+
+
+def public_video_file_id(slug: str, media_id: Any, extension: str) -> Any | None:
+    """The file behind a Store product's uploaded video - only a product on
+    the customer Store, only its video, only at its own extension - or
+    ``None``."""
+    from workeasy360.commercial.catalog.models import ProductMedia
+
+    row = (
+        ProductMedia.objects.filter(
+            id=media_id,
+            kind=ProductMediaKind.VIDEO.value,
+            product__slug=str(slug),
+            product__status=ProductStatus.AVAILABLE.value,
+            product__listing=ProductListing.LISTED.value,
+            product__customer_store_enabled=True,
+        )
+        .values_list("file_id", "content_type")
+        .first()
+    )
+    if row is None or VIDEO_EXTENSION.get(row[1]) != extension:
+        return None
+    return row[0]
 
 
 def public_media_file_id(slug: str, media_id: Any) -> Any | None:
@@ -566,6 +664,11 @@ def public_media_file_id(slug: str, media_id: Any) -> Any | None:
     return (
         ProductMedia.objects.filter(
             id=media_id,
+            kind__in=[
+                ProductMediaKind.LOGO.value,
+                ProductMediaKind.BANNER.value,
+                ProductMediaKind.SCREENSHOT.value,
+            ],
             product__slug=str(slug),
             product__status=ProductStatus.AVAILABLE.value,
             product__listing=ProductListing.LISTED.value,
@@ -576,12 +679,14 @@ def public_media_file_id(slug: str, media_id: Any) -> Any | None:
     )
 
 
-def promotable_products(*, at: Any) -> list[dict[str, Any]]:
-    """What an affiliate may promote (ADR-053): Store products open to the
-    affiliate channel, each with its sellable plans and its approved listing
-    content - the Marketing Materials. Read-only: nothing here lets a partner
-    change the catalog."""
-    rows = [p for p in store_products() if p["affiliate_enabled"]]
+def promotable_products(*, at: Any, channel: str = "affiliate") -> list[dict[str, Any]]:
+    """What an affiliate may promote (ADR-053) - or, with another ``channel``,
+    what a reseller or white-label partner may ask to sell (ADR-055): Store
+    products open to that channel, each with its sellable plans and its
+    approved listing content. Read-only: nothing here lets a partner change
+    the catalog."""
+    column = CHANNEL_FLAGS[channel]
+    rows = [p for p in store_products() if p[column]]
     plans = sellable_plans([p["code"] for p in rows], at=at)
     media = media_rows([p["id"] for p in rows])
     return [
@@ -801,6 +906,7 @@ def sellable_plans(product_codes: list[str], *, at: Any) -> list[dict[str, Any]]
         result.append(
             {
                 "plan_version_id": row.id,
+                "plan_id": row.plan_id,
                 "plan_code": row.plan.code,
                 "plan_name": row.plan.name,
                 "product_code": row.plan.product.code,
@@ -860,6 +966,7 @@ def plan_listing(*, product_code: str | None = None) -> list[dict[str, Any]]:
             "sort_order": p.sort_order,
             "billing_type": p.billing_type,
             "kind": p.kind,
+            "recommended": p.product.recommended_plan_id == p.id,
             "product": {
                 "id": str(p.product_id),
                 "code": p.product.code,
@@ -965,6 +1072,8 @@ def features_for_product(product_id: UUID) -> list[dict[str, Any]]:
             "unit": f.unit,
             "default_value": f.default_value,
             "enum_ordering": f.enum_ordering,
+            "is_public": f.is_public,
+            "description": f.description,
         }
         for f in Feature.objects.filter(product_id=product_id).order_by("key")
     ]
@@ -1020,6 +1129,8 @@ def marketplace_offers(*, at: Any) -> dict[str, list[dict[str, Any]]]:
                 "included_seats": v.included_seats,
                 "max_seats": v.max_seats,
                 "trial_days": v.trial_days,
+                "recommended": v.plan.product.recommended_plan_id == v.plan_id,
+                "sort_order": v.plan.sort_order,
             }
         )
     bundle_rows = (
@@ -1113,6 +1224,8 @@ def public_products() -> list[dict[str, Any]]:
             "availability": p.availability.value,
             "category": p.category,
             "icon": p.icon,
+            **merchandising(p),
+            "activated_at": p.activated_at.isoformat() if p.activated_at else None,
             "trial_config": trial_row(p),
             "features": [
                 {"name": f.name, "description": f.description} for f in p.public_features
@@ -1169,3 +1282,38 @@ def product_names(codes: list[str]) -> dict[str, str]:
     if not codes:
         return {}
     return dict(Product.objects.filter(code__in=set(codes)).values_list("code", "name"))
+
+
+def store_counts() -> dict[str, int]:
+    """For the Super Admin Store dashboard (ADR-056): products by Product
+    Manager status and listing, and plans on sale. Two queries."""
+    from django.db.models import Count, Q
+
+    from workeasy360.commercial.catalog.models import Plan, Product
+    from workeasy360.contracts.enums import ProductListing, ProductStatus
+
+    products = Product.objects.aggregate(
+        published=Count(
+            "id",
+            filter=Q(
+                status=ProductStatus.AVAILABLE.value, listing=ProductListing.LISTED.value
+            ),
+        ),
+        draft=Count("id", filter=Q(status=ProductStatus.DRAFT.value)),
+        coming_soon=Count("id", filter=Q(listing=ProductListing.COMING_SOON.value)),
+        archived=Count(
+            "id",
+            filter=Q(
+                status__in=[ProductStatus.DEPRECATED.value, ProductStatus.RETIRED.value]
+            ),
+        ),
+        total=Count("id"),
+    )
+    plans = Plan.objects.aggregate(
+        active=Count("id", filter=Q(status=CatalogStatus.AVAILABLE.value)),
+        draft=Count("id", filter=Q(status=CatalogStatus.DRAFT.value)),
+    )
+    return {
+        **{f"products_{k}": int(v or 0) for k, v in products.items()},
+        **{f"plans_{k}": int(v or 0) for k, v in plans.items()},
+    }

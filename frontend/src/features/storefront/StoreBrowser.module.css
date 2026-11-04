@@ -1,0 +1,1017 @@
+/* The Store, in every portal (Super Admin, customer, affiliate, reseller,
+   white-label): a marketplace page (2026-11-03 redesign) - a heading with the
+   search beside it, a "Shop by Category" panel on the left, collection tabs
+   and sorting above a grid of product cards, each with a coloured cover
+   showing the product's name over its screenshot. Every grid child that can
+   hold wide content gets min-width: 0, and the panel stacks above the cards on
+   narrow screens. */
+
+.page {
+  display: grid;
+  gap: var(--w360-space-5);
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--w360-space-4);
+}
+
+.headText {
+  min-width: 0;
+}
+
+.pageTitle {
+  margin: 0;
+  font-size: clamp(24px, 3vw, 32px);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--w360-text);
+}
+
+.lead {
+  margin: var(--w360-space-1) 0 0;
+  max-width: 70ch;
+  font-size: 16px;
+  color: var(--w360-text-muted);
+}
+
+.headActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  flex: 0 1 420px;
+  min-width: min(100%, 280px);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--w360-space-5);
+}
+
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* --- filter panel ----------------------------------------------------------------- */
+
+.panel {
+  display: grid;
+  min-width: 0;
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-lg);
+  box-shadow: var(--w360-shadow-sm);
+}
+
+@media (min-width: 961px) {
+  .panel {
+    position: sticky;
+    top: var(--w360-space-4);
+    max-height: calc(100vh - 2 * var(--w360-space-4));
+    overflow-y: auto;
+  }
+}
+
+.panel > .hint {
+  padding: var(--w360-space-4);
+}
+
+.fold {
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border-top: 1px solid var(--w360-border);
+}
+
+.fold:first-child {
+  border-top: 0;
+}
+
+.fold > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--w360-text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.foldTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.foldTitle svg {
+  color: var(--w360-brand);
+}
+
+.fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.fold > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform 0.15s ease;
+}
+
+.fold[open] > summary {
+  margin-bottom: var(--w360-space-2);
+}
+
+.fold[open] > summary::after {
+  transform: rotate(-135deg) translate(-2px, -2px);
+}
+
+.categories {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.categoryItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  color: var(--w360-text-secondary);
+  background: none;
+  border: 0;
+  border-radius: var(--w360-radius-sm);
+  cursor: pointer;
+}
+
+.catIcon {
+  flex: none;
+  color: var(--w360-text-muted);
+}
+
+.catLabel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.categoryItem:hover {
+  color: var(--w360-text);
+  background: var(--w360-bg-soft);
+}
+
+.categoryItem[aria-pressed="true"] {
+  font-weight: 700;
+  color: var(--w360-brand);
+  background: var(--w360-brand-soft);
+}
+
+.categoryItem[aria-pressed="true"] .catIcon {
+  color: var(--w360-brand);
+}
+
+.categoryItem:focus-visible,
+.category:focus-visible,
+.activeChip:focus-visible,
+.clearAll:focus-visible,
+.tab:focus-visible,
+.fold > summary:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+.count {
+  flex: none;
+  min-width: 24px;
+  margin-left: auto;
+  padding: 1px 7px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--w360-text-muted);
+  background: var(--w360-neutral-bg);
+  border-radius: 999px;
+}
+
+.options {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 2px 10px;
+  font-size: 14px;
+  color: var(--w360-text-secondary);
+  border-radius: var(--w360-radius-sm);
+  cursor: pointer;
+}
+
+.option:hover {
+  background: var(--w360-bg-soft);
+}
+
+.option input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--w360-brand);
+}
+
+.optionLabel {
+  min-width: 0;
+}
+
+.priceForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: end;
+  gap: var(--w360-space-2);
+}
+
+.priceForm label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.priceForm input {
+  width: 100%;
+}
+
+.priceForm button {
+  grid-column: 1 / -1;
+}
+
+.hint {
+  margin: var(--w360-space-2) 0 0;
+  font-size: 13px;
+  color: var(--w360-text-muted);
+}
+
+/* --- toolbar and results ------------------------------------------------------------ */
+
+.results {
+  display: grid;
+  gap: var(--w360-space-4);
+  min-width: 0;
+}
+
+.results[aria-busy="true"] .grid {
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2) var(--w360-space-4);
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1);
+  min-width: 0;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 var(--w360-space-3);
+  margin-bottom: -1px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--w360-text-muted);
+  background: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--w360-text);
+}
+
+.tab[aria-pressed="true"] {
+  font-weight: 800;
+  color: var(--w360-text);
+  border-bottom-color: var(--w360-accent);
+}
+
+.tabCount {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--w360-text-muted);
+}
+
+.toolbarEnd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-3);
+  margin-left: auto;
+  padding: 6px 0;
+}
+
+.search {
+  position: relative;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.searchIcon {
+  position: absolute;
+  top: 50%;
+  left: 14px;
+  transform: translateY(-50%);
+  color: var(--w360-text-muted);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  min-height: 44px;
+  padding-left: 42px;
+  border-radius: 999px;
+  background: var(--w360-surface);
+}
+
+.control {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  min-width: 0;
+}
+
+.control label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--w360-text-secondary);
+  white-space: nowrap;
+}
+
+.control select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.showing {
+  margin: 0;
+  font-size: 14px;
+  color: var(--w360-text-muted);
+}
+
+.showing strong {
+  color: var(--w360-text);
+}
+
+.active {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activeChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 2px 10px 2px 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--w360-text);
+  background: var(--w360-brand-soft);
+  border: 1px solid var(--w360-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.activeChip:hover {
+  border-color: var(--w360-border-strong);
+}
+
+.clearAll {
+  min-height: 30px;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--w360-text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.error {
+  margin: 0;
+  color: var(--w360-danger);
+}
+
+.empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-7) var(--w360-space-5);
+  text-align: center;
+  background: var(--w360-surface);
+  border: 1px dashed var(--w360-border-strong);
+  border-radius: var(--w360-radius-lg);
+}
+
+.emptyTitle {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* --- cards ------------------------------------------------------------------------ */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 216px), 1fr));
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-border);
+  border-radius: 14px;
+  box-shadow: 0 2px 8px rgba(22, 29, 36, 0.06);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.card:hover,
+.card:focus-within {
+  transform: translateY(-3px);
+  border-color: var(--w360-border-strong);
+  box-shadow: 0 14px 30px rgba(22, 29, 36, 0.12);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+  }
+
+  .card:hover,
+  .card:focus-within {
+    transform: none;
+  }
+}
+
+/* The cover: a coloured band with the name, the screenshot rising from its foot. */
+.media {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 156px;
+  padding: 24px 14px 0;
+  overflow: hidden;
+  color: #ffffff;
+  background: var(--w360-neutral-bg);
+}
+
+.mediaHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mediaHead > span:first-child {
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 7px;
+}
+
+.mediaName {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.shot {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+  border-radius: 8px 8px 0 0;
+  box-shadow: 0 -2px 14px rgba(0, 0, 0, 0.18);
+}
+
+.banner {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top left;
+}
+
+.markShot {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 12px;
+}
+
+.markShot > span {
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.toneBlue {
+  background: linear-gradient(135deg, #1d4fbf 0%, #3b82f6 100%);
+}
+
+.toneGreen {
+  background: linear-gradient(135deg, #087443 0%, #22c47a 100%);
+}
+
+.toneOrange {
+  background: linear-gradient(135deg, #c2410c 0%, #f59e0b 100%);
+}
+
+.tonePurple {
+  background: linear-gradient(135deg, #5b33c9 0%, #9b7bf3 100%);
+}
+
+.toneRed {
+  background: linear-gradient(135deg, #0e7490 0%, #2dd4bf 100%);
+}
+
+/* The corner tags ("Best seller", "New!", "Coming soon", ...). */
+/* They hang from the cover's top edge, clear of the name below them. */
+.ribbons {
+  position: absolute;
+  top: 0;
+  right: 12px;
+  display: flex;
+  gap: 4px;
+}
+
+.ribbonList {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.badge {
+  padding: 2px 9px 3px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.badgeCollection {
+  color: var(--w360-sun-contrast);
+  background: var(--w360-sun);
+}
+
+.badgeNew {
+  color: var(--w360-success);
+  background: var(--w360-success-bg);
+}
+
+.badgeTrial {
+  color: var(--w360-tile-orange);
+  background: var(--w360-tile-orange-bg);
+}
+
+.badgeSoon {
+  color: var(--w360-info);
+  background: var(--w360-info-bg);
+}
+
+.badgeQuiet {
+  color: var(--w360-text-secondary);
+  background: var(--w360-surface);
+  border-color: var(--w360-border-strong);
+}
+
+.badgeArchived,
+.badgeWarning {
+  color: var(--w360-text);
+  background: var(--w360-warning-bg);
+}
+
+.body {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  flex: 1;
+  gap: 8px;
+  padding: 14px 16px 10px;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  justify-self: stretch;
+}
+
+.titleRow > span:first-child {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
+  border-radius: 7px;
+}
+
+.title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.title a {
+  color: var(--w360-text);
+  text-decoration: none;
+}
+
+.title a:hover {
+  color: var(--w360-brand);
+  text-decoration: underline;
+}
+
+.category {
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+  color: var(--w360-success);
+  background: var(--w360-success-bg);
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.category:hover {
+  text-decoration: underline;
+}
+
+.categoryNone {
+  font-size: 12px;
+  color: var(--w360-text-faint);
+}
+
+.summary {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--w360-text-secondary);
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+
+.summaryEmpty {
+  font-style: italic;
+  color: var(--w360-text-muted);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--w360-text-secondary);
+  background: var(--w360-neutral-bg);
+  border-radius: var(--w360-radius-sm);
+}
+
+.chipTrial {
+  color: var(--w360-success);
+  background: var(--w360-success-bg);
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-2);
+  padding: 4px 16px 14px;
+}
+
+.priceBlock {
+  display: grid;
+  min-width: 0;
+}
+
+.price {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.amount {
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--w360-text);
+}
+
+.per {
+  margin-left: 3px;
+  font-size: 12px;
+  color: var(--w360-text-muted);
+}
+
+.noPrice {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--w360-text-muted);
+}
+
+.deal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--w360-text-secondary);
+}
+
+.compare {
+  color: var(--w360-text-muted);
+}
+
+.save {
+  padding: 0 6px;
+  font-weight: 700;
+  color: var(--w360-success);
+  background: var(--w360-success-bg);
+  border-radius: var(--w360-radius-sm);
+}
+
+.manage {
+  flex: none;
+}
+
+/* "View Details ->": the card's outlined link beside the price. */
+.detailsLink {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--w360-brand);
+  text-decoration: none;
+  background: var(--w360-surface);
+  border: 1.5px solid var(--w360-accent);
+  border-radius: 8px;
+}
+
+.detailsLink:hover {
+  color: var(--w360-brand-contrast);
+  background: var(--w360-brand);
+  border-color: var(--w360-brand);
+}
+
+.detailsLink:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+/* A card's own facts under its summary (an access status, what a sale earns). */
+.facts {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--w360-text-secondary);
+}
+
+.facts p {
+  margin: 0;
+}
+
+/* The buttons of a card that has more than one thing to do. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  padding: 0 16px 16px;
+}
+
+.actions:empty {
+  display: none;
+}
+
+.above {
+  display: grid;
+  gap: var(--w360-space-3);
+  min-width: 0;
+}
+
+/* --- loading ------------------------------------------------------------------------ */
+
+.skeleton .media {
+  background: var(--w360-neutral-bg);
+}
+
+.skeletonLine {
+  display: block;
+  height: 14px;
+  background: var(--w360-neutral-bg);
+  border-radius: var(--w360-radius-sm);
+}
+
+.skeletonShort {
+  width: 55%;
+}
+
+/* --- narrow screens: categories and programs as rows of chips ----------------------- */
+
+@media (max-width: 960px) {
+  .categories,
+  .options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .categoryItem,
+  .option {
+    width: auto;
+    min-height: 32px;
+    padding: 4px 10px;
+    border: 1px solid var(--w360-border);
+    border-radius: 999px;
+  }
+
+  .categoryItem[aria-pressed="true"] {
+    border-color: var(--w360-brand);
+  }
+
+  .count {
+    margin-left: 4px;
+  }
+
+  .toolbarEnd {
+    margin-left: 0;
+  }
+}
+
+/* --- ADR-056: plan comparison and the product page --------------------------- */
+
+/* A grid item defaults to min-width: auto and would grow to the table's
+   width; held to the page, the table scrolls inside its own frame. */
+.compareSection {
+  min-width: 0;
+}
+
+.compareWrap {
+  overflow-x: auto;
+  max-width: 100%;
+  margin-top: var(--w360-space-3);
+}
+
+.compare {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 32rem;
+}
+
+.compare th,
+.compare td {
+  padding: var(--w360-space-3);
+  border-bottom: 1px solid var(--w360-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.compare thead th {
+  font-weight: 600;
+}
+
+.compareRecommended {
+  background: var(--w360-brand-soft);
+  box-shadow: inset 0 3px 0 var(--w360-brand);
+}
+
+.compareName {
+  display: block;
+  font-size: 1.05rem;
+}
+
+.productHero {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--w360-space-4);
+  align-items: center;
+}
+
+.productBullets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--w360-space-4);
+}
+
+.shots {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  gap: var(--w360-space-3);
+  overflow-x: auto;
+  padding: 0;
+  list-style: none;
+}
+
+.shots img {
+  max-height: 14rem;
+  width: auto;
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+}
+
+@media (max-width: 640px) {
+  .productHero {
+    grid-template-columns: 1fr;
+  }
+}

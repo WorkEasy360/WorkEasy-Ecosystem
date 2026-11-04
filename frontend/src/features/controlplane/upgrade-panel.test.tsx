@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import type { PartnerUpgrades, UpgradeRequestRow } from "@/lib/api/partnerConsole";
 import type { Load } from "./ui";
@@ -268,6 +268,23 @@ describe("deciding", () => {
       commercial_reference: "CONTRACT-2026-17",
     });
     expect(onChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an offline fee with the partner's reference ready to verify and keep (2026-11-03)", async () => {
+    const fee = { amount_minor: 2_500_000, currency: "INR", settled: false, payment_method: "offline" as const, payment_reference: "UTR 4029", paid_online: false, paid_at: null, online_payment: null };
+    const calls = mockApi({ [DECISION]: [ok(request({ status: "approved" }))] });
+    mount(upgrades({ open: request({ setup_fee: fee }) }));
+    expect(screen.getByText(/the partner says it paid offline, reference UTR 4029\. Verify the transfer/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Set-up fee payment reference \(required\)/)).toHaveValue("UTR 4029");
+    fireEvent.click(screen.getByRole("button", { name: "Approve upgrade" }));
+    await waitFor(() => expect(writes(calls)[0].body).toMatchObject({ commercial_reference: "UTR 4029" }));
+  });
+
+  it("shows a fee paid online as confirmed, with the reference optional (2026-11-03)", () => {
+    const fee = { amount_minor: 2_500_000, currency: "INR", settled: false, payment_method: "online" as const, payment_reference: "", paid_online: true, paid_at: "2026-11-03T10:00:00Z", online_payment: null };
+    mount(upgrades({ open: request({ setup_fee: fee }) }));
+    expect(screen.getByText(/paid online, confirmed by the payment provider/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Commercial reference \(optional\)/)).toHaveValue("");
   });
 
   it("can approve with a product the partner did not ask for left unticked, and with none", async () => {

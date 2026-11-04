@@ -42,6 +42,31 @@ ALLOWED_CONTENT_TYPES: Final[frozenset[str]] = frozenset(
     }
 )
 
+#: Video is accepted only where a caller asks for it (``allowed_types``): the
+#: product page's uploaded video (2026-11-04). Not on the general allowlist, so
+#: no other upload path starts taking video by accident.
+VIDEO_CONTENT_TYPES: Final[frozenset[str]] = frozenset({"video/mp4", "video/webm"})
+
+#: The MP4 ``ftyp`` major brands accepted as ``video/mp4``. QuickTime (``qt  ``)
+#: and the HEIF/AVIF image brands share the box and are not video/mp4.
+_MP4_BRANDS: Final[frozenset[bytes]] = frozenset(
+    {
+        b"isom",
+        b"iso2",
+        b"iso4",
+        b"iso5",
+        b"iso6",
+        b"mp41",
+        b"mp42",
+        b"avc1",
+        b"M4V ",
+        b"M4VP",
+        b"dash",
+        b"mmp4",
+        b"MSNV",
+    }
+)
+
 #: Rejected regardless of allowlist membership.
 #: SVG is XML that can carry script, so it is treated as executable and
 #: rejected rather than served (12-security.md section 10).
@@ -86,9 +111,19 @@ def safe_filename(filename: str) -> str:
     return name[:255]
 
 
-def validate_upload(*, content_type: str, size_bytes: int, filename: str) -> None:
-    """Reject before any bytes are stored."""
-    max_bytes = getattr(settings, "FILE_MAX_BYTES", 25 * 1024 * 1024)
+def validate_upload(
+    *,
+    content_type: str,
+    size_bytes: int,
+    filename: str,
+    allowed_types: frozenset[str] = frozenset(),
+    max_bytes: int | None = None,
+) -> None:
+    """Reject before any bytes are stored. ``allowed_types`` adds types (video)
+    to the allowlist for this one call; ``max_bytes`` replaces the general
+    ceiling for it."""
+    if max_bytes is None:
+        max_bytes = getattr(settings, "FILE_MAX_BYTES", 25 * 1024 * 1024)
 
     if size_bytes <= 0:
         raise FileTooLarge("Empty uploads are rejected.", size_bytes=size_bytes)
@@ -105,7 +140,7 @@ def validate_upload(*, content_type: str, size_bytes: int, filename: str) -> Non
             f"{normalized} is not accepted: it can carry executable content.",
             content_type=normalized,
         )
-    if normalized not in ALLOWED_CONTENT_TYPES:
+    if normalized not in ALLOWED_CONTENT_TYPES | allowed_types:
         raise UnsupportedFileType(
             f"{normalized or 'unknown'} is not in the accepted type list.",
             content_type=normalized,
@@ -113,11 +148,23 @@ def validate_upload(*, content_type: str, size_bytes: int, filename: str) -> Non
 
 
 def detect_content_type(head: bytes) -> str:
-    """Identify content from its leading bytes."""
+    """Identify content from its leading bytes (at least 12 for video)."""
     for prefix, content_type in _MAGIC:
         if head.startswith(prefix):
             return content_type
+    # MP4: a box size, then ``ftyp`` and the major brand.
+    if head[4:8] == b"ftyp" and head[8:12] in _MP4_BRANDS:
+        return "video/mp4"
+    # WebM: an EBML header (Matroska shares it; the browser judges the rest).
+    if head.startswith(b"\x1a\x45\xdf\xa3"):
+        return "video/webm"
     return ""
+
+
+#: Declared types whose bytes can be checked against a signature.
+_VERIFIABLE: Final[frozenset[str]] = (
+    frozenset({ct for _prefix, ct in _MAGIC}) | VIDEO_CONTENT_TYPES
+)
 
 
 def build_storage_key(organization_id: UUID, module: str, file_id: UUID) -> str:
@@ -133,6 +180,8 @@ def register_upload(
     content_type: str,
     size_bytes: int,
     module: str,
+    allowed_types: frozenset[str] = frozenset(),
+    max_bytes: int | None = None,
 ) -> tuple[UUID, PresignedUpload]:
     """Validate, create metadata, and return a constrained upload grant.
 
@@ -142,7 +191,13 @@ def register_upload(
     from workeasy360.platform.files.models import File
     from workeasy360.platform.files.storage import get_store
 
-    validate_upload(content_type=content_type, size_bytes=size_bytes, filename=filename)
+    validate_upload(
+        content_type=content_type,
+        size_bytes=size_bytes,
+        filename=filename,
+        allowed_types=allowed_types,
+        max_bytes=max_bytes,
+    )
 
     file_id = uuid.uuid4()
     key = build_storage_key(ctx.organization_id, module, file_id)
@@ -164,7 +219,9 @@ def register_upload(
     grant = get_store().presign_upload(
         key,
         content_type=content_type,
-        max_bytes=getattr(settings, "FILE_MAX_BYTES", 25 * 1024 * 1024),
+        max_bytes=max_bytes
+        if max_bytes is not None
+        else getattr(settings, "FILE_MAX_BYTES", 25 * 1024 * 1024),
         ttl=timedelta(seconds=getattr(settings, "FILE_URL_TTL_SECONDS", 900)),
     )
     logger.info(
@@ -211,7 +268,7 @@ def store_content(ctx: TenantContext, file_id: UUID, content: BinaryIO) -> None:
     # cannot be verified this way. They are accepted, are inert, and are
     # served with Content-Disposition: attachment from an isolated origin.
     declared = (record.declared_content_type or "").split(";")[0].strip().lower()
-    verifiable = declared in {ct for _prefix, ct in _MAGIC}
+    verifiable = declared in _VERIFIABLE
 
     mismatch = verifiable and detected != declared
     blocked = bool(detected) and detected in BLOCKED_CONTENT_TYPES

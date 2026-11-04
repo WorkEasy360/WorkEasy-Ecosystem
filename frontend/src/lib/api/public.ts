@@ -97,6 +97,118 @@ export interface PublicProductPage {
   bundles: PublicBundle[];
 }
 
+/** One product of the public Store (`/store`, 2026-11-02): the public
+ * catalog's product plus what a Store card shows - every value the server's. */
+export interface PublicStoreCard extends PublicProduct {
+  title: string;
+  summary: string;
+  status: "available" | "coming_soon";
+  ribbon: { kind: "coming_soon" | "new" | "trial"; label: string } | null;
+  price: { amount_minor: number; currency: string; interval: string; plan_name: string; list_amount_minor?: number | null; discount_bp?: number } | null;
+  yearly_deal: { amount_minor: number; compare_at_minor: number; currency: string; save_percent: number } | null;
+  badges?: string[];
+  tags?: string[];
+  subcategory?: string;
+  plan_types: string[];
+  trial_days: number | null;
+  logo_url: string | null;
+  banner_url: string | null;
+}
+
+interface PublicStoreFacet {
+  value: string;
+  label: string;
+  count: number;
+}
+
+/** The public Store: the public catalog as a marketplace page. */
+export interface PublicStorePage {
+  currency: string | null;
+  currencies: string[];
+  count: number;
+  total: number;
+  products: PublicStoreCard[];
+  facets: {
+    categories: PublicStoreFacet[];
+    statuses: PublicStoreFacet[];
+    plan_types: PublicStoreFacet[];
+    collections?: PublicStoreFacet[];
+    price: { min_minor: number | null; max_minor: number | null };
+  };
+  sorts: { value: string; label: string }[];
+}
+
+/** A listing image of a Store product. */
+export interface PublicStoreImage {
+  url: string;
+  caption: string;
+  width: number;
+  height: number;
+}
+
+/** A product page's video (2026-11-04). `embed_url` is the server's fixed
+ * player address (YouTube's no-cookie host or Vimeo's player), never the link
+ * an admin typed; the CSP's `frame-src` names exactly those two origins. */
+export type PublicStoreVideo =
+  | {
+      provider: "youtube" | "vimeo";
+      id: string;
+      embed_url: string;
+      watch_url: string;
+    }
+  /** A video uploaded from the admin's computer: same-origin, played by the
+   * browser's own player (`url` answers Range requests). */
+  | { provider: "upload"; id: string; url: string; content_type: string };
+
+/** A plan as the public Store's comparison shows it. */
+export type PublicStorePlan = Omit<PublicPlan, "billing_type" | "kind" | "prices"> & {
+  billing_type: "paid" | "free_trial";
+  kind: "standard" | "add_on";
+  recommended?: boolean;
+  /** ADR-056: a promotional discount's list price and a one-time set-up fee
+   * ride on each price row. */
+  prices: (PublicPlan["prices"][number] & { list_amount_minor?: number | null; discount_bp?: number; setup_fee_minor?: number | null })[];
+};
+
+/** One product of the public Store (`/store/product/<slug>`): its full
+ * listing, the plan comparison and related products - every value the server's. */
+export interface PublicStoreProductPage {
+  currency: string | null;
+  currencies: string[];
+  product: {
+    code: string;
+    slug: string;
+    name: string;
+    tagline: string;
+    availability: PublicAvailability;
+    trial: PublicTrialOffer;
+    category: string;
+    subcategory: string;
+    icon: string;
+    title: string;
+    summary: string;
+    description: string;
+    highlights: string[];
+    benefits: string[];
+    use_cases: string[];
+    tags: string[];
+    badges: string[];
+    documentation_url: string;
+    support_url: string;
+    status: "available" | "coming_soon";
+    logo: PublicStoreImage | null;
+    banner: PublicStoreImage | null;
+    screenshots: PublicStoreImage[];
+    /** Absent from an older server's answer. */
+    video?: PublicStoreVideo | null;
+    price: PublicStoreCard["price"];
+    yearly_deal: PublicStoreCard["yearly_deal"];
+  };
+  plans: PublicStorePlan[];
+  comparison: { key: string; label: string; description?: string; kind: string; unit: string; values: Record<string, unknown> }[];
+  related: { code: string; slug: string; name: string; title: string; summary: string; icon: string; category: string; price: PublicStoreCard["price"] }[];
+}
+
 export interface SignupRequest {
   first_name: string;
   last_name: string;
@@ -112,6 +224,11 @@ export const publicApi = {
   site: () => apiFetch<SiteSettings>("/api/v1/public/site"),
   catalog: (currency?: string) =>
     apiFetch<PublicCatalog>("/api/v1/public/catalog", { query: { currency } }),
+  /** The public Store: filtered, counted and sorted on the server (`status`
+   * and `plan_type` comma-separated; price bounds in major units). */
+  store: (query: Record<string, string | undefined>) => apiFetch<PublicStorePage>("/api/v1/public/store", { query }),
+  storeProduct: (slug: string, currency?: string) =>
+    apiFetch<PublicStoreProductPage>(`/api/v1/public/store/products/${encodeURIComponent(slug)}`, { query: { currency } }),
   product: (slug: string, currency?: string) =>
     apiFetch<PublicProductPage>(`/api/v1/public/catalog/products/${encodeURIComponent(slug)}`, {
       query: { currency },

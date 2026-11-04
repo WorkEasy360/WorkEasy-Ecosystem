@@ -3,15 +3,16 @@
     CHECK_PASSWORD=... python scripts/store_console_check/prepare.py
     python scripts/store_console_check/prepare.py --drop
 
-1. **The committed code** (``git archive HEAD``) migrates ``w360_sc_fresh`` and
-   writes the history production would hold (``seed_history.py``: the
-   ecosystem history, a live and a revoked promotion grant, a product link
-   with a captured visit).
+1. **The committed code** (``git archive HEAD``, which has ``partners.0012``)
+   migrates ``w360_sc_fresh`` and writes the history production would hold
+   (``seed_history.py``: the ecosystem history, a live and a revoked
+   promotion grant, a product link with a captured visit, an approved and a
+   pending affiliate request, a product grant).
 2. Every existing row of the tables ADR-055 reads or writes is fingerprinted.
-3. **The working tree** applies ``partners.0012``: the fingerprints must be
-   identical, the new table is empty (no request is invented for an existing
-   grant), and the ledger still refuses UPDATE.
-4. ``partners.0012`` is reversed and re-applied; the fingerprints again.
+3. **The working tree** applies ``partners.0013`` (the request's kind): the
+   fingerprints must be identical, every existing request is ``promote`` with
+   no product grant, and the ledger still refuses UPDATE.
+4. ``partners.0013`` is reversed and re-applied; the fingerprints again.
 5. ``scripts/ecosystem_browser_check/seed.py`` adds the acceptance data (the
    four products on the Store with TEST prices, a 10% programme rule, the
    affiliate Aman with no promotion grant, Super Admin ``staff@eco.test``).
@@ -48,6 +49,8 @@ eco.DB = DB  # its helpers read the module's database name
 
 FINGERPRINTS = {
     "partners_promotion_grant": "id, partner_id, product_id, status, granted_at, revoked_at",
+    "partners_promotion_request": "id, partner_id, product_id, status, channel, website, audience, strategy, notes, requested_at, decided_at, decision_reason, grant_id, revoked_at, revoke_reason",
+    "partners_product_grant": "id, partner_id, product_id, plan_id, status, granted_at, revoked_at",
     "partners_account": "id, code, display_name, status, version",
     "partners_capability_grant": "id, partner_id, capability, status, granted_at, revoked_at",
     "commissions_referral_code": "id, partner_id, code, status, product_code, link_kind, campaign_id",
@@ -101,8 +104,8 @@ def main() -> int:
         plan = eco.run(new, "showmigrations", "--plan")
         check("no migration left unapplied", "[ ]" not in plan)
         check(
-            "partners.0012_promotion_requests applied",
-            "[X]  partners.0012_promotion_requests" in plan,
+            "partners.0013_product_request_kind applied",
+            "[X]  partners.0013_product_request_kind" in plan,
         )
 
         print("== 3. every existing row is unchanged; nothing is invented")
@@ -113,20 +116,26 @@ def main() -> int:
                 after[table] == before[table],
                 f"{after[table][0]} rows",
             )
+        kinds = q(
+            DB,
+            "SELECT kind, count(*), count(product_grant_id) FROM partners_promotion_request GROUP BY kind",
+        )
         check(
-            "the request table starts empty",
-            q(DB, "SELECT count(*) FROM partners_promotion_request")[0][0] == 0,
+            "existing requests are 'promote' with no product grant",
+            [tuple(k) for k in kinds] == [("promote", 2, 0)],
+            str(kinds),
         )
         check("the ledger is still append-only (UPDATE refused)", eco._update_refused())
 
         print("== 4. the migration reverses and re-applies without loss")
-        eco.run(new, "migrate", "partners", "0011", "--noinput")
+        eco.run(new, "migrate", "partners", "0012", "--noinput")
         check("reversed: rows intact", eco.fingerprints() == before)
         check(
-            "reversed: the request table is gone",
+            "reversed: the kind column is gone",
             q(
                 DB,
-                "SELECT count(*) FROM pg_tables WHERE tablename = 'partners_promotion_request'",
+                "SELECT count(*) FROM information_schema.columns WHERE "
+                "table_name = 'partners_promotion_request' AND column_name = 'kind'",
             )[0][0]
             == 0,
         )

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { LoadGate, money, useAction, useLoad } from "@/features/controlplane/ui";
 import { panelApi, type OwnProfile, type UpgradeRequest, type UpgradeState, type UpgradeTarget } from "@/lib/api/partnerPanel";
 import { workspaceHome } from "./experiences";
@@ -33,8 +33,33 @@ import styles from "./PartnerPanel.module.css";
 export function UpgradePage({ target }: { target?: UpgradeTarget }) {
   const { id } = usePanel();
   const [load, reload] = useLoad(() => panelApi.upgrade(id), [id]);
+  // Back from the provider's page (2026-11-03): the address proves nothing, so
+  // ask the server until the provider's confirmation arrives (or a minute passes).
+  const [returned] = useState(() =>
+    typeof window === "undefined" ? false : new URLSearchParams(window.location.search).get("outcome") === "success",
+  );
+  const waiting =
+    returned &&
+    load.status === "ready" &&
+    !!load.data.open?.setup_fee &&
+    !load.data.open.setup_fee.paid_online &&
+    load.data.open.setup_fee.online_payment?.status === "awaiting_payment";
+  const polls = useRef(0);
+  useEffect(() => {
+    if (!waiting || polls.current >= 20) return;
+    const timer = setTimeout(() => {
+      polls.current += 1;
+      reload();
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [waiting, load, reload]);
   return (
     <div className={styles.page}>
+      {waiting && (
+        <p role="status" className={styles.notice}>
+          Waiting for the payment provider to confirm your payment…
+        </p>
+      )}
       <LoadGate load={load} what="your upgrade">
         {(state) => <UpgradeBody state={state} target={target} reload={reload} />}
       </LoadGate>
@@ -237,11 +262,18 @@ function Wizard({ state, request, onChanged }: { state: UpgradeState; request: U
         request={current}
         busy={busy}
         onBack={back}
-        onSubmit={() =>
+        onSubmit={(reference) =>
           void act(async () => {
-            setLatest(await panelApi.submitUpgrade(id, current.id, current.version));
+            setLatest(await panelApi.submitUpgrade(id, current.id, current.version, reference));
             onChanged();
           }, "Sent for review.")
+        }
+        onPay={() =>
+          void act(async () => {
+            const { payment } = await panelApi.payUpgrade(id, current.id, current.version);
+            // The provider's own page: what the payer types never passes through here.
+            if (payment.checkout_url) window.location.assign(payment.checkout_url);
+          }, "Opening the payment page…")
         }
         onRefresh={onChanged}
       />
@@ -286,13 +318,17 @@ function Review({
   busy,
   onBack,
   onSubmit,
+  onPay,
   onRefresh,
 }: {
   state: UpgradeState;
   request: UpgradeRequest;
   busy: boolean;
   onBack: () => void;
-  onSubmit: () => void;
+  /** Sends the request; `reference` is the offline transfer's, when there is a fee. */
+  onSubmit: (reference?: string) => void;
+  /** Opens the provider's page for the set-up fee (2026-11-03). */
+  onPay: () => void;
   onRefresh: () => void;
 }) {
   // The checklist is the server's answer for the stored facts; ask again on arrival
@@ -302,6 +338,14 @@ function Review({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const missing = state.checklist.filter((c) => c.required && !c.done);
+  const fee = request.setup_fee;
+  const online = !!state.payment?.online_available;
+  const [method, setMethod] = useState<"online" | "offline">(online ? "online" : "offline");
+  const [reference, setReference] = useState(fee?.payment_reference ?? "");
+  const referenceId = useId();
+  const unpaid = !!fee && !fee.paid_online;
+  const offline = unpaid && (method === "offline" || !online);
+  const needsReference = offline && !reference.trim();
   return (
     <div className={styles.page}>
       <Summary state={state} request={request} />
@@ -316,11 +360,56 @@ function Review({
           ))}
         </ul>
       </section>
-      {request.setup_fee && (
-        <p role="note">
-          Set-up fee: {money(request.setup_fee.amount_minor, request.setup_fee.currency)} -{" "}
-          {request.setup_fee.settled ? "paid." : "Workeasy360 invoices it; the upgrade is approved once it is paid."}
-        </p>
+      {fee && (
+        <section className={styles.panel} aria-labelledby="upgrade-fee">
+          <h3 id="upgrade-fee">Set-up fee: {money(fee.amount_minor, fee.currency)}</h3>
+          {fee.paid_online ? (
+            <p role="status">Paid online - confirmed by the payment provider.</p>
+          ) : (
+            <>
+              <p className={styles.muted}>Set by Workeasy360. The upgrade is approved once it is paid.</p>
+              {fee.online_payment && ["failed", "expired"].includes(fee.online_payment.status) && (
+                <p role="alert">Your last online payment did not go through. Nothing was charged; you can try again.</p>
+              )}
+              {online && (
+                <fieldset className={styles.choices}>
+                  <legend>How will you pay?</legend>
+                  <label>
+                    <input type="radio" name="fee-method" checked={method === "online"} onChange={() => setMethod("online")} /> Pay online now
+                  </label>
+                  <label>
+                    <input type="radio" name="fee-method" checked={method === "offline"} onChange={() => setMethod("offline")} /> I have paid by bank
+                    transfer or UPI
+                  </label>
+                </fieldset>
+              )}
+              {offline && (
+                <>
+                  {state.payment?.instructions && (
+                    <div className={styles.instructions}>
+                      <p>
+                        <strong>How to pay</strong>
+                      </p>
+                      <p className={styles.preWrap}>{state.payment.instructions}</p>
+                    </div>
+                  )}
+                  <label htmlFor={referenceId}>Transaction reference (UTR, transfer or receipt number)</label>
+                  <input
+                    id={referenceId}
+                    className="w360-input"
+                    maxLength={120}
+                    value={reference}
+                    onChange={(e) => setReference(e.target.value)}
+                    aria-describedby={`${referenceId}-hint`}
+                  />
+                  <p id={`${referenceId}-hint`} className={styles.muted}>
+                    Workeasy360 checks the payment before approving.
+                  </p>
+                </>
+              )}
+            </>
+          )}
+        </section>
       )}
       <p className={styles.muted}>
         Workeasy360 reviews every request. Nothing about your account changes until it is approved, and you keep using your current workspace in the
@@ -330,9 +419,20 @@ function Review({
         <button type="button" className="w360-btn w360-btn-secondary" onClick={onBack}>
           Back
         </button>
-        <button type="button" className="w360-btn w360-btn-primary" disabled={busy || missing.length > 0} onClick={onSubmit}>
-          Send for review
-        </button>
+        {unpaid && !offline ? (
+          <button type="button" className="w360-btn w360-btn-primary" disabled={busy || missing.length > 0} onClick={onPay}>
+            Pay {money(fee!.amount_minor, fee!.currency)} and send for review
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="w360-btn w360-btn-primary"
+            disabled={busy || missing.length > 0 || needsReference}
+            onClick={() => onSubmit(offline ? reference.trim() : undefined)}
+          >
+            Send for review
+          </button>
+        )}
         {missing.length > 0 && <span role="status">Complete the items marked &ldquo;Still needed&rdquo; first.</span>}
       </div>
     </div>
@@ -396,6 +496,14 @@ function Submitted({ state, request, onChanged }: { state: UpgradeState; request
         <p>
           <span className={STATUS_BADGE[request.status]}>{STATUS_LABEL[request.status]}</span>
         </p>
+        {request.setup_fee && (
+          <p>
+            Set-up fee {money(request.setup_fee.amount_minor, request.setup_fee.currency)}:{" "}
+            {request.setup_fee.paid_online
+              ? "paid online."
+              : `paid offline, reference ${request.setup_fee.payment_reference || "not given"} - Workeasy360 checks it before approving.`}
+          </p>
+        )}
         <p>
           Nothing about your account has changed. You will keep signing in the same way, and your {TARGET_LABEL[request.to_experience]} workspace opens
           once the request is approved.

@@ -34,8 +34,15 @@ export interface SetMarginBody {
   reason?: string;
 }
 
+/** A set-up fee, with how to pay it offline (2026-11-03). */
+export interface ProgramFee {
+  amount_minor: number;
+  currency: string;
+  instructions?: string;
+}
+
 export interface ProgramFees {
-  fees: { reseller: { amount_minor: number; currency: string } | null; white_label: { amount_minor: number; currency: string } | null };
+  fees: { reseller: ProgramFee | null; white_label: ProgramFee | null };
 }
 
 // --- ADR-054: the affiliate programme ------------------------------------------------
@@ -75,7 +82,6 @@ export interface PromotionRequestQueue {
   total: number;
   limit: number;
   offset: number;
-  channels: Record<string, string>;
 }
 
 export interface PromotionRequestDetail {
@@ -87,7 +93,11 @@ export interface PromotionRequestDetail {
     status: string;
     website: string;
     referral_capability: boolean;
+    selling_capability: boolean;
+    /** The catalog channel the request needs open: affiliate, reseller or white_label. */
+    channel: string;
     promotes: string[];
+    sells: string[];
   };
   product: { code: string; name: string; status: string; eligible: boolean };
   history: AdminPromotionRequest[];
@@ -127,7 +137,7 @@ export const adminProgrammeApi = {
   endMargin: (code: string) => apiFetch<MarginRule>(`${admin}/margins/end`, { method: "POST", body: json({ code }) }),
   fees: () => apiFetch<ProgramFees>(`${admin}/partner-programme/fees`),
   /** `amount` is the decimal text typed ("25000.00"); the server converts it. */
-  setFee: (body: { experience: string; amount: string; currency: string }) =>
+  setFee: (body: { experience: string; amount: string; currency: string; instructions?: string }) =>
     apiFetch<ProgramFees>(`${admin}/partner-programme/fees`, { method: "PUT", body: json(body) }),
   affiliatePolicy: () => apiFetch<AffiliatePolicy>(`${admin}/affiliate-policy`),
   setAffiliatePolicy: (body: { attribution_days: number; revoked_links: string }) =>
@@ -140,7 +150,7 @@ export const adminProgrammeApi = {
     }),
   revokePromotion: (partnerId: string, grantId: string) =>
     apiFetch<{ id: string }>(`${admin}/partners/${partnerId}/promotions/${grantId}/revoke`, { method: "POST", body: json({}) }),
-  promotionRequests: (query: { status?: string; q?: string; partner_id?: string; offset?: number }) =>
+  promotionRequests: (query: { status?: string; kind?: string; q?: string; partner_id?: string; offset?: number }) =>
     apiFetch<PromotionRequestQueue>(`${admin}/partner-product-requests`, { query }),
   promotionRequest: (requestId: string) => apiFetch<PromotionRequestDetail>(`${admin}/partner-product-requests/${requestId}`),
   /** Approve, reject (a reason the partner reads is required) or revoke. */

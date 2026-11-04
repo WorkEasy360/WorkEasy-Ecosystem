@@ -26,6 +26,7 @@ it arrives it has services to call rather than business logic to embed.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -118,6 +119,22 @@ def _int(body: dict[str, Any], field: str, default: int | None = None) -> int | 
     if isinstance(raw, bool) or not isinstance(raw, int):
         raise CatalogValidationError(f"{field} must be an integer.", field=field)
     return raw
+
+
+def _moment(body: dict[str, Any], field: str) -> datetime | None:
+    """An optional ISO-8601 instant with a timezone (ADR-056 effective dates)."""
+    raw = body.get(field)
+    if raw in (None, ""):
+        return None
+    try:
+        value = datetime.fromisoformat(str(raw))
+    except ValueError as exc:
+        raise CatalogValidationError(
+            f"{field} must be an ISO-8601 date and time.", field=field
+        ) from exc
+    if value.tzinfo is None:
+        raise CatalogValidationError(f"{field} must carry a timezone.", field=field)
+    return value
 
 
 def _flag(body: dict[str, Any], field: str, default: bool = False) -> bool:
@@ -357,9 +374,22 @@ def prices_view(request: HttpRequest, org_slug: str) -> HttpResponse:
         tiers=body.get("tiers"),
         min_quantity=_int(body, "min_quantity", 1) or 1,
         max_quantity=_int(body, "max_quantity"),
+        # ADR-056: promotional discount, set-up fee and effective dates.
+        discount_bp=_int(body, "discount_bp", 0) or 0,
+        setup_fee_minor=_int(body, "setup_fee_minor"),
+        valid_from=_moment(body, "valid_from"),
+        valid_to=_moment(body, "valid_to"),
     )
     return JsonResponse(
-        {"id": str(price.id), "amount_minor": price.amount_minor}, status=201
+        {
+            "id": str(price.id),
+            "amount_minor": price.amount_minor,
+            "discount_bp": price.discount_bp,
+            "setup_fee_minor": price.setup_fee_minor,
+            "valid_from": price.valid_from.isoformat(),
+            "valid_to": price.valid_to.isoformat() if price.valid_to else None,
+        },
+        status=201,
     )
 
 

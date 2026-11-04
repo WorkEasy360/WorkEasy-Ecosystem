@@ -96,6 +96,16 @@ PRODUCT_FIELDS = (
     "reseller_enabled",
     "affiliate_enabled",
     "white_label_enabled",
+    # ADR-056: the store's merchandising content.
+    "subcategory",
+    "tags",
+    "highlights",
+    "benefits",
+    "use_cases",
+    "video_url",
+    "featured",
+    "popular",
+    "badge_new",
     "created_at",
     "updated_at",
     "activated_at",
@@ -187,6 +197,7 @@ def console(ctx: TenantContext) -> dict[str, Any]:
     # ADR-051: the Product Manager's list - each product's images and the
     # launch URL a holder's "Open" goes to (one query each, not one per row).
     media = catalog_selectors.media_rows([p["id"] for p in built["products"]])
+    videos = catalog_selectors.product_videos([p["id"] for p in built["products"]])
     launch_urls = ecosystem_selectors.launch_urls(p["code"] for p in built["products"])
 
     products = []
@@ -202,6 +213,8 @@ def console(ctx: TenantContext) -> dict[str, Any]:
                 "id": str(product["id"]),
                 "logo_media_id": logo["id"] if logo else None,
                 "media": images,
+                # 2026-11-04: the product page's uploaded video, or None.
+                "video": videos.get(str(product["id"])),
                 "launch_url": launch_urls.get(code, ""),
                 "plans": [
                     {

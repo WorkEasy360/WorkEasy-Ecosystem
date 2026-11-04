@@ -116,7 +116,10 @@ def install() -> Callable[[], None]:
         check(sender, "save")
 
     def on_delete(sender: Any, origin: Any = None, **kwargs: Any) -> None:
-        started = getattr(origin, "model", None) or type(origin)
+        # A QuerySet delete names its model; an instance delete is its own type.
+        # (Not ``getattr(origin, "model")``: a model may have a field so named,
+        # as ``PlanPrice.model`` - the price model - does.)
+        started = origin.model if isinstance(origin, QuerySet) else type(origin)
         if origin is not None and started._meta.concrete_model is not (
             sender._meta.concrete_model
         ):

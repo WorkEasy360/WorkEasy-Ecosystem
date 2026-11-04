@@ -11,9 +11,13 @@ import styles from "./PartnerPanel.module.css";
  */
 
 const RANGES: { key: RangeKey; label: string }[] = [
+  { key: "today", label: "Today" },
+  { key: "yesterday", label: "Yesterday" },
   { key: "7d", label: "7 days" },
   { key: "30d", label: "30 days" },
   { key: "90d", label: "90 days" },
+  { key: "this_month", label: "This month" },
+  { key: "last_month", label: "Last month" },
   { key: "custom", label: "Custom" },
 ];
 

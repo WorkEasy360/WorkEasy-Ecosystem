@@ -93,6 +93,37 @@ def affiliate_store_view(request: HttpRequest, ctx: TenantContext) -> JsonRespon
     return JsonResponse(partner_workspaces.store_console(ctx))
 
 
+def _partner_store(request: HttpRequest, ctx: TenantContext, kind: str) -> JsonResponse:
+    from workeasy360.commercial.controlplane import portal_store
+
+    return JsonResponse(
+        portal_store.partner_store(
+            ctx,
+            kind=kind,
+            q=request.GET.get("q"),
+            category=request.GET.get("category"),
+            status=request.GET.getlist("status"),
+            plan_type=request.GET.getlist("plan_type"),
+            price_min=request.GET.get("price_min"),
+            price_max=request.GET.get("price_max"),
+            sort=request.GET.get("sort"),
+            collection=request.GET.get("collection"),
+        )
+    )
+
+
+@partner_view(["GET"])
+def affiliate_marketplace_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """The affiliate's Store (2026-10-31): Explore Products as a marketplace."""
+    return _partner_store(request, ctx, "promote")
+
+
+@partner_view(["GET"])
+def reseller_marketplace_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """A reseller's or white-label partner's Store: Explore as a marketplace."""
+    return _partner_store(request, ctx, "sell")
+
+
 @partner_view(["POST"])
 def affiliate_product_request_view(
     request: HttpRequest, ctx: TenantContext
@@ -101,6 +132,24 @@ def affiliate_product_request_view(
     from workeasy360.commercial.partners import promotion_requests
 
     return JsonResponse(promotion_requests.submit(ctx, body=_body(request)), status=201)
+
+
+@partner_view(["GET"])
+def reseller_store_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """ADR-055 Store Console for sellers: Explore Products and My Requests."""
+    return JsonResponse(partner_workspaces.store_console(ctx, kind="sell"))
+
+
+@partner_view(["POST"])
+def reseller_product_request_view(
+    request: HttpRequest, ctx: TenantContext
+) -> JsonResponse:
+    """ADR-055: ask to sell one Store product. Grants nothing; staff decide."""
+    from workeasy360.commercial.partners import promotion_requests
+
+    return JsonResponse(
+        promotion_requests.submit(ctx, body=_body(request), kind="sell"), status=201
+    )
 
 
 @partner_view(["GET"])
@@ -216,6 +265,25 @@ def product_setting_view(
 @partner_view(["GET"])
 def plans_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     return JsonResponse(partner_portal.plans(ctx))
+
+
+@partner_view(["POST"])
+def own_price_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """ADR-056: the partner's own customer price for one plan and cycle, inside
+    the range Super Admin allows (``partners.price_ranges.set_own_price``)."""
+    from workeasy360.commercial.partners import price_ranges
+
+    body = _body(request)
+    return JsonResponse(
+        price_ranges.set_own_price(
+            ctx,
+            plan_version_id=body.get("plan_version_id"),
+            interval=body.get("interval"),
+            amount_minor=body.get("amount_minor"),
+            currency=body.get("currency"),
+        ),
+        status=201,
+    )
 
 
 @partner_view(["GET"])
@@ -593,9 +661,35 @@ def upgrade_submit_view(
     blocked = _upgrade_limited(request)
     if blocked is not None:
         return blocked
+    body = _body(request)
     return JsonResponse(
         upgrades.submit(
-            ctx, request_id, expected_version=_body(request).get("expected_version")
+            ctx,
+            request_id,
+            expected_version=body.get("expected_version"),
+            # 2026-11-03: the offline transfer's reference, when there is a fee.
+            payment_reference=body.get("payment_reference", ""),
+        )
+    )
+
+
+@partner_view(["POST"])
+def upgrade_pay_view(
+    request: HttpRequest, ctx: TenantContext, request_id: UUID
+) -> JsonResponse:
+    """2026-11-03: open the hosted checkout for the request's set-up fee. Only
+    the provider's verified callback marks it paid and sends the request."""
+    from workeasy360.commercial.partners import upgrade_payments
+
+    blocked = _upgrade_limited(request)
+    if blocked is not None:
+        return blocked
+    return JsonResponse(
+        upgrade_payments.pay_online(
+            ctx,
+            request_id,
+            expected_version=_body(request).get("expected_version"),
+            email=getattr(request.user, "email", "") or "",
         )
     )
 

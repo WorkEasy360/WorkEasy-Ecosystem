@@ -20,7 +20,7 @@ Django's ``is_staff`` flag confers nothing on its own.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, BinaryIO
 from uuid import UUID
 
 from django.db import transaction
@@ -31,9 +31,14 @@ from workeasy360.commercial.catalog.domain import (
     MAX_SCREENSHOTS,
     MAX_STORE_SUMMARY,
     MAX_STORE_TITLE,
+    MAX_VIDEO_BYTES,
+    MERCHANDISING_FLAGS,
+    MERCHANDISING_LISTS,
+    VIDEO_CONTENT_TYPES,
     assert_catalog_transition,
     assert_product_transition,
     slug_for_code,
+    validate_bullets,
     validate_category,
     validate_feature_key,
     validate_feature_value,
@@ -44,8 +49,12 @@ from workeasy360.commercial.catalog.domain import (
     validate_product_code,
     validate_slug,
     validate_store_text,
+    validate_subcategory,
     validate_tagline,
+    validate_tags,
     validate_trial_terms,
+    validate_video_upload,
+    validate_video_url,
 )
 from workeasy360.contracts.enums import (
     AuditOutcome,
@@ -79,11 +88,15 @@ def _authorise(ctx: TenantContext, operation: str) -> None:
     authz.require_platform_staff(ctx, operation=operation, permission=MANAGE)
 
 
-def _refresh_public_catalog() -> None:
+def refresh_public_catalog() -> None:
     """Once this transaction commits, move the public catalog's cache to a new
     generation (ADR-052): a product just published shows at once, one just
     hidden disappears at once, rather than up to a cache lifetime later. A
-    cache outage only means the old entry expires on its own."""
+    cache outage only means the old entry expires on its own.
+
+    Called by every write a visitor sees in the Store (2026-11-02): products,
+    features, plans and their published versions, bundles - and prices, from
+    ``pricing.services``."""
     from django.core.cache import cache
 
     from workeasy360.commercial.catalog.selectors import PUBLIC_CATALOG_GENERATION_KEY
@@ -240,6 +253,11 @@ EDITABLE_PRODUCT_FIELDS = (
     "sort_order",
     "category",
     "icon",
+    "subcategory",
+    "tags",
+    "video_url",
+    *MERCHANDISING_LISTS,
+    *MERCHANDISING_FLAGS,
     *LISTING_DETAIL_FIELDS,
 )
 
@@ -300,6 +318,20 @@ def _clean_product_changes(changes: dict[str, Any]) -> dict[str, Any]:
         clean["store_summary"] = validate_store_text(
             changes["store_summary"], field="store_summary", maximum=MAX_STORE_SUMMARY
         )
+    if "subcategory" in changes:
+        clean["subcategory"] = validate_subcategory(changes["subcategory"])
+    if "tags" in changes:
+        clean["tags"] = validate_tags(changes["tags"])
+    if "video_url" in changes:
+        clean["video_url"] = validate_video_url(changes["video_url"])
+    for key in MERCHANDISING_LISTS:
+        if key in changes:
+            clean[key] = validate_bullets(changes[key], field=key)
+    for key in MERCHANDISING_FLAGS:
+        if key in changes:
+            if not isinstance(changes[key], bool):
+                raise CatalogValidationError(f"{key} is true or false.", field=key)
+            clean[key] = changes[key]
     for key in _LINK_FIELDS:
         if key in changes:
             clean[key] = validate_link_url(changes[key], field=key)
@@ -351,7 +383,7 @@ def update_product(
         for key, value in changed.items():
             setattr(product, key, value)
         product.save(update_fields=[*changed, "updated_at"])
-        _refresh_public_catalog()
+        refresh_public_catalog()
         audit.record(
             ctx,
             "commercial.product.updated",
@@ -435,7 +467,7 @@ def publish_product(ctx: TenantContext, *, product_id: UUID) -> Any:
             product, status=ProductStatus.AVAILABLE, listing=ProductListing.LISTED
         )
         if changes is not None:
-            _refresh_public_catalog()
+            refresh_public_catalog()
             audit.record(
                 ctx,
                 "commercial.product.published",
@@ -456,7 +488,7 @@ def unpublish_product(ctx: TenantContext, *, product_id: UUID) -> Any:
         product = _one(Product.objects.select_for_update(), id=product_id)
         changes = _move(product, listing=ProductListing.HIDDEN)
         if changes is not None:
-            _refresh_public_catalog()
+            refresh_public_catalog()
             audit.record(
                 ctx,
                 "commercial.product.unpublished",
@@ -481,7 +513,7 @@ def archive_product(ctx: TenantContext, *, product_id: UUID) -> Any:
             product, status=ProductStatus.DEPRECATED, listing=ProductListing.HIDDEN
         )
         if changes is not None:
-            _refresh_public_catalog()
+            refresh_public_catalog()
             audit.record(
                 ctx,
                 "commercial.product.archived",
@@ -507,7 +539,7 @@ def restore_product(ctx: TenantContext, *, product_id: UUID) -> Any:
             )
         changes = _move(product, status=ProductStatus.AVAILABLE)
         if changes is not None:
-            _refresh_public_catalog()
+            refresh_public_catalog()
             audit.record(
                 ctx,
                 "commercial.product.restored",
@@ -567,6 +599,7 @@ def delete_product(
             resource_id=product_id,
             changes={"code": code},
         )
+    refresh_public_catalog()
     return code
 
 
@@ -659,6 +692,83 @@ def upload_product_media(
                 "dimensions": f"{width}x{height}",
             },
         )
+    return media
+
+
+def upload_product_video(
+    ctx: TenantContext,
+    *,
+    product_id: UUID,
+    content: BinaryIO,
+    size_bytes: int,
+    content_type: str,
+) -> Any:
+    """Store the product page's video (MP4 or WebM) and attach it, replacing the
+    previous one (2026-11-04).
+
+    ``content`` is already on local disk (the view spools the request body
+    before any transaction opens), so the transaction here never waits on a
+    slow client - only on the copy to the store. The type and size are checked
+    on the bytes here, and again by the files platform, which stores the file
+    under the platform organization's key prefix and scans it before it may be
+    served."""
+    from workeasy360.commercial.catalog.models import Product, ProductMedia
+    from workeasy360.platform.files import services as files
+
+    _authorise(ctx, "catalog.product.media")
+    head = content.read(16)
+    content.seek(0)
+    declared = validate_video_upload(
+        content_type=content_type, size_bytes=size_bytes, head=head
+    )
+    with transaction.atomic():
+        product = _one(Product.objects.select_for_update(), id=product_id)
+        existing = list(
+            ProductMedia.objects.filter(
+                product_id=product.id, kind=ProductMediaKind.VIDEO.value
+            )
+        )
+        file_id, _grant = files.register_upload(
+            ctx,
+            filename=f"video.{VIDEO_CONTENT_TYPES[declared]}",
+            content_type=declared,
+            size_bytes=size_bytes,
+            module=MEDIA_MODULE,
+            allowed_types=files.VIDEO_CONTENT_TYPES,
+            max_bytes=MAX_VIDEO_BYTES,
+        )
+        files.store_content(ctx, file_id, content)
+        files.scan_now(file_id)
+        replaced = str(existing[0].file_id) if existing else None
+        if existing:
+            ProductMedia.objects.filter(id=existing[0].id).delete()
+        media = ProductMedia.objects.create(
+            product=product,
+            kind=ProductMediaKind.VIDEO.value,
+            file_id=file_id,
+            width=0,
+            height=0,
+            content_type=declared,
+            size_bytes=size_bytes,
+            caption="",
+            sort_order=0,
+            uploaded_by_id=ctx.user_id,
+        )
+        Product.objects.filter(id=product.id).update(updated_at=timezone.now())
+        audit.record(
+            ctx,
+            "commercial.product.media_added",
+            resource_type="catalog.product",
+            resource_id=product.id,
+            changes={
+                "kind": ProductMediaKind.VIDEO.value,
+                "media_id": str(media.id),
+                "file_id": str(file_id),
+                "replaced_file_id": replaced,
+                "size_bytes": size_bytes,
+            },
+        )
+        refresh_public_catalog()
     return media
 
 
@@ -786,7 +896,7 @@ def set_product_status(
             fields.append(stamp)
         product.save(update_fields=fields)
 
-        _refresh_public_catalog()
+        refresh_public_catalog()
         audit.record(
             ctx,
             "commercial.product.status_changed",
@@ -863,7 +973,7 @@ def configure_product_trial(
             "eligible_plan_codes": list(config.eligible_plan_codes),
         }
         if before != after:
-            _refresh_public_catalog()
+            refresh_public_catalog()
             audit.record(
                 ctx,
                 "commercial.product.trial_configured",
@@ -934,6 +1044,7 @@ def create_feature(
             resource_id=feature.id,
             changes={"key": feature.key, "kind": feature.kind},
         )
+    refresh_public_catalog()
     return feature
 
 
@@ -979,6 +1090,7 @@ def update_feature(
                 resource_id=feature.id,
                 changes=changed,
             )
+    refresh_public_catalog()
     return feature
 
 
@@ -1101,15 +1213,18 @@ def update_plan(
     is_public: Any = None,
     sort_order: Any = None,
     billing_type: PlanBillingType | None = None,
+    recommended: Any = None,
 ) -> Any:
     """Change a plan's presentation - name, caption, description, visibility,
-    order. Never its commercial terms (those live on immutable versions).
+    order, and whether it is the product's recommended plan (ADR-056; setting
+    one clears the others). Never its commercial terms (those live on
+    immutable versions).
 
     ``billing_type`` may change only while the plan is a draft: flipping a
     plan customers already bought between "free trial" and "paid" would change
     what they signed up for.
     """
-    from workeasy360.commercial.catalog.models import Plan
+    from workeasy360.commercial.catalog.models import Plan, Product
 
     _authorise(ctx, "catalog.plan.update")
     _validate_texts(name=name, caption=caption, description=description)
@@ -1159,7 +1274,29 @@ def update_plan(
                 "to": billing_type.value,
             }
             plan.billing_type = billing_type.value
+        if recommended is not None:
+            if not isinstance(recommended, bool):
+                raise CatalogValidationError(
+                    "recommended must be true or false.", field="recommended"
+                )
+            product = Product.objects.select_for_update().get(id=plan.product_id)
+            is_now = product.recommended_plan_id == plan.id
+            if is_now != recommended:
+                # One reference per product: recommending a plan replaces the
+                # product's previous choice, so a comparison highlights one.
+                previous = product.recommended_plan_id
+                product.recommended_plan_id = plan.id if recommended else None
+                product.save(update_fields=["recommended_plan", "updated_at"])
+                changes["recommended"] = {
+                    "from": is_now,
+                    "to": recommended,
+                    "replaced_plan_id": str(previous)
+                    if previous and recommended
+                    else None,
+                }
         plan.save()
+        if changes:
+            refresh_public_catalog()
         audit.record(
             ctx,
             "commercial.plan.updated",
@@ -1183,6 +1320,7 @@ def set_plan_status(ctx: TenantContext, *, plan_id: UUID, status: CatalogStatus)
             return plan
         plan.status = status.value
         plan.save(update_fields=["status", "updated_at"])
+        refresh_public_catalog()
         audit.record(
             ctx,
             "commercial.plan.status_changed",
@@ -1347,6 +1485,7 @@ def publish_plan_version(ctx: TenantContext, *, plan_version_id: UUID) -> Any:
 
         version.published_at = now
         version.save(update_fields=["published_at", "updated_at"])
+        refresh_public_catalog()
 
         audit.record(
             ctx,
@@ -1619,6 +1758,7 @@ def publish_bundle_version(ctx: TenantContext, *, bundle_version_id: UUID) -> An
 
         version.published_at = now
         version.save(update_fields=["published_at", "updated_at"])
+        refresh_public_catalog()
 
         audit.record(
             ctx,
@@ -1650,6 +1790,7 @@ def set_bundle_status(
 
         bundle.status = status.value
         bundle.save(update_fields=["status", "updated_at"])
+        refresh_public_catalog()
         audit.record(
             ctx,
             "commercial.bundle.status_changed",
@@ -1747,6 +1888,7 @@ def update_bundle(
             }
             bundle.billing_type = billing_type.value
         bundle.save()
+        refresh_public_catalog()
         audit.record(
             ctx,
             "commercial.bundle.updated",
