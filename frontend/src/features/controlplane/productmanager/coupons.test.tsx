@@ -44,7 +44,7 @@ describe("Super Admin coupons", () => {
   it("creates a coupon from the New coupon popup, closes it and reports it", async () => {
     const calls = mockApi({
       [COUPONS]: [ok({ results: [] }), ok({ results: [CREATED] })],
-      [PRODUCTS]: [ok({ results: [{ id: "p1", code: "easy_crm", name: "Easy CRM" }] })],
+      [PRODUCTS]: [ok({ results: [{ id: "p1", code: "sample_app", name: "Sample App" }] })],
     });
     const create = vi.spyOn(storeAdminApi, "createCoupon").mockResolvedValue(CREATED);
     const { container } = render(<Coupons />);

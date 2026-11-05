@@ -3,6 +3,7 @@
 import { useId, useState } from "react";
 import { adminApi } from "@/lib/api/controlPlane";
 import { storeAdminApi, type Coupon, type CouponInput } from "@/lib/api/store";
+import { toBasisPoints, toMinor } from "../amounts";
 import { dialog, FormPopup } from "../Modal";
 import { LoadGate, Status, Table, useAction, useLoad, when } from "../ui";
 import cp from "../ControlPlane.module.css";
@@ -49,18 +50,20 @@ function CouponForm({
   const endsId = useId();
 
   const clean = code.trim().toUpperCase();
-  const amount = Number(value);
+  // Typed text to the integers the server stores, without floating point.
+  const percentBp = toBasisPoints(value);
+  const amountMinor = toMinor(value, currency.trim().toUpperCase());
   const codeProblem =
     clean && !CODE.test(clean) ? "3 to 32 letters, digits, - or _." : undefined;
   const valueProblem =
     value === ""
       ? undefined
       : kind === "percent"
-        ? !(amount > 0 && amount <= 99)
+        ? !(percentBp !== null && percentBp > 0 && percentBp <= 9900)
           ? "A percentage from 0.01 to 99."
           : undefined
-        : !(amount > 0)
-          ? "An amount above zero."
+        : !(amountMinor !== null && amountMinor > 0)
+          ? "An amount above zero, with at most two decimals."
           : undefined;
   const limitNumber = limit.trim() === "" ? null : Number(limit);
   const limitProblem =
@@ -81,9 +84,9 @@ function CouponForm({
       max_redemptions: limitNumber,
       once_per_organization: once,
     };
-    if (kind === "percent") input.percent_bp = Math.round(amount * 100);
+    if (kind === "percent") input.percent_bp = percentBp ?? undefined;
     else {
-      input.amount_minor = Math.round(amount * 100);
+      input.amount_minor = amountMinor ?? undefined;
       input.currency = currency.trim().toUpperCase();
     }
     return input;
