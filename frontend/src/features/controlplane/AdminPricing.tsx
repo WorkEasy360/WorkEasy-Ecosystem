@@ -8,11 +8,13 @@ import {
   type CatalogOverview,
   type CatalogPrice,
 } from "@/lib/api/adminConsole";
+import { ApiError } from "@/lib/api/client";
 import { can, useAdmin } from "./ControlShell";
-import { LoadGate, Table, money, useAction, useLoad, when } from "./ui";
+import { FormPopup } from "./Modal";
+import { LoadGate, Table, money, useLoad, when } from "./ui";
 import { DEFAULT_INTERVALS } from "./catalogUi";
 import { PartnerProgramme } from "./PartnerProgramme";
-import { ErrorSummary, SelectField, TextField } from "./widgets";
+import { SelectField, TextField } from "./widgets";
 import cp from "./ControlPlane.module.css";
 import styles from "./AdminConsole.module.css";
 
@@ -94,6 +96,12 @@ export function PricingScreen({ productCode }: { productCode?: string } = {}) {
 const BOOK_CODE = /^[a-z0-9][a-z0-9_-]{1,63}$/;
 const REGION = /^[A-Za-z]{2}$/;
 
+/** Before any call: the fields say what is wrong, the popup how many. */
+function invalid(problems: Record<string, string>): ApiError {
+  const list = Object.values(problems);
+  return new ApiError(400, { detail: `Fix ${list.length === 1 ? "this" : `these ${list.length} things`} before saving: ${list.join(" ")}` });
+}
+
 function NewPriceBook({ currencies, onCreated }: { currencies: string[]; onCreated: () => void }) {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
@@ -101,10 +109,17 @@ function NewPriceBook({ currencies, onCreated }: { currencies: string[]; onCreat
   const [region, setRegion] = useState("");
   const [priority, setPriority] = useState("100");
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const { act, busy, feedback } = useAction(onCreated);
 
-  function submit(e: React.FormEvent) {
-    e.preventDefault();
+  function reset() {
+    setCode("");
+    setName("");
+    setCurrency(currencies[0] ?? "");
+    setRegion("");
+    setPriority("100");
+    setErrors({});
+  }
+
+  async function submit() {
     const problems: Record<string, string> = {};
     if (!BOOK_CODE.test(code.trim())) problems.code = "Enter a code of 2–64 lowercase letters, digits, “-” or “_”.";
     if (!name.trim()) problems.name = "Enter a name.";
@@ -112,26 +127,20 @@ function NewPriceBook({ currencies, onCreated }: { currencies: string[]; onCreat
     if (region.trim() && !REGION.test(region.trim())) problems.region = "Use a two-letter country code, or leave it empty.";
     if (!/^\d{1,4}$/.test(priority.trim())) problems.priority = "Priority is a whole number (lower wins).";
     setErrors(problems);
-    if (Object.keys(problems).length > 0) return;
-    void act(async () => {
-      await adminConsoleApi.createPriceBook({
-        code: code.trim(),
-        name: name.trim(),
-        currency,
-        region: region.trim().toUpperCase() || undefined,
-        priority: Number(priority.trim()),
-      });
-      setCode("");
-      setName("");
-      setRegion("");
-    }, `Price book “${name.trim()}” created.`);
+    if (Object.keys(problems).length > 0) throw invalid(problems);
+    await adminConsoleApi.createPriceBook({
+      code: code.trim(),
+      name: name.trim(),
+      currency,
+      region: region.trim().toUpperCase() || undefined,
+      priority: Number(priority.trim()),
+    });
+    return `Price book “${name.trim()}” created.`;
   }
 
   return (
-    <div className={`w360-card ${cp.card}`}>
-      <form className={cp.form} onSubmit={submit} noValidate>
-        <h3 className={cp.cardTitle}>New price book</h3>
-        <ErrorSummary errors={Object.values(errors)} />
+    <div>
+      <FormPopup label="+ New price book" title="New price book" submitLabel="Create price book" onOpen={reset} onSubmit={submit} onDone={onCreated}>
         <TextField label="Code" value={code} onChange={(v) => setCode(v.toLowerCase())} maxLength={64} error={errors.code} autoComplete="off" />
         <TextField label="Name" value={name} onChange={setName} maxLength={128} error={errors.name} />
         <SelectField
@@ -157,13 +166,7 @@ function NewPriceBook({ currencies, onCreated }: { currencies: string[]; onCreat
           hint="When several books match, the lower number wins."
           error={errors.priority}
         />
-        <div>
-          <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-            Create price book
-          </button>
-        </div>
-      </form>
-      {feedback}
+      </FormPopup>
     </div>
   );
 }

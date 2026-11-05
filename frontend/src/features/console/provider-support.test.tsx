@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { expectNoViolations, mockApi, ok } from "@/features/controlplane/testSupport";
 import { ProviderSupport } from "./ProviderSupport";
@@ -48,19 +48,45 @@ describe("tickets to the organization's provider", () => {
     const { container } = render(<ProviderSupport slug="acme" />);
     expect(await screen.findByText(/Acme Reseller looks after your Workeasy360 subscription/)).toBeInTheDocument();
     await expectNoViolations(container);
+    // The ticket is written in a popup.
     fireEvent.click(screen.getByRole("button", { name: "Raise a ticket" }));
+    const popup = screen.getByRole("dialog", { name: "Raise a ticket" });
+    await expectNoViolations(popup);
     // A customer never files a commission or payout ticket.
     expect(screen.queryByRole("option", { name: "commission" })).toBeNull();
-    fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "Cannot log in" } });
-    fireEvent.change(screen.getByLabelText("What do you need?"), { target: { value: "Since today." } });
-    fireEvent.click(screen.getByRole("button", { name: "Send ticket" }));
+    const send = within(popup).getByRole("button", { name: "Send ticket" });
+    expect(send).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Subject"), { target: { value: "Cannot log in" } });
+    fireEvent.change(within(popup).getByLabelText("What do you need?"), { target: { value: "Since today." } });
+    fireEvent.click(send);
     await waitFor(() => expect(calls.map((c) => c.key)).toContain(`GET ${API}/t1`));
     expect(await screen.findByText("Since today.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(calls.find((c) => c.key === `POST ${API}`)!.body).toEqual({
       subject: "Cannot log in",
       message: "Since today.",
       category: "general",
       priority: "normal",
     });
+  });
+
+  it("replies to a ticket in a small popup and keeps the thread open", async () => {
+    const calls = mockApi({
+      [`GET ${API}`]: [ok({ ...EMPTY, provider: { name: "Acme Reseller" }, items: [TICKET], total: 1 })],
+      [`GET ${API}/t1`]: [ok(TICKET)],
+      [`POST ${API}/t1`]: [ok(TICKET)],
+    });
+    render(<ProviderSupport slug="acme" />);
+    fireEvent.click(await screen.findByRole("button", { name: "#1" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reply" }));
+    const popup = screen.getByRole("dialog", { name: "Reply to #1" });
+    const send = within(popup).getByRole("button", { name: "Send" });
+    expect(send).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Your reply"), { target: { value: "Still broken." } });
+    fireEvent.click(send);
+    expect(await screen.findByText("Reply sent.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.filter((c) => c.key === `POST ${API}/t1`).map((c) => c.body)).toEqual([{ message: "Still broken." }]);
+    expect(screen.getByRole("button", { name: "Close ticket" })).toBeInTheDocument();
   });
 });

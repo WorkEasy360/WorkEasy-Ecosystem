@@ -169,98 +169,108 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
         <ErrorSummary errors={summary} focusRef={summaryRef} />
         {feedback}
 
-        <TextField
-          label="Partner name"
-          value={draft.name}
-          onChange={(v) => set("name", v)}
-          maxLength={120}
-          autoComplete="organization"
-          placeholder="Enter partner name"
-          required
-          showRequired
-          error={errors["partner.display_name"] ?? errors.partner}
-        />
-        <TextField
-          label="Admin email"
-          type="email"
-          value={draft.email}
-          onChange={(v) => {
-            set("email", v);
-            if (draft.mode === "link_existing") set("mode", "create");
-            setExisting(false);
-          }}
-          maxLength={254}
-          autoComplete="off"
-          placeholder="Enter admin email"
-          required
-          showRequired
-          error={errors["administrator.email"]}
-        />
+        {/* Two aligned columns, as every popup form (2026-11-05); the password,
+            its guidance and the notes run across both. */}
+        <div className={dialog.grid}>
+          <TextField
+            label="Partner name"
+            value={draft.name}
+            onChange={(v) => set("name", v)}
+            maxLength={120}
+            autoComplete="organization"
+            placeholder="Enter partner name"
+            required
+            showRequired
+            error={errors["partner.display_name"] ?? errors.partner}
+          />
+          <TextField
+            label="Admin email"
+            type="email"
+            value={draft.email}
+            onChange={(v) => {
+              set("email", v);
+              if (draft.mode === "link_existing") set("mode", "create");
+              setExisting(false);
+            }}
+            maxLength={254}
+            autoComplete="off"
+            placeholder="Enter admin email"
+            required
+            showRequired
+            error={errors["administrator.email"]}
+          />
 
-        {existing && (
-          <div className={mine.existing} role="alert">
-            <p>
-              <strong>{EXISTING_ACCOUNT}</strong>
-            </p>
-            <p>
-              Its password will not be changed. You can link that person as this partner&apos;s administrator - they keep signing in with
-              the password they already have - or cancel and use another email.
-            </p>
-            <div className={styles.row}>
-              <button type="button" className="w360-btn w360-btn-primary" disabled={busy} onClick={linkExisting}>
-                Link Existing User as Partner Administrator
-              </button>
-              <button type="button" className="w360-btn w360-btn-secondary" onClick={useAnother}>
-                Cancel
-              </button>
+          {existing && (
+            <div className={`${mine.existing} ${dialog.span}`} role="alert">
+              <p>
+                <strong>{EXISTING_ACCOUNT}</strong>
+              </p>
+              <p>
+                Its password will not be changed. You can link that person as this partner&apos;s administrator - they keep signing in with
+                the password they already have - or cancel and use another email.
+              </p>
+              <div className={styles.row}>
+                <button type="button" className="w360-btn w360-btn-primary" disabled={busy} onClick={linkExisting}>
+                  Link Existing User as Partner Administrator
+                </button>
+                <button type="button" className="w360-btn w360-btn-secondary" onClick={useAnother}>
+                  Cancel
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {draft.mode === "create" && !existing && (
-          <>
-            <PasswordField
-              label="Password"
-              value={draft.password}
-              onChange={(v) => set("password", v)}
-              placeholder="Enter password"
-              describedBy={guidanceId}
-              error={errors["administrator.password"]}
-            />
-            <PasswordField
-              label="Confirm password"
-              value={draft.confirm}
-              onChange={(v) => set("confirm", v)}
-              placeholder="Confirm password"
-              error={errors["administrator.password_confirm"]}
-            />
-            <PasswordGuidance id={guidanceId} password={draft.password} confirm={draft.confirm} minLength={DEFAULT_MIN_PASSWORD} compact />
-          </>
-        )}
+          {draft.mode === "create" && !existing && (
+            <>
+              <div className={dialog.span}>
+                <PasswordField
+                  label="Password"
+                  value={draft.password}
+                  onChange={(v) => set("password", v)}
+                  placeholder="Enter password"
+                  describedBy={guidanceId}
+                  error={errors["administrator.password"]}
+                />
+              </div>
+              <div className={dialog.span}>
+                <PasswordField
+                  label="Confirm password"
+                  value={draft.confirm}
+                  onChange={(v) => set("confirm", v)}
+                  placeholder="Confirm password"
+                  error={errors["administrator.password_confirm"]}
+                />
+              </div>
+              <div className={dialog.span}>
+                <PasswordGuidance id={guidanceId} password={draft.password} confirm={draft.confirm} minLength={DEFAULT_MIN_PASSWORD} compact />
+              </div>
+            </>
+          )}
 
-        <SelectField
-          label="Partner type"
-          value={draft.experience ?? ""}
-          onChange={(v) => set("experience", experienceFromParam(v))}
-          options={typeOptions}
-          required
-          showRequired
-          hint={draft.experience ? TYPE_CARDS[draft.experience].text : "Sets the partner's first capabilities and the workspace it opens."}
-          error={errors.experience}
-        />
+          <SelectField
+            label="Partner type"
+            value={draft.experience ?? ""}
+            onChange={(v) => set("experience", experienceFromParam(v))}
+            options={typeOptions}
+            required
+            showRequired
+            hint={draft.experience ? TYPE_CARDS[draft.experience].text : "Sets the partner's first capabilities and the workspace it opens."}
+            error={errors.experience}
+          />
 
-        <SelectField
-          label="Country"
-          value={draft.country}
-          onChange={(v) => set("country", v)}
-          options={countryOptions("Select…")}
-          hint="Optional. Sets the starting currency, which can be changed until the partner is activated."
-          error={errors["partner.country"]}
-        />
+          <SelectField
+            label="Country"
+            value={draft.country}
+            onChange={(v) => set("country", v)}
+            options={countryOptions("Select…")}
+            hint="Optional. Sets the starting currency, which can be changed until the partner is activated."
+            error={errors["partner.country"]}
+          />
 
-        {draft.mode === "create" && !existing && (
-          <p className={mine.note}>Nothing is emailed: tell the administrator this password privately. They can change it after signing in.</p>
-        )}
+          {draft.mode === "create" && !existing && (
+            <p className={`${mine.note} ${dialog.span}`}>Nothing is emailed: tell the administrator this password privately. They can change it after signing in.</p>
+          )}
+        </div>
       </div>
       <div className={dialog.foot}>
         <button type="button" className="w360-btn w360-btn-secondary" onClick={onClose}>

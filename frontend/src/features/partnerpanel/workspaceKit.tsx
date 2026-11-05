@@ -1,6 +1,7 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
+import { ApiError } from "@/lib/api/client";
 import type { RangeKey } from "@/lib/api/partnerPanel";
 import styles from "./PartnerPanel.module.css";
 
@@ -116,6 +117,35 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
       </span>
     </span>
   );
+}
+
+/** A popup form (FormDialog) does not run the browser's own field checks
+ * (required, type="email", type="url", pattern, min and max). A popup whose
+ * fields rely on them puts `probe` among its fields and calls `check()` first
+ * in its onSubmit: the browser marks the first wrong field and the popup says
+ * so, as the form on the page did, and nothing is sent. */
+export function useFieldChecks() {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const probe = <span ref={ref} hidden />;
+  function check() {
+    const form = ref.current?.closest("form");
+    if (form && !form.reportValidity()) refuse("Check the highlighted field.");
+  }
+  return { probe, check };
+}
+
+/** Stops a popup's onSubmit with this message, shown inside the popup (which
+ * stays open with what was typed), in the words the form on the page used. */
+export function refuse(message: string): never {
+  throw new ApiError(400, { detail: message });
+}
+
+/** The outcome of a popup opened from a row or a page button that is not a
+ * FormPopup: announced in a status line, as FormPopup does beside its button. */
+export function useNote() {
+  const [note, setNote] = useState<string | null>(null);
+  const node = note ? <p role="status">{note}</p> : null;
+  return { node, show: (m: string | undefined) => setNote(m ?? null), clear: () => setNote(null) };
 }
 
 /** Basis points as a percentage, to two decimals ("50.00%"); an em dash when

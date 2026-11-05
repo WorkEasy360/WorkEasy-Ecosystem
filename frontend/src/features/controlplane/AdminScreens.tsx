@@ -7,6 +7,7 @@ import { adminConsoleApi } from "@/lib/api/adminConsole";
 import { can, useAdmin } from "./ControlShell";
 import { CustomerBilling } from "./AdminBilling";
 import { StaffRolesPanel } from "./AdminCommerce";
+import { FormPopup } from "./Modal";
 import { LoadGate, MoreButton, ReasonAction, Status, Table, autoReason, useAction, useLoad, usePaged, when } from "./ui";
 import styles from "./ControlPlane.module.css";
 
@@ -283,50 +284,56 @@ function OverridePanel({
         ))}
       </Table>
       {canManage && (
-        <form
-          className={styles.form}
-          onSubmit={(e) => {
-            e.preventDefault();
-            const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
-            void act(async () => {
-              await adminApi.grantOverride(organizationId, { [kind]: code.trim(), reason: autoReason("Grant override"), expires_at: expires });
+        <div>
+          <FormPopup
+            label="+ Grant override"
+            title="Grant an override"
+            intro="A time-boxed grant on top of what the subscriptions give; access is recomputed when it starts and when it ends."
+            size="sm"
+            submitLabel="Grant override"
+            canSubmit={Boolean(code.trim())}
+            disabled={busy}
+            onOpen={() => {
+              setKind("product_code");
               setCode("");
-            }, "Override granted; access was recomputed.");
-          }}
-        >
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={kindId}>
-              Grant access to
-            </label>
-            <select id={kindId} className="w360-input" value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
-              <option value="product_code">A product</option>
-              <option value="feature_key">A feature</option>
-            </select>
-          </div>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={codeId}>
-              {kind === "product_code" ? "Product code" : "Feature key"}
-            </label>
-            <input id={codeId} className="w360-input" required value={code} onChange={(e) => setCode(e.target.value)} />
-          </div>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={daysId}>
-              Expires after
-            </label>
-            <select id={daysId} className="w360-input" value={days} onChange={(e) => setDays(Number(e.target.value))}>
-              {OVERRIDE_DAYS.map((d) => (
-                <option key={d} value={d}>
-                  {d} days
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !code.trim()}>
-              Grant override
-            </button>
-          </div>
-        </form>
+              setDays(30);
+            }}
+            onSubmit={async () => {
+              const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+              await adminApi.grantOverride(organizationId, { [kind]: code.trim(), reason: autoReason("Grant override"), expires_at: expires });
+            }}
+            // The customer's page announces it and reloads, with the override listed.
+            onDone={() => void act(async () => {}, "Override granted; access was recomputed.")}
+          >
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={kindId}>
+                Grant access to
+              </label>
+              <select id={kindId} className="w360-input" value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
+                <option value="product_code">A product</option>
+                <option value="feature_key">A feature</option>
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={codeId}>
+                {kind === "product_code" ? "Product code" : "Feature key"}
+              </label>
+              <input id={codeId} className="w360-input" required value={code} onChange={(e) => setCode(e.target.value)} />
+            </div>
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={daysId}>
+                Expires after
+              </label>
+              <select id={daysId} className="w360-input" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+                {OVERRIDE_DAYS.map((d) => (
+                  <option key={d} value={d}>
+                    {d} days
+                  </option>
+                ))}
+              </select>
+            </div>
+          </FormPopup>
+        </div>
       )}
     </div>
   );
@@ -580,42 +587,46 @@ export function SecurityScreen() {
         )}
       </LoadGate>
       {manage && (
-        <form
-          className={`w360-card ${styles.card} ${styles.form}`}
-          onSubmit={(e) => {
-            e.preventDefault();
-            const expiresAt = expiresOn ? new Date(`${expiresOn}T23:59:59`).toISOString() : undefined;
-            void act(
-              () => adminApi.grantPermission(email.trim(), permission.trim(), autoReason("Grant permission"), expiresAt),
-              "Permission granted.",
-            );
-          }}
-        >
-          <h2 className={styles.cardTitle}>Grant a permission</h2>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={emailId}>
-              Staff member&apos;s email
-            </label>
-            <input id={emailId} className="w360-input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-          </div>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={permId}>
-              Permission
-            </label>
-            <input id={permId} className="w360-input" required value={permission} onChange={(e) => setPermission(e.target.value)} />
-          </div>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={expiresId}>
-              Expires on (optional)
-            </label>
-            <input id={expiresId} className="w360-input" type="date" min={today} value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
-          </div>
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-              Grant
-            </button>
-          </div>
-        </form>
+        <div>
+          <FormPopup
+            label="+ Grant a permission"
+            title="Grant a permission"
+            intro="It takes effect immediately; a time-boxed grant ends on its own when it expires."
+            size="sm"
+            submitLabel="Grant"
+            canSubmit={Boolean(email.trim() && permission.trim())}
+            onOpen={() => {
+              setEmail("");
+              setPermission("platform.staff_customer.view");
+              setExpiresOn("");
+            }}
+            onSubmit={async () => {
+              const expiresAt = expiresOn ? new Date(`${expiresOn}T23:59:59`).toISOString() : undefined;
+              await adminApi.grantPermission(email.trim(), permission.trim(), autoReason("Grant permission"), expiresAt);
+              return "Permission granted.";
+            }}
+            onDone={reload}
+          >
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={emailId}>
+                Staff member&apos;s email
+              </label>
+              <input id={emailId} className="w360-input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={permId}>
+                Permission
+              </label>
+              <input id={permId} className="w360-input" required value={permission} onChange={(e) => setPermission(e.target.value)} />
+            </div>
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={expiresId}>
+                Expires on (optional)
+              </label>
+              <input id={expiresId} className="w360-input" type="date" min={today} value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
+            </div>
+          </FormPopup>
+        </div>
       )}
     </div>
   );

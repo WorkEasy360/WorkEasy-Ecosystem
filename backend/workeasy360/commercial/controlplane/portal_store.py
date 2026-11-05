@@ -247,7 +247,36 @@ def public_product(slug: Any, *, currency: Any = None) -> dict[str, Any] | None:
     )
     if page is None:
         return None
-    return {"currency": listing["currency"], "currencies": listing["currencies"], **page}
+    from workeasy360.commercial.billing import tax
+
+    return {
+        "currency": listing["currency"],
+        "currencies": listing["currencies"],
+        # ADR-058: GST added on top of INR prices - the page's order summary.
+        "tax": tax.terms(listing["currency"]),
+        **page,
+    }
+
+
+def check_coupon(
+    code: Any, *, slug: Any, currency: Any, amount_minor: Any
+) -> dict[str, Any]:
+    """The product page's coupon "Apply" (ADR-058): what ``code`` would take
+    off ``amount_minor`` of this product. A preview for a visitor - the
+    organization's checkout prices the code again for its own order."""
+    from workeasy360.commercial.pricing import coupons
+    from workeasy360.commercial.subscriptions.marketplace import public_catalog
+
+    listing = public_catalog(currency=currency)
+    product = next((p for p in listing["products"] if p["slug"] == str(slug or "")), None)
+    if product is None:
+        return {"valid": False, "message": "This product is not on sale."}
+    return coupons.preview(
+        code,
+        product_code=product["code"],
+        currency=listing["currency"],
+        amount_minor=amount_minor,
+    )
 
 
 def public_store(*, currency: Any = None, **params: Any) -> dict[str, Any]:

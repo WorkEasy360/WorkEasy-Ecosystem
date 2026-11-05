@@ -458,11 +458,35 @@
   font-weight: 700;
 }
 
+/* A form on the page (the upgrade steps, the translation list) lined up like
+   the popups (2026-11-05): two equal columns, labels above their fields; one
+   column on a narrow screen. */
 .formGrid {
   display: grid;
-  gap: var(--w360-space-3);
-  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: var(--w360-space-3) var(--w360-space-4);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   max-width: 760px;
+}
+
+.formGrid > * {
+  min-width: 0;
+}
+
+.formGrid :global(.w360-input) {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 560px) {
+  .formGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A wizard step's Back and Continue, at the bottom right. */
+.alignEnd {
+  justify-content: flex-end;
 }
 
 .checks {

@@ -223,16 +223,19 @@ export function WhiteLabelWizard({ api, partnerName }: { api: WhiteLabelApi; par
                         Your name, accent colour and logo are shown to {partnerName}&apos;s customers on its domain. Nothing is saved until you
                         approve it on the next step.
                       </p>
-                      <TextField label="Brand name" value={draft.name} onChange={(v) => set({ name: v })} maxLength={80} required autoComplete="off" />
-                      <TextField
-                        label="Accent colour (hex, e.g. #1a56db)"
-                        value={draft.accent}
-                        onChange={(v) => set({ accent: v })}
-                        maxLength={7}
-                        spellCheck={false}
-                        autoComplete="off"
-                        error={draft.accent.trim() && safeColor(draft.accent.trim()) === null ? "Enter a six-digit hex colour such as #1a56db." : undefined}
-                      />
+                      {/* Fields in two equal columns, as the support details below (2026-11-05). */}
+                      <div className={local.split}>
+                        <TextField label="Brand name" value={draft.name} onChange={(v) => set({ name: v })} maxLength={80} required autoComplete="off" />
+                        <TextField
+                          label="Accent colour (hex, e.g. #1a56db)"
+                          value={draft.accent}
+                          onChange={(v) => set({ accent: v })}
+                          maxLength={7}
+                          spellCheck={false}
+                          autoComplete="off"
+                          error={draft.accent.trim() && safeColor(draft.accent.trim()) === null ? "Enter a six-digit hex colour such as #1a56db." : undefined}
+                        />
+                      </div>
                       <LogoField brand={brand} file={file} onPick={pickLogo} />
                       <div className={local.split}>
                         <TextField label="Support email (optional)" type="email" value={draft.email} onChange={(v) => set({ email: v })} maxLength={254} />

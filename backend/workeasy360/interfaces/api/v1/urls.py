@@ -121,6 +121,11 @@ urlpatterns = [
         name="public-store-product",
     ),
     path(
+        "public/store/products/<slug:slug>/coupon",
+        public_site_views.store_coupon_view,
+        name="public-store-coupon",
+    ),
+    path(
         "public/catalog/products/<slug:slug>",
         public_site_views.catalog_product_view,
         name="public-catalog-product",
@@ -925,6 +930,17 @@ _admin = [
         "admin/store/price-ranges/<uuid:range_id>",
         admin_store_views.price_range_view,
         name="admin-store-price-range",
+    ),
+    # ADR-058: coupons.
+    path(
+        "admin/store/coupons",
+        admin_store_views.coupons_view,
+        name="admin-store-coupons",
+    ),
+    path(
+        "admin/store/coupons/<uuid:coupon_id>",
+        admin_store_views.coupon_view,
+        name="admin-store-coupon",
     ),
     # ADR-051: the Product Manager - add (wizard), one product, its lifecycle,
     # its listing images and its activity. Edits reuse admin/catalog/products.

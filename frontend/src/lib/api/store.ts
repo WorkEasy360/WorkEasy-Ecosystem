@@ -225,7 +225,46 @@ export interface RangeInput {
   partner_may_set: boolean;
 }
 
+/** ADR-058: a coupon the Super Admin issued. */
+export interface Coupon {
+  id: string;
+  code: string;
+  description: string;
+  kind: "percent" | "fixed";
+  percent_bp: number | null;
+  amount_minor: number | null;
+  currency: string | null;
+  label: string;
+  product_codes: string[];
+  starts_at: string | null;
+  ends_at: string | null;
+  max_redemptions: number | null;
+  once_per_organization: boolean;
+  status: "active" | "disabled";
+  redemptions: number;
+  created_at: string;
+}
+
+export interface CouponInput {
+  code: string;
+  kind: "percent" | "fixed";
+  percent_bp?: number;
+  amount_minor?: number;
+  currency?: string;
+  description?: string;
+  product_codes?: string[];
+  starts_at?: string | null;
+  ends_at?: string | null;
+  max_redemptions?: number | null;
+  once_per_organization?: boolean;
+}
+
+export type CouponChanges = Partial<Pick<Coupon, "description" | "product_codes" | "starts_at" | "ends_at" | "max_redemptions" | "once_per_organization" | "status">>;
+
 export const storeAdminApi = {
+  coupons: () => apiFetch<{ results: Coupon[] }>(`${admin}/coupons`),
+  createCoupon: (body: CouponInput) => apiFetch<Coupon>(`${admin}/coupons`, { method: "POST", body: json(body) }),
+  updateCoupon: (id: string, changes: CouponChanges) => apiFetch<Coupon>(`${admin}/coupons/${id}`, { method: "PATCH", body: json(changes) }),
   dashboard: (days = 30) => apiFetch<StoreDashboard>(`${admin}/dashboard`, { query: { days: String(days) } }),
   commercialRules: (currency?: string) => apiFetch<CommercialRules>(`${admin}/commercial-rules`, { query: { currency } }),
   setCommission: (body: CommissionInput) => apiFetch<{ code: string; version: number }>(`${admin}/commission`, { method: "POST", body: json(body) }),

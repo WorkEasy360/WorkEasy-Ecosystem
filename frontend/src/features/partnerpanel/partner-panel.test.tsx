@@ -341,12 +341,17 @@ describe("agency", () => {
     fireEvent.click(within(table).getByRole("button", { name: "Activate" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${API}/sub-partners/c1/activate`)).toBe(true));
 
-    fireEvent.change(await screen.findByLabelText("Partner name"), { target: { value: "Southern Agency" } });
-    fireEvent.change(screen.getByLabelText("Administrator's email"), { target: { value: "sam@southern.example.com" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Create customers" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Easy CRM" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add agency" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add an agency" }));
+    const popup = screen.getByRole("dialog", { name: "Add an agency" });
+    expect(within(popup).getByRole("button", { name: "Add agency" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Partner name"), { target: { value: "Southern Agency" } });
+    fireEvent.change(within(popup).getByLabelText("Administrator's email"), { target: { value: "sam@southern.example.com" } });
+    fireEvent.click(within(popup).getByRole("checkbox", { name: "Create customers" }));
+    fireEvent.click(within(popup).getByRole("checkbox", { name: "Easy CRM" }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Add agency" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${API}/sub-partners`)).toBe(true));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText(/Agency created in draft/)).toBeInTheDocument();
     const create = calls.find((c) => c.key === `POST ${API}/sub-partners`)!;
     expect(create.body).toEqual({
       display_name: "Southern Agency",
@@ -382,8 +387,28 @@ describe("agency", () => {
     });
     shell(<Agency />);
     await screen.findByRole("table", { name: "Your agencies" });
-    expect(screen.queryByRole("button", { name: "Add agency" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add an agency/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Activate" })).not.toBeInTheDocument();
+  });
+
+  it("changes an agency's products and access in a popup from its row", async () => {
+    const calls = mockApi({
+      "GET /api/v1/auth/session": [SIGNED_IN],
+      "GET /api/v1/partner/portal": [portal()],
+      [`GET ${API}/sub-partners`]: [ok({ results: [ROW], next_cursor: null, has_more: false }), ok({ results: [ROW], next_cursor: null, has_more: false })],
+      [`GET ${API}/sub-partners/options`]: [ok(OPTIONS), ok(OPTIONS)],
+      [`PUT ${API}/sub-partners/c1/equipment`]: [ok({ id: "c1" })],
+    });
+    shell(<Agency />);
+    const table = await screen.findByRole("table", { name: "Your agencies" });
+    fireEvent.click(within(table).getByRole("button", { name: "Products & access" }));
+    const popup = screen.getByRole("dialog", { name: "Products & access: Northern Agency" });
+    fireEvent.click(await within(popup).findByRole("checkbox", { name: /Create customers/ }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText("Saved.")).toBeInTheDocument();
+    const put = calls.find((c) => c.key === `PUT ${API}/sub-partners/c1/equipment`)!;
+    expect(Object.keys(put.body as object).sort()).toEqual(["capabilities", "products"]);
   });
 });
 
@@ -448,11 +473,16 @@ describe("the team", () => {
     await waitFor(() => expect(calls.some((c) => c.key === `PATCH ${API}/members/m2`)).toBe(true));
     expect(calls.find((c) => c.key === `PATCH ${API}/members/m2`)!.body).toEqual({ role: "viewer" });
 
-    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "new@acme.example.com" } });
-    fireEvent.change(screen.getByLabelText("Role for the new user"), { target: { value: "sales" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Invite someone" }));
+    const popup = screen.getByRole("dialog", { name: "Invite someone" });
+    fireEvent.change(within(popup).getByLabelText("Email"), { target: { value: "new@acme.example.com" } });
+    fireEvent.change(within(popup).getByLabelText("Role for the new user"), { target: { value: "sales" } });
+    expect(within(popup).getByText("Sells.")).toBeInTheDocument();
+    fireEvent.click(within(popup).getByRole("button", { name: "Send invitation" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${API}/members`)).toBe(true));
     expect(calls.find((c) => c.key === `POST ${API}/members`)!.body).toEqual({ email: "new@acme.example.com", full_name: "", role: "sales" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText(/Invitation sent/)).toBeInTheDocument();
     await expectNoViolations(container);
   });
 
@@ -464,7 +494,7 @@ describe("the team", () => {
     });
     shell(<Team />);
     await screen.findByRole("table", { name: "Your team" });
-    expect(screen.queryByRole("button", { name: "Send invitation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Invite someone/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 });
@@ -603,11 +633,19 @@ describe("account", () => {
       [`GET ${API}/activity`]: [ok({ results: [{ id: "a1", occurred_at: "2026-10-01T00:00:00Z", label: "Business details or contacts changed", target: "business", actor: "owner@acme.example.com", outcome: "success" }], next_cursor: null, has_more: false })],
     });
     const { container } = shell(<Account />);
-    fireEvent.change(await screen.findByLabelText("Business name"), { target: { value: "Acme Partners Pvt" } });
+    // The saved values are text on the page; the fields are in the section's Edit popup.
+    expect(await screen.findByText("Acme Ltd")).toBeInTheDocument();
     expect(screen.getByText("INR")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Business name")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit business details" }));
+    const popup = screen.getByRole("dialog", { name: "Edit business details" });
+    expect(within(popup).getByLabelText("Legal name")).toHaveValue("Acme Ltd");
+    fireEvent.change(within(popup).getByLabelText("Business name"), { target: { value: "Acme Partners Pvt" } });
     expect(screen.queryByLabelText(/currency/i)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(calls.some((c) => c.key === `PUT ${API}/profile`)).toBe(true));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText("Saved.")).toBeInTheDocument();
     const body = calls.find((c) => c.key === `PUT ${API}/profile`)!.body as Record<string, unknown>;
     expect(body.expected_version).toBe(7);
     expect((body.business as Record<string, string>).display_name).toBe("Acme Partners Pvt");
@@ -623,7 +661,7 @@ describe("account", () => {
       [`GET ${API}/profile`]: [ok(PROFILE)],
     });
     shell(<Account />);
-    await screen.findByLabelText("Business name");
+    await screen.findByText("Acme Ltd");
     expect(screen.queryByRole("heading", { name: "Activity" })).not.toBeInTheDocument();
   });
 });

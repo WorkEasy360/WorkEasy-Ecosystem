@@ -290,7 +290,7 @@ describe("members", () => {
     mockApi({ [`GET ${ORG}/members`]: [page(MEMBERS)] });
     renderOrg(<MembersScreen />, ["platform.member.view"]);
     await screen.findByRole("table", { name: "Organization members" });
-    expect(screen.queryAllByRole("button", { name: /Suspend|Reactivate|Remove|Sign out|Save role/ })).toEqual([]);
+    expect(screen.queryAllByRole("button", { name: /Suspend|Reactivate|Remove|Sign out|Change role|Save role/ })).toEqual([]);
     expect(screen.queryByRole("link", { name: "Invitations" })).not.toBeInTheDocument();
   });
 
@@ -332,12 +332,16 @@ describe("members", () => {
       [`POST ${ORG}/members/m2/role`]: [{ status: 200, body: {} }],
     });
     const { container } = renderOrg(<MembersScreen />, ADMIN);
-    const select = await screen.findByLabelText("Role for Bob Jones");
-    const save = screen.getByRole("button", { name: "Save role for Bob Jones" });
+    // The role is changed in a small popup opened from the member's row.
+    fireEvent.click(await screen.findByRole("button", { name: "Change role for Bob Jones" }));
+    const popup = screen.getByRole("dialog", { name: "Change role for Bob Jones" });
+    const select = within(popup).getByLabelText("Role for Bob Jones");
+    const save = within(popup).getByRole("button", { name: "Save role" });
     expect(save).toBeDisabled();
     fireEvent.change(select, { target: { value: "readonly" } });
     fireEvent.click(save);
     expect(await screen.findByText("Bob Jones is now Read Only.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await expectNoViolations(container);
     const roleCalls = posted(calls, `POST ${ORG}/members/m2/role`);
     expect(roleCalls.map((c) => c.body)).toEqual([{ role: "readonly" }]);
@@ -387,21 +391,34 @@ const INVITES = [
 ];
 
 describe("invitations", () => {
-  const roleOptions = () =>
-    within(screen.getByLabelText("Role")).getAllByRole("option").map((o) => o.textContent);
+  // The invitation is written in a popup opened from the page header.
+  const openInvite = () => {
+    fireEvent.click(screen.getByRole("button", { name: "+ Invite someone" }));
+    return screen.getByRole("dialog", { name: "Invite someone" });
+  };
+  const roleOptions = (popup: HTMLElement) =>
+    within(within(popup).getByLabelText("Role")).getAllByRole("option").map((o) => o.textContent);
 
   it("offers administrator and billing manager only to someone who may assign roles", async () => {
     mockApi({ [`GET ${ORG}/invitations`]: [page(INVITES)] });
     const { unmount } = renderOrg(<InvitationsScreen />, ["platform.member.invite", "platform.member.view"]);
     await screen.findByRole("table", { name: "Invitations" });
-    expect(roleOptions()).toEqual(["Member", "Read Only"]);
+    expect(roleOptions(openInvite())).toEqual(["Member", "Read Only"]);
     unmount();
 
     mockApi({ [`GET ${ORG}/invitations`]: [page(INVITES)] });
     const { container } = renderOrg(<InvitationsScreen />, ["platform.member.invite", "platform.role.assign"]);
     await screen.findByRole("table", { name: "Invitations" });
-    expect(roleOptions()).toEqual(["Administrator", "Billing Manager", "Member", "Read Only"]);
     await expectNoViolations(container);
+    expect(roleOptions(openInvite())).toEqual(["Administrator", "Billing Manager", "Member", "Read Only"]);
+    await expectNoViolations(document.body);
+  });
+
+  it("offers no invitation to someone who may only view", async () => {
+    mockApi({ [`GET ${ORG}/invitations`]: [page(INVITES)] });
+    renderOrg(<InvitationsScreen />, ["platform.member.view"]);
+    await screen.findByRole("table", { name: "Invitations" });
+    expect(screen.queryByRole("button", { name: "+ Invite someone" })).not.toBeInTheDocument();
   });
 
   it("sends an email and a role, and offers resend and revoke only on open invitations", async () => {
@@ -417,10 +434,14 @@ describe("invitations", () => {
     expect(screen.getByText("Sent 2 times")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resend invitation to old@acme.test" })).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: " x@acme.test " } });
-    fireEvent.change(screen.getByLabelText("Role"), { target: { value: "readonly" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+    const popup = openInvite();
+    const send = within(popup).getByRole("button", { name: "Send invitation" });
+    expect(send).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Email address"), { target: { value: " x@acme.test " } });
+    fireEvent.change(within(popup).getByLabelText("Role"), { target: { value: "readonly" } });
+    fireEvent.click(send);
     expect(await screen.findByText("Invitation sent to x@acme.test.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(posted(calls, `POST ${ORG}/invitations`)[0].body).toEqual({ email: "x@acme.test", role: "readonly" });
 
     fireEvent.click(screen.getByRole("button", { name: "Resend invitation to new@acme.test" }));
@@ -442,14 +463,32 @@ describe("organization profile", () => {
     });
     const { container, reload } = renderOrg(<OrganizationScreen />, ["platform.organization.update"]);
     expect(screen.getByText("/o/acme")).toBeInTheDocument();
-    const save = screen.getByRole("button", { name: "Save name" });
+    // The name is read-only text on the page; it is changed in a popup.
+    expect(screen.queryByLabelText("Organization name")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Rename the organization" }));
+    const popup = screen.getByRole("dialog", { name: "Rename the organization" });
+    expect(within(popup).getByLabelText("Organization name")).toHaveValue("Acme Ltd");
+    const save = within(popup).getByRole("button", { name: "Save name" });
     expect(save).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Organization name"), { target: { value: "Acme Group " } });
+    fireEvent.change(within(popup).getByLabelText("Organization name"), { target: { value: "Acme Group " } });
     fireEvent.click(save);
     expect(await screen.findByText("The organization is now called Acme Group.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(posted(calls, `PATCH ${ORG}/organization`)[0].body).toEqual({ display_name: "Acme Group" });
     expect(reload).toHaveBeenCalled();
     await expectNoViolations(container);
+  });
+
+  it("keeps a refused rename in the popup with the server's reason", async () => {
+    mockApi({ [`PATCH ${ORG}/organization`]: [{ status: 400, body: { code: "invalid", detail: "That name is not allowed." } }] });
+    const { reload } = renderOrg(<OrganizationScreen />, ["platform.organization.update"]);
+    fireEvent.click(screen.getByRole("button", { name: "Rename the organization" }));
+    const popup = screen.getByRole("dialog", { name: "Rename the organization" });
+    fireEvent.change(within(popup).getByLabelText("Organization name"), { target: { value: "Bad" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save name" }));
+    expect(await within(popup).findByRole("alert")).toHaveTextContent("That name is not allowed.");
+    expect(within(popup).getByLabelText("Organization name")).toHaveValue("Bad");
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it("is read-only without the update permission", () => {
@@ -457,6 +496,7 @@ describe("organization profile", () => {
     renderOrg(<OrganizationScreen />, []);
     expect(screen.getByText("Acme Ltd")).toBeInTheDocument();
     expect(screen.queryByLabelText("Organization name")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rename the organization" })).not.toBeInTheDocument();
   });
 });
 
@@ -716,7 +756,10 @@ describe("subscription & billing", () => {
       }),
     );
     const { container } = renderOrg(<BillingScreen />, OWNER_BILLING);
-    const currency = await screen.findByLabelText("Currency");
+    // The account is opened in a popup from the Billing account panel.
+    fireEvent.click(await screen.findByRole("button", { name: "Open billing account" }));
+    const popup = screen.getByRole("dialog", { name: "Open a billing account" });
+    const currency = within(popup).getByLabelText("Currency");
     expect(within(currency).getAllByRole("option").map((o) => o.textContent)).toEqual([
       "Choose a currency",
       "AED",
@@ -729,14 +772,16 @@ describe("subscription & billing", () => {
       "USD",
     ]);
     await expectNoViolations(container);
-    const open = screen.getByRole("button", { name: "Open billing account" });
+    await expectNoViolations(popup);
+    const open = within(popup).getByRole("button", { name: "Open billing account" });
     expect(open).toBeDisabled();
     fireEvent.change(currency, { target: { value: "JPY" } });
-    fireEvent.change(screen.getByLabelText("Billing email (optional)"), { target: { value: "ap@acme.test" } });
+    fireEvent.change(within(popup).getByLabelText("Billing email (optional)"), { target: { value: "ap@acme.test" } });
     // Phase 9: no region field - collection mode and region are Workeasy360's.
     expect(screen.queryByLabelText("Billing region (optional)")).not.toBeInTheDocument();
     fireEvent.click(open);
     expect(await screen.findByText(/billed in JPY/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(posted(calls, `POST ${ORG}/billing-account`)[0].body).toEqual({
       currency: "JPY",
       billing_email: "ap@acme.test",
@@ -1321,9 +1366,12 @@ describe("my security", () => {
     expect(screen.queryByRole("button", { name: /^Sign out Chrome on macOS/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Sign out Firefox on Windows/ })).toBeInTheDocument();
     expect(screen.getByText("All other sessions were signed out")).toBeInTheDocument();
-    expect(screen.getByLabelText("Current password")).toBeInTheDocument();
     expect(screen.getByText(/Changing your password also signs out every other session/)).toBeInTheDocument();
     await expectNoViolations(container);
+    // The password change opens in a popup.
+    expect(screen.queryByLabelText("Current password")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+    expect(within(screen.getByRole("dialog")).getByLabelText("Current password")).toBeInTheDocument();
   });
 
   it("signing a session out ends it at once", async () => {
@@ -1376,15 +1424,21 @@ describe("authentication policy", () => {
       [`PUT ${ORG}/security/policy`]: [{ status: 200, body: { ...POLICY, session_max_age_minutes: 480, version: 8 } }],
     });
     const { container } = renderOrg(<AuthenticationPolicyScreen />, ADMIN);
-    await screen.findByLabelText("Session length");
+    // The page shows the settings as text; they are changed in an Edit popup.
+    expect(await screen.findByText("No limit")).toBeInTheDocument();
+    expect(screen.getByText("Platform minimum (12 characters)")).toBeInTheDocument();
     await expectNoViolations(container);
-    fireEvent.change(screen.getByLabelText("Session length"), { target: { value: "480" } });
-    fireEvent.change(screen.getByLabelText("Minimum password length"), { target: { value: "8" } });
-    expect(screen.getByRole("button", { name: "Save authentication settings" })).toBeDisabled();
-    expect(screen.getByText(/Enter a number from 12 to 64/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Minimum password length"), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save authentication settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit authentication settings" }));
+    const popup = screen.getByRole("dialog", { name: "Edit authentication settings" });
+    await expectNoViolations(popup);
+    fireEvent.change(within(popup).getByLabelText("Session length"), { target: { value: "480" } });
+    fireEvent.change(within(popup).getByLabelText("Minimum password length"), { target: { value: "8" } });
+    expect(within(popup).getByRole("button", { name: "Save authentication settings" })).toBeDisabled();
+    expect(within(popup).getByText(/Enter a number from 12 to 64/)).toBeInTheDocument();
+    fireEvent.change(within(popup).getByLabelText("Minimum password length"), { target: { value: "" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save authentication settings" }));
     expect(await screen.findByText("Authentication settings saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(posted(calls, `PUT ${ORG}/security/policy`)[0].body).toEqual({
       session_max_age_minutes: 480,
       password_min_length: null,
@@ -1401,17 +1455,24 @@ describe("authentication policy", () => {
       ],
     });
     const { container } = renderOrg(<AuthenticationPolicyScreen />, ADMIN);
-    fireEvent.click(await screen.findByRole("button", { name: "Save authentication settings" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Someone else changed this policy/);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit authentication settings" }));
+    const popup = screen.getByRole("dialog", { name: "Edit authentication settings" });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save authentication settings" }));
+    // The refusal stays in the popup; the page behind offers to reload.
+    expect(await within(popup).findByRole("alert")).toHaveTextContent(/Someone else changed this policy/);
     expect(screen.getByRole("button", { name: "Reload settings" })).toBeInTheDocument();
+    fireEvent.click(within(popup).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await expectNoViolations(container);
   });
 
   it("is view-only without the update permission", async () => {
     mockApi({ [`GET ${ORG}/security/policy`]: [{ status: 200, body: { ...POLICY, session_max_age_minutes: 90 } }] });
     renderOrg(<AuthenticationPolicyScreen />, ["platform.security.view"]);
-    expect(await screen.findByLabelText("Session length")).toBeDisabled();
-    expect(screen.getByLabelText("Session length")).toHaveValue("90");
+    expect(await screen.findByText("90 minutes")).toBeInTheDocument();
+    expect(screen.getByText(/You can view these settings/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Session length")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit authentication settings" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save authentication settings" })).not.toBeInTheDocument();
   });
 });
@@ -1434,26 +1495,58 @@ describe("network access", () => {
       ],
     });
     const { container } = renderOrg(<NetworkPolicyScreen />, ADMIN);
-    expect(await screen.findByText(/You're connecting from 203.0.113.7/)).toBeInTheDocument();
-    expect(screen.getByText(/server-to-server calls are not affected/)).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("Only allow access from the networks below"));
-    const save = screen.getByRole("button", { name: "Save network access" });
+    // The page shows the allow-list as text; it is changed in an Edit popup.
+    expect(await screen.findByText("203.0.113.7")).toBeInTheDocument();
+    expect(screen.getByText("Off")).toBeInTheDocument();
+    await expectNoViolations(container);
+    fireEvent.click(screen.getByRole("button", { name: "Edit network access" }));
+    const popup = screen.getByRole("dialog", { name: "Edit network access" });
+    expect(within(popup).getByText(/You're connecting from 203.0.113.7/)).toBeInTheDocument();
+    expect(within(popup).getByText(/server-to-server calls are not affected/)).toBeInTheDocument();
+    fireEvent.click(within(popup).getByLabelText("Only allow access from the networks below"));
+    const save = within(popup).getByRole("button", { name: "Save network access" });
     expect(save).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Allowed network 1"), { target: { value: "198.51.100.0/24" } });
+    fireEvent.change(within(popup).getByLabelText("Allowed network 1"), { target: { value: "198.51.100.0/24" } });
     fireEvent.click(save);
-    expect(await screen.findByRole("alert")).toHaveTextContent(/would lock you out/);
-    expect(screen.getByText(/Not saved - this would lock you out/)).toBeInTheDocument();
+    expect(await within(popup).findByRole("alert")).toHaveTextContent(/would lock you out/);
+    expect(within(popup).getByText(/Not saved - this would lock you out/)).toBeInTheDocument();
     expect(posted(calls, `PUT ${ORG}/security/network`)[0].body).toEqual({
       ip_allowlist_enabled: true,
       ip_allowlist: ["198.51.100.0/24"],
       version: 7,
     });
-    await expectNoViolations(container);
+    await expectNoViolations(popup);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add my network (203.0.113.0/24)" }));
-    expect(screen.getByLabelText("Allowed network 2")).toHaveValue("203.0.113.0/24");
-    expect(screen.getByLabelText("Allowed network 2")).toHaveFocus();
+    fireEvent.click(within(popup).getByRole("button", { name: "Add my network (203.0.113.0/24)" }));
+    expect(within(popup).getByLabelText("Allowed network 2")).toHaveValue("203.0.113.0/24");
+    expect(within(popup).getByLabelText("Allowed network 2")).toHaveFocus();
     expect(screen.queryByRole("button", { name: /Add my network/ })).not.toBeInTheDocument();
+  });
+
+  it("saves the allow-list from its popup and closes it", async () => {
+    const calls = mockApi({
+      [`GET ${ORG}/security/network`]: [{ status: 200, body: NETWORK }],
+      [`PUT ${ORG}/security/network`]: [{ status: 200, body: { ...NETWORK, ip_allowlist_enabled: true, ip_allowlist: ["203.0.113.0/24"], version: 8 } }],
+    });
+    renderOrg(<NetworkPolicyScreen />, ADMIN);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit network access" }));
+    const popup = screen.getByRole("dialog", { name: "Edit network access" });
+    fireEvent.click(within(popup).getByLabelText("Only allow access from the networks below"));
+    fireEvent.click(within(popup).getByRole("button", { name: "Add my network (203.0.113.0/24)" }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Save network access" }));
+    expect(await screen.findByText("Network access saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(posted(calls, `PUT ${ORG}/security/network`).map((c) => c.body)).toEqual([
+      { ip_allowlist_enabled: true, ip_allowlist: ["203.0.113.0/24"], version: 7 },
+    ]);
+  });
+
+  it("is view-only without the update permission", async () => {
+    mockApi({ [`GET ${ORG}/security/network`]: [{ status: 200, body: { ...NETWORK, ip_allowlist_enabled: true, ip_allowlist: ["192.0.2.1"] } }] });
+    renderOrg(<NetworkPolicyScreen />, ["platform.security.view"]);
+    expect(await screen.findByText("192.0.2.1")).toBeInTheDocument();
+    expect(screen.getByText("On")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit network access" })).not.toBeInTheDocument();
   });
 
   it("edits the list row by row", async () => {
@@ -1463,12 +1556,14 @@ describe("network access", () => {
       ],
     });
     renderOrg(<NetworkPolicyScreen />, ADMIN);
-    expect(await screen.findByLabelText("Allowed network 2")).toHaveValue("192.0.2.1");
-    fireEvent.click(screen.getByRole("button", { name: "Add a network" }));
-    expect(screen.getByLabelText("Allowed network 3")).toHaveFocus();
-    fireEvent.click(screen.getByRole("button", { name: "Remove allowed network 2" }));
-    expect(screen.getByLabelText("Allowed network 2")).toHaveValue("");
-    expect(screen.queryByLabelText("Allowed network 3")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit network access" }));
+    const popup = screen.getByRole("dialog", { name: "Edit network access" });
+    expect(within(popup).getByLabelText("Allowed network 2")).toHaveValue("192.0.2.1");
+    fireEvent.click(within(popup).getByRole("button", { name: "Add a network" }));
+    expect(within(popup).getByLabelText("Allowed network 3")).toHaveFocus();
+    fireEvent.click(within(popup).getByRole("button", { name: "Remove allowed network 2" }));
+    expect(within(popup).getByLabelText("Allowed network 2")).toHaveValue("");
+    expect(within(popup).queryByLabelText("Allowed network 3")).not.toBeInTheDocument();
   });
 });
 

@@ -233,6 +233,12 @@ function mount(tab = "overview", permissions = ALL) {
 
 const change = (label: string | RegExp, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
 
+/** The Profile tab shows what is saved; each editor opens in a popup (2026-11-05). */
+async function openEditor(label: "Edit business details" | "Edit contacts" | "+ Invite a person") {
+  fireEvent.click(await screen.findByRole("button", { name: label }));
+  return screen.getByRole("dialog", { name: label.replace(/^\+ /, "") });
+}
+
 beforeEach(() => {
   vi.restoreAllMocks();
   query = "";
@@ -296,8 +302,8 @@ describe("the tabs", () => {
   it("shows the business details before the contacts on the Profile tab", async () => {
     mockApi(routes());
     mount("profile");
-    const business = await screen.findByRole("form", { name: "Business details" });
-    const contacts = await screen.findByRole("form", { name: "Contacts" });
+    const business = await screen.findByRole("button", { name: "Edit business details" });
+    const contacts = await screen.findByRole("button", { name: "Edit contacts" });
     expect(business.compareDocumentPosition(contacts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -319,7 +325,11 @@ describe("Business Details", () => {
   it("shows what is saved, marks business email and country as required, and shows the currency as a fact", async () => {
     mockApi(routes());
     const { container } = mount("business");
-    expect(await screen.findByLabelText(/^Business email/)).toHaveValue("hello@acme.example");
+    // What is saved is on the page as text; the fields are in the popup.
+    expect(await screen.findByText("hello@acme.example")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Business email/)).not.toBeInTheDocument();
+    const popup = await openEditor("Edit business details");
+    expect(within(popup).getByLabelText(/^Business email/)).toHaveValue("hello@acme.example");
     expect(screen.getByLabelText(/^Company or partner name/)).toHaveValue("Acme Partners");
     expect(screen.getByLabelText(/^Website/)).toHaveValue("https://acme.example");
     expect(screen.getByLabelText(/^Registration or company number/)).toHaveValue("12345678");
@@ -340,11 +350,12 @@ describe("Business Details", () => {
       expect(screen.getByLabelText(optional)).not.toBeRequired();
     }
     // Once the partner is active the currency is a fact, not a field.
-    expect(screen.getByText("GBP").closest("p")).toHaveTextContent(/^Paid in GBP\./);
+    expect(within(popup).getByText("GBP").closest("p")).toHaveTextContent(/^Paid in GBP\./);
     expect(screen.queryByLabelText(/currency/i)).not.toBeInTheDocument();
     // The promise about what editing does not touch.
     expect(screen.getByText(/never rewrites sales, subscriptions, commissions or payouts/)).toBeInTheDocument();
     await expectNoViolations(container);
+    await expectNoViolations(popup);
   }, 60_000);
 
   it("sends only the business, support, payout and notes parts, at the version it read, and shows the saved values", async () => {
@@ -357,7 +368,7 @@ describe("Business Details", () => {
     );
     mount("business");
     expect(screen.queryByRole("button", { name: "Save business details" })).not.toBeInTheDocument();
-    await screen.findByLabelText(/^Website/);
+    await openEditor("Edit business details");
     expect(screen.getByRole("button", { name: "Save business details" })).toBeDisabled();
     expect(within(screen.getByRole("form", { name: "Business details" })).getByText("No changes to save.")).toBeInTheDocument();
 
@@ -381,8 +392,9 @@ describe("Business Details", () => {
     expect(body.payout).toEqual({ frequency: "monthly", contact_email: "finance@acme.example" });
     // Neither the code nor anything commercial is in the request.
     expect(JSON.stringify(body)).not.toMatch(/"code"|capabilit|price|commission/);
-    // The tab re-read the profile and shows the new value.
-    await waitFor(() => expect(screen.getByLabelText(/^Website/)).toHaveValue("https://www.acme.example"));
+    // The popup closed; the tab re-read the profile and shows the new value.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(await screen.findByText("https://www.acme.example")).toBeInTheDocument();
     // The page re-read the partner too, so the next status change uses the new version.
     expect(calls.filter((c) => c.key === `GET ${BASE}`).length).toBeGreaterThan(1);
   });
@@ -390,7 +402,7 @@ describe("Business Details", () => {
   it("sends a cleared optional field as empty, and a changed note and payout preference", async () => {
     const calls = mockApi(routes({ [`PUT ${BASE}/profile`]: [ok(PROFILE)] }));
     mount("business");
-    await screen.findByLabelText(/^Website/);
+    await openEditor("Edit business details");
     change(/^Website/, "");
     change(/^Internal notes/, "Call first.");
     change(/^Payout frequency/, "quarterly");
@@ -406,7 +418,7 @@ describe("Business Details", () => {
   it("sends a chosen time zone", async () => {
     const calls = mockApi(routes({ [`PUT ${BASE}/profile`]: [ok(PROFILE)] }));
     mount("business");
-    await screen.findByLabelText(/^Website/);
+    await openEditor("Edit business details");
     const zone = screen.getByLabelText("Time zone (optional)");
     expect(within(zone).getByRole("option", { name: "Not set" })).toHaveValue("");
     change("Time zone (optional)", "Asia/Kolkata");
@@ -424,9 +436,10 @@ describe("Business Details", () => {
       }),
     );
     mount("business");
-    const currency = await screen.findByLabelText("Preferred currency");
+    const popup = await openEditor("Edit business details");
+    const currency = within(popup).getByLabelText("Preferred currency");
     expect(currency).toHaveValue("GBP");
-    expect(screen.queryByText(/^Paid in/)).not.toBeInTheDocument();
+    expect(within(popup).queryByText(/^Paid in/)).not.toBeInTheDocument();
     change("Preferred currency", "EUR");
     fireEvent.click(screen.getByRole("button", { name: "Save business details" }));
     await screen.findByText("Business details saved.");
@@ -436,7 +449,7 @@ describe("Business Details", () => {
   it("will not send a form with the required details missing, and says which", async () => {
     const calls = mockApi(routes());
     mount("business");
-    await screen.findByLabelText(/^Website/);
+    await openEditor("Edit business details");
     change(/^Business email/, "");
     change(/^Country/, "");
     fireEvent.click(screen.getByRole("button", { name: "Save business details" }));
@@ -454,7 +467,7 @@ describe("Business Details", () => {
   it("refuses an address that is plainly not one before asking the server", async () => {
     const calls = mockApi(routes());
     mount("business");
-    await screen.findByLabelText(/^Website/);
+    await openEditor("Edit business details");
     change(/^Business email/, "not-an-email");
     change(/^Website/, "http://insecure.example");
     fireEvent.click(screen.getByRole("button", { name: "Save business details" }));
@@ -472,7 +485,7 @@ describe("Business Details", () => {
       }),
     );
     mount("business");
-    await screen.findByLabelText(/^Website/);
+    await openEditor("Edit business details");
     change("Postal or ZIP code", "N1 1AA!");
     fireEvent.click(screen.getByRole("button", { name: "Save business details" }));
 
@@ -497,20 +510,22 @@ describe("Business Details", () => {
       }),
     );
     mount("business");
-    await screen.findByLabelText(/^Website/);
+    await openEditor("Edit business details");
     change(/^Website/, "https://www.acme.example");
     fireEvent.click(screen.getByRole("button", { name: "Save business details" }));
 
     const alert = await screen.findByText(/Someone else changed this partner while you were editing/);
     expect(alert).toHaveTextContent(/nothing was saved/i);
     expect(document.body.textContent).not.toMatch(/version 4/);
-    const reload = screen.getByRole("button", { name: "Reload" });
+    // The popup stays open and offers Reload itself.
+    const reload = within(screen.getByRole("dialog")).getByRole("button", { name: "Reload" });
 
     fireEvent.click(reload);
     await screen.findByText(/Reloaded\. This is what is saved now\./);
-    await waitFor(() => expect(screen.getByLabelText(/^Business phone/)).toHaveValue("+44 20 7946 9999"));
+    expect(await screen.findByText("+44 20 7946 9999")).toBeInTheDocument();
     // The unsaved edit was replaced by what is saved, and the Reload button is gone.
-    expect(screen.getByLabelText(/^Website/)).toHaveValue("https://acme.example");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("https://acme.example")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reload" })).not.toBeInTheDocument();
     expect(calls.filter((c) => c.key === `GET ${BASE}/profile`)).toHaveLength(4);
   });
@@ -529,6 +544,7 @@ describe("Business Details", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Save/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Edit/ })).not.toBeInTheDocument();
     expect(writes(calls)).toEqual([]);
     await expectNoViolations(container);
   });
@@ -538,10 +554,13 @@ describe("Business Details", () => {
     const hostile = { ...PROFILE, business: { ...PROFILE.business, display_name: EVIL }, internal_notes: EVIL };
     mockApi(routes({ [`GET ${BASE}/profile`]: [ok(hostile)] }));
     const { container, unmount } = mount("business");
-    expect(await screen.findByLabelText(/^Company or partner name/)).toHaveValue(EVIL);
-    expect(screen.getByLabelText(/^Internal notes/)).toHaveValue(EVIL);
+    expect(await screen.findAllByText(EVIL)).not.toHaveLength(0);
+    const popup = await openEditor("Edit business details");
+    expect(within(popup).getByLabelText(/^Company or partner name/)).toHaveValue(EVIL);
+    expect(within(popup).getByLabelText(/^Internal notes/)).toHaveValue(EVIL);
     expect(container.querySelector("img")).toBeNull();
-    expect(container.querySelector("script")).toBeNull();
+    expect(popup.querySelector("img")).toBeNull();
+    expect(document.querySelector("script")).toBeNull();
     unmount();
 
     mockApi(routes({ [`GET ${BASE}/profile`]: [ok(hostile)] }));
@@ -560,7 +579,9 @@ describe("Contacts", () => {
   it("shows the four roles, with a role that follows the primary shown as such", async () => {
     mockApi(routes());
     const { container } = mount("contacts");
-    expect(await screen.findByLabelText(/^Primary contact name/)).toHaveValue("Priya Shah");
+    expect(await screen.findByText("Priya Shah")).toBeInTheDocument();
+    const popup = await openEditor("Edit contacts");
+    expect(within(popup).getByLabelText(/^Primary contact name/)).toHaveValue("Priya Shah");
     expect(screen.getByLabelText(/^Primary contact email/)).toHaveValue("priya@acme.example");
     expect(screen.getByLabelText(/^Primary contact job title/)).toHaveValue("Director");
     const billing = screen.getByRole("group", { name: "Billing contact (optional)" });
@@ -578,12 +599,13 @@ describe("Contacts", () => {
     expect(screen.getAllByText(/not Workeasy360 accounts and cannot sign in|not an account, and cannot sign in/).length).toBeGreaterThan(0);
     expect(screen.getByText(/never shown on a partner portal or to another partner/)).toBeInTheDocument();
     await expectNoViolations(container);
+    await expectNoViolations(popup);
   });
 
   it("sends only the contacts - never the business details - and a role that follows the primary stores nothing", async () => {
     const calls = mockApi(routes({ [`PUT ${BASE}/profile`]: [ok({ ...PROFILE, version: 4 })] }));
     mount("contacts");
-    await screen.findByLabelText(/^Primary contact name/);
+    await openEditor("Edit contacts");
     change(/^Primary contact name/, "Priya S.");
     fireEvent.click(screen.getByRole("button", { name: "Save contacts" }));
     await screen.findByText("Contacts saved.");
@@ -602,7 +624,7 @@ describe("Contacts", () => {
   it("makes a role the same as the primary by ticking the box, and a role its own by clearing it", async () => {
     const calls = mockApi(routes({ [`PUT ${BASE}/profile`]: [ok(PROFILE)] }));
     mount("contacts");
-    await screen.findByLabelText(/^Primary contact name/);
+    await openEditor("Edit contacts");
     const technical = screen.getByRole("group", { name: "Technical contact (optional)" });
     fireEvent.click(within(technical).getByRole("checkbox", { name: "Same as primary contact" }));
     expect(within(technical).queryByRole("textbox")).not.toBeInTheDocument();
@@ -622,7 +644,7 @@ describe("Contacts", () => {
   it("requires the primary contact's name and email, and refuses a plainly wrong address, before asking", async () => {
     const calls = mockApi(routes());
     mount("contacts");
-    await screen.findByLabelText(/^Primary contact name/);
+    await openEditor("Edit contacts");
     change(/^Primary contact name/, "");
     change(/^Primary contact email/, "");
     const billing = screen.getByRole("group", { name: "Billing contact (optional)" });
@@ -642,7 +664,7 @@ describe("Contacts", () => {
       }),
     );
     mount("contacts");
-    await screen.findByLabelText(/^Primary contact name/);
+    await openEditor("Edit contacts");
     const technical = screen.getByRole("group", { name: "Technical contact (optional)" });
     fireEvent.change(within(technical).getByLabelText(/^Technical contact name/), { target: { value: "Tim Tech" } });
     fireEvent.click(screen.getByRole("button", { name: "Save contacts" }));
@@ -658,7 +680,7 @@ describe("Contacts", () => {
       }),
     );
     mount("contacts");
-    await screen.findByLabelText(/^Primary contact name/);
+    await openEditor("Edit contacts");
     change(/^Primary contact name/, "Someone New");
     fireEvent.click(screen.getByRole("button", { name: "Save contacts" }));
     expect(await screen.findByText(/Someone else changed this partner/)).toBeInTheDocument();
@@ -668,7 +690,7 @@ describe("Contacts", () => {
   it("points to Users & Permissions for people who can sign in", async () => {
     mockApi(routes());
     mount("contacts");
-    await screen.findByLabelText(/^Primary contact name/);
+    await screen.findByRole("button", { name: "Edit contacts" });
     const links = screen.getAllByRole("button", { name: "Users & Permissions" });
     fireEvent.click(links[0]);
     expect(screen.getByRole("tab", { name: "Users & Permissions" })).toHaveAttribute("aria-selected", "true");
@@ -682,6 +704,7 @@ describe("Contacts", () => {
     expect(screen.getAllByText("Same as the primary contact.")).toHaveLength(2);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save contacts" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit contacts" })).not.toBeInTheDocument();
     expect(writes(calls)).toEqual([]);
     await expectNoViolations(container);
   });
@@ -1038,9 +1061,13 @@ describe("Users & Permissions", () => {
       }),
     );
     const { container } = mount("users");
-    const email = await screen.findByLabelText(/^Email address/);
+    // Inviting is a popup (2026-11-05).
+    await screen.findByRole("table", { name: "Members" });
+    expect(screen.queryByLabelText(/^Email address/)).not.toBeInTheDocument();
+    const popup = await openEditor("+ Invite a person");
+    const email = within(popup).getByLabelText(/^Email address/);
     expect(email).toBeRequired();
-    expect(container.querySelector('input[type="password"]')).toBeNull();
+    expect(document.querySelector('input[type="password"]')).toBeNull();
     expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
 
     const timing = screen.getByRole("group", { name: "Send the invitation" });
@@ -1060,7 +1087,10 @@ describe("Users & Permissions", () => {
       last_name: "Lovelace",
       send_invitation: "on_activation",
     });
-    await waitFor(() => expect(screen.getByLabelText(/^Email address/)).toHaveValue(""));
+    // The popup closed; opened again, it starts empty.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await openEditor("+ Invite a person");
+    expect(screen.getByLabelText(/^Email address/)).toHaveValue("");
     expect(screen.getByLabelText(/^First name/)).toHaveValue("");
     await expectNoViolations(container);
   });
@@ -1068,7 +1098,8 @@ describe("Users & Permissions", () => {
   it("invites now by default, omitting empty names", async () => {
     const calls = mockApi(routes({ [`GET ${BASE}`]: [ok({ ...DETAIL, status: "draft" })], [`POST ${BASE}/administrators`]: [{ status: 201, body: { id: "m9", role: "admin", invited: true } }] }));
     mount("users");
-    fireEvent.change(await screen.findByLabelText(/^Email address/), { target: { value: "new@acme.example" } });
+    await openEditor("+ Invite a person");
+    fireEvent.change(screen.getByLabelText(/^Email address/), { target: { value: "new@acme.example" } });
     fireEvent.click(screen.getByRole("button", { name: "Invite" }));
     await screen.findByText("Added. If this person has no password yet, a link to choose one was emailed.");
     expect(calls.find((c) => c.key === `POST ${BASE}/administrators`)!.body).toEqual({ email: "new@acme.example", role: "admin", send_invitation: "now" });
@@ -1077,7 +1108,8 @@ describe("Users & Permissions", () => {
   it("offers no deferral on a partner that is not a draft - nothing would send it later", async () => {
     const calls = mockApi(routes({ [`POST ${BASE}/administrators`]: [{ status: 201, body: { id: "m9", role: "viewer", invited: true } }] }));
     mount("users");
-    fireEvent.change(await screen.findByLabelText(/^Email address/), { target: { value: "new@acme.example" } });
+    await openEditor("+ Invite a person");
+    fireEvent.change(screen.getByLabelText(/^Email address/), { target: { value: "new@acme.example" } });
     expect(screen.queryByRole("group", { name: "Send the invitation" })).not.toBeInTheDocument();
     change(/^First name/, "Ann");
     change("Role", "viewer");
@@ -1091,9 +1123,12 @@ describe("Users & Permissions", () => {
     const { container } = mount("users");
     await screen.findByRole("table", { name: "Members" });
     const open = screen.getByRole("button", { name: "Change role for ops@acme.example" });
+    // A click focuses the button in a browser; the popup returns focus to it on close.
+    open.focus();
     fireEvent.click(open);
 
-    const group = screen.getByRole("group", { name: "Change role for ops@acme.example" });
+    // The role is chosen in a small popup (2026-11-05).
+    const group = screen.getByRole("dialog", { name: "Change role for ops@acme.example" });
     const select = within(group).getByLabelText("New role for ops@acme.example");
     expect(select).toHaveFocus();
     expect(select).toHaveValue("viewer");
@@ -1101,7 +1136,7 @@ describe("Users & Permissions", () => {
     await expectNoViolations(container);
 
     fireEvent.click(within(group).getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("group", { name: "Change role for ops@acme.example" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Change role for ops@acme.example" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Change role for ops@acme.example" })).toHaveFocus();
     expect(writes(calls)).toEqual([]);
 
@@ -1110,7 +1145,7 @@ describe("Users & Permissions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm role change" }));
     await screen.findByText("Role changed. It takes effect on this person's next request.");
     expect(calls.find((c) => c.key === `POST ${BASE}/members/m2/role`)!.body).toEqual({ role: "admin" });
-    expect(screen.queryByRole("group", { name: "Change role for ops@acme.example" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Change role for ops@acme.example" })).not.toBeInTheDocument();
   });
 
   it("shows the server's refusal when the change would leave an active partner with no administrator", async () => {
@@ -1125,7 +1160,8 @@ describe("Users & Permissions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Change role for priya@acme.example" }));
     fireEvent.change(screen.getByLabelText("New role for priya@acme.example"), { target: { value: "viewer" } });
     fireEvent.click(screen.getByRole("button", { name: "Confirm role change" }));
-    const alert = await screen.findByRole("alert");
+    // The refusal is shown inside the popup, which stays open.
+    const alert = await within(screen.getByRole("dialog")).findByRole("alert");
     expect(alert).toHaveTextContent(refusal);
     // The row still says Administrator: nothing changed.
     const members = screen.getByRole("table", { name: "Members" });
@@ -1162,6 +1198,7 @@ describe("Users & Permissions", () => {
     mount("users");
     expect(await screen.findByText(/terminated, so it takes on no new users/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Invite" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Invite a person" })).not.toBeInTheDocument();
   });
 
   it("shows the people and no action to staff who may not manage partners", async () => {
@@ -1172,6 +1209,7 @@ describe("Users & Permissions", () => {
     expect(within(members).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/^Email address/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Invite" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Invite a person" })).not.toBeInTheDocument();
     expect(writes(calls)).toEqual([]);
   });
 });

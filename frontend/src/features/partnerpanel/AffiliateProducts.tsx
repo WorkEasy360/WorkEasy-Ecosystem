@@ -12,9 +12,10 @@ import {
   type MyProducts as MyProductsData,
   type ReferralTrail,
 } from "@/lib/api/partnerPanel";
+import { FormDialog } from "@/features/controlplane/Modal";
 import { EarningCells, productLabel } from "./AffiliateScreens";
 import { Amounts, EmptyState, Kpi, usePanel } from "./PanelKit";
-import { CopyButton, percent, useRangeControls } from "./workspaceKit";
+import { CopyButton, percent, useNote, useRangeControls } from "./workspaceKit";
 import styles from "./PartnerPanel.module.css";
 
 /**
@@ -65,23 +66,19 @@ function RollupKpis({ totals, label }: { totals: LinkRollup; label: string }) {
   );
 }
 
-function LinkGenerator({
-  product,
-  campaigns,
-  onCreated,
-  preset,
-}: {
-  product: MyProduct;
-  campaigns: MyProductsData["campaign_list"];
-  onCreated: () => void;
-  preset?: { kind: LinkKind; updateId: string };
-}) {
+const OWN_CODE = /^[A-Za-z0-9]{4,16}$/;
+
+/** The "Create a link" popup: opened from the section's button, or from an
+ * update's row with that update chosen. The new address shows on the page
+ * once the popup closes, with a copy button. */
+function useLinkGenerator(product: MyProduct, campaigns: MyProductsData["campaign_list"], onCreated: () => void) {
   const { id } = usePanel();
   const formId = useId();
+  const [open, setOpen] = useState(false);
   const [made, setMade] = useState<string | null>(null);
-  const { act, busy, feedback } = useAction(onCreated);
-  const [kind, setKind] = useState<LinkKind>(preset?.kind ?? "product");
-  const [updateId, setUpdateId] = useState(preset?.updateId ?? "");
+  const note = useNote();
+  const [kind, setKind] = useState<LinkKind>("product");
+  const [updateId, setUpdateId] = useState("");
   const [plan, setPlan] = useState("");
   const [campaign, setCampaign] = useState("");
   const [label, setLabel] = useState("");
@@ -89,142 +86,186 @@ function LinkGenerator({
   const wanted = kind === "feature" ? "feature" : "release";
   const targets = product.updates.filter((u) => u.kind === wanted);
   const needsUpdate = kind === "feature" || kind === "update";
-  return (
-    <form
-      className={styles.panel}
-      aria-label={`Create a link for ${product.name}`}
-      onSubmit={(e) => {
-        e.preventDefault();
-        void act(async () => {
-          const created = await panelApi.createTrackingLink(id, {
-            link_kind: kind,
-            product_code: product.code,
-            update_id: needsUpdate ? updateId || undefined : undefined,
-            plan_code: kind === "product" ? plan || undefined : undefined,
-            campaign_id: campaign || undefined,
-            label: label.trim() || undefined,
-            code: code.trim() || undefined,
-          });
-          setMade(created.url);
-          setCode("");
-          setLabel("");
-        }, "Referral link created.");
-      }}
-    >
-      <h3>Create a link for {product.name}</h3>
-      <div className={styles.formGrid}>
-        <div>
-          <label className="w360-label" htmlFor={`${formId}-kind`}>
-            Link opens
-          </label>
-          <select
-            id={`${formId}-kind`}
-            className="w360-input"
-            value={kind}
-            onChange={(e) => {
-              setKind(e.target.value as LinkKind);
-              setUpdateId("");
-            }}
-          >
-            <option value="product">Main product page</option>
-            <option value="pricing">Pricing page</option>
-            <option value="feature" disabled={!product.updates.some((u) => u.kind === "feature")}>
-              A feature
-            </option>
-            <option value="update" disabled={!product.updates.some((u) => u.kind === "release")}>
-              A product update
-            </option>
-          </select>
-        </div>
-        {needsUpdate && (
-          <div>
-            <label className="w360-label" htmlFor={`${formId}-update`}>
-              {kind === "feature" ? "Feature" : "Update"}
-            </label>
-            <select id={`${formId}-update`} className="w360-input" required value={updateId} onChange={(e) => setUpdateId(e.target.value)}>
-              <option value="">Choose…</option>
-              {targets.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.title}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-        {kind === "product" && (
-          <div>
-            <label className="w360-label" htmlFor={`${formId}-plan`}>
-              Plan (optional)
-            </label>
-            <select id={`${formId}-plan`} className="w360-input" value={plan} onChange={(e) => setPlan(e.target.value)}>
-              <option value="">Any plan</option>
-              {product.plans.map((p) => (
-                <option key={p.plan_code} value={p.plan_code}>
-                  {p.plan_name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-        <div>
-          <label className="w360-label" htmlFor={`${formId}-campaign`}>
-            Campaign (optional)
-          </label>
-          <select id={`${formId}-campaign`} className="w360-input" value={campaign} onChange={(e) => setCampaign(e.target.value)}>
-            <option value="">No campaign</option>
-            {campaigns
-              .filter((c) => c.status === "active")
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-          </select>
-        </div>
-        <div>
-          <label className="w360-label" htmlFor={`${formId}-label`}>
-            Name (optional)
-          </label>
-          <input id={`${formId}-label`} className="w360-input" maxLength={64} value={label} onChange={(e) => setLabel(e.target.value)} />
-        </div>
-        <div>
-          <label className="w360-label" htmlFor={`${formId}-code`}>
-            Your own code (optional)
-          </label>
-          <input
-            id={`${formId}-code`}
-            className="w360-input"
-            maxLength={16}
-            pattern="[A-Za-z0-9]{4,16}"
-            value={code}
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
-          />
-        </div>
-      </div>
-      <div>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || (needsUpdate && !updateId)}>
-          Generate link
-        </button>
-      </div>
-      {feedback}
+  const codeOk = code === "" || OWN_CODE.test(code);
+
+  function start(preset?: { kind: LinkKind; updateId: string }) {
+    setKind(preset?.kind ?? "product");
+    setUpdateId(preset?.updateId ?? "");
+    setPlan("");
+    setCampaign("");
+    setLabel("");
+    setCode("");
+    setMade(null);
+    note.clear();
+    setOpen(true);
+  }
+
+  const node = (
+    <>
+      {note.node}
       {made && (
         <p className={styles.linkRow}>
           <span className={styles.mono}>{made}</span>
           <CopyButton text={made} label="new link" />
         </p>
       )}
-    </form>
+      {open && (
+        <FormDialog
+          title={`Create a link for ${product.name}`}
+          intro="Each link gets its own tracking code and is listed below."
+          submitLabel="Generate link"
+          canSubmit={(!needsUpdate || Boolean(updateId)) && codeOk}
+          onSubmit={async () => {
+            const created = await panelApi.createTrackingLink(id, {
+              link_kind: kind,
+              product_code: product.code,
+              update_id: needsUpdate ? updateId || undefined : undefined,
+              plan_code: kind === "product" ? plan || undefined : undefined,
+              campaign_id: campaign || undefined,
+              label: label.trim() || undefined,
+              code: code.trim() || undefined,
+            });
+            setMade(created.url);
+            return "Referral link created.";
+          }}
+          onDone={(m) => {
+            note.show(m);
+            onCreated();
+          }}
+          onClose={() => setOpen(false)}
+        >
+          <div>
+            <label className="w360-label" htmlFor={`${formId}-kind`}>
+              Link opens
+            </label>
+            <select
+              id={`${formId}-kind`}
+              className="w360-input"
+              value={kind}
+              onChange={(e) => {
+                setKind(e.target.value as LinkKind);
+                setUpdateId("");
+              }}
+            >
+              <option value="product">Main product page</option>
+              <option value="pricing">Pricing page</option>
+              <option value="feature" disabled={!product.updates.some((u) => u.kind === "feature")}>
+                A feature
+              </option>
+              <option value="update" disabled={!product.updates.some((u) => u.kind === "release")}>
+                A product update
+              </option>
+            </select>
+          </div>
+          {needsUpdate && (
+            <div>
+              <label className="w360-label" htmlFor={`${formId}-update`}>
+                {kind === "feature" ? "Feature" : "Update"}
+              </label>
+              <select id={`${formId}-update`} className="w360-input" required value={updateId} onChange={(e) => setUpdateId(e.target.value)}>
+                <option value="">Choose…</option>
+                {targets.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {kind === "product" && (
+            <div>
+              <label className="w360-label" htmlFor={`${formId}-plan`}>
+                Plan (optional)
+              </label>
+              <select id={`${formId}-plan`} className="w360-input" value={plan} onChange={(e) => setPlan(e.target.value)}>
+                <option value="">Any plan</option>
+                {product.plans.map((p) => (
+                  <option key={p.plan_code} value={p.plan_code}>
+                    {p.plan_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div>
+            <label className="w360-label" htmlFor={`${formId}-campaign`}>
+              Campaign (optional)
+            </label>
+            <select id={`${formId}-campaign`} className="w360-input" value={campaign} onChange={(e) => setCampaign(e.target.value)}>
+              <option value="">No campaign</option>
+              {campaigns
+                .filter((c) => c.status === "active")
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <div>
+            <label className="w360-label" htmlFor={`${formId}-label`}>
+              Name (optional)
+            </label>
+            <input id={`${formId}-label`} className="w360-input" maxLength={64} value={label} onChange={(e) => setLabel(e.target.value)} />
+          </div>
+          <div>
+            <label className="w360-label" htmlFor={`${formId}-code`}>
+              Your own code (optional)
+            </label>
+            <input
+              id={`${formId}-code`}
+              className="w360-input"
+              maxLength={16}
+              pattern="[A-Za-z0-9]{4,16}"
+              aria-invalid={!codeOk || undefined}
+              aria-describedby={`${formId}-code-hint`}
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+            />
+            <p id={`${formId}-code-hint`} className="w360-hint">
+              4 to 16 letters or digits.
+            </p>
+          </div>
+        </FormDialog>
+      )}
+    </>
   );
+  return { start, node };
 }
 
 function LinkTable({ links, caption, manage, onChanged }: { links: AffiliateLink[]; caption: string; manage: boolean; onChanged: () => void }) {
   const { id } = usePanel();
   const { act, busy, feedback } = useAction(onChanged);
-  const [renaming, setRenaming] = useState<string | null>(null);
+  const renamed = useNote();
+  const [renaming, setRenaming] = useState<AffiliateLink | null>(null);
   const [name, setName] = useState("");
   return (
     <>
       {feedback}
+      {renamed.node}
+      {renaming && (
+        <FormDialog
+          size="sm"
+          title={`Rename link ${renaming.code}`}
+          submitLabel="Save"
+          onSubmit={async () => {
+            await panelApi.updateTrackingLink(id, renaming.id, { label: name });
+            return "Link renamed.";
+          }}
+          onDone={(m) => {
+            renamed.show(m);
+            onChanged();
+          }}
+          onClose={() => setRenaming(null)}
+        >
+          <div>
+            <label className="w360-label" htmlFor={`rename-${renaming.id}`}>
+              New name for {renaming.code}
+            </label>
+            <input id={`rename-${renaming.id}`} className="w360-input" maxLength={64} value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+        </FormDialog>
+      )}
       <Table
         caption={caption}
         head={["Link", "Opens", "Name", "Clicks", "Leads", "Trials", "Conversions", "Revenue", "Commission", "Status", "Actions"]}
@@ -237,30 +278,7 @@ function LinkTable({ links, caption, manage, onChanged }: { links: AffiliateLink
               {l.url ?? l.code}
             </th>
             <td>{linkOpens(l)}</td>
-            <td>
-              {renaming === l.id ? (
-                <form
-                  className={styles.linkRow}
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void act(async () => {
-                      await panelApi.updateTrackingLink(id, l.id, { label: name });
-                      setRenaming(null);
-                    }, "Link renamed.");
-                  }}
-                >
-                  <label className="w360-visually-hidden" htmlFor={`rename-${l.id}`}>
-                    New name for {l.code}
-                  </label>
-                  <input id={`rename-${l.id}`} className="w360-input" maxLength={64} value={name} onChange={(e) => setName(e.target.value)} />
-                  <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-                    Save
-                  </button>
-                </form>
-              ) : (
-                l.label || l.campaign
-              )}
-            </td>
+            <td>{l.label || l.campaign}</td>
             <td className={styles.num}>{l.clicks}</td>
             <td className={styles.num}>{l.registrations}</td>
             <td className={styles.num}>{l.trials ?? 0}</td>
@@ -272,13 +290,15 @@ function LinkTable({ links, caption, manage, onChanged }: { links: AffiliateLink
             <td>
               <div className={styles.actions}>
                 {l.url && <CopyButton text={l.url} label={`link ${l.code}`} />}
-                {manage && renaming !== l.id && (
+                {manage && (
                   <button
                     type="button"
                     className="w360-btn w360-btn-secondary"
+                    aria-haspopup="dialog"
                     onClick={() => {
-                      setRenaming(l.id);
+                      renamed.clear();
                       setName(l.label);
+                      setRenaming(l);
                     }}
                   >
                     Rename<span className="w360-visually-hidden"> link {l.code}</span>
@@ -332,8 +352,8 @@ function NoLinkForm({ product, canCreate }: { product: MyProduct; canCreate: boo
 function ProductSection({ product, data, onChanged }: { product: MyProduct; data: MyProductsData; onChanged: () => void }) {
   const { partner, active, base, can } = usePanel();
   const headingId = useId();
-  const [preset, setPreset] = useState<{ kind: LinkKind; updateId: string } | undefined>();
   const manage = data.can_create && active;
+  const generator = useLinkGenerator(product, data.campaign_list, onChanged);
   const banner = product.media.find((m) => m.kind === "banner") ?? product.media.find((m) => m.kind === "logo");
   return (
     <section className={styles.panel} aria-labelledby={headingId}>
@@ -415,7 +435,8 @@ function ProductSection({ product, data, onChanged }: { product: MyProduct; data
                   <button
                     type="button"
                     className="w360-btn w360-btn-secondary"
-                    onClick={() => setPreset({ kind: u.kind === "feature" ? "feature" : "update", updateId: u.id })}
+                    aria-haspopup="dialog"
+                    onClick={() => generator.start({ kind: u.kind === "feature" ? "feature" : "update", updateId: u.id })}
                   >
                     Create link<span className="w360-visually-hidden"> for {u.title}</span>
                   </button>
@@ -427,16 +448,15 @@ function ProductSection({ product, data, onChanged }: { product: MyProduct; data
       </Table>
 
       {manage ? (
-        <LinkGenerator
-          key={preset ? `${preset.kind}-${preset.updateId}` : "new"}
-          product={product}
-          campaigns={data.campaign_list}
-          preset={preset}
-          onCreated={onChanged}
-        />
+        <div className={styles.actions}>
+          <button type="button" className="w360-btn w360-btn-primary" aria-haspopup="dialog" aria-label={`Create link for ${product.name}`} onClick={() => generator.start()}>
+            + Create link
+          </button>
+        </div>
       ) : (
         <NoLinkForm product={product} canCreate={data.can_create} />
       )}
+      {generator.node}
       <LinkTable links={product.links} caption={`Your links for ${product.name}`} manage={manage} onChanged={onChanged} />
     </section>
   );

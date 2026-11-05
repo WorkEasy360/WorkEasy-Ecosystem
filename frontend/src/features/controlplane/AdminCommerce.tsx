@@ -6,6 +6,8 @@ import { adminApi, type CatalogProduct } from "@/lib/api/controlPlane";
 import { adminConsoleApi, type PlatformSettings, type StaffRoleRow } from "@/lib/api/adminConsole";
 import { can, useAdmin } from "./ControlShell";
 import { LoadGate, MoreButton, ReasonAction, Status, Table, autoReason, money, useAction, useLoad, usePaged, when } from "./ui";
+import { dialog, FormPopup } from "./Modal";
+import { TextField } from "./widgets";
 import cp from "./ControlPlane.module.css";
 
 /**
@@ -235,78 +237,96 @@ export function PlatformSettingsScreen() {
         </p>
       </div>
       <LoadGate load={load} what="platform settings">
-        {(s) => <SettingsForm key={s.version} settings={s} manage={manage} onSaved={reload} />}
+        {(s) => <SettingsSection settings={s} manage={manage} onSaved={reload} />}
       </LoadGate>
     </div>
   );
 }
 
-function SettingsForm({ settings, manage, onSaved }: { settings: PlatformSettings; manage: boolean; onSaved: () => void }) {
-  const { act, busy, feedback } = useAction(onSaved);
+/** The settings in force, as text, and (for a manager) an "Edit settings"
+ * popup prefilled from them each time it opens. Saving names the version it
+ * read, so two editors can't silently overwrite each other. */
+function SettingsSection({ settings, manage, onSaved }: { settings: PlatformSettings; manage: boolean; onSaved: () => void }) {
   const [signup, setSignup] = useState(settings.signup_enabled);
   const [support, setSupport] = useState(settings.support_email);
   const [sales, setSales] = useState(settings.sales_email);
   const [currency, setCurrency] = useState(settings.public_catalog_currency);
-  const ids = { signup: useId(), support: useId(), sales: useId(), currency: useId() };
+  const ids = { signup: useId(), currency: useId() };
+  const defaultCurrency = `Deployment default (${settings.default_currency})`;
+
+  function prefill() {
+    setSignup(settings.signup_enabled);
+    setSupport(settings.support_email);
+    setSales(settings.sales_email);
+    setCurrency(settings.public_catalog_currency);
+  }
+
   return (
-    <form
-      className={`w360-card ${cp.card} ${cp.form}`}
-      onSubmit={(e) => {
-        e.preventDefault();
-        void act(
-          () =>
-            adminConsoleApi.saveSettings({
-              signup_enabled: signup,
-              support_email: support.trim(),
-              sales_email: sales.trim(),
-              public_catalog_currency: currency,
-              version: settings.version,
-            }),
-          "Platform settings saved.",
-        );
-      }}
-    >
-      {feedback}
-      <div className={cp.field}>
-        <label htmlFor={ids.signup}>
-          <input id={ids.signup} type="checkbox" checked={signup} disabled={!manage} onChange={(e) => setSignup(e.target.checked)} />{" "}
-          Self-service signup is open
-        </label>
-        <p className="w360-hint">Close it to stop new accounts during abuse; existing accounts are unaffected.</p>
-      </div>
-      <div className={cp.field}>
-        <label className="w360-label" htmlFor={ids.support}>
-          Support email
-        </label>
-        <input id={ids.support} className="w360-input" type="email" maxLength={254} value={support} disabled={!manage} onChange={(e) => setSupport(e.target.value)} />
-      </div>
-      <div className={cp.field}>
-        <label className="w360-label" htmlFor={ids.sales}>
-          Sales email
-        </label>
-        <input id={ids.sales} className="w360-input" type="email" maxLength={254} value={sales} disabled={!manage} onChange={(e) => setSales(e.target.value)} />
-      </div>
-      <div className={cp.field}>
-        <label className="w360-label" htmlFor={ids.currency}>
-          Public catalog currency
-        </label>
-        <select id={ids.currency} className="w360-input" value={currency} disabled={!manage} onChange={(e) => setCurrency(e.target.value)}>
-          <option value="">Deployment default ({settings.default_currency})</option>
-          {settings.currencies.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-      </div>
+    <section className={`w360-card ${cp.card} ${cp.stack}`} aria-label="Current platform settings">
+      <dl className={cp.factsGrid}>
+        <div>
+          <dt>Self-service signup</dt>
+          <dd>{settings.signup_enabled ? "Open" : "Closed"}</dd>
+        </div>
+        <div>
+          <dt>Support email</dt>
+          <dd>{settings.support_email || "—"}</dd>
+        </div>
+        <div>
+          <dt>Sales email</dt>
+          <dd>{settings.sales_email || "—"}</dd>
+        </div>
+        <div>
+          <dt>Public catalog currency</dt>
+          <dd>{settings.public_catalog_currency || defaultCurrency}</dd>
+        </div>
+      </dl>
       {manage && (
         <div>
-          <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-            Save settings
-          </button>
+          <FormPopup
+            label="Edit settings"
+            title="Platform settings"
+            intro="Changing them is recorded in the audit log."
+            submitLabel="Save settings"
+            onOpen={prefill}
+            onSubmit={async () => {
+              await adminConsoleApi.saveSettings({
+                signup_enabled: signup,
+                support_email: support.trim(),
+                sales_email: sales.trim(),
+                public_catalog_currency: currency,
+                version: settings.version,
+              });
+              return "Platform settings saved.";
+            }}
+            onDone={onSaved}
+          >
+            <div className={`${cp.field} ${dialog.span}`}>
+              <label htmlFor={ids.signup}>
+                <input id={ids.signup} type="checkbox" checked={signup} onChange={(e) => setSignup(e.target.checked)} /> Self-service signup is
+                open
+              </label>
+              <p className="w360-hint">Close it to stop new accounts during abuse; existing accounts are unaffected.</p>
+            </div>
+            <TextField label="Support email" type="email" maxLength={254} value={support} onChange={setSupport} />
+            <TextField label="Sales email" type="email" maxLength={254} value={sales} onChange={setSales} />
+            <div className={cp.field}>
+              <label className="w360-label" htmlFor={ids.currency}>
+                Public catalog currency
+              </label>
+              <select id={ids.currency} className="w360-input" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+                <option value="">{defaultCurrency}</option>
+                {settings.currencies.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </FormPopup>
         </div>
       )}
-    </form>
+    </section>
   );
 }
 
@@ -319,7 +339,6 @@ export function StaffRolesPanel() {
   const [load, reload] = useLoad(() => adminConsoleApi.roles(), []);
   const { act, busy, feedback } = useAction(reload);
   const manage = can(permissions, "platform.staff_security.manage");
-  const emailId = useId();
   const roleId = useId();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("SUPPORT_ADMIN");
@@ -363,39 +382,40 @@ export function StaffRolesPanel() {
         )}
       </LoadGate>
       {manage && (
-        <form
-          className={`w360-card ${cp.card} ${cp.form}`}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(() => adminConsoleApi.grantRole({ email: email.trim(), role, reason: autoReason("Grant role") }), "Role granted.");
-          }}
-        >
-          <h3 className={cp.cardTitle}>Grant a role</h3>
-          <div className={cp.field}>
-            <label className="w360-label" htmlFor={emailId}>
-              Staff member&apos;s email
-            </label>
-            <input id={emailId} className="w360-input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-          </div>
-          <div className={cp.field}>
-            <label className="w360-label" htmlFor={roleId}>
-              Role
-            </label>
-            <select id={roleId} className="w360-input" value={role} onChange={(e) => setRole(e.target.value)}>
-              <option value="SUPER_ADMIN">Super Admin</option>
-              <option value="USER_ADMIN">User Admin</option>
-              <option value="PRODUCT_ADMIN">Product Admin</option>
-              <option value="BILLING_ADMIN">Billing Admin</option>
-              <option value="SUPPORT_ADMIN">Support Admin</option>
-              <option value="READ_ONLY_ADMIN">Read-only Admin</option>
-            </select>
-          </div>
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !email.trim()}>
-              Grant role
-            </button>
-          </div>
-        </form>
+        <div>
+          <FormPopup
+            label="+ Grant a role"
+            title="Grant a role"
+            intro="Granting a role grants each of its permissions."
+            size="sm"
+            submitLabel="Grant role"
+            canSubmit={Boolean(email.trim())}
+            onOpen={() => {
+              setEmail("");
+              setRole("SUPPORT_ADMIN");
+            }}
+            onSubmit={async () => {
+              await adminConsoleApi.grantRole({ email: email.trim(), role, reason: autoReason("Grant role") });
+              return "Role granted.";
+            }}
+            onDone={reload}
+          >
+            <TextField label="Staff member's email" type="email" required value={email} onChange={setEmail} />
+            <div className={cp.field}>
+              <label className="w360-label" htmlFor={roleId}>
+                Role
+              </label>
+              <select id={roleId} className="w360-input" value={role} onChange={(e) => setRole(e.target.value)}>
+                <option value="SUPER_ADMIN">Super Admin</option>
+                <option value="USER_ADMIN">User Admin</option>
+                <option value="PRODUCT_ADMIN">Product Admin</option>
+                <option value="BILLING_ADMIN">Billing Admin</option>
+                <option value="SUPPORT_ADMIN">Support Admin</option>
+                <option value="READ_ONLY_ADMIN">Read-only Admin</option>
+              </select>
+            </div>
+          </FormPopup>
+        </div>
       )}
     </section>
   );

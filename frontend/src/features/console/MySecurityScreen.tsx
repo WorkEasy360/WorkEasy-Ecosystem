@@ -70,7 +70,7 @@ export function MySecurityScreen() {
       />
 
       <Panel title="Password">
-        <ChangePasswordForm onChanged={refresh} />
+        <ChangePasswordForm popup onChanged={refresh} />
       </Panel>
 
       <Panel title="Where you're signed in">

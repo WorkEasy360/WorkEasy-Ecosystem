@@ -1007,3 +1007,115 @@
     font-size: 16px;
   }
 }
+
+/* ADR-058: the coupon row, its result, and the summary's discount line. */
+.couponRow {
+  display: flex;
+  gap: var(--w360-space-2);
+}
+
+.couponField {
+  display: flex;
+  flex: 1;
+  align-items: stretch;
+  min-width: 0;
+  overflow: hidden;
+  border: 1.5px solid var(--w360-border-strong);
+  border-radius: 10px;
+}
+
+.couponField:focus-within {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 1px;
+}
+
+.couponIcon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  color: var(--w360-brand);
+  border-right: 1.5px solid var(--w360-border);
+}
+
+.couponField input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 16px;
+  color: var(--w360-text);
+  text-transform: uppercase;
+  background: var(--w360-surface);
+  border: 0;
+  outline: none;
+}
+
+.couponField input::placeholder {
+  text-transform: none;
+}
+
+.couponApply {
+  flex: none;
+  min-width: 92px;
+  padding: 0 18px;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--w360-success);
+  background: var(--w360-success-bg);
+  border: 1.5px solid var(--w360-success);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.couponApply:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--w360-success) 14%, var(--w360-surface));
+}
+
+.couponApply:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.couponApply:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+.couponNote {
+  margin: -8px 0 0;
+  font-size: 13px;
+}
+
+.couponOk {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-2);
+  margin: -8px 0 0;
+  font-size: 14px;
+  color: var(--w360-success);
+}
+
+.couponOk button {
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--w360-text-secondary);
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.discount {
+  color: var(--w360-success);
+}
+
+.assurancesFour {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}

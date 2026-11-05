@@ -582,7 +582,11 @@ describe("Products", () => {
     await openTab("Products");
     const grants = await screen.findByRole("table", { name: "Product grants" });
     expect(within(grants).getByRole("rowheader", { name: "crm" })).toBeInTheDocument();
-    const select = await screen.findByLabelText("Allow a product");
+    // Allowing a product is a popup (2026-11-05).
+    expect(screen.queryByLabelText("Allow a product")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "+ Allow a product" }));
+    const popup = screen.getByRole("dialog", { name: "Allow a product" });
+    const select = within(popup).getByLabelText("Allow a product");
     // The options come from the server's catalog, which loads after the select
     // first renders: choosing before they are there selects nothing.
     await screen.findByRole("option", { name: "Books" });
@@ -590,8 +594,9 @@ describe("Products", () => {
     expect(within(select).queryByRole("option", { name: "CRM" })).not.toBeInTheDocument();
     await expectNoViolations(container);
     fireEvent.change(select, { target: { value: "books" } });
-    fireEvent.click(screen.getByRole("button", { name: "Allow product" }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Allow product" }));
     await screen.findByText("Product allowed.");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(calls.find((c) => c.key.endsWith("/product-grants"))!.body).toEqual({ product_code: "books" });
     fireEvent.click(screen.getByRole("button", { name: /^Remove ?crm$/ }));
     await waitFor(() => expect(calls.some((c) => c.key.endsWith("/g1/revoke"))).toBe(true));
@@ -604,6 +609,7 @@ describe("Products", () => {
     await openTab("Products");
     await screen.findByRole("table", { name: "Product grants" });
     expect(screen.queryByLabelText("Allow a product")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Allow a product" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Remove/ })).not.toBeInTheDocument();
   });
 
@@ -633,11 +639,14 @@ describe("Products", () => {
     expect(within(table).getByRole("rowheader", { name: "Books" })).toBeInTheDocument();
     expect(promoted).toHaveTextContent(/Promoting a product is not selling it/);
     expect(screen.queryByRole("table", { name: "Product grants" })).not.toBeInTheDocument();
-    const select = within(promoted).getByLabelText("Assign a product to promote");
+    fireEvent.click(within(promoted).getByRole("button", { name: "+ Assign a product" }));
+    const popup = screen.getByRole("dialog", { name: "Assign a product to promote" });
+    const select = within(popup).getByLabelText("Assign a product to promote");
+    await within(select).findByRole("option", { name: "CRM" });
     const options = within(select).getAllByRole("option").map((o) => o.textContent);
     expect(options).toEqual(["Choose…", "CRM"]); // Books is already assigned
     fireEvent.change(select, { target: { value: "crm" } });
-    fireEvent.click(within(promoted).getByRole("button", { name: "Assign product" }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Assign product" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST /api/v1/admin/partners/${ID}/promotions`)).toBe(true));
     expect(calls.find((c) => c.key === `POST /api/v1/admin/partners/${ID}/promotions`)!.body).toEqual({ product_code: "crm" });
   });
@@ -656,9 +665,13 @@ describe("Pricing", () => {
     expect(within(table).getByText("£40.50")).toBeInTheDocument();
     await expectNoViolations(container);
 
-    fireEvent.change(screen.getByLabelText(/New partner price for CRM Professional/), { target: { value: "42.00" } });
-    fireEvent.click(within(table).getByRole("button", { name: "Save" }));
+    // Each plan's price is set in a small popup opened from its row (2026-11-05).
+    fireEvent.click(within(table).getByRole("button", { name: /^Set price for CRM Professional/ }));
+    const popup = screen.getByRole("dialog");
+    fireEvent.change(within(popup).getByLabelText(/New partner price for CRM Professional/), { target: { value: "42.00" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save" }));
     await screen.findByText("Partner price saved.");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(calls.find((c) => c.key.endsWith("/prices"))!.body).toEqual({ plan_version_id: "pv1", interval: "monthly", amount_minor: 4200 });
   });
 
@@ -668,6 +681,7 @@ describe("Pricing", () => {
     await openTab("Pricing");
     const table = await screen.findByRole("table", { name: "Partner prices" });
     expect(within(table).queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(within(table).queryByRole("button", { name: /^Set price/ })).not.toBeInTheDocument();
   });
 
   it("refuses an amount that is not money and sends nothing", async () => {
@@ -675,10 +689,14 @@ describe("Pricing", () => {
     mount();
     await openTab("Pricing");
     await screen.findByRole("table", { name: "Partner prices" });
-    fireEvent.change(screen.getByLabelText(/New partner price for CRM Professional/), { target: { value: "forty" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Enter an amount in GBP/);
+    fireEvent.click(screen.getByRole("button", { name: /^Set price for CRM Professional/ }));
+    const popup = screen.getByRole("dialog");
+    fireEvent.change(within(popup).getByLabelText(/New partner price for CRM Professional/), { target: { value: "forty" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save" }));
+    expect(await within(popup).findByRole("alert")).toHaveTextContent(/Enter an amount in GBP/);
     expect(writes(calls)).toEqual([]);
+    // The popup stays open with what was typed.
+    expect(within(popup).getByLabelText(/New partner price for CRM Professional/)).toHaveValue("forty");
   });
 });
 
@@ -688,9 +706,12 @@ describe("Commission", () => {
     mount();
     await openTab("Commission");
     expect(await screen.findByText(/In force now: 15% \(partner\)/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("New rate (%)"), { target: { value: "17.5" } });
-    fireEvent.click(screen.getByRole("button", { name: "Assign rate" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Assign a new rate" }));
+    const popup = screen.getByRole("dialog", { name: "Assign a commission rate" });
+    fireEvent.change(within(popup).getByLabelText("New rate (%)"), { target: { value: "17.5" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Assign rate" }));
     await screen.findByText("Commission rate assigned.");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(calls.find((c) => c.key.endsWith("/commission") && c.key.startsWith("POST"))!.body).toEqual({
       rate_bp: 1750,
       reason: "Assign commission rate - Super Admin console",
@@ -703,9 +724,12 @@ describe("Commission", () => {
     mount();
     await openTab("Commission");
     await screen.findByText(/In force now/);
-    fireEvent.change(screen.getByLabelText("New rate (%)"), { target: { value: "20" } });
-    fireEvent.click(screen.getByRole("button", { name: "Assign rate" }));
-    expect(await screen.findByText(/was at version 3, not 2/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "+ Assign a new rate" }));
+    const popup = screen.getByRole("dialog", { name: "Assign a commission rate" });
+    fireEvent.change(within(popup).getByLabelText("New rate (%)"), { target: { value: "20" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Assign rate" }));
+    // The refusal is shown in the popup, which stays open.
+    expect(await within(popup).findByText(/was at version 3, not 2/)).toBeInTheDocument();
   });
 
   it("does not offer rate assignment without the commission permission", async () => {
@@ -714,6 +738,7 @@ describe("Commission", () => {
     await openTab("Commission");
     expect(await screen.findByText(/needs the platform\.staff_commission\.manage permission/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Assign rate" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Assign a new rate" })).not.toBeInTheDocument();
   });
 
   const ledger = {
@@ -796,6 +821,28 @@ describe("Payouts", () => {
 });
 
 describe("Users & Permissions", () => {
+  it("grants a capability from a popup, with the recorded reason", async () => {
+    const calls = mockApi(routes({ [`POST /api/v1/admin/partners/${ID}/capabilities`]: [{ status: 201, body: {} }] }));
+    mount();
+    await openTab("Users & Permissions");
+    await screen.findByRole("table", { name: "Granted capabilities" });
+    expect(screen.queryByLabelText("Reason (recorded)")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Grant a capability" }));
+    const popup = screen.getByRole("dialog", { name: "Grant a capability" });
+    fireEvent.change(within(popup).getByLabelText("Grant a capability"), { target: { value: "customer.provision" } });
+    fireEvent.change(within(popup).getByLabelText("Reason (recorded)"), { target: { value: "short" } });
+    // Fewer than 10 characters of reason: nothing can be sent.
+    expect(within(popup).getByRole("button", { name: "Grant capability" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Reason (recorded)"), { target: { value: "Signed the reseller terms" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Grant capability" }));
+    expect(await screen.findByText("Capability granted.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.find((c) => c.key === `POST /api/v1/admin/partners/${ID}/capabilities`)!.body).toEqual({
+      capability: "customer.provision",
+      reason: "Signed the reseller terms",
+    });
+  });
+
   it("keeps the experience, capability and member sections, and shows who has not chosen a password", async () => {
     mockApi(routes());
     mount();
@@ -822,8 +869,10 @@ describe("Users & Permissions", () => {
     );
     mount();
     await openTab("Users & Permissions");
-    fireEvent.change(await screen.findByLabelText(/Email address/), { target: { value: "new@acme.example" } });
-    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Invite a person" }));
+    const popup = screen.getByRole("dialog", { name: "Invite a person" });
+    fireEvent.change(within(popup).getByLabelText(/Email address/), { target: { value: "new@acme.example" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Invite" }));
     await screen.findByText(/a link to choose one was emailed/);
     expect(calls.find((c) => c.key.endsWith("/administrators"))!.body).toEqual({ email: "new@acme.example", role: "admin" });
     fireEvent.click(screen.getByRole("button", { name: /Resend setup link/ }));
@@ -1035,7 +1084,9 @@ describe("an open upgrade request", () => {
     expect(screen.getByRole("tab", { name: "Users & Permissions" })).toHaveAttribute("aria-selected", "true");
     const panel = await screen.findByRole("heading", { level: 2, name: "Upgrade" });
     expect(panel.closest("section")).toHaveTextContent("pending approval");
-    expect(screen.getByRole("button", { name: "Approve upgrade" })).toBeInTheDocument();
+    // The decision itself is made in a popup opened from the panel.
+    fireEvent.click(screen.getByRole("button", { name: "Decide the request" }));
+    expect(within(screen.getByRole("dialog", { name: /decision$/ })).getByRole("button", { name: "Approve upgrade" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Experience" })).toBeInTheDocument();
     await expectNoViolations(container);
   });
@@ -1044,7 +1095,8 @@ describe("an open upgrade request", () => {
     mockApi(withUpgrade());
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Review the upgrade request" }));
-    const form = (await screen.findByRole("heading", { name: "Decision" })).closest("form")!;
+    await screen.findByRole("heading", { name: "Decision" });
+    const form = screen.getByRole("region", { name: "Decision" });
     fireEvent.click(within(form).getByRole("button", { name: "Products" }));
     expect(screen.getByRole("tab", { name: "Products" })).toHaveAttribute("aria-selected", "true");
   });

@@ -329,14 +329,20 @@ describe("Super Admin screens", () => {
     await screen.findByText("No payouts.");
     // The partner is the page's own: there is no partner field to type into.
     expect(screen.queryByLabelText(/Partner id/i)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Prepare payout" })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Include everything cleared by"), { target: { value: "2026-06-30" } });
-    fireEvent.click(screen.getByRole("button", { name: "Prepare payout" }));
+    // Preparing opens a popup (2026-11-05).
+    fireEvent.click(screen.getByRole("button", { name: "Prepare a payout" }));
+    const popup = screen.getByRole("dialog", { name: "Prepare a payout for this partner" });
+    expect(within(popup).queryByLabelText(/Partner id/i)).not.toBeInTheDocument();
+    expect(within(popup).getByRole("button", { name: "Prepare payout" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Include everything cleared by"), { target: { value: "2026-06-30" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Prepare payout" }));
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/payouts")).toBe(true));
     const post = calls.find((c) => c.key === "POST /api/v1/admin/payouts")!;
     expect(Object.keys(post.body as object).sort()).toEqual(["partner_id", "period_end"]);
     expect(post.body).toEqual({ partner_id: PARTNER, period_end: "2026-06-30" });
     expect(post.headers["idempotency-key"]).toBeTruthy();
+    expect(await screen.findByText("Draft payout prepared from cleared commission.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("approval is offered only to someone who may approve, and never to prepare-only staff", async () => {
@@ -397,6 +403,40 @@ describe("Super Admin screens", () => {
     expect(calls.find((c) => c.key === "POST /api/v1/admin/payouts/p1/approve")!.body).toMatchObject({
       reason: "Approve - Super Admin console",
     });
+  });
+
+  it("records an approved payout as paid from a popup, with the transfer reference only", async () => {
+    const approved = {
+      id: "p1",
+      status: "approved",
+      currency: "GBP",
+      period_end: "2026-06-30",
+      gross_minor: 1000,
+      adjustments_minor: 0,
+      payable_minor: 1000,
+      line_count: 1,
+      version: 2,
+    };
+    const calls = mockApi({
+      "GET /api/v1/admin/payouts": [{ status: 200, body: { results: [approved], next_cursor: null, has_more: false } }],
+      "POST /api/v1/admin/payouts/p1/paid": [{ status: 200, body: { ...approved, status: "paid", version: 3 } }],
+    });
+    render(
+      <AdminContextForTest permissions={["platform.staff_payout.manage"]}>
+        <PayoutsFor />
+      </AdminContextForTest>,
+    );
+    expect(screen.queryByLabelText(/Transfer reference/)).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Record the payout for 2026-06-30 as paid" }));
+    const popup = screen.getByRole("dialog", { name: "Record a payout as paid" });
+    const record = within(popup).getByRole("button", { name: "Record as paid" });
+    fireEvent.change(within(popup).getByLabelText(/Transfer reference/), { target: { value: "AB" } });
+    expect(record).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText(/Transfer reference/), { target: { value: " BACS-2026-06 " } });
+    fireEvent.click(record);
+    expect(await screen.findByText("Recorded as paid.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.find((c) => c.key === "POST /api/v1/admin/payouts/p1/paid")!.body).toEqual({ expected_version: 2, reference: "BACS-2026-06" });
   });
 
   it("a destructive action asks once to confirm, then puts keyboard focus on the outcome", async () => {
@@ -587,15 +627,20 @@ describe("partner screens", () => {
         <PartnerCustomers />
       </PartnerShell>,
     );
+    // The form is a popup (2026-11-05): a failure keeps it open with what was
+    // typed, a success closes it.
     const submit = async () => {
-      fireEvent.change(await screen.findByLabelText("Organization name"), { target: { value: "Globex" } });
-      fireEvent.change(screen.getByLabelText(/Owner.s email/), { target: { value: "o@globex.test" } });
-      fireEvent.click(screen.getByRole("button", { name: "Create customer" }));
+      if (!screen.queryByRole("dialog")) fireEvent.click(await screen.findByRole("button", { name: "+ Add a customer" }));
+      const popup = screen.getByRole("dialog", { name: "Add a customer" });
+      fireEvent.change(within(popup).getByLabelText("Organization name"), { target: { value: "Globex" } });
+      fireEvent.change(within(popup).getByLabelText(/Owner.s email/), { target: { value: "o@globex.test" } });
+      fireEvent.click(within(popup).getByRole("button", { name: "Create customer" }));
     };
     await submit();
-    await screen.findByText(/Something went wrong/);
+    await within(screen.getByRole("dialog")).findByText(/Something went wrong/);
     await submit();
     await screen.findByText(/Customer created/);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await submit();
     await waitFor(() => expect(calls.filter((c) => c.key.startsWith("POST") && c.key.endsWith("/customers")).length).toBe(3));
     const keys = calls.filter((c) => c.key.startsWith("POST") && c.key.endsWith("/customers")).map((c) => c.headers["idempotency-key"]);
@@ -617,6 +662,7 @@ describe("partner screens", () => {
     );
     await screen.findByText("No customers yet.");
     expect(screen.queryByLabelText("Organization name")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Add a customer" })).not.toBeInTheDocument();
   });
 
   it("shows an ended relationship as history with nothing to act on", async () => {
@@ -658,17 +704,21 @@ describe("partner screens", () => {
         <PartnerBranding />
       </PartnerShell>,
     );
-    fireEvent.change(await screen.findByLabelText("Brand name"), { target: { value: "Acme" } });
-    fireEvent.change(screen.getByLabelText(/Accent colour/), { target: { value: "red;background:url(//evil)" } });
-    expect(screen.getByRole("button", { name: "Save branding" })).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent(/six-digit hex/);
+    // The page shows the saved brand; the fields open in a popup (2026-11-05).
+    fireEvent.click(await screen.findByRole("button", { name: "Edit branding" }));
+    const popup = screen.getByRole("dialog", { name: "Edit branding" });
+    fireEvent.change(within(popup).getByLabelText("Brand name"), { target: { value: "Acme" } });
+    fireEvent.change(within(popup).getByLabelText(/Accent colour/), { target: { value: "red;background:url(//evil)" } });
+    expect(within(popup).getByRole("button", { name: "Save branding" })).toBeDisabled();
+    expect(within(popup).getByRole("alert")).toHaveTextContent(/six-digit hex/);
     // What the person typed stays in the input; nothing reaches a style or the page.
-    const preview = container.querySelector("section[aria-labelledby=preview-h]") as HTMLElement;
+    const preview = popup.querySelector("section[aria-labelledby]") as HTMLElement;
     expect(preview.style.getPropertyValue("--w360-brand")).toBe("");
-    expect(container.querySelectorAll("[style*=evil]")).toHaveLength(0);
-    fireEvent.change(screen.getByLabelText(/Accent colour/), { target: { value: "#1a56db" } });
-    expect(screen.getByRole("button", { name: "Save branding" })).toBeEnabled();
+    expect(document.querySelectorAll("[style*=evil]")).toHaveLength(0);
+    fireEvent.change(within(popup).getByLabelText(/Accent colour/), { target: { value: "#1a56db" } });
+    expect(within(popup).getByRole("button", { name: "Save branding" })).toBeEnabled();
     await expectNoViolations(container);
+    await expectNoViolations(popup);
   });
 
   it("branding: saving without choosing a new logo sends the current one back (a save replaces the brand)", async () => {
@@ -699,9 +749,15 @@ describe("partner screens", () => {
         <PartnerBranding />
       </PartnerShell>,
     );
-    fireEvent.change(await screen.findByLabelText("Brand name"), { target: { value: "Acme Two" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save branding" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit branding" }));
+    const popup = screen.getByRole("dialog", { name: "Edit branding" });
+    // The popup starts from what is saved.
+    expect(within(popup).getByLabelText("Brand name")).toHaveValue("Acme");
+    fireEvent.change(within(popup).getByLabelText("Brand name"), { target: { value: "Acme Two" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save branding" }));
     await waitFor(() => expect(calls.some((c) => c.key.startsWith("PUT"))).toBe(true));
+    expect(await screen.findByText("Branding saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     const put = calls.find((c) => c.key.startsWith("PUT"))!;
     expect(put.body).toMatchObject({
       brand_name: "Acme Two",
@@ -722,10 +778,12 @@ describe("partner screens", () => {
         <PartnerBranding />
       </PartnerShell>,
     );
-    const input = await screen.findByLabelText(/Logo/);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit branding" }));
+    const popup = screen.getByRole("dialog", { name: "Edit branding" });
+    const input = within(popup).getByLabelText(/Logo/);
     const svg = new File(["<svg/>"], "logo.svg", { type: "image/svg+xml" });
     fireEvent.change(input, { target: { files: [svg] } });
-    expect(await screen.findByRole("alert")).toHaveTextContent(/PNG or JPEG/);
+    expect(await within(popup).findByRole("alert")).toHaveTextContent(/PNG or JPEG/);
     expect(calls.some((c) => c.key.includes("logo"))).toBe(false);
   });
 
@@ -761,6 +819,31 @@ describe("partner screens", () => {
     expect(screen.getByRole("button", { name: "Check DNS" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Activate" })).not.toBeInTheDocument();
     await expectNoViolations(container);
+  });
+
+  it("domains: a hostname is requested from a popup, lower-cased, and the popup closes", async () => {
+    pathname = `/partner/${PARTNER}/domains`;
+    const calls = mockApi({
+      "GET /api/v1/auth/session": [SIGNED_IN],
+      "GET /api/v1/partner/portal": [portal(["domain.manage"])],
+      [`GET /api/v1/partner/${PARTNER}/domains`]: [{ status: 200, body: { results: [] } }],
+      [`POST /api/v1/partner/${PARTNER}/domains`]: [{ status: 201, body: {} }],
+    });
+    render(
+      <PartnerShell partnerId={PARTNER}>
+        <PartnerDomains />
+      </PartnerShell>,
+    );
+    await screen.findByText("No domains yet.");
+    expect(screen.queryByLabelText(/^Hostname/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "+ Add a domain" }));
+    const popup = screen.getByRole("dialog", { name: "Add a domain" });
+    expect(within(popup).getByRole("button", { name: "Request domain" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText(/^Hostname/), { target: { value: " App.Acme.Test " } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Request domain" }));
+    expect(await screen.findByText(/Domain requested/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.find((c) => c.key === `POST /api/v1/partner/${PARTNER}/domains`)!.body).toEqual({ hostname: "app.acme.test" });
   });
 });
 
@@ -898,10 +981,13 @@ describe("hostile text is rendered as text (XSS)", () => {
         <PartnerBranding />
       </PartnerShell>,
     );
-    fireEvent.change(await screen.findByLabelText("Brand name"), { target: { value: EVIL } });
+    fireEvent.click(await screen.findByRole("button", { name: "Edit branding" }));
+    const popup = screen.getByRole("dialog", { name: "Edit branding" });
+    fireEvent.change(within(popup).getByLabelText("Brand name"), { target: { value: EVIL } });
     expect(container.querySelector("img:not([data-w360-logo])")).toBeNull(); // the shell's own logo aside
-    expect(container.querySelector("script")).toBeNull();
-    expect(container.querySelector("strong")?.textContent).toBe(EVIL);
+    expect(popup.querySelector("img")).toBeNull();
+    expect(document.querySelector("script")).toBeNull();
+    expect(popup.querySelector("strong")?.textContent).toBe(EVIL);
   });
 });
 

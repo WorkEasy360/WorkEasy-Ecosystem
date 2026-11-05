@@ -13,6 +13,7 @@ import {
 import { newKey } from "@/lib/api/controlPlane";
 import { LoadGate, Status, Table, describeError, money, useAction, useLoad } from "@/features/controlplane/ui";
 import { SUPPORTED_CURRENCIES } from "@/features/controlplane/amounts";
+import { FormPopup } from "@/features/controlplane/Modal";
 import cp from "@/features/controlplane/ControlPlane.module.css";
 import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
@@ -335,11 +336,12 @@ function BillingAccountPanel({ slug, canView, canOpen }: { slug: string; canView
   // Without the billing view permission the account cannot be read back, so
   // an account opened here is remembered for this visit instead.
   const [openedIn, setOpenedIn] = useState<string | null>(null);
-  const { act, busy, feedback } = useAction(reload);
+  // The popup's button is gone once the account exists, so the outcome is said here.
+  const [notice, setNotice] = useState<string | null>(null);
 
   return (
     <Panel title="Billing account">
-      {feedback}
+      {notice && <p role="status">{notice}</p>}
       <LoadGate load={load} what="the billing account">
         {({ billing_account: account }) => {
           if (account) return <AccountDetails account={account} />;
@@ -352,15 +354,19 @@ function BillingAccountPanel({ slug, canView, canOpen }: { slug: string; canView
             );
           }
           return (
-            <OpenAccountForm
-              busy={busy}
-              onOpen={(body) =>
-                void act(async () => {
-                  const opened = await consoleApi.openBillingAccount(slug, body);
-                  if (!canView) setOpenedIn(opened.currency);
-                }, `Billing account opened. Your organization is billed in ${body.currency}.`)
-              }
-            />
+            <>
+              <p className={local.textBlock}>No billing account yet.</p>
+              <div className={local.actions}>
+                <OpenAccountPopup
+                  onOpen={async (body) => {
+                    const opened = await consoleApi.openBillingAccount(slug, body);
+                    if (!canView) setOpenedIn(opened.currency);
+                    setNotice(`Billing account opened. Your organization is billed in ${body.currency}.`);
+                  }}
+                  onDone={reload}
+                />
+              </div>
+            </>
           );
         }}
       </LoadGate>
@@ -391,32 +397,26 @@ function AccountDetails({ account }: { account: BillingAccount }) {
   );
 }
 
+const OPEN_ACCOUNT_LEAD =
+  "Open a billing account to buy plans. It sets the currency your organization is billed in, which can't be changed later.";
+
 /** Phase 9: the currency and a billing address - collection mode and region
  * are Workeasy360's to set (a sales-led agreement), never the customer's. */
-export function OpenAccountForm({
-  busy,
-  onOpen,
+function AccountFields({
+  currency,
+  email,
+  onCurrency,
+  onEmail,
 }: {
-  busy: boolean;
-  onOpen: (body: { currency: string; billing_email: string }) => void;
+  currency: string;
+  email: string;
+  onCurrency: (value: string) => void;
+  onEmail: (value: string) => void;
 }) {
   const currencyId = useId();
   const emailId = useId();
-  const [currency, setCurrency] = useState("");
-  const [email, setEmail] = useState("");
-
   return (
-    <form
-      className={cp.form}
-      onSubmit={(e) => {
-        e.preventDefault();
-        onOpen({ currency, billing_email: email.trim() });
-      }}
-    >
-      <p className={local.textBlock}>
-        Open a billing account to buy plans. It sets the currency your organization is billed in, which can&apos;t be
-        changed later.
-      </p>
+    <>
       <div className={cp.field}>
         <label className="w360-label" htmlFor={currencyId}>
           Currency
@@ -426,7 +426,7 @@ export function OpenAccountForm({
           className="w360-input"
           required
           value={currency}
-          onChange={(e) => setCurrency(e.target.value)}
+          onChange={(e) => onCurrency(e.target.value)}
         >
           <option value="">Choose a currency</option>
           {SUPPORTED_CURRENCIES.map((c) => (
@@ -447,15 +447,69 @@ export function OpenAccountForm({
           autoComplete="email"
           maxLength={254}
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => onEmail(e.target.value)}
         />
       </div>
+    </>
+  );
+}
+
+/** The billing details on the page: a step of the checkout, which stays on the page. */
+export function OpenAccountForm({
+  busy,
+  onOpen,
+}: {
+  busy: boolean;
+  onOpen: (body: { currency: string; billing_email: string }) => void;
+}) {
+  const [currency, setCurrency] = useState("");
+  const [email, setEmail] = useState("");
+
+  return (
+    <form
+      className={cp.form}
+      onSubmit={(e) => {
+        e.preventDefault();
+        onOpen({ currency, billing_email: email.trim() });
+      }}
+    >
+      <p className={local.textBlock}>{OPEN_ACCOUNT_LEAD}</p>
+      <AccountFields currency={currency} email={email} onCurrency={setCurrency} onEmail={setEmail} />
       <div>
         <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !currency}>
           Open billing account
         </button>
       </div>
     </form>
+  );
+}
+
+/** The same fields in a popup, on the billing page (2026-11-05, every form in a popup). */
+function OpenAccountPopup({
+  onOpen,
+  onDone,
+}: {
+  onOpen: (body: { currency: string; billing_email: string }) => Promise<void>;
+  onDone: () => void;
+}) {
+  const [currency, setCurrency] = useState("");
+  const [email, setEmail] = useState("");
+  return (
+    <FormPopup
+      label="Open billing account"
+      title="Open a billing account"
+      intro={OPEN_ACCOUNT_LEAD}
+      submitLabel="Open billing account"
+      canSubmit={!!currency}
+      onOpen={() => {
+        setCurrency("");
+        setEmail("");
+      }}
+      onSubmit={() => onOpen({ currency, billing_email: email.trim() })}
+      onDone={onDone}
+    >
+      <AccountFields currency={currency} email={email} onCurrency={setCurrency} onEmail={setEmail} />
+    </FormPopup>
   );
 }
 

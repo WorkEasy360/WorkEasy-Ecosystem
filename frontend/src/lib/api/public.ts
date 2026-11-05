@@ -210,11 +210,27 @@ export interface PublicStoreProductPage {
     video?: PublicStoreVideo | null;
     price: PublicStoreCard["price"];
     yearly_deal: PublicStoreCard["yearly_deal"];
+    /** ADR-058: the refund promise the Super Admin set, in days; absent/null = none. */
+    refund_days?: number | null;
   };
+  /** ADR-058: GST added on top of the prices (INR), or null. Absent from an older server. */
+  tax?: PublicTax | null;
   plans: PublicStorePlan[];
   comparison: { key: string; label: string; description?: string; kind: string; unit: string; values: Record<string, unknown> }[];
   related: { code: string; slug: string; name: string; title: string; summary: string; icon: string; category: string; price: PublicStoreCard["price"] }[];
 }
+
+/** ADR-058: the tax a currency's prices are before (INR: GST 18%). */
+export interface PublicTax {
+  label: string;
+  rate_bp: number;
+  description: string;
+}
+
+/** ADR-058: what a coupon would take off - a preview; the checkout prices it again. */
+export type CouponCheck =
+  | { valid: true; code: string; label: string; discount_minor: number }
+  | { valid: false; reason?: string; message: string };
 
 export interface SignupRequest {
   first_name: string;
@@ -236,6 +252,11 @@ export const publicApi = {
   store: (query: Record<string, string | undefined>) => apiFetch<PublicStorePage>("/api/v1/public/store", { query }),
   storeProduct: (slug: string, currency?: string) =>
     apiFetch<PublicStoreProductPage>(`/api/v1/public/store/products/${encodeURIComponent(slug)}`, { query: { currency } }),
+  /** ADR-058: the product page's coupon "Apply". */
+  storeCoupon: (slug: string, query: { code: string; currency: string; amount_minor: number }) =>
+    apiFetch<CouponCheck>(`/api/v1/public/store/products/${encodeURIComponent(slug)}/coupon`, {
+      query: { code: query.code, currency: query.currency, amount_minor: String(query.amount_minor) },
+    }),
   product: (slug: string, currency?: string) =>
     apiFetch<PublicProductPage>(`/api/v1/public/catalog/products/${encodeURIComponent(slug)}`, {
       query: { currency },

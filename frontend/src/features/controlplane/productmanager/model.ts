@@ -7,6 +7,7 @@
  * bytes it receives.
  */
 
+import { ApiError } from "@/lib/api/client";
 import type { ConsoleIntegration, ConsoleProduct, TrialConfig } from "@/lib/api/controlPlane";
 
 export type ManagerStatus = ConsoleProduct["manager_status"];
@@ -211,4 +212,11 @@ export function dateOnly(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** A form's own refusal (before any request), thrown from a `FormDialog`'s
+ * `onSubmit`: the popup shows its text the way it shows the server's own
+ * refusal (`describeError` reads `detail`) and stays open with the values kept. */
+export function refusal(detail: string): ApiError {
+  return new ApiError(400, { detail });
 }

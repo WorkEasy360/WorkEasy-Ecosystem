@@ -131,13 +131,15 @@ describe("product integration in the Product Manager", () => {
     });
     renderDetail();
     fireEvent.click(await screen.findByRole("button", { name: "Edit authentication" }));
-    const form = screen.getByRole("form", { name: "Authentication settings for Future Product" });
+    const form = screen.getByRole("dialog", { name: "Authentication settings for Future Product" });
     fireEvent.change(within(form).getByLabelText("Sign-in mode"), { target: { value: "sso_only" } });
     fireEvent.change(within(form).getByLabelText(/Redirect URIs/), {
       target: { value: "https://future.example.com/api/auth/callback\nhttps://future.example.com/cb2" },
     });
     fireEvent.click(within(form).getByRole("button", { name: "Save authentication settings" }));
     await waitFor(() => expect(calls.some((c) => c.key === `PATCH ${ADMIN}/products/future_product/integration`)).toBe(true));
+    expect(await screen.findByText("Authentication settings saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(calls.find((c) => c.key === `PATCH ${ADMIN}/products/future_product/integration`)?.body).toEqual({
       sign_in_mode: "sso_only",
       login_url: "https://future.example.com/login",
@@ -153,10 +155,16 @@ describe("product integration in the Product Manager", () => {
       [`PATCH ${ADMIN}/products/future_product/integration`]: [ok(integration())],
     });
     renderDetail();
-    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-    fireEvent.change(screen.getByLabelText("Launch URL (https)"), { target: { value: "https://new.example.com/open" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit launch settings" }));
+    const popup = screen.getByRole("dialog", { name: "Launch settings" });
+    fireEvent.change(within(popup).getByLabelText("Launch URL (https)"), { target: { value: "http://new.example.com/open" } });
+    expect(within(popup).getByText("Use an https:// address.")).toBeInTheDocument();
+    expect(within(popup).getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Launch URL (https)"), { target: { value: "https://new.example.com/open" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(calls.some((c) => c.key === `PATCH ${ADMIN}/products/future_product/integration`)).toBe(true));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText("Integration updated.")).toBeInTheDocument();
     expect(calls.find((c) => c.key === `PATCH ${ADMIN}/products/future_product/integration`)?.body).toEqual({
       display_name: "Future Product",
       launch_url: "https://new.example.com/open",
@@ -191,10 +199,12 @@ describe("product integration in the Product Manager", () => {
     renderDetail();
     expect(await screen.findByText("Not configured")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Register integration" }));
-    const form = screen.getByRole("form", { name: "Register the integration for Future Product" });
+    const form = screen.getByRole("dialog", { name: "Register the integration for Future Product" });
+    const register = within(form).getByRole("button", { name: "Register" });
     fireEvent.change(within(form).getByLabelText("Launch URL (https)"), { target: { value: "https://future.example.com/" } });
+    expect(register).toBeDisabled(); // the redirect URIs are required
     fireEvent.change(within(form).getByLabelText(/Redirect URIs/), { target: { value: "https://future.example.com/api/auth/callback" } });
-    fireEvent.click(within(form).getByRole("button", { name: "Register" }));
+    fireEvent.click(register);
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${ADMIN}/products/future_product/integration`)).toBe(true));
     expect(calls.find((c) => c.key === `POST ${ADMIN}/products/future_product/integration`)?.body).toMatchObject({
       display_name: "Future Product",
@@ -234,11 +244,42 @@ describe("product integration in the Product Manager", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Show credentials" }));
     expect(await screen.findByText(/No credentials/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Generate client secret" }));
+    const popup = screen.getByRole("dialog", { name: "Generate a client secret" });
+    fireEvent.click(within(popup).getByRole("button", { name: "Generate client secret" }));
     expect(await screen.findByText("s3cr3t-value")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(calls.find((c) => c.key === `POST ${ADMIN}/products/future_product/integration/credentials`)?.body).toMatchObject({ kind: "client_secret" });
     fireEvent.click(screen.getByRole("button", { name: "I have stored it - hide" }));
     expect(screen.queryByText("s3cr3t-value")).not.toBeInTheDocument();
     expect(screen.getByText("abcd1234")).toBeInTheDocument();
+  });
+
+  it("adds a public key in a popup, which keeps the key typed when the server refuses it", async () => {
+    const PEM = "-----BEGIN PUBLIC KEY-----\nMFkw\n-----END PUBLIC KEY-----";
+    const calls = mockApi({
+      [DETAIL]: [ok(detail(integration()))],
+      [`GET ${ADMIN}/products/future_product/integration/credentials`]: [ok({ credentials: [] })],
+      [`POST ${ADMIN}/products/future_product/integration/credentials`]: [
+        { status: 400, body: { detail: "That is not a supported public key." } },
+        { status: 201, body: { credential_id: "k1", kind: "public_key", expires_at: null, client_secret: null, notice: "" } },
+      ],
+    });
+    renderDetail();
+    fireEvent.click(await screen.findByRole("button", { name: "Show credentials" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add public key" }));
+    const popup = screen.getByRole("dialog", { name: "Add a public key" });
+    const add = within(popup).getByRole("button", { name: "Add public key" });
+    expect(add).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText(/Product public key/), { target: { value: PEM } });
+    fireEvent.change(within(popup).getByLabelText("Label (optional)"), { target: { value: "prod" } });
+    fireEvent.click(add);
+    expect(await within(popup).findByRole("alert")).toHaveTextContent("That is not a supported public key.");
+    expect(within(popup).getByLabelText(/Product public key/)).toHaveValue(PEM);
+    fireEvent.click(add);
+    expect(await screen.findByText("Public key added as credential k1.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const posts = calls.filter((c) => c.key === `POST ${ADMIN}/products/future_product/integration/credentials`);
+    expect(posts[1].body).toEqual({ kind: "public_key", public_key_pem: PEM, label: "prod" });
   });
 
   it("without the integration grant, the integration section is absent - not merely disabled", async () => {

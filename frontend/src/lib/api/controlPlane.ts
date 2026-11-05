@@ -265,6 +265,8 @@ export interface ProductChanges {
   product_type?: ProductType;
   best_for?: string[];
   integrations?: string[];
+  /** ADR-058: the refund promise in days; null = none. */
+  refund_days?: number | null;
 }
 
 /** The marketplace's product types (2026-11-04); the server checks the value. */
@@ -413,6 +415,7 @@ export interface ConsoleProduct {
   product_type?: ProductType;
   best_for?: string[];
   integrations?: string[];
+  refund_days?: number | null;
   created_at: string | null;
   updated_at: string | null;
   activated_at: string | null;

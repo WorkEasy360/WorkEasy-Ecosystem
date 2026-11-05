@@ -3,10 +3,11 @@
 import { useId, useState } from "react";
 import { ASSIGNABLE_ROLES, consoleApi } from "@/lib/api/console";
 import { MoreButton, Status, Table, useAction, usePaged, when } from "@/features/controlplane/ui";
+import { FormPopup } from "@/features/controlplane/Modal";
 import cp from "@/features/controlplane/ControlPlane.module.css";
 import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
-import { PageHeader, PagedState, Panel, roleLabel } from "./consoleUi";
+import { PageHeader, PagedState, roleLabel } from "./consoleUi";
 import { useOrgAccess } from "./OrgAccess";
 
 const STATES = [
@@ -22,8 +23,9 @@ const STATES = [
 const PRIVILEGED = new Set(["admin", "billing_manager"]);
 
 /**
- * Invite people by email, and follow up on the invitations already sent. The
- * link travels in the email only; nothing here ever shows or sends a token.
+ * Invite people by email (in a popup, 2026-11-05), and follow up on the
+ * invitations already sent. The link travels in the email only; nothing here
+ * ever shows or sends a token.
  */
 export function InvitationsScreen() {
   const { slug, can } = useOrgAccess();
@@ -46,67 +48,68 @@ export function InvitationsScreen() {
       <PageHeader
         title="Invitations"
         lead="Invite people to this organization by email. An invitation lasts a week; resending it sends a new link and the old one stops working."
+        actions={
+          canInvite && (
+            <FormPopup
+              label="+ Invite someone"
+              title="Invite someone"
+              size="sm"
+              submitLabel="Send invitation"
+              canSubmit={!!email.trim()}
+              onOpen={() => {
+                setEmail("");
+                setRole("member");
+              }}
+              onSubmit={async () => {
+                const address = email.trim();
+                await consoleApi.invite(slug, address, role);
+                return `Invitation sent to ${address}.`;
+              }}
+              onDone={paged.reload}
+            >
+              <div className={cp.field}>
+                <label className="w360-label" htmlFor={emailId}>
+                  Email address
+                </label>
+                <input
+                  id={emailId}
+                  className="w360-input"
+                  type="email"
+                  autoComplete="off"
+                  required
+                  maxLength={254}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+              <div className={cp.field}>
+                <label className="w360-label" htmlFor={roleId}>
+                  Role
+                </label>
+                <select
+                  id={roleId}
+                  className="w360-input"
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  aria-describedby={roleHintId}
+                >
+                  {roles.map((r) => (
+                    <option key={r.key} value={r.key}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+                <p id={roleHintId} className="w360-hint">
+                  {canPrivileged
+                    ? "You can invite Members, Read Only users, Administrators and Billing Managers."
+                    : "You can invite Members and Read Only users. An administrator who can assign roles can invite administrators and billing managers."}
+                </p>
+              </div>
+            </FormPopup>
+          )
+        }
       />
       {feedback}
-      {canInvite && (
-        <Panel title="Invite someone">
-          <form
-            className={cp.form}
-            onSubmit={(e) => {
-              e.preventDefault();
-              const address = email.trim();
-              void act(async () => {
-                await consoleApi.invite(slug, address, role);
-                setEmail("");
-              }, `Invitation sent to ${address}.`);
-            }}
-          >
-            <div className={cp.field}>
-              <label className="w360-label" htmlFor={emailId}>
-                Email address
-              </label>
-              <input
-                id={emailId}
-                className="w360-input"
-                type="email"
-                autoComplete="off"
-                required
-                maxLength={254}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </div>
-            <div className={cp.field}>
-              <label className="w360-label" htmlFor={roleId}>
-                Role
-              </label>
-              <select
-                id={roleId}
-                className="w360-input"
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                aria-describedby={roleHintId}
-              >
-                {roles.map((r) => (
-                  <option key={r.key} value={r.key}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
-              <p id={roleHintId} className="w360-hint">
-                {canPrivileged
-                  ? "You can invite Members, Read Only users, Administrators and Billing Managers."
-                  : "You can invite Members and Read Only users. An administrator who can assign roles can invite administrators and billing managers."}
-              </p>
-            </div>
-            <div>
-              <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !email.trim()}>
-                Send invitation
-              </button>
-            </div>
-          </form>
-        </Panel>
-      )}
 
       <div className={local.section}>
         <h2 className={local.sectionTitle}>Sent invitations</h2>

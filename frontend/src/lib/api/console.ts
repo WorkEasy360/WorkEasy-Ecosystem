@@ -303,6 +303,8 @@ export interface OrderRequest {
    * e.g. `acme-partners`). The server verifies the store and prices from the
    * partner's book; nothing about the partner is trusted from here. */
   storefront?: string;
+  /** ADR-058: a coupon code; the server decides what it takes off. */
+  coupon_code?: string;
 }
 
 /** One product's line in a cart quote or order, priced by the server. */
@@ -332,6 +334,15 @@ export interface OrderQuote {
   requires_payment: boolean;
   /** A cart's lines (empty for every other kind). */
   lines?: OrderLine[];
+  /** ADR-056/058: one-time set-up fees, the amount before the coupon and GST,
+   * the coupon applied, and the GST added - all already in `amount_due_minor`.
+   * Absent from an older server's answer. */
+  setup_fee_minor?: number;
+  subtotal_minor?: number;
+  coupon?: { code: string; label: string; discount_minor: number } | null;
+  discount_minor?: number;
+  tax?: { label: string; rate_bp: number; amount_minor: number; description: string } | null;
+  tax_minor?: number;
 }
 
 export type OrderStatus = "pending_payment" | "paid" | "fulfilled" | "cancelled" | "expired" | "failed";
@@ -359,6 +370,10 @@ export interface Order {
   cancelled_at: string | null;
   failure_reason: string;
   lines?: OrderLine[];
+  /** ADR-058; absent from an older server's answer. */
+  coupon_code?: string | null;
+  discount_minor?: number;
+  tax_minor?: number;
 }
 
 // --- product trials (Phase 11) ----------------------------------------------------------

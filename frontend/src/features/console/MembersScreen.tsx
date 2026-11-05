@@ -3,6 +3,7 @@
 import { useId, useState } from "react";
 import { ASSIGNABLE_ROLES, consoleApi, type MemberRow } from "@/lib/api/console";
 import { MoreButton, Status, Table, useAction, usePaged, when } from "@/features/controlplane/ui";
+import { FormPopup } from "@/features/controlplane/Modal";
 import cp from "@/features/controlplane/ControlPlane.module.css";
 import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
@@ -22,8 +23,8 @@ const STATUS_FILTERS = [
  * Actions are offered only where the backend would allow them - never on the
  * owner (ownership moves by transfer) and never on yourself (the same mistake
  * made on oneself has no one left to undo it) - and every one is authorized
- * again by the server. Role changes and signing a member out are dangerous
- * so they run through `useAction`.
+ * again by the server. Signing a member out is dangerous so it runs through
+ * `useAction`; a role is changed in a small popup from the row.
  */
 export function MembersScreen() {
   const { slug, access, can } = useOrgAccess();
@@ -117,6 +118,7 @@ export function MembersScreen() {
                       busy={busy}
                       can={can}
                       run={(action, success) => void act(action, success)}
+                      reload={paged.reload}
                       slug={slug}
                     />
                   )}
@@ -137,6 +139,7 @@ function MemberActions({
   busy,
   can,
   run,
+  reload,
   slug,
 }: {
   member: MemberRow;
@@ -144,6 +147,7 @@ function MemberActions({
   busy: boolean;
   can: (permission: string) => boolean;
   run: (action: () => Promise<unknown>, success: string) => void;
+  reload: () => void;
   slug: string;
 }) {
   const who = member.name || member.email;
@@ -154,12 +158,15 @@ function MemberActions({
   return (
     <div className={local.actions}>
       {can("platform.role.assign") && hasRole && (
-        <RoleForm
-          key={current}
+        <RolePopup
           who={who}
           current={current}
           busy={busy}
-          onSave={(role) => run(() => consoleApi.changeRole(slug, id, role), `${who} is now ${roleLabel(role)}.`)}
+          onSave={async (role) => {
+            await consoleApi.changeRole(slug, id, role);
+            return `${who} is now ${roleLabel(role)}.`;
+          }}
+          onDone={reload}
         />
       )}
       {can("platform.member.update") && member.status === "active" && (
@@ -211,45 +218,48 @@ function MemberActions({
   );
 }
 
-function RoleForm({
+/** A member's role, changed in a small popup from the row (2026-11-05). */
+function RolePopup({
   who,
   current,
   busy,
   onSave,
+  onDone,
 }: {
   who: string;
   current: string;
   busy: boolean;
-  onSave: (role: string) => void;
+  onSave: (role: string) => Promise<string>;
+  onDone: () => void;
 }) {
   const id = useId();
   const [role, setRole] = useState(current);
   return (
-    <form
-      className={local.inlineForm}
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSave(role);
-      }}
+    <FormPopup
+      label="Change role"
+      buttonClassName="w360-btn w360-btn-secondary"
+      buttonAriaLabel={`Change role for ${who}`}
+      disabled={busy}
+      title={`Change role for ${who}`}
+      size="sm"
+      submitLabel="Save role"
+      canSubmit={role !== current}
+      onOpen={() => setRole(current)}
+      onSubmit={() => onSave(role)}
+      onDone={onDone}
     >
-      <label className="w360-visually-hidden" htmlFor={id}>
-        Role for {who}
-      </label>
-      <select id={id} className="w360-input" value={role} onChange={(e) => setRole(e.target.value)}>
-        {ASSIGNABLE_ROLES.map((r) => (
-          <option key={r.key} value={r.key}>
-            {r.label}
-          </option>
-        ))}
-      </select>
-      <button
-        type="submit"
-        className="w360-btn w360-btn-secondary"
-        aria-label={`Save role for ${who}`}
-        disabled={busy || role === current}
-      >
-        Save role
-      </button>
-    </form>
+      <div className={cp.field}>
+        <label className="w360-label" htmlFor={id}>
+          Role for {who}
+        </label>
+        <select id={id} className="w360-input" value={role} onChange={(e) => setRole(e.target.value)}>
+          {ASSIGNABLE_ROLES.map((r) => (
+            <option key={r.key} value={r.key}>
+              {r.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </FormPopup>
   );
 }

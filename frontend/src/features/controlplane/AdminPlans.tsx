@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import {
   adminConsoleApi,
@@ -22,6 +22,7 @@ import {
   type BuilderKind,
   type UiStatus,
 } from "./catalogUi";
+import { DialogHead, Modal, dialog } from "./Modal";
 import { PlanBuilder, type BuilderOutcome } from "./PlanBuilder";
 import { DescriptionField, ErrorSummary, ProgressList, Segmented, Tabs, TextField, useStepRunner, type StepDef } from "./widgets";
 import cp from "./ControlPlane.module.css";
@@ -181,6 +182,7 @@ function OfferTab({
           <button
             type="button"
             className="w360-btn w360-btn-primary"
+            aria-haspopup="dialog"
             disabled={panel?.mode === "new"}
             onClick={() => open({ mode: "new" })}
           >
@@ -257,6 +259,7 @@ function OfferRow({
               type="button"
               className="w360-btn w360-btn-secondary"
               aria-label={`Edit details of ${row.name}`}
+              aria-haspopup="dialog"
               onClick={() => open({ mode: "edit", id: row.id })}
             >
               Edit details
@@ -266,6 +269,7 @@ function OfferRow({
                 type="button"
                 className="w360-btn w360-btn-secondary"
                 aria-label={`Publish new version of ${row.name}`}
+                aria-haspopup="dialog"
                 onClick={() => open({ mode: "version", id: row.id })}
               >
                 Publish new version
@@ -314,11 +318,7 @@ function DetailsEditor({ kind, row, onClose }: { kind: BuilderKind; row: Row; on
   const [errors, setErrors] = useState<string[]>([]);
   const runner = useStepRunner();
   const { act, busy, feedback } = useAction();
-  const heading = useRef<HTMLHeadingElement | null>(null);
-
-  useEffect(() => {
-    heading.current?.focus();
-  }, []);
+  const titleId = useId();
 
   const isDraft = row.status === "draft";
   const retired = current === "retired";
@@ -364,70 +364,76 @@ function DetailsEditor({ kind, row, onClose }: { kind: BuilderKind; row: Row; on
     }, message);
   }
 
+  const close = () => onClose({ saved: false, changed: runner.started });
+
   return (
-    <section className={`w360-card ${cp.card}`} aria-labelledby={`edit-${row.id}`}>
-      <form className={styles.builder} onSubmit={submit} noValidate>
-        <h3 id={`edit-${row.id}`} ref={heading} tabIndex={-1} className={styles.panelTitle}>
-          Edit details of “{row.name}”
-        </h3>
-        <ErrorSummary errors={errors} />
-        <TextField label="Title" value={name} onChange={setName} maxLength={128} />
-        <TextField
-          label="Caption (one line)"
-          value={caption}
-          onChange={(v) => setCaption(v.replace(/[\r\n]+/g, " "))}
-          maxLength={160}
-        />
-        <DescriptionField value={description} onChange={setDescription} />
-        {isDraft ? (
-          <Segmented
-            legend="Type"
-            options={[
-              { value: "free_trial", label: "Free Trial", disabled: kind === "addon" },
-              { value: "paid", label: "Paid" },
-            ]}
-            value={billingType}
-            onChange={setBillingType}
-            hint="The type can change only while it is a draft."
-          />
-        ) : (
-          <p>Type: {row.billing_type === "free_trial" ? "Free Trial" : "Paid"} (fixed once it has been on sale)</p>
-        )}
-        {retired ? (
-          <p>Status: Retired. A retired offer can&apos;t be put back on sale.</p>
-        ) : (
-          <Segmented
-            legend="Status"
-            options={[
-              { value: "draft", label: "Draft", disabled: !isDraft },
-              { value: "private", label: "Private" },
-              { value: "public", label: "Public" },
-              { value: "deactivated", label: "Deactivated" },
-            ]}
-            value={status}
-            onChange={setStatus}
-            hint={
-              kind === "bundle"
-                ? "A plan can go on sale only once it has a published version."
-                : "Deactivated stops new sales; existing customers keep what they bought."
-            }
-          />
-        )}
-        <div className={styles.actions}>
+    <Modal labelledBy={titleId} onClose={close} size="md">
+      <form className={dialog.form} onSubmit={submit} noValidate>
+        <DialogHead titleId={titleId} title={`Edit details of “${row.name}”`} onClose={close} />
+        <div className={dialog.body}>
+          <ErrorSummary errors={errors} />
+          <div className={dialog.grid}>
+            <TextField label="Title" value={name} onChange={setName} maxLength={128} />
+            <TextField
+              label="Caption (one line)"
+              value={caption}
+              onChange={(v) => setCaption(v.replace(/[\r\n]+/g, " "))}
+              maxLength={160}
+            />
+            <div className={dialog.span}>
+              <DescriptionField value={description} onChange={setDescription} />
+            </div>
+            <div className={dialog.span}>
+              {isDraft ? (
+                <Segmented
+                  legend="Type"
+                  options={[
+                    { value: "free_trial", label: "Free Trial", disabled: kind === "addon" },
+                    { value: "paid", label: "Paid" },
+                  ]}
+                  value={billingType}
+                  onChange={setBillingType}
+                  hint="The type can change only while it is a draft."
+                />
+              ) : (
+                <p>Type: {row.billing_type === "free_trial" ? "Free Trial" : "Paid"} (fixed once it has been on sale)</p>
+              )}
+            </div>
+            <div className={dialog.span}>
+              {retired ? (
+                <p>Status: Retired. A retired offer can&apos;t be put back on sale.</p>
+              ) : (
+                <Segmented
+                  legend="Status"
+                  options={[
+                    { value: "draft", label: "Draft", disabled: !isDraft },
+                    { value: "private", label: "Private" },
+                    { value: "public", label: "Public" },
+                    { value: "deactivated", label: "Deactivated" },
+                  ]}
+                  value={status}
+                  onChange={setStatus}
+                  hint={
+                    kind === "bundle"
+                      ? "A plan can go on sale only once it has a published version."
+                      : "Deactivated stops new sales; existing customers keep what they bought."
+                  }
+                />
+              )}
+            </div>
+          </div>
+          <ProgressList steps={runner.steps} title="Saving" />
+          {feedback}
+        </div>
+        <div className={dialog.foot}>
+          <button type="button" className="w360-btn w360-btn-secondary" onClick={close}>
+            Cancel
+          </button>
           <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || runner.running}>
             {runner.started ? "Resume saving" : "Save details"}
           </button>
-          <button
-            type="button"
-            className="w360-btn w360-btn-secondary"
-            onClick={() => onClose({ saved: false, changed: runner.started })}
-          >
-            Cancel
-          </button>
         </div>
       </form>
-      <ProgressList steps={runner.steps} title="Saving" />
-      {feedback}
-    </section>
+    </Modal>
   );
 }

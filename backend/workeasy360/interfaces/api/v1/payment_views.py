@@ -63,6 +63,8 @@ _ORDER_FIELDS = (
     "with_trial",
     # ADR-052: a cart - plan ids and quantities, never a price.
     "cart_items",
+    # ADR-058: the coupon code the customer typed; the server prices it.
+    "coupon_code",
 )
 
 

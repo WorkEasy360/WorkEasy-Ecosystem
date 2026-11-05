@@ -50,6 +50,7 @@ from workeasy360.commercial.catalog.domain import (
     validate_media,
     validate_product_code,
     validate_product_type,
+    validate_refund_days,
     validate_slug,
     validate_store_text,
     validate_subcategory,
@@ -262,6 +263,7 @@ EDITABLE_PRODUCT_FIELDS = (
     "product_type",
     "best_for",
     "integrations",
+    "refund_days",
     *MERCHANDISING_LISTS,
     *MERCHANDISING_FLAGS,
     *LISTING_DETAIL_FIELDS,
@@ -336,6 +338,8 @@ def _clean_product_changes(changes: dict[str, Any]) -> dict[str, Any]:
         clean["best_for"] = validate_best_for(changes["best_for"])
     if "integrations" in changes:
         clean["integrations"] = validate_integrations(changes["integrations"])
+    if "refund_days" in changes:
+        clean["refund_days"] = validate_refund_days(changes["refund_days"])
     for key in MERCHANDISING_LISTS:
         if key in changes:
             clean[key] = validate_bullets(changes[key], field=key)

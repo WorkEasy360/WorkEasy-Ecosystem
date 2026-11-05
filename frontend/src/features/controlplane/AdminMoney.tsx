@@ -1,8 +1,10 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useState } from "react";
 import { adminApi, type PayoutRow } from "@/lib/api/controlPlane";
+import { FormPopup } from "./Modal";
 import { ReasonAction, Status, money } from "./ui";
+import { TextField } from "./widgets";
 import styles from "./ControlPlane.module.css";
 
 // The products console that lived here (Phase 11) is now the Product Manager:
@@ -28,7 +30,6 @@ export function PayoutRowView({
   act: (action: () => Promise<unknown>, success: string) => Promise<void>;
 }) {
   const version = p.version ?? 0;
-  const refId = useId();
   const [reference, setReference] = useState("");
   return (
     <tr>
@@ -51,21 +52,25 @@ export function PayoutRowView({
             <ReasonAction label="Approve" busy={busy} onConfirm={(r) => act(() => adminApi.payoutAction(p.id, "approve", version, { reason: r }), "Payout approved. No payment was made.")} />
           )}
           {manage && p.status === "approved" && (
-            <form
-              className={styles.field}
-              onSubmit={(e) => {
-                e.preventDefault();
-                void act(() => adminApi.payoutAction(p.id, "paid", version, { reference: reference.trim() }), "Recorded as paid.");
+            <FormPopup
+              label="Record as paid"
+              buttonAriaLabel={`Record the payout for ${p.period_end} as paid`}
+              title="Record a payout as paid"
+              intro={`${money(p.payable_minor, p.currency)} for the period ending ${p.period_end}. Record the transfer made outside Workeasy360.`}
+              size="sm"
+              submitLabel="Record as paid"
+              canSubmit={reference.trim().length >= 3}
+              disabled={busy}
+              onOpen={() => setReference("")}
+              onSubmit={async () => {
+                await adminApi.payoutAction(p.id, "paid", version, { reference: reference.trim() });
               }}
+              // The row changes once it is paid, so the outcome is the payouts
+              // list's own (and so is the reload that follows it).
+              onDone={() => void act(async () => {}, "Recorded as paid.")}
             >
-              <label className="w360-label" htmlFor={refId}>
-                Transfer reference (no bank details)
-              </label>
-              <input id={refId} className="w360-input" required minLength={3} maxLength={64} value={reference} onChange={(e) => setReference(e.target.value)} />
-              <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || reference.trim().length < 3}>
-                Record as paid
-              </button>
-            </form>
+              <TextField label="Transfer reference (no bank details)" required minLength={3} maxLength={64} value={reference} onChange={setReference} />
+            </FormPopup>
           )}
           {manage && p.status !== "paid" && p.status !== "cancelled" && (
             <ReasonAction label="Cancel payout" busy={busy} onConfirm={(r) => act(() => adminApi.payoutAction(p.id, "cancel", version, { reason: r }), "Payout cancelled; its entries are payable again.")} />

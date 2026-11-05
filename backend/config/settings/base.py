@@ -1380,6 +1380,9 @@ PUBLIC_CATALOG_DEFAULT_CURRENCY = env.str("W360_PUBLIC_CATALOG_CURRENCY", "INR")
 #: How long an unpaid order waits for its payment before it expires and its
 #: invoice is voided.
 ORDER_TTL_HOURS = env.int("W360_ORDER_TTL_HOURS", 24)
+#: ADR-058: GST on every INR invoice (orders and renewals), in basis points -
+#: 1800 = 18%. 0 turns GST off. Other currencies carry no tax line.
+GST_RATE_BP = env.int("W360_GST_RATE_BP", 1800)
 
 CONTROL_PLANE_RATE_LIMITS.update(
     {
@@ -1400,6 +1403,9 @@ CONTROL_PLANE_RATE_LIMITS.update(
         ),
         # The public site: catalog and site configuration.
         "public_catalog_ip": (env.int("W360_RL_PUBLIC_CATALOG_IP", 120), 60),
+        # ADR-058: the Store's coupon "Apply" - tight, so codes cannot be
+        # guessed by trying many.
+        "coupon_check_ip": (env.int("W360_RL_COUPON_CHECK_IP", 20), 600),
         # Placing orders: an owner scripting purchases, or an address doing so.
         "order_place_user": (env.int("W360_RL_ORDER_PLACE_USER", 20), 60),
         "order_place_ip": (env.int("W360_RL_ORDER_PLACE_IP", 60), 60),

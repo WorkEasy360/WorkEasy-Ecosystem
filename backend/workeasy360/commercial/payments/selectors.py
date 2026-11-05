@@ -71,6 +71,7 @@ def invoice(ctx: TenantContext, invoice_id: UUID) -> dict[str, Any]:
         **invoice_json(row),
         "lines": [
             {
+                "kind": line.kind,
                 "description": line.description,
                 "product_code": line.product_code,
                 "plan_code": line.plan_code,
