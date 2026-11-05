@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import axe, { type Result } from "axe-core";
 
 import { AdminContext, AdminShell } from "./ControlShell";
-import { CustomerDetailScreen } from "./AdminScreens";
+import { CustomerDetailScreen, SecurityScreen } from "./AdminScreens";
 import { PlansScreen } from "./AdminPlans";
 import { PricingScreen } from "./AdminPricing";
 import { PaymentsScreen } from "./AdminPayments";
@@ -345,8 +345,11 @@ describe("the plan builder", () => {
     await openPackageBuilder();
     await fillPackage();
     fireEvent.click(screen.getByRole("checkbox", { name: /Export/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Create product package" }));
+    // The builder is a popup over the list; saving closes it.
+    const popup = screen.getByRole("dialog", { name: "New product package" });
+    fireEvent.click(within(popup).getByRole("button", { name: "Create product package" }));
     expect(await screen.findByText("Product package “Alpha Team” created.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     expect(writes(calls).map((c) => c.key)).toEqual([
       "POST /api/v1/admin/catalog/plans",
@@ -533,8 +536,10 @@ describe("the plan builder", () => {
     fireEvent.change(await screen.findByLabelText("Title"), { target: { value: "Alpha Professional" } });
     fireEvent.click(screen.getByRole("radio", { name: "Private" }));
     expect(screen.getByRole("radio", { name: "Draft" })).toBeDisabled();
+    expect(screen.getByRole("dialog", { name: "Edit details of “Alpha Pro”" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save details" }));
     await screen.findByText("“Alpha Professional” updated.");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(writes(calls).map((c) => c.key)).toEqual(["PATCH /api/v1/admin/catalog/plans/plan-alpha-pro"]);
     expect(bodyOf(calls, "PATCH /api/v1/admin/catalog/plans/plan-alpha-pro")).toEqual({
       name: "Alpha Professional",
@@ -574,6 +579,20 @@ describe("the plan builder", () => {
     fireEvent.click(screen.getByRole("button", { name: "Bold" }));
     expect(description.value).toBe("**Fast** sync");
   });
+
+  it("the builder opens in a popup that Cancel and Escape close without a call", async () => {
+    const calls = mockApi(catalogRoutes());
+    asStaff(CATALOG_MANAGER, <PlansScreen />);
+    await openPackageBuilder();
+    const popup = screen.getByRole("dialog", { name: "New product package" });
+    expect(within(popup).getByLabelText("Title")).toHaveFocus();
+    fireEvent.click(within(popup).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await openPackageBuilder();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(writes(calls)).toEqual([]);
+  });
 });
 
 // --- pricing -------------------------------------------------------------------------------
@@ -591,17 +610,34 @@ describe("currency and pricing", () => {
     expect(within(prices).getByText("Alpha Pro")).toBeInTheDocument();
     await expectNoViolations(container);
 
-    fireEvent.change(screen.getByLabelText("Code"), { target: { value: "direct-usd" } });
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Direct USD" } });
-    fireEvent.change(screen.getByLabelText("Currency"), { target: { value: "USD" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create price book" }));
+    // The new book's form is a popup over the list.
+    expect(screen.queryByLabelText("Code")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "+ New price book" }));
+    const popup = screen.getByRole("dialog", { name: "New price book" });
+    fireEvent.change(within(popup).getByLabelText("Code"), { target: { value: "direct-usd" } });
+    fireEvent.change(within(popup).getByLabelText("Name"), { target: { value: "Direct USD" } });
+    fireEvent.change(within(popup).getByLabelText("Currency"), { target: { value: "USD" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Create price book" }));
     await screen.findByText("Price book “Direct USD” created.");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(bodyOf(calls, "POST /api/v1/admin/catalog/price-books")).toEqual({
       code: "direct-usd",
       name: "Direct USD",
       currency: "USD",
       priority: 100,
     });
+  });
+
+  it("checks a new book in its popup before any call, and keeps it open", async () => {
+    const calls = mockApi({ "GET /api/v1/admin/catalog/overview": [{ status: 200, body: OVERVIEW }] });
+    asStaff(["platform.staff_catalog.view", "platform.staff_pricing.manage"], <PricingScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "+ New price book" }));
+    const popup = screen.getByRole("dialog", { name: "New price book" });
+    fireEvent.change(within(popup).getByLabelText("Code"), { target: { value: "Bad Code!" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Create price book" }));
+    expect(await within(popup).findByRole("alert")).toHaveTextContent(/Enter a code.*Enter a name\./);
+    expect(writes(calls)).toEqual([]);
+    expect(screen.getByRole("dialog", { name: "New price book" })).toBeInTheDocument();
   });
 });
 
@@ -679,13 +715,17 @@ describe("payment providers", () => {
       "POST /api/v1/admin/payments/providers": [{ status: 201, body: provider }],
     });
     asStaff(["platform.staff_payment.view", "platform.staff_payment.manage"], <PaymentsScreen />);
-    fireEvent.change(await screen.findByLabelText("Key"), { target: { value: "razor-in" } });
-    fireEvent.change(screen.getByLabelText("Adapter"), { target: { value: "razorpay" } });
-    fireEvent.change(screen.getByLabelText("API key reference"), { target: { value: "razor_in" } });
-    fireEvent.change(screen.getByLabelText("Webhook secret reference"), { target: { value: "razor_in" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: "INR" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add provider" }));
+    const popup = screen.getByRole("dialog", { name: "Add provider" });
+    expect(popup.querySelector("input[type=password]")).toBeNull();
+    fireEvent.change(within(popup).getByLabelText("Key"), { target: { value: "razor-in" } });
+    fireEvent.change(within(popup).getByLabelText("Adapter"), { target: { value: "razorpay" } });
+    fireEvent.change(within(popup).getByLabelText("API key reference"), { target: { value: "razor_in" } });
+    fireEvent.change(within(popup).getByLabelText("Webhook secret reference"), { target: { value: "razor_in" } });
+    fireEvent.click(within(popup).getByRole("checkbox", { name: "INR" }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Add provider" }));
     await screen.findByText(/Provider added/);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(bodyOf(calls, "POST /api/v1/admin/payments/providers")).toEqual({
       key: "razor-in",
       adapter: "razorpay",
@@ -696,6 +736,40 @@ describe("payment providers", () => {
       currencies: ["INR"],
       priority: 100,
     });
+  });
+
+  it("refuses a provider without references in the popup, before any call", async () => {
+    const calls = mockApi({
+      "GET /api/v1/admin/payments/providers": [{ status: 200, body: { results: [] } }],
+      "GET /api/v1/admin/payments/events": [{ status: 200, body: { results: [] } }],
+    });
+    asStaff(["platform.staff_payment.view", "platform.staff_payment.manage"], <PaymentsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add provider" }));
+    const popup = screen.getByRole("dialog", { name: "Add provider" });
+    fireEvent.click(within(popup).getByRole("button", { name: "Add provider" }));
+    const alert = await within(popup).findByRole("alert");
+    expect(alert).toHaveTextContent(/API key reference: 1–48/);
+    expect(alert).toHaveTextContent("Choose at least one currency.");
+    expect(writes(calls)).toEqual([]);
+  });
+
+  it("edits a provider's currencies in a popup from its row", async () => {
+    const calls = mockApi({
+      "GET /api/v1/admin/payments/providers": [{ status: 200, body: { results: [provider] } }],
+      "GET /api/v1/admin/payments/events": [{ status: 200, body: { results: [] } }],
+      "PATCH /api/v1/admin/payments/providers/stripe-eu": [{ status: 200, body: provider }],
+    });
+    asStaff(["platform.staff_payment.view", "platform.staff_payment.manage"], <PaymentsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit currencies of Stripe EU" }));
+    const popup = screen.getByRole("dialog", { name: "Edit currencies of Stripe EU" });
+    fireEvent.click(within(popup).getByRole("checkbox", { name: "GBP" }));
+    fireEvent.click(within(popup).getByRole("checkbox", { name: "EUR" }));
+    expect(within(popup).getByRole("button", { name: "Save currencies" })).toBeDisabled();
+    fireEvent.click(within(popup).getByRole("checkbox", { name: "INR" }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Save currencies" }));
+    await screen.findByText("Stripe EU: currencies updated.");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(bodyOf(calls, "PATCH /api/v1/admin/payments/providers/stripe-eu")).toEqual({ currencies: ["INR"], version: 4 });
   });
 });
 
@@ -881,6 +955,48 @@ describe("a customer's billing", () => {
     await screen.findByText(/allow-list is off/);
     expect(bodyOf(calls, `POST /api/v1/admin/customers/${ORG}/network-policy/reset`)).toEqual({
       reason: recorded("Reset network allow-list"),
+    });
+  });
+
+  it("grants a staff override from a popup, recording a reason without asking", async () => {
+    const calls = mockApi({
+      ...billingRoutes(),
+      [`POST /api/v1/admin/customers/${ORG}/entitlement-overrides`]: [{ status: 201, body: {} }],
+    });
+    asStaff([...BILLING_STAFF, "platform.staff_subscription.manage"], <CustomerDetailScreen organizationId={ORG} />);
+    fireEvent.click(await screen.findByRole("button", { name: "+ Grant override" }));
+    const popup = screen.getByRole("dialog", { name: "Grant an override" });
+    const grant = within(popup).getByRole("button", { name: "Grant override" });
+    expect(grant).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Product code"), { target: { value: "crm" } });
+    fireEvent.change(within(popup).getByLabelText("Expires after"), { target: { value: "7" } });
+    fireEvent.click(grant);
+    await screen.findByText("Override granted; access was recomputed.");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const body = bodyOf(calls, `POST /api/v1/admin/customers/${ORG}/entitlement-overrides`);
+    expect(body).toMatchObject({ product_code: "crm", reason: recorded("Grant override") });
+    expect(Object.keys(body).sort()).toEqual(["expires_at", "product_code", "reason"]);
+  });
+});
+
+describe("staff access", () => {
+  it("grants a permission from a popup and shows it was granted", async () => {
+    const calls = mockApi({
+      "GET /api/v1/admin/security/roles": [{ status: 200, body: { results: [] } }],
+      "GET /api/v1/admin/security/grants": [{ status: 200, body: { results: [] } }],
+      "POST /api/v1/admin/security/grants": [{ status: 201, body: {} }],
+    });
+    asStaff(["platform.staff_security.view", "platform.staff_security.manage"], <SecurityScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "+ Grant a permission" }));
+    const popup = screen.getByRole("dialog", { name: "Grant a permission" });
+    fireEvent.change(within(popup).getByLabelText(/Staff member.s email/), { target: { value: "pat@example.com" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Grant" }));
+    await screen.findByText("Permission granted.");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(bodyOf(calls, "POST /api/v1/admin/security/grants")).toEqual({
+      email: "pat@example.com",
+      permission: "platform.staff_customer.view",
+      reason: recorded("Grant permission"),
     });
   });
 });
@@ -1091,9 +1207,16 @@ describe("communication", () => {
     const calls = mockApi(communicationRoutes());
     asStaff(COMMS, <CommunicationScreen />);
     expect(await screen.findByText("no-reply@workeasy360.test")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Reply-to address (optional)"), { target: { value: "help@acme.test" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save sender" }));
+    // The values in force are shown as text; they are changed in a popup.
+    expect(screen.getByText("Reply-to address").nextElementSibling).toHaveTextContent("None");
+    expect(screen.queryByLabelText("Reply-to address (optional)")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit sender" }));
+    const popup = screen.getByRole("dialog", { name: "Sender" });
+    expect(within(popup).getByLabelText("Sender name")).toHaveValue("Workeasy360");
+    fireEvent.change(within(popup).getByLabelText("Reply-to address (optional)"), { target: { value: "help@acme.test" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save sender" }));
     await screen.findByText("Sender settings saved.");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(bodyOf(calls, "PUT /api/v1/admin/communication/sender")).toEqual({
       sender_name: "Workeasy360",
       reply_to: "help@acme.test",
@@ -1108,6 +1231,20 @@ describe("communication", () => {
     expect(screen.getByRole("button", { name: "Preview" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save template" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save sender" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit sender" })).not.toBeInTheDocument();
+  });
+
+  it("edits a template in a popup that Close dismisses", async () => {
+    mockApi(communicationRoutes());
+    asStaff(COMMS, <CommunicationScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit invitation" }));
+    const popup = screen.getByRole("dialog", { name: "Edit invitation" });
+    expect(within(popup).getByLabelText("Subject")).toHaveValue("Join {organization}");
+    // The title bar's × and the Close at the bottom both dismiss it.
+    const closers = within(popup).getAllByRole("button", { name: "Close" });
+    expect(closers).toHaveLength(2);
+    fireEvent.click(closers[1]);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
 
@@ -1214,10 +1351,18 @@ describe("platform settings", () => {
       "PUT /api/v1/admin/settings": [{ status: 200, body: { ...SETTINGS, signup_enabled: false, version: 4 } }],
     });
     const { container, unmount } = asStaff(["platform.staff_settings.view", "platform.staff_settings.manage"], <PlatformSettingsScreen />);
-    fireEvent.click(await screen.findByLabelText(/Self-service signup is open/));
+    // The settings in force are text on the page; they are changed in a popup.
+    expect((await screen.findByText("Self-service signup")).nextElementSibling).toHaveTextContent("Open");
+    expect(screen.getByText("Support email").nextElementSibling).toHaveTextContent("help@example.com");
     await expectNoViolations(container);
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit settings" }));
+    const popup = screen.getByRole("dialog", { name: "Platform settings" });
+    expect(within(popup).getByLabelText("Support email")).toHaveValue("help@example.com");
+    fireEvent.click(within(popup).getByLabelText(/Self-service signup is open/));
+    fireEvent.click(within(popup).getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(calls.some((c) => c.key === "PUT /api/v1/admin/settings")).toBe(true));
+    expect(await screen.findByText("Platform settings saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(calls.find((c) => c.key === "PUT /api/v1/admin/settings")?.body).toEqual({
       signup_enabled: false,
       support_email: "help@example.com",
@@ -1228,7 +1373,9 @@ describe("platform settings", () => {
     unmount();
     mockApi({ "GET /api/v1/admin/settings": [{ status: 200, body: SETTINGS }] });
     asStaff(["platform.staff_settings.view"], <PlatformSettingsScreen />);
-    expect(await screen.findByLabelText(/Self-service signup is open/)).toBeDisabled();
+    expect((await screen.findByText("Self-service signup")).nextElementSibling).toHaveTextContent("Open");
+    expect(screen.queryByLabelText(/Self-service signup is open/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit settings" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save settings" })).not.toBeInTheDocument();
   });
 });
@@ -1258,10 +1405,15 @@ describe("staff roles", () => {
     const table = await screen.findByRole("table", { name: "Roles and who holds them" });
     expect(table).toHaveTextContent("sam@example.com");
     await expectNoViolations(container);
-    fireEvent.change(screen.getByLabelText(/Staff member.s email/), { target: { value: "new@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "+ Grant a role" }));
+    const popup = screen.getByRole("dialog", { name: "Grant a role" });
+    expect(within(popup).getByRole("button", { name: "Grant role" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText(/Staff member.s email/), { target: { value: "new@example.com" } });
     expect(screen.queryByLabelText(/^Reason/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Grant role" }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Grant role" }));
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/security/roles")).toBe(true));
+    expect(await screen.findByText("Role granted.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(calls.find((c) => c.key === "POST /api/v1/admin/security/roles")?.body).toEqual({
       email: "new@example.com",
       role: "SUPPORT_ADMIN",

@@ -155,11 +155,15 @@ def _issue(
     collection_mode: str,
     moment: datetime,
 ) -> UUID | None:
+    from workeasy360.commercial.billing.tax import tax_for
     from workeasy360.commercial.payments.models import Invoice, InvoiceLine
 
-    total = sum(line.total_amount_minor for line in lines)
-    if total <= 0:
+    charges = sum(line.total_amount_minor for line in lines)
+    if charges <= 0:
         return None
+    # ADR-058: GST on every INR period invoice, as its own line.
+    tax = tax_for(subscription.currency, charges)
+    total = charges + (tax.amount_minor if tax is not None else 0)
     mismatched = [line for line in lines if line.currency != subscription.currency]
     if mismatched:
         # Unreachable through the subscription services, which refuse a price
@@ -225,6 +229,25 @@ def _issue(
                 )
                 for line in lines
             ]
+            + (
+                [
+                    InvoiceLine(
+                        organization_id=organization_id,
+                        invoice=invoice,
+                        kind=InvoiceLine.Kind.TAX,
+                        subscription_item_id=None,
+                        description=tax.description,
+                        product_code="",
+                        plan_code="",
+                        bundle_code="",
+                        quantity=1,
+                        unit_amount_minor=None,
+                        amount_minor=tax.amount_minor,
+                    )
+                ]
+                if tax is not None
+                else []
+            )
         )
         audit.record_system(
             organization_id,

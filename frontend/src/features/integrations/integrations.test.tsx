@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import axe, { type Result } from "axe-core";
 import { ConnectionsSettings } from "./ConnectionsSettings";
 import { DeliveryLog } from "./DeliveryLog";
@@ -84,13 +84,20 @@ describe("ConnectionsSettings", () => {
       [`POST ${API}/connections`]: [{ status: 201, body: { connection: CONNECTION, secret: SECRET, notice: "" } }],
     });
     render(<ConnectionsSettings orgSlug="acme" />);
-    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Orders" } });
-    fireEvent.change(screen.getByLabelText("Endpoint URL (https)"), {
+    // The webhook is added in a popup; the secret shows on the page once it closes.
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add a webhook" }));
+    const popup = screen.getByRole("dialog", { name: "Add a webhook" });
+    expect(within(popup).getByRole("button", { name: "Create connection" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Name"), { target: { value: "Orders" } });
+    fireEvent.change(within(popup).getByLabelText("Endpoint URL (https)"), {
       target: { value: "https://hooks.example.com/in" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create connection" }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Create connection" }));
 
     expect(await screen.findByDisplayValue(SECRET)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Signing secret for Orders" })).toHaveFocus();
+    expect(screen.getByText("Connection created as a draft. Send a test event, then activate it.")).toBeInTheDocument();
     expect(JSON.stringify({ ...localStorage })).not.toContain(SECRET);
     expect(JSON.stringify({ ...sessionStorage })).not.toContain(SECRET);
     expect(window.location.href).not.toContain(SECRET);
@@ -108,8 +115,50 @@ describe("ConnectionsSettings", () => {
     });
     render(<ConnectionsSettings orgSlug="acme" />);
     fireEvent.click(await screen.findByRole("button", { name: "Activate" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("Connection activated.");
+    expect(await screen.findByText("Connection activated.")).toHaveAttribute("role", "status");
     expect(calls.filter((c) => c.key === `POST ${API}/connections/c1/status`)).toHaveLength(1);
+  });
+
+  it("keeps a refused webhook in the popup, in this page's words", async () => {
+    const calls = mockApi({
+      [`GET ${API}/connections`]: [EMPTY_PAGE],
+      [`GET ${API}/event-catalog`]: [CATALOG],
+      [`POST ${API}/connections`]: [{ status: 403, body: { code: "permission_denied", detail: "raw server words" } }],
+    });
+    render(<ConnectionsSettings orgSlug="acme" />);
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add a webhook" }));
+    const popup = screen.getByRole("dialog", { name: "Add a webhook" });
+    fireEvent.change(within(popup).getByLabelText("Name"), { target: { value: "Orders" } });
+    fireEvent.change(within(popup).getByLabelText("Endpoint URL (https)"), { target: { value: "https://hooks.example.com/in" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Create connection" }));
+    expect(await within(popup).findByRole("alert")).toHaveTextContent("You don't have permission to do that.");
+    expect(calls.filter((c) => c.key === `POST ${API}/connections`)).toHaveLength(1);
+  });
+
+  it("chooses a connection's events in a popup, starting from what is saved", async () => {
+    const calls = mockApi({
+      [`GET ${API}/connections`]: [{ status: 200, body: { results: [CONNECTION], next_cursor: null, has_more: false } }],
+      [`GET ${API}/event-catalog`]: [CATALOG],
+      [`GET ${API}/connections/c1/subscriptions`]: [{ status: 200, body: { event_filters: [] } }],
+      [`PUT ${API}/connections/c1/subscriptions`]: [{ status: 200, body: { event_filters: ["product.example.record.created.v1"] } }],
+    });
+    render(
+      <main>
+        <h1>Integrations</h1>
+        <ConnectionsSettings orgSlug="acme" />
+      </main>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Events" }));
+    const popup = screen.getByRole("dialog", { name: "Events for Orders" });
+    const box = await within(popup).findByRole("checkbox", { name: /product\.example\.record\.created\.v1/ });
+    expect(box).not.toBeChecked();
+    await expectNoViolations(popup);
+    fireEvent.click(box);
+    fireEvent.click(within(popup).getByRole("button", { name: "Save events" }));
+    expect(await screen.findByText("Subscriptions saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const saved = calls.filter((c) => c.key === `PUT ${API}/connections/c1/subscriptions`);
+    expect(saved.map((c) => c.body)).toEqual([{ event_filters: ["product.example.record.created.v1"] }]);
   });
 
   it("is accessible, including the one-time secret panel", async () => {
@@ -209,15 +258,22 @@ describe("AutomationsSettings", () => {
         <AutomationsSettings orgSlug="acme" />
       </main>,
     );
-    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Big orders" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add condition" }));
-    fireEvent.change(screen.getByLabelText("Field 1 (in the event data)"), { target: { value: "amount" } });
-    fireEvent.change(screen.getByLabelText("Operator 1"), { target: { value: "greater_than" } });
-    fireEvent.change(screen.getByLabelText("Value 1"), { target: { value: "100" } });
+    // The automation is written in a popup.
+    fireEvent.click(await screen.findByRole("button", { name: "+ New automation" }));
+    const popup = screen.getByRole("dialog", { name: "New automation" });
+    expect(within(popup).getByRole("button", { name: "Save automation" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Name"), { target: { value: "Big orders" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Add condition" }));
+    fireEvent.change(within(popup).getByLabelText("Field 1 (in the event data)"), { target: { value: "amount" } });
+    fireEvent.change(within(popup).getByLabelText("Operator 1"), { target: { value: "greater_than" } });
+    fireEvent.change(within(popup).getByLabelText("Value 1"), { target: { value: "100" } });
     await expectNoViolations(container);
-    fireEvent.click(screen.getByRole("button", { name: "Save automation" }));
+    await expectNoViolations(popup);
+    fireEvent.click(within(popup).getByRole("button", { name: "Save automation" }));
 
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${API}/automations`)).toBe(true));
+    expect(await screen.findByText("Automation saved as a draft.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     const sent = calls.find((c) => c.key === `POST ${API}/automations`)!.body as Record<string, unknown>;
     expect(sent).toEqual({
       name: "Big orders",

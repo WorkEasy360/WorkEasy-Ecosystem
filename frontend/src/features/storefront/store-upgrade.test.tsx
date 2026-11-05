@@ -384,6 +384,8 @@ describe("Super Admin commercial rules", () => {
         recurring_months: 12,
       }),
     );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText(/^Commission for Easy CRM saved\./)).toBeInTheDocument();
   });
 
   it("sets a white-label price range", async () => {
@@ -397,6 +399,11 @@ describe("Super Admin commercial rules", () => {
     fireEvent.click(within(table).getAllByRole("button", { name: "Add range" })[0]);
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText(/Lowest price/), { target: { value: "500" } });
+    // Refused before any request: the message shows in the popup, which stays open.
+    fireEvent.change(within(dialog).getByLabelText(/Highest price/), { target: { value: "400" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save range" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("The highest price must be at least the lowest.");
+    expect(calls.some((c) => c.key === `POST ${ADMIN}/price-ranges`)).toBe(false);
     fireEvent.change(within(dialog).getByLabelText(/Highest price/), { target: { value: "900" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Save range" }));
     await waitFor(() =>

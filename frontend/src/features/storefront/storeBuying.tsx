@@ -5,7 +5,7 @@ import Link from "next/link";
 import { getOrganizations } from "@/lib/api/auth";
 import { useSession } from "@/lib/auth/useSession";
 import { usePortalRouter } from "@/lib/portalRouter";
-import { Modal } from "@/features/controlplane/Modal";
+import { DialogHead, Modal, dialog } from "@/features/controlplane/Modal";
 import { SignupForm } from "@/features/auth/SelfService";
 import {
   MAX_CART_ITEMS,
@@ -70,33 +70,23 @@ export function useStoreBuy() {
     router.push("/dashboard?mode=user");
   }
 
-  const dialog = asking ? (
+  const signupDialog = asking ? (
     <Modal labelledBy={titleId} onClose={() => setAsking(false)}>
-      <div className={styles.dialogBody}>
-        <div className={styles.dialogHead}>
-          <h2 id={titleId} className={styles.dialogTitle}>
-            Create your account to continue
-          </h2>
-          <button
-            type="button"
-            className="w360-btn w360-btn-secondary"
-            onClick={() => setAsking(false)}
-            aria-label="Close"
-          >
-            ×
-          </button>
+      <div className={dialog.form}>
+        <DialogHead titleId={titleId} title="Create your account to continue" onClose={() => setAsking(false)} />
+        <div className={dialog.body}>
+          <p className={dialog.intro}>
+            Your choice is saved. Confirm your email and your checkout opens - or{" "}
+            <Link href="/login?mode=user">sign in</Link> if you already have an
+            account.
+          </p>
+          <SignupForm signInHref="/login?mode=user" />
         </div>
-        <p className={styles.dialogLead}>
-          Your choice is saved. Confirm your email and your checkout opens - or{" "}
-          <Link href="/login?mode=user">sign in</Link> if you already have an
-          account.
-        </p>
-        <SignupForm signInHref="/login?mode=user" />
       </div>
     </Modal>
   ) : null;
 
-  return { buy, busy, signedIn, dialog };
+  return { buy, busy, signedIn, dialog: signupDialog };
 }
 
 /** The public Store's cart: what is in it, and one checkout for all of it. */

@@ -192,6 +192,27 @@ def store_product_view(request: HttpRequest, slug: str) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
+@never_cache
+def store_coupon_view(request: HttpRequest, slug: str) -> JsonResponse:
+    """ADR-058: the product page's coupon "Apply" -
+    ``?code=&currency=&amount_minor=``. What the code would take off; the
+    checkout prices it again. Anonymous, read only, tightly rate-limited."""
+    from workeasy360.commercial.controlplane import portal_store
+
+    blocked = limited(request, "coupon_check")
+    if blocked is not None:
+        return blocked
+    return JsonResponse(
+        portal_store.check_coupon(
+            request.GET.get("code"),
+            slug=slug,
+            currency=request.GET.get("currency"),
+            amount_minor=request.GET.get("amount_minor"),
+        )
+    )
+
+
+@require_http_methods(["GET"])
 def product_update_view(
     request: HttpRequest, slug: str, update_slug: str
 ) -> JsonResponse:

@@ -230,13 +230,20 @@ describe("wallet & payouts", () => {
       [`PUT ${API}/withdrawals/method`]: [ok(WALLET)],
     });
     fireEvent.click(await screen.findByRole("button", { name: "Add payout details" }));
-    fireEvent.change(screen.getByLabelText("Account holder name"), { target: { value: "Resell Co" } });
-    fireEvent.change(screen.getByLabelText("IFSC"), { target: { value: "HDFC0001234" } });
-    fireEvent.change(screen.getByLabelText("Account number"), { target: { value: "50100123456789" } });
-    fireEvent.change(screen.getByLabelText("Confirm account number"), { target: { value: "50100123456789" } });
-    fireEvent.change(screen.getByLabelText("PAN"), { target: { value: "ABCDE1234F" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save payout details" }));
+    const popup = screen.getByRole("dialog", { name: "Add payout details" });
+    // A required field left empty: the popup stays open and nothing is sent.
+    fireEvent.click(within(popup).getByRole("button", { name: "Save payout details" }));
+    expect(await within(popup).findByRole("alert")).toHaveTextContent("Check the highlighted field.");
+    expect(calls.some((c) => c.key === `PUT ${API}/withdrawals/method`)).toBe(false);
+    fireEvent.change(within(popup).getByLabelText("Account holder name"), { target: { value: "Resell Co" } });
+    fireEvent.change(within(popup).getByLabelText("IFSC"), { target: { value: "HDFC0001234" } });
+    fireEvent.change(within(popup).getByLabelText("Account number"), { target: { value: "50100123456789" } });
+    fireEvent.change(within(popup).getByLabelText("Confirm account number"), { target: { value: "50100123456789" } });
+    fireEvent.change(within(popup).getByLabelText("PAN"), { target: { value: "ABCDE1234F" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save payout details" }));
     await waitFor(() => expect(calls.some((c) => c.key === `PUT ${API}/withdrawals/method`)).toBe(true));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText(/Payout details saved/)).toBeInTheDocument();
     const put = calls.find((c) => c.key === `PUT ${API}/withdrawals/method`)!;
     expect(put.body).toMatchObject({
       method: "bank",
@@ -301,11 +308,15 @@ describe("the helpdesk", () => {
     expect(table).toHaveTextContent("On track");
     expect(screen.getByRole("button", { name: "Open (1)" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "Raise a ticket" }));
-    fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "Payout late" } });
-    fireEvent.change(screen.getByLabelText("What do you need?"), { target: { value: "Where is October's payout?" } });
-    fireEvent.change(screen.getByLabelText("Priority"), { target: { value: "urgent" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send ticket" }));
+    const popup = screen.getByRole("dialog", { name: "New ticket" });
+    expect(within(popup).getByRole("button", { name: "Send ticket" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Subject"), { target: { value: "Payout late" } });
+    fireEvent.change(within(popup).getByLabelText("What do you need?"), { target: { value: "Where is October's payout?" } });
+    fireEvent.change(within(popup).getByLabelText("Priority"), { target: { value: "urgent" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Send ticket" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${API}/tickets`)).toBe(true));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText("Ticket sent to Workeasy360.")).toBeInTheDocument();
     expect(calls.find((c) => c.key === `POST ${API}/tickets`)!.body).toMatchObject({
       subject: "Payout late",
       message: "Where is October's payout?",
@@ -337,8 +348,28 @@ describe("the helpdesk", () => {
     ]);
     expect(thread).toHaveTextContent("You");
     expect(thread).toHaveTextContent("Workeasy360 Support");
-    // The asking side may only close its ticket.
-    const status = screen.getByLabelText("Status");
+    // The asking side may only close its ticket (the reply is in a popup).
+    fireEvent.click(screen.getByRole("button", { name: "Reply to #1" }));
+    const popup = screen.getByRole("dialog", { name: "Reply to #1" });
+    const status = within(popup).getByLabelText("Status");
     expect(within(status).getAllByRole("option").map((o) => o.getAttribute("value"))).toEqual(["", "closed"]);
+  });
+
+  it("sends a reply from the ticket's popup and closes it", async () => {
+    search = "ticket=t1";
+    const { calls } = mount(<MyTickets />, {
+      [`GET ${API}/tickets`]: [ok({ items: [TICKET], counts: {}, total: 1, priorities: [], categories: [] })],
+      [`GET ${API}/support`]: [ok(SUPPORT)],
+      [`GET ${API}/tickets/t1`]: [ok({ ...TICKET, messages: [] }), ok({ ...TICKET, messages: [] })],
+      [`POST ${API}/tickets/t1`]: [ok({ ...TICKET, messages: [] })],
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Reply to #1" }));
+    const popup = screen.getByRole("dialog", { name: "Reply to #1" });
+    expect(within(popup).getByRole("button", { name: "Send" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Your reply"), { target: { value: "Thanks, it is there now." } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Reply sent.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.find((c) => c.key === `POST ${API}/tickets/t1`)!.body).toEqual({ message: "Thanks, it is there now.", internal: false });
   });
 });

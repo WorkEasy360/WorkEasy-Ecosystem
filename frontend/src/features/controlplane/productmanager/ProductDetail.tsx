@@ -245,7 +245,6 @@ export function ProductDetail({ productId }: { productId: string }) {
                       categories={data.categories}
                       manage={manageCatalog}
                       busy={busy}
-                      act={act}
                       reload={reload}
                       onPreview={() => setPreviewing(true)}
                     />
@@ -261,7 +260,7 @@ export function ProductDetail({ productId }: { productId: string }) {
                       reload={reload}
                     />
                   )}
-                  {tab === "availability" && <AvailabilityTab key={p.updated_at ?? ""} product={p} manage={manageCatalog} busy={busy} act={act} />}
+                  {tab === "availability" && <AvailabilityTab product={p} manage={manageCatalog} busy={busy} act={act} reload={reload} />}
                   {tab === "updates" && <UpdatesTab product={p} manage={manageCatalog} />}
                   {tab === "plans" && <PlansPricingTab productId={p.id} />}
                   {tab === "pricing" && <PricingPanel product={p} />}

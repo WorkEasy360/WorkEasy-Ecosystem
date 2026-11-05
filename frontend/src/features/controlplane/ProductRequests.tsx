@@ -13,6 +13,7 @@ import {
 import type { RequestKind } from "@/lib/api/partnerPanel";
 import { can, useAdmin } from "./ControlShell";
 import { Section } from "./PartnerSection";
+import { FormPopup } from "./Modal";
 import { LoadGate, Status, Table, useAction, useLoad, when } from "./ui";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
@@ -220,16 +221,16 @@ function RequestReview({ requestId, onClose, onDecided }: { requestId: string; o
     reload();
     onDecided();
   });
-  const [mode, setMode] = useState<"reject" | "revoke" | null>(null);
-  const [reason, setReason] = useState("");
-  const reasonId = useId();
+  // A rejection or revocation is made in a popup; its outcome is the review's own.
+  const announce = (message: string) => void act(async () => {}, message);
+  const headingId = useId();
   const heading = useRef<HTMLHeadingElement | null>(null);
   useEffect(() => heading.current?.focus(), [requestId]);
 
   return (
-    <section className={`w360-card ${styles.card}`} aria-labelledby={`${reasonId}-h`}>
+    <section className={`w360-card ${styles.card}`} aria-labelledby={`${headingId}-h`}>
       <div className={local.headerRow}>
-        <h2 id={`${reasonId}-h`} ref={heading} tabIndex={-1} className={styles.cardTitle}>
+        <h2 id={`${headingId}-h`} ref={heading} tabIndex={-1} className={styles.cardTitle}>
           Review request
         </h2>
         <button type="button" className="w360-btn w360-btn-secondary" onClick={onClose}>
@@ -308,73 +309,42 @@ function RequestReview({ requestId, onClose, onDecided }: { requestId: string; o
               </Section>
 
               {manage && (r.status === "pending" || r.status === "approved") && (
-                <div className={styles.stack}>
-                  {mode === null && (
-                    <div className={styles.row}>
-                      {r.status === "pending" && (
-                        <>
-                          <button
-                            type="button"
-                            className="w360-btn w360-btn-primary"
-                            disabled={busy}
-                            onClick={() => void act(() => adminProgrammeApi.decidePromotionRequest(r.id, "approve"), `Approved: ${d.partner.name} may ${words.verb} ${d.product.name}.`)}
-                          >
-                            Approve
-                          </button>
-                          <button type="button" className="w360-btn w360-btn-secondary" disabled={busy} onClick={() => setMode("reject")}>
-                            Reject
-                          </button>
-                        </>
-                      )}
-                      {r.status === "approved" && (
-                        <button type="button" className="w360-btn w360-btn-danger" disabled={busy} onClick={() => setMode("revoke")}>
-                          Revoke permission
-                        </button>
-                      )}
-                    </div>
+                <div className={styles.row}>
+                  {r.status === "pending" && (
+                    <>
+                      <button
+                        type="button"
+                        className="w360-btn w360-btn-primary"
+                        disabled={busy}
+                        onClick={() => void act(() => adminProgrammeApi.decidePromotionRequest(r.id, "approve"), `Approved: ${d.partner.name} may ${words.verb} ${d.product.name}.`)}
+                      >
+                        Approve
+                      </button>
+                      <ReasonPopup
+                        action="reject"
+                        label="Reject"
+                        reasonLabel={`Reason (the ${words.who} reads it)`}
+                        disabled={busy}
+                        onSubmit={(reason) => adminProgrammeApi.decidePromotionRequest(r.id, "reject", reason)}
+                        onDone={() => announce(`Request rejected. The ${words.who} sees your reason.`)}
+                      />
+                    </>
                   )}
-                  {mode !== null && (
-                    <form
-                      className={styles.form}
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        const action = mode;
-                        void act(async () => {
-                          await adminProgrammeApi.decidePromotionRequest(r.id, action, reason.trim() || undefined);
-                          setMode(null);
-                          setReason("");
-                        }, action === "reject"
-                          ? `Request rejected. The ${words.who} sees your reason.`
-                          : r.kind === "sell"
+                  {r.status === "approved" && (
+                    <ReasonPopup
+                      action="revoke"
+                      label="Revoke permission"
+                      reasonLabel={`Reason (optional, the ${words.who} reads it)`}
+                      disabled={busy}
+                      onSubmit={(reason) => adminProgrammeApi.decidePromotionRequest(r.id, "revoke", reason)}
+                      onDone={() =>
+                        announce(
+                          r.kind === "sell"
                             ? "Permission revoked. New sales stop now; existing customers keep their subscriptions."
-                            : "Permission revoked. New links stop now; earned commission is kept.");
-                      }}
-                    >
-                      <div className={styles.field}>
-                        <label className="w360-label" htmlFor={reasonId}>
-                          {mode === "reject" ? `Reason (the ${words.who} reads it)` : `Reason (optional, the ${words.who} reads it)`}
-                        </label>
-                        <textarea
-                          id={reasonId}
-                          className="w360-input"
-                          rows={3}
-                          maxLength={500}
-                          required={mode === "reject"}
-                          minLength={mode === "reject" ? 3 : undefined}
-                          value={reason}
-                          onChange={(e) => setReason(e.target.value)}
-                          autoFocus
-                        />
-                      </div>
-                      <div className={styles.row}>
-                        <button type="submit" className={mode === "reject" ? "w360-btn w360-btn-primary" : "w360-btn w360-btn-danger"} disabled={busy}>
-                          {mode === "reject" ? "Reject request" : "Revoke permission"}
-                        </button>
-                        <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setMode(null)}>
-                          Cancel
-                        </button>
-                      </div>
-                    </form>
+                            : "Permission revoked. New links stop now; earned commission is kept.",
+                        )
+                      }
+                    />
                   )}
                 </div>
               )}
@@ -417,5 +387,60 @@ function RequestReview({ requestId, onClose, onDecided }: { requestId: string; o
         }}
       </LoadGate>
     </section>
+  );
+}
+
+/** Reject or revoke, with the reason the partner reads, in a small popup. A
+ * refusal stays in the popup with the reason kept; a rejection needs one. */
+function ReasonPopup({
+  action,
+  label,
+  reasonLabel,
+  disabled,
+  onSubmit,
+  onDone,
+}: {
+  action: "reject" | "revoke";
+  label: string;
+  reasonLabel: string;
+  disabled: boolean;
+  onSubmit: (reason: string | undefined) => Promise<unknown>;
+  onDone: () => void;
+}) {
+  const reasonId = useId();
+  const [reason, setReason] = useState("");
+  const reject = action === "reject";
+  return (
+    <FormPopup
+      label={label}
+      buttonClassName={reject ? "w360-btn w360-btn-secondary" : "w360-btn w360-btn-danger"}
+      title={reject ? "Reject the request" : "Revoke the permission"}
+      size="sm"
+      submitLabel={reject ? "Reject request" : "Revoke permission"}
+      danger={!reject}
+      canSubmit={!reject || reason.trim().length >= 3}
+      disabled={disabled}
+      onOpen={() => setReason("")}
+      onSubmit={async () => {
+        await onSubmit(reason.trim() || undefined);
+      }}
+      onDone={onDone}
+    >
+      <div className={styles.field}>
+        <label className="w360-label" htmlFor={reasonId}>
+          {reasonLabel}
+        </label>
+        <textarea
+          id={reasonId}
+          className="w360-input"
+          rows={3}
+          maxLength={500}
+          required={reject}
+          minLength={reject ? 3 : undefined}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
+      </div>
+    </FormPopup>
   );
 }

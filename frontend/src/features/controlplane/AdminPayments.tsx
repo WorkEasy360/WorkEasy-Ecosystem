@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { adminConsoleApi, type PaymentProviderRow } from "@/lib/api/adminConsole";
+import { ApiError } from "@/lib/api/client";
 import { can, useAdmin } from "./ControlShell";
+import { FormDialog, FormPopup, dialog } from "./Modal";
 import { LoadGate, Status, Table, money, useAction, useLoad, when } from "./ui";
 import { SUPPORTED_CURRENCIES } from "./amounts";
-import { ErrorSummary, Segmented, SelectField, TextField } from "./widgets";
+import { Segmented, SelectField, TextField } from "./widgets";
 import cp from "./ControlPlane.module.css";
 import styles from "./AdminConsole.module.css";
 
@@ -64,7 +66,7 @@ export function PaymentsScreen() {
             </Table>
           )}
         </LoadGate>
-        {manage && <AddProvider act={act} busy={busy} />}
+        {manage && <AddProvider onAdded={reloadProviders} />}
       </section>
 
       <section className={styles.section} aria-labelledby="events-h">
@@ -140,23 +142,7 @@ function ProviderRow({
       <td>
         <Status value={p.status} />
       </td>
-      <td>
-        {editing ? (
-          <CurrencyEditor
-            provider={p}
-            busy={busy}
-            onCancel={() => setEditing(false)}
-            onSave={(currencies) =>
-              act(async () => {
-                await adminConsoleApi.updatePaymentProvider(p.key, { currencies, version: p.version });
-                setEditing(false);
-              }, `${p.display_name}: currencies updated.`)
-            }
-          />
-        ) : (
-          p.currencies.join(", ") || "—"
-        )}
-      </td>
+      <td>{p.currencies.join(", ") || "—"}</td>
       <td>
         <ul className={styles.plainList}>
           <SecretState label="API key" configured={p.credential_configured} variable={p.credential_variable} />
@@ -198,18 +184,25 @@ function ProviderRow({
             >
               Switch to {p.mode === "live" ? "test" : "live"}
             </button>
-            {!editing && (
-              <button
-                type="button"
-                className="w360-btn w360-btn-secondary"
-                aria-label={`Edit currencies of ${p.display_name}`}
-                onClick={() => setEditing(true)}
-              >
-                Edit currencies
-              </button>
-            )}
+            <button
+              type="button"
+              className="w360-btn w360-btn-secondary"
+              aria-label={`Edit currencies of ${p.display_name}`}
+              aria-haspopup="dialog"
+              disabled={busy}
+              onClick={() => setEditing(true)}
+            >
+              Edit currencies
+            </button>
             {!enabled && !ready && <p className={cp.muted}>Set both secrets before enabling.</p>}
           </div>
+        )}
+        {editing && (
+          <CurrencyEditor
+            provider={p}
+            onClose={() => setEditing(false)}
+            onSaved={() => void act(async () => {}, `${p.display_name}: currencies updated.`)}
+          />
         )}
       </td>
     </tr>
@@ -247,25 +240,21 @@ function CurrencyChecks({
   );
 }
 
-function CurrencyEditor({
-  provider,
-  busy,
-  onSave,
-  onCancel,
-}: {
-  provider: PaymentProviderRow;
-  busy: boolean;
-  onSave: (currencies: string[]) => void;
-  onCancel: () => void;
-}) {
+/** A provider's currencies, in a popup opened from its row. A refusal stays in
+ * the popup; a save is announced (and the list reloaded) by the page. */
+function CurrencyEditor({ provider, onClose, onSaved }: { provider: PaymentProviderRow; onClose: () => void; onSaved: () => void }) {
   const [value, setValue] = useState<string[]>(provider.currencies);
   return (
-    <form
-      className={cp.field}
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (value.length > 0) onSave(value);
+    <FormDialog
+      title={`Edit currencies of ${provider.display_name}`}
+      size="sm"
+      submitLabel="Save currencies"
+      canSubmit={value.length > 0}
+      onSubmit={async () => {
+        await adminConsoleApi.updatePaymentProvider(provider.key, { currencies: value, version: provider.version });
       }}
+      onDone={onSaved}
+      onClose={onClose}
     >
       <CurrencyChecks
         legend={`Currencies ${provider.display_name} collects`}
@@ -273,22 +262,20 @@ function CurrencyEditor({
         onChange={setValue}
         error={value.length === 0 ? "Choose at least one currency." : undefined}
       />
-      <div className={styles.actions}>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || value.length === 0}>
-          Save currencies
-        </button>
-        <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </form>
+    </FormDialog>
   );
 }
 
 const KEY = /^[a-z0-9-]{1,32}$/;
 const REF = /^[A-Za-z0-9_-]{1,48}$/;
 
-function AddProvider({ act, busy }: { act: Act; busy: boolean }) {
+/** Before any call: the fields say what is wrong, the popup how many. */
+function invalid(problems: Record<string, string>): ApiError {
+  const list = Object.values(problems);
+  return new ApiError(400, { detail: `Fix ${list.length === 1 ? "this" : `these ${list.length} things`} before saving: ${list.join(" ")}` });
+}
+
+function AddProvider({ onAdded }: { onAdded: () => void }) {
   const [key, setKey] = useState("");
   const [adapter, setAdapter] = useState("stripe");
   const [displayName, setDisplayName] = useState("");
@@ -299,8 +286,19 @@ function AddProvider({ act, busy }: { act: Act; busy: boolean }) {
   const [priority, setPriority] = useState("100");
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  function submit(e: React.FormEvent) {
-    e.preventDefault();
+  function reset() {
+    setKey("");
+    setAdapter("stripe");
+    setDisplayName("");
+    setMode("test");
+    setCredentialRef("");
+    setWebhookRef("");
+    setCurrencies([]);
+    setPriority("100");
+    setErrors({});
+  }
+
+  async function submit() {
     const problems: Record<string, string> = {};
     if (!KEY.test(key.trim())) problems.key = "Key: 1–32 lowercase letters, digits or “-”.";
     if (!REF.test(credentialRef.trim())) problems.credentialRef = "API key reference: 1–48 letters, digits, “_” or “-”.";
@@ -308,35 +306,36 @@ function AddProvider({ act, busy }: { act: Act; busy: boolean }) {
     if (currencies.length === 0) problems.currencies = "Choose at least one currency.";
     if (!/^\d{1,4}$/.test(priority.trim())) problems.priority = "Priority is a whole number (lower is tried first).";
     setErrors(problems);
-    if (Object.keys(problems).length > 0) return;
-    void act(async () => {
-      await adminConsoleApi.createPaymentProvider({
-        key: key.trim(),
-        adapter,
-        display_name: displayName.trim() || key.trim(),
-        mode,
-        credential_ref: credentialRef.trim().toUpperCase(),
-        webhook_secret_ref: webhookRef.trim().toUpperCase(),
-        currencies,
-        priority: Number(priority.trim()),
-      });
-      setKey("");
-      setDisplayName("");
-      setCredentialRef("");
-      setWebhookRef("");
-      setCurrencies([]);
-    }, "Provider added. It starts disabled: set its two secrets in the secret manager, then enable it.");
+    if (Object.keys(problems).length > 0) throw invalid(problems);
+    await adminConsoleApi.createPaymentProvider({
+      key: key.trim(),
+      adapter,
+      display_name: displayName.trim() || key.trim(),
+      mode,
+      credential_ref: credentialRef.trim().toUpperCase(),
+      webhook_secret_ref: webhookRef.trim().toUpperCase(),
+      currencies,
+      priority: Number(priority.trim()),
+    });
+    return "Provider added. It starts disabled: set its two secrets in the secret manager, then enable it.";
   }
 
   return (
-    <div className={`w360-card ${cp.card}`}>
-      <form className={cp.form} onSubmit={submit} noValidate>
-        <h3 className={cp.cardTitle}>Add provider</h3>
-        <p className={cp.muted}>
-          Secrets are never typed here. You name two <em>references</em>; the server turns each into an environment
-          variable name (shown in the providers table once added) that an operator sets in the secret manager.
-        </p>
-        <ErrorSummary errors={Object.values(errors)} />
+    <div>
+      <FormPopup
+        label="+ Add provider"
+        title="Add provider"
+        intro={
+          <>
+            Secrets are never typed here. You name two <em>references</em>; the server turns each into an environment variable name (shown in the
+            providers table once added) that an operator sets in the secret manager.
+          </>
+        }
+        submitLabel="Add provider"
+        onOpen={reset}
+        onSubmit={submit}
+        onDone={onAdded}
+      >
         <TextField label="Key" value={key} onChange={(v) => setKey(v.toLowerCase())} maxLength={32} autoComplete="off" hint="Used in the webhook URL, e.g. stripe-eu." error={errors.key} />
         <SelectField label="Adapter" value={adapter} onChange={setAdapter} options={ADAPTERS} />
         <TextField label="Display name" value={displayName} onChange={setDisplayName} maxLength={64} />
@@ -369,14 +368,11 @@ function AddProvider({ act, busy }: { act: Act; busy: boolean }) {
           hint="A name such as STRIPE_EU - never the secret itself."
           error={errors.webhookRef}
         />
-        <CurrencyChecks legend="Currencies it collects" value={currencies} onChange={setCurrencies} error={errors.currencies} />
-        <TextField label="Priority" value={priority} onChange={setPriority} inputMode="numeric" hint="Lower is tried first." error={errors.priority} />
-        <div>
-          <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-            Add provider
-          </button>
+        <div className={dialog.span}>
+          <CurrencyChecks legend="Currencies it collects" value={currencies} onChange={setCurrencies} error={errors.currencies} />
         </div>
-      </form>
+        <TextField label="Priority" value={priority} onChange={setPriority} inputMode="numeric" hint="Lower is tried first." error={errors.priority} />
+      </FormPopup>
     </div>
   );
 }

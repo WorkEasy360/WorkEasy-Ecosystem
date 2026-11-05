@@ -225,17 +225,27 @@ function prefs(overrides: Partial<SignInPreferences> = {}): SignInPreferences {
 }
 
 describe("sign-in preferences", () => {
+  const openEditor = () => {
+    fireEvent.click(screen.getByRole("button", { name: "Edit sign-in preferences" }));
+    return screen.getByRole("dialog", { name: "Edit sign-in preferences" });
+  };
+
   it("shows the default and each product's override, offering only what the server allows", async () => {
     mockApi({ "GET /api/v1/auth/sign-in-preferences": [ok(prefs())] });
     const { container } = render(<SignInPreferencesScreen />);
     expect(await screen.findByRole("heading", { level: 1, name: "Sign-in preferences" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /Ask me each time/ })).toBeChecked();
-    expect(screen.getByRole("radio", { name: /Automatically sign me in/ })).not.toBeChecked();
+    // The page shows what is saved; the choices are made in an Edit popup.
+    expect(screen.getByText("Separate product sign-in required.")).toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    await expectNoViolations(container);
+    const popup = openEditor();
+    expect(within(popup).getByRole("radio", { name: /Ask me each time/ })).toBeChecked();
+    expect(within(popup).getByRole("radio", { name: /Automatically sign me in/ })).not.toBeChecked();
     // Automatic is the recommended choice (and the platform default); the person's stored "ask" wins here.
-    expect(screen.getByRole("radio", { name: /Automatically sign me in.*\(recommended\)/ })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /Ask me each time/ })).not.toHaveAccessibleName(/recommended/);
+    expect(within(popup).getByRole("radio", { name: /Automatically sign me in.*\(recommended\)/ })).toBeInTheDocument();
+    expect(within(popup).getByRole("radio", { name: /Ask me each time/ })).not.toHaveAccessibleName(/recommended/);
 
-    const crm = screen.getByRole("combobox", { name: "Easy CRM" });
+    const crm = within(popup).getByRole("combobox", { name: "Easy CRM" });
     expect(within(crm).getAllByRole("option").map((o) => o.textContent)).toEqual([
       "Use my default (ask each time)",
       "Automatically use Workeasy360",
@@ -243,13 +253,13 @@ describe("sign-in preferences", () => {
       "Prefer Easy CRM sign-in",
     ]);
     // An SSO-only product is never offered its own sign-in.
-    const book = screen.getByRole("combobox", { name: "EasyBook" });
+    const book = within(popup).getByRole("combobox", { name: "EasyBook" });
     expect(within(book).queryByRole("option", { name: /EasyBook sign-in/ })).not.toBeInTheDocument();
     expect(book).toHaveValue("auto_sso");
     // A product Workeasy360 cannot sign anyone in to has nothing to choose.
-    expect(screen.queryByRole("combobox", { name: "Easy Project" })).not.toBeInTheDocument();
-    expect(screen.getByText("Separate product sign-in required.")).toBeInTheDocument();
-    await expectNoViolations(container);
+    expect(within(popup).queryByRole("combobox", { name: "Easy Project" })).not.toBeInTheDocument();
+    expect(within(popup).getByText("Separate product sign-in required.")).toBeInTheDocument();
+    await expectNoViolations(popup);
   });
 
   it("saves only what changed and says when it takes effect", async () => {
@@ -258,12 +268,16 @@ describe("sign-in preferences", () => {
       "PUT /api/v1/auth/sign-in-preferences": [ok(prefs({ default: "auto_sso", default_is_set: true }))],
     });
     render(<SignInPreferencesScreen />);
-    const save = await screen.findByRole("button", { name: "Save changes" });
+    await screen.findByRole("heading", { level: 1, name: "Sign-in preferences" });
+    const popup = openEditor();
+    const save = within(popup).getByRole("button", { name: "Save changes" });
     expect(save).toBeDisabled();
-    fireEvent.click(screen.getByRole("radio", { name: /Automatically sign me in/ }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Easy CRM" }), { target: { value: "product_login" } });
+    fireEvent.click(within(popup).getByRole("radio", { name: /Automatically sign me in/ }));
+    fireEvent.change(within(popup).getByRole("combobox", { name: "Easy CRM" }), { target: { value: "product_login" } });
     fireEvent.click(save);
     expect(await screen.findByText("Saved. This applies the next time you open a product.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText(/Your default for every product:/).parentElement).toHaveTextContent(/Automatically sign me in/);
     expect(calls.find((c) => c.key === "PUT /api/v1/auth/sign-in-preferences")?.body).toEqual({
       default: "auto_sso",
       products: { easy_crm: "product_login" },
@@ -289,9 +303,11 @@ describe("sign-in preferences", () => {
       ],
     });
     render(<SignInPreferencesScreen />);
-    fireEvent.change(await screen.findByRole("combobox", { name: "EasyBook" }), { target: { value: "ask" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    expect(await screen.findByText("That product does not offer this way of signing in.")).toBeInTheDocument();
+    await screen.findByRole("heading", { level: 1, name: "Sign-in preferences" });
+    const popup = openEditor();
+    fireEvent.change(within(popup).getByRole("combobox", { name: "EasyBook" }), { target: { value: "ask" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save changes" }));
+    expect(await within(popup).findByRole("alert")).toHaveTextContent("That product does not offer this way of signing in.");
   });
 });
 

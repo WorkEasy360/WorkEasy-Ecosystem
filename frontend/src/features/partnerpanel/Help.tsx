@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useId, useState } from "react";
 import { LoadGate, useAction, useLoad, when } from "@/features/controlplane/ui";
 import { panelApi, type NotificationView, type SupportResponse } from "@/lib/api/partnerPanel";
+import { dialog, FormPopup } from "@/features/controlplane/Modal";
 import { EmptyState, NotAvailable, PageHeader, usePanel } from "./PanelKit";
 import styles from "./PartnerPanel.module.css";
 
@@ -38,7 +39,6 @@ export function Support() {
 
 function SupportBody({ data }: { data: SupportResponse }) {
   const { id, base } = usePanel();
-  const { act, busy, feedback } = useAction();
   const subjectId = useId();
   const priorityId = useId();
   const detailsId = useId();
@@ -78,69 +78,75 @@ function SupportBody({ data }: { data: SupportResponse }) {
         </section>
       </div>
       <section className={styles.panel} aria-labelledby="support-request">
-        <h2 id="support-request">Send a support request</h2>
-        {feedback}
+        <div className={styles.panelHead}>
+          <h2 id="support-request">Send a support request</h2>
+          {(data.can_send || mailto) && (
+            <div className={styles.actions}>
+              <FormPopup
+                label={data.can_send ? "+ New support request" : "Prepare an email to support"}
+                title="Send a support request"
+                intro={
+                  data.can_send
+                    ? "Sent by Workeasy360 to its partner support team, with your email address to reply to."
+                    : "This prepares an email to support in your own email app."
+                }
+                submitLabel={data.can_send ? "Send request" : "Prepare email"}
+                canSubmit={Boolean(subject.trim() && details.trim())}
+                onOpen={() => {
+                  setSubject("");
+                  setPriority("normal");
+                  setDetails("");
+                }}
+                onSubmit={async () => {
+                  if (!data.can_send) {
+                    if (mailto) window.location.href = mailto;
+                    return;
+                  }
+                  await panelApi.sendSupport(id, {
+                    subject: subject.trim(),
+                    message: details.trim(),
+                    priority,
+                    workspace: base.split("/")[2] ?? "",
+                  });
+                  return "Request sent to Workeasy360 support. They will reply to your email address.";
+                }}
+              >
+                <div>
+                  <label className="w360-label" htmlFor={subjectId}>
+                    Subject
+                  </label>
+                  <input id={subjectId} className="w360-input" required maxLength={120} value={subject} onChange={(e) => setSubject(e.target.value)} />
+                </div>
+                <div>
+                  <label className="w360-label" htmlFor={priorityId}>
+                    Priority
+                  </label>
+                  <select id={priorityId} className="w360-input" value={priority} onChange={(e) => setPriority(e.target.value)}>
+                    {data.priorities.map((p) => (
+                      <option key={p} value={p}>
+                        {p[0]?.toUpperCase()}
+                        {p.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className={dialog.span}>
+                  <label className="w360-label" htmlFor={detailsId}>
+                    What do you need help with?
+                  </label>
+                  <textarea id={detailsId} className="w360-input" rows={5} required maxLength={2000} value={details} onChange={(e) => setDetails(e.target.value)} />
+                </div>
+                <p className={`w360-hint ${dialog.span}`}>Never include a password, an API key or a card number.</p>
+              </FormPopup>
+            </div>
+          )}
+        </div>
         {data.can_send || mailto ? (
-          <form
-            className={styles.page}
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!data.can_send) {
-                if (mailto) window.location.href = mailto;
-                return;
-              }
-              void act(async () => {
-                const sent = await panelApi.sendSupport(id, {
-                  subject: subject.trim(),
-                  message: details.trim(),
-                  priority,
-                  workspace: base.split("/")[2] ?? "",
-                });
-                setSubject("");
-                setDetails("");
-                return sent;
-              }, "Request sent to Workeasy360 support. They will reply to your email address.");
-            }}
-          >
-            <p className={styles.muted}>
-              {data.can_send
-                ? "Sent by Workeasy360 to its partner support team, with your email address to reply to."
-                : "This prepares an email to support in your own email app."}
-            </p>
-            <div className={styles.formGrid}>
-              <div>
-                <label className="w360-label" htmlFor={subjectId}>
-                  Subject
-                </label>
-                <input id={subjectId} className="w360-input" required maxLength={120} value={subject} onChange={(e) => setSubject(e.target.value)} />
-              </div>
-              <div>
-                <label className="w360-label" htmlFor={priorityId}>
-                  Priority
-                </label>
-                <select id={priorityId} className="w360-input" value={priority} onChange={(e) => setPriority(e.target.value)}>
-                  {data.priorities.map((p) => (
-                    <option key={p} value={p}>
-                      {p[0]?.toUpperCase()}
-                      {p.slice(1)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className="w360-label" htmlFor={detailsId}>
-                What do you need help with?
-              </label>
-              <textarea id={detailsId} className="w360-input" rows={5} required maxLength={2000} value={details} onChange={(e) => setDetails(e.target.value)} />
-            </div>
-            <p className={styles.muted}>Never include a password, an API key or a card number.</p>
-            <div>
-              <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !subject.trim() || !details.trim()}>
-                {data.can_send ? "Send request" : "Prepare email"}
-              </button>
-            </div>
-          </form>
+          <p className={styles.muted}>
+            {data.can_send
+              ? "Sent by Workeasy360 to its partner support team, with your email address to reply to."
+              : "This prepares an email to support in your own email app."}
+          </p>
         ) : (
           <p className={styles.muted}>
             {desk ? "Raise your request in Easy Help Desk above." : "Support requests will be possible once a support address or Easy Help Desk is connected."}

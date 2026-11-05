@@ -117,12 +117,17 @@ describe("Product Requests", () => {
     const calls = mockApi(routes({ [`POST ${API}/req1/reject`]: [ok({ ...REQUEST, status: "rejected" })] }));
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Reject" }));
-    const reason = screen.getByLabelText(/Reason \(the affiliate reads it\)/);
+    const popup = screen.getByRole("dialog", { name: "Reject the request" });
+    const reason = within(popup).getByLabelText(/Reason \(the affiliate reads it\)/);
     expect(reason).toBeRequired();
+    const submit = within(popup).getByRole("button", { name: "Reject request" });
+    expect(submit).toBeDisabled();
     fireEvent.change(reason, { target: { value: "Audience is not a fit." } });
-    fireEvent.click(screen.getByRole("button", { name: "Reject request" }));
+    fireEvent.click(submit);
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${API}/req1/reject`)).toBe(true));
     expect(calls.find((c) => c.key === `POST ${API}/req1/reject`)!.body).toEqual({ reason: "Audience is not a fit." });
+    expect(await screen.findByText("Request rejected. The affiliate sees your reason.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("offers revocation for an approved request", async () => {
@@ -135,8 +140,10 @@ describe("Product Requests", () => {
     );
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Revoke permission" }));
-    fireEvent.click(screen.getByRole("button", { name: "Revoke permission" }));
+    const popup = screen.getByRole("dialog", { name: "Revoke the permission" });
+    fireEvent.click(within(popup).getByRole("button", { name: "Revoke permission" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${API}/req1/revoke`)).toBe(true));
+    expect(await screen.findByText(/Permission revoked\. New links stop now/)).toBeInTheDocument();
   });
 
   it("gives a staff member who may only look no decision buttons", async () => {

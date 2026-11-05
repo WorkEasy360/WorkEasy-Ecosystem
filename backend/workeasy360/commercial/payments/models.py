@@ -183,6 +183,12 @@ class Order(TenantScopedModel):
         max_length=16, blank=True, default="direct", db_default="direct"
     )
     partner_id = models.UUIDField(null=True, blank=True)
+    #: ADR-058: the coupon the order used (its code, as typed and accepted),
+    #: what it took off the first payment, and the GST added on top. Both
+    #: amounts are already inside ``amount_due_minor``.
+    coupon_code = models.CharField(max_length=32, blank=True, default="", db_default="")
+    discount_minor = models.BigIntegerField(default=0, db_default=0)
+    tax_minor = models.BigIntegerField(default=0, db_default=0)
     idempotency_key = models.CharField(max_length=128)
     expires_at = models.DateTimeField(null=True, blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
@@ -393,7 +399,18 @@ class Invoice(TenantScopedModel):
 
 
 class InvoiceLine(TenantScopedModel):
+    class Kind(models.TextChoices):
+        #: What a product or bundle costs - the only kind commission earns on.
+        CHARGE = "charge", "Charge"
+        #: A plan's one-time set-up fee (ADR-056).
+        SETUP_FEE = "setup_fee", "Set-up fee"
+        #: GST (ADR-058), on the invoice's other lines.
+        TAX = "tax", "Tax"
+
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="lines")
+    kind = models.CharField(
+        max_length=16, choices=Kind.choices, default=Kind.CHARGE, db_default="charge"
+    )
     #: The priced subscription line this came from (a soft reference: the
     #: line's own history is immutable, and the invoice keeps its copy). An
     #: order invoice's line has none until the order is fulfilled.

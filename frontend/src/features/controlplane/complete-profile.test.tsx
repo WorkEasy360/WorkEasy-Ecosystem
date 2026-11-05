@@ -296,8 +296,12 @@ describe("the affiliate wizard", () => {
     );
     mount();
     expect(await screen.findByText(/Promoting a product is not selling it/)).toBeInTheDocument();
-    expect(await screen.findByLabelText("Assign a product to promote")).toBeInTheDocument();
+    // Assigning is a popup (2026-11-05).
+    fireEvent.click(await screen.findByRole("button", { name: "+ Assign a product" }));
+    const popup = screen.getByRole("dialog", { name: "Assign a product to promote" });
+    expect(within(popup).getByRole("combobox", { name: "Assign a product to promote" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Allow product" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Allow a product" })).not.toBeInTheDocument();
   });
 });
 

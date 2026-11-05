@@ -1,13 +1,13 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import Link from "next/link";
-import { publicApi, type PublicStoreImage, type PublicStoreProductPage, type PublicStoreVideo } from "@/lib/api/public";
+import { publicApi, type PublicStoreImage, type PublicStoreProductPage, type PublicStoreVideo, type PublicTax } from "@/lib/api/public";
 import { LoadGate, money, useLoad } from "@/features/controlplane/ui";
 import { ProductMark } from "@/features/controlplane/productmanager/ProductMark";
 import { MarkdownLite } from "@/features/console/MarkdownLite";
 import { usePortalRouter } from "@/lib/portalRouter";
-import { MAX_INTENT_QUANTITY } from "@/features/site/SiteShell";
+import { MAX_INTENT_QUANTITY, cleanCoupon } from "@/features/site/SiteShell";
 import { PlanComparison, comparisonCell, type ComparablePlan } from "./PlanComparison";
 import { BADGE_LABEL, PER, StoreCard, shelfPrice, storeDetailsClass, taxNote } from "./StoreBrowser";
 import { AddToCart, PublicCartBar, useStoreBuy } from "./storeBuying";
@@ -41,16 +41,32 @@ const PERIOD: Record<string, string> = {
 };
 
 const TERM: Record<string, string> = {
-  monthly: "1 month",
-  quarterly: "3 months",
-  semi_annual: "6 months",
-  annual: "1 year",
+  monthly: "1 Month",
+  quarterly: "3 Months",
+  semi_annual: "6 Months",
+  annual: "1 Year",
 };
 
 const MAX_QTY = Math.min(999, MAX_INTENT_QUANTITY);
 
 /** A price as the page shows it: whole amounts without the ".00" (₹8,399), others as `money`. */
 const amount = shelfPrice;
+
+/** ADR-058: the GST the checkout will add on `taxable` - the server's rule
+ * (`billing.tax.tax_for`): the rate, rounded to whole rupees, half up. Only an
+ * estimate here; the checkout's quote is the amount charged. */
+export function taxOn(tax: PublicTax | null | undefined, currency: string, taxable: number): number {
+  if (!tax || currency !== "INR" || taxable <= 0) return 0;
+  return Math.round((taxable * tax.rate_bp) / 1_000_000) * 100;
+}
+
+/** The refund promise's words ("30-Day Refund Policy"), or null for none. */
+export function refundLabel(days: number | null | undefined): string | null {
+  return days && days > 0 ? `${days}-Day Refund Policy` : null;
+}
+
+/** A coupon the server accepted, and the amount and currency it was priced for. */
+type AppliedCoupon = { code: string; label: string; discount_minor: number; for_minor: number; currency: string };
 
 /** The plan's price for one billing period in the page's currency, if it has one. */
 function priceOf(plan: Plan, interval: string, currency: string | null) {
@@ -240,7 +256,7 @@ function CheckoutBox({
   onCurrency: (currency: string) => void;
 }) {
   const p = data.product;
-  const ids = { plans: useId(), qty: useId(), currency: useId(), summary: useId() };
+  const ids = { plans: useId(), qty: useId(), currency: useId(), summary: useId(), coupon: useId() };
   const soon = p.status === "coming_soon";
   const buyable = data.plans.filter((plan) => plan.kind === "standard" && plan.billing_type !== "free_trial");
   const periods = [...new Set(buyable.flatMap((plan) => plan.prices.filter((x) => x.amount_minor !== null).map((x) => x.interval)))].filter(
@@ -251,6 +267,10 @@ function CheckoutBox({
   const inPeriod = buyable.filter((plan) => priceOf(plan, period, data.currency));
   const [chosenId, setChosenId] = useState<string | null>(null);
   const [qty, setQty] = useState(1);
+  const [couponText, setCouponText] = useState("");
+  const [coupon, setCoupon] = useState<AppliedCoupon | null>(null);
+  const [couponProblem, setCouponProblem] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
 
   const fallback = inPeriod.find((plan) => plan.recommended) ?? inPeriod.find((plan) => plan.name === p.price?.plan_name) ?? inPeriod[0];
   const plan = inPeriod.find((x) => x.plan_version_id === chosenId) ?? fallback;
@@ -261,13 +281,64 @@ function CheckoutBox({
   const subtotal = price ? price.amount_minor * qty : 0;
   const per = PER[period] ?? "";
   const setQuantity = (n: number) => setQty(Math.max(1, Math.min(MAX_QTY, Number.isFinite(n) ? Math.trunc(n) : 1)));
+  const discount = coupon && coupon.for_minor === subtotal ? Math.min(coupon.discount_minor, subtotal) : 0;
+  const tax = price ? taxOn(data.tax, price.currency, subtotal - discount + setup) : 0;
+  const total = subtotal - discount + setup + tax;
+  const refund = refundLabel(p.refund_days);
+  const currencyNow = price?.currency ?? "";
+
+  /** What the server says `code` takes off the current choice - no state. */
+  async function priceCoupon(code: string): Promise<{ applied: AppliedCoupon } | { problem: string }> {
+    try {
+      const result = await publicApi.storeCoupon(p.slug, { code, currency: currencyNow, amount_minor: subtotal });
+      return result.valid
+        ? { applied: { code: result.code, label: result.label, discount_minor: result.discount_minor, for_minor: subtotal, currency: currencyNow } }
+        : { problem: result.message };
+    } catch {
+      return { problem: "The coupon could not be checked just now. You can enter it again at checkout." };
+    }
+  }
+
+  function settleCoupon(outcome: { applied: AppliedCoupon } | { problem: string }) {
+    if ("applied" in outcome) {
+      setCoupon(outcome.applied);
+      setCouponProblem(null);
+      setCouponText("");
+    } else {
+      setCoupon(null);
+      setCouponProblem(outcome.problem);
+    }
+  }
+
+  async function checkCoupon(code: string): Promise<void> {
+    if (!price || !currencyNow) return;
+    setChecking(true);
+    setCouponProblem(null);
+    settleCoupon(await priceCoupon(code));
+    setChecking(false);
+  }
+
+  // The coupon's amount follows the plan, period and quantity chosen: priced
+  // again only when what it applies to has changed.
+  const stale = coupon !== null && (coupon.for_minor !== subtotal || coupon.currency !== currencyNow) ? coupon.code : null;
+  useEffect(() => {
+    if (!stale) return;
+    let current = true;
+    void priceCoupon(stale).then((outcome) => {
+      if (current) settleCoupon(outcome);
+    });
+    return () => {
+      current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- priceCoupon reads the current choice
+  }, [stale, subtotal, currencyNow]);
 
   return (
     <aside className={styles.checkout} aria-label={`Buy ${p.title}`}>
       {discounted && price && (
         <p className={styles.offer}>
-          <StoreIcon name="gift" size={22} />
-          Special offer - save {Math.round((price.discount_bp ?? 0) / 100)}%
+          <StoreIcon name="rocket" size={24} />
+          {p.badges.includes("new") ? "Launch Offer" : "Special Offer"} – Save {Math.round((price.discount_bp ?? 0) / 100)}%!
         </p>
       )}
       <div className={styles.checkoutBody}>
@@ -297,8 +368,13 @@ function CheckoutBox({
               </p>
             )}
           </div>
+        ) : trialPlan ? (
+          <p className={styles.bigPrice}>Free trial</p>
         ) : (
-          <p className={styles.bigPrice}>{trialPlan ? "Free trial" : "Contact sales"}</p>
+          <div>
+            <p className={styles.bigPrice}>Pricing on request</p>
+            <p className={styles.boxHint}>Plans for {p.title} are not on sale online yet. Talk to us for a quote.</p>
+          </div>
         )}
 
         {!soon && periods.length > 1 && (
@@ -369,9 +445,58 @@ function CheckoutBox({
               </div>
             </div>
 
+            <form
+              className={styles.couponRow}
+              aria-label="Coupon"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const code = cleanCoupon(couponText);
+                if (!code) {
+                  setCouponProblem("That coupon code is not valid.");
+                  return;
+                }
+                void checkCoupon(code);
+              }}
+            >
+              <div className={styles.couponField}>
+                <span className={styles.couponIcon} aria-hidden="true">
+                  <StoreIcon name="ticket" size={22} />
+                </span>
+                <label htmlFor={ids.coupon} className="w360-visually-hidden">
+                  Coupon code
+                </label>
+                <input
+                  id={ids.coupon}
+                  placeholder="Enter coupon code"
+                  value={couponText}
+                  maxLength={32}
+                  autoComplete="off"
+                  onChange={(e) => setCouponText(e.target.value)}
+                />
+              </div>
+              <button type="submit" className={styles.couponApply} disabled={checking || !couponText.trim()}>
+                Apply
+              </button>
+            </form>
+            {coupon && (
+              <p className={styles.couponOk} role="status">
+                <span>
+                  <strong>{coupon.code}</strong> applied - {coupon.label}
+                </span>
+                <button type="button" onClick={() => setCoupon(null)}>
+                  Remove
+                </button>
+              </p>
+            )}
+            {couponProblem && !coupon && (
+              <p role="alert" className={`w360-error-text ${styles.couponNote}`}>
+                {couponProblem}
+              </p>
+            )}
+
             <section className={styles.summary} aria-labelledby={ids.summary}>
               <h2 id={ids.summary} className={styles.boxHeading}>
-                Order summary
+                Order Summary
               </h2>
               <dl className={styles.summaryRows}>
                 <div>
@@ -387,14 +512,22 @@ function CheckoutBox({
                     <dd>{amount(setup, price.currency)}</dd>
                   </div>
                 )}
-                <div>
-                  <dt>{price.currency === "INR" ? "GST" : "Tax"}</dt>
-                  <dd className={styles.muted}>As applicable</dd>
-                </div>
+                {discount > 0 && coupon && (
+                  <div className={styles.discount}>
+                    <dt>Coupon {coupon.code}</dt>
+                    <dd>−{amount(discount, price.currency)}</dd>
+                  </div>
+                )}
+                {data.tax && price.currency === "INR" ? (
+                  <div>
+                    <dt>{data.tax.description}</dt>
+                    <dd>{amount(tax, price.currency)}</dd>
+                  </div>
+                ) : null}
               </dl>
               <p className={styles.total}>
-                <span>Estimated total</span>
-                <strong>{amount(subtotal + setup, price.currency)}</strong>
+                <span>Total Payable</span>
+                <strong>{amount(total, price.currency)}</strong>
               </p>
             </section>
 
@@ -402,10 +535,12 @@ function CheckoutBox({
               type="button"
               className={styles.payButton}
               disabled={busy}
-              onClick={() => void buy({ plan: plan.plan_version_id, interval: period, trial: false, quantity: qty > 1 ? qty : undefined })}
+              onClick={() =>
+                void buy({ plan: plan.plan_version_id, interval: period, trial: false, quantity: qty > 1 ? qty : undefined, coupon: coupon?.code })
+              }
             >
               <StoreIcon name="lock" size={18} />
-              Proceed to Secure Checkout
+              Proceed to Secure Payment
               <StoreIcon name="arrow" size={18} />
             </button>
           </>
@@ -440,19 +575,25 @@ function CheckoutBox({
           )}
         </div>
 
-        <ul className={styles.assurances} aria-label="Why buy here">
+        <ul className={`${styles.assurances} ${refund ? styles.assurancesFour : ""}`} aria-label="Why buy here">
           <li>
             <StoreIcon name="shield" size={22} />
-            Secure checkout
+            Secure Checkout
           </li>
           <li>
             <StoreIcon name="bolt" size={22} />
-            Instant activation
+            Instant Activation
           </li>
           <li>
             <StoreIcon name="headset" size={22} />
-            Expert support
+            Priority Support
           </li>
+          {refund && (
+            <li>
+              <StoreIcon name="refund" size={22} />
+              {refund}
+            </li>
+          )}
         </ul>
 
         <p className={styles.boxHint}>
@@ -614,6 +755,12 @@ export function PublicStoreProductScreen({ slug }: { slug: string }) {
                       <StoreIcon name="headset" size={22} />
                       Expert support
                     </li>
+                    {refundLabel(p.refund_days) && (
+                      <li>
+                        <StoreIcon name="refund" size={22} />
+                        {refundLabel(p.refund_days)}
+                      </li>
+                    )}
                     {p.trial.available && (
                       <li>
                         <StoreIcon name="gift" size={22} />
@@ -630,7 +777,8 @@ export function PublicStoreProductScreen({ slug }: { slug: string }) {
                 <div className={styles.panel}>
                   <PlanComparison plans={data.plans} rows={data.comparison} renderCta={cta} />
                   <p className={browse.hint}>
-                    Prices are in {data.currency ?? "the store currency"}, before any tax. The checkout shows the final price.
+                    Prices are in {data.currency ?? "the store currency"}
+                    {data.tax ? `, before ${data.tax.description} which is added at checkout` : ", before any tax"}. The checkout shows the final price.
                   </p>
                 </div>
               )}

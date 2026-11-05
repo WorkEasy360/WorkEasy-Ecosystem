@@ -17,7 +17,7 @@ export function AddPartner({ onClose }: { onClose?: () => void } = {}) {
   const titleId = useId();
   const close = onClose ?? (() => router.push("/admin/partners/all"));
   return (
-    <Modal labelledBy={titleId} onClose={close}>
+    <Modal labelledBy={titleId} onClose={close} size="md">
       <AddPartnerForm titleId={titleId} onClose={close} />
     </Modal>
   );

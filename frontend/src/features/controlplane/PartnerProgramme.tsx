@@ -4,6 +4,7 @@ import { useState } from "react";
 import { adminProgrammeApi, type MarginRule } from "@/lib/api/adminProgramme";
 import { partnerConsoleApi } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
+import { dialog, FormPopup } from "./Modal";
 import { LoadGate, Table, money, useAction, useLoad, when } from "./ui";
 import { SelectField, TextAreaField, TextField } from "./widgets";
 import cp from "./ControlPlane.module.css";
@@ -83,6 +84,66 @@ function MarginsSection({ manage, products }: { manage: boolean; products: { cod
         A partner&apos;s cost is the list price less its discount; its margin (customer price less cost) is earned instead of a
         commission once a sale is paid. A change applies to sales from now on.
       </p>
+      {manage && (
+        <div>
+          <FormPopup
+            label="+ Set a margin"
+            title="Set a margin"
+            submitLabel="Save margin"
+            disabled={busy}
+            canSubmit={bp !== null && !(scope === "partner" && !partnerId)}
+            onOpen={() => {
+              setScope("reseller");
+              setPartnerId("");
+              setProduct("");
+              setDiscount("");
+              setRecurring(true);
+            }}
+            onSubmit={async () => {
+              if (bp === null) return;
+              await adminProgrammeApi.setMargin({
+                discount_bp: bp,
+                recurring,
+                product_code: product || undefined,
+                ...(scope === "partner" ? { partner_id: partnerId } : { experience: scope }),
+              });
+              return "Margin saved. It applies to sales from now on.";
+            }}
+            onDone={reload}
+          >
+            <SelectField label="Applies to" value={scope} onChange={setScope} options={SCOPES} />
+            {scope === "partner" && (
+              <SelectField
+                label="Partner"
+                value={partnerId}
+                onChange={setPartnerId}
+                options={[
+                  { value: "", label: "Choose a partner…" },
+                  ...(partners.status === "ready" ? partners.data.results.map((p) => ({ value: p.id, label: `${p.display_name} (${p.code})` })) : []),
+                ]}
+              />
+            )}
+            <SelectField
+              label="Product"
+              value={product}
+              onChange={setProduct}
+              options={[{ value: "", label: "All products" }, ...products.map((p) => ({ value: p.code, label: p.name }))]}
+            />
+            <TextField
+              label="Discount off list price (%)"
+              value={discount}
+              onChange={setDiscount}
+              inputMode="decimal"
+              maxLength={6}
+              hint="For example 20 or 12.5. The partner's cost is the list price less this."
+              error={discount && bp === null ? "Enter a percentage from 0 to 100, with at most two decimals." : undefined}
+            />
+            <label className={`w360-label ${dialog.span}`}>
+              <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} /> Also earn the margin on paid renewals
+            </label>
+          </FormPopup>
+        </div>
+      )}
       {feedback}
       <LoadGate load={load} what="partner margins">
         {(d) => (
@@ -116,62 +177,6 @@ function MarginsSection({ manage, products }: { manage: boolean; products: { cod
           </Table>
         )}
       </LoadGate>
-      {manage && (
-        <form
-          className={cp.stack}
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (bp === null) return;
-            void act(
-              () =>
-                adminProgrammeApi.setMargin({
-                  discount_bp: bp,
-                  recurring,
-                  product_code: product || undefined,
-                  ...(scope === "partner" ? { partner_id: partnerId } : { experience: scope }),
-                }),
-              "Margin saved. It applies to sales from now on.",
-            );
-          }}
-        >
-          <h3>Set a margin</h3>
-          <SelectField label="Applies to" value={scope} onChange={setScope} options={SCOPES} />
-          {scope === "partner" && (
-            <SelectField
-              label="Partner"
-              value={partnerId}
-              onChange={setPartnerId}
-              options={[
-                { value: "", label: "Choose a partner…" },
-                ...(partners.status === "ready" ? partners.data.results.map((p) => ({ value: p.id, label: `${p.display_name} (${p.code})` })) : []),
-              ]}
-            />
-          )}
-          <SelectField
-            label="Product"
-            value={product}
-            onChange={setProduct}
-            options={[{ value: "", label: "All products" }, ...products.map((p) => ({ value: p.code, label: p.name }))]}
-          />
-          <TextField
-            label="Discount off list price (%)"
-            value={discount}
-            onChange={setDiscount}
-            inputMode="decimal"
-            maxLength={6}
-            hint="For example 20 or 12.5. The partner's cost is the list price less this."
-            error={discount && bp === null ? "Enter a percentage from 0 to 100, with at most two decimals." : undefined}
-          />
-          <label>
-            <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} /> Also earn the margin on paid renewals
-          </label>
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || bp === null || (scope === "partner" && !partnerId)}>
-              Save margin
-            </button>
-          </div>
-        </form>
-      )}
     </section>
   );
 }
@@ -194,7 +199,6 @@ export function UpgradeFeesScreen() {
 
 function FeesSection({ manage }: { manage: boolean }) {
   const [load, reload] = useLoad(() => adminProgrammeApi.fees(), []);
-  const { act, busy, feedback } = useAction(reload);
   const [target, setTarget] = useState("reseller");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("INR");
@@ -212,7 +216,61 @@ function FeesSection({ manage }: { manage: boolean }) {
         takes the currency) or offline, giving the transfer&apos;s reference, which you verify before approving. Zero removes the fee.
         Requests already open keep the fee they started with.
       </p>
-      {feedback}
+      {manage && (
+        <div>
+          <FormPopup
+            label="Set a fee"
+            title="Set a fee"
+            submitLabel="Save fee"
+            canSubmit={valid}
+            onOpen={() => {
+              setTarget("reseller");
+              setAmount("");
+              setCurrency("INR");
+              setInstructions("");
+            }}
+            onSubmit={async () => {
+              await adminProgrammeApi.setFee({ experience: target, amount: amount.trim(), currency, instructions: instructions.trim() });
+              return "Set-up fee saved.";
+            }}
+            onDone={reload}
+          >
+            <SelectField
+              label="Becoming"
+              value={target}
+              onChange={setTarget}
+              options={[
+                { value: "reseller", label: "Reseller" },
+                { value: "white_label", label: "White-label" },
+              ]}
+            />
+            <SelectField
+              label="Currency"
+              value={currency}
+              onChange={setCurrency}
+              options={["INR", "USD", "GBP", "EUR", "AED", "AUD", "CAD"].map((c) => ({ value: c, label: c }))}
+            />
+            <TextField
+              label="Amount"
+              value={amount}
+              onChange={setAmount}
+              inputMode="decimal"
+              maxLength={13}
+              hint="For example 25000 or 25000.00. Zero removes the fee."
+              error={amount && !valid ? "Enter an amount with at most two decimals." : undefined}
+            />
+            <div className={dialog.span}>
+              <TextAreaField
+                label="How to pay offline"
+                value={instructions}
+                onChange={setInstructions}
+                maxLength={1000}
+                hint="Shown to the partner beside the fee: bank account, IFSC, UPI ID. The partner then gives the transfer's reference."
+              />
+            </div>
+          </FormPopup>
+        </div>
+      )}
       <LoadGate load={load} what="set-up fees">
         {(d) => (
           <Table caption="Set-up fees" head={["Becoming", "Fee", "How to pay offline"]}>
@@ -226,57 +284,6 @@ function FeesSection({ manage }: { manage: boolean }) {
           </Table>
         )}
       </LoadGate>
-      {manage && (
-        <form
-          className={cp.stack}
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!valid) return;
-            void act(
-              () => adminProgrammeApi.setFee({ experience: target, amount: amount.trim(), currency, instructions: instructions.trim() }),
-              "Set-up fee saved.",
-            );
-          }}
-        >
-          <h3>Set a fee</h3>
-          <SelectField
-            label="Becoming"
-            value={target}
-            onChange={setTarget}
-            options={[
-              { value: "reseller", label: "Reseller" },
-              { value: "white_label", label: "White-label" },
-            ]}
-          />
-          <SelectField
-            label="Currency"
-            value={currency}
-            onChange={setCurrency}
-            options={["INR", "USD", "GBP", "EUR", "AED", "AUD", "CAD"].map((c) => ({ value: c, label: c }))}
-          />
-          <TextField
-            label="Amount"
-            value={amount}
-            onChange={setAmount}
-            inputMode="decimal"
-            maxLength={13}
-            hint="For example 25000 or 25000.00. Zero removes the fee."
-            error={amount && !valid ? "Enter an amount with at most two decimals." : undefined}
-          />
-          <TextAreaField
-            label="How to pay offline"
-            value={instructions}
-            onChange={setInstructions}
-            maxLength={1000}
-            hint="Shown to the partner beside the fee: bank account, IFSC, UPI ID. The partner then gives the transfer's reference."
-          />
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !valid}>
-              Save fee
-            </button>
-          </div>
-        </form>
-      )}
     </section>
   );
 }
@@ -285,7 +292,6 @@ function FeesSection({ manage }: { manage: boolean }) {
  * does once its affiliate may no longer promote the product. Super Admin only. */
 function AffiliatePolicySection({ manage }: { manage: boolean }) {
   const [load, reload] = useLoad(() => adminProgrammeApi.affiliatePolicy(), []);
-  const { act, busy, feedback } = useAction(reload);
   const [days, setDays] = useState("");
   const [revoked, setRevoked] = useState("");
   const number = Number(days.trim());
@@ -300,7 +306,6 @@ function AffiliatePolicySection({ manage }: { manage: boolean }) {
         counted for that link but never takes the customer. Changes apply to new visits only. Revoking a product from an affiliate
         always stops new links; this decides whether its existing links keep taking visitors. Earned commission is never touched.
       </p>
-      {feedback}
       <LoadGate load={load} what="the affiliate policy">
         {(d) => (
           <>
@@ -313,42 +318,43 @@ function AffiliatePolicySection({ manage }: { manage: boolean }) {
               <dd>{d.updated_at ? when(d.updated_at) : "Never - the platform default applies"}</dd>
             </dl>
             {manage && (
-              <form
-                className={cp.stack}
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!valid) return;
-                  void act(
-                    () => adminProgrammeApi.setAffiliatePolicy({ attribution_days: number, revoked_links: revoked || d.revoked_links }),
-                    "Affiliate policy saved.",
-                  );
-                }}
-              >
-                <h3>Change the policy</h3>
-                <TextField
-                  label="Attribution window (days)"
-                  value={days}
-                  onChange={setDays}
-                  inputMode="numeric"
-                  maxLength={3}
-                  hint={`1 to ${d.max_attribution_days}. Now ${d.attribution_days}.`}
-                  error={days && !valid ? `Enter a whole number from 1 to ${d.max_attribution_days}.` : undefined}
-                />
-                <SelectField
-                  label="Existing links after a revocation"
-                  value={revoked || d.revoked_links}
-                  onChange={setRevoked}
-                  options={[
-                    { value: "stop", label: "Stop taking new visitors" },
-                    { value: "continue", label: "Keep taking visitors" },
-                  ]}
-                />
-                <div>
-                  <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !valid}>
-                    Save policy
-                  </button>
-                </div>
-              </form>
+              <div>
+                <FormPopup
+                  label="Change the policy"
+                  title="Change the affiliate policy"
+                  size="sm"
+                  submitLabel="Save policy"
+                        canSubmit={valid}
+                  onOpen={() => {
+                    setDays(String(d.attribution_days));
+                    setRevoked(d.revoked_links);
+                  }}
+                  onSubmit={async () => {
+                    await adminProgrammeApi.setAffiliatePolicy({ attribution_days: number, revoked_links: revoked || d.revoked_links });
+                    return "Affiliate policy saved.";
+                  }}
+                  onDone={reload}
+                >
+                  <TextField
+                    label="Attribution window (days)"
+                    value={days}
+                    onChange={setDays}
+                    inputMode="numeric"
+                    maxLength={3}
+                    hint={`1 to ${d.max_attribution_days}. Now ${d.attribution_days}.`}
+                    error={days && !valid ? `Enter a whole number from 1 to ${d.max_attribution_days}.` : undefined}
+                  />
+                  <SelectField
+                    label="Existing links after a revocation"
+                    value={revoked || d.revoked_links}
+                    onChange={setRevoked}
+                    options={[
+                      { value: "stop", label: "Stop taking new visitors" },
+                      { value: "continue", label: "Keep taking visitors" },
+                    ]}
+                  />
+                </FormPopup>
+              </div>
             )}
           </>
         )}

@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useId, useState } from "react";
+import { useState } from "react";
 import { LoadGate, MoreButton, Status, Table, money, useAction, useLoad, usePaged, when } from "@/features/controlplane/ui";
 import { partnerApi } from "@/lib/api/controlPlane";
 import { panelApi, type ManagedProduct, type PlanRow } from "@/lib/api/partnerPanel";
 import { partnerPriceApi } from "@/lib/api/store";
-import { Modal } from "@/features/controlplane/Modal";
+import { FormDialog } from "@/features/controlplane/Modal";
 import { TextField } from "@/features/controlplane/widgets";
-import { describeError } from "@/features/controlplane/ui";
+import { refuse } from "./workspaceKit";
 import { toMajor, toMinor } from "@/features/controlplane/amounts";
 import { PartnerCommissions } from "@/features/controlplane/PartnerScreens";
 import { ProductIcon, productIconKnown } from "@/components/ProductIcon";
@@ -277,53 +277,30 @@ type PlanPrice = PlanRow["prices"][number];
  * range. The server re-checks the range, the grant and the permission. */
 function OwnPriceDialog({ plan, price, onDone, onCancel }: { plan: PlanRow; price: PlanPrice; onDone: (m: string) => void; onCancel: () => void }) {
   const { id } = usePanel();
-  const titleId = useId();
   const range = price.price_range!;
   const [value, setValue] = useState(price.customer_price_minor != null ? toMajor(price.customer_price_minor, plan.currency) : "");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
   const top = range.max_minor != null ? money(range.max_minor, plan.currency) : "no upper limit";
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
+  async function save(): Promise<string> {
     const amount = toMinor(value, plan.currency);
-    if (amount === null) return setError("Enter the price as an amount, like 699 or 699.00.");
+    if (amount === null) refuse("Enter the price as an amount, like 699 or 699.00.");
     if (amount < range.min_minor || (range.max_minor != null && amount > range.max_minor)) {
-      return setError(`The price must be between ${money(range.min_minor, plan.currency)} and ${top}.`);
+      refuse(`The price must be between ${money(range.min_minor, plan.currency)} and ${top}.`);
     }
-    setSaving(true);
-    setError(null);
-    try {
-      await partnerPriceApi.setOwnPrice(id, { plan_version_id: plan.plan_version_id, interval: price.interval, amount_minor: amount });
-      onDone(`Your price for ${plan.plan_name} is now ${money(amount, plan.currency)}. Existing customers keep the price they bought at.`);
-    } catch (err) {
-      setError(describeError(err));
-    } finally {
-      setSaving(false);
-    }
+    await partnerPriceApi.setOwnPrice(id, { plan_version_id: plan.plan_version_id, interval: price.interval, amount_minor: amount });
+    return `Your price for ${plan.plan_name} is now ${money(amount, plan.currency)}. Existing customers keep the price they bought at.`;
   }
   return (
-    <Modal labelledBy={titleId} onClose={onCancel}>
-      <form onSubmit={(e) => void save(e)} noValidate>
-        <h2 id={titleId}>Your price: {plan.plan_name}</h2>
-        <p className={styles.muted}>
-          Allowed by Workeasy360: {money(range.min_minor, plan.currency)} to {top} ({INTERVALS[price.interval] ?? price.interval}). Applies to new sales.
-        </p>
-        {error && (
-          <p className="w360-error-text" role="alert">
-            {error}
-          </p>
-        )}
-        <TextField label={`Customer price (${plan.currency})`} inputMode="decimal" value={value} onChange={setValue} />
-        <div>
-          <button type="submit" className="w360-btn w360-btn-primary" disabled={saving}>
-            Save price
-          </button>{" "}
-          <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
-      </form>
-    </Modal>
+    <FormDialog
+      size="sm"
+      title={`Your price: ${plan.plan_name}`}
+      intro={`Allowed by Workeasy360: ${money(range.min_minor, plan.currency)} to ${top} (${INTERVALS[price.interval] ?? price.interval}). Applies to new sales.`}
+      submitLabel="Save price"
+      onSubmit={save}
+      onDone={(m) => onDone(m ?? "")}
+      onClose={onCancel}
+    >
+      <TextField label={`Customer price (${plan.currency})`} inputMode="decimal" value={value} onChange={setValue} />
+    </FormDialog>
   );
 }
 

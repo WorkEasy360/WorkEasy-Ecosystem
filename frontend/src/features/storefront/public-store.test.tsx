@@ -301,8 +301,11 @@ describe("a product's page in the public Store", () => {
     const box = screen.getByRole("complementary", { name: "Buy Harbor CRM" });
     expect(within(box).getByRole("radio", { name: /Harbor CRM Starter/ })).toBeChecked();
     expect(within(box).getByRole("spinbutton", { name: "Quantity" })).toHaveValue(1);
-    expect(within(box).getByRole("region", { name: "Order summary" }).textContent).toContain("Estimated total£19");
-    for (const name of ["Proceed to Secure Checkout", "Add to cart: Harbor CRM", "Start free trial: Harbor CRM"]) {
+    expect(within(box).getByRole("region", { name: "Order Summary" }).textContent).toContain("Total Payable£19");
+    // Not an INR price: no GST line, and no refund promise the admin did not set.
+    expect(within(box).queryByText(/GST/)).toBeNull();
+    expect(within(box).queryByText(/Refund Policy/)).toBeNull();
+    for (const name of ["Proceed to Secure Payment", "Add to cart: Harbor CRM", "Start free trial: Harbor CRM"]) {
       expect(within(box).getByRole("button", { name })).toBeInTheDocument();
     }
     expect(screen.getByRole("button", { name: "Buy now: Harbor CRM Starter" })).toBeInTheDocument();
@@ -314,13 +317,13 @@ describe("a product's page in the public Store", () => {
     mockApi({ [SESSION]: [SIGNED_OUT], [PRODUCT]: [ok(detail)] });
     render(<PublicStoreProductScreen slug="harbor-crm" />);
     const box = await screen.findByRole("complementary", { name: "Buy Harbor CRM" });
-    expect(within(box).queryByText(/Special offer/)).toBeNull();
+    expect(within(box).queryByText(/Special Offer/)).toBeNull();
     fireEvent.click(within(box).getByRole("radio", { name: /Harbor CRM Pro/ }));
-    expect(within(box).getByText(/Special offer - save 40%/)).toBeInTheDocument();
+    expect(within(box).getByText(/Special Offer – Save 40%!/)).toBeInTheDocument();
     fireEvent.click(within(box).getByRole("button", { name: "Increase quantity" }));
-    const summary = within(box).getByRole("region", { name: "Order summary" });
-    expect(summary.textContent).toContain("Harbor CRM - Harbor CRM Pro (1 month) × 2");
-    expect(summary.textContent).toContain("Estimated total£60");
+    const summary = within(box).getByRole("region", { name: "Order Summary" });
+    expect(summary.textContent).toContain("Harbor CRM - Harbor CRM Pro (1 Month) × 2");
+    expect(summary.textContent).toContain("Total Payable£60");
     expect(within(box).getByText("You save").textContent).toContain("£40");
   });
 
@@ -328,7 +331,7 @@ describe("a product's page in the public Store", () => {
     mockApi({ [SESSION]: [SIGNED_OUT], [PRODUCT]: [ok(detail)], [SITE]: [ok(SITE_SETTINGS)] });
     render(<PublicStoreProductScreen slug="harbor-crm" />);
     fireEvent.click(await screen.findByRole("button", { name: "Increase quantity" }));
-    fireEvent.click(screen.getByRole("button", { name: "Proceed to Secure Checkout" }));
+    fireEvent.click(screen.getByRole("button", { name: "Proceed to Secure Payment" }));
     const dialog = await screen.findByRole("dialog", { name: "Create your account to continue" });
     expect(within(dialog).getByRole("button", { name: "Create account" })).toBeInTheDocument();
     expect(within(dialog).getAllByRole("link", { name: "Sign in" })[0]).toHaveAttribute("href", "/login?mode=user");
@@ -340,9 +343,74 @@ describe("a product's page in the public Store", () => {
     mockApi({ [SESSION]: [SIGNED_IN], [PRODUCT]: [ok(detail)], [ORGS]: [ok(ONE_ORG)] });
     render(<PublicStoreProductScreen slug="harbor-crm" />);
     fireEvent.change(await screen.findByRole("spinbutton", { name: "Quantity" }), { target: { value: "3" } });
-    fireEvent.click(screen.getByRole("button", { name: "Proceed to Secure Checkout" }));
+    fireEvent.click(screen.getByRole("button", { name: "Proceed to Secure Payment" }));
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith(`/o/acme/checkout?plan=${PV}&interval=monthly&quantity=3`));
     expect(localStorage.getItem(PURCHASE_INTENT)).toBeNull();
+  });
+
+  // ADR-058: the owner's mock-up - an INR plan with 40% off, GST 18% on top,
+  // a coupon and the refund promise the Super Admin set.
+  const inr = {
+    ...detail,
+    currency: "INR",
+    currencies: ["INR"],
+    tax: { label: "GST", rate_bp: 1800, description: "GST (18%)" },
+    product: { ...detail.product, badges: ["new"], refund_days: 60 },
+    plans: [
+      {
+        ...pro,
+        name: "Starter",
+        caption: "Up to 10,000 messages/month",
+        prices: [{ interval: "annual", currency: "INR", model: "flat", amount_minor: 839900, list_amount_minor: 1399900, discount_bp: 4000, from_tiers: false }],
+      },
+    ],
+  };
+  const COUPON = "GET /api/v1/public/store/products/harbor-crm/coupon";
+
+  it("an INR plan adds GST, takes a coupon and shows the refund promise", async () => {
+    mockApi({
+      [SESSION]: [SIGNED_IN],
+      [PRODUCT]: [ok(inr)],
+      [ORGS]: [ok(ONE_ORG)],
+      [COUPON]: [ok({ valid: false, reason: "unknown", message: "That coupon code is not valid." }), ok({ valid: true, code: "SAVE10", label: "10% off", discount_minor: 83990 })],
+    });
+    const { container } = render(
+      <main>
+        <PublicStoreProductScreen slug="harbor-crm" />
+      </main>,
+    );
+    const box = await screen.findByRole("complementary", { name: "Buy Harbor CRM" });
+    expect(within(box).getByText(/Launch Offer – Save 40%!/)).toBeInTheDocument();
+    const summary = within(box).getByRole("region", { name: "Order Summary" });
+    expect(summary.textContent).toContain("Harbor CRM - Starter (1 Year)₹8,399");
+    expect(summary.textContent).toContain("GST (18%)₹1,512");
+    expect(summary.textContent).toContain("Total Payable₹9,911");
+    expect(within(box).getByText("60-Day Refund Policy")).toBeInTheDocument();
+
+    const field = within(box).getByRole("textbox", { name: "Coupon code" });
+    fireEvent.change(field, { target: { value: "nope1" } });
+    fireEvent.click(within(box).getByRole("button", { name: "Apply" }));
+    expect(await within(box).findByRole("alert")).toHaveTextContent("That coupon code is not valid.");
+
+    fireEvent.change(field, { target: { value: "save10" } });
+    fireEvent.click(within(box).getByRole("button", { name: "Apply" }));
+    expect(await within(box).findByText("SAVE10")).toBeInTheDocument();
+    // ₹8,399 - ₹839.90 = ₹7,559.10; GST 18% = ₹1,360.64 -> ₹1,361; total ₹8,920.10.
+    expect(summary.textContent).toContain("Coupon SAVE10−₹839.90");
+    expect(summary.textContent).toContain("GST (18%)₹1,361");
+    expect(summary.textContent).toContain("Total Payable₹8,920.10");
+    await expectNoViolations(container);
+
+    fireEvent.click(within(box).getByRole("button", { name: "Proceed to Secure Payment" }));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith(`/o/acme/checkout?plan=${PV2}&interval=annual&coupon=SAVE10`));
+  });
+
+  it("a product with no plans on sale asks for a quote, once", async () => {
+    mockApi({ [SESSION]: [SIGNED_OUT], [PRODUCT]: [ok({ ...detail, plans: [], comparison: [], product: { ...detail.product, trial: { ...detail.product.trial, available: false, plan_codes: [] } } })] });
+    render(<PublicStoreProductScreen slug="harbor-crm" />);
+    const box = await screen.findByRole("complementary", { name: "Buy Harbor CRM" });
+    expect(within(box).getByText("Pricing on request")).toBeInTheDocument();
+    expect(within(box).getAllByText("Contact sales")).toHaveLength(1);
   });
 
   it("a signed-in trial opens the organization, which starts it", async () => {

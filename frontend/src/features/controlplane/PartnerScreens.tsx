@@ -9,6 +9,7 @@ import { portalOwnerInvitationApi } from "@/lib/api/partnerConsole";
 import { usePartner } from "./ControlShell";
 import { ActivationBadge, OwnerInvitationActions } from "./PartnerCustomers";
 import { DiagnosticResult } from "./AdminScreens";
+import { DialogHead, FormPopup, Modal, dialog } from "./Modal";
 import { applyAccent, safeColor } from "./useBranding";
 import { isExperienceKey, workspaceHome } from "@/features/partnerpanel/experiences";
 import { LoadGate, MoreButton, Status, Table, money, useAction, useLoad, usePaged, when } from "./ui";
@@ -141,6 +142,56 @@ export function PartnerCustomers() {
       </form>
       {has("customer.provision") || has("customer.manage") ? (
         <div className={styles.row}>
+          {has("customer.provision") && active && (
+            // The dashboards' "Add customer" links land here (#add-customer).
+            <span id="add-customer">
+              <FormPopup
+                label="+ Add a customer"
+                title="Add a customer"
+                intro="The owner is emailed a one-time link to activate the account."
+                submitLabel="Create customer"
+                disabled={busy}
+                canSubmit={!!name.trim() && !!email.trim()}
+                onSubmit={async () => {
+                  // A retry after a failure keeps the same command id (the popup
+                  // stays open with what was typed); a success mints a new one.
+                  await partnerApi.provision(id, name.trim(), email.trim(), key.current, { first: first.trim(), last: last.trim() });
+                  key.current = newKey();
+                  setName("");
+                  setEmail("");
+                  setFirst("");
+                  setLast("");
+                  return "Customer created. Their owner has been emailed a one-time link to activate the account; until they do, the customer shows as awaiting activation.";
+                }}
+                onDone={paged.reload}
+              >
+                <div className={`${styles.field} ${dialog.span}`}>
+                  <label className="w360-label" htmlFor={nameId}>
+                    Organization name
+                  </label>
+                  <input id={nameId} className="w360-input" required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div className={styles.field}>
+                  <label className="w360-label" htmlFor={firstId}>
+                    Owner&apos;s first name
+                  </label>
+                  <input id={firstId} className="w360-input" maxLength={100} value={first} onChange={(e) => setFirst(e.target.value)} />
+                </div>
+                <div className={styles.field}>
+                  <label className="w360-label" htmlFor={lastId}>
+                    Owner&apos;s last name
+                  </label>
+                  <input id={lastId} className="w360-input" maxLength={100} value={last} onChange={(e) => setLast(e.target.value)} />
+                </div>
+                <div className={`${styles.field} ${dialog.span}`}>
+                  <label className="w360-label" htmlFor={emailId}>
+                    Owner&apos;s email
+                  </label>
+                  <input id={emailId} className="w360-input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+                </div>
+              </FormPopup>
+            </span>
+          )}
           <button
             type="button"
             className="w360-btn w360-btn-secondary"
@@ -207,10 +258,10 @@ export function PartnerCustomers() {
                   <td>
                     <div className={styles.row}>
                       {has("subscription.sell") && active && c.link_status === "active" && (
-                        <SellForm partnerId={id} organizationId={c.organization_id} onDone={paged.reload} />
+                        <SellForm partnerId={id} organizationId={c.organization_id} customer={c.name} onDone={paged.reload} />
                       )}
                       {has("subscription.manage") && active && c.link_status === "active" && (
-                        <ManageSubscription partnerId={id} organizationId={c.organization_id} onDone={paged.reload} />
+                        <ManageSubscription partnerId={id} organizationId={c.organization_id} customer={c.name} onDone={paged.reload} />
                       )}
                       {has("customer.provision") && active && !ended && (
                         <OwnerInvitationActions
@@ -223,12 +274,14 @@ export function PartnerCustomers() {
                         />
                       )}
                       {has("support.access") && !ended && (
-                        <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setDiagnosing(c.organization_id)}>
+                        <button type="button" className="w360-btn w360-btn-secondary" aria-haspopup="dialog" onClick={() => setDiagnosing(c.organization_id)}>
                           Diagnose launch
                         </button>
                       )}
                     </div>
-                    {diagnosing === c.organization_id && <PartnerDiagnose partnerId={id} organizationId={c.organization_id} />}
+                    {diagnosing === c.organization_id && (
+                      <PartnerDiagnose partnerId={id} organizationId={c.organization_id} customer={c.name} onClose={() => setDiagnosing(null)} />
+                    )}
                   </td>
                 </tr>
               );
@@ -236,54 +289,6 @@ export function PartnerCustomers() {
           </Table>
           <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
         </>
-      )}
-      {has("customer.provision") && active && (
-        <form
-          id="add-customer"
-          className={`w360-card ${styles.card} ${styles.form}`}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(async () => {
-              await partnerApi.provision(id, name.trim(), email.trim(), key.current, { first: first.trim(), last: last.trim() });
-              key.current = newKey();
-              setName("");
-              setEmail("");
-              setFirst("");
-              setLast("");
-            }, "Customer created. Their owner has been emailed a one-time link to activate the account; until they do, the customer shows as awaiting activation.");
-          }}
-        >
-          <h2 className={styles.cardTitle}>Add a customer</h2>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={nameId}>
-              Organization name
-            </label>
-            <input id={nameId} className="w360-input" required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={firstId}>
-              Owner&apos;s first name
-            </label>
-            <input id={firstId} className="w360-input" maxLength={100} value={first} onChange={(e) => setFirst(e.target.value)} />
-          </div>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={lastId}>
-              Owner&apos;s last name
-            </label>
-            <input id={lastId} className="w360-input" maxLength={100} value={last} onChange={(e) => setLast(e.target.value)} />
-          </div>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={emailId}>
-              Owner&apos;s email
-            </label>
-            <input id={emailId} className="w360-input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-          </div>
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !name.trim() || !email.trim()}>
-              Create customer
-            </button>
-          </div>
-        </form>
       )}
     </div>
   );
@@ -295,10 +300,10 @@ export function PartnerCustomers() {
  * console before anything is granted; a partner-billed account is an approved
  * sale, fulfilled at once. The browser sends identifiers only.
  */
-function SellForm({ partnerId, organizationId, onDone }: { partnerId: string; organizationId: string; onDone: () => void }) {
+function SellForm({ partnerId, organizationId, customer, onDone }: { partnerId: string; organizationId: string; customer: string; onDone: () => void }) {
+  // The approved plans are read the first time the popup opens.
   const [open, setOpen] = useState(false);
   const [catalog] = useLoad(() => (open ? partnerApi.catalog(partnerId) : Promise.resolve({ results: [] })), [open, partnerId]);
-  const { act, busy, feedback } = useAction(onDone);
   const planId = useId();
   const qtyId = useId();
   const intervalId = useId();
@@ -307,39 +312,35 @@ function SellForm({ partnerId, organizationId, onDone }: { partnerId: string; or
   const [interval, setInterval] = useState("monthly");
   const [quote, setQuote] = useState<CustomerOrderQuote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [pricing, setPricing] = useState(false);
   const key = useRef(newKey());
   const request = { plan_version_id: plan, quantity: Number(quantity), billing_interval: interval };
 
-  if (!open) {
-    // The outcome of the last order stays on screen after the form closes.
-    return (
-      <>
-        {feedback}
-        <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setOpen(true)}>
-          Sell a plan
-        </button>
-      </>
-    );
-  }
+  // The outcome of the last order stays beside the button after the popup closes.
   return (
-    <form
-      className={styles.form}
-      onSubmit={(e) => {
-        e.preventDefault();
-        void act(async () => {
-          const placed = await panelApi.placeCustomerOrder(partnerId, organizationId, request, key.current);
-          key.current = newKey();
-          setOpen(false);
-          setQuote(null);
-          return placed;
-        }, "Order created. If the customer pays by card, its owner pays the order in their console; access starts once the payment is confirmed.");
+    <FormPopup
+      label="Sell a plan"
+      buttonClassName="w360-btn w360-btn-secondary"
+      title={customer ? `Sell a plan to ${customer}` : "Sell a plan"}
+      submitLabel="Create order"
+      canSubmit={!!plan && !!quote}
+      onOpen={() => {
+        setOpen(true);
+        setQuote(null);
+        setQuoteError(null);
       }}
+      onSubmit={async () => {
+        await panelApi.placeCustomerOrder(partnerId, organizationId, request, key.current);
+        key.current = newKey();
+        setQuote(null);
+        return "Order created. If the customer pays by card, its owner pays the order in their console; access starts once the payment is confirmed.";
+      }}
+      onDone={onDone}
     >
-      {feedback}
       <LoadGate load={catalog} what="your approved plans">
         {(d) => (
           <>
-            <div className={styles.field}>
+            <div className={`${styles.field} ${dialog.span}`}>
               <label className="w360-label" htmlFor={planId}>
                 Plan
               </label>
@@ -395,41 +396,44 @@ function SellForm({ partnerId, organizationId, onDone }: { partnerId: string; or
                 }}
               />
             </div>
+            <div className={`${styles.row} ${dialog.span}`}>
+              <button
+                type="button"
+                className="w360-btn w360-btn-secondary"
+                disabled={pricing || !plan}
+                onClick={() => {
+                  setQuoteError(null);
+                  setPricing(true);
+                  panelApi
+                    .quoteCustomerOrder(partnerId, organizationId, request)
+                    .then(setQuote, (err: unknown) => {
+                      setQuote(null);
+                      setQuoteError(err instanceof Error ? err.message : "Couldn't price this order.");
+                    })
+                    .finally(() => setPricing(false));
+                }}
+              >
+                Get price
+              </button>
+              {!quote && <span className={styles.muted}>Get the price before creating the order.</span>}
+            </div>
             {quote && (
-              <p aria-live="polite">
+              <p aria-live="polite" className={dialog.span}>
                 {quote.description}: {money(quote.recurring_amount_minor, quote.currency)} per period
                 {quote.requires_payment
                   ? ` — the customer pays ${money(quote.amount_due_minor, quote.currency)} now.`
                   : " — nothing is charged now (an approved sale)."}
               </p>
             )}
-            {quoteError && <p role="alert">{quoteError}</p>}
-            <div className={styles.row}>
-              <button
-                type="button"
-                className="w360-btn w360-btn-secondary"
-                disabled={busy || !plan}
-                onClick={() => {
-                  setQuoteError(null);
-                  panelApi.quoteCustomerOrder(partnerId, organizationId, request).then(setQuote, (err: unknown) => {
-                    setQuote(null);
-                    setQuoteError(err instanceof Error ? err.message : "Couldn't price this order.");
-                  });
-                }}
-              >
-                Get price
-              </button>
-              <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !plan || !quote}>
-                Create order
-              </button>
-              <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setOpen(false)}>
-                Cancel
-              </button>
-            </div>
+            {quoteError && (
+              <p role="alert" className={dialog.span}>
+                {quoteError}
+              </p>
+            )}
           </>
         )}
       </LoadGate>
-    </form>
+    </FormPopup>
   );
 }
 
@@ -437,7 +441,8 @@ function SellForm({ partnerId, organizationId, onDone }: { partnerId: string; or
  * the same product the partner may sell) or cancel at the end of the period.
  * Renewal is automatic; a partner never manufactures access - every change goes
  * through the subscription services and is re-authorized there. */
-function ManageSubscription({ partnerId, organizationId, onDone }: { partnerId: string; organizationId: string; onDone: () => void }) {
+function ManageSubscription({ partnerId, organizationId, customer, onDone }: { partnerId: string; organizationId: string; customer: string; onDone: () => void }) {
+  const titleId = useId();
   const [open, setOpen] = useState(false);
   const [load, reload] = useLoad(
     () => (open ? partnerApi.customerSubscription(partnerId, organizationId) : Promise.resolve([] as CustomerSubscription[])),
@@ -451,13 +456,17 @@ function ManageSubscription({ partnerId, organizationId, onDone }: { partnerId: 
   const [target, setTarget] = useState<Record<string, string>>({});
   if (!open) {
     return (
-      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setOpen(true)}>
+      <button type="button" className="w360-btn w360-btn-secondary" aria-haspopup="dialog" onClick={() => setOpen(true)}>
         Manage subscription
       </button>
     );
   }
+  const close = () => setOpen(false);
   return (
-    <div className={styles.form}>
+    <Modal labelledBy={titleId} onClose={close} size="md">
+      <div className={dialog.form}>
+        <DialogHead titleId={titleId} title={customer ? `Subscription of ${customer}` : "Manage subscription"} onClose={close} />
+        <div className={dialog.body}>
       {feedback}
       <LoadGate load={load} what="the subscription">
         {(subs) =>
@@ -542,44 +551,59 @@ function ManageSubscription({ partnerId, organizationId, onDone }: { partnerId: 
           )
         }
       </LoadGate>
-      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setOpen(false)}>
-        Close
-      </button>
-    </div>
+        </div>
+        <div className={dialog.foot}>
+          <button type="button" className="w360-btn w360-btn-secondary" onClick={close}>
+            Close
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
-function PartnerDiagnose({ partnerId, organizationId }: { partnerId: string; organizationId: string }) {
+function PartnerDiagnose({ partnerId, organizationId, customer, onClose }: { partnerId: string; organizationId: string; customer: string; onClose: () => void }) {
+  const titleId = useId();
   const productId = useId();
   const [product, setProduct] = useState("");
   const [result, setResult] = useState<Diagnosis | null>(null);
   const [error, setError] = useState<string | null>(null);
   return (
-    <form
-      className={styles.form}
-      onSubmit={(e) => {
-        e.preventDefault();
-        setError(null);
-        partnerApi
-          .diagnose(partnerId, organizationId, product.trim())
-          .then(setResult)
-          .catch(() => setError("Couldn't run the check."));
-      }}
-    >
-      <div className={styles.field}>
-        <label className="w360-label" htmlFor={productId}>
-          Product code
-        </label>
-        <input id={productId} className="w360-input" required value={product} onChange={(e) => setProduct(e.target.value)} />
-      </div>
-      <div>
-        <button type="submit" className="w360-btn w360-btn-secondary" disabled={!product.trim()}>
-          Check
-        </button>
-      </div>
-      {error && <p role="alert">{error}</p>}
-      {result && <DiagnosticResult result={result} />}
-    </form>
+    <Modal labelledBy={titleId} onClose={onClose} size="md">
+      <form
+        className={dialog.form}
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!product.trim()) return;
+          setError(null);
+          partnerApi
+            .diagnose(partnerId, organizationId, product.trim())
+            .then(setResult)
+            .catch(() => setError("Couldn't run the check."));
+        }}
+      >
+        <DialogHead titleId={titleId} title={customer ? `Diagnose launch for ${customer}` : "Diagnose launch"} onClose={onClose} />
+        <div className={dialog.body}>
+          <div className={styles.field}>
+            <label className="w360-label" htmlFor={productId}>
+              Product code
+            </label>
+            <input id={productId} className="w360-input" required value={product} onChange={(e) => setProduct(e.target.value)} />
+          </div>
+          {error && <p role="alert">{error}</p>}
+          {result && <DiagnosticResult result={result} />}
+        </div>
+        <div className={dialog.foot}>
+          <button type="button" className="w360-btn w360-btn-secondary" onClick={onClose}>
+            Close
+          </button>
+          <button type="submit" className="w360-btn w360-btn-primary" disabled={!product.trim()}>
+            Check
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -720,16 +744,18 @@ function BrandScope() {
           Your white-label brand
         </h2>
         <p className={styles.muted}>
-          What your customers see on your domain: your brand name, accent colour and logo. Change it below; the live
-          preview shows your colours as you type.
+          What your customers see on your domain: your brand name, accent colour and logo. Change it with Edit branding;
+          its live preview shows your colours as you type.
         </p>
       </section>
     </div>
   );
 }
 
+/** What the saved brand is, as text, with Edit branding: the fields open in a
+ * popup (2026-11-05, the owner: every form in a popup) beside a live preview of
+ * what is typed. The page's own preview shows the brand as saved. */
 function BrandForm({ partnerId, brand, disabled, onSaved }: { partnerId: string; brand: Brand | null; disabled: boolean; onSaved: () => void }) {
-  const { act, busy, feedback } = useAction(onSaved);
   const nameId = useId();
   const colorId = useId();
   const emailId = useId();
@@ -742,14 +768,7 @@ function BrandForm({ partnerId, brand, disabled, onSaved }: { partnerId: string;
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [logoError, setLogoError] = useState<string | null>(null);
   const [logoFile, setLogoFile] = useState<File | null>(null);
-  const preview = useRef<HTMLElement>(null);
   const validColor = color === "" || safeColor(color) !== null;
-
-  // The preview is isolated to its own element: the accent is applied there
-  // through the CSSOM, never as markup, so a bad value cannot leak into the page.
-  useEffect(() => {
-    if (preview.current) applyAccent(preview.current, color);
-  }, [color]);
 
   function pickLogo(file: File | undefined) {
     setLogoError(null);
@@ -772,109 +791,159 @@ function BrandForm({ partnerId, brand, disabled, onSaved }: { partnerId: string;
 
   return (
     <div className={styles.stack}>
-      {feedback}
-      <form
-        className={`w360-card ${styles.card} ${styles.form}`}
-        onSubmit={(e) => {
-          e.preventDefault();
-          void act(async () => {
-            // A save *replaces* the brand, so the current logo must be sent back
-            // or it is cleared. A newly chosen file is uploaded first and replaces it.
-            let logoId = brand?.logo_file_id ?? undefined;
-            if (logoFile) logoId = (await partnerApi.uploadLogo(partnerId, logoFile)).logo_file_id;
-            await partnerApi.saveBrand(
-              partnerId,
-              {
-                brand_name: name.trim(),
-                accent_color: color,
-                support_email: email.trim(),
-                support_url: url.trim(),
-                theme: {},
-                logo_file_id: logoId,
-              },
-              brand?.version,
-            );
-            setLogoFile(null);
-          }, "Branding saved.");
-        }}
-      >
-        <div className={styles.field}>
-          <label className="w360-label" htmlFor={nameId}>
-            Brand name
-          </label>
-          <input id={nameId} className="w360-input" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} disabled={disabled} />
-        </div>
-        <div className={styles.field}>
-          <label className="w360-label" htmlFor={colorId}>
-            Accent colour (hex, e.g. #1a56db)
-          </label>
-          <input id={colorId} className="w360-input" value={color} onChange={(e) => setColor(e.target.value)} aria-invalid={!validColor} aria-describedby={validColor ? undefined : `${colorId}-e`} disabled={disabled} />
-          {!validColor && (
-            <span id={`${colorId}-e`} className="w360-error-text" role="alert">
-              Enter a six-digit hex colour such as #1a56db.
-            </span>
-          )}
-        </div>
-        <div className={styles.field}>
-          <label className="w360-label" htmlFor={emailId}>
-            Support email
-          </label>
-          <input id={emailId} className="w360-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={disabled} />
-        </div>
-        <div className={styles.field}>
-          <label className="w360-label" htmlFor={urlId}>
-            Support page (https)
-          </label>
-          <input id={urlId} className="w360-input" type="url" pattern="https://.*" value={url} onChange={(e) => setUrl(e.target.value)} disabled={disabled} />
-        </div>
-        <div className={styles.field}>
-          <label className="w360-label" htmlFor={logoId}>
-            Logo (PNG or JPEG, up to 512 KB)
-          </label>
-          <input id={logoId} type="file" accept="image/png,image/jpeg" onChange={(e) => pickLogo(e.target.files?.[0])} disabled={disabled} />
-          {logoError && (
-            <span className="w360-error-text" role="alert">
-              {logoError}
-            </span>
-          )}
-          {brand?.logo_file_id && !logoFile && <span className={styles.muted}>A logo is saved. Choose a file to replace it.</span>}
-        </div>
-        <div>
-          <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || disabled || !validColor || !name.trim()}>
-            Save branding
-          </button>
-        </div>
-      </form>
-
-      {/* The partner's colours apply inside this section only (applyAccent on
-          its own element); the panel around it stays WorkEasy360's. */}
-      <section aria-labelledby="preview-h" className={styles.preview} ref={preview}>
-        <h2 id="preview-h" className={styles.cardTitle}>
-          Your white-label brand: live preview
+      <section className={`w360-card ${styles.card}`} aria-labelledby={`${nameId}-saved`}>
+        <h2 id={`${nameId}-saved`} className={styles.cardTitle}>
+          Your saved brand
         </h2>
-        <p className={styles.muted}>
-          Customers see this beside the standard Workeasy360 sign-in.{" "}
-          {safeColor(color) ? `Accent ${color}.` : "The default accent until you choose one."}
-        </p>
-        <div className={local.simulated}>
-          <div className={local.simHeader}>
-            {logoPreview ? (
-              // eslint-disable-next-line @next/next/no-img-element -- a data: URL of a local, validated file
-              <img className={styles.logo} src={logoPreview} alt={`${name || "Your"} logo preview`} />
-            ) : (
-              <span className={styles.previewMark} aria-hidden="true" />
-            )}
-            <strong>{name || "Your brand"}</strong>
+        <dl className={styles.factsGrid}>
+          <div>
+            <dt>Brand name</dt>
+            <dd>{brand?.brand_name || "Not set"}</dd>
           </div>
-          <div className={styles.previewSignIn} aria-hidden="true">
-            <p>Sign in to {name || "your brand"}</p>
-            <div className={local.simTile}>Email</div>
-            <div className={local.simTile}>Password</div>
-            <span className={styles.previewButton}>Sign in</span>
+          <div>
+            <dt>Accent colour</dt>
+            <dd>{brand?.accent_color || "The default accent"}</dd>
           </div>
+          <div>
+            <dt>Support email</dt>
+            <dd>{brand?.support_email || "Not set"}</dd>
+          </div>
+          <div>
+            <dt>Support page</dt>
+            <dd>{brand?.support_url || "Not set"}</dd>
+          </div>
+          <div>
+            <dt>Logo</dt>
+            <dd>{brand?.logo_file_id ? "A logo is saved" : "No logo"}</dd>
+          </div>
+        </dl>
+        <div className={styles.row}>
+          <FormPopup
+            label="Edit branding"
+            title="Edit branding"
+            size="lg"
+            submitLabel="Save branding"
+            disabled={disabled}
+            canSubmit={!disabled && validColor && !!name.trim()}
+            onOpen={() => {
+              setName(brand?.brand_name ?? "");
+              setColor(brand?.accent_color ?? "");
+              setEmail(brand?.support_email ?? "");
+              setUrl(brand?.support_url ?? "");
+              setLogoPreview(null);
+              setLogoError(null);
+              setLogoFile(null);
+            }}
+            onSubmit={async () => {
+              // A save *replaces* the brand, so the current logo must be sent back
+              // or it is cleared. A newly chosen file is uploaded first and replaces it.
+              let logoId = brand?.logo_file_id ?? undefined;
+              if (logoFile) logoId = (await partnerApi.uploadLogo(partnerId, logoFile)).logo_file_id;
+              await partnerApi.saveBrand(
+                partnerId,
+                {
+                  brand_name: name.trim(),
+                  accent_color: color,
+                  support_email: email.trim(),
+                  support_url: url.trim(),
+                  theme: {},
+                  logo_file_id: logoId,
+                },
+                brand?.version,
+              );
+              setLogoFile(null);
+              return "Branding saved.";
+            }}
+            onDone={onSaved}
+          >
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={nameId}>
+                Brand name
+              </label>
+              <input id={nameId} className="w360-input" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={colorId}>
+                Accent colour (hex, e.g. #1a56db)
+              </label>
+              <input id={colorId} className="w360-input" value={color} onChange={(e) => setColor(e.target.value)} aria-invalid={!validColor} aria-describedby={validColor ? undefined : `${colorId}-e`} />
+              {!validColor && (
+                <span id={`${colorId}-e`} className="w360-error-text" role="alert">
+                  Enter a six-digit hex colour such as #1a56db.
+                </span>
+              )}
+            </div>
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={emailId}>
+                Support email
+              </label>
+              <input id={emailId} className="w360-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={urlId}>
+                Support page (https)
+              </label>
+              <input id={urlId} className="w360-input" type="url" pattern="https://.*" value={url} onChange={(e) => setUrl(e.target.value)} />
+            </div>
+            <div className={`${styles.field} ${dialog.span}`}>
+              <label className="w360-label" htmlFor={logoId}>
+                Logo (PNG or JPEG, up to 512 KB)
+              </label>
+              <input id={logoId} type="file" accept="image/png,image/jpeg" onChange={(e) => pickLogo(e.target.files?.[0])} />
+              {logoError && (
+                <span className="w360-error-text" role="alert">
+                  {logoError}
+                </span>
+              )}
+              {brand?.logo_file_id && !logoFile && <span className={styles.muted}>A logo is saved. Choose a file to replace it.</span>}
+            </div>
+            <div className={dialog.span}>
+              <BrandPreview title="Live preview" name={name} color={color} logo={logoPreview} />
+            </div>
+          </FormPopup>
         </div>
       </section>
+      <BrandPreview title="Your white-label brand: preview" name={brand?.brand_name ?? ""} color={brand?.accent_color ?? ""} logo={null} />
     </div>
+  );
+}
+
+/** The partner's colours apply inside this section only (applyAccent on its own
+ * element, through the CSSOM, never as markup, so a bad value cannot leak into
+ * the page); the panel around it stays WorkEasy360's. */
+function BrandPreview({ title, name, color, logo }: { title: string; name: string; color: string; logo: string | null }) {
+  const headingId = useId();
+  const preview = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (preview.current) applyAccent(preview.current, color);
+  }, [color]);
+  return (
+    <section aria-labelledby={headingId} className={styles.preview} ref={preview}>
+      <h2 id={headingId} className={styles.cardTitle}>
+        {title}
+      </h2>
+      <p className={styles.muted}>
+        Customers see this beside the standard Workeasy360 sign-in.{" "}
+        {safeColor(color) ? `Accent ${color}.` : "The default accent until you choose one."}
+      </p>
+      <div className={local.simulated}>
+        <div className={local.simHeader}>
+          {logo ? (
+            // eslint-disable-next-line @next/next/no-img-element -- a data: URL of a local, validated file
+            <img className={styles.logo} src={logo} alt={`${name || "Your"} logo preview`} />
+          ) : (
+            <span className={styles.previewMark} aria-hidden="true" />
+          )}
+          <strong>{name || "Your brand"}</strong>
+        </div>
+        <div className={styles.previewSignIn} aria-hidden="true">
+          <p>Sign in to {name || "your brand"}</p>
+          <div className={local.simTile}>Email</div>
+          <div className={local.simTile}>Password</div>
+          <span className={styles.previewButton}>Sign in</span>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -893,6 +962,31 @@ export function PartnerDomains() {
         A domain serves your branding only after you prove you control it by publishing the DNS record shown, and after
         you activate it.
       </p>
+      {active && (
+        <div>
+          <FormPopup
+            label="+ Add a domain"
+            title="Add a domain"
+            size="sm"
+            submitLabel="Request domain"
+            disabled={busy}
+            canSubmit={!!host.trim()}
+            onOpen={() => setHost("")}
+            onSubmit={async () => {
+              await partnerApi.requestDomain(id, host.trim().toLowerCase());
+              return "Domain requested. Publish the DNS record, then check it.";
+            }}
+            onDone={reload}
+          >
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={hostId}>
+                Hostname (e.g. app.example.com)
+              </label>
+              <input id={hostId} className="w360-input" required value={host} onChange={(e) => setHost(e.target.value)} />
+            </div>
+          </FormPopup>
+        </div>
+      )}
       {feedback}
       <LoadGate load={load} what="your domains">
         {(d) => (
@@ -935,31 +1029,6 @@ export function PartnerDomains() {
           </Table>
         )}
       </LoadGate>
-      {active && (
-        <form
-          className={`w360-card ${styles.card} ${styles.form}`}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(async () => {
-              await partnerApi.requestDomain(id, host.trim().toLowerCase());
-              setHost("");
-            }, "Domain requested. Publish the DNS record, then check it.");
-          }}
-        >
-          <h2 className={styles.cardTitle}>Add a domain</h2>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={hostId}>
-              Hostname (e.g. app.example.com)
-            </label>
-            <input id={hostId} className="w360-input" required value={host} onChange={(e) => setHost(e.target.value)} />
-          </div>
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !host.trim()}>
-              Request domain
-            </button>
-          </div>
-        </form>
-      )}
     </div>
   );
 }

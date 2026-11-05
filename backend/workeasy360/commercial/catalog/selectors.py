@@ -410,6 +410,7 @@ def merchandising(product: Any) -> dict[str, Any]:
         "product_type": product.product_type,
         "best_for": list(product.best_for or []),
         "integrations": list(product.integrations or []),
+        "refund_days": product.refund_days,
     }
 
 

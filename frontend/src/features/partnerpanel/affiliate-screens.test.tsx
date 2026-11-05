@@ -256,13 +256,17 @@ describe("referral links", () => {
       [`POST ${API}/referrals`]: [{ status: 201, body: { id: "c9", code: "AMAN360", label: "CRM October", url: "https://app.example.com/r/AMAN360" } }],
     });
     inWorkspace(<ReferralLinks />);
-    await screen.findByRole("heading", { name: "Create a referral link" });
-    fireEvent.change(screen.getByLabelText("Product"), { target: { value: "easy_crm" } });
-    fireEvent.change(screen.getByLabelText("Plan (optional)"), { target: { value: "crm_basic" } });
-    fireEvent.change(screen.getByLabelText("Campaign (optional)"), { target: { value: "cmp1" } });
-    fireEvent.change(screen.getByLabelText("Your own code (optional)"), { target: { value: "aman360" } });
-    fireEvent.click(screen.getByRole("button", { name: "Generate link" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Create a referral link" }));
+    const popup = screen.getByRole("dialog", { name: "Create a referral link" });
+    fireEvent.change(within(popup).getByLabelText("Product"), { target: { value: "easy_crm" } });
+    fireEvent.change(within(popup).getByLabelText("Plan (optional)"), { target: { value: "crm_basic" } });
+    fireEvent.change(within(popup).getByLabelText("Campaign (optional)"), { target: { value: "cmp1" } });
+    fireEvent.change(within(popup).getByLabelText("Your own code (optional)"), { target: { value: "ab" } });
+    expect(within(popup).getByRole("button", { name: "Generate link" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Your own code (optional)"), { target: { value: "aman360" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Generate link" }));
     expect(await screen.findByText("Referral link created.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     const post = calls.find((c) => c.key === `POST ${API}/referrals`) as Call;
     expect(post.body).toEqual({ product_code: "easy_crm", plan_code: "crm_basic", campaign_id: "cmp1", code: "AMAN360" });
   });
@@ -273,10 +277,11 @@ describe("referral links", () => {
       [`POST ${API}/referrals`]: [{ status: 201, body: { id: "c9", code: "NEW12345", label: "", url: "https://app.example.com/r/NEW12345" } }],
     });
     inWorkspace(<ReferralLinks />);
-    await screen.findByRole("heading", { name: "Create a referral link" });
-    expect(screen.getByLabelText("Plan (optional)")).toBeDisabled();
-    expect(screen.getByLabelText("Your own code (optional)")).toHaveAttribute("maxlength", "16");
-    fireEvent.click(screen.getByRole("button", { name: "Generate link" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Create a referral link" }));
+    const popup = screen.getByRole("dialog", { name: "Create a referral link" });
+    expect(within(popup).getByLabelText("Plan (optional)")).toBeDisabled();
+    expect(within(popup).getByLabelText("Your own code (optional)")).toHaveAttribute("maxlength", "16");
+    fireEvent.click(within(popup).getByRole("button", { name: "Generate link" }));
     await screen.findByText("Referral link created.");
     expect((calls.find((c) => c.key === `POST ${API}/referrals`) as Call).body).toEqual({});
   });
@@ -309,7 +314,7 @@ describe("referral links", () => {
     mockApi(route(overview()));
     inWorkspace(<ReferralLinks />, perm("dashboard.view", "referral.view"));
     await screen.findByRole("table", { name: "Your referral links" });
-    expect(screen.queryByRole("heading", { name: "Create a referral link" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create a referral link/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Switch off/ })).not.toBeInTheDocument();
   });
 
@@ -317,7 +322,7 @@ describe("referral links", () => {
     mockApi(route(overview()));
     inWorkspace(<ReferralLinks />, AFFILIATE, BASE, "suspended");
     await screen.findByRole("table", { name: "Your referral links" });
-    expect(screen.queryByRole("heading", { name: "Create a referral link" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create a referral link/ })).not.toBeInTheDocument();
   });
 });
 
@@ -337,9 +342,13 @@ describe("codes, campaigns, materials and leads", () => {
       [`POST ${API}/referrals`]: [{ status: 201, body: { id: "c9", code: "AMAN360", label: "", url: "https://app.example.com/r/AMAN360" } }],
     });
     inWorkspace(<ReferralCodes />);
-    fireEvent.change(await screen.findByLabelText("Code"), { target: { value: "aman360" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create code" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Create your own code" }));
+    const popup = screen.getByRole("dialog", { name: "Create your own code" });
+    expect(within(popup).getByRole("button", { name: "Create code" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Code"), { target: { value: "aman360" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Create code" }));
     expect(await screen.findByText("Referral code created.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect((calls.find((c) => c.key === `POST ${API}/referrals`) as Call).body).toEqual({ code: "AMAN360" });
   });
 
@@ -358,9 +367,12 @@ describe("codes, campaigns, materials and leads", () => {
     expect(rows[2].textContent).toMatch(/LinkedIn/);
     expect(rows[2].textContent).toMatch(/25\.00%/);
     expect(rows[2].textContent).toMatch(/2,000\.00/);
-    fireEvent.change(screen.getByLabelText("Campaign name"), { target: { value: "Diwali" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Start a campaign" }));
+    const popup = screen.getByRole("dialog", { name: "Start a campaign" });
+    fireEvent.change(within(popup).getByLabelText("Campaign name"), { target: { value: "Diwali" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Create campaign" }));
     await screen.findByText(/Campaign "Diwali" created/);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect((calls.find((c) => c.key === `POST ${API}/campaigns`) as Call).body).toEqual({ name: "Diwali" });
     fireEvent.click(await screen.findByRole("button", { name: /Archive/ }));
     await screen.findByText(/Campaign archived/);

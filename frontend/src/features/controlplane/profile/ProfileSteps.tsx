@@ -53,8 +53,8 @@ export function BusinessStep(props: StepProps) {
         </p>
       }
     >
-      <BusinessDetailsTab {...props} />
-      <ContactsTab {...props} />
+      <BusinessDetailsTab {...props} inline />
+      <ContactsTab {...props} inline />
     </Frame>
   );
 }
@@ -343,7 +343,7 @@ export function TeamStep(props: StepProps) {
       }
     >
       {feedback}
-      <MembersSection partner={props.partner} manage={manage} act={act} busy={busy} />
+      <MembersSection partner={props.partner} manage={manage} act={act} busy={busy} onChanged={props.bump} />
     </Frame>
   );
 }

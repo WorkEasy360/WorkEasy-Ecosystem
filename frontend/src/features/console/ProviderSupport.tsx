@@ -1,7 +1,8 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { LoadGate, Status, Table, useAction, useLoad, when } from "@/features/controlplane/ui";
+import { FormPopup, dialog } from "@/features/controlplane/Modal";
 import cp from "@/features/controlplane/ControlPlane.module.css";
 import { consoleApi } from "@/lib/api/console";
 import type { NewTicket, TicketDetail } from "@/lib/api/partnerPanel";
@@ -18,7 +19,6 @@ import { Panel } from "./consoleUi";
 export function ProviderSupport({ slug }: { slug: string }) {
   const [load, reload] = useLoad(() => consoleApi.supportTickets(slug), [slug]);
   const [open, setOpen] = useState<string | null>(null);
-  const [composing, setComposing] = useState(false);
   if (load.status !== "ready" || !load.data.provider) return null;
   const page = load.data;
   return (
@@ -37,24 +37,9 @@ export function ProviderSupport({ slug }: { slug: string }) {
         />
       ) : (
         <>
-          {composing ? (
-            <NewTicketForm
-              slug={slug}
-              categories={page.categories}
-              priorities={page.priorities}
-              onCreated={(t) => {
-                setComposing(false);
-                setOpen(t.id);
-              }}
-              onCancel={() => setComposing(false)}
-            />
-          ) : (
-            <p>
-              <button type="button" className="w360-btn w360-btn-primary" onClick={() => setComposing(true)}>
-                Raise a ticket
-              </button>
-            </p>
-          )}
+          <div className={local.actions}>
+            <NewTicketPopup slug={slug} categories={page.categories} priorities={page.priorities} onCreated={(t) => setOpen(t.id)} />
+          </div>
           <Table caption="Your tickets" head={["Ticket", "Subject", "Status", "Updated"]} isEmpty={page.items.length === 0} empty="No tickets yet.">
             {page.items.map((t) => (
               <tr key={t.id}>
@@ -77,39 +62,50 @@ export function ProviderSupport({ slug }: { slug: string }) {
   );
 }
 
-function NewTicketForm({
+const NEW_TICKET: NewTicket = { subject: "", message: "", category: "general", priority: "normal" };
+
+/** A new ticket, written in a popup (2026-11-05, every form in a popup); once sent, its thread opens. */
+function NewTicketPopup({
   slug,
   categories,
   priorities,
   onCreated,
-  onCancel,
 }: {
   slug: string;
   categories: string[];
   priorities: string[];
   onCreated: (t: TicketDetail) => void;
-  onCancel: () => void;
 }) {
   const ids = { subject: useId(), category: useId(), priority: useId(), message: useId() };
-  const [form, setForm] = useState<NewTicket>({ subject: "", message: "", category: "general", priority: "normal" });
-  const { act, busy, feedback } = useAction();
+  const [form, setForm] = useState<NewTicket>(NEW_TICKET);
+  const created = useRef<TicketDetail | null>(null);
   const set = (key: keyof NewTicket) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
   return (
-    <form
-      className={local.ticketForm}
-      onSubmit={(e) => {
-        e.preventDefault();
-        act(async () => onCreated(await consoleApi.openSupportTicket(slug, form)), "Ticket sent.");
+    <FormPopup
+      label="Raise a ticket"
+      title="Raise a ticket"
+      submitLabel="Send ticket"
+      canSubmit={form.subject !== "" && form.message !== ""}
+      onOpen={() => {
+        created.current = null;
+        setForm(NEW_TICKET);
+      }}
+      onSubmit={async () => {
+        created.current = await consoleApi.openSupportTicket(slug, form);
+        return "Ticket sent.";
+      }}
+      onDone={() => {
+        if (created.current) onCreated(created.current);
       }}
     >
-      <div>
+      <div className={`${cp.field} ${dialog.span}`}>
         <label className="w360-label" htmlFor={ids.subject}>
           Subject
         </label>
         <input id={ids.subject} className="w360-input" required maxLength={200} value={form.subject} onChange={set("subject")} />
       </div>
-      <div>
+      <div className={cp.field}>
         <label className="w360-label" htmlFor={ids.category}>
           Category
         </label>
@@ -123,7 +119,7 @@ function NewTicketForm({
             ))}
         </select>
       </div>
-      <div>
+      <div className={cp.field}>
         <label className="w360-label" htmlFor={ids.priority}>
           Priority
         </label>
@@ -135,32 +131,20 @@ function NewTicketForm({
           ))}
         </select>
       </div>
-      <div>
+      <div className={`${cp.field} ${dialog.span}`}>
         <label className="w360-label" htmlFor={ids.message}>
           What do you need?
         </label>
         <textarea id={ids.message} className="w360-input" required rows={5} maxLength={5000} value={form.message} onChange={set("message")} />
       </div>
-      <p>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-          Send ticket
-        </button>{" "}
-        <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
-          Cancel
-        </button>
-      </p>
-      {feedback}
-    </form>
+    </FormPopup>
   );
 }
 
 function TicketThread({ slug, ticketId, onClose }: { slug: string; ticketId: string; onClose: () => void }) {
   const [load, reload] = useLoad(() => consoleApi.supportTicket(slug, ticketId), [slug, ticketId]);
   const [message, setMessage] = useState("");
-  const { act, busy, feedback } = useAction(() => {
-    setMessage("");
-    reload();
-  });
+  const { act, busy, feedback } = useAction(reload);
   const replyId = useId();
   return (
     <div>
@@ -186,21 +170,32 @@ function TicketThread({ slug, ticketId, onClose }: { slug: string; ticketId: str
             {t.status === "closed" ? (
               <p className={cp.muted}>This ticket is closed.</p>
             ) : (
-              <form
-                className={local.ticketForm}
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  act(() => consoleApi.replySupportTicket(slug, t.id, { message }), "Reply sent.");
-                }}
-              >
-                <label className="w360-label" htmlFor={replyId}>
-                  Your reply
-                </label>
-                <textarea id={replyId} className="w360-input" rows={4} maxLength={5000} required value={message} onChange={(e) => setMessage(e.target.value)} />
-                <p>
-                  <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-                    Send
-                  </button>{" "}
+              <>
+                <div className={local.actions}>
+                  <FormPopup
+                    label="Reply"
+                    title={`Reply to ${t.reference}`}
+                    size="sm"
+                    submitLabel="Send"
+                    disabled={busy}
+                    canSubmit={message !== ""}
+                    onOpen={() => setMessage("")}
+                    onSubmit={async () => {
+                      await consoleApi.replySupportTicket(slug, t.id, { message });
+                      return "Reply sent.";
+                    }}
+                    onDone={() => {
+                      setMessage("");
+                      reload();
+                    }}
+                  >
+                    <div className={cp.field}>
+                      <label className="w360-label" htmlFor={replyId}>
+                        Your reply
+                      </label>
+                      <textarea id={replyId} className="w360-input" rows={4} maxLength={5000} required value={message} onChange={(e) => setMessage(e.target.value)} />
+                    </div>
+                  </FormPopup>
                   <button
                     type="button"
                     className="w360-btn w360-btn-secondary"
@@ -209,9 +204,9 @@ function TicketThread({ slug, ticketId, onClose }: { slug: string; ticketId: str
                   >
                     Close ticket
                   </button>
-                </p>
+                </div>
                 {feedback}
-              </form>
+              </>
             )}
           </>
         )}

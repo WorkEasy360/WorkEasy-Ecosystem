@@ -6,6 +6,7 @@ import { adminDeskApi, type PendingMethod } from "@/lib/api/adminDesk";
 import type { TicketDetail } from "@/lib/api/partnerPanel";
 import { Sla } from "@/features/partnerpanel/Helpdesk";
 import { can, useAdmin } from "./ControlShell";
+import { FormDialog, FormPopup } from "./Modal";
 import { LoadGate, Status, Table, money, useAction, useLoad, when } from "./ui";
 import { SelectField, TextAreaField, TextField } from "./widgets";
 import cp from "./ControlPlane.module.css";
@@ -112,12 +113,11 @@ function StaffConversation({ t, reload }: { t: TicketDetail; reload: () => void 
   const [message, setMessage] = useState("");
   const [internal, setInternal] = useState(false);
   const [status, setStatus] = useState("");
-  const { act, busy, feedback } = useAction(() => {
+  function reset() {
     setMessage("");
     setInternal(false);
     setStatus("");
-    reload();
-  });
+  }
   return (
     <>
       <h2 className={styles.sectionTitle}>
@@ -140,37 +140,39 @@ function StaffConversation({ t, reload }: { t: TicketDetail; reload: () => void 
       {t.status === "closed" ? (
         <p className={cp.muted}>This ticket is closed.</p>
       ) : t.may_answer ? (
-        <form
-          className={cp.stack}
-          onSubmit={(e) => {
-            e.preventDefault();
-            act(() => adminDeskApi.reply(t.id, { message: message || undefined, internal, status: status || undefined }), "Saved.");
-          }}
-        >
-          <TextAreaField label="Answer" value={message} onChange={setMessage} maxLength={5000} />
-          <label>
-            <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} /> Internal note (the partner does not see
-            it)
-          </label>
-          <SelectField
-            label="Set status"
-            value={status}
-            onChange={setStatus}
-            options={[
-              { value: "", label: "Keep as is" },
-              { value: "in_progress", label: "In progress" },
-              { value: "waiting", label: "Waiting on partner" },
-              { value: "resolved", label: "Resolved" },
-              { value: "closed", label: "Closed" },
-            ]}
-          />
-          <p>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || (!message.trim() && !status)}>
-              Send
-            </button>
-          </p>
-          {feedback}
-        </form>
+        <p>
+          <FormPopup
+            label="Reply"
+            title={`Reply to ${t.reference}`}
+            size="sm"
+            submitLabel="Send"
+            canSubmit={!!message.trim() || !!status}
+            onOpen={reset}
+            onSubmit={async () => {
+              await adminDeskApi.reply(t.id, { message: message || undefined, internal, status: status || undefined });
+              return "Saved.";
+            }}
+            onDone={reload}
+          >
+            <TextAreaField label="Answer" value={message} onChange={setMessage} maxLength={5000} />
+            <label className="w360-label">
+              <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} /> Internal note (the partner does not see
+              it)
+            </label>
+            <SelectField
+              label="Set status"
+              value={status}
+              onChange={setStatus}
+              options={[
+                { value: "", label: "Keep as is" },
+                { value: "in_progress", label: "In progress" },
+                { value: "waiting", label: "Waiting on partner" },
+                { value: "resolved", label: "Resolved" },
+                { value: "closed", label: "Closed" },
+              ]}
+            />
+          </FormPopup>
+        </p>
       ) : (
         <p className={cp.muted}>You can read partner tickets; answering needs the partner management permission.</p>
       )}
@@ -183,8 +185,9 @@ export function WithdrawalsScreen() {
   const [status, setStatus] = useState("requested");
   const [load, reload] = useLoad(() => adminDeskApi.withdrawals(status), [status]);
   const { act, busy, feedback } = useAction(reload);
-  const [rejecting, setRejecting] = useState<string | null>(null);
+  const [rejecting, setRejecting] = useState<{ id: string; partner: string } | null>(null);
   const [note, setNote] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
   const manage = can(permissions, "platform.staff_payout.manage");
   return (
     <div className={cp.stack}>
@@ -194,6 +197,28 @@ export function WithdrawalsScreen() {
         a second person approves it and confirms it paid on the partner&apos;s Payouts tab. TDS shown is withheld from INR withdrawals.
       </p>
       {feedback}
+      {notice && <p role="status">{notice}</p>}
+      {rejecting && (
+        <FormDialog
+          title={`Reject the withdrawal of ${rejecting.partner}`}
+          size="sm"
+          submitLabel="Reject"
+          danger
+          canSubmit={!!note.trim()}
+          onSubmit={async () => {
+            await adminDeskApi.rejectWithdrawal(rejecting.id, note);
+            return "Request rejected.";
+          }}
+          onDone={(m) => {
+            setNotice(m ?? null);
+            setNote("");
+            reload();
+          }}
+          onClose={() => setRejecting(null)}
+        >
+          <TextField label="Why" value={note} onChange={setNote} maxLength={500} />
+        </FormDialog>
+      )}
       <LoadGate load={load} what="withdrawals">
         {(d) => (
           <>
@@ -255,30 +280,25 @@ export function WithdrawalsScreen() {
                             type="button"
                             className="w360-btn w360-btn-primary"
                             disabled={busy}
-                            onClick={() => act(() => adminDeskApi.startPayout(w.id), "Payout prepared. Approve and pay it on the partner's Payouts tab.")}
+                            onClick={() => {
+                              setNotice(null);
+                              void act(() => adminDeskApi.startPayout(w.id), "Payout prepared. Approve and pay it on the partner's Payouts tab.");
+                            }}
                           >
                             Start payout
                           </button>
-                          {rejecting === w.id ? (
-                            <form
-                              onSubmit={(e) => {
-                                e.preventDefault();
-                                act(() => adminDeskApi.rejectWithdrawal(w.id, note), "Request rejected.").then(() => {
-                                  setRejecting(null);
-                                  setNote("");
-                                });
-                              }}
-                            >
-                              <TextField label="Why" value={note} onChange={setNote} maxLength={500} />
-                              <button type="submit" className="w360-btn w360-btn-secondary" disabled={busy || !note.trim()}>
-                                Reject
-                              </button>
-                            </form>
-                          ) : (
-                            <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setRejecting(w.id)}>
-                              Reject…
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            className="w360-btn w360-btn-secondary"
+                            aria-haspopup="dialog"
+                            onClick={() => {
+                              setNotice(null);
+                              setNote("");
+                              setRejecting({ id: w.id, partner: w.partner.name });
+                            }}
+                          >
+                            Reject…
+                          </button>
                         </span>
                       )}
                     </td>
@@ -326,15 +346,25 @@ function MethodRow({ m, manage, onDone }: { m: PendingMethod; manage: boolean; o
             <button type="button" className="w360-btn w360-btn-primary" disabled={busy} onClick={() => act(() => adminDeskApi.verifyMethod(m.partner.id, "verified"), "Verified.")}>
               Verify
             </button>
-            <TextField label="Reason if rejecting" value={note} onChange={setNote} maxLength={500} />
-            <button
-              type="button"
-              className="w360-btn w360-btn-secondary"
-              disabled={busy || !note.trim()}
-              onClick={() => act(() => adminDeskApi.verifyMethod(m.partner.id, "rejected", note), "Rejected.")}
+            <FormPopup
+              label="Reject…"
+              buttonClassName="w360-btn w360-btn-secondary"
+              buttonAriaLabel={`Reject the payout details of ${m.partner.name}`}
+              title={`Reject the payout details of ${m.partner.name}`}
+              size="sm"
+              submitLabel="Reject"
+              danger
+              disabled={busy}
+              canSubmit={!!note.trim()}
+              onOpen={() => setNote("")}
+              onSubmit={async () => {
+                await adminDeskApi.verifyMethod(m.partner.id, "rejected", note);
+                return "Rejected.";
+              }}
+              onDone={onDone}
             >
-              Reject
-            </button>
+              <TextField label="Reason if rejecting" value={note} onChange={setNote} maxLength={500} />
+            </FormPopup>
           </span>
         )}
         {feedback}

@@ -394,6 +394,28 @@ def validate_best_for(raw: Any) -> list[str]:
     return [key for key in BEST_FOR if key in raw]
 
 
+#: The longest refund promise a product page may make.
+MAX_REFUND_DAYS: Final = 365
+
+
+def validate_refund_days(raw: Any) -> int | None:
+    """A whole number of days from 1 to ``MAX_REFUND_DAYS``, or empty (0 or
+    nothing) for no refund promise."""
+    if raw in (None, "", 0):
+        return None
+    if (
+        isinstance(raw, bool)
+        or not isinstance(raw, int)
+        or not 1 <= raw <= MAX_REFUND_DAYS
+    ):
+        raise CatalogValidationError(
+            f"refund_days is a whole number of days from 1 to {MAX_REFUND_DAYS}, "
+            "or empty for no refund promise.",
+            field="refund_days",
+        )
+    return raw
+
+
 def validate_integrations(raw: Any) -> list[str]:
     """Up to ``MAX_INTEGRATIONS`` app names as typed ("WhatsApp"), duplicates
     (ignoring case) dropped."""

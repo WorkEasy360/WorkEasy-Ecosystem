@@ -240,6 +240,9 @@ def test_the_commission_and_pricing_models_are_the_frozen_set():
         "PlanPrice",
         "PriceTier",
         "ContractPrice",
+        # ADR-058: Super Admin coupons and their uses (a control-plane table).
+        "Coupon",
+        "CouponRedemption",
     }
 
 
@@ -468,4 +471,6 @@ def test_phase_10_leaves_the_legacy_catalog_alone():
         # 2026-11-04 marketplace: four presentation columns with database
         # defaults (product type, best for, integrations, Best Seller).
         "0010_marketplace_filters.py",
+        # ADR-058: one nullable presentation column (Product.refund_days).
+        "0011_product_refund_days.py",
     ]

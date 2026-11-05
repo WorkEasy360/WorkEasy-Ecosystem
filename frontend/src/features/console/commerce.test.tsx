@@ -264,6 +264,54 @@ describe("checkout", () => {
     assign.mockRestore();
   });
 
+  it("shows the coupon and GST the server applied, drops a refused coupon, and takes a new one (ADR-058)", async () => {
+    nav.search = new URLSearchParams(`plan=${PV}&interval=annual&coupon=gone10`);
+    const priced = {
+      ...QUOTE,
+      billing_interval: "annual",
+      recurring_amount_minor: 839900,
+      amount_due_minor: 991100,
+      subtotal_minor: 839900,
+      setup_fee_minor: 0,
+      coupon: null,
+      discount_minor: 0,
+      tax: { label: "GST", rate_bp: 1800, amount_minor: 151200, description: "GST (18%)" },
+      tax_minor: 151200,
+    };
+    const withCoupon = {
+      ...priced,
+      amount_due_minor: 892000,
+      coupon: { code: "SAVE10", label: "10% off", discount_minor: 83990 },
+      discount_minor: 83990,
+      tax: { ...priced.tax, amount_minor: 136100 },
+      tax_minor: 136100,
+    };
+    const calls = mockApi({
+      [`GET ${ORG}/billing-account`]: [{ status: 200, body: { billing_account: { id: "b1", currency: "INR", collection_mode: "automatic", billing_email: "", billing_region: "" } } }],
+      [`POST ${ORG}/orders/quote`]: [
+        { status: 409, body: { code: "order_not_allowed", detail: "The coupon GONE10 has expired.", reason: "coupon_invalid", coupon_reason: "expired" } },
+        { status: 200, body: priced },
+        { status: 200, body: withCoupon },
+      ],
+    });
+    const { container } = renderOrg(<CheckoutScreen />, OWNER);
+    expect(await screen.findByText(/The order is priced without it/)).toBeInTheDocument();
+    expect(screen.getByText("GST (18%)").nextSibling?.textContent).toMatch(/1,512/);
+    expect(screen.getByText("Total payable now").nextSibling?.textContent).toMatch(/9,911/);
+    await expectNoViolations(container);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Coupon code" }), { target: { value: "save10" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(await screen.findByText(/Coupon SAVE10 \(10% off\)/)).toBeInTheDocument();
+    expect(screen.getByText("Total payable now").nextSibling?.textContent).toMatch(/8,920/);
+    const quotes = calls.filter((c) => c.key === `POST ${ORG}/orders/quote`).map((c) => c.body);
+    expect(quotes).toEqual([
+      { plan_version_id: PV, billing_interval: "annual", coupon_code: "GONE10" },
+      { plan_version_id: PV, billing_interval: "annual" },
+      { plan_version_id: PV, billing_interval: "annual", coupon_code: "SAVE10" },
+    ]);
+  });
+
   it("asks for billing details first when the organization has none", async () => {
     nav.search = new URLSearchParams(`plan=${PV}`);
     mockApi({ [`GET ${ORG}/billing-account`]: [{ status: 200, body: { billing_account: null } }] });

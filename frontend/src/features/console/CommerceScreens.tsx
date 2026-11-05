@@ -4,12 +4,13 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getAppDirectory } from "@/lib/api/launcher";
-import { accountApi, consoleApi, type Order, type OrderRequest } from "@/lib/api/console";
+import { accountApi, consoleApi, type Order, type OrderQuote, type OrderRequest } from "@/lib/api/console";
+import { ApiError } from "@/lib/api/client";
 import { newKey } from "@/lib/api/controlPlane";
 import type { AppDirectoryEntry } from "@/lib/api/types";
 import { AppCard } from "@/features/launcher/AppCard";
 import { LoadGate, MoreButton, Status, Table, describeError, money, useAction, useLoad, usePaged, when } from "@/features/controlplane/ui";
-import { useSiteSettings } from "@/features/site/SiteShell";
+import { cleanCoupon, useSiteSettings } from "@/features/site/SiteShell";
 import cp from "@/features/controlplane/ControlPlane.module.css";
 import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
@@ -294,7 +295,28 @@ export function orderRequestFrom(params: URLSearchParams): OrderRequest | null {
   // ADR-053: a purchase that started in a partner's branded Store says which one.
   const storefront = params.get("storefront");
   if (storefront && /^[a-z0-9-]{1,48}$/.test(storefront)) request.storefront = storefront;
+  // ADR-058: the coupon typed on the Store's product page - a code only.
+  const coupon = cleanCoupon(params.get("coupon"));
+  if (coupon && !request.with_trial) request.coupon_code = coupon;
   return request;
+}
+
+/** The server refused the order's coupon (`pricing.coupons.CouponRejected`). */
+function couponRefused(err: unknown): boolean {
+  return err instanceof ApiError && typeof err.body === "object" && err.body !== null && (err.body as { reason?: unknown }).reason === "coupon_invalid";
+}
+
+/** The quote for `request`; a coupon the server refuses is dropped (with the
+ * reason shown) rather than hiding the whole order summary. */
+async function quoteWithCoupon(slug: string, request: OrderRequest): Promise<{ quote: OrderQuote; couponProblem: string | null }> {
+  try {
+    return { quote: await consoleApi.quoteOrder(slug, request), couponProblem: null };
+  } catch (err) {
+    if (!request.coupon_code || !couponRefused(err)) throw err;
+    const { coupon_code: _dropped, ...rest } = request;
+    void _dropped;
+    return { quote: await consoleApi.quoteOrder(slug, rest), couponProblem: describeError(err) };
+  }
 }
 
 /**
@@ -331,6 +353,10 @@ export function CheckoutScreen() {
 function Checkout({ slug, request }: { slug: string; request: OrderRequest }) {
   const router = useRouter();
   const [refresh, setRefresh] = useState(0);
+  // ADR-058: the coupon may be changed here; a new code is a new quote (and a
+  // new command key, since the request it would place is a different one).
+  const [coupon, setCoupon] = useState(request.coupon_code ?? "");
+  const withCoupon: OrderRequest = { ...request, coupon_code: coupon || undefined };
   const [account] = useLoad(() => consoleApi.billingAccount(slug), [slug, refresh]);
   const opening = useAction(() => setRefresh((n) => n + 1));
 
@@ -338,7 +364,13 @@ function Checkout({ slug, request }: { slug: string; request: OrderRequest }) {
     <LoadGate load={account} what="your billing account">
       {({ billing_account }) =>
         billing_account ? (
-          <Quote slug={slug} request={request} onDone={(order) => router.push(`/o/${slug}/orders?placed=${order.order_id}`)} />
+          <Quote
+            key={coupon}
+            slug={slug}
+            request={withCoupon}
+            onCoupon={setCoupon}
+            onDone={(order) => router.push(`/o/${slug}/orders?placed=${order.order_id}`)}
+          />
         ) : (
           <Panel title="Billing details">
             {opening.feedback}
@@ -355,8 +387,66 @@ function Checkout({ slug, request }: { slug: string; request: OrderRequest }) {
   );
 }
 
-function Quote({ slug, request, onDone }: { slug: string; request: OrderRequest; onDone: (order: Order) => void }) {
-  const [load] = useLoad(() => consoleApi.quoteOrder(slug, request), [slug, JSON.stringify(request)]);
+/** "Have a coupon?" - a code goes back to the checkout, which quotes it. */
+function CouponField({ applied, onApply }: { applied: string | null; onApply: (code: string) => void }) {
+  const [code, setCode] = useState("");
+  const [invalid, setInvalid] = useState(false);
+  if (applied) {
+    return (
+      <p className={local.priceNote}>
+        Coupon <strong>{applied}</strong> applied.{" "}
+        <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onApply("")}>
+          Remove coupon
+        </button>
+      </p>
+    );
+  }
+  return (
+    <form
+      className={local.actions}
+      onSubmit={(e) => {
+        e.preventDefault();
+        const clean = cleanCoupon(code);
+        setInvalid(!clean);
+        if (clean) onApply(clean);
+      }}
+    >
+      <label className="w360-visually-hidden" htmlFor="checkout-coupon">
+        Coupon code
+      </label>
+      <input
+        id="checkout-coupon"
+        className="w360-input"
+        placeholder="Coupon code"
+        value={code}
+        maxLength={32}
+        autoComplete="off"
+        onChange={(e) => setCode(e.target.value)}
+      />
+      <button type="submit" className="w360-btn w360-btn-secondary" disabled={!code.trim()}>
+        Apply
+      </button>
+      {invalid && (
+        <span role="alert" className="w360-error-text">
+          That coupon code is not valid.
+        </span>
+      )}
+    </form>
+  );
+}
+
+function Quote({
+  slug,
+  request,
+  onDone,
+  onCoupon,
+}: {
+  slug: string;
+  request: OrderRequest;
+  onDone: (order: Order) => void;
+  onCoupon?: (code: string) => void;
+}) {
+  const [load] = useLoad(() => quoteWithCoupon(slug, request), [slug, JSON.stringify(request)]);
   const key = useRef(newKey());
   const [placed, setPlaced] = useState<Order | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -364,11 +454,11 @@ function Quote({ slug, request, onDone }: { slug: string; request: OrderRequest;
   const pay = usePayInvoice(slug, () => undefined);
   const cartStore = useCart(slug);
 
-  async function place() {
+  async function place(toPlace: OrderRequest) {
     setBusy(true);
     setProblem(null);
     try {
-      const order = placed ?? (await consoleApi.placeOrder(slug, request, key.current));
+      const order = placed ?? (await consoleApi.placeOrder(slug, toPlace, key.current));
       setPlaced(order);
       // The order now holds the cart's lines; the server re-priced each one.
       if (request.cart_items) cartStore.clear();
@@ -386,7 +476,7 @@ function Quote({ slug, request, onDone }: { slug: string; request: OrderRequest;
 
   return (
     <LoadGate load={load} what="the price">
-      {(quote) => (
+      {({ quote, couponProblem }) => (
         <Panel title="Order summary">
           {quote.lines && quote.lines.length > 0 && (
             <Table
@@ -418,8 +508,28 @@ function Quote({ slug, request, onDone }: { slug: string; request: OrderRequest;
               </div>
             ) : (
               <>
+                {quote.requires_payment && (quote.coupon || quote.tax || (quote.setup_fee_minor ?? 0) > 0) && (
+                  <div>
+                    <dt>Subtotal</dt>
+                    <dd>{money(quote.subtotal_minor ?? quote.amount_due_minor, quote.currency)}</dd>
+                  </div>
+                )}
+                {quote.requires_payment && quote.coupon && (
+                  <div>
+                    <dt>
+                      Coupon {quote.coupon.code} ({quote.coupon.label})
+                    </dt>
+                    <dd>−{money(quote.coupon.discount_minor, quote.currency)}</dd>
+                  </div>
+                )}
+                {quote.requires_payment && quote.tax && (
+                  <div>
+                    <dt>{quote.tax.description}</dt>
+                    <dd>{money(quote.tax.amount_minor, quote.currency)}</dd>
+                  </div>
+                )}
                 <div>
-                  <dt>Due now</dt>
+                  <dt>{quote.tax ? "Total payable now" : "Due now"}</dt>
                   <dd>
                     {quote.requires_payment ? money(quote.amount_due_minor, quote.currency) : "Nothing"}
                     {quote.prorated && quote.requires_payment && (
@@ -431,11 +541,20 @@ function Quote({ slug, request, onDone }: { slug: string; request: OrderRequest;
                   <dt>Then</dt>
                   <dd>
                     {money(quote.recurring_amount_minor, quote.currency)} {intervalLabel(quote.billing_interval).toLowerCase()}
+                    {quote.tax && <span className={local.priceNote}> + {quote.tax.label}</span>}
                   </dd>
                 </div>
               </>
             )}
           </dl>
+          {couponProblem && (
+            <p role="alert" className="w360-error-text">
+              {couponProblem} The order is priced without it.
+            </p>
+          )}
+          {onCoupon && quote.requires_payment && !placed && (
+            <CouponField applied={quote.coupon?.code ?? null} onApply={onCoupon} />
+          )}
           {pay.feedback}
           {problem && (
             <p role="alert" className="w360-error-text">
@@ -453,7 +572,7 @@ function Quote({ slug, request, onDone }: { slug: string; request: OrderRequest;
               type="button"
               className="w360-btn w360-btn-primary"
               disabled={busy || pay.busy}
-              onClick={() => void place()}
+              onClick={() => void place(couponProblem ? { ...request, coupon_code: undefined } : request)}
             >
               {quote.requires_payment ? "Place order and pay" : quote.is_trial ? "Start free trial" : "Place order"}
             </button>

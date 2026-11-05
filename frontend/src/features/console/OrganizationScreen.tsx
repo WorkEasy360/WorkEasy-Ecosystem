@@ -2,7 +2,8 @@
 
 import { useId, useState } from "react";
 import { consoleApi } from "@/lib/api/console";
-import { Status, useAction } from "@/features/controlplane/ui";
+import { Status } from "@/features/controlplane/ui";
+import { FormPopup } from "@/features/controlplane/Modal";
 import cp from "@/features/controlplane/ControlPlane.module.css";
 import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
@@ -13,17 +14,15 @@ import { useOrgAccess } from "./OrgAccess";
  * The organization's profile. Read from the access the shell already loaded
  * (no request of its own); a rename reloads that access so the header and
  * this page show the new name together. The slug is URL identity and never
- * changes.
+ * changes. The name is changed in a popup (2026-11-05, every form in a popup).
  */
 export function OrganizationScreen() {
   const { slug, access, reload, can } = useOrgAccess();
-  const { act, busy, feedback } = useAction(reload);
   const org = access?.organization;
 
   return (
     <div className={styles.page}>
       <PageHeader title="Organization profile" lead="Your organization's name and status." />
-      {feedback}
       {org && (
         <Panel title="Details">
           <dl className={local.details}>
@@ -43,44 +42,45 @@ export function OrganizationScreen() {
               </dd>
             </div>
           </dl>
-        </Panel>
-      )}
-      {org && can("platform.organization.update") && (
-        <Panel title="Rename the organization">
-          <RenameForm
-            key={org.display_name}
-            current={org.display_name}
-            busy={busy}
-            onSave={(name) =>
-              void act(() => consoleApi.renameOrganization(slug, name), `The organization is now called ${name}.`)
-            }
-          />
+          {can("platform.organization.update") && (
+            <div className={local.actions}>
+              <RenamePopup current={org.display_name} onSave={(name) => consoleApi.renameOrganization(slug, name)} onDone={reload} />
+            </div>
+          )}
         </Panel>
       )}
     </div>
   );
 }
 
-function RenameForm({
+function RenamePopup({
   current,
-  busy,
   onSave,
+  onDone,
 }: {
   current: string;
-  busy: boolean;
-  onSave: (name: string) => void;
+  onSave: (name: string) => Promise<unknown>;
+  onDone: () => void;
 }) {
   const id = useId();
   const hintId = useId();
   const [name, setName] = useState(current);
   const trimmed = name.trim();
   return (
-    <form
-      className={cp.form}
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSave(trimmed);
+    <FormPopup
+      label="Rename"
+      buttonClassName="w360-btn w360-btn-secondary"
+      buttonAriaLabel="Rename the organization"
+      title="Rename the organization"
+      size="sm"
+      submitLabel="Save name"
+      canSubmit={!!trimmed && trimmed !== current}
+      onOpen={() => setName(current)}
+      onSubmit={async () => {
+        await onSave(trimmed);
+        return `The organization is now called ${trimmed}.`;
       }}
+      onDone={onDone}
     >
       <div className={cp.field}>
         <label className="w360-label" htmlFor={id}>
@@ -99,15 +99,6 @@ function RenameForm({
           Shown to your members across Workeasy360. The web address stays the same.
         </p>
       </div>
-      <div>
-        <button
-          type="submit"
-          className="w360-btn w360-btn-primary"
-          disabled={busy || !trimmed || trimmed === current}
-        >
-          Save name
-        </button>
-      </div>
-    </form>
+    </FormPopup>
   );
 }

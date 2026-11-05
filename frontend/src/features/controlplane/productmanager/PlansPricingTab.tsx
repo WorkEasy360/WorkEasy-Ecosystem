@@ -1,13 +1,14 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { INTERVAL_LABELS } from "@/lib/api/adminConsole";
 import { storeAdminApi, type BoardPlan, type PlanBoard, type PriceRow } from "@/lib/api/store";
 import { percentToBp, toMajor, toMinor } from "../amounts";
-import { Modal } from "../Modal";
-import { LoadGate, describeError, money, useAction, useLoad } from "../ui";
+import { dialog, FormDialog } from "../Modal";
+import { LoadGate, money, useAction, useLoad } from "../ui";
 import { TextField } from "../widgets";
+import { refusal } from "./model";
 import styles from "./ProductManager.module.css";
 
 /**
@@ -132,10 +133,9 @@ function EditPriceDialog({ plan, board, bookId, onDone, onCancel }: {
   plan: BoardPlan;
   board: PlanBoard;
   bookId: string;
-  onDone: (message: string) => void;
+  onDone: (message: string | undefined) => void;
   onCancel: () => void;
 }) {
-  const titleId = useId();
   const book = board.books.find((b) => b.id === bookId);
   const currency = book?.currency ?? "";
   const target = plan.version ?? plan.draft_version;
@@ -158,8 +158,6 @@ function EditPriceDialog({ plan, board, bookId, onDone, onCancel }: {
   );
   const [from, setFrom] = useState("");
   const [until, setUntil] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
 
   function parse(c: string): { amount: number; discount: number; setup: number | null } | string | null {
     const d = drafts[c];
@@ -173,172 +171,112 @@ function EditPriceDialog({ plan, board, bookId, onDone, onCancel }: {
     return { amount, discount, setup };
   }
 
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    if (!target) return;
+  async function save(): Promise<string> {
+    if (!target) throw refusal("This plan has no version to price yet.");
     const work: { interval: string; amount: number; discount: number; setup: number | null }[] = [];
     for (const c of cycles) {
       const parsed = parse(c);
-      if (typeof parsed === "string") return setError(parsed);
+      if (typeof parsed === "string") throw refusal(parsed);
       if (parsed === null) continue;
       const row = current(c);
       const same = row && row.amount_minor === parsed.amount && row.discount_bp === parsed.discount && (row.setup_fee_minor ?? null) === parsed.setup;
       if (!same || from || until) work.push({ interval: c, ...parsed });
     }
-    if (work.length === 0) return setError("Nothing changed.");
-    setSaving(true);
-    setError(null);
-    try {
-      for (const w of work) {
-        await storeAdminApi.publishPrice({
-          price_book_id: bookId,
-          plan_version_id: target.id,
-          interval: w.interval,
-          amount_minor: w.amount,
-          discount_bp: w.discount,
-          setup_fee_minor: w.setup,
-          valid_from: dayStart(from),
-          valid_to: dayStart(until),
-        });
-      }
-      onDone(from ? `New price for ${plan.name} scheduled from ${from}.` : `Price of ${plan.name} updated. Existing subscriptions keep the price they bought at.`);
-    } catch (err) {
-      setError(describeError(err));
-    } finally {
-      setSaving(false);
+    if (work.length === 0) throw refusal("Nothing changed.");
+    for (const w of work) {
+      await storeAdminApi.publishPrice({
+        price_book_id: bookId,
+        plan_version_id: target.id,
+        interval: w.interval,
+        amount_minor: w.amount,
+        discount_bp: w.discount,
+        setup_fee_minor: w.setup,
+        valid_from: dayStart(from),
+        valid_to: dayStart(until),
+      });
     }
+    return from ? `New price for ${plan.name} scheduled from ${from}.` : `Price of ${plan.name} updated. Existing subscriptions keep the price they bought at.`;
   }
 
   return (
-    <Modal labelledBy={titleId} onClose={onCancel}>
-      <form onSubmit={(e) => void save(e)} noValidate>
-        <h2 id={titleId}>Edit price: {plan.name}</h2>
-        <p className={styles.muted}>
-          {book?.name ?? "Price book"} ({currency}). A change applies to new purchases from its start date; existing orders and subscriptions keep their price.
-        </p>
-        {error && (
-          <p className="w360-error-text" role="alert">
-            {error}
-          </p>
-        )}
-        {cycles.map((c) => (
-          <fieldset key={c} className={styles.card}>
-            <legend className="w360-label">{INTERVAL_LABELS[c] ?? c}</legend>
-            <div className={styles.formGrid}>
-              {(
-                [
-                  ["amount", `Price (${currency})`, "Empty = no price for this cycle"],
-                  ["discount", "Discount %", "A promotional discount off the price"],
-                  ["setup", `Set-up fee (${currency})`, "One-time, with the first purchase"],
-                ] as const
-              ).map(([key, label, hint]) => (
-                <TextField
-                  key={key}
-                  label={label}
-                  hint={hint}
-                  inputMode="decimal"
-                  value={drafts[c][key]}
-                  onChange={(v) => setDrafts((cur) => ({ ...cur, [c]: { ...cur[c], [key]: v } }))}
-                />
-              ))}
-            </div>
-          </fieldset>
-        ))}
-        <div className={styles.formGrid}>
-          <TextField label="Effective from (UTC)" type="date" value={from} onChange={setFrom} hint="Empty = now. A price change cannot start in the past." />
-          <TextField label="Effective until (UTC, optional)" type="date" value={until} onChange={setUntil} hint="E.g. the end of a promotion." />
-        </div>
-        <div className={styles.toolbar}>
-          <button type="submit" className="w360-btn w360-btn-primary" disabled={saving || !target}>
-            Save price
-          </button>
-          <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
-      </form>
-    </Modal>
+    <FormDialog
+      title={`Edit price: ${plan.name}`}
+      intro={`${book?.name ?? "Price book"} (${currency}). A change applies to new purchases from its start date; existing orders and subscriptions keep their price.`}
+      size="lg"
+      submitLabel="Save price"
+      canSubmit={!!target}
+      onSubmit={save}
+      onDone={onDone}
+      onClose={onCancel}
+    >
+      {cycles.map((c) => (
+        <fieldset key={c} className={dialog.span}>
+          <legend className="w360-label">{INTERVAL_LABELS[c] ?? c}</legend>
+          <div className={styles.formGrid3}>
+            {(
+              [
+                ["amount", `Price (${currency})`, "Empty = no price for this cycle"],
+                ["discount", "Discount %", "A promotional discount off the price"],
+                ["setup", `Set-up fee (${currency})`, "One-time, with the first purchase"],
+              ] as const
+            ).map(([key, label, hint]) => (
+              <TextField
+                key={key}
+                label={label}
+                hint={hint}
+                inputMode="decimal"
+                value={drafts[c][key]}
+                onChange={(v) => setDrafts((cur) => ({ ...cur, [c]: { ...cur[c], [key]: v } }))}
+              />
+            ))}
+          </div>
+        </fieldset>
+      ))}
+      <TextField label="Effective from (UTC)" type="date" value={from} onChange={setFrom} hint="Empty = now. A price change cannot start in the past." />
+      <TextField label="Effective until (UTC, optional)" type="date" value={until} onChange={setUntil} hint="E.g. the end of a promotion." />
+    </FormDialog>
   );
 }
 
-function DuplicateDialog({ plan, onDone, onCancel }: { plan: BoardPlan; onDone: (message: string) => void; onCancel: () => void }) {
-  const titleId = useId();
+function DuplicateDialog({ plan, onDone, onCancel }: { plan: BoardPlan; onDone: (message: string | undefined) => void; onCancel: () => void }) {
   const [code, setCode] = useState(`${plan.code}-copy`);
   const [name, setName] = useState(`${plan.name} (copy)`);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    setError(null);
-    try {
-      const made = await storeAdminApi.duplicatePlan(plan.id, code.trim(), name.trim());
-      onDone(`${name.trim()} created as a draft with ${made.prices_copied} price${made.prices_copied === 1 ? "" : "s"}. Publish its version and enable it to sell.`);
-    } catch (err) {
-      setError(describeError(err));
-    } finally {
-      setSaving(false);
-    }
-  }
   return (
-    <Modal labelledBy={titleId} onClose={onCancel}>
-      <form onSubmit={(e) => void save(e)} noValidate>
-        <h2 id={titleId}>Duplicate {plan.name}</h2>
-        <p className={styles.muted}>Copies the plan, its seats, trial, features and current prices as a new draft.</p>
-        {error && (
-          <p className="w360-error-text" role="alert">
-            {error}
-          </p>
-        )}
-        <TextField label="Plan name" value={name} maxLength={128} onChange={setName} />
-        <TextField label="Plan code" value={code} maxLength={64} onChange={(v) => setCode(v.toLowerCase())} hint="Permanent; lowercase letters, digits, hyphens or underscores." />
-        <div className={styles.toolbar}>
-          <button type="submit" className="w360-btn w360-btn-primary" disabled={saving}>
-            Duplicate
-          </button>
-          <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
-      </form>
-    </Modal>
+    <FormDialog
+      title={`Duplicate ${plan.name}`}
+      intro="Copies the plan, its seats, trial, features and current prices as a new draft."
+      size="sm"
+      submitLabel="Duplicate"
+      onSubmit={async () => {
+        const made = await storeAdminApi.duplicatePlan(plan.id, code.trim(), name.trim());
+        return `${name.trim()} created as a draft with ${made.prices_copied} price${made.prices_copied === 1 ? "" : "s"}. Publish its version and enable it to sell.`;
+      }}
+      onDone={onDone}
+      onClose={onCancel}
+    >
+      <TextField label="Plan name" value={name} maxLength={128} onChange={setName} />
+      <TextField label="Plan code" value={code} maxLength={64} onChange={(v) => setCode(v.toLowerCase())} hint="Permanent; lowercase letters, digits, hyphens or underscores." />
+    </FormDialog>
   );
 }
 
-function EndPriceDialog({ row, onDone, onCancel }: { row: PriceRow; onDone: (message: string) => void; onCancel: () => void }) {
-  const titleId = useId();
+function EndPriceDialog({ row, onDone, onCancel }: { row: PriceRow; onDone: (message: string | undefined) => void; onCancel: () => void }) {
   const [until, setUntil] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    try {
-      await storeAdminApi.closePrice(row.price_id, dayStart(until));
-      onDone(until ? `The price ends on ${until}.` : "The price has ended.");
-    } catch (err) {
-      setError(describeError(err));
-    }
-  }
   return (
-    <Modal labelledBy={titleId} onClose={onCancel}>
-      <form onSubmit={(e) => void save(e)} noValidate>
-        <h2 id={titleId}>End this price</h2>
-        <p className={styles.muted}>Without a replacement, the plan cannot be bought in this cycle after the end date. Existing subscriptions are not affected.</p>
-        {error && (
-          <p className="w360-error-text" role="alert">
-            {error}
-          </p>
-        )}
-        <TextField label="End on (UTC)" type="date" value={until} onChange={setUntil} hint="Empty = now." />
-        <div className={styles.toolbar}>
-          <button type="submit" className="w360-btn w360-btn-primary">
-            End price
-          </button>
-          <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
-      </form>
-    </Modal>
+    <FormDialog
+      title="End this price"
+      intro="Without a replacement, the plan cannot be bought in this cycle after the end date. Existing subscriptions are not affected."
+      size="sm"
+      submitLabel="End price"
+      onSubmit={async () => {
+        await storeAdminApi.closePrice(row.price_id, dayStart(until));
+        return until ? `The price ends on ${until}.` : "The price has ended.";
+      }}
+      onDone={onDone}
+      onClose={onCancel}
+    >
+      <TextField label="End on (UTC)" type="date" value={until} onChange={setUntil} hint="Empty = now." />
+    </FormDialog>
   );
 }
 
@@ -448,11 +386,10 @@ export function PlansPricingTab({ productId }: { productId: string }) {
   const [load, reload] = useLoad(() => storeAdminApi.planBoard(productId), [productId]);
   const { act, busy, feedback } = useAction(reload);
   const [chosenBook, setChosenBook] = useState<string>("");
-  const [dialog, setDialog] = useState<Dialog>(null);
+  const [opened, setOpened] = useState<Dialog>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const done = (message: string) => {
-    setDialog(null);
-    setNotice(message);
+  const done = (message: string | undefined) => {
+    setNotice(message ?? null);
     reload();
   };
 
@@ -498,11 +435,11 @@ export function PlansPricingTab({ productId }: { productId: string }) {
             </section>
             {board.plans.length === 0 && <p className={styles.muted}>No plans yet. Add a plan to put {board.product.name} on sale.</p>}
             {board.plans.map((plan) => (
-              <PlanCard key={plan.id} plan={plan} board={board} bookId={bookId} act={act} busy={busy} open={setDialog} />
+              <PlanCard key={plan.id} plan={plan} board={board} bookId={bookId} act={act} busy={busy} open={setOpened} />
             ))}
-            {dialog?.kind === "price" && <EditPriceDialog plan={dialog.plan} board={board} bookId={bookId} onDone={done} onCancel={() => setDialog(null)} />}
-            {dialog?.kind === "duplicate" && <DuplicateDialog plan={dialog.plan} onDone={done} onCancel={() => setDialog(null)} />}
-            {dialog?.kind === "end" && <EndPriceDialog row={dialog.row} onDone={done} onCancel={() => setDialog(null)} />}
+            {opened?.kind === "price" && <EditPriceDialog plan={opened.plan} board={board} bookId={bookId} onDone={done} onCancel={() => setOpened(null)} />}
+            {opened?.kind === "duplicate" && <DuplicateDialog plan={opened.plan} onDone={done} onCancel={() => setOpened(null)} />}
+            {opened?.kind === "end" && <EndPriceDialog row={opened.row} onDone={done} onCancel={() => setOpened(null)} />}
           </div>
         );
       }}

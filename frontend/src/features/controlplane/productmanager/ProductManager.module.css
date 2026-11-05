@@ -476,8 +476,34 @@
   grid-column: 1 / -1;
 }
 
+/* Three aligned fields in a row (a price cycle's price, discount and set-up
+   fee inside the Edit price popup). */
+.formGrid3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--w360-space-3) var(--w360-space-4);
+  align-items: start;
+}
+
+/* Radio choices one under the other, inside a popup's fieldset. */
+.radioStack {
+  display: grid;
+  gap: var(--w360-space-2);
+  align-content: start;
+}
+
+/* A section's current values, read-only, with its Edit popup beside them. */
+.sectionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-2);
+}
+
 @media (max-width: 720px) {
-  .formGrid {
+  .formGrid,
+  .formGrid3 {
     grid-template-columns: minmax(0, 1fr);
   }
 }

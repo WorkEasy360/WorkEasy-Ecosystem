@@ -141,6 +141,10 @@ class Product(models.Model):
     product_type = models.CharField(max_length=16, default="saas", db_default="saas")
     best_for = models.JSONField(default=list, blank=True, db_default=[])
     integrations = models.JSONField(default=list, blank=True, db_default=[])
+    #: ADR-058: the refund promise the product page shows ("30-Day Refund
+    #: Policy"), set by the Super Admin. Empty = no refund promise is shown.
+    #: Presentation only: refunds themselves are staff's (``payments.refunds``).
+    refund_days = models.PositiveSmallIntegerField(null=True, blank=True)
     #: The plan a store's comparison highlights (ADR-056) - at most one per
     #: product by construction. A reference, not a column on the plan tables,
     #: which carry no booleans (features live in ``PlanFeature``).

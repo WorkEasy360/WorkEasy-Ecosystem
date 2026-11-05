@@ -181,6 +181,13 @@ TENANT_SCOPE_EXEMPT = frozenset(
         # identifiers/codes/amounts only, read only behind
         # platform.staff_payment.view.
         "payments.OrderSummary",
+        # ADR-058. A coupon's uses, the same class as OrderSummary: a code's
+        # use limit counts every customer's orders at once, which no single
+        # organization's scope can see. Written by payments.orders in the
+        # order's own transaction (the coupon row locked), identifiers and an
+        # amount only, read by pricing.coupons for its limits and behind
+        # platform.staff_catalog.view for the Super Admin's coupon list.
+        "pricing.CouponRedemption",
     }
 )
 
