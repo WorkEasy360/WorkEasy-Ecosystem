@@ -12,6 +12,8 @@
  * them just leads to a polite refusal.
  */
 
+import { PORTAL_ROOT, safeNext } from "@/lib/portals";
+
 export type SignInMode = "admin" | "partner" | "user";
 
 export function parseMode(raw: string | null): SignInMode | null {
@@ -42,15 +44,20 @@ export function safeAdminNext(raw: string | null): string | null {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
-/** Where a person goes after signing in with this mode. */
+/** Where a person goes after signing in with this mode. `next` (the page a
+ * signed-out visit asked for) is honoured only when it is a plain same-site
+ * path of that same portal (`safeNext`). */
 export function destinationAfterSignIn(mode: SignInMode | null, next: string | null): string {
   if (mode === "admin") return safeAdminNext(next) ?? "/admin";
   // The partner portal lists this person's partner accounts (and says so
   // plainly when there are none); it checks membership on every request.
-  if (mode === "partner") return "/partner";
+  if (mode === "partner") return safeNext("partner", next);
   // The central dashboard picks the organization (or the chooser, or
   // onboarding). `mode=user` tells it not to send staff to the console.
-  if (mode === "user") return "/dashboard?mode=user";
+  if (mode === "user") {
+    const page = safeNext("app", next);
+    return page === PORTAL_ROOT.app ? "/dashboard?mode=user" : page;
+  }
   return "/dashboard";
 }
 

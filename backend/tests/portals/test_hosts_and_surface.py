@@ -23,7 +23,6 @@ pytestmark = pytest.mark.django_db
         ("/api/v1/admin/session", "admin"),
         ("/api/v1/partner/portal", "partner"),
         ("/api/v1/orgs/anything/apps", "app"),
-        ("/api/v1/auth/login", "auth"),
         ("/api/v1/auth/handoff", "auth"),
         ("/api/v1/integrations/oauth/authorize", "auth"),
         ("/api/v1/integrations/oauth/resume", "auth"),
@@ -35,7 +34,7 @@ def test_a_portal_owned_prefix_is_not_served_on_any_other_host(portals_on, path,
 
     def call(portal):
         client = HostClient(portal)
-        writes = ("/api/v1/auth/login", "/api/v1/auth/handoff")
+        writes = ("/api/v1/auth/handoff",)
         return client.post(path, {}) if path in writes else client.get(path)
 
     def refused_by_surface(response):
@@ -57,6 +56,46 @@ def test_the_redeem_endpoint_is_served_on_the_three_destinations_only(portals_on
     ):
         response = HostClient(portal).post("/api/v1/auth/handoff/redeem", {"code": "x"})
         assert response.status_code == expected, portal
+
+
+def test_each_web_portal_has_its_own_sign_in_and_the_api_host_none(portals_on, customer):
+    """ADR-059: the Admin, Partner and customer portals each sign in on
+    their own host - the session cookie is that host's, with no central
+    sign-in and no hand-off. The API host serves no sign-in."""
+    from tests.portals.conftest import PASSWORD
+
+    for portal in ("admin", "partner", "app", "auth"):
+        client = HostClient(portal)
+        client.get("/api/v1/auth/session")
+        response = client.post(
+            "/api/v1/auth/login",
+            {"email": customer["user"].email, "password": PASSWORD},
+        )
+        assert response.status_code == 200, (portal, response.content)
+        session = client.get("/api/v1/auth/session").json()
+        assert session["authenticated"] is True, portal
+    api = HostClient("api")
+    assert api.post("/api/v1/auth/login", {}).status_code == 404
+
+
+def test_a_sign_in_on_one_portal_is_not_a_session_on_another(portals_on, customer):
+    """Host-only cookies: signing in on the customer portal opens nothing on
+    the admin host, and the admin API stays refused to that customer."""
+    from tests.portals.conftest import PASSWORD
+
+    app = HostClient("app")
+    app.get("/api/v1/auth/session")
+    assert (
+        app.post(
+            "/api/v1/auth/login",
+            {"email": customer["user"].email, "password": PASSWORD},
+        ).status_code
+        == 200
+    )
+    admin = HostClient("admin")
+    assert admin.get("/api/v1/auth/session").json()["authenticated"] is False
+    admin.client.cookies = app.client.cookies
+    assert admin.get("/api/v1/admin/customers").status_code in (401, 403)
 
 
 def test_shared_endpoints_answer_on_every_portal(portals_on):
@@ -112,7 +151,9 @@ def test_a_spoofed_host_is_refused_before_any_view(portals_on):
 
 def test_no_view_derives_tenant_or_authority_from_the_host():
     """The only code that reads the Host header is the surface narrowing and
-    the hand-off redemption's binding check - both of which can only refuse."""
+    the hand-off redemption's binding check - both of which can only refuse -
+    and (ADR-059) the choice of which portal's reset page an emailed link
+    opens, a link target that grants nothing."""
     import re
     from pathlib import Path
 
@@ -120,6 +161,7 @@ def test_no_view_derives_tenant_or_authority_from_the_host():
     allowed = {
         root / "interfaces" / "api" / "portal_surface.py",
         root / "interfaces" / "api" / "v1" / "auth_views.py",
+        root / "platform" / "identity" / "portals.py",
     }
     pattern = re.compile(r"get_host\(|HTTP_HOST|SERVER_NAME|HTTP_X_FORWARDED_HOST")
     offenders = [
@@ -173,18 +215,59 @@ def test_trusted_origins_carry_no_wildcard(portals_on):
 # --- links name their portal ---------------------------------------------------------------
 
 
-def test_account_links_go_to_the_sign_in_host_and_billing_to_the_customer_portal(
-    portals_on,
-):
+def test_account_links_open_the_portal_they_belong_to(portals_on):
+    """ADR-059: account links open a portal's own pages - the customer
+    portal's by default, the Partner or Admin portal's when named. Only the
+    product sign-in stays on the central sign-in host."""
     from workeasy360.platform.administration import invitations, self_service
     from workeasy360.platform.identity import portals
 
     assert portals.auth_url() == ORIGINS["auth"]
     assert portals.app_url() == ORIGINS["app"]
-    assert invitations._url("t").startswith(ORIGINS["auth"] + "/invitations/accept#")
+    assert portals.account_url() == ORIGINS["app"]
+    assert portals.account_url("partner") == ORIGINS["partner"]
+    assert portals.account_url("admin") == ORIGINS["admin"]
+    assert portals.account_url("auth") == ORIGINS["app"]
+    assert portals.account_url("api") == ORIGINS["app"]
+    assert invitations._url("t").startswith(ORIGINS["app"] + "/invitations/accept#")
     assert self_service._url("/reset-password", "t").startswith(
-        ORIGINS["auth"] + "/reset-password#"
+        ORIGINS["app"] + "/reset-password#"
     )
+    assert self_service._url("/reset-password", "t", portal="partner").startswith(
+        ORIGINS["partner"] + "/reset-password#"
+    )
+
+
+def test_a_reset_link_opens_the_portal_it_was_asked_on(
+    portals_on, customer, django_capture_on_commit_callbacks
+):
+    """A partner who forgets their password on the Partner portal resets it
+    there; the central host and the API host get the customer portal's."""
+    from django.core import mail
+    from django.test import RequestFactory
+
+    from tests.portals.conftest import HOST
+    from workeasy360.platform.identity import portals
+
+    for portal, expected in (
+        ("partner", "partner"),
+        ("admin", "admin"),
+        ("app", "app"),
+        ("auth", "app"),
+        ("api", "app"),
+    ):
+        request = RequestFactory().get("/", HTTP_HOST=HOST[portal], secure=True)
+        assert portals.request_portal(request) == expected, portal
+
+    client = HostClient("partner")
+    client.get("/api/v1/auth/session")
+    with django_capture_on_commit_callbacks(execute=True):
+        response = client.post(
+            "/api/v1/public/password/forgot", {"email": customer["user"].email}
+        )
+    assert response.status_code == 202, response.content
+    assert ORIGINS["partner"] + "/reset-password#token=" in mail.outbox[-1].body
+
 
 
 def test_single_host_links_stay_on_the_one_frontend(settings):
@@ -192,6 +275,7 @@ def test_single_host_links_stay_on_the_one_frontend(settings):
 
     settings.W360_FRONTEND_URL = "https://one.example.com"
     assert portals.auth_url() == portals.app_url() == "https://one.example.com"
+    assert portals.account_url("partner") == "https://one.example.com"
 
 
 def test_an_oidc_login_is_parked_on_the_sign_in_host(portals_on):

@@ -145,7 +145,15 @@ export function LoginForm({
         {submitting ? "Signing in…" : "Sign in"}
       </button>
       <p className="w360-hint">
-        <Link href="/forgot-password">Forgotten your password?</Link> · <Link href="/signup">Create an account</Link>
+        <Link href="/forgot-password">Forgotten your password?</Link>
+        {/* ADR-059: only a customer creates their own account. Partner accounts
+            are set up by Workeasy360 and administrators are staff. */}
+        {(mode === "user" || mode === null) && (
+          <>
+            {" · "}
+            <Link href="/signup">Create an account</Link>
+          </>
+        )}
       </p>
     </form>
   );

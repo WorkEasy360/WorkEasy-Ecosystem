@@ -37,19 +37,27 @@ const NEXT_PREFIXES: Record<Destination, readonly string[]> = {
 };
 
 /** Which portal serves each page. A page not listed here (`/auth/continue`,
- * a 404) is served on whichever host it was asked for. */
+ * a 404) is served on whichever host it was asked for.
+ *
+ * ADR-059: the sign-in pages are each portal's own. The Admin, Partner and
+ * customer portals each serve `/login`, `/forgot-password` and
+ * `/reset-password` on their own host (see {@link ALSO_ON}), so signing in
+ * there sets that host's session directly - no trip to the central sign-in
+ * and no hand-off. Sign-up, email verification and invitations are the
+ * customer portal's. The central sign-in host keeps only the product
+ * sign-in (OIDC) pages. */
 const PAGE_OWNERS: readonly (readonly [string, Portal])[] = [
   ["/admin", "admin"],
   ["/partner", "partner"],
-  ["/login", "auth"],
-  ["/signup", "auth"],
+  ["/login", "app"],
+  ["/signup", "app"],
   // ADR-053: a referral link records the visit where sign-up will read it.
-  ["/r", "auth"],
-  ["/verify-email", "auth"],
-  ["/forgot-password", "auth"],
-  ["/reset-password", "auth"],
-  ["/invitations", "auth"],
-  ["/owner-invitations", "auth"],
+  ["/r", "app"],
+  ["/verify-email", "app"],
+  ["/forgot-password", "app"],
+  ["/reset-password", "app"],
+  ["/invitations", "app"],
+  ["/owner-invitations", "app"],
   // ADR-044: the access chooser and the RP-initiated sign-out confirmation
   // act on the central sign-in's own session.
   ["/product-access", "auth"],
@@ -69,8 +77,15 @@ const PAGE_OWNERS: readonly (readonly [string, Portal])[] = [
 ];
 
 /** Pages more than one portal serves: the organization chooser is also how
- * the central sign-in asks which organization a product sign-in is for. */
-const ALSO_ON: Record<string, readonly Portal[]> = { "/organizations/select": ["auth"] };
+ * the central sign-in asks which organization a product sign-in is for; each
+ * portal has its own sign-in and password reset (ADR-059), and the central
+ * sign-in host keeps `/login` for a product sign-in (`?resume=`). */
+const ALSO_ON: Record<string, readonly Portal[]> = {
+  "/organizations/select": ["auth"],
+  "/login": ["admin", "partner", "auth"],
+  "/forgot-password": ["admin", "partner"],
+  "/reset-password": ["admin", "partner"],
+};
 
 const matches = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
 
@@ -148,13 +163,24 @@ export function safeNext(portal: Destination, raw: string | null | undefined): s
 }
 
 /** The central sign-in page for someone headed to `portal`. `state` is the
- * portal's binding value (its host-only cookie), never a credential. */
+ * portal's binding value (its host-only cookie), never a credential.
+ *
+ * ADR-059: no longer where a portal sends a signed-out visitor (that is the
+ * portal's own {@link portalSignInPath}); kept for the hand-off a sign-in
+ * already in flight may still complete. */
 export function signInUrl(origins: PortalOrigins, portal: Destination, next: string | null, state: string): string {
   const params = new URLSearchParams({ mode: PORTAL_TO_MODE[portal] });
   const page = safeNext(portal, next);
   if (page !== PORTAL_ROOT[portal]) params.set("next", page);
   params.set("state", state);
   return `${origins.auth}/login?${params.toString()}`;
+}
+
+/** A portal's own sign-in page (ADR-059), returning to `next` afterwards
+ * when it is a page that portal serves. A path on that portal's host. */
+export function portalSignInPath(portal: Destination, next: string | null): string {
+  const page = safeNext(portal, next);
+  return page === PORTAL_ROOT[portal] ? "/login" : `/login?next=${encodeURIComponent(page)}`;
 }
 
 /** An absolute link to a page of another portal (or the path itself in

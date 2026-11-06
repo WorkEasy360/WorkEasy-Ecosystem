@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminSignInUrl } from "@/features/auth/signInMode";
+import { adminSignInUrl, parseMode } from "@/features/auth/signInMode";
 import {
-  isState,
+  MODE_TO_PORTAL,
   pageOwner,
   portalForHost,
+  portalSignInPath,
   readPortalOrigins,
   servesPage,
-  signInUrl,
-  stateCookieName,
   type Destination,
+  type Portal,
   type PortalOrigins,
 } from "@/lib/portals";
 
@@ -74,23 +74,25 @@ export function isPublicPath(pathname: string): boolean {
 }
 
 /** Where a portal host lands a sign-in hand-off (ADR-043): reached before
- * the portal has a session, by definition. */
+ * the portal has a session, by definition. Kept for a hand-off already in
+ * flight; no portal starts one any more (ADR-059). */
 const HANDOFF_LANDING = "/auth/continue";
 
-export type PortalRouting = { kind: "serve" } | { kind: "redirect"; location: string; state?: string };
+export type PortalRouting = { kind: "serve" } | { kind: "redirect"; location: string };
 
 /**
  * The multi-portal routing decision for one page request (ADR-043), or `null`
  * when the host is not one of the platform's portals (a partner's white-label
  * domain, handled by {@link offCanonicalRedirect}). Display only: it picks
- * which host shows a page and sends a signed-out visitor to the central
- * sign-in; every permission is still decided by the server.
+ * which host shows a page and sends a signed-out visitor to a sign-in page;
+ * every permission is still decided by the server.
  *
- * `state` on a redirect is the portal's binding value for the hand-off: the
- * caller sets it as this host's own cookie. An existing valid one is reused,
- * so a second sign-in started before the first finishes does not void it. The
- * cookie is spent by the first redemption: a tab redeeming after that asks
- * for one more click ("Sign in again"), never a second password.
+ * ADR-059: each portal signs in on its **own** host. A signed-out visit to the
+ * Admin, Partner or customer portal goes to that portal's `/login`, the form
+ * there signs in against the same one endpoint, and the session cookie is set
+ * on that host directly - no central sign-in, no hand-off code, no binding
+ * cookie. `?mode=` on a sign-in address only says which portal's sign-in page
+ * to show. The central sign-in host keeps the product sign-in (`?resume=`).
  */
 export function routePortalRequest(args: {
   origins: PortalOrigins;
@@ -98,27 +100,35 @@ export function routePortalRequest(args: {
   pathname: string;
   search: string;
   hasSession: boolean;
-  existingState?: string | null;
-  newState: () => string;
 }): PortalRouting | null {
   const { origins, pathname, search, hasSession } = args;
   const portal = portalForHost(args.host, origins);
   if (portal === null) return null;
   const params = new URLSearchParams(search);
-  const startSignIn = (destination: Destination, next: string | null): PortalRouting => {
-    const state = isState(args.existingState) ? args.existingState : args.newState();
-    return { kind: "redirect", location: signInUrl(origins, destination, next, state), state };
-  };
+  const signIn = (destination: Destination, next: string | null): PortalRouting => ({
+    kind: "redirect",
+    location: `${origins[destination]}${portalSignInPath(destination, next)}`,
+  });
 
-  if (portal !== "auth" && pathname === "/login") {
-    const resume = params.get("resume");
-    if (resume) return { kind: "redirect", location: `${origins.auth}/login?resume=${encodeURIComponent(resume)}` };
-    return startSignIn(portal, params.get("next"));
+  if (pathname === "/login") {
+    // A product's sign-in (OIDC, ADR-044) completes on the central sign-in host.
+    if (params.get("resume")) {
+      return portal === "auth" ? { kind: "serve" } : { kind: "redirect", location: `${origins.auth}/login${search}` };
+    }
+    const mode = parseMode(params.get("mode"));
+    const target: Portal = mode ? MODE_TO_PORTAL[mode] : portal === "auth" ? "app" : portal;
+    if (target === portal) return { kind: "serve" };
+    // Another portal's sign-in page: the same address on its own host, less
+    // what no longer applies there (the mode it names, an old binding value).
+    params.delete("mode");
+    params.delete("state");
+    const rest = params.toString();
+    return { kind: "redirect", location: `${origins[target]}/login${rest ? `?${rest}` : ""}` };
   }
   if (pathname === "/") {
     if (portal === "admin") return { kind: "redirect", location: `${origins.admin}/admin` };
     if (portal === "partner") return { kind: "redirect", location: `${origins.partner}/partner` };
-    if (portal === "auth") return { kind: "redirect", location: `${origins.auth}/login` };
+    if (portal === "auth") return { kind: "redirect", location: `${origins.app}/login` };
     return { kind: "serve" }; // the public site's home, on the customer portal
   }
   if (!servesPage(portal, pathname)) {
@@ -129,17 +139,13 @@ export function routePortalRequest(args: {
   if (!hasSession && !isPublic) {
     if (portal === "auth") {
       const resume = params.get("resume");
-      return { kind: "redirect", location: `${origins.auth}/login${resume ? `?resume=${encodeURIComponent(resume)}` : ""}` };
+      return resume
+        ? { kind: "redirect", location: `${origins.auth}/login?resume=${encodeURIComponent(resume)}` }
+        : { kind: "redirect", location: `${origins.app}/login` };
     }
-    return startSignIn(portal, `${pathname}${search}`);
+    return signIn(portal, `${pathname}${search}`);
   }
   return { kind: "serve" };
-}
-
-/** 32 random bytes, base64url: a hand-off binding value. */
-function randomState(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return Buffer.from(bytes).toString("base64url");
 }
 
 /**
@@ -253,28 +259,15 @@ export function proxy(request: NextRequest): NextResponse {
   const hasSessionCookie = request.cookies.has(SESSION_COOKIE) || request.cookies.has(HOST_SESSION_COOKIE);
 
   if (origins) {
-    const cookieName = stateCookieName(origins);
     const routed = routePortalRequest({
       origins,
       host,
       pathname,
       search: request.nextUrl.search,
       hasSession: hasSessionCookie,
-      existingState: request.cookies.get(cookieName)?.value,
-      newState: randomState,
     });
     if (routed?.kind === "redirect") {
-      const response = NextResponse.redirect(new URL(routed.location, request.url), 302);
-      if (routed.state) {
-        response.cookies.set(cookieName, routed.state, {
-          httpOnly: true,
-          sameSite: "lax",
-          secure: cookieName.startsWith("__Host-"),
-          path: "/",
-          maxAge: 600,
-        });
-      }
-      return response;
+      return NextResponse.redirect(new URL(routed.location, request.url), 302);
     }
     if (routed?.kind === "serve") {
       return withSecurityHeaders(request, nonce, isDev, true);

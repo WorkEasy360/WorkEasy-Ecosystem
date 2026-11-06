@@ -84,8 +84,8 @@ def _describe(ttl: timedelta) -> str:
     return f"{minutes} minutes"
 
 
-def _url(path: str, token: str | None = None) -> str:
-    base = f"{portal_links.auth_url()}{path}"
+def _url(path: str, token: str | None = None, *, portal: str | None = None) -> str:
+    base = f"{portal_links.account_url(portal)}{path}"
     return f"{base}#token={token}" if token else base
 
 
@@ -341,9 +341,13 @@ def _create_requested_organization(
 # --- password reset -------------------------------------------------------------
 
 
-def request_password_reset(email: Any) -> None:
+def request_password_reset(email: Any, *, portal: str | None = None) -> None:
     """Email a reset link if the address has an account that may use one.
-    Silent otherwise - the HTTP answer is always the same."""
+    Silent otherwise - the HTTP answer is always the same.
+
+    ``portal`` is the portal whose own reset page the link opens (ADR-059):
+    the one the request was made on, so a partner resets on the Partner
+    portal and signs in there. A link target only, never a grant."""
     from workeasy360.contracts.values.control_plane import PLATFORM_SYSTEM_USER_EMAIL
     from workeasy360.platform.identity import lifecycle, tokens
     from workeasy360.platform.identity.email import normalize_email
@@ -367,7 +371,7 @@ def request_password_reset(email: Any) -> None:
             template_key=RESET_TEMPLATE,
             recipient_email=user.email_original or user.email,
             context={"expires_in": _describe(_reset_ttl())},
-            sealed_context={"reset_url": _url("/reset-password", token)},
+            sealed_context={"reset_url": _url("/reset-password", token, portal=portal)},
             idempotency_key=f"account:{user.pk}:reset:{_hash_prefix(token)}",
         )
     metrics.increment("identity_password_reset_requests_total", outcome="sent")

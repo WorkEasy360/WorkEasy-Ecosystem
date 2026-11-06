@@ -41,8 +41,9 @@ SURFACE_RULES: Final[tuple[tuple[str, bool, frozenset[str]], ...]] = (
     ("/api/v1/admin/", False, frozenset({portals.ADMIN})),
     ("/api/v1/partner/", False, frozenset({portals.PARTNER})),
     ("/api/v1/orgs/", False, frozenset({portals.APP})),
-    # The one sign-in form, on the central sign-in host only.
-    ("/api/v1/auth/login", True, frozenset({portals.AUTH})),
+    # ADR-059: every web portal has its own sign-in page, so the one sign-in
+    # endpoint answers on each of them (the session cookie is that host's).
+    ("/api/v1/auth/login", True, frozenset(portals.WEB_PORTALS)),
     ("/api/v1/auth/handoff/redeem", True, frozenset(portals.DESTINATIONS)),
     ("/api/v1/auth/handoff", True, frozenset({portals.AUTH})),
     # The OIDC authorization endpoint needs the central sign-in session.

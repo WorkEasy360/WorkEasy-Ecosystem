@@ -1188,7 +1188,7 @@ def send_member_password_reset(
             UserStatus.PENDING.value,
         )
         if usable:
-            self_service.request_password_reset(address)
+            self_service.request_password_reset(address, portal="partner")
         audit.record(
             ctx,
             "partner.member_password_reset_sent",
@@ -1255,7 +1255,9 @@ def _send_setup_link(partner: Any, member: Any, user_id: UUID) -> bool:
             "expires_in": f"{days} day" + ("" if days == 1 else "s"),
         },
         sealed_context={
-            "setup_url": f"{portal_links.auth_url()}/reset-password#token={token}"
+            "setup_url": (
+                f"{portal_links.account_url('partner')}/reset-password#token={token}"
+            )
         },
         idempotency_key=(
             f"partner-member:{member.id}:setup:"

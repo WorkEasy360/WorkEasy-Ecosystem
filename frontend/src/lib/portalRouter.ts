@@ -12,9 +12,9 @@ import { pageOwner, portalForHost, servesPage } from "./portals";
  * **origin**: client-side navigation to it would fetch the page's payload
  * across origins, which this app's own CSP (`connect-src 'self'`) refuses. So
  * such a navigation is a full one, straight to the owning portal's origin.
- * `/login` on a portal is a full navigation on this host, so the proxy can set
- * the portal's binding cookie before sending the browser to the central
- * sign-in. Everything else - and everything in single-host mode - is the
+ * `/login` on a portal is a full navigation on this host, so the proxy can
+ * send a sign-in address that names another portal (`?mode=`) to that
+ * portal's own sign-in page (ADR-059). Everything else - and everything in single-host mode - is the
  * ordinary client-side router, unchanged.
  *
  * Navigation only: which portal serves a page decides nothing about access.

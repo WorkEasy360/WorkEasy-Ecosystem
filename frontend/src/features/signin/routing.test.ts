@@ -10,7 +10,7 @@ const ORIGINS: PortalOrigins = {
 };
 
 const route = (host: string, pathname: string, search = "", hasSession = true) =>
-  routePortalRequest({ origins: ORIGINS, host, pathname, search, hasSession, newState: () => "s".repeat(43) });
+  routePortalRequest({ origins: ORIGINS, host, pathname, search, hasSession });
 
 describe("universal sign-in pages and their hosts (ADR-044)", () => {
   it("serves the access chooser and the sign-out confirmation on the central sign-in host only", () => {

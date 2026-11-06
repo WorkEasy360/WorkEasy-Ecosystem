@@ -5,6 +5,7 @@ import {
   parseOrigin,
   portalForHost,
   portalHref,
+  portalSignInPath,
   readPortalOrigins,
   safeNext,
   servesPage,
@@ -14,9 +15,10 @@ import {
 } from "@/lib/portals";
 
 /**
- * Multi-portal host routing (ADR-043). The host decides which UI a page is
- * shown on and sends a signed-out visitor to the central sign-in - never what
- * anyone may do: these functions read no session contents and grant nothing.
+ * Multi-portal host routing (ADR-043, ADR-059). The host decides which UI a
+ * page is shown on and sends a signed-out visitor to that portal's own
+ * sign-in page - never what anyone may do: these functions read no session
+ * contents and grant nothing.
  */
 
 const ORIGINS: PortalOrigins = {
@@ -27,7 +29,7 @@ const ORIGINS: PortalOrigins = {
 };
 const STATE = "s".repeat(43);
 
-function route(host: string, path: string, opts: { session?: boolean; state?: string | null } = {}) {
+function route(host: string, path: string, opts: { session?: boolean } = {}) {
   const [pathname, search = ""] = path.split("?");
   return routePortalRequest({
     origins: ORIGINS,
@@ -35,8 +37,6 @@ function route(host: string, path: string, opts: { session?: boolean; state?: st
     pathname,
     search: search ? `?${search}` : "",
     hasSession: opts.session ?? false,
-    existingState: opts.state ?? null,
-    newState: () => STATE,
   });
 }
 
@@ -75,8 +75,9 @@ describe("which portal serves a page", () => {
     expect(pageOwner("/admin/customers")).toBe("admin");
     expect(pageOwner("/partner/p1/customers")).toBe("partner");
     expect(pageOwner("/o/acme/apps")).toBe("app");
-    expect(pageOwner("/login")).toBe("auth");
-    expect(pageOwner("/reset-password")).toBe("auth");
+    expect(pageOwner("/login")).toBe("app");
+    expect(pageOwner("/reset-password")).toBe("app");
+    expect(pageOwner("/signup")).toBe("app");
     expect(pageOwner("/auth/continue")).toBeNull();
     expect(pageOwner("/administrator")).toBeNull();
   });
@@ -88,6 +89,20 @@ describe("which portal serves a page", () => {
       expect(servesPage("admin", path), path).toBe(false);
       expect(servesPage("app", path), path).toBe(false);
     }
+  });
+
+  it("gives the Admin, Partner and customer portals each their own sign-in pages (ADR-059)", () => {
+    for (const portal of ["admin", "partner", "app"] as const) {
+      for (const path of ["/login", "/forgot-password", "/reset-password"]) {
+        expect(servesPage(portal, path), `${portal}${path}`).toBe(true);
+      }
+    }
+    // Only a customer signs up; the central host keeps /login for products.
+    expect(servesPage("admin", "/signup")).toBe(false);
+    expect(servesPage("partner", "/signup")).toBe(false);
+    expect(servesPage("app", "/signup")).toBe(true);
+    expect(servesPage("auth", "/login")).toBe(true);
+    expect(servesPage("auth", "/signup")).toBe(false);
   });
 
   it("lets the central sign-in ask which organization a product sign-in is for", () => {
@@ -143,22 +158,17 @@ describe("the return-URL allowlist", () => {
 });
 
 describe("routing a page request", () => {
-  it("sends a signed-out visit to the central sign-in, remembering the page", () => {
-    const routed = route("admin.workeasy360.com", "/admin/customers?q=acme");
-    expect(routed?.kind).toBe("redirect");
-    if (routed?.kind !== "redirect") return;
-    const url = new URL(routed.location);
-    expect(url.origin).toBe(ORIGINS.auth);
-    expect(Object.fromEntries(url.searchParams)).toEqual({ mode: "admin", next: "/admin/customers?q=acme", state: STATE });
-    expect(routed.state).toBe(STATE);
-  });
-
-  it("reuses a valid binding value while a sign-in is under way", () => {
-    const existing = "e".repeat(43);
-    const routed = route("app.workeasy360.com", "/o/acme", { state: existing });
-    expect(routed?.kind === "redirect" && routed.state).toBe(existing);
-    const replaced = route("app.workeasy360.com", "/o/acme", { state: "too-short" });
-    expect(replaced?.kind === "redirect" && replaced.state).toBe(STATE);
+  it("sends a signed-out visit to this portal's own sign-in page, remembering the page", () => {
+    expect(route("admin.workeasy360.com", "/admin/customers?q=acme")).toEqual({
+      kind: "redirect",
+      location: `${ORIGINS.admin}/login?next=${encodeURIComponent("/admin/customers?q=acme")}`,
+    });
+    expect(route("app.workeasy360.com", "/o/acme")).toEqual({
+      kind: "redirect",
+      location: `${ORIGINS.app}/login?next=${encodeURIComponent("/o/acme")}`,
+    });
+    expect(route("partner.workeasy360.com", "/partner")).toEqual({ kind: "redirect", location: `${ORIGINS.partner}/login` });
+    expect(portalSignInPath("admin", "//evil.example")).toBe("/login");
   });
 
   it("serves a signed-in visit, whoever it is - the server decides access", () => {
@@ -172,12 +182,10 @@ describe("routing a page request", () => {
       kind: "redirect",
       location: "https://partner.workeasy360.com/partner/reseller/customers",
     });
-    const signedOut = route("partner.workeasy360.com", "/partner/white-label/dashboard");
-    expect(signedOut?.kind).toBe("redirect");
-    if (signedOut?.kind !== "redirect") return;
-    const url = new URL(signedOut.location);
-    expect(url.origin).toBe(ORIGINS.auth);
-    expect(Object.fromEntries(url.searchParams)).toEqual({ mode: "partner", next: "/partner/white-label/dashboard", state: STATE });
+    expect(route("partner.workeasy360.com", "/partner/white-label/dashboard")).toEqual({
+      kind: "redirect",
+      location: `${ORIGINS.partner}/login?next=${encodeURIComponent("/partner/white-label/dashboard")}`,
+    });
   });
 
   it("moves a page to the portal that serves it", () => {
@@ -193,32 +201,56 @@ describe("routing a page request", () => {
       kind: "redirect",
       location: "https://app.workeasy360.com/dashboard",
     });
-    expect(route("partner.workeasy360.com", "/reset-password")).toEqual({
+    expect(route("partner.workeasy360.com", "/reset-password")).toEqual({ kind: "serve" });
+    expect(route("partner.workeasy360.com", "/signup")).toEqual({
       kind: "redirect",
-      location: "https://auth.workeasy360.com/reset-password",
+      location: "https://app.workeasy360.com/signup",
+    });
+    // An emailed link from before ADR-059 still opens (the fragment carries over).
+    expect(route("auth.workeasy360.com", "/verify-email")).toEqual({
+      kind: "redirect",
+      location: "https://app.workeasy360.com/verify-email",
     });
   });
 
   it("opens each portal at its own root", () => {
     expect(route("admin.workeasy360.com", "/")).toEqual({ kind: "redirect", location: `${ORIGINS.admin}/admin` });
     expect(route("partner.workeasy360.com", "/")).toEqual({ kind: "redirect", location: `${ORIGINS.partner}/partner` });
-    expect(route("auth.workeasy360.com", "/")).toEqual({ kind: "redirect", location: `${ORIGINS.auth}/login` });
+    expect(route("auth.workeasy360.com", "/")).toEqual({ kind: "redirect", location: `${ORIGINS.app}/login` });
     expect(route("app.workeasy360.com", "/")).toEqual({ kind: "serve" });
   });
 
-  it("turns sign-in on any portal into the central sign-in", () => {
-    const routed = route("partner.workeasy360.com", "/login?next=/partner/p1");
-    expect(routed?.kind === "redirect" && new URL(routed.location).searchParams.get("mode")).toBe("partner");
-    expect(routed?.kind === "redirect" && new URL(routed.location).searchParams.get("next")).toBe("/partner/p1");
-    expect(route("app.workeasy360.com", "/login?resume=tok")).toEqual({
+  it("serves sign-in on each portal's own host - no central sign-in (ADR-059)", () => {
+    expect(route("admin.workeasy360.com", "/login")).toEqual({ kind: "serve" });
+    expect(route("partner.workeasy360.com", "/login?next=/partner/p1")).toEqual({ kind: "serve" });
+    expect(route("app.workeasy360.com", "/login?mode=user")).toEqual({ kind: "serve" });
+  });
+
+  it("sends a sign-in address naming another portal to that portal's own sign-in page", () => {
+    expect(route("app.workeasy360.com", "/login?mode=partner")).toEqual({ kind: "redirect", location: `${ORIGINS.partner}/login` });
+    expect(route("app.workeasy360.com", "/login?mode=admin&next=%2Fadmin%2Fusers")).toEqual({
       kind: "redirect",
-      location: `${ORIGINS.auth}/login?resume=tok`,
+      location: `${ORIGINS.admin}/login?next=%2Fadmin%2Fusers`,
+    });
+    // An old central sign-in address lands on the portal it named.
+    expect(route("auth.workeasy360.com", `/login?mode=admin&next=%2Fadmin&state=${STATE}`)).toEqual({
+      kind: "redirect",
+      location: `${ORIGINS.admin}/login?next=%2Fadmin`,
+    });
+    expect(route("auth.workeasy360.com", "/login")).toEqual({ kind: "redirect", location: `${ORIGINS.app}/login` });
+  });
+
+  it("keeps a product sign-in on the central sign-in host", () => {
+    expect(route("auth.workeasy360.com", "/login?resume=tok")).toEqual({ kind: "serve" });
+    expect(route("app.workeasy360.com", "/login?resume=tok&reauth=1")).toEqual({
+      kind: "redirect",
+      location: `${ORIGINS.auth}/login?resume=tok&reauth=1`,
     });
   });
 
   it("serves the sign-in pages and the hand-off landing without a session", () => {
-    expect(route("auth.workeasy360.com", "/login?mode=admin")).toEqual({ kind: "serve" });
-    expect(route("auth.workeasy360.com", "/signup")).toEqual({ kind: "serve" });
+    expect(route("app.workeasy360.com", "/signup")).toEqual({ kind: "serve" });
+    expect(route("admin.workeasy360.com", "/forgot-password")).toEqual({ kind: "serve" });
     expect(route("admin.workeasy360.com", "/auth/continue")).toEqual({ kind: "serve" });
     expect(route("app.workeasy360.com", "/products")).toEqual({ kind: "serve" });
     expect(route("auth.workeasy360.com", "/organizations/select?resume=r")).toEqual({

@@ -8,9 +8,9 @@ import { PortalsProvider } from "@/lib/portalContext";
 import type { PortalOrigins } from "@/lib/portals";
 
 /**
- * The central sign-in and the hand-off to a portal (ADR-043). The mode only
- * says where to go: the server answers whether this account may enter, and
- * the page shows that answer - go, or no access.
+ * Each portal's own sign-in page (ADR-059), and the hand-off landing kept for
+ * a sign-in already in flight (ADR-043). The host only says which portal to
+ * open: the server answers what this account may do there.
  */
 
 let query = "";
@@ -27,7 +27,6 @@ const ORIGINS: PortalOrigins = {
   app: "https://app.workeasy360.com",
   auth: "https://auth.workeasy360.com",
 };
-const STATE = "s".repeat(43);
 
 type Reply = { status: number; body?: unknown };
 interface Call {
@@ -81,58 +80,70 @@ async function expectNoViolations(container: HTMLElement) {
   expect(violations.map((v: Result) => v.id)).toEqual([]);
 }
 
-describe("the central sign-in", () => {
-  it("signs in once, then hands the sign-in to the chosen portal", async () => {
-    query = `mode=user&next=${encodeURIComponent("/o/acme")}&state=${STATE}`;
-    const calls = mockApi({
-      "GET /api/v1/auth/session": [SIGNED_OUT],
-      "POST /api/v1/auth/login": [{ status: 200, body: { user_id: "u1", email: "a@example.com", name: "A" } }],
-      "POST /api/v1/auth/handoff": [{ status: 200, body: { redirect_url: `${ORIGINS.app}/auth/continue#code=c0de` } }],
-    });
-    renderPortal(<LoginScreen />);
+describe("each portal's own sign-in page (ADR-059)", () => {
+  const LOGIN_OK: Reply = { status: 200, body: { user_id: "u1", email: "a@example.com", name: "A" } };
+
+  async function signIn() {
     fireEvent.change(await screen.findByLabelText("Email"), { target: { value: "a@example.com" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith(`${ORIGINS.app}/auth/continue#code=c0de`));
-    const handoff = calls.find((c) => c.key === "POST /api/v1/auth/handoff");
-    // The mode and the page asked for, and the portal's binding value - the
-    // server decides everything else.
-    expect(handoff?.body).toEqual({ mode: "user", next: "/o/acme", state: STATE });
-    expect(nav.router.replace).not.toHaveBeenCalled();
-  });
+  }
 
-  it("goes straight on when already signed in here", async () => {
-    query = `mode=partner&state=${STATE}`;
-    mockApi({
-      "GET /api/v1/auth/session": [SIGNED_IN_SESSION],
-      "POST /api/v1/auth/handoff": [{ status: 200, body: { redirect_url: `${ORIGINS.partner}/auth/continue#code=c0de` } }],
-    });
-    renderPortal(<LoginScreen />);
-    await waitFor(() => expect(assign).toHaveBeenCalledWith(`${ORIGINS.partner}/auth/continue#code=c0de`));
-    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
-  });
-
-  it("without the portal's binding value, asks that portal to start the sign-in", async () => {
-    query = "mode=admin";
-    const calls = mockApi({ "GET /api/v1/auth/session": [SIGNED_IN_SESSION] });
-    renderPortal(<LoginScreen />);
-    await waitFor(() => expect(assign).toHaveBeenCalledWith(`${ORIGINS.admin}/login?next=${encodeURIComponent("/admin")}`));
-    expect(calls.some((c) => c.key === "POST /api/v1/auth/handoff")).toBe(false);
-  });
-
-  it("an account the server refuses sees no access - and nothing of the portal", async () => {
-    query = `mode=admin&state=${STATE}`;
-    mockApi({
-      "GET /api/v1/auth/session": [SIGNED_IN_SESSION],
-      "POST /api/v1/auth/handoff": [{ status: 403, body: { code: "portal_access_denied" } }],
-      "POST /api/v1/auth/logout": [{ status: 200, body: { ok: true } }],
-    });
-    const { container } = renderPortal(<LoginScreen />);
-    expect(await screen.findByRole("heading", { name: "You don't have access to the Admin portal." })).toBeInTheDocument();
+  it("the Admin portal signs in on its own host and opens the console page asked for", async () => {
+    query = `next=${encodeURIComponent("/admin/partners")}`;
+    const calls = mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT], "POST /api/v1/auth/login": [LOGIN_OK] });
+    renderPortal(<LoginScreen portal="admin" />);
+    expect(await screen.findByRole("heading", { name: "Sign in as Administrator" })).toBeInTheDocument();
+    await signIn();
+    await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/admin/partners"));
+    // No central sign-in, no hand-off: the session is this host's.
+    expect(calls.some((c) => c.key.includes("handoff"))).toBe(false);
     expect(assign).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Continue as User" }));
-    expect(assign).toHaveBeenCalledWith(`${ORIGINS.app}/login`);
+    expect(screen.queryByRole("link", { name: "Create an account" })).not.toBeInTheDocument();
+  });
+
+  it("the Partner portal signs in on its own host and opens the partner portal", async () => {
+    const calls = mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT], "POST /api/v1/auth/login": [LOGIN_OK] });
+    renderPortal(<LoginScreen portal="partner" />);
+    expect(await screen.findByRole("heading", { name: "Sign in as Partner" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Create an account" })).not.toBeInTheDocument();
+    await signIn();
+    await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/partner"));
+    expect(calls.some((c) => c.key.includes("handoff"))).toBe(false);
+  });
+
+  it("the customer portal signs in on its own host and offers sign-up", async () => {
+    query = `next=${encodeURIComponent("/o/acme")}`;
+    const calls = mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT], "POST /api/v1/auth/login": [LOGIN_OK] });
+    const { container } = renderPortal(<LoginScreen portal="app" />);
+    expect(await screen.findByRole("heading", { name: "Sign in as User" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create an account" })).toHaveAttribute("href", "/signup");
     await expectNoViolations(container);
+    await signIn();
+    await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/o/acme"));
+    expect(calls.some((c) => c.key.includes("handoff"))).toBe(false);
+  });
+
+  it("the host names the mode, whatever the address says", async () => {
+    query = "mode=admin";
+    mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT] });
+    renderPortal(<LoginScreen portal="partner" />);
+    expect(await screen.findByRole("heading", { name: "Sign in as Partner" })).toBeInTheDocument();
+  });
+
+  it("already signed in on this portal goes straight on", async () => {
+    mockApi({ "GET /api/v1/auth/session": [SIGNED_IN_SESSION] });
+    renderPortal(<LoginScreen portal="admin" />);
+    await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/admin"));
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("a page another portal names is never a return target", async () => {
+    query = `next=${encodeURIComponent("/admin")}`;
+    mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT], "POST /api/v1/auth/login": [LOGIN_OK] });
+    renderPortal(<LoginScreen portal="partner" />);
+    await signIn();
+    await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/partner"));
   });
 });
 

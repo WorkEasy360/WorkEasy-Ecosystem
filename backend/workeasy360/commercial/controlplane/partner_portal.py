@@ -1079,11 +1079,11 @@ def authentication(ctx: TenantContext) -> dict[str, Any]:
     users = panel_selectors.active_member_user_ids(partner_id)
     return {
         **AUTHENTICATION,
-        "sign_in_url": portal_links.auth_url(),
+        "sign_in_url": portal_links.account_url(),
         "brand_domains": domains,
         "team": {"members": len(users)},
         "controlled_by_workeasy360": [
-            "Where people sign in (the central sign-in page)",
+            "Where people sign in (each portal's own sign-in page)",
             "How long a session lasts",
             "The issuer and signing keys other products trust",
             "Which Workeasy360 staff may do what",
