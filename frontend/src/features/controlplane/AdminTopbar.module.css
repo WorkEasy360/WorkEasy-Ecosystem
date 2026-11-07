@@ -10,44 +10,138 @@
   min-width: 0;
 }
 
-.search form {
+/* The box that opens the command palette. */
+.searchOpener {
   display: flex;
   align-items: center;
   gap: var(--w360-space-2);
-  height: 42px;
+  width: 100%;
+  height: var(--w360-control-h);
   padding: 0 var(--w360-space-2) 0 var(--w360-space-3);
   background: var(--w360-shell-raised);
   border: 1px solid var(--w360-shell-border);
-  border-radius: var(--w360-radius-sm);
+  border-radius: var(--w360-radius-control);
   color: var(--w360-shell-muted);
+  font: inherit;
+  font-size: var(--w360-fs-body);
+  text-align: left;
+  cursor: text;
 }
 
-.search form:focus-within {
+.searchOpener:hover {
   border-color: var(--w360-shell-muted);
 }
 
-.searchIcon {
-  display: inline-flex;
+.searchOpener svg {
   flex: none;
 }
 
-.searchInput {
+.searchPlaceholder {
   flex: 1;
   min-width: 0;
-  background: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- the palette (in the console's dialog) --- */
+
+.palette {
+  display: grid;
+}
+
+.paletteInputRow {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+  padding: 0 var(--w360-space-4);
+  border-bottom: 1px solid var(--w360-border);
+  color: var(--w360-text-muted);
+}
+
+.paletteInput {
+  flex: 1;
+  min-width: 0;
+  height: 52px;
   border: none;
-  color: var(--w360-shell-text);
+  background: none;
+  color: var(--w360-text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--w360-fs-section);
 }
 
-.searchInput::placeholder {
-  color: var(--w360-shell-muted);
-  opacity: 1;
-}
-
-.searchInput:focus {
+.paletteInput:focus,
+.paletteInput:focus-visible {
   outline: none;
+}
+
+.paletteInput::-webkit-search-cancel-button {
+  display: none;
+}
+
+.paletteKbd {
+  font: inherit;
+  font-size: var(--w360-fs-meta);
+  padding: 1px 6px;
+  border: 1px solid var(--w360-border-strong);
+  border-radius: 4px;
+}
+
+.paletteList {
+  list-style: none;
+  margin: 0;
+  padding: var(--w360-space-2);
+  max-height: min(60vh, 440px);
+  overflow-y: auto;
+}
+
+.paletteGroup {
+  margin: var(--w360-space-2) var(--w360-space-2) var(--w360-space-1);
+  font-size: var(--w360-fs-meta);
+  font-weight: 600;
+  color: var(--w360-text-muted);
+}
+
+.paletteOption {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+  min-height: 40px;
+  padding: 0 var(--w360-space-3);
+  border-radius: var(--w360-radius-control);
+  color: var(--w360-text);
+  font-size: var(--w360-fs-body);
+  cursor: pointer;
+}
+
+.paletteOption svg {
+  flex: none;
+  color: var(--w360-text-muted);
+}
+
+.paletteOption[aria-selected="true"] {
+  background: var(--w360-brand-soft);
+}
+
+.paletteOption[aria-selected="true"] .paletteLabel {
+  color: var(--w360-brand);
+  font-weight: 600;
+}
+
+.paletteLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paletteStatus {
+  margin: 0;
+  padding: 0 var(--w360-space-4) var(--w360-space-3);
+  min-height: 1em;
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-text-muted);
 }
 
 .kbd {
@@ -59,38 +153,6 @@
   border: 1px solid var(--w360-shell-border);
   border-radius: var(--w360-radius-sm);
   color: var(--w360-shell-muted);
-}
-
-.results {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  z-index: 30;
-  list-style: none;
-  margin: 0;
-  padding: var(--w360-space-2);
-  background: var(--w360-surface-raised);
-  border: 1px solid var(--w360-border);
-  border-radius: var(--w360-radius-md);
-  box-shadow: var(--w360-shadow-md);
-  color: var(--w360-text);
-}
-
-.result {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--w360-space-3);
-  padding: 8px 10px;
-  border-radius: var(--w360-radius-sm);
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.result[aria-selected="true"] {
-  background: var(--w360-brand-soft);
-  color: var(--w360-brand);
-  font-weight: 600;
 }
 
 .resultHint {
@@ -109,31 +171,33 @@
   display: inline-flex;
   align-items: center;
   gap: var(--w360-space-2);
-  height: 42px;
-  padding: 0 var(--w360-space-4);
+  height: var(--w360-control-h);
+  padding: 0 var(--w360-space-3);
   border: none;
-  border-radius: var(--w360-radius-sm);
+  border-radius: var(--w360-radius-control);
   background: var(--w360-shell-marker);
   color: var(--w360-cta-contrast);
-  font-weight: 700;
-  font-size: 15px;
+  font: inherit;
+  font-weight: 600;
+  font-size: var(--w360-fs-body);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.newButton svg {
+  flex: none;
 }
 
 .newButton:hover {
   background: var(--w360-cta-hover);
 }
 
-.caret {
-  font-size: 13px;
-  line-height: 1;
-}
-
 .iconButton {
   position: relative;
   display: inline-grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
+  width: var(--w360-control-h);
+  height: var(--w360-control-h);
   border: none;
   border-radius: 999px;
   background: none;
@@ -145,10 +209,6 @@
   background: var(--w360-shell-raised);
 }
 
-.iconButton svg {
-  width: 22px;
-  height: 22px;
-}
 
 .badge {
   position: absolute;
@@ -184,7 +244,150 @@
 }
 
 .bellPanel {
-  width: min(320px, 90vw);
+  width: min(360px, 92vw);
+  padding: 0;
+}
+
+.popoverHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-2);
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.popoverHead .popoverTitle {
+  margin: 0;
+}
+
+.popoverFoot {
+  display: flex;
+  justify-content: center;
+  padding: var(--w360-space-2);
+  border-top: 1px solid var(--w360-border);
+}
+
+.linkButton {
+  padding: 4px 6px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--w360-brand);
+  font: inherit;
+  font-size: var(--w360-fs-meta);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.linkButton:hover {
+  text-decoration: underline;
+}
+
+.noteItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-3) var(--w360-space-4);
+  color: var(--w360-text);
+  font-size: var(--w360-fs-body);
+  text-decoration: none;
+}
+
+.noteItem:hover {
+  background: var(--w360-gray-50);
+}
+
+.noteIcon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--w360-radius-pill);
+  background: var(--w360-brand-soft);
+  color: var(--w360-brand);
+}
+
+.noteText {
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.noteTime {
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-text-muted);
+}
+
+.unreadDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: var(--w360-radius-pill);
+  background: var(--w360-shell-marker);
+}
+
+/* --- the account button --- */
+
+.accountButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  height: 44px;
+  padding: 0 var(--w360-space-2) 0 4px;
+  border: none;
+  border-radius: var(--w360-radius-control);
+  background: none;
+  color: var(--w360-shell-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  max-width: 260px;
+}
+
+.accountButton:hover {
+  background: var(--w360-shell-raised);
+}
+
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--w360-radius-pill);
+  background: var(--w360-shell-marker);
+  color: var(--w360-cta-contrast);
+  font-size: var(--w360-fs-meta);
+  font-weight: 700;
+}
+
+.accountText {
+  display: grid;
+  min-width: 0;
+  line-height: 16px;
+}
+
+.accountName {
+  font-size: var(--w360-fs-body);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountRole {
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-shell-muted);
+}
+
+.accountChevron {
+  display: inline-flex;
+  color: var(--w360-shell-muted);
 }
 
 .popoverTitle {
@@ -219,7 +422,8 @@
 }
 
 @media (max-width: 1100px) {
-  .kbd {
+  .kbd,
+  .accountText {
     display: none;
   }
 }
@@ -237,15 +441,7 @@
 }
 
 @media (max-width: 480px) {
-  .newButton {
-    font-size: 0;
-  }
-
-  .newButton span:first-child {
-    font-size: 20px;
-  }
-
-  .caret {
+  .newLabel {
     display: none;
   }
 

@@ -1067,6 +1067,7 @@ def partner_create_view(request, ctx) -> JsonResponse:
                 "administrator": {
                     "email": created.administrator_email,
                     "account_created": created.account_created,
+                    "invited": created.invited,
                 },
                 "capabilities": created.capabilities,
                 "payout_currency": created.payout_currency,

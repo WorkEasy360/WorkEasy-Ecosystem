@@ -33,6 +33,13 @@ email and the partner, never a secret. There is no temporary password, no
 forced change and no invitation email, because there is nothing to invite: the
 person signs in with what they were told.
 
+**Or an invitation (2026-11-07).** ``mode="invite"`` creates the account with
+no password at all and names the person the partner's owner; nobody types or
+shares a password. The partner is a draft, so - as for every member named while
+it is one (``invite_member(send_link=False)``) - the invitation is deferred:
+activating the partner emails its administrator a one-time link to set their
+own password on the partner portal (``services._send_deferred_invitations``).
+
 **An existing account is never touched.** If the address already belongs to a
 Workeasy360 account the form says so and offers to *link* it: the partner's
 administrator is then that person, signing in with the password they already
@@ -85,9 +92,14 @@ MANAGE: Final = services.MANAGE
 REASON: Final = "Created through Add Partner"
 OPERATIONS: Final = services.PARTNER_OPERATIONS
 
-#: ``create``: a new account with the password typed here. ``link_existing``: the
-#: administrator is an account that already exists, and keeps its own password.
-ADMIN_MODES: Final = ("create", "link_existing")
+#: ``create``: a new account with the password typed here. ``invite``: a new
+#: account with no password, emailed a link to set one when the partner is
+#: activated. ``link_existing``: the administrator is an account that already
+#: exists, and keeps its own password.
+ADMIN_MODES: Final = ("create", "invite", "link_existing")
+
+#: The modes that make a new account.
+NEW_ACCOUNT_MODES: Final = ("create", "invite")
 
 #: The longest password accepted here (the form's own limit). Bounding it keeps the
 #: similarity and hashing work a staff request can cause small; the platform's
@@ -146,6 +158,8 @@ class Created:
     account_created: bool
     capabilities: list[str]
     payout_currency: str
+    #: The administrator will be emailed a link to set a password (``invite``).
+    invited: bool = False
 
 
 # --- the administrator's input ---------------------------------------------------------
@@ -255,7 +269,7 @@ def _account_state(email: str) -> tuple[str, UUID | None]:
 
 def _check_account(admin: _Admin, problems: Problems) -> tuple[str, UUID | None]:
     state, user_id = _account_state(admin.email)
-    if admin.mode == "create" and state != "new":
+    if admin.mode in NEW_ACCOUNT_MODES and state != "new":
         problems.add("administrator.email", _EXISTING_ACCOUNT)
     if admin.mode == "link_existing":
         if state == "new":
@@ -277,6 +291,14 @@ def _check_password(admin: _Admin, problems: Problems) -> None:
     from workeasy360.platform.identity.account import check_new_password
     from workeasy360.platform.identity.models import User
 
+    if admin.mode == "invite":
+        if admin.password or admin.confirm:
+            problems.add(
+                "administrator.password",
+                "An invited administrator sets their own password from the "
+                "invitation email; none is typed here.",
+            )
+        return
     if admin.mode == "link_existing":
         if admin.password or admin.confirm:
             problems.add(
@@ -340,7 +362,7 @@ def credentials_check(ctx: TenantContext, raw: Any) -> dict[str, Any]:
         state, _user = _account_state(admin.email)
     if state == "new" or admin.mode == "link_existing":
         _check_password(admin, problems)
-    if admin.mode == "create" and state != "new" and not problems.items:
+    if admin.mode in NEW_ACCOUNT_MODES and state != "new" and not problems.items:
         problems.add("administrator.email", _EXISTING_ACCOUNT)
     if admin.mode == "link_existing" and state == "new" and admin.email:
         problems.add(
@@ -476,7 +498,7 @@ def _lock(key: str) -> None:
         cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [key])
 
 
-def _new_account(admin: _Admin) -> Any:
+def _new_account(admin: _Admin, *, invited: bool = False) -> Any:
     """The administrator's account, with the password Super Admin typed. This is
     one of the two functions that read ``admin.password`` (the other only judges
     it); the hash is made by Django's configured hasher inside
@@ -488,7 +510,9 @@ def _new_account(admin: _Admin) -> Any:
         with transaction.atomic():
             return lifecycle.create_account(
                 email=admin.typed_email,
-                password=admin.password,
+                # An invited administrator has no password until they set one
+                # from the invitation link.
+                password=None if invited else admin.password,
                 full_name=admin.full_name,
                 status=UserStatus.ACTIVE,
                 source=User.AcquisitionSource.OPERATOR,
@@ -535,7 +559,7 @@ def create(ctx: TenantContext, raw: Any) -> Created:
         _lock(f"partner-onboard:email:{plan.admin.email}")
         # Re-judge the address now that nothing else can change it.
         state, user_id = _account_state(plan.admin.email)
-        if plan.admin.mode == "create" and state != "new":
+        if plan.admin.mode in NEW_ACCOUNT_MODES and state != "new":
             raise PartnerValidationError(_EXISTING_ACCOUNT, field="administrator.email")
         if plan.admin.mode == "link_existing" and state != "existing":
             raise PartnerValidationError(
@@ -543,9 +567,10 @@ def create(ctx: TenantContext, raw: Any) -> Created:
                 field="administrator.email",
             )
 
-        account_created = plan.admin.mode == "create"
+        account_created = plan.admin.mode in NEW_ACCOUNT_MODES
+        invited = plan.admin.mode == "invite"
         if account_created:
-            user = _new_account(plan.admin)
+            user = _new_account(plan.admin, invited=invited)
             user_id = user.id
 
         partner = services.create_partner(
@@ -566,12 +591,16 @@ def create(ctx: TenantContext, raw: Any) -> Created:
         transition = experience.grant_experience(
             ctx, partner.id, experience=key, reason=REASON, make_default=True
         )
-        services.attach_user_as_member(
+        member = services.attach_user_as_member(
             ctx,
             partner.id,
             user_id=user_id,
             role=ADMIN_ROLE,  # type: ignore[arg-type]
         )
+        if invited:
+            # Emailed when the partner is activated (the partner is a draft now).
+            member.invitation_deferred = True
+            member.save(update_fields=["invitation_deferred"])
         audit.record(
             ctx,
             "partner.onboarded",
@@ -581,7 +610,9 @@ def create(ctx: TenantContext, raw: Any) -> Created:
             changes={
                 "partner_id": str(partner.id),
                 "experience": key,
-                "administrator": "created" if account_created else "linked",
+                "administrator": (
+                    "invited" if invited else "created" if account_created else "linked"
+                ),
                 "capabilities": len(transition.capabilities_granted),
             },
             reason=REASON,
@@ -597,6 +628,7 @@ def create(ctx: TenantContext, raw: Any) -> Created:
         default_experience=current.default_experience,
         administrator_email=plan.admin.typed_email,
         account_created=account_created,
+        invited=invited,
         capabilities=sorted(selectors.active_capabilities(partner.id)),
         payout_currency=current.payout_currency,
     )

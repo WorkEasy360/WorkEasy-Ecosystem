@@ -4,7 +4,9 @@ import Link from "next/link";
 import { adminApi, productMediaUrl, type StoreCard, type StorePage } from "@/lib/api/controlPlane";
 import { StoreBrowser, StoreCard as Card, storeAsideClass, type BadgeTone } from "@/features/storefront/StoreBrowser";
 import { can, useAdmin } from "../ControlShell";
-import { StoreTabs } from "./StoreTabs";
+import { ButtonLink, Page } from "../kit";
+import { StoreHeader } from "./StoreTabs";
+import css from "./AdminStore.module.css";
 
 /**
  * Super Admin → Product Store → Store: the central catalog as a marketplace
@@ -38,24 +40,17 @@ export function ProductStore() {
   const { permissions } = useAdmin();
   const manage = can(permissions, "platform.staff_catalog.manage");
   const add = manage && (
-    <Link className="w360-btn w360-btn-primary" href="/admin/products/new">
-      + Add product
-    </Link>
+    <ButtonLink variant="primary" icon="plus" href="/admin/products/new">
+      New product
+    </ButtonLink>
   );
   return (
-    <>
-    <StoreTabs current="browse" />
+    <Page>
+    <StoreHeader current="browse" primary={add || undefined} actions={<ButtonLink href="/admin/products">Manage products</ButtonLink>} />
+    <div className={css.preview}>
     <StoreBrowser<StoreCard, StorePage>
-      title="Store"
+      title="Customer preview"
       lead="Every product as customers find it in the store, with the price they would see it from."
-      headActions={
-        <>
-          <Link className="w360-btn w360-btn-secondary" href="/admin/products">
-            Manage products
-          </Link>
-          {add}
-        </>
-      }
       load={adminApi.productStore}
       loadKey="admin"
       forbidden="You don't have access to the store."
@@ -90,6 +85,7 @@ export function ProductStore() {
         />
       )}
     />
-    </>
+    </div>
+    </Page>
   );
 }

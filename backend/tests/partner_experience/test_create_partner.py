@@ -69,7 +69,7 @@ def test_a_reseller_is_created_and_signs_in_with_the_typed_credentials(catalog, 
     assert data["status"] == "draft"
     assert data["experience"] == "reseller"
     assert data["default_experience"] == "reseller"
-    assert data["administrator"] == {"email": ADMIN_EMAIL, "account_created": True}
+    assert data["administrator"] == {"email": ADMIN_EMAIL, "account_created": True, "invited": False}
     assert set(data["capabilities"]) == set(capabilities.EXPERIENCE_BUNDLES["reseller"])
     assert data["payout_currency"] == "GBP"
 

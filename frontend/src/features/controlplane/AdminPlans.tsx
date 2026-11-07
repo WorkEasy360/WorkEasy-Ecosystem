@@ -15,7 +15,6 @@ import { LoadGate, Table, money, useAction, useLoad } from "./ui";
 import {
   DEFAULT_INTERVALS,
   NOUN,
-  STATUS_BADGE,
   STATUS_LABEL,
   statusPath,
   uiStatusOf,
@@ -24,7 +23,8 @@ import {
 } from "./catalogUi";
 import { DialogHead, Modal, dialog } from "./Modal";
 import { PlanBuilder, type BuilderOutcome } from "./PlanBuilder";
-import { DescriptionField, ErrorSummary, ProgressList, Segmented, Tabs, TextField, useStepRunner, type StepDef } from "./widgets";
+import { DescriptionField, ErrorSummary, ProgressList, Segmented, TextField, useStepRunner, type StepDef } from "./widgets";
+import { Alert, Badge, Button, Page, PageHeader, SectionHeader, StatusBadge, Tabs } from "./kit";
 import cp from "./ControlPlane.module.css";
 import styles from "./AdminConsole.module.css";
 
@@ -96,14 +96,12 @@ export function PlansScreen({ productCode }: { productCode?: string } = {}) {
   }
 
   return (
-    <div className={cp.stack}>
-      <div>
-        <h1>Plans &amp; add-ons</h1>
-        <p className={cp.lead}>
-          Build what customers can buy. Terms are versioned: publishing a new version changes new sales only, and
-          existing subscriptions keep the version they bought.
-        </p>
-      </div>
+    <Page>
+      <PageHeader
+        title="Plans & add-ons"
+        subtitle="Build what customers can buy: plans, product packages and add-ons."
+        info="Terms are versioned: publishing a new version changes new sales only, and existing subscriptions keep the version they bought."
+      />
       {notice && (
         <p role="status" tabIndex={-1} ref={noticeRef}>
           {notice}
@@ -113,14 +111,18 @@ export function PlansScreen({ productCode }: { productCode?: string } = {}) {
         {(overview) => (
           <div>
             {productCode && (
-              <p className={cp.muted}>
+              <Alert tone="info">
                 Showing {overview.products.find((p) => p.code === productCode)?.name ?? productCode} only.{" "}
                 <Link href="/admin/plans">Show all products</Link>
-              </p>
+              </Alert>
             )}
             <Tabs
               label="Catalog offers"
-              items={(["bundle", "package", "addon"] as const).map((key) => ({ key, label: TAB_TITLE[key] }))}
+              tabs={(["bundle", "package", "addon"] as const).map((key) => ({
+                key,
+                label: TAB_TITLE[key],
+                count: rowsOf(overview, key, productCode).length,
+              }))}
               selected={tab}
               onSelect={(key) => {
                 if (key === tab) return;
@@ -145,7 +147,7 @@ export function PlansScreen({ productCode }: { productCode?: string } = {}) {
           </div>
         )}
       </LoadGate>
-    </div>
+    </Page>
   );
 }
 
@@ -171,25 +173,14 @@ function OfferTab({
   const row = panel && panel.mode !== "new" ? rows.find((r) => r.id === panel.id) : undefined;
   const productColumn = kind === "bundle" ? [] : [kind === "addon" ? "Product / add-on for" : "Product"];
 
+  const add = manage ? (
+    <Button variant="primary" icon="plus" aria-haspopup="dialog" disabled={panel?.mode === "new"} onClick={() => open({ mode: "new" })}>
+      New {noun}
+    </Button>
+  ) : null;
   return (
-    <>
-      <div className={styles.header}>
-        <div>
-          <h2 className={styles.sectionTitle}>{TAB_TITLE[kind]}</h2>
-          <p className={cp.muted}>{TAB_LEAD[kind]}</p>
-        </div>
-        {manage && (
-          <button
-            type="button"
-            className="w360-btn w360-btn-primary"
-            aria-haspopup="dialog"
-            disabled={panel?.mode === "new"}
-            onClick={() => open({ mode: "new" })}
-          >
-            New {noun}
-          </button>
-        )}
-      </div>
+    <div className={cp.stack}>
+      <SectionHeader title={TAB_TITLE[kind]} description={TAB_LEAD[kind]} actions={add} />
 
       {panel?.mode === "new" && <PlanBuilder key={`new-${kind}`} kind={kind} overview={overview} onClose={onClose} />}
       {panel?.mode === "version" && row && (
@@ -202,12 +193,20 @@ function OfferTab({
         head={["Name", ...productColumn, "Type", "Status", "Billing cycles (latest published version)", "Version", "Actions"]}
         isEmpty={rows.length === 0}
         empty={`No ${noun}s yet.`}
+        emptyHint={TAB_LEAD[kind]}
+        emptyAction={
+          manage && panel?.mode !== "new" ? (
+            <Button variant="primary" icon="plus" aria-haspopup="dialog" onClick={() => open({ mode: "new" })}>
+              {`Create the first ${noun}`}
+            </Button>
+          ) : undefined
+        }
       >
         {rows.map((r) => (
           <OfferRow key={r.id} row={r} kind={kind} manage={manage} open={open} />
         ))}
       </Table>
-    </>
+    </div>
   );
 }
 
@@ -240,10 +239,10 @@ function OfferRow({
         </td>
       )}
       <td>
-        <span className="w360-badge w360-badge-neutral">{row.billing_type === "free_trial" ? "Free trial" : "Paid"}</span>
+        <Badge tone={row.billing_type === "free_trial" ? "info" : "neutral"}>{row.billing_type === "free_trial" ? "Free trial" : "Paid"}</Badge>
       </td>
       <td>
-        <span className={STATUS_BADGE[status]}>{STATUS_LABEL[status]}</span>
+        <StatusBadge value={status} label={STATUS_LABEL[status]} />
       </td>
       <td>
         <CyclePrices prices={published?.prices} published={Boolean(published)} />

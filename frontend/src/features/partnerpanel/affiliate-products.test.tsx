@@ -247,7 +247,7 @@ describe("the attribution trail", () => {
     expect(screen.getByText(/Started a trial: not yet/)).toBeInTheDocument();
     const sales = screen.getByRole("table", { name: "Paid sales and their commission" });
     expect(within(sales).getByText("Verified")).toBeInTheDocument();
-    expect(within(sales).getByText("pending")).toBeInTheDocument();
+    expect(within(sales).getByText("Pending")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Close/ }));
     expect(onClose).toHaveBeenCalled();
   });

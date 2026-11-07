@@ -11,12 +11,13 @@ import {
 import { ApiError } from "@/lib/api/client";
 import { can, useAdmin } from "./ControlShell";
 import { FormPopup } from "./Modal";
-import { LoadGate, Table, money, useLoad, when } from "./ui";
+import { LoadGate, Table, money, useLoad } from "./ui";
 import { DEFAULT_INTERVALS } from "./catalogUi";
 import { PartnerProgramme } from "./PartnerProgramme";
 import { SelectField, TextField } from "./widgets";
+import { Alert, BoolBadge, ButtonLink, Card, EmptyState, Page, PageHeader, formatDate, sentence } from "./kit";
+import { iconLabel, popupButton } from "./kit/PopupLabel";
 import cp from "./ControlPlane.module.css";
-import styles from "./AdminConsole.module.css";
 
 /**
  * Super Admin → Currency & pricing (Phase 8 extension): the price books list
@@ -32,26 +33,27 @@ export function PricingScreen({ productCode }: { productCode?: string } = {}) {
   const [load, reload] = useLoad(() => adminConsoleApi.catalogOverview(), []);
 
   return (
-    <div className={cp.stack}>
-      <div>
-        <h1>Currency &amp; pricing</h1>
-        <p className={cp.lead}>
-          A price book holds the list prices for one currency (and optionally one region). Amounts are stored in the
-          currency&apos;s minor units and are never converted between currencies.
-        </p>
-      </div>
+    <Page>
+      <PageHeader
+        title="Currency & pricing"
+        subtitle="Price books per currency, the prices in force, and partner margins."
+        info="A price book holds the list prices for one currency (and optionally one region). Amounts are stored exactly in the currency's smallest unit (paise, cents) and are never converted between currencies."
+      />
       <LoadGate load={load} what="price books">
         {(overview) => (
           <>
-            <section className={styles.section} aria-labelledby="price-books">
-              <h2 id="price-books" className={styles.sectionTitle}>
-                Price books
-              </h2>
+            <Card
+              title="Price books"
+              description="Where published prices live: one book per channel, currency and region."
+              actions={manage ? <NewPriceBook currencies={overview.currencies} onCreated={reload} /> : undefined}
+            >
               <Table
                 caption="Price books"
                 head={["Code", "Name", "Channel", "Currency", "Region", "Priority", "Active", "Valid from"]}
+                numeric={["Priority"]}
                 isEmpty={overview.price_books.length === 0}
-                empty="No price books yet. Create one to publish prices."
+                empty="No price books yet"
+                emptyHint="Create one to publish prices."
               >
                 {overview.price_books.map((b) => (
                   <tr key={b.id}>
@@ -59,37 +61,47 @@ export function PricingScreen({ productCode }: { productCode?: string } = {}) {
                       {b.code}
                     </th>
                     <td>{b.name}</td>
-                    <td>{b.channel}</td>
+                    <td>{sentence(b.channel)}</td>
                     <td>{b.currency}</td>
                     <td>{b.region || "All regions"}</td>
                     <td className={cp.num}>{b.priority}</td>
-                    <td>{b.is_active ? "Yes" : "No"}</td>
-                    <td>{when(b.valid_from)}</td>
+                    <td>
+                      <BoolBadge value={b.is_active} yes="Active" no="Inactive" noTone="neutral" />
+                    </td>
+                    <td>{formatDate(b.valid_from)}</td>
                   </tr>
                 ))}
               </Table>
-              {manage ? (
-                <NewPriceBook currencies={overview.currencies} onCreated={reload} />
-              ) : (
-                <p className={cp.muted}>Creating price books needs the platform.staff_pricing.manage permission.</p>
-              )}
-            </section>
+              {!manage && <p className={cp.muted}>Creating price books needs the pricing management permission.</p>}
+            </Card>
             {productCode && (
-              <p className={cp.muted}>
+              <Alert tone="info">
                 Showing prices for {overview.products.find((p) => p.code === productCode)?.name ?? productCode} only.{" "}
                 <Link href="/admin/pricing">Show all products</Link>
-              </p>
+              </Alert>
             )}
             <CurrentPrices overview={overview} productCode={productCode} />
+            <Card
+              title="Partner set-up fees"
+              description="What a partner pays to upgrade to Reseller or White-label is set on one page: Upgrade fees."
+              actions={
+                <ButtonLink href="/admin/partners/upgrade-fees" iconEnd="chevronRight">
+                  Open Upgrade fees
+                </ButtonLink>
+              }
+            >
+              {null}
+            </Card>
             <PartnerProgramme
               manage={can(permissions, "platform.staff_commission.manage")}
               manageFees={can(permissions, "platform.staff_partner.manage")}
               products={overview.products.map((p) => ({ code: p.code, name: p.name }))}
+              fees={false}
             />
           </>
         )}
       </LoadGate>
-    </div>
+    </Page>
   );
 }
 
@@ -140,7 +152,7 @@ function NewPriceBook({ currencies, onCreated }: { currencies: string[]; onCreat
 
   return (
     <div>
-      <FormPopup label="+ New price book" title="New price book" submitLabel="Create price book" onOpen={reset} onSubmit={submit} onDone={onCreated}>
+      <FormPopup label={iconLabel("New price book")} buttonClassName={popupButton()} title="New price book" submitLabel="Create price book" onOpen={reset} onSubmit={submit} onDone={onCreated}>
         <TextField label="Code" value={code} onChange={(v) => setCode(v.toLowerCase())} maxLength={64} error={errors.code} autoComplete="off" />
         <TextField label="Name" value={name} onChange={setName} maxLength={128} error={errors.name} />
         <SelectField
@@ -215,19 +227,26 @@ function CurrentPrices({ overview, productCode }: { overview: CatalogOverview; p
   if (bundleLines.length > 0) groups.push({ title: "Plans (suites)", lines: sortLines(bundleLines) });
 
   return (
-    <section className={styles.section} aria-labelledby="current-prices">
-      <h2 id="current-prices" className={styles.sectionTitle}>
-        Current prices
-      </h2>
-      <p className={cp.muted}>Read-only. Publish a new version from Plans &amp; add-ons to change a price.</p>
+    <Card
+      title="Current prices"
+      description="Read-only. Publish a new version from Plans & add-ons to change a price."
+      actions={<ButtonLink href="/admin/plans">Open Plans &amp; add-ons</ButtonLink>}
+    >
       {groups.length === 0 ? (
-        <p className={cp.muted}>No prices are published yet.</p>
+        <EmptyState
+          icon="tag"
+          title="No prices are published yet."
+          hint="Publish a plan or package version with prices to see them here."
+          action={{ label: "Go to Plans & add-ons", href: "/admin/plans", icon: "chevronRight" }}
+          compact
+        />
       ) : (
         groups.map((group) => (
           <Table
             key={group.title}
             caption={`${group.title}: current prices`}
             head={["Offer", "Version", "Billing cycle", "Price book", "Price"]}
+            numeric={["Price"]}
           >
             {group.lines.map((line) => (
               <tr key={line.price.price_id}>
@@ -243,6 +262,6 @@ function CurrentPrices({ overview, productCode }: { overview: CatalogOverview; p
           </Table>
         ))
       )}
-    </section>
+    </Card>
   );
 }

@@ -292,6 +292,13 @@ describe("Super Admin AI", () => {
     );
     expect(await screen.findByText("Configured")).toBeInTheDocument();
     expect(screen.getByText("Not configured")).toBeInTheDocument();
+    // Active but without a credential: needs setup, not a green "active".
+    expect(within(screen.getByRole("row", { name: /OpenAI/ })).getByText("Needs setup")).toBeInTheDocument();
+    // A readable model name, its id kept as small copyable text; health, not "circuit".
+    const model = screen.getByRole("row", { name: /Claude Opus 5/ });
+    expect(model).toHaveTextContent("anthropic.claude-opus-5");
+    expect(within(model).getByText("Healthy")).toBeInTheDocument();
+    expect(within(model).getByText("Structured output")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /disable/i })).not.toBeInTheDocument();
     await expectNoViolations(container);
   });

@@ -4,97 +4,196 @@ import { useEffect, useId, useRef, useState } from "react";
 import { adminConsoleApi, type SenderSettings, type TemplateRow } from "@/lib/api/adminConsole";
 import { can, useAdmin } from "./ControlShell";
 import { DialogHead, FormPopup, Modal, dialog } from "./Modal";
-import { LoadGate, Table, describeError, useAction, useLoad, when } from "./ui";
+import { LoadGate, describeError, useAction, useLoad, when } from "./ui";
 import { TextField } from "./widgets";
+import {
+  Badge,
+  Card,
+  DataTable,
+  DescriptionList,
+  EmptyState,
+  KeyText,
+  Page,
+  PageHeader,
+  SectionHeader,
+  Stack,
+  eventLabel,
+  formatDate,
+  type Column,
+  type MenuItem,
+} from "./kit";
+import { popupButton } from "./kit/PopupLabel";
 import cp from "./ControlPlane.module.css";
 import styles from "./AdminConsole.module.css";
+import comm from "./AdminCommunication.module.css";
 
 /**
- * Super Admin → Communication (Phase 8 extension): the wording of every
- * platform email and the sender it goes out as. Changing either is dangerous
- * (``platform.staff_communication.manage``) - an altered invitation is
- * a phishing kit - so saves go through `useAction`, and each save names the
- * version it was based on so two editors can't silently overwrite each other.
+ * Super Admin → Communication → Email templates (Phase 8 extension): the
+ * wording of every platform email and the sender it goes out as. Changing
+ * either is dangerous (``platform.staff_communication.manage``) - an altered
+ * invitation is a phishing kit - so saves go through `useAction`, and each
+ * save names the version it was based on so two editors can't silently
+ * overwrite each other.
  *
  * Wording is plain text with `{placeholder}` fields; the server validates
  * which placeholders are allowed and which are required, and renders previews
  * with sample values. Everything is displayed as text.
+ *
+ * 2026-11-07 design system: templates are grouped by what they are about and
+ * named in words; the system key stays beside the name in small mono text.
  */
+
+/** Readable names for the registered keys; any other key is named from its words. */
+const NAMES: Record<string, string> = {
+  "platform.member.invited": "Member invitation",
+  "platform.organization.suspended": "Organization suspended",
+  "platform.organization.reactivated": "Organization reactivated",
+  "platform.account.verify_email": "Verify email address",
+  "platform.account.signup_existing": "Sign-up with an existing account",
+  "platform.account.password_reset": "Password reset",
+  "platform.account.password_changed": "Password changed",
+  "platform.partner.member_invited": "Partner team invitation",
+  "platform.partner.support_request": "Partner support request",
+  "platform.customer.owner_invited": "Customer owner invitation",
+  "commercial.invoice.issued": "Invoice issued",
+  "commercial.payment.failed": "Payment failed",
+  "commercial.payment.received": "Payment received",
+  "integration.automation.triggered": "Automation email",
+};
+
+/** What a template is for, when the server gives no description. */
+const DESCRIPTIONS: Record<string, string> = {
+  "integration.automation.triggered": "Sent when an automation rule runs its “send email” action.",
+};
+
+export const templateName = (key: string) => NAMES[key] ?? eventLabel(key);
+
+const CATEGORIES = ["Billing", "Account & security", "Organizations", "Partners", "Integrations", "Other"] as const;
+type Category = (typeof CATEGORIES)[number];
+
+export function templateCategory(key: string): Category {
+  if (key.startsWith("commercial.")) return "Billing";
+  if (key.startsWith("platform.account.") || key.includes("password")) return "Account & security";
+  if (key.startsWith("platform.partner.")) return "Partners";
+  if (key.startsWith("integration.") || key.startsWith("connector.")) return "Integrations";
+  if (key.startsWith("platform.member.") || key.startsWith("platform.organization.") || key.startsWith("platform.customer.")) return "Organizations";
+  return "Other";
+}
+
+const describe = (t: TemplateRow) => t.description || DESCRIPTIONS[t.key] || "No description.";
+
 export function CommunicationScreen() {
   const { permissions } = useAdmin();
   const manage = can(permissions, "platform.staff_communication.manage");
   const [load, reload] = useLoad(() => adminConsoleApi.templates(), []);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<{ key: string; preview: boolean } | null>(null);
+  const { act, feedback } = useAction();
+
+  const columns: Column<TemplateRow>[] = [
+    {
+      key: "template",
+      header: "Template",
+      value: (t) => templateName(t.key),
+      render: (t) => <Stack main={templateName(t.key)} sub={<KeyText>{t.key}</KeyText>} />,
+    },
+    { key: "description", header: "Description", wrap: true, render: (t) => <span className={comm.description}>{describe(t)}</span> },
+    {
+      key: "status",
+      header: "Status",
+      value: (t) => (t.override ? "customized" : "default"),
+      render: (t) =>
+        t.override ? (
+          <Stack
+            main={
+              <Badge tone="info" dot>
+                Customized
+              </Badge>
+            }
+            sub={
+              <span title={when(t.override.updated_at)}>
+                v{t.override.version} · {formatDate(t.override.updated_at)}
+              </span>
+            }
+          />
+        ) : (
+          <Badge tone="neutral" dot>
+            Default
+          </Badge>
+        ),
+    },
+  ];
+
+  const menu = (t: TemplateRow): MenuItem[] => [
+    { label: manage ? "Edit" : "View", icon: manage ? "edit" : "eye", onSelect: () => setSelected({ key: t.key, preview: false }) },
+    { label: "Preview", icon: "eye", onSelect: () => setSelected({ key: t.key, preview: true }) },
+    {
+      label: "Send me a test",
+      icon: "send",
+      onSelect: () =>
+        void act(async () => {
+          await adminConsoleApi.sendTestTemplate(t.key);
+        }, `Test of “${templateName(t.key)}” queued to your own address.`),
+    },
+  ];
 
   return (
-    <div className={cp.stack}>
-      <div>
-        <h1>Communication</h1>
-        <p className={cp.lead}>
-          What the platform&apos;s emails say and who they come from. Placeholders such as <code>{"{link}"}</code> are
-          filled in for each recipient when the email is sent.
-        </p>
-      </div>
-      <section className={styles.section} aria-labelledby="templates-h">
-        <h2 id="templates-h" className={styles.sectionTitle}>
-          Email templates
-        </h2>
-        <LoadGate load={load} what="email templates">
-          {({ results }) => {
-            const template = results.find((t) => t.key === selected);
-            return (
-              <>
-                <Table
-                  caption="Email templates"
-                  head={["Template", "Description", "Wording", "Actions"]}
-                  isEmpty={results.length === 0}
-                  empty="No templates."
-                >
-                  {results.map((t) => (
-                    <tr key={t.key}>
-                      <th scope="row" className={cp.mono}>
-                        {t.key}
-                      </th>
-                      <td>{t.description}</td>
-                      <td>
-                        {t.override ? (
-                          <>
-                            Customised <span className={cp.muted}>(v{t.override.version}, {when(t.override.updated_at)})</span>
-                          </>
-                        ) : (
-                          "Default"
-                        )}
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="w360-btn w360-btn-secondary"
-                          aria-label={`${manage ? "Edit" : "View"} ${t.key}`}
-                          aria-haspopup="dialog"
-                          onClick={() => setSelected(t.key)}
-                        >
-                          {manage ? "Edit" : "View"}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
-                {template && (
-                  <TemplateEditor
-                    key={template.key}
-                    template={template}
-                    manage={manage}
-                    onChanged={reload}
-                    onClose={() => setSelected(null)}
-                  />
-                )}
-              </>
-            );
-          }}
-        </LoadGate>
-      </section>
+    <Page>
+      <PageHeader
+        title="Email templates"
+        subtitle="What the platform's emails say, and who they come from."
+        info={
+          <>
+            Placeholders such as <code>{"{link}"}</code> are filled in for each recipient when the email is sent.
+          </>
+        }
+      />
+      {feedback}
+      <LoadGate load={load} what="email templates">
+        {({ results }) => {
+          const template = results.find((t) => t.key === selected?.key);
+          const groups = CATEGORIES.map((c) => ({ category: c, rows: results.filter((t) => templateCategory(t.key) === c) })).filter(
+            (g) => g.rows.length > 0,
+          );
+          return (
+            <>
+              {results.length === 0 ? (
+                <Card as="div">
+                  <EmptyState icon="mail" title="No templates" compact />
+                </Card>
+              ) : (
+                groups.map((g) => (
+                  <section key={g.category} className={comm.group} aria-labelledby={`tpl-${g.category}`}>
+                    <SectionHeader id={`tpl-${g.category}`} title={g.category} description={`${g.rows.length} template${g.rows.length === 1 ? "" : "s"}`} />
+                    <DataTable
+                      caption={`Email templates: ${g.category}`}
+                      columns={columns}
+                      rows={g.rows}
+                      rowKey={(t) => t.key}
+                      rowLabel={(t) => templateName(t.key)}
+                      rowMenu={menu}
+                      pageSize={0}
+                      maxHeight={false}
+                      hideEmptyColumns={false}
+                    />
+                  </section>
+                ))
+              )}
+              {template && (
+                <TemplateEditor
+                  key={template.key}
+                  template={template}
+                  manage={manage}
+                  previewFirst={selected?.preview ?? false}
+                  onChanged={reload}
+                  onClose={() => setSelected(null)}
+                />
+              )}
+            </>
+          );
+        }}
+      </LoadGate>
       <Sender manage={manage} />
-    </div>
+    </Page>
   );
 }
 
@@ -103,11 +202,14 @@ type Field = "subject" | "body";
 function TemplateEditor({
   template,
   manage,
+  previewFirst = false,
   onChanged,
   onClose,
 }: {
   template: TemplateRow;
   manage: boolean;
+  /** Opened from "Preview": show the preview at once. */
+  previewFirst?: boolean;
   onChanged: () => void;
   onClose: () => void;
 }) {
@@ -159,6 +261,20 @@ function TemplateEditor({
     }
   }
 
+  // "Preview" from the row: the preview of the wording in force, at once.
+  useEffect(() => {
+    if (!previewFirst) return;
+    let live = true;
+    adminConsoleApi.previewTemplate(template.key, { subject, body_text: body }).then(
+      (result) => live && setPreview(result),
+      (err: unknown) => live && setPreviewError(describeError(err)),
+    );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const required = new Set(template.required);
   const customised = template.override !== null;
 
@@ -180,9 +296,11 @@ function TemplateEditor({
           );
         }}
       >
-        <DialogHead titleId={headingId} title={`${manage ? "Edit" : "View"} ${template.key}`} onClose={onClose} />
+        <DialogHead titleId={headingId} title={`${manage ? "Edit" : "View"}: ${templateName(template.key)}`} onClose={onClose} />
         <div className={dialog.body}>
-          <p className={dialog.intro}>{template.description}</p>
+          <p className={dialog.intro}>
+            {describe(template)} <KeyText>{template.key}</KeyText>
+          </p>
           {feedback}
           <div className={dialog.grid}>
             <div className={`${cp.field} ${dialog.span}`}>
@@ -237,7 +355,7 @@ function TemplateEditor({
               </p>
             </div>
           </div>
-          {!manage && <p className={cp.muted}>You can preview changes; saving needs platform.staff_communication.manage.</p>}
+          {!manage && <p className={cp.muted}>You can preview changes; saving needs the communication management permission.</p>}
           {testTo && (
             <p className={cp.muted}>
               The test went to {testTo} (your own address), with the saved wording and sample values.
@@ -310,14 +428,9 @@ function TemplateEditor({
 function Sender({ manage }: { manage: boolean }) {
   const [load, reload] = useLoad(() => adminConsoleApi.sender(), []);
   return (
-    <section className={`w360-card ${cp.card}`} aria-labelledby="sender-h">
-      <h2 id="sender-h" className={cp.cardTitle}>
-        Sender
-      </h2>
-      <LoadGate load={load} what="sender settings">
-        {(settings) => <SenderSettingsView settings={settings} manage={manage} onSaved={reload} />}
-      </LoadGate>
-    </section>
+    <LoadGate load={load} what="sender settings">
+      {(settings) => <SenderSettingsView settings={settings} manage={manage} onSaved={reload} />}
+    </LoadGate>
   );
 }
 
@@ -327,25 +440,14 @@ function SenderSettingsView({ settings, manage, onSaved }: { settings: SenderSet
   const [name, setName] = useState(settings.sender_name);
   const [replyTo, setReplyTo] = useState(settings.reply_to);
   return (
-    <div className={cp.stack}>
-      <p>
-        Emails are sent from <code className={cp.mono}>{settings.from_address}</code>. That address is fixed by the
-        platform&apos;s mail configuration; the name and reply-to are yours to set.
-      </p>
-      <dl className={cp.factsGrid}>
-        <div>
-          <dt>Sender name</dt>
-          <dd>{settings.sender_name || "The platform name"}</dd>
-        </div>
-        <div>
-          <dt>Reply-to address</dt>
-          <dd>{settings.reply_to || "None"}</dd>
-        </div>
-      </dl>
-      {manage && (
-        <div>
+    <Card
+      title="Sender"
+      description="The from address is fixed by the platform's mail configuration; the name and reply-to are yours to set."
+      actions={
+        manage ? (
           <FormPopup
             label="Edit sender"
+            buttonClassName={popupButton("secondary")}
             title="Sender"
             intro="The from address is fixed by the platform's mail configuration; the name and reply-to are yours to set."
             submitLabel="Save sender"
@@ -368,8 +470,16 @@ function SenderSettingsView({ settings, manage, onSaved }: { settings: SenderSet
             />
             <TextField label="Reply-to address (optional)" type="email" value={replyTo} onChange={setReplyTo} maxLength={254} />
           </FormPopup>
-        </div>
-      )}
-    </div>
+        ) : undefined
+      }
+    >
+      <DescriptionList
+        items={[
+          { label: "From address", value: <code className={cp.mono}>{settings.from_address}</code> },
+          { label: "Sender name", value: settings.sender_name || "The platform name" },
+          { label: "Reply-to address", value: settings.reply_to || <span className={cp.muted}>Not set</span> },
+        ]}
+      />
+    </Card>
   );
 }

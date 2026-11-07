@@ -8,7 +8,9 @@ import { dialog, FormPopup } from "../Modal";
 import { LoadGate, Status, Table, useAction, useLoad, when } from "../ui";
 import cp from "../ControlPlane.module.css";
 import { TextField } from "../widgets";
-import { StoreTabs } from "./StoreTabs";
+import { StoreHeader } from "./StoreTabs";
+import { Page, SectionHeader } from "../kit";
+import { iconLabel, popupButton } from "../kit/PopupLabel";
 import styles from "./ProductManager.module.css";
 
 /**
@@ -108,7 +110,8 @@ function CouponForm({
   return (
     <div className={styles.toolbar}>
       <FormPopup
-        label="+ New coupon"
+        label={iconLabel("New coupon")}
+        buttonClassName={popupButton()}
         title="New coupon"
         intro="Customers type the code on a product page or at checkout. It lowers the first payment only, before GST."
         submitLabel="Create coupon"
@@ -307,9 +310,8 @@ export function Coupons() {
     [],
   );
   return (
-    <div className={styles.page}>
-      <h1>Coupons</h1>
-      <StoreTabs current="coupons" />
+    <Page>
+      <StoreHeader current="coupons" />
       <LoadGate load={load} what="the coupons">
         {([coupons, products]) => {
           const list = products.results.map((p) => ({
@@ -319,7 +321,11 @@ export function Coupons() {
           const names = Object.fromEntries(list.map((p) => [p.code, p.name]));
           return (
             <>
-              <CouponForm products={list} onCreated={reload} />
+              <SectionHeader
+                title="All coupons"
+                description="A coupon lowers the first payment only, before GST."
+                actions={<CouponForm products={list} onCreated={reload} />}
+              />
               <Table
                 caption="Coupons"
                 head={[
@@ -333,6 +339,7 @@ export function Coupons() {
                 ]}
                 isEmpty={coupons.results.length === 0}
                 empty="No coupons yet."
+                emptyHint="Create a code customers can type at checkout."
               >
                 {coupons.results.map((c) => (
                   <CouponRow
@@ -347,6 +354,6 @@ export function Coupons() {
           );
         }}
       </LoadGate>
-    </div>
+    </Page>
   );
 }

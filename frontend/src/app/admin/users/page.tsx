@@ -3,11 +3,12 @@
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Users } from "@/features/controlplane/AdminUsers";
+import { LoadingBlock } from "@/features/controlplane/kit";
 
 /** Suspense: the page reads a search from the address (the console's search box). */
 export default function Page() {
   return (
-    <Suspense fallback={<p aria-live="polite">Loading users…</p>}>
+    <Suspense fallback={<LoadingBlock what="users" />}>
       <UsersFromAddress />
     </Suspense>
   );

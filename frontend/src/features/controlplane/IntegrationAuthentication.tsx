@@ -26,9 +26,9 @@ import styles from "./ControlPlane.module.css";
  */
 
 export const SIGN_IN_MODE_LABELS: Record<ConsoleIntegration["sign_in_mode"], string> = {
-  sso_optional: "Optional SSO - Workeasy360 or the product's own sign-in",
-  sso_only: "SSO only - Workeasy360 sign-in only",
-  local_only: "Local sign-in only - the product does not use Workeasy360 sign-in",
+  sso_optional: "Optional SSO - WorkEasy360 or the product's own sign-in",
+  sso_only: "SSO only - WorkEasy360 sign-in only",
+  local_only: "Local sign-in only - the product does not use WorkEasy360 sign-in",
 };
 
 const SSO_STATE: Record<ConsoleIntegration["sso_state"], string> = {
@@ -51,7 +51,7 @@ export function AuthenticationFacts({ integration }: { integration: ConsoleInteg
   return (
     <dl className={styles.factsGrid}>
       <div>
-        <dt>Workeasy360 SSO</dt>
+        <dt>WorkEasy360 SSO</dt>
         <dd>{SSO_STATE[integration.sso_state] ?? integration.sso_state}</dd>
       </div>
       <div>
@@ -73,7 +73,7 @@ export function AuthenticationFacts({ integration }: { integration: ConsoleInteg
         <dd className={styles.mono}>
           {integration.post_logout_redirect_uris.length
             ? integration.post_logout_redirect_uris.map((u) => <div key={u}>{u}</div>)
-            : "None (no sign-out of Workeasy360 from the product)"}
+            : "None (no sign-out of WorkEasy360 from the product)"}
         </dd>
       </div>
       <div>
@@ -343,7 +343,7 @@ export function CredentialsPanel({ code, manage, busy, act }: { code: string; ma
       )}
       {issued && !issued.client_secret && <p role="status">Public key added as credential {issued.credential_id}.</p>}
       {rows.length === 0 ? (
-        <p className={styles.muted}>No credentials. Workeasy360 sign-in cannot complete until one is added.</p>
+        <p className={styles.muted}>No credentials. WorkEasy360 sign-in cannot complete until one is added.</p>
       ) : (
         <ul className={styles.stack}>
           {rows.map((c) => (

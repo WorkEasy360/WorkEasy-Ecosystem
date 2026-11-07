@@ -7,6 +7,8 @@ import { can, useAdmin } from "./ControlShell";
 import { dialog, FormPopup } from "./Modal";
 import { LoadGate, Table, money, useAction, useLoad, when } from "./ui";
 import { SelectField, TextAreaField, TextField } from "./widgets";
+import { toMajor } from "./amounts";
+import { Card, Page, PageHeader, buttonClass } from "./kit";
 import cp from "./ControlPlane.module.css";
 import styles from "./AdminConsole.module.css";
 
@@ -45,17 +47,20 @@ export function PartnerProgramme({
   manage,
   manageFees,
   products,
+  fees = true,
 }: {
   /** ``platform.staff_commission.manage``: set and end margins. */
   manage: boolean;
   /** ``platform.staff_partner.manage``: set the set-up fees. */
   manageFees: boolean;
   products: { code: string; name: string }[];
+  /** false: leave the set-up fees to the Upgrade fees page (Currency & pricing links to it). */
+  fees?: boolean;
 }) {
   return (
     <>
       <MarginsSection manage={manage} products={products} />
-      <FeesSection manage={manageFees} />
+      {fees && <FeesSection manage={manageFees} />}
       <AffiliatePolicySection manage={manageFees} />
     </>
   );
@@ -181,21 +186,26 @@ function MarginsSection({ manage, products }: { manage: boolean; products: { cod
   );
 }
 
-/** Partners → Upgrade Fees (2026-11-03): the set-up fees alone, where staff look
- * for them. Super Admin's Partner Programme shows the same section. */
+/** Partners → Upgrade fees (2026-11-03): the set-up fees, where staff look for
+ * them. Currency & pricing links here instead of repeating them. */
 export function UpgradeFeesScreen() {
   const { permissions } = useAdmin();
   return (
-    <div className={cp.stack}>
-      <h1>Upgrade fees</h1>
-      <p className={cp.lead}>
-        What a partner pays to upgrade - Affiliate to Reseller, or to White-label - and how to pay it offline. Upgrade requests and their
-        payments are on each partner&apos;s Upgrade panel.
-      </p>
+    <Page>
+      <PageHeader
+        title="Upgrade fees"
+        subtitle="What a partner pays to become a Reseller or a White-label partner."
+        info="Upgrade requests and their payments are on each partner's Upgrade panel. Requests already open keep the fee they started with."
+      />
       <FeesSection manage={can(permissions, "platform.staff_partner.manage")} />
-    </div>
+    </Page>
   );
 }
+
+const FEE_TARGETS = [
+  { value: "reseller", label: "Reseller" },
+  { value: "white_label", label: "White-label" },
+] as const;
 
 function FeesSection({ manage }: { manage: boolean }) {
   const [load, reload] = useLoad(() => adminProgrammeApi.fees(), []);
@@ -206,18 +216,45 @@ function FeesSection({ manage }: { manage: boolean }) {
   // The amount travels as the decimal text typed; the server converts it to
   // minor units for the currency (no money arithmetic in the browser).
   const valid = /^\d{1,10}(\.\d{1,2})?$/.test(amount.trim());
+  const fields = (
+    <>
+      <SelectField label="Becoming" value={target} onChange={setTarget} options={FEE_TARGETS.map((t) => ({ value: t.value, label: t.label }))} />
+      <SelectField
+        label="Currency"
+        value={currency}
+        onChange={setCurrency}
+        options={["INR", "USD", "GBP", "EUR", "AED", "AUD", "CAD"].map((c) => ({ value: c, label: c }))}
+      />
+      <TextField
+        label="Amount"
+        value={amount}
+        onChange={setAmount}
+        inputMode="decimal"
+        maxLength={13}
+        hint="For example 25000 or 25000.00. Zero removes the fee."
+        error={amount && !valid ? "Enter an amount with at most two decimals." : undefined}
+      />
+      <div className={dialog.span}>
+        <TextAreaField
+          label="How to pay offline"
+          value={instructions}
+          onChange={setInstructions}
+          maxLength={1000}
+          hint="Shown to the partner beside the fee: bank account, IFSC, UPI ID. The partner then gives the transfer's reference."
+        />
+      </div>
+    </>
+  );
+  const save = async () => {
+    await adminProgrammeApi.setFee({ experience: target, amount: amount.trim(), currency, instructions: instructions.trim() });
+    return "Set-up fee saved.";
+  };
   return (
-    <section className={styles.section} aria-labelledby="setup-fees">
-      <h2 id="setup-fees" className={styles.sectionTitle}>
-        Partner set-up fees
-      </h2>
-      <p className={cp.lead}>
-        An optional one-time fee for becoming a Reseller or White-label partner. The partner pays it online (when a payment provider
-        takes the currency) or offline, giving the transfer&apos;s reference, which you verify before approving. Zero removes the fee.
-        Requests already open keep the fee they started with.
-      </p>
-      {manage && (
-        <div>
+    <Card
+      title="Partner set-up fees"
+      description="An optional one-time fee, paid online or offline with a transfer reference you verify before approving."
+      actions={
+        manage ? (
           <FormPopup
             label="Set a fee"
             title="Set a fee"
@@ -229,62 +266,53 @@ function FeesSection({ manage }: { manage: boolean }) {
               setCurrency("INR");
               setInstructions("");
             }}
-            onSubmit={async () => {
-              await adminProgrammeApi.setFee({ experience: target, amount: amount.trim(), currency, instructions: instructions.trim() });
-              return "Set-up fee saved.";
-            }}
+            onSubmit={save}
             onDone={reload}
           >
-            <SelectField
-              label="Becoming"
-              value={target}
-              onChange={setTarget}
-              options={[
-                { value: "reseller", label: "Reseller" },
-                { value: "white_label", label: "White-label" },
-              ]}
-            />
-            <SelectField
-              label="Currency"
-              value={currency}
-              onChange={setCurrency}
-              options={["INR", "USD", "GBP", "EUR", "AED", "AUD", "CAD"].map((c) => ({ value: c, label: c }))}
-            />
-            <TextField
-              label="Amount"
-              value={amount}
-              onChange={setAmount}
-              inputMode="decimal"
-              maxLength={13}
-              hint="For example 25000 or 25000.00. Zero removes the fee."
-              error={amount && !valid ? "Enter an amount with at most two decimals." : undefined}
-            />
-            <div className={dialog.span}>
-              <TextAreaField
-                label="How to pay offline"
-                value={instructions}
-                onChange={setInstructions}
-                maxLength={1000}
-                hint="Shown to the partner beside the fee: bank account, IFSC, UPI ID. The partner then gives the transfer's reference."
-              />
-            </div>
+            {fields}
           </FormPopup>
-        </div>
-      )}
+        ) : undefined
+      }
+    >
       <LoadGate load={load} what="set-up fees">
         {(d) => (
-          <Table caption="Set-up fees" head={["Becoming", "Fee", "How to pay offline"]}>
-            {(["reseller", "white_label"] as const).map((key) => (
-              <tr key={key}>
-                <th scope="row">{key === "reseller" ? "Reseller" : "White-label"}</th>
-                <td className={cp.num}>{d.fees[key] ? money(d.fees[key]!.amount_minor, d.fees[key]!.currency) : "No fee"}</td>
-                <td className={cp.preWrap}>{d.fees[key]?.instructions || "—"}</td>
-              </tr>
-            ))}
+          <Table caption="Set-up fees" head={["Becoming", "Fee", "How to pay offline", ...(manage ? ["Actions"] : [])]} numeric={["Fee"]}>
+            {FEE_TARGETS.map(({ value: key, label }) => {
+              const fee = d.fees[key];
+              return (
+                <tr key={key}>
+                  <th scope="row">{label}</th>
+                  <td className={cp.num}>{fee ? money(fee.amount_minor, fee.currency) : "No fee"}</td>
+                  <td className={cp.preWrap}>{fee?.instructions || "—"}</td>
+                  {manage && (
+                    <td>
+                      <FormPopup
+                        label="Edit"
+                        buttonClassName={buttonClass("secondary", "sm")}
+                        buttonAriaLabel={`Edit the ${label} fee`}
+                        title={`Edit the ${label} fee`}
+                        submitLabel="Save fee"
+                        canSubmit={valid}
+                        onOpen={() => {
+                          setTarget(key);
+                          setAmount(fee ? toMajor(fee.amount_minor, fee.currency) : "");
+                          setCurrency(fee?.currency ?? "INR");
+                          setInstructions(fee?.instructions ?? "");
+                        }}
+                        onSubmit={save}
+                        onDone={reload}
+                      >
+                        {fields}
+                      </FormPopup>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
           </Table>
         )}
       </LoadGate>
-    </section>
+    </Card>
   );
 }
 

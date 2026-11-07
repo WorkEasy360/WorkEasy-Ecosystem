@@ -5,6 +5,7 @@ import { AdminShell } from "./ControlShell";
 import { AllPartnersList, PartnersOverview } from "./PartnerConsole";
 import { PartnerCenterLayout } from "./PartnerCenter";
 import { allPartnersHref } from "./oldPartnerRoutes";
+import { CENTER_ITEMS, centerItems, isCurrent } from "./partnerCenterNav";
 import { AdminContextForTest, SIGNED_IN, expectNoViolations, mockApi, ok, type Reply } from "./testSupport";
 
 /**
@@ -113,75 +114,54 @@ describe("the Super Admin sidebar", () => {
     return within(screen.getByRole("navigation", { name: /Super Admin/ })).getAllByRole("link");
   }
 
-  it("has one Partner section holding the Partners area's pages", async () => {
-    await sidebarLinks([VIEW, MONEY]);
+  it("has one Partners section holding the Partners area's pages - New partner is an action, not a page", async () => {
+    await sidebarLinks([VIEW, MANAGE, MONEY]);
     const nav = screen.getByRole("navigation", { name: /Super Admin/ });
-    const section = within(nav).getByRole("button", { name: /Partner/ });
+    const section = within(nav).getByRole("button", { name: /^Partners/ });
     if (section.getAttribute("aria-expanded") === "false") fireEvent.click(section);
     const links = within(nav).getAllByRole("link");
-    expect(links.map((a) => a.textContent)).toEqual(["Dashboard", "Partner dashboard", "All Partners", "Product Requests", "Upgrade Fees", "Partner Tickets"]);
+    expect(links.map((a) => a.textContent)).toEqual(["Dashboard", "Partner overview", "All partners", "Product requests", "Upgrade fees", "Partner tickets"]);
     expect(links[1]).toHaveAttribute("href", "/admin/partners");
   });
 
   it("stays current on a partner's own page", async () => {
     pathname = "/admin/partners/0b8f6a52-6c1e-4f39-9d55-1f0f6f0e2a11/profile";
     const links = await sidebarLinks([VIEW]);
-    expect(links.find((a) => a.textContent === "All Partners")).toHaveAttribute("aria-current", "page");
-    expect(links.find((a) => a.textContent === "Partner dashboard")).not.toHaveAttribute("aria-current");
+    expect(links.find((a) => a.textContent === "All partners")).toHaveAttribute("aria-current", "page");
+    expect(links.find((a) => a.textContent === "Partner overview")).not.toHaveAttribute("aria-current");
   });
 
   it("is absent for someone who may not view partners", async () => {
     for (const permissions of [["platform.staff_customer.view"], [MONEY]]) {
       const links = await sidebarLinks(permissions);
-      expect(links.map((a) => a.textContent)).not.toContain("All Partners");
-      expect(within(screen.getByRole("navigation", { name: /Super Admin/ })).queryByRole("button", { name: /Partner/ })).toBeNull();
+      expect(links.map((a) => a.textContent)).not.toContain("All partners");
+      expect(within(screen.getByRole("navigation", { name: /Super Admin/ })).queryByRole("button", { name: /^Partners/ })).toBeNull();
     }
   });
 });
 
-describe("the Partners navigation", () => {
-  function renderCenter(permissions: string[]) {
-    return render(
-      <AdminContextForTest permissions={permissions}>
+describe("the Partners area", () => {
+  it("adds no second navigation or banner above a page: the sidebar is the one menu", async () => {
+    pathname = "/admin/partners/all";
+    const { container } = render(
+      <AdminContextForTest permissions={[VIEW, MANAGE, MONEY]}>
         <PartnerCenterLayout>
           <h1>Body</h1>
         </PartnerCenterLayout>
       </AdminContextForTest>,
     );
-  }
-  const labels = () =>
-    within(screen.getByRole("navigation", { name: "Partner Control Center" }))
-      .getAllByRole("link")
-      .map((a) => a.textContent);
-
-  it("is exactly Dashboard, All Partners, Add Partner, Product Requests, Upgrade Fees and Partner Tickets (ADR-055, ADR-057)", async () => {
-    pathname = "/admin/partners/all";
-    const { container } = renderCenter([VIEW, MANAGE, MONEY]);
-    expect(labels()).toEqual(["Dashboard", "All Partners", "Add Partner", "Product Requests", "Upgrade Fees", "Partner Tickets"]);
-    for (const gone of ["Resellers", "White-label", "Affiliates", "Customers", "Products & Pricing", "Commissions", "Payouts", "Domains", "Branding"]) {
-      expect(labels()).not.toContain(gone);
-    }
-    expect(screen.getByRole("link", { name: "All Partners" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    expect(screen.queryByText("Partner Control Center")).not.toBeInTheDocument();
     expect(screen.getAllByRole("heading", { level: 1 }).map((h) => h.textContent)).toEqual(["Body"]);
     await expectNoViolations(container);
   });
 
-  it("keeps a partner's page and its Complete Your Profile under All Partners", () => {
-    pathname = "/admin/partners/0b8f6a52-6c1e-4f39-9d55-1f0f6f0e2a11/profile";
-    renderCenter([VIEW, MANAGE]);
-    expect(screen.getByRole("link", { name: "All Partners" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Dashboard" })).not.toHaveAttribute("aria-current");
-  });
-
-  it("marks Add Partner on its page and offers it only to staff who may manage partners", () => {
-    pathname = "/admin/partners/new";
-    renderCenter([VIEW, MANAGE]);
-    expect(screen.getByRole("link", { name: "Add Partner" })).toHaveAttribute("aria-current", "page");
-  });
-
-  it("hides Add Partner from someone who may only view", () => {
-    renderCenter([VIEW]);
-    expect(labels()).toEqual(["Dashboard", "All Partners", "Product Requests", "Upgrade Fees", "Partner Tickets"]);
+  it("keeps a partner's page and its profile under All partners, and New partner too", () => {
+    const page = "/admin/partners/0b8f6a52-6c1e-4f39-9d55-1f0f6f0e2a11/profile";
+    const all = CENTER_ITEMS.find((i) => i.href === "/admin/partners/all")!;
+    expect(isCurrent(page, all)).toBe(true);
+    expect(isCurrent(page, CENTER_ITEMS[0])).toBe(false);
+    expect(centerItems([VIEW]).map((i) => i.label)).not.toContain("New partner");
   });
 });
 
@@ -193,28 +173,31 @@ describe("old addresses", () => {
   });
 });
 
-// --- the dashboard -------------------------------------------------------------------------------
+// --- the overview -------------------------------------------------------------------------------
 
-describe("the Partner dashboard", () => {
-  it("shows the counts, each a link to All Partners filtered to what it counts", async () => {
+describe("the Partner overview", () => {
+  it("shows the counts, each a card linking to All partners filtered to what it counts", async () => {
     mockApi({ "GET /api/v1/admin/partners/overview": [ok(OVERVIEW)] });
     const { container } = render(
       <AdminContextForTest permissions={[VIEW, MANAGE]}>
         <PartnersOverview />
       </AdminContextForTest>,
     );
-    const total = await screen.findByRole("link", { name: "Total partners: 4. Open the list." });
+    expect(await screen.findByRole("heading", { level: 1, name: "Partner overview" })).toBeInTheDocument();
+    const total = await screen.findByRole("link", { name: /^Total partners 4/ });
     expect(total).toHaveAttribute("href", "/admin/partners/all");
-    const expected: [string, string][] = [
-      ["Active partners: 3. Open the list.", "/admin/partners/all?status=active"],
-      ["Resellers: 2. Open the list.", "/admin/partners/all?type=reseller"],
-      ["White-label partners: 1. Open the list.", "/admin/partners/all?type=white_label"],
-      ["Affiliates: 1. Open the list.", "/admin/partners/all?type=affiliate"],
-      ["Suspended partners: 1. Open the list.", "/admin/partners/all?status=suspended"],
-      ["Profiles incomplete: 2. Open the list.", "/admin/partners/all?profile=incomplete"],
+    const expected: [RegExp, string][] = [
+      [/^Active partners 3/, "/admin/partners/all?status=active"],
+      [/^Resellers 2/, "/admin/partners/all?type=reseller"],
+      [/^White-label partners 1/, "/admin/partners/all?type=white_label"],
+      [/^Affiliates 1/, "/admin/partners/all?type=affiliate"],
+      [/^Suspended partners 1/, "/admin/partners/all?status=suspended"],
+      [/^Profiles incomplete 2/, "/admin/partners/all?profile=incomplete"],
     ];
     for (const [name, href] of expected) expect(screen.getByRole("link", { name })).toHaveAttribute("href", href);
-    expect(screen.getByRole("link", { name: "+ Add Partner" })).toHaveAttribute("href", "/admin/partners/new");
+    expect(screen.getByRole("link", { name: "New partner" })).toHaveAttribute("href", "/admin/partners/new");
+    // The paragraph about currency conversion is gone.
+    expect(screen.queryByText(/currency conversion/)).not.toBeInTheDocument();
     await expectNoViolations(container);
   });
 
@@ -232,8 +215,8 @@ describe("the Partner dashboard", () => {
     expect(r).toHaveTextContent("40%");
     expect(r).toHaveTextContent("Incomplete");
     expect(r).toHaveTextContent("Setup required");
-    // Someone who may only view gets no Add Partner button.
-    expect(screen.queryByRole("link", { name: "+ Add Partner" })).not.toBeInTheDocument();
+    // Someone who may only view gets no New partner button.
+    expect(screen.queryByRole("link", { name: "New partner" })).not.toBeInTheDocument();
   });
 
   it("invents no revenue, growth or recurring-revenue figure", async () => {
@@ -243,14 +226,14 @@ describe("the Partner dashboard", () => {
         <PartnersOverview />
       </AdminContextForTest>,
     );
-    await screen.findByRole("link", { name: /Total partners/ });
+    await screen.findByRole("link", { name: /^Total partners/ });
     const text = document.body.textContent ?? "";
     expect(text).not.toMatch(/\bMRR\b|\bARR\b|growth \d|%\s*growth/i);
     expect(screen.queryByText(/[£$€]\s?\d/)).not.toBeInTheDocument();
   });
 });
 
-// --- All Partners --------------------------------------------------------------------------------
+// --- All partners --------------------------------------------------------------------------------
 
 function renderList(permissions = [VIEW, MANAGE]) {
   return render(
@@ -260,8 +243,20 @@ function renderList(permissions = [VIEW, MANAGE]) {
   );
 }
 
-describe("All Partners", () => {
-  it("shows the agency-style columns, one partner type per row and the setup state", async () => {
+/** Open a row's "⋯" menu and return it. */
+function openRowMenu(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: `Actions for ${name}` }));
+  return screen.getByRole("menu", { name: `Actions for ${name}` });
+}
+
+/** Choose an option of a styled select. */
+function choose(label: string, option: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: label }));
+  fireEvent.click(screen.getByRole("option", { name: option }));
+}
+
+describe("All partners", () => {
+  it("shows the partner, type, status, country, currency, wallet, last login and joined columns, with actions in a row menu", async () => {
     mockApi(
       listRoutes([
         row(),
@@ -284,60 +279,67 @@ describe("All Partners", () => {
       ]),
     );
     const { container } = renderList();
+    expect(screen.getByRole("heading", { level: 1, name: "All partners" })).toBeInTheDocument();
     const table = await screen.findByRole("table", { name: "Partners" });
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
+      "Partner",
+      "Type",
       "Status",
-      "Action",
-      "Panel",
-      "Partner ID",
-      "Name",
-      "Partner Type",
-      "Email",
-      "Phone",
       "Country",
       "Currency",
       "Wallet",
-      "Last Login",
-      "Joining Date",
+      "Last login",
+      "Joined",
+      "Actions",
     ]);
     const acme = within(table).getByRole("row", { name: /Acme Partners/ });
-    expect(within(acme).getByRole("switch", { name: "Acme Partners active" })).toHaveAttribute("aria-checked", "true");
     expect(within(acme).getByRole("link", { name: "Acme Partners" })).toHaveAttribute("href", "/admin/partners/p1");
-    expect(within(acme).getByRole("link", { name: "Edit setup of Acme Partners" })).toHaveAttribute("href", "/admin/partners/p1/profile");
-    expect(within(acme).getByRole("button", { name: "Guest login to Acme Partners" })).toBeInTheDocument();
-    expect(within(acme).getByRole("button", { name: "Copy panel link of Acme Partners" })).toBeInTheDocument();
-    expect(acme).toHaveTextContent(`${window.location.origin}/partner/p1`);
+    expect(within(acme).getByRole("button", { name: "Copy partner ID of Acme Partners" })).toBeInTheDocument();
     expect(acme).toHaveTextContent("owner@acme.example");
-    expect(acme).toHaveTextContent("+44 20 7946 0000");
     expect(acme).toHaveTextContent("GB");
     expect(acme).toHaveTextContent("35.54");
-    expect(acme).toHaveTextContent("active");
+    expect(acme).toHaveTextContent("Active");
+    // No inline switch: the status is a badge.
+    expect(within(table).queryByRole("switch")).not.toBeInTheDocument();
     const combo = within(table).getByRole("row", { name: /Combo Co/ });
     // One type, the partner's current workspace - never all it holds.
-    const typeCell = (r: HTMLElement) => within(r).getAllByRole("cell")[4];
+    const typeCell = (r: HTMLElement) => within(r).getAllByRole("cell")[0];
     expect(typeCell(combo)).toHaveTextContent(/^White-label$/);
     expect(typeCell(acme)).toHaveTextContent(/^Reseller$/);
-    expect(within(combo).queryByRole("list", { name: /Partner type/ })).not.toBeInTheDocument();
     expect(combo).not.toHaveTextContent("Affiliate");
-    expect(within(combo).getByRole("link", { name: "Complete setup of Combo Co" })).toHaveAttribute("href", "/admin/partners/p2/profile");
-    // A draft nobody can act for is not offered activation (the server refuses it).
-    const comboSwitch = within(combo).getByRole("switch", { name: "Combo Co active" });
-    expect(comboSwitch).toBeDisabled();
-    expect(comboSwitch).toHaveAttribute("title", "Add an administrator before activating this partner.");
     expect(combo).toHaveTextContent("Setup required");
     expect(combo).toHaveTextContent("No administrator");
     await expectNoViolations(container);
+
+    const menu = openRowMenu("Acme Partners");
+    expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "View partner",
+      "Edit setup",
+      "Open partner panel",
+      "Copy panel link",
+      "Guest login (read-only)",
+      "Suspend",
+    ]);
+    expect(within(menu).getByRole("menuitem", { name: "Edit setup" })).toHaveAttribute("href", "/admin/partners/p1/profile");
+    expect(within(menu).getByRole("menuitem", { name: /Open partner panel/ })).toHaveAttribute("href", `${window.location.origin}/partner/p1`);
+    fireEvent.keyDown(menu, { key: "Escape" });
+
+    // A draft nobody can act for is not offered activation (the server refuses it).
+    const comboMenu = openRowMenu("Combo Co");
+    expect(within(comboMenu).getByRole("menuitem", { name: "Complete setup" })).toHaveAttribute("href", "/admin/partners/p2/profile");
+    expect(within(comboMenu).getByRole("menuitem", { name: "Activate (add an administrator first)" })).toBeDisabled();
+    expect(within(comboMenu).queryByRole("menuitem", { name: "Suspend" })).not.toBeInTheDocument();
   });
 
-  it("copies the value a copy button stands next to", async () => {
+  it("copies an ID with the copy button beside it", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     mockApi(listRoutes([row()]));
     renderList();
     const table = await screen.findByRole("table", { name: "Partners" });
-    fireEvent.click(within(table).getByRole("button", { name: "Copy email of Acme Partners" }));
-    expect(writeText).toHaveBeenCalledWith("owner@acme.example");
-    expect(await within(table).findByRole("button", { name: "Copied email of Acme Partners" })).toBeInTheDocument();
+    fireEvent.click(within(table).getByRole("button", { name: "Copy partner ID of Acme Partners" }));
+    expect(writeText).toHaveBeenCalledWith("p1");
+    expect(await within(table).findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 
   it("guest login opens the partner's portal read-only at once, recording where it came from", async () => {
@@ -351,15 +353,15 @@ describe("All Partners", () => {
       }),
     );
     renderList();
-    const table = await screen.findByRole("table", { name: "Partners" });
-    fireEvent.click(within(table).getByRole("button", { name: "Guest login to Acme Partners" }));
-    expect(within(table).queryByLabelText(/Why are you opening/)).not.toBeInTheDocument();
+    await screen.findByRole("table", { name: "Partners" });
+    fireEvent.click(within(openRowMenu("Acme Partners")).getByRole("menuitem", { name: "Guest login (read-only)" }));
+    expect(screen.queryByLabelText(/Why are you opening/)).not.toBeInTheDocument();
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/partner/p1"));
     expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p1/guest-view")!.body).toEqual({ reason: "Guest login - All Partners" });
     vi.unstubAllGlobals();
   });
 
-  it("marks the partner Add Partner just created and points to its setup", async () => {
+  it("says the partner New partner just created was created and points to its setup", async () => {
     const id = "11111111-2222-4333-8444-555555555555";
     query = `created=${id}`;
     mockApi(listRoutes([row({ id, display_name: "Fresh Co", status: "draft" })]));
@@ -377,18 +379,18 @@ describe("All Partners", () => {
     expect(screen.queryByText("Partner created successfully.")).not.toBeInTheDocument();
   });
 
-  it("sends every filter to the server and keeps them in the address", async () => {
+  it("sends every filter to the server, searches as you type and keeps them in the address", async () => {
     const calls = mockApi(listRoutes([row()]));
     renderList();
     await screen.findByRole("table", { name: "Partners" });
-    fireEvent.change(screen.getByLabelText("Partner type"), { target: { value: "affiliate" } });
+    choose("Partner type", "Affiliate");
     await waitFor(() => expect(calls.at(-1)!.url).toContain("type=affiliate"));
-    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "suspended" } });
+    choose("Status", "Suspended");
     await waitFor(() => expect(calls.at(-1)!.url).toContain("status=suspended"));
-    fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "incomplete" } });
+    choose("Profile", "Incomplete");
     await waitFor(() => expect(calls.at(-1)!.url).toContain("profile=incomplete"));
     fireEvent.change(screen.getByLabelText("Search by partner name or email"), { target: { value: "owner@acme" } });
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
     await waitFor(() => expect(calls.at(-1)!.url).toContain("q=owner%40acme"));
     const last = new URL(calls.at(-1)!.url, "http://x");
     expect(Object.fromEntries(last.searchParams)).toMatchObject({
@@ -399,6 +401,8 @@ describe("All Partners", () => {
       q: "owner@acme",
     });
     expect(replace).toHaveBeenLastCalledWith("/admin/partners?q=owner%40acme&type=affiliate&status=suspended&profile=incomplete", { scroll: false });
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(replace).toHaveBeenLastCalledWith("/admin/partners", { scroll: false });
   });
 
   it("starts from the filters in the address and ignores values it does not know", async () => {
@@ -411,23 +415,21 @@ describe("All Partners", () => {
     expect(url.searchParams.get("status")).toBeNull();
     expect(url.searchParams.get("profile")).toBe("complete");
     expect(url.searchParams.get("q")).toBe("brand");
-    expect(screen.getByLabelText("Partner type")).toHaveValue("white_label");
+    expect(screen.getByRole("combobox", { name: "Partner type" })).toHaveTextContent("White-label");
   });
 
-  it("reactivates from the switch at once, recording where it came from and sending the row's version", async () => {
+  it("reactivates from the row menu after a confirmation, recording where it came from and sending the row's version", async () => {
     const calls = mockApi(
       listRoutes([row(), row({ id: "p3", display_name: "Paused Co", status: "suspended", version: 7 })], {
         "POST /api/v1/admin/partners/p3/status": [ok({ id: "p3" })],
       }),
     );
     renderList();
-    const table = await screen.findByRole("table", { name: "Partners" });
-    const paused = within(table).getByRole("row", { name: /Paused Co/ });
-    const toggle = within(paused).getByRole("switch", { name: "Paused Co active" });
-    expect(toggle).toHaveAttribute("aria-checked", "false");
-    fireEvent.click(toggle);
-    // No reason is asked for turning a partner on.
-    expect(within(table).queryByLabelText(/Reason to/)).not.toBeInTheDocument();
+    await screen.findByRole("table", { name: "Partners" });
+    fireEvent.click(within(openRowMenu("Paused Co")).getByRole("menuitem", { name: "Reactivate" }));
+    const dialog = screen.getByRole("dialog", { name: "Reactivate Paused Co?" });
+    expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p3/status")).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Reactivate partner" }));
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p3/status")).toBe(true));
     expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p3/status")!.body).toEqual({
       status: "active",
@@ -437,36 +439,35 @@ describe("All Partners", () => {
     expect(await screen.findByText("Paused Co reactivated.")).toBeInTheDocument();
   });
 
-  it("suspends an active partner from its switch at once", async () => {
+  it("suspends an active partner after a red confirmation, with the reason written there", async () => {
     const calls = mockApi(
       listRoutes([row()], {
         "POST /api/v1/admin/partners/p1/status": [ok({ id: "p1" })],
       }),
     );
     renderList();
-    const table = await screen.findByRole("table", { name: "Partners" });
-    fireEvent.click(within(table).getByRole("switch", { name: "Acme Partners active" }));
-    expect(within(table).queryByLabelText(/Reason to/)).not.toBeInTheDocument();
+    await screen.findByRole("table", { name: "Partners" });
+    fireEvent.click(within(openRowMenu("Acme Partners")).getByRole("menuitem", { name: "Suspend" }));
+    const dialog = screen.getByRole("dialog", { name: "Suspend Acme Partners?" });
+    fireEvent.change(within(dialog).getByLabelText(/Reason/), { target: { value: "Unpaid invoices since March" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Suspend partner" }));
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p1/status")).toBe(true));
-    expect((calls.find((c) => c.key === "POST /api/v1/admin/partners/p1/status")!.body as { status: string; reason: string })).toMatchObject({
+    expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p1/status")!.body as { status: string; reason: string }).toMatchObject({
       status: "suspended",
-      reason: "Suspended from All Partners",
+      reason: "Unpaid invoices since March",
     });
   });
 
-  it("activates a draft with an administrator from its switch at once", async () => {
+  it("activates a draft with an administrator from its row menu", async () => {
     const calls = mockApi(
       listRoutes([row({ id: "p5", display_name: "Draft Co", status: "draft", version: 2 })], {
         "POST /api/v1/admin/partners/p5/status": [ok({ id: "p5" })],
       }),
     );
     renderList();
-    const table = await screen.findByRole("table", { name: "Partners" });
-    const toggle = within(table).getByRole("switch", { name: "Draft Co active" });
-    expect(toggle).toHaveAttribute("aria-checked", "false");
-    expect(toggle).toBeEnabled();
-    fireEvent.click(toggle);
-    expect(within(table).queryByLabelText(/Reason to/)).not.toBeInTheDocument();
+    await screen.findByRole("table", { name: "Partners" });
+    fireEvent.click(within(openRowMenu("Draft Co")).getByRole("menuitem", { name: "Activate" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Activate partner" }));
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p5/status")).toBe(true));
     expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p5/status")!.body).toEqual({
       status: "active",
@@ -479,13 +480,14 @@ describe("All Partners", () => {
   it("offers no lifecycle action to staff who may only view", async () => {
     mockApi(listRoutes([row(), row({ id: "p4", display_name: "Draft Co", status: "draft" })]));
     renderList([VIEW]);
-    const table = await screen.findByRole("table", { name: "Partners" });
-    for (const toggle of within(table).getAllByRole("switch")) expect(toggle).toBeDisabled();
-    expect(within(table).queryByRole("button", { name: /Guest login/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "+ Add Partner" })).not.toBeInTheDocument();
+    await screen.findByRole("table", { name: "Partners" });
+    const menu = openRowMenu("Acme Partners");
+    expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["View partner", "Edit setup", "Open partner panel", "Copy panel link"]);
+    expect(screen.queryByRole("link", { name: "New partner" })).not.toBeInTheDocument();
   });
 
   it("says when nothing matches", async () => {
+    query = "q=zzz";
     mockApi(listRoutes([]));
     renderList();
     expect(await screen.findByText("No partners match these filters.")).toBeInTheDocument();
@@ -495,17 +497,17 @@ describe("All Partners", () => {
 // --- upgrade requests (ADR-049) -------------------------------------------------------------------
 
 describe("upgrade requests on the Partners screens", () => {
-  it("tells the dashboard how many requests wait for a decision, and says nothing when none do", async () => {
+  it("tells the overview how many requests wait for a decision, and says nothing when none do", async () => {
     mockApi({ "GET /api/v1/admin/partners/overview": [ok({ ...OVERVIEW, upgrades_pending: 2 })] });
     const first = render(
       <AdminContextForTest permissions={[VIEW]}>
         <PartnersOverview />
       </AdminContextForTest>,
     );
-    const notice = (await screen.findByText("2 upgrade requests are waiting for a decision.")).closest("section")!;
-    expect(within(notice).getByRole("link", { name: "Open All Partners" })).toHaveAttribute("href", "/admin/partners/all");
-    // It sits beside the cards: the pinned card list is unchanged.
-    expect(screen.getAllByRole("link", { name: /Open the list\./ })).toHaveLength(CARDS.length);
+    const notice = (await screen.findByText("2 upgrade requests are waiting for a decision.")).closest("[role=status]") as HTMLElement;
+    expect(within(notice).getByRole("link", { name: "Open all partners" })).toHaveAttribute("href", "/admin/partners/all");
+    // It sits beside the cards: the card list is unchanged.
+    expect(screen.getAllByRole("link", { name: /partners|Resellers|Affiliates|Profiles/ }).filter((a) => a.getAttribute("href")?.startsWith("/admin/partners/all")).length).toBeGreaterThanOrEqual(CARDS.length);
     await expectNoViolations(first.container);
     first.unmount();
 
@@ -516,8 +518,8 @@ describe("upgrade requests on the Partners screens", () => {
           <PartnersOverview />
         </AdminContextForTest>,
       );
-      await screen.findByRole("link", { name: /Total partners/ });
-      expect(screen.queryByRole("region", { name: "Upgrade requests" })).not.toBeInTheDocument();
+      await screen.findByRole("link", { name: /^Total partners/ });
+      expect(screen.queryByText(/waiting for a decision/)).not.toBeInTheDocument();
       again.unmount();
     }
   });

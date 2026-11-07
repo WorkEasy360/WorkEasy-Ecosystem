@@ -20,8 +20,10 @@ import { adminSignInUrl } from "@/features/auth/signInMode";
 import loginStyles from "@/features/auth/LoginScreen.module.css";
 import { PARTNER_MENU, type Can } from "@/features/partnerpanel/menu";
 import { ForcedPasswordChange } from "./ForcedPasswordChange";
-import { AdminTools } from "./AdminTopbar";
-import { adminNav } from "./adminNav";
+import { AdminAccount, AdminTools, roleLabel } from "./AdminTopbar";
+import { ADMIN_PAGE_TITLES, adminNav } from "./adminNav";
+import { ToastProvider } from "./kit/Confirm";
+import { ADMIN_TITLE_SUFFIX } from "./kit/Layout";
 import { usePortalRouter } from "@/lib/portalRouter";
 
 export function useSignOut() {
@@ -123,6 +125,22 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AdminState>({ status: "loading" });
   const { signOut, signOutTo, banner } = useSignOut();
 
+  // The console's own type scale, controls and page gutter (globals.css,
+  // :root[data-console="admin"]) - on <html>, so dialogs drawn on <body> have them too.
+  useEffect(() => {
+    document.documentElement.dataset.console = "admin";
+    return () => {
+      delete document.documentElement.dataset.console;
+    };
+  }, []);
+
+  // The browser tab names the page: "Users · WorkEasy360 Admin". A record's own
+  // page (a user, a partner) names itself from its page header.
+  useEffect(() => {
+    const title = pathname ? ADMIN_PAGE_TITLES[pathname.replace(/\/$/, "") || "/admin"] : undefined;
+    if (title) document.title = `${title} · ${ADMIN_TITLE_SUFFIX}`;
+  }, [pathname]);
+
   useEffect(() => {
     if (session.status !== "ready") return;
     // Sign in as an administrator, then come back to this page. The mode and
@@ -145,7 +163,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   }, [session, router, pathname]);
 
   if (session.status === "loading" || state.status === "loading") {
-    return <StatusScreen>Loading the control plane…</StatusScreen>;
+    return <StatusScreen>Loading the admin console…</StatusScreen>;
   }
   if (state.status === "denied") {
     // Signed in, but the server says this account may not use the console.
@@ -162,29 +180,44 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   if (state.status === "error") {
     return (
       <StatusScreen role="alert">
-        <p>The control plane could not be reached right now.</p>
+        <p>The admin console could not be reached right now.</p>
       </StatusScreen>
     );
   }
   const who = session.status === "ready" ? session.session : null;
-  const entries: AccountMenuEntry[] = [
-    { label: "My organizations", href: portalHref(portals, "app", "/organizations/select") },
-    ...(who?.consoles?.partner ? [{ label: "Partner portal", href: portalHref(portals, "partner", "/partner") }] : []),
-    { label: "Sign out", onSelect: signOut },
+  const external = (href: string) => /^https?:\/\//.test(href);
+  const link = (label: string, icon: string, href: string) => ({ label, icon, href, external: external(href) });
+  const entries = [
+    link("Sign-in preferences", "user", portalHref(portals, "app", "/settings/sign-in")),
+    link("My organizations", "building", portalHref(portals, "app", "/organizations/select")),
+    ...(who?.consoles?.partner ? [link("Partner portal", "handshake", portalHref(portals, "partner", "/partner"))] : []),
+    link("Help & support", "help", portalHref(portals, "app", "/contact")),
+    { label: "Sign out", icon: "logout", onSelect: signOut, separator: true },
   ];
   return (
     <AdminContext.Provider value={{ permissions: state.permissions }}>
-      <SidebarShell
-        area="Super Admin"
-        variant="admin"
-        navTitle="Admin panel"
-        groups={adminNav(state.permissions)}
-        tools={<AdminTools permissions={state.permissions} />}
-        account={<AccountMenu name={who?.name || who?.email || ""} entries={entries} showName />}
-        banner={banner}
-      >
-        {children}
-      </SidebarShell>
+      <ToastProvider>
+        <SidebarShell
+          area="Super Admin"
+          variant="admin"
+          navTitle="Admin panel"
+          accordion
+          railKey="w360.admin.rail"
+          groups={adminNav(state.permissions)}
+          tools={<AdminTools permissions={state.permissions} />}
+          account={
+            <AdminAccount
+              name={who?.name ?? ""}
+              email={who?.email ?? ""}
+              role={roleLabel(state.permissions)}
+              entries={entries}
+            />
+          }
+          banner={banner}
+        >
+          {children}
+        </SidebarShell>
+      </ToastProvider>
     </AdminContext.Provider>
   );
 }

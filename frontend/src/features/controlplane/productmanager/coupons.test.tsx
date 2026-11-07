@@ -53,7 +53,7 @@ describe("Super Admin coupons", () => {
     // No form sits open on the page.
     expect(screen.queryByLabelText(/^Code/)).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "+ New coupon" }));
+    fireEvent.click(screen.getByRole("button", { name: "New coupon" }));
     const popup = screen.getByRole("dialog", { name: "New coupon" });
     const submit = within(popup).getByRole("button", { name: "Create coupon" });
     expect(submit).toBeDisabled();

@@ -197,7 +197,7 @@ describe("the reseller wizard", () => {
       "Team",
       "Review",
     ]);
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Complete Your Profile: ABC Technologies");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Complete partner profile: ABC Technologies");
     expect(document.body.textContent).toMatch(/50%/);
     expect(document.body.textContent).toMatch(/Still needed: Business information/);
     await screen.findByLabelText(/^Business email/, { selector: "input" });
@@ -343,7 +343,7 @@ describe("the review step", () => {
     mockApi(base(["reseller"], RESELLER));
     mount();
     // jsdom drops the space before the visually hidden part of the name.
-    fireEvent.click(await screen.findByRole("button", { name: /^Complete ?Business information$/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Add details ?for Business information$/ }));
     expect(await screen.findByRole("heading", { level: 2, name: /Step 1 of 8: Business information/ })).toBeInTheDocument();
     expect(replace).toHaveBeenLastCalledWith(`/admin/partners/${ID}/profile?step=business`, { scroll: false });
   });

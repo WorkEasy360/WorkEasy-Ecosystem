@@ -46,7 +46,7 @@ const PRIMARY_LABELS: Record<string, string> = {
  * the new one). A partner may hold more than one set of capabilities; this is
  * its current type, a display only, never an authority. */
 export function PrimaryType({ value }: { value: string | null }) {
-  if (!value) return <span className={styles.muted}>Not set</span>;
+  if (!value) return <span className={styles.muted}>—</span>;
   return (
     <span className={`${local.typeBadge} ${local[`type_${value}`] ?? ""}`}>{PRIMARY_LABELS[value] ?? value.replace(/_/g, " ")}</span>
   );

@@ -2,21 +2,26 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { NavIcon } from "@/components/sidebar/icons";
+import { Icon } from "@/components/sidebar/icons";
 import type { SidebarItem } from "@/components/sidebar/SidebarShell";
+import { adminConsoleApi } from "@/lib/api/adminConsole";
 import { adminApi, type AttentionItem } from "@/lib/api/controlPlane";
 import { usePortalRouter } from "@/lib/portalRouter";
 import { adminNav } from "./adminNav";
+import { Modal } from "./Modal";
+import { Menu, type MenuItem } from "./kit/Menu";
+import { initialsOf } from "./kit/Layout";
+import { formatRelative, productName } from "./kit/format";
 
 import styles from "./AdminTopbar.module.css";
 
 const can = (permissions: string[], key: string) => permissions.includes(key);
 
 /**
- * The Super Admin's top bar (2026-10-26 redesign): search, the New menu, the
- * notification bell and the settings shortcut. Everything here is a way to a
- * page the staff member could already reach from the menu - each page and each
- * request behind it checks the grant again.
+ * The Super Admin's top bar (2026-11-07 design system): the command palette
+ * (Ctrl/⌘K), the New menu, notifications and the settings shortcut. Everything
+ * here is a way to a page the staff member could already reach from the menu -
+ * each page and each request behind it checks the grant again.
  */
 export function AdminTools({ permissions }: { permissions: string[] }) {
   return (
@@ -27,248 +32,391 @@ export function AdminTools({ permissions }: { permissions: string[] }) {
       <Bell permissions={permissions} />
       {can(permissions, "platform.staff_settings.view") && (
         <Link href="/admin/settings" className={styles.iconButton} aria-label="Platform settings" title="Platform settings">
-          <NavIcon name="settings" />
+          <Icon name="settings" size={20} />
         </Link>
       )}
     </>
   );
 }
 
-// --- search ------------------------------------------------------------------------
+// --- the command palette ------------------------------------------------------------
+
+type Group = "Recent" | "Pages" | "Settings" | "Users" | "Partners" | "Products" | "Orders";
+const GROUP_ORDER: Group[] = ["Recent", "Pages", "Settings", "Users", "Partners", "Products", "Orders"];
 
 interface Result {
   id: string;
+  group: Group;
   label: string;
   hint: string;
   href: string;
+  icon: string;
+}
+
+const RECENT_KEY = "w360.admin.recent";
+
+function readRecent(): Result[] {
+  try {
+    const raw = window.localStorage.getItem(RECENT_KEY);
+    const list = raw ? (JSON.parse(raw) as Result[]) : [];
+    return Array.isArray(list) ? list.filter((r) => typeof r?.href === "string" && r.href.startsWith("/admin")).slice(0, 5) : [];
+  } catch {
+    return [];
+  }
+}
+
+function remember(result: Result) {
+  try {
+    const next = [{ ...result, id: `recent-${result.href}`, group: "Recent" as const }, ...readRecent().filter((r) => r.href !== result.href)];
+    window.localStorage.setItem(RECENT_KEY, JSON.stringify(next.slice(0, 5)));
+  } catch {
+    /* private mode: nothing remembered */
+  }
 }
 
 /** Every page in this staff member's menu, with the section it sits in. */
 function pagesFor(permissions: string[]): Result[] {
   const out: Result[] = [];
-  const walk = (items: SidebarItem[], section: string) => {
+  const walk = (items: SidebarItem[], section: string, icon: string) => {
     for (const item of items) {
       if (item.when === false) continue;
-      if (item.children) walk(item.children, item.label);
-      else out.push({ id: `page-${item.href}`, label: item.label, hint: section || "Page", href: item.href });
+      if (item.children) walk(item.children, item.label, item.icon ?? icon);
+      else
+        out.push({
+          id: `page-${item.href}`,
+          group: section === "Settings" ? "Settings" : "Pages",
+          label: item.label,
+          hint: section || "Page",
+          href: item.href,
+          icon: item.icon ?? icon,
+        });
     }
   };
-  for (const group of adminNav(permissions)) walk(group.items, "");
+  for (const group of adminNav(permissions)) walk(group.items, "", "dashboard");
   return out;
 }
 
-/** "Search anything": the pages of the console by name, and a search of users
- * or partners for the words typed. Ctrl+K (⌘K) jumps here from anywhere. */
-export function AdminSearch({ permissions }: { permissions: string[] }) {
-  const router = usePortalRouter();
-  const inputId = useId();
-  const listId = useId();
-  const input = useRef<HTMLInputElement | null>(null);
-  const wrap = useRef<HTMLDivElement | null>(null);
-  const [text, setText] = useState("");
-  const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(0);
-  const pages = useMemo(() => pagesFor(permissions), [permissions]);
+/** Live results from the server for the words typed (users, partners) and a
+ * filter of the recent orders and the product list. A failed source is left
+ * out, never shown as "no results". */
+function useLiveResults(permissions: string[], query: string): { results: Result[]; loading: boolean } {
+  const [state, setState] = useState<{ query: string; results: Result[] }>({ query: "", results: [] });
+  const cache = useRef<{ products?: Result[]; orders?: Result[] }>({});
 
-  const query = text.trim();
-  const results = useMemo(() => {
-    if (!query) return [];
-    const needle = query.toLowerCase();
-    const found = pages
-      .filter((p) => p.label.toLowerCase().includes(needle) || p.hint.toLowerCase().includes(needle))
-      .slice(0, 6);
-    const q = encodeURIComponent(query.slice(0, 80));
-    if (can(permissions, "platform.staff_user.view")) {
-      found.push({ id: "users", label: `Search users for “${query}”`, hint: "Users", href: `/admin/users?q=${q}` });
-    }
-    if (can(permissions, "platform.staff_partner.view")) {
-      found.push({
-        id: "partners",
-        label: `Search partners for “${query}”`,
-        hint: "Partners",
-        href: `/admin/partners/all?q=${q}`,
+  useEffect(() => {
+    if (query.length < 2) return;
+    let live = true;
+    const t = window.setTimeout(() => {
+      const needle = query.toLowerCase();
+      const jobs: Promise<Result[]>[] = [];
+      if (can(permissions, "platform.staff_user.view")) {
+        jobs.push(
+          adminConsoleApi.users({ q: query, limit: 5 }).then((page) =>
+            page.results.map((u) => ({
+              id: `user-${u.user_id}`,
+              group: "Users" as const,
+              label: u.name || u.email,
+              hint: u.name ? u.email : "User",
+              href: `/admin/users/${u.user_id}`,
+              icon: "user",
+            })),
+          ),
+        );
+      }
+      if (can(permissions, "platform.staff_partner.view")) {
+        jobs.push(
+          adminApi.partners({ q: query, limit: 5 }).then((page) =>
+            page.results.map((p) => ({
+              id: `partner-${p.id}`,
+              group: "Partners" as const,
+              label: p.display_name,
+              hint: p.contact_email || p.code,
+              href: `/admin/partners/${p.id}`,
+              icon: "handshake",
+            })),
+          ),
+        );
+      }
+      if (can(permissions, "platform.staff_catalog.view")) {
+        const products = cache.current.products
+          ? Promise.resolve(cache.current.products)
+          : adminApi.products().then((r) => {
+              cache.current.products = r.results.map((p) => ({
+                id: `product-${p.id}`,
+                group: "Products" as const,
+                label: productName(p.name),
+                hint: p.code,
+                href: `/admin/products/${p.id}`,
+                icon: "box",
+              }));
+              return cache.current.products;
+            });
+        jobs.push(products.then((all) => all.filter((p) => `${p.label} ${p.hint}`.toLowerCase().includes(needle)).slice(0, 5)));
+      }
+      if (can(permissions, "platform.staff_payment.view")) {
+        const orders = cache.current.orders
+          ? Promise.resolve(cache.current.orders)
+          : adminConsoleApi.orders({ limit: 50 }).then((page) => {
+              cache.current.orders = page.results.map((o) => ({
+                id: `order-${o.order_id}`,
+                group: "Orders" as const,
+                label: `${o.number} · ${o.organization_name}`,
+                hint: o.description,
+                href: `/admin/orders?q=${encodeURIComponent(o.number)}`,
+                icon: "receipt",
+              }));
+              return cache.current.orders;
+            });
+        jobs.push(orders.then((all) => all.filter((o) => `${o.label} ${o.hint}`.toLowerCase().includes(needle)).slice(0, 5)));
+      }
+      Promise.allSettled(jobs).then((settled) => {
+        if (!live) return;
+        const results = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
+        setState({ query, results });
       });
-    }
-    return found;
-  }, [query, pages, permissions]);
+    }, 200);
+    return () => {
+      live = false;
+      window.clearTimeout(t);
+    };
+  }, [permissions, query]);
+
+  if (query.length < 2) return { results: [], loading: false };
+  return { results: state.query === query ? state.results : [], loading: state.query !== query };
+}
+
+/**
+ * The command palette: the top-bar box (or Ctrl/⌘K anywhere) opens it. Pages
+ * and settings by name, and live results grouped as Users, Partners, Products
+ * and Orders; recent items when nothing is typed. Arrow keys move, Enter
+ * opens, Escape closes.
+ */
+export function AdminSearch({ permissions }: { permissions: string[] }) {
+  const [open, setOpen] = useState(false);
+  const opener = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        input.current?.focus();
-        input.current?.select();
+        setOpen(true);
       }
     };
-    const onClick = (e: MouseEvent) => {
-      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
-    };
     document.addEventListener("keydown", onKey);
-    document.addEventListener("mousedown", onClick);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onClick);
-    };
+    return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  const go = (result: Result | undefined) => {
-    if (!result) return;
-    setOpen(false);
-    setText("");
-    router.push(result.href);
-  };
-  const shown = open && results.length > 0;
-  const optionId = (i: number) => `${listId}-${i}`;
-
   return (
-    <div className={styles.search} ref={wrap}>
-      <form
-        role="search"
-        aria-label="Search the console"
-        onSubmit={(e) => {
-          e.preventDefault();
-          go(results[active]);
-        }}
-      >
-        <label htmlFor={inputId} className="w360-visually-hidden">
-          Search anything
-        </label>
-        <span aria-hidden="true" className={styles.searchIcon}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-3.5-3.5" />
-          </svg>
-        </span>
-        <input
-          ref={input}
-          id={inputId}
-          className={styles.searchInput}
-          type="search"
-          role="combobox"
-          aria-expanded={shown}
-          aria-controls={listId}
-          aria-autocomplete="list"
-          aria-activedescendant={shown ? optionId(active) : undefined}
-          autoComplete="off"
-          placeholder="Search anything…"
-          value={text}
-          maxLength={80}
-          onChange={(e) => {
-            setText(e.target.value);
-            setActive(0);
-            setOpen(true);
-          }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={(e) => {
-            if (e.key === "ArrowDown" && results.length) {
-              e.preventDefault();
-              setOpen(true);
-              setActive((i) => (i + 1) % results.length);
-            } else if (e.key === "ArrowUp" && results.length) {
-              e.preventDefault();
-              setActive((i) => (i - 1 + results.length) % results.length);
-            } else if (e.key === "Escape") {
-              setOpen(false);
-            }
-          }}
-        />
+    <div className={styles.search}>
+      <button ref={opener} type="button" className={styles.searchOpener} aria-haspopup="dialog" onClick={() => setOpen(true)}>
+        <Icon name="search" size={16} />
+        <span className={styles.searchPlaceholder}>Search users, partners, pages…</span>
         <kbd className={styles.kbd} aria-hidden="true">
           Ctrl K
         </kbd>
-      </form>
-      <ul id={listId} role="listbox" aria-label="Search results" className={styles.results} hidden={!shown}>
-        {results.map((r, i) => (
-          <li
-            key={r.id}
-            id={optionId(i)}
-            role="option"
-            aria-selected={i === active}
-            className={styles.result}
-            onMouseEnter={() => setActive(i)}
-            onMouseDown={(e) => {
-              // Before the input's blur: navigate on the press, as a link would.
-              e.preventDefault();
-              go(r);
-            }}
-          >
-            <span>{r.label}</span>
-            <span className={styles.resultHint}>{r.hint}</span>
-          </li>
-        ))}
-      </ul>
+        <span className="w360-visually-hidden"> (Ctrl+K)</span>
+      </button>
+      {open && <CommandPalette permissions={permissions} onClose={() => setOpen(false)} />}
     </div>
+  );
+}
+
+function CommandPalette({ permissions, onClose }: { permissions: string[]; onClose: () => void }) {
+  const router = usePortalRouter();
+  const titleId = useId();
+  const inputId = useId();
+  const listId = useId();
+  const [text, setText] = useState("");
+  const [active, setActive] = useState(0);
+  const [recent] = useState<Result[]>(() => (typeof window === "undefined" ? [] : readRecent()));
+  const pages = useMemo(() => pagesFor(permissions), [permissions]);
+  const query = text.trim();
+  const live = useLiveResults(permissions, query);
+
+  const results = useMemo(() => {
+    if (!query) return recent.length ? recent : pages.slice(0, 8);
+    const needle = query.toLowerCase();
+    const matched = pages.filter((p) => p.label.toLowerCase().includes(needle) || p.hint.toLowerCase().includes(needle)).slice(0, 6);
+    const all = [...matched, ...live.results];
+    return GROUP_ORDER.flatMap((g) => all.filter((r) => r.group === g));
+  }, [query, pages, recent, live.results]);
+
+  const current = Math.min(active, Math.max(0, results.length - 1));
+
+  const go = (result: Result | undefined) => {
+    if (!result) return;
+    remember(result);
+    onClose();
+    router.push(result.href);
+  };
+
+  const optionId = (i: number) => `${listId}-${i}`;
+  const startsGroup = results.map((r, i) => i === 0 || results[i - 1].group !== r.group);
+
+  return (
+    <Modal labelledBy={titleId} onClose={onClose} size="md">
+      <div className={styles.palette}>
+        <h2 id={titleId} className="w360-visually-hidden">
+          Search the console
+        </h2>
+        <div className={styles.paletteInputRow}>
+          <Icon name="search" size={18} />
+          <label htmlFor={inputId} className="w360-visually-hidden">
+            Search anything
+          </label>
+          <input
+            id={inputId}
+            className={styles.paletteInput}
+            type="search"
+            role="combobox"
+            aria-expanded={results.length > 0}
+            aria-controls={listId}
+            aria-autocomplete="list"
+            aria-activedescendant={results.length ? optionId(current) : undefined}
+            autoComplete="off"
+            placeholder="Search users, partners, products, orders or pages…"
+            value={text}
+            maxLength={80}
+            onChange={(e) => {
+              setText(e.target.value);
+              setActive(0);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown" && results.length) {
+                e.preventDefault();
+                setActive((current + 1) % results.length);
+              } else if (e.key === "ArrowUp" && results.length) {
+                e.preventDefault();
+                setActive((current - 1 + results.length) % results.length);
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                go(results[current]);
+              }
+            }}
+          />
+          <kbd className={styles.paletteKbd} aria-hidden="true">
+            Esc
+          </kbd>
+        </div>
+        <ul id={listId} role="listbox" aria-label="Search results" className={styles.paletteList}>
+          {results.map((r, i) => {
+            const heading = startsGroup[i] ? r.group : null;
+            return (
+              <li key={r.id} role="presentation">
+                {heading && (
+                  <p className={styles.paletteGroup} aria-hidden="true">
+                    {heading === "Recent" ? "Recent" : heading}
+                  </p>
+                )}
+                <div
+                  id={optionId(i)}
+                  role="option"
+                  aria-selected={i === current}
+                  className={styles.paletteOption}
+                  onMouseEnter={() => setActive(i)}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    go(r);
+                  }}
+                >
+                  <Icon name={r.icon} size={16} />
+                  <span className={styles.paletteLabel}>{r.label}</span>
+                  <span className={styles.resultHint}>{r.hint}</span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        <p className={styles.paletteStatus} aria-live="polite">
+          {live.loading ? "Searching…" : query && results.length === 0 ? `No results for “${query}”.` : ""}
+        </p>
+      </div>
+    </Modal>
   );
 }
 
 // --- the New menu --------------------------------------------------------------------
 
-const NEW_ITEMS: { label: string; href: string; permission: string }[] = [
-  { label: "Add partner", href: "/admin/partners/new", permission: "platform.staff_partner.manage" },
-  { label: "Add product", href: "/admin/products/new", permission: "platform.staff_catalog.manage" },
-  { label: "New plan", href: "/admin/plans", permission: "platform.staff_catalog.manage" },
-  { label: "Grant staff access", href: "/admin/security", permission: "platform.staff_security.manage" },
+const NEW_ITEMS: { label: string; href: string; permission: string; icon: string }[] = [
+  { label: "New partner", href: "/admin/partners/new", permission: "platform.staff_partner.manage", icon: "handshake" },
+  { label: "New product", href: "/admin/products/new", permission: "platform.staff_catalog.manage", icon: "box" },
+  { label: "New plan", href: "/admin/plans", permission: "platform.staff_catalog.manage", icon: "tag" },
+  { label: "Grant staff access", href: "/admin/security", permission: "platform.staff_security.manage", icon: "shield" },
 ];
 
 function NewMenu({ permissions }: { permissions: string[] }) {
-  const items = NEW_ITEMS.filter((item) => can(permissions, item.permission));
-  const { open, setOpen, wrap, button } = usePopover();
-  const menuId = useId();
+  const items: MenuItem[] = NEW_ITEMS.filter((item) => can(permissions, item.permission)).map((item) => ({
+    label: item.label,
+    href: item.href,
+    icon: item.icon,
+  }));
   if (items.length === 0) return null;
   return (
-    <div className={styles.popoverWrap} ref={wrap}>
-      <button
-        ref={button}
-        type="button"
-        className={styles.newButton}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span aria-hidden="true">+</span> New <span aria-hidden="true" className={styles.caret}>⌄</span>
-      </button>
-      {open && (
-        <div id={menuId} role="menu" className={styles.popover}>
-          {items.map((item) => (
-            <Link key={item.label} role="menuitem" href={item.href} className={styles.menuItem} onClick={() => setOpen(false)}>
-              {item.label}
-            </Link>
-          ))}
-        </div>
-      )}
-    </div>
+    <Menu
+      label="New"
+      items={items}
+      triggerClassName={styles.newButton}
+      triggerContent={
+        <>
+          <Icon name="plus" size={16} />
+          <span className={styles.newLabel}>New</span>
+          <Icon name="chevronDown" size={16} />
+        </>
+      }
+    />
   );
 }
 
-// --- the bell ------------------------------------------------------------------------
+// --- notifications ---------------------------------------------------------------------
 
-const ATTENTION: Record<AttentionItem["key"], { one: string; many: string; href: string }> = {
+const ATTENTION: Record<AttentionItem["key"], { one: string; many: string; href: string; icon: string }> = {
   partner_upgrades: {
     one: "upgrade request waits for a decision",
     many: "upgrade requests wait for a decision",
     href: "/admin/partners/all",
+    icon: "arrowUp",
   },
   draft_partners: {
     one: "partner is still a draft",
     many: "partners are still drafts",
     href: "/admin/partners/all?status=draft",
+    icon: "handshake",
   },
-  payouts: { one: "payout awaits action", many: "payouts await action", href: "/admin/partners/all" },
+  payouts: { one: "payout awaits action", many: "payouts await action", href: "/admin/partners/withdrawals", icon: "wallet" },
 };
 
+const SEEN_KEY = "w360.admin.notifications.seen";
+
+function readSeen(): Record<string, number> {
+  try {
+    return JSON.parse(window.localStorage.getItem(SEEN_KEY) ?? "{}") as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+
 /** What is waiting for staff (only what their grants cover), read when the
- * console opens and again whenever the bell is opened. A failed read shows no
- * count rather than a wrong one. */
+ * console opens and again whenever the panel is opened. "Mark all read"
+ * remembers the counts on this browser, so only new items are counted as
+ * unread. A failed read shows no count rather than a wrong one. */
 function Bell({ permissions }: { permissions: string[] }) {
   const [items, setItems] = useState<AttentionItem[] | null>(null);
-  const { open, setOpen, wrap, button } = usePopover();
+  const [checkedAt, setCheckedAt] = useState<number | null>(null);
+  const [seen, setSeen] = useState<Record<string, number>>(() => (typeof window === "undefined" ? {} : readSeen()));
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement | null>(null);
+  const button = useRef<HTMLButtonElement | null>(null);
   const panelId = useId();
   const key = permissions.join(",");
 
   useEffect(() => {
     let live = true;
     adminApi.attention().then(
-      (r) => live && setItems(r.items),
+      (r) => {
+        if (!live) return;
+        setItems(r.items);
+        setCheckedAt(Date.now());
+      },
       () => live && setItems(null),
     );
     return () => {
@@ -276,59 +424,6 @@ function Bell({ permissions }: { permissions: string[] }) {
     };
   }, [key, open]);
 
-  const total = (items ?? []).reduce((sum, item) => sum + item.count, 0);
-  return (
-    <div className={styles.popoverWrap} ref={wrap}>
-      <button
-        ref={button}
-        type="button"
-        className={styles.iconButton}
-        aria-expanded={open}
-        aria-controls={open ? panelId : undefined}
-        aria-label={total > 0 ? `Notifications: ${total} waiting` : "Notifications"}
-        title="Notifications"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <NavIcon name="bell" />
-        {total > 0 && (
-          <span aria-hidden="true" className={styles.badge}>
-            {total > 99 ? "99+" : total}
-          </span>
-        )}
-      </button>
-      {open && (
-        <div id={panelId} className={`${styles.popover} ${styles.bellPanel}`}>
-          <p className={styles.popoverTitle}>Waiting for you</p>
-          {items === null ? (
-            <p className={styles.empty}>Notifications could not be loaded right now.</p>
-          ) : items.length === 0 ? (
-            <p className={styles.empty}>Nothing is waiting for you.</p>
-          ) : (
-            <ul className={styles.attention}>
-              {items.map((item) => {
-                const words = ATTENTION[item.key];
-                if (!words) return null;
-                return (
-                  <li key={item.key}>
-                    <Link href={words.href} className={styles.menuItem} onClick={() => setOpen(false)}>
-                      <strong>{item.count}</strong> {item.count === 1 ? words.one : words.many}
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** A button's popover: closes on Escape (focus back to the button) and on a click outside. */
-function usePopover() {
-  const [open, setOpen] = useState(false);
-  const wrap = useRef<HTMLDivElement | null>(null);
-  const button = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -347,5 +442,142 @@ function usePopover() {
       document.removeEventListener("mousedown", onClick);
     };
   }, [open]);
-  return { open, setOpen, wrap, button };
+
+  const shown = (items ?? []).filter((item) => ATTENTION[item.key] && item.count > 0);
+  const total = shown.reduce((sum, item) => sum + item.count, 0);
+  const unread = shown.reduce((sum, item) => sum + Math.max(0, item.count - (seen[item.key] ?? 0)), 0);
+  const markAllRead = () => {
+    const next = Object.fromEntries(shown.map((item) => [item.key, item.count]));
+    setSeen(next);
+    try {
+      window.localStorage.setItem(SEEN_KEY, JSON.stringify(next));
+    } catch {
+      /* private mode */
+    }
+  };
+
+  return (
+    <div className={styles.popoverWrap} ref={wrap}>
+      <button
+        ref={button}
+        type="button"
+        className={styles.iconButton}
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        aria-label={total > 0 ? `Notifications: ${total} waiting` : "Notifications"}
+        title="Notifications"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Icon name="bell" size={20} />
+        {unread > 0 && (
+          <span aria-hidden="true" className={styles.badge}>
+            {unread > 99 ? "99+" : unread}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div id={panelId} className={`${styles.popover} ${styles.bellPanel}`}>
+          <div className={styles.popoverHead}>
+            <p className={styles.popoverTitle}>Notifications</p>
+            {unread > 0 && (
+              <button type="button" className={styles.linkButton} onClick={markAllRead}>
+                Mark all read
+              </button>
+            )}
+          </div>
+          {items === null ? (
+            <p className={styles.empty}>Notifications could not be loaded right now.</p>
+          ) : shown.length === 0 ? (
+            <p className={styles.empty}>You&apos;re all caught up.</p>
+          ) : (
+            <ul className={styles.attention}>
+              {shown.map((item) => {
+                const words = ATTENTION[item.key];
+                const isNew = item.count > (seen[item.key] ?? 0);
+                return (
+                  <li key={item.key}>
+                    <Link href={words.href} className={styles.noteItem} onClick={() => setOpen(false)}>
+                      <span className={styles.noteIcon}>
+                        <Icon name={words.icon} size={16} />
+                      </span>
+                      <span className={styles.noteText}>
+                        <span>
+                          <strong>{item.count}</strong> {item.count === 1 ? words.one : words.many}
+                        </span>
+                        <span className={styles.noteTime}>{checkedAt ? `Checked ${formatRelative(checkedAt).toLowerCase()}` : ""}</span>
+                      </span>
+                      {isNew && (
+                        <span className={styles.unreadDot}>
+                          <span className="w360-visually-hidden">Unread</span>
+                        </span>
+                      )}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <div className={styles.popoverFoot}>
+            <Link href="/admin/notifications" className={styles.linkButton} onClick={() => setOpen(false)}>
+              View all
+            </Link>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- the account button --------------------------------------------------------------
+
+/** The staff member's role, as far as the console can tell from the grants it holds. */
+export function roleLabel(permissions: string[]): string {
+  if (permissions.includes("platform.staff_security.manage")) return "Super Admin";
+  if (permissions.some((p) => p.endsWith(".manage"))) return "Administrator";
+  return "Staff (read-only)";
+}
+
+/** Avatar, full name and role; the menu has the name and email, then the
+ * account's links, and Sign out set apart at the end. */
+export function AdminAccount({
+  name,
+  email,
+  role,
+  entries,
+}: {
+  name: string;
+  email: string;
+  role: string;
+  entries: MenuItem[];
+}) {
+  const shownName = name || email || "Your account";
+  return (
+    <Menu
+      label={`Account menu for ${shownName}`}
+      items={entries}
+      align="end"
+      triggerClassName={styles.accountButton}
+      header={
+        <>
+          <strong>{shownName}</strong>
+          {email && email !== shownName && <span>{email}</span>}
+          <span>{role}</span>
+        </>
+      }
+      triggerContent={
+        <>
+          <span aria-hidden="true" className={styles.avatar}>
+            {initialsOf(shownName)}
+          </span>
+          <span aria-hidden="true" className={styles.accountText}>
+            <span className={styles.accountName}>{shownName}</span>
+            <span className={styles.accountRole}>{role}</span>
+          </span>
+          <span className={styles.accountChevron} aria-hidden="true">
+            <Icon name="chevronDown" size={16} />
+          </span>
+        </>
+      }
+    />
+  );
 }

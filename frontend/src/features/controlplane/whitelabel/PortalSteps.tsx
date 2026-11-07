@@ -24,8 +24,8 @@ export function CommunicationStep({ ctx }: { ctx: Ctx }) {
       intro={
         <div className={css.callout}>
           <p>
-            Today there is one email Workeasy360 sends in a partner&apos;s name: the invitation sent to a customer&apos;s owner. It is always sent
-            from Workeasy360&apos;s own address, and that cannot be changed. What you set here is the sender name that appears next to it and
+            Today there is one email WorkEasy360 sends in a partner&apos;s name: the invitation sent to a customer&apos;s owner. It is always sent
+            from WorkEasy360&apos;s own address, and that cannot be changed. What you set here is the sender name that appears next to it and
             where replies go.
           </p>
         </div>
@@ -84,7 +84,7 @@ export function CommunicationStep({ ctx }: { ctx: Ctx }) {
             </li>
           ))}
         </ul>
-        <p className={css.reason}>Nothing is configured for these: Workeasy360 does not send them.</p>
+        <p className={css.reason}>Nothing is configured for these: WorkEasy360 does not send them.</p>
       </section>
     </StepFrame>
   );

@@ -1,69 +1,96 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import Link from "next/link";
-import { adminApi, type CatalogProduct } from "@/lib/api/controlPlane";
-import { adminConsoleApi, type PlatformSettings, type StaffRoleRow } from "@/lib/api/adminConsole";
+import { adminApi, type CatalogProduct, type CustomerRow } from "@/lib/api/controlPlane";
+import { adminConsoleApi, type PlatformSettings, type StaffOrderRow, type StaffRoleRow } from "@/lib/api/adminConsole";
 import { can, useAdmin } from "./ControlShell";
-import { LoadGate, MoreButton, ReasonAction, Status, Table, autoReason, money, useAction, useLoad, usePaged, when } from "./ui";
-import { dialog, FormPopup } from "./Modal";
+import { LoadGate, autoReason, describeError, useLoad, usePaged } from "./ui";
+import { DialogHead, Modal, dialog, FormPopup } from "./Modal";
 import { TextField } from "./widgets";
-import cp from "./ControlPlane.module.css";
+import {
+  Avatar,
+  Badge,
+  Button,
+  Card,
+  DataTable,
+  DescriptionList,
+  EmptyState,
+  FilterBar,
+  Page,
+  PageHeader,
+  SearchInput,
+  SectionHeader,
+  Select,
+  Stack,
+  StatusBadge,
+  StatusChips,
+  Trunc,
+  kit,
+  EMPTY,
+  formatMoney,
+  productName,
+  sentence,
+  useConfirm,
+  useToast,
+  type Column,
+} from "./kit";
+import { downloadCsv } from "./kit/csv";
+import { DateText } from "./AdminUsers";
+import local from "./AdminPeople.module.css";
 
 /**
- * Super Admin → Commerce and Access (Phase 9): every order across customers,
- * customers by subscription state, who holds each product, the platform
- * settings and named staff roles. Reads only what the grants allow; every
- * change is re-authorized (and, where dangerous, stepped up and audited) by the
- * server.
+ * Super Admin → Commerce and Access (Phase 9; 2026-11-07 design system): every
+ * order across customers, customers by subscription state, who holds each
+ * product, the platform settings and named staff roles. Reads only what the
+ * grants allow; every change is re-authorized (and, where dangerous, audited)
+ * by the server.
  */
 
-function Paged<T>({
-  paged,
-  what,
+/** A titled section around a table (the table is its own card). */
+export function TableSection({
+  title,
+  description,
+  actions,
   children,
 }: {
-  paged: ReturnType<typeof usePaged<T>>;
-  what: string;
-  children: (rows: T[]) => React.ReactNode;
+  title: string;
+  description?: React.ReactNode;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
 }) {
-  if (paged.state === "loading") return <p aria-live="polite">Loading {what}…</p>;
-  if (paged.state === "forbidden") return <p role="alert">You don&apos;t have access to {what}.</p>;
-  if (paged.state === "error") return <p role="alert">Couldn&apos;t load {what}.</p>;
+  const id = useId();
   return (
-    <>
-      {children(paged.rows)}
-      <MoreButton hasMore={paged.hasMore} onMore={() => void paged.more()} />
-    </>
+    <section className={local.stack} aria-labelledby={id}>
+      <SectionHeader id={id} title={title} description={description} actions={actions} />
+      {children}
+    </section>
   );
 }
 
-function Tabs({
-  label,
-  options,
-  value,
-  onChange,
-}: {
-  label: string;
-  options: readonly { key: string; label: string }[];
-  value: string;
-  onChange: (key: string) => void;
-}) {
-  return (
-    <div className={cp.row} role="group" aria-label={label}>
-      {options.map((o) => (
-        <button
-          key={o.key || "all"}
-          type="button"
-          className={value === o.key ? "w360-btn w360-btn-primary" : "w360-btn w360-btn-secondary"}
-          aria-pressed={value === o.key}
-          onClick={() => onChange(o.key)}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
+/** The table props for a server-paged list. */
+function pagedProps<T>(paged: ReturnType<typeof usePaged<T>>, what: string) {
+  return {
+    loading: paged.state === "loading",
+    error:
+      paged.state === "forbidden" ? `You don't have access to ${what}.` : paged.state === "error" ? `Couldn't load ${what}.` : null,
+    onLoadMore: () => void paged.more(),
+    hasMore: paged.hasMore,
+  };
+}
+
+const CREATED = [
+  { value: "", label: "Any time" },
+  { value: "1", label: "Today" },
+  { value: "7", label: "Last 7 days" },
+  { value: "30", label: "Last 30 days" },
+  { value: "90", label: "Last 90 days" },
+];
+
+function within(iso: string, days: string, now: number): boolean {
+  if (!days) return true;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) && now - t <= Number(days) * 24 * 60 * 60 * 1000;
 }
 
 // --- orders ---------------------------------------------------------------------------------
@@ -77,38 +104,108 @@ const ORDER_TABS = [
   { key: "cancelled", label: "Cancelled" },
 ] as const;
 
-export function StaffOrdersScreen() {
+/** `initialQuery`: an order number from the address (the command palette). */
+export function StaffOrdersScreen({ initialQuery = "" }: { initialQuery?: string } = {}) {
   const [status, setStatus] = useState("");
+  const [query, setQuery] = useState(initialQuery);
+  const [created, setCreated] = useState("");
+  const [now] = useState(() => Date.now());
   const paged = usePaged((cursor) => adminConsoleApi.orders({ status: status || undefined, cursor }), [status]);
+  // The orders endpoint filters by status only: the search and the date range
+  // narrow the orders loaded so far.
+  const rows = useMemo(() => {
+    const needle = query.toLowerCase();
+    return paged.rows.filter(
+      (o) =>
+        (!needle || `${o.number} ${o.organization_name} ${o.description}`.toLowerCase().includes(needle)) &&
+        within(o.created_at, created, now),
+    );
+  }, [paged.rows, query, created, now]);
+
+  const columns: Column<StaffOrderRow>[] = [
+    { key: "number", header: "Order #", value: (o) => o.number, render: (o) => o.number },
+    {
+      key: "customer",
+      header: "Customer",
+      value: (o) => o.organization_name,
+      render: (o) => (
+        <Link href={`/admin/customers/${o.organization_id}`}>
+          <Trunc>{o.organization_name || o.organization_id}</Trunc>
+        </Link>
+      ),
+    },
+    { key: "item", header: "Item", value: (o) => o.description, render: (o) => <Trunc max="lg">{o.description}</Trunc> },
+    {
+      key: "amount",
+      header: "Amount",
+      align: "right",
+      value: (o) => o.amount_due_minor,
+      render: (o) => (o.amount_due_minor ? formatMoney(o.amount_due_minor, o.currency) : EMPTY),
+    },
+    { key: "status", header: "Status", value: (o) => o.status, render: (o) => <StatusBadge value={o.status} /> },
+    {
+      key: "payment",
+      header: "Payment",
+      value: (o) => o.paid_at,
+      render: (o) =>
+        o.paid_at ? (
+          <span>
+            Paid <DateText iso={o.paid_at} />
+          </span>
+        ) : (
+          "Not paid"
+        ),
+    },
+    { key: "created", header: "Created", value: (o) => o.created_at, render: (o) => <DateText iso={o.created_at} /> },
+  ];
+
+  const filtered = Boolean(query || created);
   return (
-    <div className={cp.stack}>
-      <div>
-        <h1>Orders</h1>
-        <p className={cp.lead}>Every order across customers, newest first. Payment confirms an order; nothing is granted before.</p>
-      </div>
-      <Tabs label="Order status" options={ORDER_TABS} value={status} onChange={setStatus} />
-      <Paged paged={paged} what="orders">
-        {(rows) => (
-          <Table caption="Orders" head={["Order", "Customer", "Item", "Amount", "Status", "Placed", "Paid"]} isEmpty={rows.length === 0} empty="No orders.">
-            {rows.map((o) => (
-              <tr key={o.order_id}>
-                <th scope="row">{o.number}</th>
-                <td>
-                  <Link href={`/admin/customers/${o.organization_id}`}>{o.organization_name || o.organization_id}</Link>
-                </td>
-                <td>{o.description}</td>
-                <td className={cp.num}>{o.amount_due_minor ? money(o.amount_due_minor, o.currency) : "—"}</td>
-                <td>
-                  <Status value={o.status.replace(/_/g, " ")} />
-                </td>
-                <td>{when(o.created_at)}</td>
-                <td>{o.paid_at ? when(o.paid_at) : "—"}</td>
-              </tr>
-            ))}
-          </Table>
-        )}
-      </Paged>
-    </div>
+    <Page>
+      <PageHeader
+        title="Orders"
+        subtitle="Every order across customers, newest first."
+        info="Payment confirms an order; nothing is granted before it is paid."
+      />
+      <StatusChips label="Order status" value={status} onChange={setStatus} chips={ORDER_TABS.map((t) => ({ value: t.key, label: t.label }))} />
+      <FilterBar
+        onClear={
+          filtered
+            ? () => {
+                setQuery("");
+                setCreated("");
+              }
+            : undefined
+        }
+        end={
+          <Button
+            icon="download"
+            disabled={rows.length === 0}
+            onClick={() =>
+              downloadCsv(
+                "orders.csv",
+                ["Order", "Customer", "Item", "Amount", "Currency", "Status", "Paid", "Created"],
+                rows.map((o) => [o.number, o.organization_name, o.description, (o.amount_due_minor / 100).toFixed(2), o.currency, o.status, o.paid_at ?? "", o.created_at]),
+              )
+            }
+          >
+            Export CSV
+          </Button>
+        }
+      >
+        <SearchInput label="Search by order number or customer" value={query} onSearch={setQuery} />
+        <Select label="Created" prefix="Created:" value={created} onChange={setCreated} options={CREATED} />
+      </FilterBar>
+      <DataTable
+        caption="Orders"
+        columns={columns}
+        rows={rows}
+        rowKey={(o) => o.order_id}
+        rowHref={(o) => `/admin/customers/${o.organization_id}`}
+        {...pagedProps(paged, "orders")}
+        empty={<EmptyState icon="receipt" title="No orders" hint={filtered || status ? "Try another status or clear the filters." : "Orders appear here when customers check out."} />}
+      />
+    </Page>
   );
 }
 
@@ -127,296 +224,482 @@ const SUBSCRIPTION_TABS = [
 
 /** Customers by subscription state - the customer directory, filtered. */
 export function SubscriptionsScreen() {
-  const [status, setStatus] = useState("active");
-  const paged = usePaged((cursor) => adminApi.customers({ subscription: status || undefined, cursor }), [status]);
+  const [status, setStatus] = useState("");
+  const [query, setQuery] = useState("");
+  const paged = usePaged(
+    (cursor) => adminApi.customers({ subscription: status || undefined, q: query || undefined, cursor }),
+    [status, query],
+  );
+  const columns: Column<CustomerRow>[] = [
+    {
+      key: "customer",
+      header: "Customer",
+      value: (c) => c.display_name,
+      render: (c) => (
+        <Stack
+          main={
+            <Link href={`/admin/customers/${c.organization_id}`}>
+              <Trunc>{c.display_name}</Trunc>
+            </Link>
+          }
+          sub={<Trunc>{c.owner_email || "No owner yet"}</Trunc>}
+        />
+      ),
+    },
+    { key: "products", header: "Products", value: (c) => c.products, render: (c) => <Trunc>{c.products.map(productName).join(", ")}</Trunc> },
+    {
+      key: "status",
+      header: "Status",
+      value: (c) => c.subscription_status,
+      render: (c) => (c.subscription_status ? <StatusBadge value={c.subscription_status} /> : "No subscription"),
+    },
+    { key: "seats", header: "Seats", align: "right", value: (c) => c.seat_capacity, render: (c) => c.seat_capacity ?? EMPTY },
+    { key: "since", header: "Customer since", value: (c) => c.created_at, render: (c) => <DateText iso={c.created_at} /> },
+  ];
   return (
-    <div className={cp.stack}>
-      <div>
-        <h1>Subscriptions</h1>
-        <p className={cp.lead}>Customers by the state of their subscription. Open a customer to act on it.</p>
-      </div>
-      <Tabs label="Subscription status" options={SUBSCRIPTION_TABS} value={status} onChange={setStatus} />
-      <Paged paged={paged} what="subscriptions">
-        {(rows) => (
-          <Table caption="Customers" head={["Customer", "Owner", "Subscription", "Products", "Seats"]} isEmpty={rows.length === 0} empty="No customers.">
-            {rows.map((c) => (
-              <tr key={c.organization_id}>
-                <th scope="row">
-                  <Link href={`/admin/customers/${c.organization_id}`}>{c.display_name}</Link>
-                </th>
-                <td>{c.owner_email}</td>
-                <td>{c.subscription_status ? <Status value={c.subscription_status} /> : "—"}</td>
-                <td>{c.products.length ? c.products.join(", ") : "—"}</td>
-                <td className={cp.num}>{c.seat_capacity ?? "—"}</td>
-              </tr>
-            ))}
-          </Table>
-        )}
-      </Paged>
-    </div>
+    <Page>
+      <PageHeader title="Subscriptions" subtitle="Customers by the state of their subscription. Open a customer to act on it." />
+      <StatusChips
+        label="Subscription status"
+        value={status}
+        onChange={setStatus}
+        chips={SUBSCRIPTION_TABS.map((t) => ({ value: t.key, label: t.label }))}
+      />
+      <FilterBar onClear={query ? () => setQuery("") : undefined}>
+        <SearchInput label="Search customers" value={query} onSearch={setQuery} />
+      </FilterBar>
+      <DataTable
+        caption="Customers"
+        columns={columns}
+        rows={paged.rows}
+        rowKey={(c) => c.organization_id}
+        rowHref={(c) => `/admin/customers/${c.organization_id}`}
+        {...pagedProps(paged, "subscriptions")}
+        empty={<EmptyState icon="card" title="No customers" hint={status || query ? "Try another status or search." : undefined} />}
+      />
+    </Page>
   );
 }
 
 // --- entitlements ------------------------------------------------------------------------------
 
 /** Who holds each product now. Changing one customer's access - an override -
- * is on the customer's page, audited with a reason. */
+ * is on the customer's page, audited. */
 export function EntitlementsScreen() {
-  const selectId = useId();
   const [products] = useLoad(() => adminApi.products(), []);
   const [chosen, setChosen] = useState("");
   return (
-    <div className={cp.stack}>
-      <div>
-        <h1>Entitlements</h1>
-        <p className={cp.lead}>
-          Which customers hold a product now. Entitlements are derived from subscriptions and support overrides; grant
-          or revoke an override on the customer&apos;s page.
-        </p>
-      </div>
+    <Page>
+      <PageHeader
+        title="Entitlements"
+        subtitle="Which customers hold a product now."
+        info="Entitlements are derived from subscriptions and staff overrides; grant or revoke an override on the customer's page."
+      />
       <LoadGate load={products} what="products">
         {({ results }: { results: CatalogProduct[] }) => {
           const code = chosen || results[0]?.code || "";
+          if (!code) return <EmptyState icon="box" title="No products yet" hint="Products appear here once they are added to the catalog." />;
           return (
             <>
-              <div className={cp.row}>
-                <label className="w360-label" htmlFor={selectId}>
-                  Product
-                </label>
-                <select id={selectId} className="w360-input" value={code} onChange={(e) => setChosen(e.target.value)}>
-                  {results.map((p) => (
-                    <option key={p.code} value={p.code}>
-                      {p.name} ({p.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {code && <Holders code={code} />}
+              <FilterBar>
+                <Select
+                  label="Product"
+                  prefix="Product:"
+                  value={code}
+                  onChange={setChosen}
+                  options={results.map((p) => ({ value: p.code, label: productName(p.name) }))}
+                />
+              </FilterBar>
+              <Holders code={code} name={productName(results.find((p) => p.code === code)?.name ?? code)} />
             </>
           );
         }}
       </LoadGate>
-    </div>
+    </Page>
   );
 }
 
-function Holders({ code }: { code: string }) {
+function Holders({ code, name }: { code: string; name: string }) {
   const paged = usePaged((cursor) => adminApi.customers({ product: code, cursor }), [code]);
+  const columns: Column<CustomerRow>[] = [
+    {
+      key: "customer",
+      header: "Customer",
+      value: (c) => c.display_name,
+      render: (c) => (
+        <Link href={`/admin/customers/${c.organization_id}`}>
+          <Trunc>{c.display_name}</Trunc>
+        </Link>
+      ),
+    },
+    {
+      key: "source",
+      header: "Source",
+      value: (c) => (c.subscription_status ? "Subscription" : "Override"),
+      render: (c) => (c.subscription_status ? <Badge tone="success">Subscription</Badge> : <Badge tone="info">Override</Badge>),
+    },
+    { key: "access", header: "Access", value: (c) => c.access_class, render: (c) => (c.access_class ? sentence(c.access_class) : EMPTY) },
+    {
+      key: "subscription",
+      header: "Subscription",
+      value: (c) => c.subscription_status,
+      render: (c) => (c.subscription_status ? <StatusBadge value={c.subscription_status} /> : "Override only"),
+    },
+    { key: "seats", header: "Seats", align: "right", value: (c) => c.seat_capacity, render: (c) => c.seat_capacity ?? EMPTY },
+  ];
   return (
-    <Paged paged={paged} what="holders">
-      {(rows) => (
-        <Table caption={`Customers holding ${code}`} head={["Customer", "Access", "Subscription", "Seats"]} isEmpty={rows.length === 0} empty="Nobody holds this product.">
-          {rows.map((c) => (
-            <tr key={c.organization_id}>
-              <th scope="row">
-                <Link href={`/admin/customers/${c.organization_id}`}>{c.display_name}</Link>
-              </th>
-              <td>{c.access_class || "—"}</td>
-              <td>{c.subscription_status ? <Status value={c.subscription_status} /> : "Override only"}</td>
-              <td className={cp.num}>{c.seat_capacity ?? "—"}</td>
-            </tr>
-          ))}
-        </Table>
-      )}
-    </Paged>
+    <DataTable
+      caption={`Customers holding ${name}`}
+      columns={columns}
+      rows={paged.rows}
+      rowKey={(c) => c.organization_id}
+      rowHref={(c) => `/admin/customers/${c.organization_id}`}
+      {...pagedProps(paged, "holders")}
+      empty={<EmptyState icon="users" title="Nobody holds this product" hint="Customers appear here when a subscription or an override gives them access." />}
+    />
   );
 }
 
 // --- platform settings ---------------------------------------------------------------------------
+
+type SettingsDraft = Pick<PlatformSettings, "signup_enabled" | "support_email" | "sales_email" | "public_catalog_currency">;
+type SectionKey = "signup" | "contact" | "localization";
 
 export function PlatformSettingsScreen() {
   const { permissions } = useAdmin();
   const [load, reload] = useLoad(() => adminConsoleApi.settings(), []);
   const manage = can(permissions, "platform.staff_settings.manage");
   return (
-    <div className={cp.stack}>
-      <div>
-        <h1>Platform settings</h1>
-        <p className={cp.lead}>
-          The public site&apos;s switches and addresses. Changing them is recorded in the audit log.
-        </p>
-      </div>
+    <Page>
+      <PageHeader title="Platform settings" subtitle="The public site's switches and addresses. Every change is recorded in the audit log." />
       <LoadGate load={load} what="platform settings">
-        {(s) => <SettingsSection settings={s} manage={manage} onSaved={reload} />}
+        {(s) => <SettingsSections settings={s} manage={manage} onSaved={reload} />}
       </LoadGate>
+    </Page>
+  );
+}
+
+/** The settings in force, one card per section, each edited in place (Save /
+ * Cancel). Saving sends every setting with the version read, so two editors
+ * can't silently overwrite each other. */
+function SettingsSections({ settings, manage, onSaved }: { settings: PlatformSettings; manage: boolean; onSaved: () => void }) {
+  const [editing, setEditing] = useState<SectionKey | null>(null);
+  const [draft, setDraft] = useState<SettingsDraft>(settings);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  const ids = { signup: useId(), support: useId(), sales: useId() };
+  const defaultCurrency = `Deployment default (${settings.default_currency})`;
+
+  const open = (key: SectionKey) => {
+    setDraft({
+      signup_enabled: settings.signup_enabled,
+      support_email: settings.support_email,
+      sales_email: settings.sales_email,
+      public_catalog_currency: settings.public_catalog_currency,
+    });
+    setError(null);
+    setEditing(key);
+  };
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await adminConsoleApi.saveSettings({
+        signup_enabled: draft.signup_enabled,
+        support_email: draft.support_email.trim(),
+        sales_email: draft.sales_email.trim(),
+        public_catalog_currency: draft.public_catalog_currency,
+        version: settings.version,
+      });
+      setEditing(null);
+      toast.success("Platform settings saved.");
+      onSaved();
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const editButton = (key: SectionKey, label: string) =>
+    manage && editing !== key ? (
+      <Button size="sm" icon="edit" onClick={() => open(key)} disabled={editing !== null}>
+        {label}
+      </Button>
+    ) : undefined;
+
+  const notSet = (key: SectionKey, what: string) =>
+    manage ? (
+      <span className={local.holders}>
+        <span className={local.note}>Not set</span>
+        <Button size="sm" variant="link" onClick={() => open(key)} disabled={editing !== null} aria-label={`Add ${what}`}>
+          Add
+        </Button>
+      </span>
+    ) : (
+      "Not set"
+    );
+
+  const footer = (
+    <>
+      {error && (
+        <p className="w360-error-text" role="alert">
+          {error}
+        </p>
+      )}
+      <div className={local.actions}>
+        <Button onClick={() => setEditing(null)} disabled={busy}>
+          Cancel
+        </Button>
+        <Button variant="primary" loading={busy} onClick={() => void save()}>
+          Save
+        </Button>
+      </div>
+    </>
+  );
+
+  return (
+    <div className={local.stack}>
+      <Card title="Signup" description="Whether new people can create an account on the public site." actions={editButton("signup", "Edit signup")}>
+        {editing === "signup" ? (
+          <>
+            <label className={local.check} htmlFor={ids.signup}>
+              <input
+                id={ids.signup}
+                type="checkbox"
+                checked={draft.signup_enabled}
+                onChange={(e) => setDraft({ ...draft, signup_enabled: e.target.checked })}
+              />
+              Self-service signup is open
+            </label>
+            <p className={local.note}>Close it to stop new accounts during abuse; existing accounts are unaffected.</p>
+            {footer}
+          </>
+        ) : (
+          <DescriptionList items={[{ label: "Self-service signup", value: settings.signup_enabled ? "Open" : "Closed" }]} />
+        )}
+      </Card>
+
+      <Card title="Contact emails" description="Where the public site sends people who need help or want to buy." actions={editButton("contact", "Edit contact emails")}>
+        {editing === "contact" ? (
+          <>
+            <div className={local.formGrid}>
+              <TextField label="Support email" type="email" maxLength={254} value={draft.support_email} onChange={(v) => setDraft({ ...draft, support_email: v })} />
+              <TextField label="Sales email" type="email" maxLength={254} value={draft.sales_email} onChange={(v) => setDraft({ ...draft, sales_email: v })} />
+            </div>
+            {footer}
+          </>
+        ) : (
+          <DescriptionList
+            columns={2}
+            items={[
+              { label: "Support email", value: settings.support_email || notSet("contact", "a support email") },
+              { label: "Sales email", value: settings.sales_email || notSet("contact", "a sales email") },
+            ]}
+          />
+        )}
+      </Card>
+
+      <Card title="Localization" description="The currency the public catalog shows prices in." actions={editButton("localization", "Edit localization")}>
+        {editing === "localization" ? (
+          <>
+            <div className={local.formGrid}>
+              <Select
+                label="Public catalog currency"
+                showLabel
+                fullWidth
+                value={draft.public_catalog_currency}
+                onChange={(v) => setDraft({ ...draft, public_catalog_currency: v })}
+                options={[{ value: "", label: defaultCurrency }, ...settings.currencies.map((c) => ({ value: c, label: c }))]}
+              />
+            </div>
+            {footer}
+          </>
+        ) : (
+          <DescriptionList
+            columns={2}
+            items={[
+              { label: "Public catalog currency", value: settings.public_catalog_currency || defaultCurrency },
+              { label: "Deployment default", value: settings.default_currency },
+            ]}
+          />
+        )}
+      </Card>
     </div>
   );
 }
 
-/** The settings in force, as text, and (for a manager) an "Edit settings"
- * popup prefilled from them each time it opens. Saving names the version it
- * read, so two editors can't silently overwrite each other. */
-function SettingsSection({ settings, manage, onSaved }: { settings: PlatformSettings; manage: boolean; onSaved: () => void }) {
-  const [signup, setSignup] = useState(settings.signup_enabled);
-  const [support, setSupport] = useState(settings.support_email);
-  const [sales, setSales] = useState(settings.sales_email);
-  const [currency, setCurrency] = useState(settings.public_catalog_currency);
-  const ids = { signup: useId(), currency: useId() };
-  const defaultCurrency = `Deployment default (${settings.default_currency})`;
-
-  function prefill() {
-    setSignup(settings.signup_enabled);
-    setSupport(settings.support_email);
-    setSales(settings.sales_email);
-    setCurrency(settings.public_catalog_currency);
-  }
-
-  return (
-    <section className={`w360-card ${cp.card} ${cp.stack}`} aria-label="Current platform settings">
-      <dl className={cp.factsGrid}>
-        <div>
-          <dt>Self-service signup</dt>
-          <dd>{settings.signup_enabled ? "Open" : "Closed"}</dd>
-        </div>
-        <div>
-          <dt>Support email</dt>
-          <dd>{settings.support_email || "—"}</dd>
-        </div>
-        <div>
-          <dt>Sales email</dt>
-          <dd>{settings.sales_email || "—"}</dd>
-        </div>
-        <div>
-          <dt>Public catalog currency</dt>
-          <dd>{settings.public_catalog_currency || defaultCurrency}</dd>
-        </div>
-      </dl>
-      {manage && (
-        <div>
-          <FormPopup
-            label="Edit settings"
-            title="Platform settings"
-            intro="Changing them is recorded in the audit log."
-            submitLabel="Save settings"
-            onOpen={prefill}
-            onSubmit={async () => {
-              await adminConsoleApi.saveSettings({
-                signup_enabled: signup,
-                support_email: support.trim(),
-                sales_email: sales.trim(),
-                public_catalog_currency: currency,
-                version: settings.version,
-              });
-              return "Platform settings saved.";
-            }}
-            onDone={onSaved}
-          >
-            <div className={`${cp.field} ${dialog.span}`}>
-              <label htmlFor={ids.signup}>
-                <input id={ids.signup} type="checkbox" checked={signup} onChange={(e) => setSignup(e.target.checked)} /> Self-service signup is
-                open
-              </label>
-              <p className="w360-hint">Close it to stop new accounts during abuse; existing accounts are unaffected.</p>
-            </div>
-            <TextField label="Support email" type="email" maxLength={254} value={support} onChange={setSupport} />
-            <TextField label="Sales email" type="email" maxLength={254} value={sales} onChange={setSales} />
-            <div className={cp.field}>
-              <label className="w360-label" htmlFor={ids.currency}>
-                Public catalog currency
-              </label>
-              <select id={ids.currency} className="w360-input" value={currency} onChange={(e) => setCurrency(e.target.value)}>
-                <option value="">{defaultCurrency}</option>
-                {settings.currencies.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </FormPopup>
-        </div>
-      )}
-    </section>
-  );
-}
-
 // --- staff roles -----------------------------------------------------------------------------------
+
+const ROLES = [
+  { value: "SUPER_ADMIN", label: "Super Admin" },
+  { value: "USER_ADMIN", label: "User Admin" },
+  { value: "PRODUCT_ADMIN", label: "Product Admin" },
+  { value: "BILLING_ADMIN", label: "Billing Admin" },
+  { value: "SUPPORT_ADMIN", label: "Support Admin" },
+  { value: "READ_ONLY_ADMIN", label: "Read-only Admin" },
+];
 
 /** Named roles over the one grant model: granting a role grants each of its
  * permissions; who holds a role is derived from the grants in force. */
 export function StaffRolesPanel() {
   const { permissions } = useAdmin();
   const [load, reload] = useLoad(() => adminConsoleApi.roles(), []);
-  const { act, busy, feedback } = useAction(reload);
+  const { ask, dialog: confirm } = useConfirm();
   const manage = can(permissions, "platform.staff_security.manage");
-  const roleId = useId();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("SUPPORT_ADMIN");
+  const [managing, setManaging] = useState<string | null>(null);
+
+  const grant = manage ? (
+    <FormPopup
+      label="Grant a role"
+      title="Grant a role"
+      intro="Granting a role grants each of its permissions."
+      size="sm"
+      submitLabel="Grant role"
+      canSubmit={Boolean(email.trim())}
+      onOpen={() => {
+        setEmail("");
+        setRole(managing ?? "SUPPORT_ADMIN");
+      }}
+      onSubmit={async () => {
+        await adminConsoleApi.grantRole({ email: email.trim(), role, reason: autoReason("Grant role") });
+        return "Role granted.";
+      }}
+      onDone={reload}
+    >
+      <TextField label="Staff member's email" type="email" required value={email} onChange={setEmail} />
+      <div className={local.field}>
+        <Select label="Role" showLabel fullWidth value={role} onChange={setRole} options={ROLES} />
+      </div>
+    </FormPopup>
+  ) : null;
 
   return (
-    <section className={cp.stack} aria-labelledby={`${roleId}-title`}>
-      <h2 id={`${roleId}-title`}>Staff roles</h2>
-      <p className={cp.lead}>Least privilege: give each person the narrowest role that covers their work.</p>
-      {feedback}
+    <TableSection title="Roles" description="Give each person the narrowest role that covers their work." actions={grant}>
       <LoadGate load={load} what="staff roles">
         {({ results }: { results: StaffRoleRow[] }) => (
-          <Table caption="Roles and who holds them" head={["Role", "What it covers", "Holders"]} isEmpty={results.length === 0}>
-            {results.map((r) => (
-              <tr key={r.key}>
-                <th scope="row">{r.name}</th>
-                <td>
-                  {r.description}
-                  <div className={cp.muted}>{r.permissions.length} permissions</div>
-                </td>
-                <td>
-                  {r.holders.length === 0
-                    ? "—"
-                    : r.holders.map((h) => (
-                        <div key={h.user_id}>
-                          {h.email}
-                          {manage && (
-                            <ReasonAction
-                              label={`Remove ${r.name}`}
-                              busy={busy}
-                              onConfirm={(why) =>
-                                act(() => adminConsoleApi.revokeRole({ user_id: h.user_id, role: r.key, reason: why }), `${r.name} removed.`)
-                              }
-                            />
-                          )}
-                        </div>
-                      ))}
-                </td>
-              </tr>
-            ))}
-          </Table>
+          <>
+            <DataTable
+              caption="Roles and who holds them"
+              columns={[
+                { key: "role", header: "Role", value: (r) => r.name, render: (r) => <Stack main={r.name} sub={`${r.permissions.length} permissions`} /> },
+                { key: "covers", header: "What it covers", wrap: true, render: (r) => r.description },
+                {
+                  key: "holders",
+                  header: "Holders",
+                  value: (r) => r.holders.length,
+                  render: (r) =>
+                    r.holders.length === 0 ? (
+                      EMPTY
+                    ) : (
+                      <span className={local.holders}>
+                        <span className={kit.avatarStack}>
+                          {r.holders.slice(0, 4).map((h) => (
+                            <Avatar key={h.user_id} name={h.email} />
+                          ))}
+                        </span>
+                        <span className={local.note}>
+                          {r.holders.length === 1 ? r.holders[0].email : `${r.holders.length} people`}
+                        </span>
+                        <span className="w360-visually-hidden">{r.holders.map((h) => h.email).join(", ")}</span>
+                      </span>
+                    ),
+                },
+                {
+                  key: "manage",
+                  header: "Manage",
+                  align: "right",
+                  render: (r) => (
+                    <Button size="sm" onClick={() => setManaging(r.key)} aria-label={`Manage ${r.name}`}>
+                      Manage
+                    </Button>
+                  ),
+                },
+              ]}
+              rows={results}
+              rowKey={(r) => r.key}
+              pageSize={0}
+              maxHeight={false}
+              stickyFirst={false}
+              empty={<EmptyState icon="shield" title="No roles" compact />}
+            />
+            {managing && (
+              <RoleHolders
+                role={results.find((r) => r.key === managing)}
+                manage={manage}
+                onClose={() => setManaging(null)}
+                onRemove={(role, h) => {
+                  setManaging(null);
+                  ask({
+                    title: `Remove ${role.name} from ${h.email}?`,
+                    message: `${h.email} loses every permission this role grants, at once.`,
+                    confirmLabel: `Remove ${role.name}`,
+                    danger: true,
+                    reason: true,
+                    typeToConfirm: role.key === "SUPER_ADMIN" ? "REMOVE" : undefined,
+                    onConfirm: async (reason) => {
+                      await adminConsoleApi.revokeRole({ user_id: h.user_id, role: role.key, reason });
+                      reload();
+                      return `${role.name} removed.`;
+                    },
+                  });
+                }}
+              />
+            )}
+          </>
         )}
       </LoadGate>
-      {manage && (
-        <div>
-          <FormPopup
-            label="+ Grant a role"
-            title="Grant a role"
-            intro="Granting a role grants each of its permissions."
-            size="sm"
-            submitLabel="Grant role"
-            canSubmit={Boolean(email.trim())}
-            onOpen={() => {
-              setEmail("");
-              setRole("SUPPORT_ADMIN");
-            }}
-            onSubmit={async () => {
-              await adminConsoleApi.grantRole({ email: email.trim(), role, reason: autoReason("Grant role") });
-              return "Role granted.";
-            }}
-            onDone={reload}
-          >
-            <TextField label="Staff member's email" type="email" required value={email} onChange={setEmail} />
-            <div className={cp.field}>
-              <label className="w360-label" htmlFor={roleId}>
-                Role
-              </label>
-              <select id={roleId} className="w360-input" value={role} onChange={(e) => setRole(e.target.value)}>
-                <option value="SUPER_ADMIN">Super Admin</option>
-                <option value="USER_ADMIN">User Admin</option>
-                <option value="PRODUCT_ADMIN">Product Admin</option>
-                <option value="BILLING_ADMIN">Billing Admin</option>
-                <option value="SUPPORT_ADMIN">Support Admin</option>
-                <option value="READ_ONLY_ADMIN">Read-only Admin</option>
-              </select>
-            </div>
-          </FormPopup>
-        </div>
-      )}
-    </section>
+      {confirm}
+    </TableSection>
+  );
+}
+
+/** One role's holders, each removable (confirmed; Super Admin asks to type REMOVE). */
+function RoleHolders({
+  role,
+  manage,
+  onClose,
+  onRemove,
+}: {
+  role: StaffRoleRow | undefined;
+  manage: boolean;
+  onClose: () => void;
+  onRemove: (role: StaffRoleRow, holder: { user_id: string; email: string }) => void;
+}) {
+  const titleId = useId();
+  if (!role) return null;
+  return (
+    <Modal labelledBy={titleId} onClose={onClose} size="md">
+      <DialogHead titleId={titleId} title={role.name} onClose={onClose} />
+      <div className={dialog.body}>
+        <p className={dialog.intro}>{role.description}</p>
+        {role.holders.length === 0 ? (
+          <EmptyState icon="users" title="Nobody holds this role" compact />
+        ) : (
+          <ul className={local.orgList} aria-label={`Holders of ${role.name}`}>
+            {role.holders.map((h) => (
+              <li key={h.user_id} className={local.orgItem}>
+                <span className={local.holders}>
+                  <Avatar name={h.email} />
+                  {h.email}
+                </span>
+                {manage && (
+                  <Button size="sm" variant="danger" onClick={() => onRemove(role, h)} aria-label={`Remove ${role.name} from ${h.email}`}>
+                    Remove
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className={dialog.foot}>
+        <Button onClick={onClose}>Done</Button>
+      </div>
+    </Modal>
   );
 }

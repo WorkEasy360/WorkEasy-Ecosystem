@@ -3,12 +3,31 @@
 import Link from "next/link";
 import { useState } from "react";
 import { adminDeskApi, type PendingMethod } from "@/lib/api/adminDesk";
-import type { TicketDetail } from "@/lib/api/partnerPanel";
+import type { Ticket, TicketDetail } from "@/lib/api/partnerPanel";
 import { Sla } from "@/features/partnerpanel/Helpdesk";
 import { can, useAdmin } from "./ControlShell";
 import { FormDialog, FormPopup } from "./Modal";
 import { LoadGate, Status, Table, money, useAction, useLoad, when } from "./ui";
 import { SelectField, TextAreaField, TextField } from "./widgets";
+import {
+  Badge,
+  Button,
+  Card,
+  DataTable,
+  EmptyState,
+  FilterBar,
+  Page,
+  PageHeader,
+  SearchInput,
+  SectionHeader,
+  StatusChips,
+  Tooltip,
+  exactTime,
+  formatRelative,
+  kit,
+  titleCase,
+  type Column,
+} from "./kit";
 import cp from "./ControlPlane.module.css";
 import styles from "./AdminConsole.module.css";
 
@@ -30,82 +49,100 @@ const FILTERS = [
   { value: "all", label: "All" },
 ];
 
+type StaffTicketRow = Ticket & { partner_name: string };
+
+/** A ticket's priority: an urgent one carries its one-hour answer promise. */
+function Priority({ value }: { value: string }) {
+  if (value === "urgent")
+    return (
+      <Badge tone="danger" icon="clock">
+        Urgent · 1 h SLA
+      </Badge>
+    );
+  return <Badge tone={value === "high" ? "warning" : "neutral"}>{titleCase(value)}</Badge>;
+}
+
 export function PartnerTicketsScreen() {
   const [status, setStatus] = useState("open");
-  const [q, setQ] = useState("");
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState<string | null>(null);
   const [load] = useLoad(() => adminDeskApi.tickets(status, search || undefined), [status, search]);
+  const counts = load.status === "ready" ? load.data.counts : {};
+  const columns: Column<StaffTicketRow>[] = [
+    {
+      key: "ticket",
+      header: "Ticket",
+      value: (t) => t.number,
+      render: (t) => (
+        <Button variant="link" onClick={() => setOpen(t.id)}>
+          {t.reference}
+        </Button>
+      ),
+    },
+    { key: "partner", header: "Partner", value: (t) => t.partner_name, render: (t) => t.partner_name },
+    { key: "subject", header: "Subject", value: (t) => t.subject, render: (t) => <span className={kit.trunc} title={t.subject}>{t.subject}</span> },
+    { key: "priority", header: "Priority", value: (t) => t.priority, render: (t) => <Priority value={t.priority} /> },
+    { key: "status", header: "Status", value: (t) => t.status, render: (t) => <Status value={t.status} /> },
+    { key: "sla", header: "SLA", render: (t) => <Sla ticket={t} /> },
+    {
+      key: "updated",
+      header: "Updated",
+      value: (t) => t.updated_at,
+      render: (t) => (
+        <Tooltip content={exactTime(t.updated_at)}>
+          <span tabIndex={0}>{formatRelative(t.updated_at)}</span>
+        </Tooltip>
+      ),
+    },
+  ];
   return (
-    <div className={cp.stack}>
-      <h1>Partner tickets</h1>
-      <p className={cp.lead}>Tickets partners raise from their dashboard&apos;s Helpdesk. Urgent tickets must be answered within an hour.</p>
+    <Page>
+      <PageHeader
+        title="Partner tickets"
+        subtitle="Tickets partners raise from their dashboard's Helpdesk."
+        info="Urgent tickets must be answered within an hour; the SLA column says whether each is on track."
+      />
       {open ? (
         <StaffTicket ticketId={open} onClose={() => setOpen(null)} />
       ) : (
         <>
-          <form
-            className={styles.filters}
-            onSubmit={(e) => {
-              e.preventDefault();
-              setSearch(q.trim());
-            }}
-          >
-            <SelectField label="Show" value={status} onChange={setStatus} options={FILTERS} />
-            <TextField label="Search (partner, subject or #number)" value={q} onChange={setQ} />
-            <button type="submit" className="w360-btn w360-btn-secondary">
-              Search
-            </button>
-          </form>
-          <LoadGate load={load} what="partner tickets">
-            {(page) => (
-              <Table
-                caption="Partner tickets, newest activity first"
-                head={["Ticket", "Partner", "Subject", "Priority", "Status", "SLA", "Updated"]}
-                isEmpty={page.items.length === 0}
-                empty="No tickets here."
-              >
-                {page.items.map((t) => (
-                  <tr key={t.id}>
-                    <th scope="row">
-                      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setOpen(t.id)}>
-                        {t.reference}
-                      </button>
-                    </th>
-                    <td>{t.partner_name}</td>
-                    <td>{t.subject}</td>
-                    <td>{t.priority}</td>
-                    <td>
-                      <Status value={t.status} />
-                    </td>
-                    <td>
-                      <Sla ticket={t} />
-                    </td>
-                    <td>{when(t.updated_at)}</td>
-                  </tr>
-                ))}
-              </Table>
-            )}
-          </LoadGate>
+          <StatusChips
+            label="Ticket status"
+            value={status}
+            onChange={setStatus}
+            chips={FILTERS.map((f) => ({ ...f, count: counts[f.value as keyof typeof counts] ?? null }))}
+          />
+          <FilterBar label="Filter tickets" onClear={search ? () => setSearch("") : undefined}>
+            <SearchInput label="Search partner, subject or #number" value={search} onSearch={setSearch} />
+          </FilterBar>
+          <DataTable
+            caption="Partner tickets, newest activity first"
+            columns={columns}
+            rows={load.status === "ready" ? (load.data.items as StaffTicketRow[]) : []}
+            rowKey={(t) => t.id}
+            loading={load.status === "loading"}
+            error={load.status === "error" ? load.message : load.status === "forbidden" ? "You don't have access to partner tickets." : null}
+            empty={<EmptyState icon="ticket" title="No tickets here." hint={search ? "Try another search." : "Tickets partners raise appear here."} />}
+          />
         </>
       )}
-    </div>
+    </Page>
   );
 }
 
 function StaffTicket({ ticketId, onClose }: { ticketId: string; onClose: () => void }) {
   const [load, reload] = useLoad(() => adminDeskApi.ticket(ticketId), [ticketId]);
   return (
-    <section className={styles.section}>
+    <Card>
       <p>
-        <button type="button" className="w360-btn w360-btn-secondary" onClick={onClose}>
+        <Button icon="chevronLeft" onClick={onClose}>
           All tickets
-        </button>
+        </Button>
       </p>
       <LoadGate load={load} what="the ticket">
         {(t) => <StaffConversation t={t} reload={reload} />}
       </LoadGate>
-    </section>
+    </Card>
   );
 }
 
@@ -124,7 +161,7 @@ function StaffConversation({ t, reload }: { t: TicketDetail; reload: () => void 
         {t.reference} {t.subject}
       </h2>
       <p>
-        <Status value={t.status} /> <Sla ticket={t} /> Priority {t.priority} ·{" "}
+        <Status value={t.status} /> <Sla ticket={t} /> <Priority value={t.priority} /> ·{" "}
         {t.partner && <Link href={`/admin/partners/${t.partner.id}`}>{t.partner.name}</Link>} · opened {when(t.opened_at)}
         {t.related_ref && <> · about {t.related_ref}</>}
       </p>
@@ -180,6 +217,14 @@ function StaffConversation({ t, reload }: { t: TicketDetail; reload: () => void 
   );
 }
 
+const WITHDRAWAL_FILTERS = [
+  { value: "requested", label: "Waiting" },
+  { value: "processing", label: "Processing" },
+  { value: "rejected", label: "Rejected" },
+  { value: "cancelled", label: "Cancelled" },
+  { value: "all", label: "All" },
+];
+
 export function WithdrawalsScreen() {
   const { permissions } = useAdmin();
   const [status, setStatus] = useState("requested");
@@ -190,12 +235,12 @@ export function WithdrawalsScreen() {
   const [notice, setNotice] = useState<string | null>(null);
   const manage = can(permissions, "platform.staff_payout.manage");
   return (
-    <div className={cp.stack}>
-      <h1>Partner withdrawals</h1>
-      <p className={cp.lead}>
-        Withdrawal requests and payout details from partners. Start payout prepares an ordinary payout of the partner&apos;s cleared commission;
-        a second person approves it and confirms it paid on the partner&apos;s Payouts tab. TDS shown is withheld from INR withdrawals.
-      </p>
+    <Page>
+      <PageHeader
+        title="Withdrawals"
+        subtitle="Partners' withdrawal requests and payout details to verify."
+        info="Start payout prepares an ordinary payout of the partner's cleared commission; a second person approves it and confirms it paid on the partner's Payouts tab. TDS shown is withheld from INR withdrawals."
+      />
       {feedback}
       {notice && <p role="status">{notice}</p>}
       {rejecting && (
@@ -222,13 +267,15 @@ export function WithdrawalsScreen() {
       <LoadGate load={load} what="withdrawals">
         {(d) => (
           <>
-            <section className={styles.section} aria-labelledby="pending-methods">
-              <h2 id="pending-methods" className={styles.sectionTitle}>
-                Payout details to verify ({d.pending_methods.length})
-              </h2>
+            <section aria-labelledby="pending-methods" className={cp.stack}>
+              <SectionHeader
+                id="pending-methods"
+                title={`Payout details to verify (${d.pending_methods.length})`}
+                description="Bank or UPI details partners saved, waiting for a check before money is sent."
+              />
               <Table
                 caption="Payout details waiting for verification"
-                head={["Partner", "Paid to", "Holder", "PAN", "Saved", ""]}
+                head={["Partner", "Paid to", "Holder", "PAN", "Saved", "Actions"]}
                 isEmpty={d.pending_methods.length === 0}
                 empty="Nothing to verify."
               >
@@ -237,25 +284,20 @@ export function WithdrawalsScreen() {
                 ))}
               </Table>
             </section>
-            <section className={styles.section} aria-labelledby="withdrawal-queue">
-              <h2 id="withdrawal-queue" className={styles.sectionTitle}>
+            <section aria-labelledby="withdrawal-queue" className={cp.stack}>
+              <h2 id="withdrawal-queue" className="w360-visually-hidden">
                 Withdrawal requests
               </h2>
-              <SelectField
-                label="Show"
+              <StatusChips
+                label="Withdrawal status"
                 value={status}
                 onChange={setStatus}
-                options={[
-                  { value: "requested", label: `Waiting (${d.counts.requested ?? 0})` },
-                  { value: "processing", label: `Processing (${d.counts.processing ?? 0})` },
-                  { value: "rejected", label: "Rejected" },
-                  { value: "cancelled", label: "Cancelled" },
-                  { value: "all", label: "All" },
-                ]}
+                chips={WITHDRAWAL_FILTERS.map((f) => ({ ...f, count: f.value === "requested" || f.value === "processing" ? (d.counts[f.value] ?? 0) : null }))}
               />
               <Table
                 caption="Withdrawal requests"
-                head={["Partner", "Requested", "Amount", "TDS", "Net", "To", "Status", ""]}
+                head={["Partner", "Requested", "Amount", "TDS", "Net", "To", "Status", "Actions"]}
+                numeric={["Amount", "TDS", "Net"]}
                 isEmpty={d.items.length === 0}
                 empty="No requests here."
               >
@@ -276,9 +318,9 @@ export function WithdrawalsScreen() {
                     <td>
                       {manage && w.status === "requested" && (
                         <span className={styles.rowActions}>
-                          <button
-                            type="button"
-                            className="w360-btn w360-btn-primary"
+                          <Button
+                            size="sm"
+                            variant="primary"
                             disabled={busy}
                             onClick={() => {
                               setNotice(null);
@@ -286,10 +328,9 @@ export function WithdrawalsScreen() {
                             }}
                           >
                             Start payout
-                          </button>
-                          <button
-                            type="button"
-                            className="w360-btn w360-btn-secondary"
+                          </Button>
+                          <Button
+                            size="sm"
                             aria-haspopup="dialog"
                             onClick={() => {
                               setNotice(null);
@@ -298,7 +339,7 @@ export function WithdrawalsScreen() {
                             }}
                           >
                             Reject…
-                          </button>
+                          </Button>
                         </span>
                       )}
                     </td>
@@ -309,7 +350,7 @@ export function WithdrawalsScreen() {
           </>
         )}
       </LoadGate>
-    </div>
+    </Page>
   );
 }
 
@@ -334,18 +375,17 @@ function MethodRow({ m, manage, onDone }: { m: PendingMethod; manage: boolean; o
         {manage && (
           <span className={styles.rowActions}>
             {!revealed && (
-              <button
-                type="button"
-                className="w360-btn w360-btn-secondary"
+              <Button
+                size="sm"
                 disabled={busy}
                 onClick={() => act(async () => setRevealed(await adminDeskApi.payoutMethod(m.partner.id, true)), "Details shown (audited).")}
               >
                 Show full details
-              </button>
+              </Button>
             )}
-            <button type="button" className="w360-btn w360-btn-primary" disabled={busy} onClick={() => act(() => adminDeskApi.verifyMethod(m.partner.id, "verified"), "Verified.")}>
+            <Button size="sm" variant="primary" disabled={busy} onClick={() => act(() => adminDeskApi.verifyMethod(m.partner.id, "verified"), "Verified.")}>
               Verify
-            </button>
+            </Button>
             <FormPopup
               label="Reject…"
               buttonClassName="w360-btn w360-btn-secondary"

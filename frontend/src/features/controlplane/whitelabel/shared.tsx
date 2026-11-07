@@ -216,7 +216,7 @@ export function AuthenticationBox({ setup }: { setup: WhiteLabelSetup }) {
       </p>
       {secure && (
         <p>
-          <strong>Authentication:</strong> Uses Workeasy360 secure sign-in.
+          <strong>Authentication:</strong> Uses WorkEasy360 secure sign-in.
         </p>
       )}
       <p>{setup.authentication.summary}</p>

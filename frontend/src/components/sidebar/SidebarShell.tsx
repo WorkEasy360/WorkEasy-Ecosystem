@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Logo } from "@/components/brand/Logo";
-import { NavIcon } from "./icons";
+import { Icon, NavIcon } from "./icons";
 import styles from "./SidebarShell.module.css";
 
 export interface SidebarItem {
@@ -85,6 +85,8 @@ export function SidebarShell({
   variant,
   navTitle,
   tools,
+  accordion = false,
+  railKey,
 }: {
   area: string;
   context?: React.ReactNode;
@@ -104,6 +106,11 @@ export function SidebarShell({
   /** Controls in the top bar between the brand and the account menu (search,
    * quick actions); they take the free space the spacer would. */
   tools?: React.ReactNode;
+  /** Only one section open at a time - the current page's (the Super Admin). */
+  accordion?: boolean;
+  /** Offer to fold the navigation to an icon rail, remembered on this browser
+   * under this key (the Super Admin). */
+  railKey?: string;
 }) {
   const pathname = usePathname();
   const navId = useId();
@@ -117,6 +124,44 @@ export function SidebarShell({
   };
   const toggle = useRef<HTMLButtonElement | null>(null);
   const nav = useRef<HTMLElement | null>(null);
+
+  // Accordion: the section open is the current page's, until the person opens another.
+  const sectionOf = (path: string | null) => {
+    for (const group of groups) {
+      for (const item of visible(group.items)) {
+        if (item.children && visible(item.children).some((c) => isActive(path ?? "", c))) return item.href;
+      }
+    }
+    return null;
+  };
+  const [openSection, setOpenSection] = useState<string | null>(() => sectionOf(pathname));
+  const [sectionFor, setSectionFor] = useState(pathname);
+  if (accordion && sectionFor !== pathname) {
+    setSectionFor(pathname);
+    const current = sectionOf(pathname);
+    if (current) setOpenSection(current);
+  }
+
+  // The icon rail, remembered on this browser.
+  // Read once, on the client: the consoles that fold their menu (the Super
+  // Admin) render it only after the session has loaded in the browser.
+  const [rail, setRailState] = useState(() => {
+    if (!railKey || typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(railKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const setRail = (next: boolean) => {
+    setRailState(next);
+    if (!railKey) return;
+    try {
+      window.localStorage.setItem(railKey, next ? "1" : "0");
+    } catch {
+      /* private mode */
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -132,7 +177,7 @@ export function SidebarShell({
   }, [open]);
 
   return (
-    <div className={styles.frame} data-variant={variant}>
+    <div className={styles.frame} data-variant={variant} data-rail={(railKey && rail) || undefined}>
       <header className={styles.topbar}>
         <button
           ref={toggle}
@@ -144,7 +189,7 @@ export function SidebarShell({
           onClick={() => setOpen((v) => !v)}
         >
           <span aria-hidden="true" className={styles.menuGlyph}>
-            ☰
+            <Icon name="menu" size={18} />
           </span>
           <span className={styles.menuLabel}>Menu</span>
         </button>
@@ -192,12 +237,38 @@ export function SidebarShell({
               {group.title && <p className={styles.groupTitle}>{group.title}</p>}
               <ul className={styles.list}>
                 {items.map((item) => (
-                  <NavEntry key={item.href} item={item} pathname={pathname} />
+                  <NavEntry
+                    key={item.href}
+                    item={item}
+                    pathname={pathname}
+                    expandedOverride={accordion ? openSection === item.href : undefined}
+                    onToggle={
+                      accordion
+                        ? () => {
+                            if (railKey && rail) {
+                              setRail(false);
+                              setOpenSection(item.href);
+                            } else setOpenSection((s) => (s === item.href ? null : item.href));
+                          }
+                        : undefined
+                    }
+                  />
                 ))}
               </ul>
             </div>
           );
         })}
+        {railKey && (
+          <button
+            type="button"
+            className={styles.railToggle}
+            aria-pressed={rail}
+            onClick={() => setRail(!rail)}
+          >
+            <Icon name={rail ? "chevronRight" : "chevronLeft"} size={16} />
+            <span className={styles.linkText}>{rail ? "Expand menu" : "Collapse menu"}</span>
+          </button>
+        )}
       </nav>
 
       <main id="w360-main" className={styles.main}>
@@ -208,10 +279,22 @@ export function SidebarShell({
   );
 }
 
-function NavEntry({ item, pathname }: { item: SidebarItem; pathname: string }) {
+function NavEntry({
+  item,
+  pathname,
+  expandedOverride,
+  onToggle,
+}: {
+  item: SidebarItem;
+  pathname: string;
+  /** Set by an accordion: whether this section is the open one. */
+  expandedOverride?: boolean;
+  onToggle?: () => void;
+}) {
   const children = item.children ? visible(item.children) : [];
   const containsCurrent = children.some((c) => isActive(pathname, c));
-  const [expanded, setExpanded] = useState(containsCurrent);
+  const [expandedOwn, setExpanded] = useState(containsCurrent);
+  const expanded = expandedOverride ?? expandedOwn;
   const [contained, setContained] = useState(containsCurrent);
   const listId = useId();
 
@@ -233,12 +316,12 @@ function NavEntry({ item, pathname }: { item: SidebarItem; pathname: string }) {
           aria-expanded={expanded}
           aria-controls={listId}
           data-contains-current={containsCurrent || undefined}
-          onClick={() => setExpanded((v) => !v)}
+          onClick={() => (onToggle ? onToggle() : setExpanded((v) => !v))}
         >
           <NavIcon name={item.icon} />
           <span className={styles.linkText}>{item.label}</span>
           <span aria-hidden="true" className={styles.chevron} data-expanded={expanded || undefined}>
-            ›
+            <Icon name="chevronRight" size={16} />
           </span>
         </button>
         {expanded && (
@@ -347,7 +430,7 @@ export function AccountMenu({
               {firstName(name)}
             </span>
             <span aria-hidden="true" className={styles.accountChevron}>
-              ⌄
+              <Icon name="chevronDown" size={16} />
             </span>
           </>
         ) : (

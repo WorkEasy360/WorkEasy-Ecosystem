@@ -1,14 +1,39 @@
 "use client";
 
 import { useState } from "react";
-import { adminConsoleApi, type PaymentProviderRow } from "@/lib/api/adminConsole";
+import { adminConsoleApi, type PaymentEventRow, type PaymentProviderRow } from "@/lib/api/adminConsole";
 import { ApiError } from "@/lib/api/client";
+import { Icon } from "@/components/sidebar/icons";
 import { can, useAdmin } from "./ControlShell";
 import { FormDialog, FormPopup, dialog } from "./Modal";
-import { LoadGate, Status, Table, money, useAction, useLoad, when } from "./ui";
+import { LoadGate, money, useAction, useLoad } from "./ui";
 import { SUPPORTED_CURRENCIES } from "./amounts";
 import { Segmented, SelectField, TextField } from "./widgets";
-import cp from "./ControlPlane.module.css";
+import {
+  Avatar,
+  Badge,
+  Button,
+  Card,
+  CopyButton,
+  DataTable,
+  DescriptionList,
+  EmptyState,
+  FilterBar,
+  IdCell,
+  Page,
+  PageHeader,
+  SectionHeader,
+  Select,
+  Tooltip,
+  exactTime,
+  formatDateTime,
+  formatRelative,
+  sentence,
+  type Column,
+  type Tone,
+} from "./kit";
+import { iconLabel, popupButton } from "./kit/PopupLabel";
+import pay from "./AdminPayments.module.css";
 import styles from "./AdminConsole.module.css";
 
 /**
@@ -31,98 +56,183 @@ const adapterLabel = (adapter: string) => ADAPTERS.find((a) => a.value === adapt
 
 type Act = (action: () => Promise<unknown>, success: string) => Promise<void>;
 
+/** What happened to an event the provider sent. */
+const OUTCOME_TONE: Record<string, Tone> = {
+  applied: "success",
+  succeeded: "success",
+  duplicate: "neutral",
+  ignored: "neutral",
+  rejected: "danger",
+  invalid_signature: "danger",
+  failed: "danger",
+  error: "danger",
+};
+
 export function PaymentsScreen() {
   const { permissions } = useAdmin();
   const manage = can(permissions, "platform.staff_payment.manage");
   const [providers, reloadProviders] = useLoad(() => adminConsoleApi.paymentProviders(), []);
   const [events] = useLoad(() => adminConsoleApi.paymentEvents(), []);
   const { act, busy, feedback } = useAction(reloadProviders);
+  const eventRows = events.status === "ready" ? events.data.results : [];
 
   return (
-    <div className={cp.stack}>
-      <div>
-        <h1>Payments</h1>
-        <p className={cp.lead}>
-          Payment providers collect customers&apos; invoices. Their secrets are never entered or shown here: each is
-          set in the secret manager as the environment variable named below.
-        </p>
-      </div>
+    <Page>
+      <PageHeader
+        title="Payments"
+        subtitle="The providers that collect customers' invoices, and what they report."
+        info="Secrets are never entered or shown here. Each provider's API key and webhook secret are set by an operator in the secret manager; this page only says whether each one is present."
+      />
       {feedback}
-      <section className={styles.section} aria-labelledby="providers-h">
-        <h2 id="providers-h" className={styles.sectionTitle}>
-          Providers
-        </h2>
+      <section aria-labelledby="providers-h" className={pay.section}>
+        <SectionHeader
+          id="providers-h"
+          title="Providers"
+          description="A provider is enabled once both of its secrets are set."
+          actions={manage ? <AddProvider onAdded={reloadProviders} /> : undefined}
+        />
         <LoadGate load={providers} what="payment providers">
-          {({ results }) => (
-            <Table
-              caption="Payment providers"
-              head={["Provider", "Adapter", "Mode", "Status", "Currencies", "Secrets", "Webhook URL path", "Actions"]}
-              isEmpty={results.length === 0}
-              empty="No payment providers yet."
-            >
-              {results.map((p) => (
-                <ProviderRow key={p.key} provider={p} manage={manage} act={act} busy={busy} />
-              ))}
-            </Table>
-          )}
+          {({ results }) =>
+            results.length === 0 ? (
+              <Card as="div">
+                <EmptyState
+                  icon="card"
+                  title="No payment providers yet"
+                  hint="Add Stripe or Razorpay to collect customers' invoices."
+                  compact
+                />
+              </Card>
+            ) : (
+              <ul className={pay.providers} aria-label="Payment providers">
+                {results.map((p) => (
+                  <li key={p.key}>
+                    <ProviderCard provider={p} events={eventRows} manage={manage} act={act} busy={busy} />
+                  </li>
+                ))}
+              </ul>
+            )
+          }
         </LoadGate>
-        {manage && <AddProvider onAdded={reloadProviders} />}
       </section>
 
-      <section className={styles.section} aria-labelledby="events-h">
-        <h2 id="events-h" className={styles.sectionTitle}>
-          Payment events
-        </h2>
-        <p className={cp.muted}>What providers reported, newest first. Only a verified signature is ever applied.</p>
+      <section aria-labelledby="events-h" className={pay.section}>
+        <SectionHeader id="events-h" title="Payment events" description="What providers reported, newest first. Only a verified signature is ever applied." />
         <LoadGate load={events} what="payment events">
-          {({ results }) => (
-            <Table
-              caption="Payment event log"
-              head={["Received", "Provider", "Event", "Outcome", "Amount", "Organization"]}
-              isEmpty={results.length === 0}
-              empty="No payment events yet."
-            >
-              {results.map((e) => (
-                <tr key={e.id}>
-                  <td>{when(e.received_at)}</td>
-                  <td>{e.provider}</td>
-                  <td>{e.kind.replace(/_/g, " ")}</td>
-                  <td>
-                    <Status value={e.outcome} />
-                  </td>
-                  <td className={cp.num}>
-                    {e.amount_minor !== null && e.currency ? money(e.amount_minor, e.currency) : "—"}
-                  </td>
-                  <td className={cp.mono}>{e.organization_id ?? "—"}</td>
-                </tr>
-              ))}
-            </Table>
-          )}
+          {({ results }) => <EventLog events={results} />}
         </LoadGate>
       </section>
-    </div>
+    </Page>
   );
 }
 
+function EventLog({ events }: { events: PaymentEventRow[] }) {
+  const [provider, setProvider] = useState("all");
+  const [outcome, setOutcome] = useState("all");
+  const providers = [...new Set(events.map((e) => e.provider))].sort();
+  const outcomes = [...new Set(events.map((e) => e.outcome))].sort();
+  const rows = events.filter((e) => (provider === "all" || e.provider === provider) && (outcome === "all" || e.outcome === outcome));
+  const columns: Column<PaymentEventRow>[] = [
+    {
+      key: "received",
+      header: "Received",
+      value: (e) => e.received_at,
+      render: (e) => <time dateTime={e.received_at} title={exactTime(e.received_at)}>{formatDateTime(e.received_at)}</time>,
+    },
+    { key: "provider", header: "Provider", value: (e) => e.provider, render: (e) => <code className={pay.mono}>{e.provider}</code> },
+    { key: "event", header: "Event", value: (e) => e.kind, render: (e) => sentence(e.kind) },
+    {
+      key: "outcome",
+      header: "Outcome",
+      value: (e) => e.outcome,
+      render: (e) => (
+        <Badge tone={OUTCOME_TONE[e.outcome] ?? "neutral"} dot>
+          {sentence(e.outcome)}
+        </Badge>
+      ),
+    },
+    {
+      key: "amount",
+      header: "Amount",
+      align: "right",
+      value: (e) => e.amount_minor,
+      render: (e) => (e.amount_minor !== null && e.currency ? money(e.amount_minor, e.currency) : "—"),
+    },
+    { key: "org", header: "Organization", value: (e) => e.organization_id, render: (e) => <IdCell value={e.organization_id} label="Copy organization ID" /> },
+  ];
+  const filtered = provider !== "all" || outcome !== "all";
+  return (
+    <>
+      {events.length > 0 && (
+        <FilterBar
+          label="Filter payment events"
+          onClear={
+            filtered
+              ? () => {
+                  setProvider("all");
+                  setOutcome("all");
+                }
+              : undefined
+          }
+        >
+          <Select
+            label="Provider"
+            prefix="Provider:"
+            value={provider}
+            onChange={setProvider}
+            options={[{ value: "all", label: "All" }, ...providers.map((p) => ({ value: p, label: p }))]}
+          />
+          <Select
+            label="Outcome"
+            prefix="Outcome:"
+            value={outcome}
+            onChange={setOutcome}
+            options={[{ value: "all", label: "All" }, ...outcomes.map((o) => ({ value: o, label: sentence(o) }))]}
+          />
+        </FilterBar>
+      )}
+      <DataTable
+        caption="Payment event log"
+        columns={columns}
+        rows={rows}
+        rowKey={(e) => e.id}
+        hideEmptyColumns={false}
+        empty={
+          events.length === 0 ? (
+            <EmptyState icon="receipt" title="No payment events yet" hint="Events appear here when a provider calls its webhook." />
+          ) : (
+            <EmptyState icon="search" title="No event matches these filters" />
+          )
+        }
+      />
+    </>
+  );
+}
+
+/** Set or not set - the variable an operator sets is in the tooltip. */
 function SecretState({ label, configured, variable }: { label: string; configured: boolean; variable: string }) {
   return (
-    <li>
-      <span aria-hidden="true">{configured ? "✓ " : "✗ "}</span>
-      {label} {configured ? "configured" : "not set"}
-      <div className={cp.muted}>
-        {configured ? "In" : "Set"} <code className={cp.mono}>{variable}</code>
-      </div>
-    </li>
+    <span className={pay.secret}>
+      <Badge tone={configured ? "success" : "warning"} icon={configured ? "check" : "x"}>
+        {configured ? "Set" : "Not set"}
+      </Badge>
+      <Tooltip content={<>Set in the secret manager as {variable}</>}>
+        <button type="button" className={pay.info} aria-label={`Where the ${label.toLowerCase()} is set`}>
+          <Icon name="info" size={14} />
+        </button>
+      </Tooltip>
+    </span>
   );
 }
 
-function ProviderRow({
+function ProviderCard({
   provider: p,
+  events,
   manage,
   act,
   busy,
 }: {
   provider: PaymentProviderRow;
+  events: PaymentEventRow[];
   manage: boolean;
   act: Act;
   busy: boolean;
@@ -130,82 +240,111 @@ function ProviderRow({
   const [editing, setEditing] = useState(false);
   const ready = p.credential_configured && p.webhook_secret_configured;
   const enabled = p.status === "enabled";
+  const last = events.filter((e) => e.provider === p.key).map((e) => e.received_at).sort().at(-1);
+  const titleId = `provider-${p.key}`;
   return (
-    <tr>
-      <th scope="row">
-        {p.display_name}
-        <div className={`${cp.mono} ${cp.muted}`}>{p.key}</div>
-        <div className={cp.muted}>Priority {p.priority}</div>
-      </th>
-      <td>{adapterLabel(p.adapter)}</td>
-      <td>{p.mode === "live" ? "Live" : "Test"}</td>
-      <td>
-        <Status value={p.status} />
-      </td>
-      <td>{p.currencies.join(", ") || "—"}</td>
-      <td>
-        <ul className={styles.plainList}>
-          <SecretState label="API key" configured={p.credential_configured} variable={p.credential_variable} />
-          <SecretState label="Webhook secret" configured={p.webhook_secret_configured} variable={p.webhook_secret_variable} />
-        </ul>
-      </td>
-      <td>
-        <code className={cp.mono}>{p.webhook_path}</code>
-        <div className={cp.muted}>Register this path, on the API host, with the provider.</div>
-      </td>
-      <td>
-        {manage && (
-          <div className={styles.actions}>
-            <button
-              type="button"
-              className="w360-btn w360-btn-secondary"
-              aria-label={`${enabled ? "Disable" : "Enable"} ${p.display_name}`}
-              disabled={busy || (!enabled && !ready)}
-              onClick={() =>
-                act(
-                  () => adminConsoleApi.updatePaymentProvider(p.key, { status: enabled ? "disabled" : "enabled", version: p.version }),
-                  `${p.display_name} is now ${enabled ? "disabled" : "enabled"}.`,
-                )
-              }
-            >
-              {enabled ? "Disable" : "Enable"}
-            </button>
-            <button
-              type="button"
-              className="w360-btn w360-btn-secondary"
-              aria-label={`Switch ${p.display_name} to ${p.mode === "live" ? "test" : "live"} mode`}
-              disabled={busy}
-              onClick={() =>
-                act(
-                  () => adminConsoleApi.updatePaymentProvider(p.key, { mode: p.mode === "live" ? "test" : "live", version: p.version }),
-                  `${p.display_name} is now in ${p.mode === "live" ? "test" : "live"} mode.`,
-                )
-              }
-            >
-              Switch to {p.mode === "live" ? "test" : "live"}
-            </button>
-            <button
-              type="button"
-              className="w360-btn w360-btn-secondary"
-              aria-label={`Edit currencies of ${p.display_name}`}
-              aria-haspopup="dialog"
-              disabled={busy}
-              onClick={() => setEditing(true)}
-            >
-              Edit currencies
-            </button>
-            {!enabled && !ready && <p className={cp.muted}>Set both secrets before enabling.</p>}
-          </div>
-        )}
-        {editing && (
-          <CurrencyEditor
-            provider={p}
-            onClose={() => setEditing(false)}
-            onSaved={() => void act(async () => {}, `${p.display_name}: currencies updated.`)}
-          />
-        )}
-      </td>
-    </tr>
+    <section className={pay.card} aria-labelledby={titleId}>
+      <div className={pay.cardHead}>
+        <Avatar name={adapterLabel(p.adapter)} />
+        <div className={pay.cardTitle}>
+          <h3 id={titleId}>{p.display_name}</h3>
+          <code className={pay.mono}>{p.key}</code>
+        </div>
+        <div className={pay.badges}>
+          {enabled ? (
+            <Badge tone="success" dot>
+              Enabled
+            </Badge>
+          ) : ready ? (
+            <Badge tone="neutral" dot>
+              Disabled
+            </Badge>
+          ) : (
+            <Badge tone="warning" dot>
+              Needs setup
+            </Badge>
+          )}
+          <Badge tone={p.mode === "live" ? "success" : "info"}>{p.mode === "live" ? "Live" : "Test"}</Badge>
+        </div>
+      </div>
+      <DescriptionList
+        items={[
+          { label: "Adapter", value: adapterLabel(p.adapter) },
+          { label: "Currencies", value: p.currencies.join(", ") },
+          { label: "Priority", value: p.priority },
+          { label: "API key", value: <SecretState label="API key" configured={p.credential_configured} variable={p.credential_variable} /> },
+          {
+            label: "Webhook secret",
+            value: <SecretState label="Webhook secret" configured={p.webhook_secret_configured} variable={p.webhook_secret_variable} />,
+          },
+          {
+            label: "Webhook path",
+            value: (
+              <span className={pay.path}>
+                <Tooltip content="Register this path, on the API host, with the provider.">
+                  <code className={pay.mono} tabIndex={0}>
+                    {p.webhook_path}
+                  </code>
+                </Tooltip>
+                <CopyButton value={p.webhook_path} label="Copy webhook path" />
+              </span>
+            ),
+          },
+          {
+            label: "Last webhook",
+            value: last ? <time dateTime={last} title={exactTime(last)}>{formatRelative(last)}</time> : "None received yet",
+          },
+        ]}
+      />
+      {manage && (
+        <div className={pay.actions}>
+          <Button
+            variant={enabled ? "secondary" : "primary"}
+            size="sm"
+            aria-label={`${enabled ? "Disable" : "Enable"} ${p.display_name}`}
+            disabled={busy || (!enabled && !ready)}
+            onClick={() =>
+              act(
+                () => adminConsoleApi.updatePaymentProvider(p.key, { status: enabled ? "disabled" : "enabled", version: p.version }),
+                `${p.display_name} is now ${enabled ? "disabled" : "enabled"}.`,
+              )
+            }
+          >
+            {enabled ? "Disable" : "Enable"}
+          </Button>
+          <Button
+            size="sm"
+            aria-label={`Switch ${p.display_name} to ${p.mode === "live" ? "test" : "live"} mode`}
+            disabled={busy}
+            onClick={() =>
+              act(
+                () => adminConsoleApi.updatePaymentProvider(p.key, { mode: p.mode === "live" ? "test" : "live", version: p.version }),
+                `${p.display_name} is now in ${p.mode === "live" ? "test" : "live"} mode.`,
+              )
+            }
+          >
+            Switch to {p.mode === "live" ? "test" : "live"}
+          </Button>
+          <Button
+            size="sm"
+            aria-label={`Edit currencies of ${p.display_name}`}
+            aria-haspopup="dialog"
+            disabled={busy}
+            onClick={() => setEditing(true)}
+          >
+            Edit currencies
+          </Button>
+          {!enabled && !ready && <span className={pay.hint}>Set both secrets before enabling.</span>}
+        </div>
+      )}
+      {editing && (
+        <CurrencyEditor
+          provider={p}
+          onClose={() => setEditing(false)}
+          onSaved={() => void act(async () => {}, `${p.display_name}: currencies updated.`)}
+        />
+      )}
+    </section>
   );
 }
 
@@ -323,7 +462,8 @@ function AddProvider({ onAdded }: { onAdded: () => void }) {
   return (
     <div>
       <FormPopup
-        label="+ Add provider"
+        label={iconLabel("Add provider")}
+        buttonClassName={popupButton()}
         title="Add provider"
         intro={
           <>

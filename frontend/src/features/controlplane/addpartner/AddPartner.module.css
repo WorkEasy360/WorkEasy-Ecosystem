@@ -10,16 +10,37 @@
 
 /* --- the password ---------------------------------------------------------------- */
 
+/* The password input with its eye inside it, at the right. */
 .passwordRow {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--w360-space-2);
-  align-items: stretch;
+  align-items: center;
 }
 
 .passwordRow > input {
-  flex: 1 1 14rem;
+  flex: 1 1 auto;
   min-width: 0;
+  padding-right: 40px;
+}
+
+.eye {
+  position: absolute;
+  right: 4px;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--w360-radius-control);
+  background: none;
+  color: var(--w360-text-muted);
+  cursor: pointer;
+}
+
+.eye:hover {
+  background: var(--w360-gray-100);
+  color: var(--w360-text);
 }
 
 .guidance {
@@ -72,6 +93,16 @@
   list-style: none;
 }
 
+.requirements li {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-1);
+}
+
+.requirements svg {
+  flex: none;
+}
+
 .met {
   color: var(--w360-success);
   font-weight: 600;
@@ -95,6 +126,12 @@
 
 .existing p {
   margin: 0;
+}
+
+.existingActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
 }
 
 .linked {
@@ -183,10 +220,68 @@
 
 /* --- inside the Add New Partner dialog (Modal.module.css draws the dialog) ------ */
 
-.passwordRow :global(.w360-btn) {
-  min-height: 40px;
-  padding: 0 12px;
-  font-size: 13px;
+/* The dialog's fields scroll; the title and the buttons stay in view. */
+.scrollBody {
+  max-height: min(64vh, 560px);
+  overflow-y: auto;
+}
+
+.foot {
+  position: sticky;
+  bottom: 0;
+  background: var(--w360-surface);
+  border-radius: 0 0 var(--w360-radius-card) var(--w360-radius-card);
+}
+
+/* How the administrator signs in: two choices, the invitation first. */
+.access {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.access legend {
+  padding: 0;
+  margin-bottom: var(--w360-space-1);
+  font-size: var(--w360-fs-meta);
+  font-weight: 600;
+  color: var(--w360-text-muted);
+}
+
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--w360-space-2);
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-control);
+  cursor: pointer;
+}
+
+.choice:has(input:checked) {
+  border-color: var(--w360-indicator);
+  background: var(--w360-brand-soft);
+}
+
+.choice input {
+  margin-top: 3px;
+}
+
+.choiceText {
+  display: grid;
+  gap: 2px;
+  font-size: var(--w360-fs-body);
+}
+
+.choiceText strong {
+  font-weight: 600;
+}
+
+.choiceText span {
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-text-muted);
 }
 
 .guidanceCompact {

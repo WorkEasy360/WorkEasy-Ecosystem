@@ -156,7 +156,7 @@ function MemberRow({
                 setRemoving(false);
                 void act(
                   () => adminApi.removeMember(partnerId, m.id),
-                  "User removed. Their partner access ended immediately; their Workeasy360 account was not deleted.",
+                  "User removed. Their partner access ended immediately; their WorkEasy360 account was not deleted.",
                 );
               }}
             />
@@ -240,7 +240,7 @@ function RemovePanel({ member, busy, onCancel, onConfirm }: { member: PartnerMem
         <strong>Remove {member.email}?</strong>
       </p>
       <p id={`${id}-why`}>
-        This ends this person&apos;s partner access immediately. It does not delete their Workeasy360 account, and anything they belong
+        This ends this person&apos;s partner access immediately. It does not delete their WorkEasy360 account, and anything they belong
         to outside this partner is untouched.
       </p>
       <div className={styles.row}>
@@ -310,7 +310,7 @@ function InviteForm({ partner, busy, onChanged }: { partner: PartnerDetail; busy
       <TextField label="First name (optional)" value={first} onChange={setFirst} maxLength={120} autoComplete="off" />
       <TextField label="Last name (optional)" value={last} onChange={setLast} maxLength={120} autoComplete="off" />
       <p className={`w360-hint ${dialog.span}`}>
-        Names are used only if this address has no Workeasy360 account yet; an existing account is attached as it is and never renamed.
+        Names are used only if this address has no WorkEasy360 account yet; an existing account is attached as it is and never renamed.
       </p>
       {draft ? (
         <div className={dialog.span}>

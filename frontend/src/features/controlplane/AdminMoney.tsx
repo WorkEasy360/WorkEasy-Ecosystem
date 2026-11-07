@@ -56,7 +56,7 @@ export function PayoutRowView({
               label="Record as paid"
               buttonAriaLabel={`Record the payout for ${p.period_end} as paid`}
               title="Record a payout as paid"
-              intro={`${money(p.payable_minor, p.currency)} for the period ending ${p.period_end}. Record the transfer made outside Workeasy360.`}
+              intro={`${money(p.payable_minor, p.currency)} for the period ending ${p.period_end}. Record the transfer made outside WorkEasy360.`}
               size="sm"
               submitLabel="Record as paid"
               canSubmit={reference.trim().length >= 3}

@@ -1,11 +1,31 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { adminApi, productMediaUrl, type ConsoleProduct, type ProductsConsole } from "@/lib/api/controlPlane";
 import { can, useAdmin } from "../ControlShell";
 import { LoadGate, useAction, useLoad } from "../ui";
-import { STATUS_BADGE, STATUS_LABEL, VISIBILITY_BADGE, VISIBILITY_LABEL, dateOnly, trialLabel, visibilityOf, type ManagerStatus } from "./model";
+import {
+  Badge,
+  ButtonLink,
+  DataTable,
+  EmptyState,
+  FilterBar,
+  Page,
+  PageHeader,
+  SearchInput,
+  Select,
+  StatCard,
+  StatGrid,
+  Trunc,
+  UrlCell,
+  formatDate,
+  useConfirm,
+  type Column,
+  type MenuItem,
+  type Tone,
+} from "../kit";
+import { STATUS_LABEL, VISIBILITY_LABEL, trialLabel, visibilityOf, type ManagerStatus, type Visibility } from "./model";
 import { ProductMark } from "./ProductMark";
 import { StorePreview, type ListingPreview } from "./StorePreview";
 import styles from "./ProductManager.module.css";
@@ -57,144 +77,24 @@ function matches(p: ConsoleProduct, q: string, status: StatusFilter, visibility:
   return category === "all" || p.category === category;
 }
 
-/** "More" actions in a native disclosure: keyboard-operable for free, and it
- * closes on Escape, on a choice and on a click elsewhere. */
-function MoreMenu({ label, children }: { label: string; children: React.ReactNode }) {
-  const ref = useRef<HTMLDetailsElement | null>(null);
-  const close = () => {
-    if (ref.current) ref.current.open = false;
-  };
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current?.open && !ref.current.contains(e.target as Node)) close();
-    };
-    document.addEventListener("click", onDoc);
-    return () => document.removeEventListener("click", onDoc);
-  }, []);
+const STATUS_TONE: Record<ManagerStatus, Tone> = { draft: "neutral", active: "success", archived: "danger" };
+const VISIBILITY_TONE: Record<Visibility, Tone> = { published: "success", hidden: "neutral", coming_soon: "info" };
+
+/** A product's status in the one badge style. */
+export function ManagerStatusBadge({ status }: { status: ManagerStatus }) {
   return (
-    <details
-      ref={ref}
-      className={styles.menu}
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && ref.current?.open) {
-          close();
-          ref.current.querySelector("summary")?.focus();
-        }
-      }}
-    >
-      <summary className="w360-btn w360-btn-secondary" aria-label={label}>
-        More <span aria-hidden="true">▾</span>
-      </summary>
-      {/* A choice closes the menu: every item is a button or a link. */}
-      <div className={styles.menuList} onClick={close}>
-        {children}
-      </div>
-    </details>
+    <Badge tone={STATUS_TONE[status] ?? "neutral"} dot>
+      {STATUS_LABEL[status]}
+    </Badge>
   );
 }
 
-function ProductRow({
-  product: p,
-  manage,
-  busy,
-  act,
-  onPreview,
-}: {
-  product: ConsoleProduct;
-  manage: boolean;
-  busy: boolean;
-  act: (action: () => Promise<unknown>, success: string) => Promise<void>;
-  onPreview: (p: ConsoleProduct) => void;
-}) {
-  const visibility = visibilityOf(p.listing);
-  const logo = p.logo_media_id ? productMediaUrl(p.id, p.logo_media_id) : null;
-  const archived = p.manager_status === "archived";
+/** A product's store visibility in the one badge style. */
+export function VisibilityBadge({ visibility }: { visibility: Visibility }) {
   return (
-    <tr>
-      <th scope="row">
-        <div className={styles.productCell}>
-          <ProductMark name={p.name} icon={p.icon} src={logo} />
-          <span>
-            <Link className={styles.productName} href={`/admin/products/${p.id}`}>
-              {p.name}
-            </Link>
-            <span className={styles.slug}>{p.slug}</span>
-          </span>
-        </div>
-      </th>
-      <td className={styles.secondary}>{p.category || <span className={styles.muted}>—</span>}</td>
-      <td>
-        <span className={STATUS_BADGE[p.manager_status]}>{STATUS_LABEL[p.manager_status]}</span>
-      </td>
-      <td>
-        <span className={VISIBILITY_BADGE[visibility]}>{VISIBILITY_LABEL[visibility]}</span>
-      </td>
-      <td className={`${styles.secondary} ${styles.nowrap}`}>{trialLabel(p.channels.trial)}</td>
-      <td className={styles.optional}>{p.plans.length}</td>
-      <td className={`${styles.optional} ${styles.urlCell}`}>
-        {p.launch_url ? <span className={styles.url}>{p.launch_url}</span> : <span className={styles.muted}>Not set</span>}
-      </td>
-      <td className={`${styles.optional} ${styles.nowrap}`}>{dateOnly(p.updated_at)}</td>
-      <td>
-        <div className={styles.actions}>
-          <Link className="w360-btn w360-btn-secondary" href={`/admin/products/${p.id}`} aria-label={`Manage ${p.name}`}>
-            Manage
-          </Link>
-          <MoreMenu label={`More actions for ${p.name}`}>
-            <>
-                {manage && (
-                  <Link className={styles.menuItem} href={`/admin/products/${p.id}?tab=listing`}>
-                    Edit
-                  </Link>
-                )}
-                <button
-                  type="button"
-                  className={styles.menuItem}
-                  onClick={() => onPreview(p)}
-                >
-                  Preview listing
-                </button>
-                {manage && !archived && visibility !== "published" && (
-                  <button
-                    type="button"
-                    className={styles.menuItem}
-                    disabled={busy}
-                    onClick={() => {
-                      void act(() => adminApi.productLifecycle(p.id, "publish"), `${p.name} is published to the store.`);
-                    }}
-                  >
-                    Publish
-                  </button>
-                )}
-                {manage && visibility === "published" && (
-                  <button
-                    type="button"
-                    className={styles.menuItem}
-                    disabled={busy}
-                    onClick={() => {
-                      void act(() => adminApi.productLifecycle(p.id, "unpublish"), `${p.name} is hidden from the store.`);
-                    }}
-                  >
-                    Unpublish
-                  </button>
-                )}
-                {manage && !archived && (
-                  <button
-                    type="button"
-                    className={`${styles.menuItem} ${styles.danger}`}
-                    disabled={busy}
-                    onClick={() => {
-                      void act(() => adminApi.productLifecycle(p.id, "archive"), `${p.name} is archived. Its history is kept.`);
-                    }}
-                  >
-                    Archive
-                  </button>
-                )}
-            </>
-          </MoreMenu>
-        </div>
-      </td>
-    </tr>
+    <Badge tone={VISIBILITY_TONE[visibility] ?? "neutral"} dot>
+      {VISIBILITY_LABEL[visibility]}
+    </Badge>
   );
 }
 
@@ -203,131 +103,206 @@ export function ProductManager() {
   const manage = can(permissions, "platform.staff_catalog.manage");
   const [load, reload] = useLoad(() => adminApi.productsConsole(), []);
   const { act, busy, feedback } = useAction(reload);
+  const confirm = useConfirm();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [visibility, setVisibility] = useState<VisibilityFilter>("all");
   const [category, setCategory] = useState("all");
   const [preview, setPreview] = useState<ConsoleProduct | null>(null);
-  const ids = { q: useId(), status: useId(), visibility: useId(), category: useId(), caption: useId() };
+
+  const columns: Column<ConsoleProduct>[] = [
+    {
+      key: "product",
+      header: "Product",
+      value: (p) => p.name,
+      render: (p) => {
+        const logo = p.logo_media_id ? productMediaUrl(p.id, p.logo_media_id) : null;
+        return (
+          <span className={styles.productLine}>
+            <ProductMark name={p.name} icon={p.icon} src={logo} size={32} />
+            <span className={styles.productText}>
+              <Link href={`/admin/products/${p.id}`}>{p.name}</Link>
+              <span className={styles.productSlug}>{p.slug}</span>
+            </span>
+          </span>
+        );
+      },
+    },
+    { key: "category", header: "Category", value: (p) => p.category, render: (p) => <Trunc max="sm">{p.category}</Trunc> },
+    { key: "status", header: "Status", value: (p) => p.manager_status, render: (p) => <ManagerStatusBadge status={p.manager_status} /> },
+    {
+      key: "visibility",
+      header: "Store visibility",
+      value: (p) => visibilityOf(p.listing),
+      render: (p) => <VisibilityBadge visibility={visibilityOf(p.listing)} />,
+    },
+    {
+      key: "trial",
+      header: "Trial",
+      value: (p) => (p.channels.trial?.enabled ? p.channels.trial.duration_days : null),
+      render: (p) => trialLabel(p.channels.trial),
+    },
+    { key: "plans", header: "Plans", align: "right", value: (p) => p.plans.length, render: (p) => p.plans.length },
+    {
+      key: "launch",
+      header: "Launch URL",
+      render: (p) => (p.launch_url ? <UrlCell url={p.launch_url} /> : <span className={styles.muted}>Not set</span>),
+    },
+    { key: "updated", header: "Last updated", value: (p) => p.updated_at, render: (p) => formatDate(p.updated_at) },
+  ];
+
+  const menu = (p: ConsoleProduct): MenuItem[] => {
+    const shown = visibilityOf(p.listing);
+    const archived = p.manager_status === "archived";
+    return [
+      { label: "Manage", icon: "settings", href: `/admin/products/${p.id}` },
+      { label: "Edit listing", icon: "edit", href: `/admin/products/${p.id}?tab=listing`, when: manage },
+      { label: "Preview listing", icon: "eye", onSelect: () => setPreview(p) },
+      {
+        label: "Publish",
+        icon: "upload",
+        disabled: busy,
+        when: manage && !archived && shown !== "published",
+        onSelect: () => void act(() => adminApi.productLifecycle(p.id, "publish"), `${p.name} is published to the store.`),
+      },
+      {
+        label: "Unpublish",
+        icon: "eyeOff",
+        disabled: busy,
+        when: manage && shown === "published",
+        onSelect: () => void act(() => adminApi.productLifecycle(p.id, "unpublish"), `${p.name} is hidden from the store.`),
+      },
+      {
+        label: "Archive",
+        icon: "box",
+        danger: true,
+        separator: true,
+        disabled: busy,
+        when: manage && !archived,
+        onSelect: () =>
+          confirm.ask({
+            title: `Archive ${p.name}?`,
+            message: "It is hidden from the store and can no longer be sold. Its history, plans and customers' records are kept.",
+            confirmLabel: "Archive",
+            danger: true,
+            onConfirm: () => act(() => adminApi.productLifecycle(p.id, "archive"), `${p.name} is archived. Its history is kept.`),
+          }),
+      },
+    ];
+  };
 
   return (
-    <div className={styles.page}>
-      <div className={styles.pageHead}>
-        <div>
-          <h1 className={styles.pageTitle}>Product Manager</h1>
-          <p className={styles.lead}>Manage Workeasy360 products and their store availability.</p>
-        </div>
-        {manage && (
-          <Link className="w360-btn w360-btn-primary" href="/admin/products/new">
-            + Add Product
-          </Link>
-        )}
-      </div>
+    <Page>
+      <PageHeader
+        title="Products"
+        subtitle="Manage WorkEasy360 products and their store availability."
+        info="Status (draft, active, archived) and store visibility (published, hidden) are separate facts. Neither gives access: a customer uses a product only through a trial or a purchase."
+        primary={
+          manage ? (
+            <ButtonLink variant="primary" icon="plus" href="/admin/products/new">
+              New product
+            </ButtonLink>
+          ) : undefined
+        }
+      />
       {feedback}
       <LoadGate load={load} what="products">
         {(d: ProductsConsole) => catalog(d)}
       </LoadGate>
       {preview && <StorePreview listing={listingOf(preview)} onClose={() => setPreview(null)} />}
-    </div>
+      {confirm.dialog}
+    </Page>
   );
 
   /** A render helper, not a component: the filter inputs keep focus as they change. */
   function catalog(data: ProductsConsole) {
     const rows = data.products.filter((p) => matches(p, q, status, visibility, category));
     const count = (s: ManagerStatus) => data.products.filter((p) => p.manager_status === s).length;
+    const filtered = q !== "" || status !== "all" || visibility !== "all" || category !== "all";
     return (
       <>
-        <ul className={styles.summary} aria-label="Catalog summary">
-          {[
-            { label: "Products", value: data.products.length },
-            { label: "Active", value: count("active") },
-            { label: "Published", value: data.products.filter((p) => p.listing === "listed").length },
-            { label: "Drafts", value: count("draft") },
-          ].map((t) => (
-            <li key={t.label} className={styles.summaryTile}>
-              <span className={styles.summaryValue}>{t.value}</span>
-              <span className={styles.summaryLabel}>{t.label}</span>
-            </li>
-          ))}
-        </ul>
+        <StatGrid label="Catalog summary">
+          <StatCard label="Products" icon="box" value={data.products.length} />
+          <StatCard label="Active" icon="checkCircle" tone="blue" value={count("active")} />
+          <StatCard label="Published" icon="store" tone="purple" value={data.products.filter((p) => p.listing === "listed").length} />
+          <StatCard label="Drafts" icon="edit" tone="orange" value={count("draft")} />
+        </StatGrid>
 
-        <div className={styles.filters} role="search" aria-label="Filter products">
-          <div>
-            <label htmlFor={ids.q}>Search products</label>
-            <input id={ids.q} className="w360-input" type="search" placeholder="Name, slug or category" value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
-          <div>
-            <label htmlFor={ids.status}>Status</label>
-            <select id={ids.status} className="w360-input" value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)}>
-              <option value="all">All</option>
-              <option value="draft">Draft</option>
-              <option value="active">Active</option>
-              <option value="archived">Archived</option>
-            </select>
-          </div>
-          <div>
-            <label htmlFor={ids.visibility}>Store visibility</label>
-            <select id={ids.visibility} className="w360-input" value={visibility} onChange={(e) => setVisibility(e.target.value as VisibilityFilter)}>
-              <option value="all">All</option>
-              <option value="published">Published</option>
-              <option value="hidden">Hidden</option>
-            </select>
-          </div>
-          <div>
-            <label htmlFor={ids.category}>Category</label>
-            <select id={ids.category} className="w360-input" value={category} onChange={(e) => setCategory(e.target.value)}>
-              <option value="all">All categories</option>
-              {data.categories.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+        <FilterBar
+          label="Filter products"
+          onClear={
+            filtered
+              ? () => {
+                  setQ("");
+                  setStatus("all");
+                  setVisibility("all");
+                  setCategory("all");
+                }
+              : undefined
+          }
+          end={
+            <span className={styles.muted} aria-live="polite">
+              {rows.length === data.products.length
+                ? `${rows.length} product${rows.length === 1 ? "" : "s"}`
+                : `${rows.length} of ${data.products.length} products`}
+            </span>
+          }
+        >
+          <SearchInput label="Search products" placeholder="Name, slug or category" value={q} onSearch={setQ} />
+          <Select<StatusFilter>
+            label="Status"
+            prefix="Status:"
+            value={status}
+            onChange={setStatus}
+            options={[
+              { value: "all", label: "All" },
+              { value: "draft", label: "Draft" },
+              { value: "active", label: "Active" },
+              { value: "archived", label: "Archived" },
+            ]}
+          />
+          <Select<VisibilityFilter>
+            label="Store visibility"
+            prefix="Visibility:"
+            value={visibility}
+            onChange={setVisibility}
+            options={[
+              { value: "all", label: "All" },
+              { value: "published", label: "Published" },
+              { value: "hidden", label: "Hidden" },
+            ]}
+          />
+          <Select
+            label="Category"
+            prefix="Category:"
+            value={category}
+            onChange={setCategory}
+            options={[{ value: "all", label: "All categories" }, ...data.categories.map((c) => ({ value: c, label: c }))]}
+          />
+        </FilterBar>
 
-        <p className={styles.muted} aria-live="polite">
-          {rows.length === data.products.length ? `${rows.length} product${rows.length === 1 ? "" : "s"}` : `${rows.length} of ${data.products.length} products`}
-        </p>
-
-        <div className={styles.tableWrap} role="region" aria-labelledby={ids.caption} tabIndex={0}>
-          <table className={styles.table}>
-            <caption id={ids.caption}>Products</caption>
-            <thead>
-              <tr>
-                <th scope="col">Product</th>
-                <th scope="col" className={styles.secondary}>
-                  Category
-                </th>
-                <th scope="col">Status</th>
-                <th scope="col">Store visibility</th>
-                <th scope="col" className={styles.secondary}>
-                  Trial
-                </th>
-                <th scope="col" className={styles.optional}>
-                  Plans
-                </th>
-                <th scope="col" className={styles.optional}>
-                  Launch URL
-                </th>
-                <th scope="col" className={styles.optional}>
-                  Last updated
-                </th>
-                <th scope="col">
-                  <span className="w360-visually-hidden">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p) => (
-                <ProductRow key={p.id} product={p} manage={manage} busy={busy} act={act} onPreview={setPreview} />
-              ))}
-            </tbody>
-          </table>
-          {rows.length === 0 && (
-            <p className={styles.empty}>{data.products.length === 0 ? "No products yet." : "No product matches these filters."}</p>
-          )}
-        </div>
+        <DataTable
+          caption="Products"
+          columns={columns}
+          rows={rows}
+          rowKey={(p) => p.id}
+          rowHref={(p) => `/admin/products/${p.id}`}
+          rowLabel={(p) => p.name}
+          rowMenu={menu}
+          hideEmptyColumns={false}
+          empty={
+            data.products.length === 0 ? (
+              <EmptyState
+                icon="box"
+                title="No products yet"
+                hint="Add the first product to the central catalog."
+                action={manage ? { label: "New product", href: "/admin/products/new" } : undefined}
+              />
+            ) : (
+              <EmptyState icon="search" title="No product matches these filters" hint="Change or clear the filters to see more." />
+            )
+          }
+        />
       </>
     );
   }

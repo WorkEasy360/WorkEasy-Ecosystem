@@ -78,11 +78,18 @@
   margin: 0;
 }
 
+/* A list of badges: no bullets (a flex list keeps its markers otherwise). */
 .labels {
   display: flex;
   flex-wrap: wrap;
   gap: var(--w360-space-1);
-  margin-top: var(--w360-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.labels > li {
+  display: inline-flex;
 }
 
 .label {
@@ -186,6 +193,11 @@
 
 .split > * {
   min-width: 0;
+}
+
+/* Cards side by side are as tall as the tallest in their row. */
+.split > section {
+  height: 100%;
 }
 
 .progressItem {
@@ -462,25 +474,70 @@
 
 /* --- simplified partner management (ADR-048) ------------------------------------------ */
 
+/* A partner type: a Title Case badge (Reseller, White-label, Affiliate). */
 .typeBadge {
-  border: 1px solid var(--w360-border-strong);
-  border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--w360-radius-pill);
+  font-size: var(--w360-fs-meta);
+  font-weight: 600;
   white-space: nowrap;
+  color: var(--w360-brand);
+  background: var(--w360-brand-soft);
+}
+
+.type_white_label {
+  color: var(--w360-info);
+  background: var(--w360-info-bg);
+}
+
+.type_affiliate {
   color: var(--w360-text);
   background: var(--w360-neutral-bg);
 }
 
-.type_reseller {
-  border-color: var(--w360-accent);
+/* Badges side by side on one line (a table cell). */
+.badgeLine {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-1);
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
-.type_white_label {
-  border-style: dashed;
+/* The Partner overview's seven figures: four to a row, never one alone. */
+.statGrid4 {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 1100px) {
+  .statGrid4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .statGrid4 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Two cards side by side, equal heights (one column when narrow). */
+.pair {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+@media (max-width: 1024px) {
+  .pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .searchField {
@@ -550,9 +607,7 @@
 }
 
 .completionTitle {
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-weight: 600;
 }
 
 /* The completion bar's width in tenths (a class, never an inline style). */

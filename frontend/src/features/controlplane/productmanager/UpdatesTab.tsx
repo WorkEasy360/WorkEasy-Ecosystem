@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { iconLabel, popupButton } from "../kit/PopupLabel";
 import { adminProgrammeApi, type AdminProductUpdate, type ProductUpdateBody } from "@/lib/api/adminProgramme";
 import type { ConsoleProduct } from "@/lib/api/controlPlane";
 import { dialog, FormDialog, FormPopup } from "../Modal";
@@ -173,7 +174,8 @@ export function UpdatesTab({ product, manage }: { product: ConsoleProduct; manag
             {manage && (
               <div className={cp.row}>
                 <FormPopup
-                  label="+ New update"
+                  label={iconLabel("New update")}
+                  buttonClassName={popupButton()}
                   title="New update"
                   size="lg"
                   submitLabel="Create draft"

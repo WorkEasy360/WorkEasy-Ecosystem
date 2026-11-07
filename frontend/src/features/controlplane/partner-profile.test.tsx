@@ -1,3 +1,4 @@
+import { formatDateTime } from "./kit/format";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
@@ -740,7 +741,7 @@ describe("Overview", () => {
     expect(card("Subscriptions")).toHaveTextContent("1");
     expect(card("Commission")).toHaveTextContent("10%");
     expect(card("Pending payout")).toHaveTextContent("1");
-    expect(card("Domain status")).toHaveTextContent("requested");
+    expect(card("Domain status")).toHaveTextContent("Requested");
     await expectNoViolations(container);
   });
 
@@ -755,7 +756,7 @@ describe("Overview", () => {
     expect(business).toHaveTextContent("Incomplete");
     expect(business).toHaveTextContent("Add the company's business email.");
     // jsdom drops the space before a visually hidden suffix, so the name is matched loosely.
-    expect(within(business).getByRole("link", { name: /^Complete ?Business details$/ })).toHaveAttribute("href", `/admin/partners/${ID}/profile?step=business`);
+    expect(within(business).getByRole("link", { name: /^Add details ?for Business details$/ })).toHaveAttribute("href", `/admin/partners/${ID}/profile?step=business`);
 
     const products = rowOf(section, "Products");
     expect(products).toHaveTextContent("Complete");
@@ -781,7 +782,7 @@ describe("Overview", () => {
     const section = await completionList();
     const domain = rowOf(section, "Domain");
     expect(domain).toHaveTextContent("Waiting");
-    expect(within(domain).getByRole("link", { name: /^Complete ?Domain$/ })).toHaveAttribute("href", `/admin/partners/${ID}/profile?step=domain`);
+    expect(within(domain).getByRole("link", { name: /^Add details ?for Domain$/ })).toHaveAttribute("href", `/admin/partners/${ID}/profile?step=domain`);
     fireEvent.click(screen.getByRole("button", { name: "Open payouts" }));
     expect(screen.getByRole("tab", { name: "Payouts" })).toHaveAttribute("aria-selected", "true");
     first.unmount();
@@ -813,7 +814,7 @@ describe("Overview", () => {
     expect(writes(calls)).toEqual([]);
 
     // Everything missing is supplied through Complete Your Profile.
-    expect(within(notice).getByRole("link", { name: "Complete Your Profile" })).toHaveAttribute("href", `/admin/partners/${ID}/profile`);
+    expect(within(notice).getByRole("link", { name: "Complete partner profile" })).toHaveAttribute("href", `/admin/partners/${ID}/profile`);
     await expectNoViolations(container);
   });
 
@@ -824,7 +825,7 @@ describe("Overview", () => {
     mount();
     const notice = await banner("Profile incomplete");
     expect(within(notice).getByText(/Still needed: Primary contact\./)).toBeInTheDocument();
-    expect(within(notice).getByRole("link", { name: "Complete Your Profile" })).toBeInTheDocument();
+    expect(within(notice).getByRole("link", { name: "Complete partner profile" })).toBeInTheDocument();
   });
 
   it("says a ready draft can be activated, and activation still goes to the server with its reason and version", async () => {
@@ -1007,12 +1008,12 @@ describe("Users & Permissions", () => {
     const cells = (email: string) => within(rowOf(members, email)).getAllByRole("cell").map((c) => c.textContent);
 
     // Active, last seen on a date.
-    expect(cells("priya@acme.example").slice(0, 4)).toEqual(["Priya Shah", "Administrator", "Active", new Date("2026-02-01T09:00:00Z").toLocaleString()]);
+    expect(cells("priya@acme.example").slice(0, 4)).toEqual(["Priya Shah", "Administrator", "Active", formatDateTime("2026-02-01T09:00:00Z")]);
     // Invited: the date it was sent.
     const ops = cells("ops@acme.example");
     expect(ops[0]).toBe("-");
     expect(ops[1]).toBe("Viewer");
-    expect(ops[2]).toBe(`Invitation sent ${new Date("2026-02-10T10:00:00Z").toLocaleString()}`);
+    expect(ops[2]).toBe(`Invitation sent ${formatDateTime("2026-02-10T10:00:00Z")}`);
     expect(ops[3]).toBe("Never signed in");
     // Named, but the invitation waits for activation.
     expect(cells("later@acme.example")[2]).toBe("Invitation not sent yet (sent when the partner is activated)");
@@ -1176,10 +1177,10 @@ describe("Users & Permissions", () => {
 
     const group = screen.getByRole("group", { name: "Remove ops@acme.example?" });
     expect(within(group).getByText(/ends this person's partner access immediately/)).toBeInTheDocument();
-    expect(within(group).getByText(/does not delete their Workeasy360 account/)).toBeInTheDocument();
+    expect(within(group).getByText(/does not delete their WorkEasy360 account/)).toBeInTheDocument();
     const cancel = within(group).getByRole("button", { name: "Cancel" });
     expect(cancel).toHaveFocus();
-    expect(cancel).toHaveAccessibleDescription(/does not delete their Workeasy360 account/);
+    expect(cancel).toHaveAccessibleDescription(/does not delete their WorkEasy360 account/);
     expect(writes(calls)).toEqual([]);
     await expectNoViolations(container);
 
@@ -1189,7 +1190,7 @@ describe("Users & Permissions", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Remove user ops@acme.example" }));
     fireEvent.click(screen.getByRole("button", { name: "Yes, remove access" }));
-    await screen.findByText("User removed. Their partner access ended immediately; their Workeasy360 account was not deleted.");
+    await screen.findByText("User removed. Their partner access ended immediately; their WorkEasy360 account was not deleted.");
     expect(calls.filter((c) => c.key === `POST ${BASE}/members/m2/remove`)).toHaveLength(1);
   });
 
@@ -1257,9 +1258,9 @@ describe("Activity", () => {
     const cells = (i: number) => within(rows[i]).getAllByRole("cell").map((c) => c.textContent);
     expect(within(rows[0]).getByRole("rowheader")).toHaveTextContent("Business details or contacts changed");
     expect(within(rows[0]).getByRole("rowheader")).toHaveTextContent("partner.profile_updated");
-    expect(cells(0)).toEqual([new Date("2026-02-01T00:00:00Z").toLocaleString(), "staff@example.com", "business, contacts", "-"]);
+    expect(cells(0)).toEqual([formatDateTime("2026-02-01T00:00:00Z"), "staff@example.com", "business, contacts", "-"]);
     // No target and no reason read as a dash, and a system action says System.
-    expect(cells(1)).toEqual([new Date("2026-02-01T00:00:00Z").toLocaleString(), "System", "-", "Setup reviewed"]);
+    expect(cells(1)).toEqual([formatDateTime("2026-02-01T00:00:00Z"), "System", "-", "Setup reviewed"]);
     expect(within(rows[1]).getByRole("rowheader")).toHaveTextContent("Partner activated");
     expect(table.textContent).not.toMatch(/SECRET-TOKEN|RESOURCE-ID-VALUE|\{|\}/);
     await expectNoViolations(container);

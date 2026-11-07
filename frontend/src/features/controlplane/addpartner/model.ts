@@ -18,9 +18,9 @@ export const EXPERIENCE_KEYS: ExperienceKey[] = ["reseller", "white_label", "aff
 
 /** The three type cards. Words only: what each grants is the server's bundle. */
 export const TYPE_CARDS: Record<ExperienceKey, { title: string; text: string }> = {
-  reseller: { title: "Reseller", text: "Sell Workeasy360 products and manage customers." },
-  white_label: { title: "White-label", text: "Sell Workeasy360 products using your own brand and domain." },
-  affiliate: { title: "Affiliate", text: "Promote Workeasy360 products and earn commissions." },
+  reseller: { title: "Reseller", text: "Sell WorkEasy360 products and manage customers." },
+  white_label: { title: "White-label", text: "Sell WorkEasy360 products using your own brand and domain." },
+  affiliate: { title: "Affiliate", text: "Promote WorkEasy360 products and earn commissions." },
 };
 
 /** `?type=` (and the old `?purpose=`) on the address: a preselection only. */
@@ -73,11 +73,16 @@ export function passwordStrength(password: string, minLength: number = DEFAULT_M
 
 // --- the form ------------------------------------------------------------------------------------------------
 
+/** How a new administrator gets in (2026-11-07): an invitation email with a
+ * link to set their own password (the default), or a password set here. */
+export type AdminAccess = "invite" | "password";
+
 export interface AddPartnerDraft {
   name: string;
   country: string;
   email: string;
   mode: "create" | "link_existing";
+  access: AdminAccess;
   password: string;
   confirm: string;
   experience: ExperienceKey | null;
@@ -88,6 +93,7 @@ export const emptyAddPartner = (experience: ExperienceKey | null = null): AddPar
   country: "",
   email: "",
   mode: "create",
+  access: "invite",
   password: "",
   confirm: "",
   experience,
@@ -101,7 +107,7 @@ export function validate(d: AddPartnerDraft, minLength: number = DEFAULT_MIN_PAS
   const email = d.email.trim();
   if (!email) e["administrator.email"] = "Enter the partner administrator's email address.";
   else if (!EMAIL_PATTERN.test(email)) e["administrator.email"] = "Enter a valid email address.";
-  if (d.mode === "create") {
+  if (d.mode === "create" && d.access === "password") {
     if (!d.password) e["administrator.password"] = "Enter a password.";
     else if (d.password.length < minLength) e["administrator.password"] = `The password must be at least ${minLength} characters.`;
     if (!d.confirm) e["administrator.password_confirm"] = "Enter the password again.";
@@ -122,15 +128,17 @@ export function errorsFromProblems(problems: ReviewProblem[]): FieldErrors {
 }
 
 /** The request. The password and its confirmation are sent only when an account
- * is to be created; a linked account keeps the password it has. */
+ * is to be created with a password set here; an invited administrator sets their
+ * own, and a linked account keeps the password it has. */
 export function toOnboardingBody(d: AddPartnerDraft): OnboardingBody {
+  const typed = d.mode === "create" && d.access === "password";
   return {
     experience: d.experience as ExperienceKey,
     partner: { display_name: d.name.trim(), ...(d.country ? { country: d.country } : {}) },
     administrator: {
       email: d.email.trim(),
-      mode: d.mode,
-      ...(d.mode === "create" ? { password: d.password, password_confirm: d.confirm } : {}),
+      mode: d.mode === "link_existing" ? "link_existing" : typed ? "create" : "invite",
+      ...(typed ? { password: d.password, password_confirm: d.confirm } : {}),
     },
   };
 }

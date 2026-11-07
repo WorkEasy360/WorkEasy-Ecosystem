@@ -103,10 +103,20 @@ function portal(capabilities: string[], status = "active", role = "admin"): Repl
 }
 
 /** Every page in the menu, each collapsible section opened first. */
+/** Every page in the menu: the sections are an accordion (one open at a
+ * time), so each is opened in turn and its pages collected. */
 function navLabels(): string[] {
   const nav = screen.getByRole("navigation");
-  for (const b of within(nav).queryAllByRole("button")) if (b.getAttribute("aria-expanded") === "false") fireEvent.click(b);
-  return within(nav).queryAllByRole("link").map((a) => a.textContent ?? "");
+  const seen: string[] = [];
+  const collect = () => {
+    for (const a of within(nav).queryAllByRole("link")) if (!seen.includes(a.textContent ?? "")) seen.push(a.textContent ?? "");
+  };
+  collect();
+  for (const b of within(nav).queryAllByRole("button").filter((b) => b.hasAttribute("aria-expanded"))) {
+    if (b.getAttribute("aria-expanded") === "false") fireEvent.click(b);
+    collect();
+  }
+  return seen;
 }
 
 beforeEach(() => {
@@ -128,7 +138,7 @@ describe("the Super Admin shell", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(navLabels()).toEqual(["Dashboard", "Subscriptions", "Entitlements", "Audit"]);
+    expect(navLabels()).toEqual(["Dashboard", "Subscriptions", "Entitlements", "Audit log"]);
   });
 
   it("says plainly that the account has no administrator access when the backend refuses, and offers the User way in", async () => {
@@ -298,7 +308,7 @@ describe("Super Admin screens", () => {
     await expectNoViolations(container);
   });
 
-  it("the directory searches on submit, not on every keystroke", async () => {
+  it("the directory searches as you type, once the typing settles - not on every keystroke", async () => {
     const calls = mockApi({
       "GET /api/v1/admin/customers": [{ status: 200, body: { results: [], next_cursor: null, has_more: false } }],
     });
@@ -312,8 +322,8 @@ describe("Super Admin screens", () => {
     fireEvent.change(screen.getByLabelText("Search by name or slug"), { target: { value: "acm" } });
     fireEvent.change(screen.getByLabelText("Search by name or slug"), { target: { value: "acme" } });
     expect(calls.length).toBe(before);
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() => expect(calls.length).toBe(before + 1));
+    expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
   });
 
   it("preparing a payout sends only a partner and a date - never an amount", async () => {
@@ -439,7 +449,7 @@ describe("Super Admin screens", () => {
     expect(calls.find((c) => c.key === "POST /api/v1/admin/payouts/p1/paid")!.body).toEqual({ expected_version: 2, reference: "BACS-2026-06" });
   });
 
-  it("a destructive action asks once to confirm, then puts keyboard focus on the outcome", async () => {
+  it("a destructive action asks once to confirm in a dialog, then gives focus back to its button", async () => {
     function Harness() {
       const { act, feedback } = useAction();
       return (
@@ -450,13 +460,14 @@ describe("Super Admin screens", () => {
       );
     }
     render(<Harness />);
+    screen.getByRole("button", { name: "Suspend" }).focus();
     fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
     const confirm = within(screen.getByRole("group", { name: "Confirm Suspend" })).getByRole("button", { name: "Confirm suspend" });
     expect(screen.queryByLabelText(/Reason for/)).not.toBeInTheDocument();
     fireEvent.click(confirm);
     const status = await screen.findByRole("status");
     expect(status).toHaveTextContent("Suspended.");
-    await waitFor(() => expect(status).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Suspend" })).toHaveFocus());
   });
 
   it("puts keyboard focus nowhere new when the button that started the action is still there", async () => {

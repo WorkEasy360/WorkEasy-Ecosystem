@@ -97,8 +97,8 @@ describe("channel manager", () => {
     });
     const { container } = shell(<ChannelManager />);
     const table = await screen.findByRole("table", { name: "Channels" });
-    expect(within(table).getByText("needs setup")).toBeInTheDocument();
-    expect(within(table).getByText("not available")).toBeInTheDocument();
+    expect(within(table).getByText("Needs setup")).toBeInTheDocument();
+    expect(within(table).getByText("Not available")).toBeInTheDocument();
     expect(within(table).queryByText("connected")).not.toBeInTheDocument();
     expect(within(table).getByRole("link", { name: "Set the sender" })).toHaveAttribute("href", `/partner/${ID}/brand-settings`);
     await expectNoViolations(container);
@@ -516,7 +516,7 @@ describe("the team", () => {
     const self = within(table).getByText("owner@acme.example.com").closest("tr")!;
     expect(within(self).queryByRole("button", { name: "Suspend" })).not.toBeInTheDocument();
     const paused = within(table).getByText("pat@acme.example.com").closest("tr")!;
-    expect(within(paused).getByText("suspended")).toBeInTheDocument();
+    expect(within(paused).getByText("Suspended")).toBeInTheDocument();
     expect(within(paused).queryByRole("combobox")).not.toBeInTheDocument(); // no role change while paused
     fireEvent.click(within(within(table).getByText("sam@acme.example.com").closest("tr")!).getByRole("button", { name: "Suspend" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${API}/members/m2/suspend`)).toBe(true));

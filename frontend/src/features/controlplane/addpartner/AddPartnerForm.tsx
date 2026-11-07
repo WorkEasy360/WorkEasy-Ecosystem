@@ -9,9 +9,9 @@ import { countryOptions } from "../countries";
 import type { FieldErrors } from "../profileDraft";
 import { useAction } from "../ui";
 import { ErrorSummary, SelectField, TextField } from "../widgets";
-import styles from "../ControlPlane.module.css";
 import mine from "./AddPartner.module.css";
 import { DialogHead as SharedHead, dialog } from "../Modal";
+import { Button } from "../kit";
 import { PasswordField, PasswordGuidance } from "./PasswordField";
 import {
   DEFAULT_MIN_PASSWORD,
@@ -28,17 +28,20 @@ import {
 } from "./model";
 
 /**
- * Partners → Add Partner (ADR-048), shown as a dialog over All Partners
+ * Partners → New partner (ADR-048), shown as a dialog over All partners
  * (2026-10-26, the owner's reference design): the short form that creates a partner's
- * account - its name, the administrator's email and the password Super Admin
- * sets, the partner type, and optionally the country. Nothing more: business
+ * account - its name, the administrator's email, how they get in, the partner
+ * type, and optionally the country. By default (2026-11-07) the administrator is
+ * invited: when the partner is activated they are emailed a link to set their
+ * own password, so nobody has to share one. Setting a password here is the
+ * advanced option. Nothing more: business
  * details, products, prices, commission, brand, domain, referral program and
  * team are set afterwards in the partner's **Complete Your Profile**, which this
  * page opens on success.
  *
  * What it will not do:
  *
- * - **Hold the password anywhere but React state.** No storage, no address, no
+ * - **Hold a typed password anywhere but React state.** No storage, no address, no
  *   draft. Both inputs are `autocomplete="new-password"`, the password is sent in
  *   the one create request, and the inputs are emptied as soon as it is made.
  * - **Overwrite an existing account.** If the email already has a Workeasy360
@@ -71,7 +74,7 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
       <div className={dialog.form}>
         <DialogHead titleId={titleId} onClose={onClose} />
         <div className={dialog.body}>
-          <p role="alert">You need the permission to manage partners to add one.</p>
+          <p role="alert">You need the permission to manage partners to create one.</p>
         </div>
       </div>
     );
@@ -88,6 +91,7 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
         password: ["administrator.password"],
         confirm: ["administrator.password_confirm"],
         experience: ["experience"],
+        access: ["administrator.password", "administrator.password_confirm"],
       };
       for (const f of fields[key as string] ?? []) delete next[f];
       return next;
@@ -134,7 +138,7 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
       } finally {
         clearSecrets();
       }
-    }, "Partner created.");
+    }, current.access === "invite" && current.mode === "create" ? "Partner created. Its administrator is emailed a link to set a password when you activate it." : "Partner created.");
   }
 
   function linkExisting() {
@@ -165,7 +169,7 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
       }}
     >
       <DialogHead titleId={titleId} onClose={onClose} />
-      <div className={dialog.body}>
+      <div className={`${dialog.body} ${mine.scrollBody}`}>
         <ErrorSummary errors={summary} focusRef={summaryRef} />
         {feedback}
 
@@ -209,18 +213,36 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
                 Its password will not be changed. You can link that person as this partner&apos;s administrator - they keep signing in with
                 the password they already have - or cancel and use another email.
               </p>
-              <div className={styles.row}>
-                <button type="button" className="w360-btn w360-btn-primary" disabled={busy} onClick={linkExisting}>
+              <div className={mine.existingActions}>
+                <Button variant="primary" disabled={busy} onClick={linkExisting}>
                   Link Existing User as Partner Administrator
-                </button>
-                <button type="button" className="w360-btn w360-btn-secondary" onClick={useAnother}>
-                  Cancel
-                </button>
+                </Button>
+                <Button onClick={useAnother}>Use another email</Button>
               </div>
             </div>
           )}
 
           {draft.mode === "create" && !existing && (
+            <fieldset className={`${mine.access} ${dialog.span}`}>
+              <legend>How the administrator signs in</legend>
+              <label className={mine.choice}>
+                <input type="radio" name="access" checked={draft.access === "invite"} onChange={() => set("access", "invite")} />
+                <span className={mine.choiceText}>
+                  <strong>Send an invitation email</strong>
+                  <span>When you activate the partner, they get a link to set their own password.</span>
+                </span>
+              </label>
+              <label className={mine.choice}>
+                <input type="radio" name="access" checked={draft.access === "password"} onChange={() => set("access", "password")} />
+                <span className={mine.choiceText}>
+                  <strong>Set a password now (advanced)</strong>
+                  <span>You type the password and tell the administrator yourself. Nothing is emailed.</span>
+                </span>
+              </label>
+            </fieldset>
+          )}
+
+          {draft.mode === "create" && !existing && draft.access === "password" && (
             <>
               <div className={dialog.span}>
                 <PasswordField
@@ -267,18 +289,16 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
             error={errors["partner.country"]}
           />
 
-          {draft.mode === "create" && !existing && (
+          {draft.mode === "create" && !existing && draft.access === "password" && (
             <p className={`${mine.note} ${dialog.span}`}>Nothing is emailed: tell the administrator this password privately. They can change it after signing in.</p>
           )}
         </div>
       </div>
-      <div className={dialog.foot}>
-        <button type="button" className="w360-btn w360-btn-secondary" onClick={onClose}>
-          Close
-        </button>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-          {busy ? "Adding…" : "Add Partner"}
-        </button>
+      <div className={`${dialog.foot} ${mine.foot}`}>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button type="submit" variant="primary" loading={busy}>
+          Create partner
+        </Button>
       </div>
     </form>
   );
@@ -286,5 +306,5 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
 
 /** The dialog's title and its close button (Escape closes it too). */
 function DialogHead({ titleId, onClose }: { titleId: string; onClose: () => void }) {
-  return <SharedHead titleId={titleId} title="Add New Partner" onClose={onClose} />;
+  return <SharedHead titleId={titleId} title="New partner" onClose={onClose} />;
 }

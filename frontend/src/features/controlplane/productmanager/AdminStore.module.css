@@ -1,0 +1,42 @@
+/* The Super Admin's "Customer preview" of the store (2026-11-07 design
+   system). The shared StoreBrowser (features/storefront) is drawn inside this
+   admin-only container: the console's page header carries the title and the
+   tabs, so the browser's own title is not repeated, its search box is the
+   console's standard input, and the category panel stays in view as the page
+   scrolls instead of scrolling inside itself. Tokens only. */
+
+.preview {
+  min-width: 0;
+}
+
+/* The page header above already names the page: one h1 per page. */
+.preview h1,
+.preview h1 + p {
+  display: none;
+}
+
+.preview input[type="search"] {
+  height: var(--w360-control-h);
+  min-height: var(--w360-control-h);
+  border-radius: var(--w360-radius-control);
+  font-size: var(--w360-fs-body);
+}
+
+.preview aside {
+  position: sticky;
+  top: calc(64px + var(--w360-space-4));
+  align-self: start;
+  max-height: none;
+  overflow: visible;
+}
+
+.preview aside ul {
+  max-height: none;
+  overflow: visible;
+}
+
+@media (max-width: 1024px) {
+  .preview aside {
+    position: static;
+  }
+}

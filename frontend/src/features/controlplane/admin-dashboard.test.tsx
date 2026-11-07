@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { AdminShell } from "./ControlShell";
-import { Dashboard } from "./AdminDashboard";
+import { Dashboard, rangeLabel } from "./AdminDashboard";
 import { AdminSearch } from "./AdminTopbar";
 import { foldSlices } from "./dashboardCharts";
 import { AdminContextForTest, SIGNED_IN, expectNoViolations, mockApi, ok } from "./testSupport";
@@ -132,25 +132,31 @@ describe("the dashboard", () => {
         </main>
       </AdminContextForTest>,
     );
-    expect(await screen.findByText("Total Users")).toBeInTheDocument();
-    expect(screen.getByText(/Welcome back, Aman!/)).toBeInTheDocument();
+    expect(await screen.findByText("Total users")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument();
+    expect(screen.getByText(/Welcome back, Aman\./)).toBeInTheDocument();
     // Growth of the total: 134 added to the 1,114 there before is 12%.
     expect(screen.getByText("1,248")).toBeInTheDocument();
     expect(screen.getByText("+134 this month")).toBeInTheDocument();
-    expect(screen.getByText("Total Users").parentElement).toHaveTextContent("up 12%");
+    expect(screen.getByText("Total users").parentElement).toHaveTextContent(/Up\s*12%/);
     expect(screen.getByText("+6 this month")).toBeInTheDocument();
-    expect(screen.getByText("Active Subscriptions").parentElement).toHaveTextContent("7");
+    expect(screen.getByText("Active subscriptions").parentElement).toHaveTextContent("7");
     expect(screen.getByText("9 in all states")).toBeInTheDocument();
+    // Six cards (3 + 3 or 6 across): no card is left alone on a row.
+    expect(screen.getByRole("group", { name: "Figures" })).toHaveAttribute("data-count", "6");
+    expect(screen.getByRole("group", { name: "Charts" })).toHaveAttribute("data-count", "3");
     // Revenue per currency, compared with the period before (+18%).
-    const revenue = screen.getByRole("heading", { name: "Revenue Overview" }).closest("section")!;
-    expect(revenue).toHaveTextContent("up 18%");
+    const revenue = screen.getByRole("heading", { name: "Revenue overview" }).closest("section")!;
+    expect(revenue).toHaveTextContent(/Up\s*18%/);
     expect(within(revenue).getByText(/12 payments/)).toBeInTheDocument();
     // The donut's legend names every product with its share.
-    const sales = screen.getByRole("heading", { name: "Product-wise Sales" }).closest("section")!;
+    const sales = screen.getByRole("heading", { name: "Product-wise sales" }).closest("section")!;
     expect(within(sales).getByText("Easy CRM")).toBeInTheDocument();
     expect(within(sales).getByText("75%")).toBeInTheDocument();
     // The latest rows, five at most.
     expect(await screen.findByRole("link", { name: "Rahul Sharma" })).toHaveAttribute("href", "/admin/users/u9");
+    // Avatar, name and the email under it, cut to fit (shown whole on hover).
+    expect(screen.getByTitle("rahul@example.com")).toBeInTheDocument();
     expect(await screen.findByText("ORD-1025")).toBeInTheDocument();
     expect(await screen.findByText("No partners yet.")).toBeInTheDocument();
     for (const key of ["GET /api/v1/admin/users", "GET /api/v1/admin/orders", "GET /api/v1/admin/partners"]) {
@@ -171,15 +177,22 @@ describe("the dashboard", () => {
         </main>
       </AdminContextForTest>,
     );
-    expect(await screen.findByText("Active Subscriptions")).toBeInTheDocument();
-    for (const hidden of ["Total Users", "Total Partners", "Revenue Overview", "User Registration", "Recent Users", "Recent Orders"]) {
+    expect(await screen.findByText("Active subscriptions")).toBeInTheDocument();
+    // Two cards: two columns, no orphan.
+    expect(screen.getByRole("group", { name: "Figures" })).toHaveAttribute("data-count", "2");
+    for (const hidden of ["Total users", "Total partners", "Revenue overview", "User registrations", "Recent users", "Recent orders"]) {
       expect(screen.queryByText(hidden)).not.toBeInTheDocument();
     }
     expect(calls.map((c) => c.key).filter((k) => k !== "GET /api/v1/auth/session")).toEqual(["GET /api/v1/admin/dashboard"]);
     await expectNoViolations(container);
   });
 
-  it("asks for the month chosen", async () => {
+  it("labels this month up to today, never the whole month", () => {
+    expect(rangeLabel("2026-11", new Date(Date.UTC(2026, 10, 7)))).toBe("1 Nov – 7 Nov 2026");
+    expect(rangeLabel("2026-10", new Date(Date.UTC(2026, 10, 7)))).toBe("1 Oct – 31 Oct 2026");
+  });
+
+  it("asks for the period chosen in the header's one period control", async () => {
     const calls = mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
       "GET /api/v1/admin/dashboard": [ok({ ...BASE, overview: overview() })],
@@ -189,12 +202,18 @@ describe("the dashboard", () => {
         <Dashboard />
       </AdminContextForTest>,
     );
-    const picker = await screen.findByLabelText("Month shown");
-    const options = within(picker).getAllByRole("option");
+    const picker = await screen.findByRole("combobox", { name: "Period" });
+    expect(picker).toHaveTextContent(/^This month · 1 \w{3} – \d{1,2} \w{3} \d{4}/);
+    fireEvent.click(picker);
+    const options = within(screen.getByRole("listbox", { name: "Period" })).getAllByRole("option");
     expect(options).toHaveLength(12);
-    const previous = (options[1] as HTMLOptionElement).value;
-    fireEvent.change(picker, { target: { value: previous } });
+    expect(options[1]).toHaveTextContent(/^Last month · /);
+    fireEvent.click(options[1]);
+    const now = new Date();
+    const previous = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
     await waitFor(() => expect(calls.some((c) => c.url.includes(`month=${previous}`))).toBe(true));
+    // One period control: no card carries its own month chip or picker.
+    expect(screen.getAllByRole("combobox")).toHaveLength(1);
   });
 
   it("says plainly when nothing was collected or sold", async () => {
@@ -209,8 +228,12 @@ describe("the dashboard", () => {
         <Dashboard />
       </AdminContextForTest>,
     );
-    expect(await screen.findByText(/No payments were collected in/)).toBeInTheDocument();
+    // An empty state, not bare axes.
+    expect(await screen.findByText("No payments yet")).toBeInTheDocument();
+    expect(screen.getByText(/No payments were collected in/)).toBeInTheDocument();
+    expect(screen.getByText("No sales yet")).toBeInTheDocument();
     expect(screen.getByText("No orders were paid this month.")).toBeInTheDocument();
+    expect(document.querySelector("svg[viewBox='0 0 400 210']")).toBeNull();
   });
 
   it("folds a sixth and later product into Others, so no colour is generated", () => {
@@ -246,11 +269,27 @@ describe("the Super Admin top bar", () => {
     );
     const bell = await screen.findByRole("button", { name: "Notifications: 3 waiting" });
     fireEvent.click(bell);
-    expect(await screen.findByRole("link", { name: "2 upgrade requests wait for a decision" })).toHaveAttribute("href", "/admin/partners/all");
-    expect(screen.getByRole("link", { name: "1 partner is still a draft" })).toHaveAttribute("href", "/admin/partners/all?status=draft");
-    // The name beside the avatar; the menu still opens from it.
-    expect(screen.getByRole("button", { name: "Account menu for Aman Gupta" })).toHaveTextContent("Aman");
+    expect(await screen.findByRole("link", { name: /^2 upgrade requests wait for a decision/ })).toHaveAttribute("href", "/admin/partners/all");
+    expect(screen.getByRole("link", { name: /^1 partner is still a draft/ })).toHaveAttribute("href", "/admin/partners/all?status=draft");
+    expect(screen.getByRole("link", { name: "View all" })).toHaveAttribute("href", "/admin/notifications");
+    // Unread until marked read on this browser.
+    expect(screen.getAllByText("Unread")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Mark all read" }));
+    expect(screen.queryByText("Unread")).not.toBeInTheDocument();
+    // Avatar, full name and role beside it; the menu opens from it.
+    const account = screen.getByRole("button", { name: "Account menu for Aman Gupta" });
+    expect(account).toHaveTextContent("Aman Gupta");
+    expect(account).toHaveTextContent("Staff (read-only)");
     await expectNoViolations(container);
+    fireEvent.click(account);
+    const menu = screen.getByRole("menu", { name: "Account menu for Aman Gupta" });
+    expect(within(menu).getByText("admin@example.com")).toBeInTheDocument();
+    expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Sign-in preferences",
+      "My organizations",
+      "Help & support",
+      "Sign out",
+    ]);
   });
 
   it("offers in New only what the staff member may create, and nothing without a grant", async () => {
@@ -261,7 +300,7 @@ describe("the Super Admin top bar", () => {
       </AdminShell>,
     );
     fireEvent.click(await screen.findByRole("button", { name: "New" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Add partner"]);
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["New partner"]);
   });
 
   it("has no New button and no settings shortcut for a read-only staff member", async () => {
@@ -285,35 +324,46 @@ describe("the Super Admin top bar", () => {
       </AdminShell>,
     );
     const nav = await screen.findByRole("navigation", { name: "Super Admin" });
-    expect(within(nav).getByRole("button", { name: /Product Store/ })).toHaveAttribute("aria-expanded", "true");
+    expect(within(nav).getByRole("button", { name: /^Store/ })).toHaveAttribute("aria-expanded", "true");
     expect(within(nav).getByRole("link", { name: "Orders" })).toHaveAttribute("aria-current", "page");
-    expect(within(nav).getByRole("button", { name: /User/ })).toHaveAttribute("aria-expanded", "false");
+    expect(within(nav).getByRole("button", { name: /^Users/ })).toHaveAttribute("aria-expanded", "false");
+    // An accordion: opening another section closes this one.
+    fireEvent.click(within(nav).getByRole("button", { name: /^Users/ }));
+    expect(within(nav).getByRole("button", { name: /^Users/ })).toHaveAttribute("aria-expanded", "true");
+    expect(within(nav).getByRole("button", { name: /^Store/ })).toHaveAttribute("aria-expanded", "false");
     expect(within(nav).queryByRole("button", { name: /Staff/ })).not.toBeInTheDocument();
     expect(within(nav).getByText("Admin panel")).toBeInTheDocument();
   });
 });
 
-describe("search anything", () => {
-  it("finds pages by name and searches users or partners for the words typed", async () => {
+describe("the command palette", () => {
+  it("finds pages by name and live users, grouped, and opens the chosen one", async () => {
+    mockApi({
+      "GET /api/v1/admin/users": [ok({ results: [{ user_id: "u9", email: "planner@example.com", name: "Pla Nner" }], next_cursor: null, has_more: false })],
+      "GET /api/v1/admin/catalog/products": [ok({ results: [{ id: "p1", code: "easy_plan", name: "Easy Plan (easy_plan)", status: "active", licensing_mode: "seat" }] })],
+    });
     render(
       <AdminSearch permissions={["platform.staff_customer.view", "platform.staff_user.view", "platform.staff_catalog.view"]} />,
     );
+    fireEvent.click(screen.getByRole("button", { name: /Search users, partners, pages/ }));
     const box = screen.getByRole("combobox", { name: "Search anything" });
     fireEvent.change(box, { target: { value: "plan" } });
-    const options = screen.getAllByRole("option").map((o) => o.textContent);
-    expect(options[0]).toContain("Plans & add-ons");
-    expect(options).toContain("Search users for “plan”Users");
-    // No partner grant, no partner search.
-    expect(options.some((o) => o?.includes("Search partners"))).toBe(false);
+    expect(screen.getAllByRole("option")[0]).toHaveTextContent("Plans & add-ons");
+    await waitFor(() => expect(screen.getByRole("option", { name: /Pla Nner/ })).toBeInTheDocument());
+    expect(screen.getByRole("option", { name: /^Easy Plan/ })).toBeInTheDocument();
+    // No partner grant: no partner results were asked for.
     fireEvent.keyDown(box, { key: "ArrowDown" });
     expect(box.getAttribute("aria-activedescendant")).toBe(screen.getAllByRole("option")[1].id);
-    fireEvent.submit(box.closest("form")!);
-    expect(nav.router.push).toHaveBeenCalledWith("/admin/users?q=plan");
+    const target = screen.getByRole("option", { name: /Pla Nner/ });
+    fireEvent.mouseDown(target);
+    expect(nav.router.push).toHaveBeenCalledWith("/admin/users/u9");
   });
 
-  it("jumps to the box on Ctrl+K", () => {
+  it("opens on Ctrl+K with the search box focused", () => {
     render(<AdminSearch permissions={["platform.staff_customer.view"]} />);
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Search anything" })).toHaveFocus();
   });
 });
+

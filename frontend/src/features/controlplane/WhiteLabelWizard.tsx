@@ -502,7 +502,7 @@ export function PortalWhiteLabelPage({
     <div className={styles.stack}>
       <h1>Set up white-label</h1>
       {!enabled ? (
-        <p role="status">White-label is not enabled for your account. Ask Workeasy360 to enable it.</p>
+        <p role="status">White-label is not enabled for your account. Ask WorkEasy360 to enable it.</p>
       ) : !active ? (
         <p role="status">This partner account is not active, so its brand and domain cannot be changed.</p>
       ) : (

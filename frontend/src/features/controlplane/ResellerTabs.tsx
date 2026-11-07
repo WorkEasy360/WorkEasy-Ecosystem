@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import Link from "next/link";
+import { Icon } from "@/components/sidebar/icons";
 import { ReferralTrailPanel } from "@/features/partnerpanel/AffiliateProducts";
 import { adminProgrammeApi } from "@/lib/api/adminProgramme";
 import { ApiError } from "@/lib/api/client";
@@ -54,12 +55,23 @@ const SECTION_TEXT: Record<CompletionSection["state"], string> = {
   optional: "Not required",
 };
 
-const SECTION_BADGE: Record<CompletionSection["state"], string> = {
-  complete: "w360-badge w360-badge-success",
-  incomplete: "w360-badge w360-badge-warning",
-  pending: "w360-badge w360-badge-neutral",
-  optional: "w360-badge w360-badge-neutral",
+/** Each section's state as an icon (shape, not colour alone), its word kept for
+ * assistive technology and as a tooltip. */
+const SECTION_ICON: Record<CompletionSection["state"], string> = {
+  complete: "checkCircle",
+  incomplete: "alert",
+  pending: "clock",
+  optional: "circle",
 };
+
+function SectionState({ state }: { state: CompletionSection["state"] }) {
+  return (
+    <span className={ps.stateIcon} data-state={state} title={SECTION_TEXT[state]}>
+      <Icon name={SECTION_ICON[state]} size={18} />
+      <span className="w360-visually-hidden">{SECTION_TEXT[state]}</span>
+    </span>
+  );
+}
 
 /** Where each completion section is filled in: a step of Complete Your Profile,
  * or (for the capabilities and the administrator) a tab of this page. */
@@ -118,7 +130,7 @@ export function CompletionList({
         const open = s.state !== "complete";
         return (
           <li key={s.key} className={ps.progressRow}>
-            <span className={SECTION_BADGE[s.state]}>{SECTION_TEXT[s.state]}</span>
+            <SectionState state={s.state} />
             <span className={ps.progressText}>
               <strong>
                 {s.label}
@@ -128,12 +140,12 @@ export function CompletionList({
             </span>
             {open && manage && step && onStep?.steps.includes(step) && (
               <button type="button" className={`w360-btn w360-btn-secondary ${ps.linkButton}`} onClick={() => onStep.go(step)}>
-                Complete<span className="w360-visually-hidden"> {s.label}</span>
+                Add details<span className="w360-visually-hidden"> for {s.label}</span>
               </button>
             )}
             {open && manage && step && !onStep && (
               <Link className={`w360-btn w360-btn-secondary ${ps.linkButton}`} href={`/admin/partners/${partnerId}/profile?step=${step}`}>
-                Complete<span className="w360-visually-hidden"> {s.label}</span>
+                Add details<span className="w360-visually-hidden"> for {s.label}</span>
               </Link>
             )}
             {open && manage && onStep && (s.key === "administrator" ? !onStep.steps.includes("team") : tab !== undefined) && (
@@ -143,7 +155,7 @@ export function CompletionList({
             )}
             {open && manage && onStep && s.key === "administrator" && onStep.steps.includes("team") && (
               <button type="button" className={`w360-btn w360-btn-secondary ${ps.linkButton}`} onClick={() => onStep.go("team")}>
-                Complete<span className="w360-visually-hidden"> {s.label}</span>
+                Add details<span className="w360-visually-hidden"> for {s.label}</span>
               </button>
             )}
             {open && tab && onOpen && available?.includes(tab) && (
@@ -194,7 +206,7 @@ function OverviewBody({
         </p>
         <CompletionList sections={d.profile_completion.sections} partnerId={partner.id} onOpen={onOpen} available={available} />
       </Section>
-      <ul className={ps.stats} aria-label="Key figures">
+      <ul className={ps.stats} aria-label="Key figures" data-count={labels.includes("white_label") ? 6 : 5}>
         <Stat label="Customers" note={d.customers.owner_activation_pending > 0 ? `${d.customers.owner_activation_pending} awaiting owner activation` : undefined}>
           {d.customers.live}
         </Stat>
@@ -208,7 +220,9 @@ function OverviewBody({
         <Stat label="Pending payout" note="open">
           {d.payouts.open}
         </Stat>
-        <Stat label="Domain status">{d.white_label.domain_status === "none" ? "None" : <Status value={d.white_label.domain_status} />}</Stat>
+        {labels.includes("white_label") && (
+          <Stat label="Domain status">{d.white_label.domain_status === "none" ? "—" : <Status value={d.white_label.domain_status} />}</Stat>
+        )}
       </ul>
       <div className={local.split}>
         <Section title="Partner">

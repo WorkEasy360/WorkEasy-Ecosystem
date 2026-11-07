@@ -12,6 +12,7 @@ import {
 import { dialog, FormPopup } from "./Modal";
 import { LoadGate, Status, money, when, type Load } from "./ui";
 import { Segmented, TextAreaField, TextField } from "./widgets";
+import { Alert, Button } from "./kit";
 import styles from "./ControlPlane.module.css";
 import local from "./UpgradePanel.module.css";
 
@@ -74,13 +75,20 @@ export function UpgradeNotice({ load, onOpen }: { load: Load<PartnerUpgrades>; o
   if (load.status !== "ready" || !load.data.open) return null;
   const open = load.data.open;
   return (
-    <section className={`w360-card ${local.notice}`} aria-label="Upgrade request">
-      <p>
-        Upgrade to <strong>{level(open.to_experience)}</strong> requested: <Status value={open.status} />
-      </p>
-      <button type="button" className="w360-btn w360-btn-secondary" onClick={onOpen}>
-        Review the upgrade request
-      </button>
+    <section aria-label="Upgrade request">
+      <Alert
+        tone="info"
+        title={
+          <>
+            Upgrade to {level(open.to_experience)} requested <Status value={open.status} />
+          </>
+        }
+        actions={
+          <Button size="sm" onClick={onOpen}>
+            Review the upgrade request
+          </Button>
+        }
+      />
     </section>
   );
 }

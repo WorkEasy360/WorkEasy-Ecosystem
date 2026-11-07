@@ -185,6 +185,8 @@ describe("Withdrawals", () => {
     expect((await screen.findAllByRole("link", { name: "Acme Partners" })).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Start payout" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Verify" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Reject/ })).toBeNull();
+    // ("Rejected" is a status filter chip, not an action.)
+    expect(screen.queryByRole("button", { name: "Reject…" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Reject the payout details/ })).toBeNull();
   });
 });

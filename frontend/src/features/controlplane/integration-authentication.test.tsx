@@ -114,7 +114,7 @@ describe("product integration in the Product Manager", () => {
     await screen.findByRole("heading", { level: 1, name: "Future Product" });
     expect(screen.getByText("Connected", { selector: "span" })).toBeInTheDocument(); // integration status
     expect(screen.getByText("OIDC")).toBeInTheDocument();
-    expect(screen.getByText("Workeasy360 SSO")).toBeInTheDocument();
+    expect(screen.getByText("WorkEasy360 SSO")).toBeInTheDocument();
     expect(screen.getByText(/Optional SSO/)).toBeInTheDocument();
     expect(screen.getByText("cid-123")).toBeInTheDocument();
     expect(screen.getByText("https://future.example.com/api/auth/callback")).toBeInTheDocument();
@@ -183,7 +183,7 @@ describe("product integration in the Product Manager", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Check now" }));
     expect(await screen.findByText("healthy (http_200)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
-    fireEvent.click(within(screen.getByRole("group", { name: /^Confirm / })).getAllByRole("button")[0]);
+    fireEvent.click(within(screen.getByRole("group", { name: /^Confirm / })).getByRole("button", { name: /^Confirm/ }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${ADMIN}/products/future_product/integration/status`)).toBe(true));
     expect(calls.find((c) => c.key === `POST ${ADMIN}/products/future_product/integration/status`)?.body).toEqual({
       status: "suspended",

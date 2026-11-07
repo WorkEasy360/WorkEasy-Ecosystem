@@ -235,29 +235,35 @@ describe("the header", () => {
     await screen.findByRole("heading", { level: 1, name: "Acme Partners" });
     const badges = screen.getByRole("list", { name: "Partner type, from its capabilities" });
     expect(within(badges).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Reseller", "White-label"]);
-    expect(screen.getByRole("heading", { level: 1, name: "Acme Partners" }).parentElement).toHaveTextContent("active");
-    expect(screen.getByRole("link", { name: "All Partners" })).toHaveAttribute("href", "/admin/partners/all");
-    expect(screen.getByText(/acme · preferred currency GBP · 2 live customers/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Acme Partners" }).parentElement).toHaveTextContent("Active");
+    // The breadcrumb: All partners / Acme Partners.
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByRole("link", { name: "All partners" })).toHaveAttribute("href", "/admin/partners/all");
+    expect(within(crumbs).getByText("Acme Partners")).toHaveAttribute("aria-current", "page");
+    expect(document.title).toBe("Acme Partners · WorkEasy360 Admin");
+    // The key facts, one each.
+    for (const fact of ["acme", "Preferred currency GBP", "2 live customers"]) expect(screen.getByText(fact)).toBeInTheDocument();
     await screen.findByRole("heading", { name: "Profile completion" });
     await expectNoViolations(container);
   });
 
-  it("says an incomplete profile is incomplete, what is still needed, and leads to Complete Your Profile", async () => {
+  it("says an incomplete profile is incomplete, what is still needed, and leads to Complete partner profile", async () => {
     mockApi(routes());
     mount();
     const notice = await banner("Profile incomplete");
     expect(notice).toHaveTextContent("57%");
     expect(within(notice).getByText(/Still needed: Administrator, Brand, Domain\./)).toBeInTheDocument();
-    expect(within(notice).getByRole("link", { name: "Complete Your Profile" })).toHaveAttribute("href", `/admin/partners/${ID}/profile`);
+    expect(within(notice).getByRole("link", { name: "Complete partner profile" })).toHaveAttribute("href", `/admin/partners/${ID}/profile`);
     expect(screen.queryByText("Profile complete")).not.toBeInTheDocument();
   });
 
-  it("offers no Complete Your Profile link to staff who may not manage partners", async () => {
+  it("offers no Complete partner profile link to staff who may not manage partners", async () => {
     mockApi(routes());
     mount(VIEW_ONLY);
     const notice = await banner("Profile incomplete");
     expect(within(notice).getByText(/Still needed:/)).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Complete Your Profile" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Complete partner profile" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More actions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Suspend" })).not.toBeInTheDocument();
   });
 
@@ -273,9 +279,10 @@ describe("the header", () => {
     expect(screen.getByRole("button", { name: "Activate" })).toHaveAccessibleDescription(/cannot be activated yet/);
     // A draft is not suspended or reactivated - only activated or terminated.
     expect(screen.queryByRole("button", { name: "Suspend" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Terminate" })).toBeInTheDocument();
     expect(writes(calls)).toEqual([]);
     await expectNoViolations(container);
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.getByRole("menuitem", { name: "Terminate partner" })).toBeInTheDocument();
   });
 
   it("says a complete draft is ready, and Activate goes to the server with a recorded reason and its version", async () => {
@@ -291,7 +298,7 @@ describe("the header", () => {
     const notice = await banner("Profile complete");
     expect(within(notice).getByRole("link", { name: "Edit profile" })).toHaveAttribute("href", `/admin/partners/${ID}/profile`);
     expect(within(notice).getByText(/Activate the partner when you are ready/)).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Complete Your Profile" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Complete partner profile" })).not.toBeInTheDocument();
     expect(screen.getByText("Ready")).toBeInTheDocument();
     const activate = await screen.findByRole("button", { name: "Activate" });
     expect(activate).toBeEnabled();
@@ -311,7 +318,7 @@ describe("the header", () => {
     query = "created=1";
     mockApi(routes());
     const { unmount } = mount();
-    expect(await screen.findByText("Partner created successfully.")).toHaveAttribute("role", "status");
+    expect((await screen.findByText("Partner created successfully.")).closest("[role=status]")).not.toBeNull();
     unmount();
     query = "";
     mockApi(routes());
@@ -320,14 +327,33 @@ describe("the header", () => {
     expect(screen.queryByText("Partner created successfully.")).not.toBeInTheDocument();
   });
 
-  it("keeps the lifecycle actions above the tabs", async () => {
+  it("keeps the lifecycle actions in the header, above the tabs, with Terminate in the overflow menu", async () => {
     mockApi(routes());
     mount();
     expect(await screen.findByRole("button", { name: "Suspend" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Terminate" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Activate" })).not.toBeInTheDocument();
     const suspend = screen.getByRole("button", { name: "Suspend" });
     expect(suspend.compareDocumentPosition(screen.getByRole("tablist", { name: "Partner sections" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Complete partner profile", "Terminate partner"]);
+  });
+
+  it("terminates only once TERMINATE is typed, with its version", async () => {
+    const calls = mockApi(routes({ [`POST /api/v1/admin/partners/${ID}/status`]: [ok({ id: ID, status: "terminated" })] }));
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "More actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Terminate partner" }));
+    const dialog = screen.getByRole("dialog", { name: "Terminate Acme Partners?" });
+    const go = within(dialog).getByRole("button", { name: "Terminate partner" });
+    expect(go).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText(/^Type/), { target: { value: "TERMINATE" } });
+    fireEvent.click(go);
+    await screen.findByText("Partner terminated. Its customers were not touched.");
+    expect(calls.find((c) => c.key === `POST /api/v1/admin/partners/${ID}/status`)!.body).toEqual({
+      status: "terminated",
+      reason: "Terminate - Super Admin console",
+      expected_version: 3,
+    });
   });
 });
 
@@ -486,11 +512,11 @@ describe("Overview", () => {
 
     const brand = await completionRow("Brand");
     expect(within(brand).getByText("Incomplete")).toBeInTheDocument();
-    expect(within(brand).getByRole("link", { name: /^Complete ?Brand$/ })).toHaveAttribute("href", `/admin/partners/${ID}/profile?step=brand`);
+    expect(within(brand).getByRole("link", { name: /^Add details ?for Brand$/ })).toHaveAttribute("href", `/admin/partners/${ID}/profile?step=brand`);
 
     const domain = await completionRow("Domain");
     expect(within(domain).getByText("Waiting")).toBeInTheDocument();
-    expect(within(domain).getByRole("link", { name: /^Complete ?Domain$/ })).toHaveAttribute("href", `/admin/partners/${ID}/profile?step=domain`);
+    expect(within(domain).getByRole("link", { name: /^Add details ?for Domain$/ })).toHaveAttribute("href", `/admin/partners/${ID}/profile?step=domain`);
 
     // The administrator is invited from Users & Permissions, not from a profile step.
     const admin = await completionRow("Administrator");
@@ -762,7 +788,7 @@ describe("Commission", () => {
     expect(within(rows[0]).getByText("default v1 · 10%")).toBeInTheDocument();
     expect(within(rows[0]).getByText("Not in a payout")).toBeInTheDocument();
     expect(within(rows[1]).getByText("reversal")).toBeInTheDocument();
-    expect(within(rows[1]).getByText("draft")).toBeInTheDocument(); // the *payout's* state
+    expect(within(rows[1]).getByText("Draft")).toBeInTheDocument(); // the *payout's* state
     // The kind column carries only the three real kinds.
     const kinds = rows.map((r) => within(r).getAllByRole("cell")[1].textContent ?? "");
     for (const cell of kinds) expect(cell).toMatch(/^(accrual|reversal|adjustment)/);
@@ -1083,7 +1109,7 @@ describe("an open upgrade request", () => {
     fireEvent.click(within(notice).getByRole("button", { name: "Review the upgrade request" }));
     expect(screen.getByRole("tab", { name: "Users & Permissions" })).toHaveAttribute("aria-selected", "true");
     const panel = await screen.findByRole("heading", { level: 2, name: "Upgrade" });
-    expect(panel.closest("section")).toHaveTextContent("pending approval");
+    expect(panel.closest("section")).toHaveTextContent("Pending approval");
     // The decision itself is made in a popup opened from the panel.
     fireEvent.click(screen.getByRole("button", { name: "Decide the request" }));
     expect(within(screen.getByRole("dialog", { name: /decision$/ })).getByRole("button", { name: "Approve upgrade" })).toBeInTheDocument();

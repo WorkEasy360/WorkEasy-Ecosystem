@@ -18,7 +18,8 @@ import { dialog, FormDialog } from "../Modal";
 import { LoadGate, money, useAction, useLoad } from "../ui";
 import { SelectField, TextField } from "../widgets";
 import { refusal } from "./model";
-import { StoreTabs } from "./StoreTabs";
+import { StoreHeader } from "./StoreTabs";
+import { Page, Select } from "../kit";
 import styles from "./ProductManager.module.css";
 
 /**
@@ -160,7 +161,7 @@ function MarginDialog({ product, experience, onDone, onCancel }: { product: Comm
   return (
     <FormDialog
       title={`${who} margin: ${product.name}`}
-      intro={`A ${who.toLowerCase()} buys at the list price less this discount and keeps the difference to what its customer pays. Workeasy360 keeps the rest. Applies to new sales from now; a partner's own override still wins.`}
+      intro={`A ${who.toLowerCase()} buys at the list price less this discount and keeps the difference to what its customer pays. WorkEasy360 keeps the rest. Applies to new sales from now; a partner's own override still wins.`}
       size="sm"
       submitLabel="Save margin"
       onSubmit={async () => {
@@ -240,7 +241,7 @@ function RangeList({ plan, experience, currency, manage, busy, open, act }: {
   const mine = plan.ranges.filter((r) => r.experience === experience && r.currency === currency);
   return (
     <div>
-      {mine.length === 0 && <span className={styles.muted}>Set by Workeasy360</span>}
+      {mine.length === 0 && <span className={styles.muted}>Set by WorkEasy360</span>}
       {mine.map((r) => (
         <div key={r.id}>
           {INTERVAL_LABELS[r.interval]?.split(" ")[0] ?? r.interval}: {money(r.min_minor, r.currency)}–{r.max_minor != null ? money(r.max_minor, r.currency) : "no limit"}
@@ -402,26 +403,26 @@ export function CommercialRules() {
     reload();
   };
   return (
-    <div className={styles.page}>
-      <h1>Commercial rules</h1>
-      <StoreTabs current="rules" />
-      <p className={styles.muted}>
-        One central catalog, priced once. Each Store level sees the same prices; partners earn a margin or a commission computed on the server, only after verified payment.
-      </p>
+    <Page>
+      <StoreHeader
+        current="rules"
+        info="One central catalog, priced once. Each Store level sees the same prices; partners earn a margin or a commission computed on the server, only after verified payment."
+      />
       {notice && <p role="status">{notice}</p>}
       {feedback}
       <LoadGate load={load} what="the commercial rules">
         {(data: Rules) => (
           <>
             {data.currencies.length > 1 && (
-              <label className="w360-label">
-                Currency{" "}
-                <select className="w360-input" value={data.currency ?? ""} onChange={(e) => setCurrency(e.target.value)}>
-                  {data.currencies.map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
-              </label>
+              <div>
+                <Select
+                  label="Currency"
+                  prefix="Currency:"
+                  value={data.currency ?? data.currencies[0]}
+                  onChange={(c) => setCurrency(c)}
+                  options={data.currencies.map((c) => ({ value: c, label: c }))}
+                />
+              </div>
             )}
             {!data.currency && <p className={styles.muted}>No price book yet: create one on Currency &amp; pricing.</p>}
             {data.products.map((p) => (
@@ -435,6 +436,6 @@ export function CommercialRules() {
           </>
         )}
       </LoadGate>
-    </div>
+    </Page>
   );
 }

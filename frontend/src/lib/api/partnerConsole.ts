@@ -565,7 +565,9 @@ export interface ResellerDraftBody {
 // --- Add Partner with a login (ADR-047) ----------------------------------------------------------------
 
 export type ExperienceKey = "reseller" | "white_label" | "affiliate";
-export type AdministratorMode = "create" | "link_existing";
+/** `invite` (2026-11-07): a new account with no password, emailed a link to
+ * set one when the partner is activated. */
+export type AdministratorMode = "create" | "invite" | "link_existing";
 
 /** The administrator as typed on the form. `password` and `password_confirm`
  * exist only on the credentials check and on the create request: they are
@@ -601,6 +603,8 @@ export interface PasswordPolicy {
 export interface CreatedAdministrator {
   email: string;
   account_created: boolean;
+  /** The administrator will be emailed a link to set a password. */
+  invited?: boolean;
 }
 
 /** The answer to creating a partner: ids and facts, never a password. */

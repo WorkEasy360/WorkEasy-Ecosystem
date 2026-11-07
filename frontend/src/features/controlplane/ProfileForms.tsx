@@ -300,7 +300,7 @@ export function ContactsForm({ value, onChange, errors = {}, primaryRequired = t
   return (
     <>
       <p className={styles.muted}>
-        Contacts are people to reach, recorded as text. They are not Workeasy360 accounts and cannot sign in.
+        Contacts are people to reach, recorded as text. They are not WorkEasy360 accounts and cannot sign in.
       </p>
       <fieldset className={local.checkGroup}>
         <legend>{CONTACT_TITLES.primary}</legend>
@@ -409,7 +409,7 @@ export function PayoutPrefsForm({
     <>
       <p className={styles.muted}>
         Payouts are prepared, approved and marked paid by staff, one step at a time. These are preferences for whoever prepares them -
-        Workeasy360 moves no money and collects no bank details.
+        WorkEasy360 moves no money and collects no bank details.
       </p>
       {currencyEditable ? (
         <SelectField

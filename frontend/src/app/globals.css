@@ -122,6 +122,29 @@
   --w360-space-5: 24px;
   --w360-space-6: 32px;
   --w360-space-7: 48px;
+  /* 2026-11-07 admin design system (docs/admin-ui/design-system.md): one type
+     scale, one control height pair, one card radius, one card shadow and one
+     popover shadow. The neutral scale is for borders, fills and muted text. */
+  --w360-gray-50: #f7f9fa;
+  --w360-gray-100: #eef2f4;
+  --w360-gray-200: #e2e8ec;
+  --w360-gray-300: #cbd5dc;
+  --w360-gray-500: #5b6b76;
+  --w360-gray-700: #374451;
+  --w360-gray-900: #161d24;
+  --w360-fs-meta: 12px;
+  --w360-fs-body: 14px;
+  --w360-fs-section: 16px;
+  --w360-fs-subhead: 20px;
+  --w360-fs-title: 24px;
+  --w360-fs-kpi: 28px;
+  --w360-radius-control: 6px;
+  --w360-radius-card: 12px;
+  --w360-radius-pill: 999px;
+  --w360-control-h: 36px;
+  --w360-control-h-sm: 32px;
+  --w360-shadow-card: 0 1px 2px rgba(22, 29, 36, 0.06), 0 1px 3px rgba(22, 29, 36, 0.04);
+  --w360-shadow-popover: 0 12px 32px rgba(22, 29, 36, 0.16), 0 2px 6px rgba(22, 29, 36, 0.08);
   /* Plus Jakarta Sans, as on the website (loaded in app/layout.tsx); the system
      stack only until it arrives or if it cannot load. */
   --w360-font: var(--w360-font-brand, "Plus Jakarta Sans"), -apple-system, BlinkMacSystemFont,
@@ -562,4 +585,94 @@ fieldset:disabled .w360-input {
 .w360-error-text ul {
   margin: 0;
   padding-left: var(--w360-space-5);
+}
+
+/* --- The Super Admin console (2026-11-07 design system) ---------------------
+   AdminShell marks <html data-console="admin">, so these apply to the console
+   and to its dialogs (drawn on <body>), and never to the partner or customer
+   portals or the public site. */
+
+:root[data-console="admin"] {
+  /* The page never jumps sideways between pages with and without a scrollbar. */
+  scrollbar-gutter: stable;
+}
+
+:root[data-console="admin"] body {
+  font-size: var(--w360-fs-body);
+  background: var(--w360-shell-canvas);
+}
+
+:root[data-console="admin"] :where(h1) {
+  font-size: var(--w360-fs-title);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+:root[data-console="admin"] :where(h2) {
+  font-size: var(--w360-fs-section);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+:root[data-console="admin"] :where(h3, h4) {
+  font-size: var(--w360-fs-body);
+  font-weight: 600;
+}
+
+:root[data-console="admin"] .w360-btn {
+  min-height: var(--w360-control-h);
+  padding: 0 14px;
+  border-radius: var(--w360-radius-control);
+  white-space: nowrap;
+  font-size: var(--w360-fs-body);
+}
+
+:root[data-console="admin"] .w360-btn-primary {
+  font-weight: 600;
+  box-shadow: none;
+}
+
+:root[data-console="admin"] .w360-btn-primary:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+
+:root[data-console="admin"] .w360-btn-danger {
+  font-weight: 600;
+}
+
+:root[data-console="admin"] :is(input.w360-input, select.w360-input, select) {
+  min-height: var(--w360-control-h);
+  padding-block: 0;
+}
+
+:root[data-console="admin"] .w360-input {
+  border-radius: var(--w360-radius-control);
+  font-size: var(--w360-fs-body);
+}
+
+:root[data-console="admin"] textarea.w360-input {
+  padding-block: 8px;
+}
+
+:root[data-console="admin"] .w360-label {
+  font-size: var(--w360-fs-meta);
+}
+
+:root[data-console="admin"] .w360-hint,
+:root[data-console="admin"] .w360-error-text {
+  font-size: var(--w360-fs-meta);
+}
+
+:root[data-console="admin"] .w360-card {
+  border-radius: var(--w360-radius-card);
+  box-shadow: var(--w360-shadow-card);
+}
+
+:root[data-console="admin"] .w360-badge {
+  padding: 2px 8px;
+  font-size: var(--w360-fs-meta);
+  line-height: 18px;
+  text-transform: none;
+  letter-spacing: 0;
 }

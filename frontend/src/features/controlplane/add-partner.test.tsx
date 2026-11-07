@@ -5,9 +5,9 @@ import { AddPartner } from "./AddPartner";
 import { AdminContextForTest, expectNoViolations, mockApi, type Call, type Reply } from "./testSupport";
 
 /**
- * Partners → Add Partner (ADR-048): the short form - partner name, admin email,
- * password and confirmation, partner type, optional country. What these tests
- * hold on to:
+ * Partners → New partner (ADR-048): the short form - partner name, admin email,
+ * an invitation by default (2026-11-07) or a password and confirmation, partner
+ * type, optional country. What these tests hold on to:
  *
  * - it asks for nothing more: no business details, products, prices or
  *   commission (those are Complete Your Profile's);
@@ -65,28 +65,45 @@ function mount(permissions = MANAGE) {
 
 const field = (name: RegExp) => screen.getByLabelText(name, { selector: "input, select" }) as HTMLInputElement;
 
-function fill({ name = "ABC Technologies", email = "admin@abctech.example", password = PASSWORD, confirm = PASSWORD, type = "reseller" } = {}) {
+/** Fill the form; a password (the default here) chooses "Set a password now". */
+function fill({
+  name = "ABC Technologies",
+  email = "admin@abctech.example",
+  password = PASSWORD as string | null,
+  confirm = PASSWORD as string | null,
+  type = "reseller",
+} = {}) {
   fireEvent.change(field(/^Partner name/), { target: { value: name } });
   fireEvent.change(field(/^Admin email/), { target: { value: email } });
+  if (password !== null) fireEvent.click(screen.getByRole("radio", { name: /Set a password now/ }));
   if (password !== null) fireEvent.change(field(/^Password/), { target: { value: password } });
   if (confirm !== null) fireEvent.change(field(/^Confirm password/), { target: { value: confirm } });
   if (type) fireEvent.change(field(/^Partner type/), { target: { value: type } });
 }
 
-const create = () => fireEvent.click(screen.getByRole("button", { name: "Add Partner" }));
+const create = () => fireEvent.click(screen.getByRole("button", { name: "Create partner" }));
 const createCalls = (calls: Call[]) => calls.filter((c) => c.key === "POST /api/v1/admin/partners/create");
 
 describe("the short form", () => {
   // A large form plus an axe pass: slow in jsdom when the whole suite runs in parallel.
-  it("asks only for the name, the admin email and password, the type and an optional country", async () => {
+  it("asks only for the name, the admin email, how they sign in, the type and an optional country", async () => {
     mockApi({});
     const { container } = mount();
-    const dialog = screen.getByRole("dialog", { name: "Add New Partner" });
+    const dialog = screen.getByRole("dialog", { name: "New partner" });
     expect(dialog).toHaveAttribute("aria-modal", "true");
-    expect(within(dialog).getByRole("heading", { level: 2, name: "Add New Partner" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { level: 2, name: "New partner" })).toBeInTheDocument();
     expect(field(/^Partner name/)).toHaveAttribute("placeholder", "Enter partner name");
     expect(field(/^Partner name/)).toBeRequired();
     expect(field(/^Admin email/)).toBeRequired();
+    // An invitation by default: no password to type or share.
+    expect(screen.getByRole("radio", { name: /Send an invitation email/ })).toBeChecked();
+    expect(screen.queryByLabelText(/^Password/, { selector: "input" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /Set a password now/ }));
+    expect(field(/^Password/)).toHaveAttribute("type", "password");
+    // The eye inside the input shows it, and hides it again.
+    fireEvent.click(screen.getByRole("button", { name: "Show password" }));
+    expect(field(/^Password/)).toHaveAttribute("type", "text");
+    fireEvent.click(screen.getByRole("button", { name: "Hide password" }));
     expect(field(/^Password/)).toHaveAttribute("type", "password");
     expect(field(/^Password/)).toHaveAttribute("autocomplete", "new-password");
     expect(field(/^Confirm password/)).toHaveAttribute("autocomplete", "new-password");
@@ -96,9 +113,9 @@ describe("the short form", () => {
     expect([...type.options].map((o) => o.value)).toEqual(["", "reseller", "white_label", "affiliate"]);
     // The chosen type is described under the list.
     for (const [key, text] of [
-      ["reseller", "Sell Workeasy360 products and manage customers."],
-      ["white_label", "Sell Workeasy360 products using your own brand and domain."],
-      ["affiliate", "Promote Workeasy360 products and earn commissions."],
+      ["reseller", "Sell WorkEasy360 products and manage customers."],
+      ["white_label", "Sell WorkEasy360 products using your own brand and domain."],
+      ["affiliate", "Promote WorkEasy360 products and earn commissions."],
     ]) {
       fireEvent.change(type, { target: { value: key } });
       expect(screen.getByText(text)).toBeInTheDocument();
@@ -109,6 +126,7 @@ describe("the short form", () => {
     }
     // Two text inputs (name, email) and two lists (type, country); the passwords are not textboxes.
     expect(screen.getAllByRole("textbox").length + screen.getAllByRole("combobox").length).toBeLessThanOrEqual(4);
+    fireEvent.click(screen.getByRole("radio", { name: /Send an invitation email/ }));
     await expectNoViolations(container);
   }, 60_000);
 
@@ -126,8 +144,12 @@ describe("the short form", () => {
     const summary = await screen.findByRole("alert");
     expect(summary).toHaveTextContent("Enter the partner's name.");
     expect(summary).toHaveTextContent("Enter the partner administrator's email address.");
-    expect(summary).toHaveTextContent("Enter a password.");
     expect(summary).toHaveTextContent("Choose the partner type.");
+    // An invitation needs no password.
+    expect(summary).not.toHaveTextContent("Enter a password.");
+    fireEvent.click(screen.getByRole("radio", { name: /Set a password now/ }));
+    create();
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Enter a password."));
     expect(calls).toHaveLength(0);
   });
 
@@ -156,7 +178,7 @@ describe("the dialog", () => {
     mount();
     expect(field(/^Partner name/)).toHaveFocus();
     const dialog = screen.getByRole("dialog");
-    const add = within(dialog).getByRole("button", { name: "Add Partner" });
+    const add = within(dialog).getByRole("button", { name: "Create partner" });
     add.focus();
     fireEvent.keyDown(document, { key: "Tab" });
     expect(dialog.contains(document.activeElement)).toBe(true);
@@ -164,10 +186,10 @@ describe("the dialog", () => {
 
   it.each([
     ["Escape", () => fireEvent.keyDown(document, { key: "Escape" })],
-    // The × in the title bar and the Close button at the bottom.
-    ["×", () => fireEvent.click(screen.getAllByRole("button", { name: "Close" })[0])],
-    ["Close", () => fireEvent.click(screen.getAllByRole("button", { name: "Close" })[1])],
-  ])("%s returns to All Partners and sends nothing", (_name, act) => {
+    // The × in the title bar and the Cancel button at the bottom.
+    ["×", () => fireEvent.click(screen.getByRole("button", { name: "Close" }))],
+    ["Cancel", () => fireEvent.click(screen.getByRole("button", { name: "Cancel" }))],
+  ])("%s returns to All partners and sends nothing", (_name, act) => {
     const calls = mockApi({});
     mount();
     fill();
@@ -195,6 +217,21 @@ describe("creating", () => {
     expect(calls.filter((c) => JSON.stringify(c.body ?? {}).includes(PASSWORD))).toHaveLength(1);
     expect(sessionStorage.length + localStorage.length).toBe(0);
     expect(document.cookie).not.toContain(PASSWORD);
+  });
+
+  it("invites the administrator by default: no password is typed or sent", async () => {
+    const calls = mockApi({
+      "POST /api/v1/admin/partners/create": [{ status: 201, body: { ...CREATED, administrator: { ...CREATED.administrator, invited: true } } }],
+    });
+    mount();
+    fill({ password: null, confirm: null });
+    create();
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/partners/all?created=p-new"));
+    expect(createCalls(calls)[0].body).toEqual({
+      experience: "reseller",
+      partner: { display_name: "ABC Technologies" },
+      administrator: { email: "admin@abctech.example", mode: "invite" },
+    });
   });
 
   it("leaves the country out when none is chosen", async () => {
@@ -252,7 +289,7 @@ describe("an email that already has an account", () => {
     const panel = await screen.findByText(EXISTING);
     const box = panel.closest("div")!.parentElement!;
     expect(within(box).getByRole("button", { name: "Link Existing User as Partner Administrator" })).toBeInTheDocument();
-    expect(within(box).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(within(box).getByRole("button", { name: "Use another email" })).toBeInTheDocument();
     // The password problem of a password that will not be used is not shown.
     expect(screen.queryByText(/too similar/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/^Password/, { selector: "input" })).not.toBeInTheDocument();
@@ -268,13 +305,13 @@ describe("an email that already has an account", () => {
     });
   });
 
-  it("Cancel clears the address and asks for another, with the password inputs back", async () => {
+  it("Use another email clears the address and asks for another, with the password inputs back", async () => {
     mockApi({ "POST /api/v1/admin/partners/create": [taken] });
     mount();
     fill({ email: "someone@customer.example" });
     create();
     await screen.findByText(EXISTING);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use another email" }));
     expect(screen.queryByText(EXISTING)).not.toBeInTheDocument();
     expect(field(/^Admin email/).value).toBe("");
     expect(field(/^Password/)).toBeInTheDocument();

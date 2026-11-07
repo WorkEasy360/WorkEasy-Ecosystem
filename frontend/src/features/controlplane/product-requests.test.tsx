@@ -88,9 +88,9 @@ const mount = (permissions: string[] = MANAGE) =>
   );
 
 describe("Product Requests", () => {
-  it("is a Partner Control Center section for anyone who may view partners", () => {
-    expect(CENTER_ITEMS.map((i) => i.label)).toEqual(["Dashboard", "All Partners", "Add Partner", "Product Requests", "Upgrade Fees", "Partner Tickets", "Withdrawals"]);
-    expect(centerItems(["platform.staff_partner.view"]).map((i) => i.label)).toContain("Product Requests");
+  it("is a Partners section for anyone who may view partners", () => {
+    expect(CENTER_ITEMS.map((i) => i.label)).toEqual(["Partner overview", "All partners", "New partner", "Product requests", "Upgrade fees", "Partner tickets", "Withdrawals"]);
+    expect(centerItems(["platform.staff_partner.view"]).map((i) => i.label)).toContain("Product requests");
   });
 
   it("shows the queue with counts and the open request's partner, product, answers and history; passes axe", async () => {
@@ -98,7 +98,10 @@ describe("Product Requests", () => {
     const { container } = mount();
     const table = await screen.findByRole("table", { name: "Product requests: pending" });
     expect(within(table).getByText("Acme Media")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Approved (4)" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Product requests" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pending 1" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Approved 4" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All 7" })).toBeInTheDocument();
     expect(await screen.findByText("Small agencies")).toBeInTheDocument();
     expect(screen.getByText("Yes - on the Store for affiliates")).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Requests" })).toBeInTheDocument();
@@ -173,7 +176,8 @@ describe("Product Requests", () => {
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${API}/req1/approve`)).toBe(true));
     expect(await screen.findByText(/Approved: Acme Media may sell Easy CRM/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "sell" } });
+    fireEvent.click(screen.getByRole("combobox", { name: "Type" }));
+    fireEvent.click(screen.getByRole("option", { name: "Reseller - sell" }));
     expect(push).toHaveBeenCalledWith("/admin/partners/product-requests?request=req1&kind=sell");
   });
 
@@ -183,7 +187,8 @@ describe("Product Requests", () => {
     mount();
     await screen.findByRole("table", { name: "Product requests: pending" });
     fireEvent.change(screen.getByLabelText("Search by partner or product"), { target: { value: "acme" } });
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect(push).toHaveBeenCalledWith("/admin/partners/product-requests?q=acme");
+    // Searched as typed (after a short pause), with no Search button.
+    expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/partners/product-requests?q=acme"));
   });
 });

@@ -622,7 +622,7 @@ export function PartnerCommissions() {
   return (
     <div className={styles.stack}>
       <h1>Commission</h1>
-      <p className={styles.lead}>Every figure is calculated by Workeasy360 from the sales your customers make. Reversals and adjustments appear as their own entries.</p>
+      <p className={styles.lead}>Every figure is calculated by WorkEasy360 from the sales your customers make. Reversals and adjustments appear as their own entries.</p>
       {balances.length > 0 && (
         <Table caption="Balance" head={["Currency", "Earned", "Adjustments", "Balance"]}>
           {balances.map((b) => (
@@ -663,7 +663,7 @@ export function PartnerPayouts() {
   return (
     <div className={styles.stack}>
       <h1>Payouts</h1>
-      <p className={styles.lead}>“Paid” means Workeasy360 recorded a transfer it made outside this platform.</p>
+      <p className={styles.lead}>“Paid” means WorkEasy360 recorded a transfer it made outside this platform.</p>
       {paged.state === "loading" && <p aria-live="polite">Loading…</p>}
       {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to payouts.</p>}
       {paged.state === "error" && <p role="alert">Couldn&apos;t load payouts.</p>}
@@ -702,7 +702,7 @@ export function PartnerBranding() {
       <h1>Branding</h1>
       <p className={styles.lead}>
         Your name, accent colour and logo are shown to your customers on your domain. The layout, and every security
-        prompt, stay Workeasy360&apos;s.
+        prompt, stay WorkEasy360&apos;s.
       </p>
       <BrandScope />
       <LoadGate load={load} what="your branding">
@@ -724,7 +724,7 @@ function BrandScope() {
           WorkEasy360 platform brand
         </h2>
         <p className={styles.muted}>
-          This partner panel, the sign-in security prompts and Workeasy360&apos;s own messages always use the WorkEasy360
+          This partner panel, the sign-in security prompts and WorkEasy360&apos;s own messages always use the WorkEasy360
           look. It is not changed by your branding.
         </p>
         <ul className={styles.platformSwatches} aria-label="WorkEasy360 colours">
@@ -923,7 +923,7 @@ function BrandPreview({ title, name, color, logo }: { title: string; name: strin
         {title}
       </h2>
       <p className={styles.muted}>
-        Customers see this beside the standard Workeasy360 sign-in.{" "}
+        Customers see this beside the standard WorkEasy360 sign-in.{" "}
         {safeColor(color) ? `Accent ${color}.` : "The default accent until you choose one."}
       </p>
       <div className={local.simulated}>

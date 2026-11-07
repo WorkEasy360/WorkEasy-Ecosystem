@@ -102,7 +102,7 @@ describe("what the panel shows", () => {
     const { container } = mount(upgrades({ status: "none", requested: null, open: null, checklist: [], eligible: ["reseller", "white_label"] }));
     expect(screen.getByRole("heading", { level: 2, name: "Upgrade" })).toBeInTheDocument();
     expect(screen.getByText("Current partner level").nextElementSibling).toHaveTextContent("Affiliate");
-    expect(status()).toHaveTextContent("none");
+    expect(status()).toHaveTextContent("None");
     expect(screen.getByText("Requested upgrade").nextElementSibling).toHaveTextContent("—");
     expect(screen.getByText(/The partner can ask for Reseller or White-label from its own dashboard\./)).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
@@ -117,7 +117,7 @@ describe("what the panel shows", () => {
   it("shows a pending request: level, status, target, checklist and exactly what the partner asked for", async () => {
     const { container } = mount(upgrades());
     expect(screen.getByText("Current partner level").nextElementSibling).toHaveTextContent("Affiliate");
-    expect(status()).toHaveTextContent("pending approval");
+    expect(status()).toHaveTextContent("Pending approval");
     expect(screen.getByText("Requested upgrade").nextElementSibling).toHaveTextContent("Reseller");
 
     const list = screen.getByRole("region", { name: "What the request still needs" });
@@ -155,7 +155,7 @@ describe("what the panel shows", () => {
 
   it("shows a request the partner has started as not yet decidable", () => {
     mount(upgrades({ status: "requested", open: request({ status: "requested", submitted_at: null, proposal: {} }) }));
-    expect(status()).toHaveTextContent("requested");
+    expect(status()).toHaveTextContent("Requested");
     expect(screen.getByText(/has not submitted it\. There is nothing to decide yet\./)).toBeInTheDocument();
     expect(screen.getByText("The partner has not filled anything in yet.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Approve|Reject|Send back/ })).not.toBeInTheDocument();
@@ -164,7 +164,7 @@ describe("what the panel shows", () => {
   it("shows a request sent back with the note, where only rejecting is left", () => {
     mount(upgrades({ status: "profile_required", open: request({ status: "profile_required", info_request_note: "Please confirm VAT" }) }));
     openDecision();
-    expect(status()).toHaveTextContent("profile required");
+    expect(status()).toHaveTextContent("Profile required");
     expect(screen.getByText(/Sent back to the partner: Please confirm VAT/)).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Approve" })).toBeDisabled();
     expect(screen.getByRole("radio", { name: "Ask for more information" })).toBeDisabled();
@@ -193,7 +193,7 @@ describe("what the panel shows", () => {
         ],
       }),
     );
-    expect(status()).toHaveTextContent("approved");
+    expect(status()).toHaveTextContent("Approved");
     expect(screen.getByText("Requested upgrade").nextElementSibling).toHaveTextContent("Reseller");
     const history = screen.getByRole("region", { name: "Upgrade history" });
     expect(within(history).getByText("Affiliate → Reseller")).toBeInTheDocument();
@@ -212,13 +212,13 @@ describe("what the panel shows", () => {
         history: [request({ status: "rejected", decided_at: "2026-10-03T10:00:00Z", decision_note: "Not yet, sorry" })],
       }),
     );
-    expect(status()).toHaveTextContent("rejected");
+    expect(status()).toHaveTextContent("Rejected");
     expect(screen.getByText("Note: Not yet, sorry")).toBeInTheDocument();
   });
 
   it("does not let a withdrawn request stand for the partner's state", () => {
     mount(upgrades({ status: "none", requested: null, open: null, checklist: [], eligible: ["reseller"], history: [request({ status: "cancelled" })] }));
-    expect(status()).toHaveTextContent("none");
+    expect(status()).toHaveTextContent("None");
   });
 
   it("shows what the partner typed as text and never as markup", () => {
@@ -242,7 +242,7 @@ describe("the header line", () => {
     const { rerender } = render(<UpgradeNotice load={ready(upgrades())} onOpen={open} />);
     const notice = screen.getByRole("region", { name: "Upgrade request" });
     expect(notice).toHaveTextContent("Upgrade to Reseller requested");
-    expect(notice).toHaveTextContent("pending approval");
+    expect(notice).toHaveTextContent("Pending approval");
     fireEvent.click(within(notice).getByRole("button", { name: "Review the upgrade request" }));
     expect(open).toHaveBeenCalledTimes(1);
 
