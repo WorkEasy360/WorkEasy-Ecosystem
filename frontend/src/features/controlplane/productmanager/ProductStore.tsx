@@ -50,6 +50,7 @@ export function ProductStore() {
     <div className={css.preview}>
     <StoreBrowser<StoreCard, StorePage>
       title="Customer preview"
+      titleLevel={2}
       lead="Every product as customers find it in the store, with the price they would see it from."
       load={adminApi.productStore}
       loadKey="admin"
