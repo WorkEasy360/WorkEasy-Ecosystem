@@ -419,12 +419,15 @@ def test_every_password_input_is_the_one_new_password_field():
 
 def test_the_password_is_sent_only_to_create_an_account():
     """The form's one request carries the password only when an account is to be
-    created; linking an existing account sends none (ADR-048)."""
+    created with a password typed here; linking an existing account or inviting
+    the administrator (the default since 2026-11-07) sends none (ADR-048)."""
     model = _code(ADD_PARTNER / "model.ts")
+    assert re.search(r'const typed = d\.mode === "create" && d\.access === "password";', model)
     assert re.search(
-        r'd\.mode === "create" \? \{ password: d\.password, password_confirm: d\.confirm \} : \{\}',
+        r'\.\.\.\(typed \? \{ password: d\.password, password_confirm: d\.confirm \} : \{\}\)',
         model,
     )
+    assert len(re.findall(r"password: d\.password", model)) == 1
     client = _code(FRONTEND_SRC / "lib" / "api" / "partnerConsole.ts")
     assert "create-review" not in client
 
