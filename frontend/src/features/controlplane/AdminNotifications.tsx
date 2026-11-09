@@ -9,6 +9,10 @@ const WHAT: Record<AttentionItem["key"], { title: string; href: string; action: 
   partner_upgrades: { title: "Partner upgrade requests waiting for a decision", href: "/admin/partners/all", action: "Review" },
   draft_partners: { title: "Partners still in draft", href: "/admin/partners/all?status=draft", action: "Open drafts" },
   payouts: { title: "Payouts waiting for action", href: "/admin/partners/withdrawals", action: "Open withdrawals" },
+  kyc_reviews: { title: "Partner applications waiting for KYC review", href: "/admin/partners/applications", action: "Review" },
+  failed_payments: { title: "Failed payments and activations", href: "/admin/payments/failed", action: "Open" },
+  low_balance: { title: "Wallets low on balance", href: "/admin/wallets?low=1", action: "Open wallets" },
+  support_tickets: { title: "Support tickets still open", href: "/admin/tickets", action: "Open tickets" },
 };
 
 const COLUMNS: Column<AttentionItem>[] = [

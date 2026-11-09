@@ -207,8 +207,26 @@ export interface RuleRow {
   rate_bp: number;
   /** ADR-052: also earns on each paid renewal of the sale. */
   recurring: boolean;
+  /** The partner a rule belongs to, by name, when it belongs to one. */
+  partner_name?: string;
+  /** ADR-056: one plan of the product, a fixed amount instead of a rate, a limit on renewals. */
+  plan_code?: string;
+  fixed_amount_minor?: number | null;
+  fixed_currency?: string;
+  recurring_months?: number | null;
   effective_from: string;
   retired_at: string | null;
+}
+
+/** The platform's fixed terms for commissions, as the server applies them. */
+export interface CommissionTerms {
+  clearance_days: number;
+  referral_earning_days: number;
+  reversal_reasons: string[];
+  min_withdrawal_minor: number;
+  withdrawal_currency: string;
+  tds_rate_bp: number;
+  tds_currency: string;
 }
 
 export interface CatalogProduct {
@@ -577,8 +595,8 @@ export const adminApi = {
   dashboard: (month?: string) => apiFetch<Dashboard>(`${admin}/dashboard`, { query: { month } }),
   /** What is waiting for staff - the console's notification bell. */
   attention: () => apiFetch<{ items: AttentionItem[] }>(`${admin}/attention`),
-  audit: (cursor?: string, action?: string) =>
-    apiFetch<Page<AuditRow>>(`${admin}/audit`, { query: { cursor, action } }),
+  audit: (cursor?: string, action?: string, filters?: { actor?: string; from?: string; to?: string }) =>
+    apiFetch<Page<AuditRow>>(`${admin}/audit`, { query: { cursor, action, ...filters } }),
 
   /** Phase 9 filters: `subscription` (a status, or "none"), `access`
    * ("customer" | "trial" | "none") and `product` (holds it now). */
@@ -733,9 +751,23 @@ export const adminApi = {
       body: json({ product_code: productCode, plan_code: planCode || undefined, ...options }),
     }),
 
-  rules: () => apiFetch<{ results: RuleRow[] }>(`${admin}/commission/rules`),
-  createRule: (body: { code: string; rate_bp: number; reason: string; product_code?: string; partner_id?: string; recurring?: boolean }) =>
-    apiFetch(`${admin}/commission/rules`, { method: "POST", body: json(body) }),
+  /** `all`: replaced versions too, not only the rules still live. */
+  rules: (q: { all?: boolean } = {}) =>
+    apiFetch<{ results: RuleRow[] }>(`${admin}/commission/rules`, { query: q.all ? { all: "1" } : {} }),
+  createRule: (body: {
+    code: string;
+    rate_bp: number;
+    reason: string;
+    product_code?: string;
+    plan_code?: string;
+    partner_id?: string;
+    recurring?: boolean;
+    recurring_months?: number | null;
+    fixed_amount_minor?: number | null;
+    fixed_currency?: string;
+    effective_from?: string;
+  }) => apiFetch(`${admin}/commission/rules`, { method: "POST", body: json(body) }),
+  commissionTerms: () => apiFetch<CommissionTerms>(`${admin}/commission/terms`),
   /** `unpaid: "1"` keeps only entries that are in no live payout. */
   accruals: (q: { partner_id?: string; cursor?: string; unpaid?: string }) =>
     apiFetch<Page<AccrualRow>>(`${admin}/commission/accruals`, { query: q }),
@@ -800,7 +832,7 @@ export interface DashboardOverview {
 }
 
 export interface AttentionItem {
-  key: "partner_upgrades" | "draft_partners" | "payouts";
+  key: "partner_upgrades" | "draft_partners" | "payouts" | "kyc_reviews" | "failed_payments" | "low_balance" | "support_tickets";
   count: number;
 }
 

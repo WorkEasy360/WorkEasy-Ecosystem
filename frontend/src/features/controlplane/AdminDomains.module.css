@@ -1,0 +1,35 @@
+/* Admin > Settings: Domains & Apps and Login clients. Tokens only. */
+
+.check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  min-width: 0;
+}
+
+.checkResult {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--w360-fs-meta);
+}
+
+.list {
+  display: grid;
+  gap: var(--w360-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.address {
+  font-size: var(--w360-fs-meta);
+  overflow-wrap: anywhere;
+}
+
+.badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-1);
+}

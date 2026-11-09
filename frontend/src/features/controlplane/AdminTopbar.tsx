@@ -5,6 +5,8 @@ import Link from "next/link";
 import { Icon } from "@/components/sidebar/icons";
 import { adminPanelApi } from "@/lib/api/adminPanel";
 import { adminApi, type AttentionItem } from "@/lib/api/controlPlane";
+import { usePortals } from "@/lib/portalContext";
+import { portalHref } from "@/lib/portals";
 import { usePortalRouter } from "@/lib/portalRouter";
 import { adminModules } from "./adminModules";
 import { Modal } from "./Modal";
@@ -29,12 +31,37 @@ export function AdminTools({ permissions }: { permissions: string[] }) {
       <div className={styles.spacer} />
       <NewMenu permissions={permissions} />
       <Bell permissions={permissions} />
+      <HelpLink permissions={permissions} />
       {can(permissions, "platform.staff_settings.view") && (
         <Link href="/admin/settings" className={styles.iconButton} aria-label="Platform settings" title="Platform settings">
           <Icon name="settings" size={20} />
         </Link>
       )}
     </>
+  );
+}
+
+/** Help: the console's own help library for those who may read it, otherwise the
+ * same help page the account menu offers. */
+function HelpLink({ permissions }: { permissions: string[] }) {
+  const portals = usePortals();
+  const icon = <Icon name="help" size={20} />;
+  if (can(permissions, "platform.staff_support.view")) {
+    return (
+      <Link href="/admin/help-content" className={styles.iconButton} aria-label="Help" title="Help">
+        {icon}
+      </Link>
+    );
+  }
+  const href = portalHref(portals, "app", "/contact");
+  return /^https?:/.test(href) ? (
+    <a href={href} className={styles.iconButton} aria-label="Help" title="Help">
+      {icon}
+    </a>
+  ) : (
+    <Link href={href} className={styles.iconButton} aria-label="Help" title="Help">
+      {icon}
+    </Link>
   );
 }
 
@@ -289,10 +316,13 @@ function CommandPalette({ permissions, onClose }: { permissions: string[]; onClo
 // --- the New menu --------------------------------------------------------------------
 
 const NEW_ITEMS: { label: string; href: string; permission: string; icon: string }[] = [
+  { label: "New customer", href: "/admin/customers", permission: "platform.staff_customer.manage", icon: "building" },
   { label: "New partner", href: "/admin/partners/new", permission: "platform.staff_partner.manage", icon: "handshake" },
   { label: "New product", href: "/admin/products/new", permission: "platform.staff_catalog.manage", icon: "box" },
   { label: "New plan", href: "/admin/plans", permission: "platform.staff_catalog.manage", icon: "tag" },
-  { label: "Grant staff access", href: "/admin/security", permission: "platform.staff_security.manage", icon: "shield" },
+  { label: "New credit pack", href: "/admin/usage-pricing/credit-packs", permission: "platform.staff_pricing.manage", icon: "wallet" },
+  { label: "New help article", href: "/admin/help-content", permission: "platform.staff_support.manage", icon: "book" },
+  { label: "New Admin", href: "/admin/security", permission: "platform.staff_security.manage", icon: "shield" },
 ];
 
 function NewMenu({ permissions }: { permissions: string[] }) {
@@ -334,6 +364,20 @@ const ATTENTION: Record<AttentionItem["key"], { one: string; many: string; href:
     icon: "handshake",
   },
   payouts: { one: "payout awaits action", many: "payouts await action", href: "/admin/partners/withdrawals", icon: "wallet" },
+  kyc_reviews: {
+    one: "partner application waits for KYC review",
+    many: "partner applications wait for KYC review",
+    href: "/admin/partners/applications",
+    icon: "shield",
+  },
+  failed_payments: {
+    one: "failed payment or activation needs attention",
+    many: "failed payments or activations need attention",
+    href: "/admin/payments/failed",
+    icon: "alert",
+  },
+  low_balance: { one: "wallet is low on balance", many: "wallets are low on balance", href: "/admin/wallets?low=1", icon: "wallet" },
+  support_tickets: { one: "support ticket is still open", many: "support tickets are still open", href: "/admin/tickets", icon: "ticket" },
 };
 
 const SEEN_KEY = "w360.admin.notifications.seen";

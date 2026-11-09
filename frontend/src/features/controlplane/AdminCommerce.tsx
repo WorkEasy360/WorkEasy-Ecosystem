@@ -37,6 +37,7 @@ import {
 } from "./kit";
 import { downloadCsv } from "./kit/csv";
 import { DateText } from "./AdminUsers";
+import { formatBasisPoints, toBasisPoints } from "./amounts";
 import local from "./AdminPeople.module.css";
 
 /**
@@ -362,8 +363,20 @@ function Holders({ code, name }: { code: string; name: string }) {
 
 // --- platform settings ---------------------------------------------------------------------------
 
-type SettingsDraft = Pick<PlatformSettings, "signup_enabled" | "support_email" | "sales_email" | "public_catalog_currency">;
-type SectionKey = "signup" | "contact" | "localization";
+type SettingsDraft = Pick<
+  PlatformSettings,
+  | "signup_enabled"
+  | "partner_applications_enabled"
+  | "support_email"
+  | "sales_email"
+  | "public_catalog_currency"
+  | "company_name"
+  | "company_legal_name"
+  | "company_address"
+  | "company_tax_id"
+  | "notifications_email"
+> & { tax_rate: string };
+type SectionKey = "company" | "signup" | "applications" | "contact" | "billing" | "notifications";
 
 export function PlatformSettingsScreen() {
   const { permissions } = useAdmin();
@@ -371,7 +384,7 @@ export function PlatformSettingsScreen() {
   const manage = can(permissions, "platform.staff_settings.manage");
   return (
     <Page>
-      <PageHeader title="Platform settings" subtitle="The public site's switches and addresses. Every change is recorded in the audit log." />
+      <PageHeader title="Platform settings" subtitle="Company details, billing, and the public site's switches and addresses. Every change is recorded in the audit log." />
       <LoadGate load={load} what="platform settings">
         {(s) => <SettingsSections settings={s} manage={manage} onSaved={reload} />}
       </LoadGate>
@@ -379,38 +392,64 @@ export function PlatformSettingsScreen() {
   );
 }
 
+/** A stored rate as the text its field starts with: 1250 is "12.5", none is empty. */
+const taxRateText = (bp: number | null) => (bp === null ? "" : formatBasisPoints(bp).replace("%", ""));
+
+const draftOf = (s: PlatformSettings): SettingsDraft => ({
+  signup_enabled: s.signup_enabled,
+  partner_applications_enabled: s.partner_applications_enabled,
+  support_email: s.support_email,
+  sales_email: s.sales_email,
+  public_catalog_currency: s.public_catalog_currency,
+  company_name: s.company_name,
+  company_legal_name: s.company_legal_name,
+  company_address: s.company_address,
+  company_tax_id: s.company_tax_id,
+  notifications_email: s.notifications_email,
+  tax_rate: taxRateText(s.tax_rate_bp),
+});
+
 /** The settings in force, one card per section, each edited in place (Save /
- * Cancel). Saving sends every setting with the version read, so two editors
- * can't silently overwrite each other. */
+ * Cancel). Saving sends every setting with the version read: the server replaces
+ * the whole row, so a field left out would be emptied, and two editors can't
+ * silently overwrite each other. */
 function SettingsSections({ settings, manage, onSaved }: { settings: PlatformSettings; manage: boolean; onSaved: () => void }) {
   const [editing, setEditing] = useState<SectionKey | null>(null);
-  const [draft, setDraft] = useState<SettingsDraft>(settings);
+  const [draft, setDraft] = useState<SettingsDraft>(() => draftOf(settings));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
-  const ids = { signup: useId(), support: useId(), sales: useId() };
+  const ids = { signup: useId(), applications: useId() };
   const defaultCurrency = `Deployment default (${settings.default_currency})`;
+  const defaultTax = `Deployment default (${formatBasisPoints(settings.default_tax_rate_bp)})`;
+
+  const typedTax = draft.tax_rate.trim();
+  const taxRateBp = typedTax ? toBasisPoints(typedTax) : null;
+  const taxInvalid = Boolean(typedTax) && taxRateBp === null;
 
   const open = (key: SectionKey) => {
-    setDraft({
-      signup_enabled: settings.signup_enabled,
-      support_email: settings.support_email,
-      sales_email: settings.sales_email,
-      public_catalog_currency: settings.public_catalog_currency,
-    });
+    setDraft(draftOf(settings));
     setError(null);
     setEditing(key);
   };
 
   const save = async () => {
+    if (taxInvalid) return;
     setBusy(true);
     setError(null);
     try {
       await adminConsoleApi.saveSettings({
         signup_enabled: draft.signup_enabled,
+        partner_applications_enabled: draft.partner_applications_enabled,
         support_email: draft.support_email.trim(),
         sales_email: draft.sales_email.trim(),
         public_catalog_currency: draft.public_catalog_currency,
+        company_name: draft.company_name.trim(),
+        company_legal_name: draft.company_legal_name.trim(),
+        company_address: draft.company_address.trim(),
+        company_tax_id: draft.company_tax_id.trim(),
+        tax_rate_bp: taxRateBp,
+        notifications_email: draft.notifications_email.trim(),
         version: settings.version,
       });
       setEditing(null);
@@ -453,7 +492,7 @@ function SettingsSections({ settings, manage, onSaved }: { settings: PlatformSet
         <Button onClick={() => setEditing(null)} disabled={busy}>
           Cancel
         </Button>
-        <Button variant="primary" loading={busy} onClick={() => void save()}>
+        <Button variant="primary" loading={busy} disabled={taxInvalid} onClick={() => void save()}>
           Save
         </Button>
       </div>
@@ -462,6 +501,30 @@ function SettingsSections({ settings, manage, onSaved }: { settings: PlatformSet
 
   return (
     <div className={local.stack}>
+      <Card title="Company information" description="WorkEasy360's own business details." actions={editButton("company", "Edit company information")}>
+        {editing === "company" ? (
+          <>
+            <div className={local.formGrid}>
+              <TextField label="Company name" maxLength={200} value={draft.company_name} onChange={(v) => setDraft({ ...draft, company_name: v })} />
+              <TextField label="Legal name" maxLength={200} value={draft.company_legal_name} onChange={(v) => setDraft({ ...draft, company_legal_name: v })} />
+              <TextField label="Address" maxLength={500} hint="Saved as one line." value={draft.company_address} onChange={(v) => setDraft({ ...draft, company_address: v })} />
+              <TextField label="Tax ID" maxLength={64} value={draft.company_tax_id} onChange={(v) => setDraft({ ...draft, company_tax_id: v })} />
+            </div>
+            {footer}
+          </>
+        ) : (
+          <DescriptionList
+            columns={2}
+            items={[
+              { label: "Company name", value: settings.company_name || notSet("company", "a company name") },
+              { label: "Legal name", value: settings.company_legal_name || notSet("company", "a legal name") },
+              { label: "Address", value: settings.company_address || notSet("company", "an address") },
+              { label: "Tax ID", value: settings.company_tax_id || notSet("company", "a tax ID") },
+            ]}
+          />
+        )}
+      </Card>
+
       <Card title="Signup" description="Whether new people can create an account on the public site." actions={editButton("signup", "Edit signup")}>
         {editing === "signup" ? (
           <>
@@ -479,6 +542,26 @@ function SettingsSections({ settings, manage, onSaved }: { settings: PlatformSet
           </>
         ) : (
           <DescriptionList items={[{ label: "Self-service signup", value: settings.signup_enabled ? "Open" : "Closed" }]} />
+        )}
+      </Card>
+
+      <Card title="Applications" description="Whether people can apply to become a partner." actions={editButton("applications", "Edit applications")}>
+        {editing === "applications" ? (
+          <>
+            <label className={local.check} htmlFor={ids.applications}>
+              <input
+                id={ids.applications}
+                type="checkbox"
+                checked={draft.partner_applications_enabled}
+                onChange={(e) => setDraft({ ...draft, partner_applications_enabled: e.target.checked })}
+              />
+              Partner applications are open
+            </label>
+            <p className={local.note}>Close it to stop new applications; partners already approved are unaffected.</p>
+            {footer}
+          </>
+        ) : (
+          <DescriptionList items={[{ label: "Partner applications", value: settings.partner_applications_enabled ? "Open" : "Closed" }]} />
         )}
       </Card>
 
@@ -502,8 +585,8 @@ function SettingsSections({ settings, manage, onSaved }: { settings: PlatformSet
         )}
       </Card>
 
-      <Card title="Localization" description="The currency the public catalog shows prices in." actions={editButton("localization", "Edit localization")}>
-        {editing === "localization" ? (
+      <Card title="Billing" description="The currency the public catalog shows prices in, and the tax rate on invoices." actions={editButton("billing", "Edit billing")}>
+        {editing === "billing" ? (
           <>
             <div className={local.formGrid}>
               <Select
@@ -514,6 +597,15 @@ function SettingsSections({ settings, manage, onSaved }: { settings: PlatformSet
                 onChange={(v) => setDraft({ ...draft, public_catalog_currency: v })}
                 options={[{ value: "", label: defaultCurrency }, ...settings.currencies.map((c) => ({ value: c, label: c }))]}
               />
+              <TextField
+                label="Tax rate (%)"
+                inputMode="decimal"
+                maxLength={7}
+                value={draft.tax_rate}
+                onChange={(v) => setDraft({ ...draft, tax_rate: v })}
+                hint={`Left empty, ${formatBasisPoints(settings.default_tax_rate_bp)} applies, the deployment's default.`}
+                error={taxInvalid ? "Enter a percentage from 0 to 100, with at most two decimals." : undefined}
+              />
             </div>
             {footer}
           </>
@@ -523,8 +615,22 @@ function SettingsSections({ settings, manage, onSaved }: { settings: PlatformSet
             items={[
               { label: "Public catalog currency", value: settings.public_catalog_currency || defaultCurrency },
               { label: "Deployment default", value: settings.default_currency },
+              { label: "Tax rate", value: settings.tax_rate_bp === null ? defaultTax : formatBasisPoints(settings.tax_rate_bp) },
             ]}
           />
+        )}
+      </Card>
+
+      <Card title="Notifications" description="The address kept for platform notices to staff." actions={editButton("notifications", "Edit notifications")}>
+        {editing === "notifications" ? (
+          <>
+            <div className={local.formGrid}>
+              <TextField label="Notifications email" type="email" maxLength={254} value={draft.notifications_email} onChange={(v) => setDraft({ ...draft, notifications_email: v })} />
+            </div>
+            {footer}
+          </>
+        ) : (
+          <DescriptionList items={[{ label: "Notifications email", value: settings.notifications_email || notSet("notifications", "a notifications email") }]} />
         )}
       </Card>
     </div>
@@ -533,7 +639,7 @@ function SettingsSections({ settings, manage, onSaved }: { settings: PlatformSet
 
 // --- staff roles -----------------------------------------------------------------------------------
 
-const ROLES = [
+export const ROLES = [
   { value: "SUPER_ADMIN", label: "Admin" },
   { value: "USER_ADMIN", label: "User Admin" },
   { value: "PRODUCT_ADMIN", label: "Product Admin" },

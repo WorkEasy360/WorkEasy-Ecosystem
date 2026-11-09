@@ -628,12 +628,20 @@ describe("staff orders", () => {
 describe("platform settings", () => {
   const SETTINGS = {
     signup_enabled: true,
+    partner_applications_enabled: true,
     support_email: "help@example.com",
     sales_email: "",
     catalog_currency: "INR",
     public_catalog_currency: "",
     default_currency: "INR",
     currencies: ["INR", "USD"],
+    company_name: "",
+    company_legal_name: "",
+    company_address: "",
+    company_tax_id: "",
+    tax_rate_bp: null,
+    default_tax_rate_bp: 1800,
+    notifications_email: "",
     version: 3,
   };
 
@@ -661,9 +669,16 @@ describe("platform settings", () => {
     await waitFor(() => expect(screen.queryByLabelText(/Self-service signup is open/)).not.toBeInTheDocument());
     expect(calls.find((c) => c.key === "PUT /api/v1/admin/settings")?.body).toEqual({
       signup_enabled: false,
+      partner_applications_enabled: true,
       support_email: "help@example.com",
       sales_email: "",
       public_catalog_currency: "",
+      company_name: "",
+      company_legal_name: "",
+      company_address: "",
+      company_tax_id: "",
+      tax_rate_bp: null,
+      notifications_email: "",
       version: 3,
     });
     unmount();

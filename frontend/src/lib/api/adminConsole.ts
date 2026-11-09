@@ -268,12 +268,21 @@ export interface StaffOrderRow {
 
 export interface PlatformSettings {
   signup_enabled: boolean;
+  partner_applications_enabled: boolean;
   support_email: string;
   sales_email: string;
   catalog_currency: string;
   public_catalog_currency: string;
   default_currency: string;
   currencies: string[];
+  company_name: string;
+  company_legal_name: string;
+  company_address: string;
+  company_tax_id: string;
+  /** Basis points; null means the deployment's default applies. */
+  tax_rate_bp: number | null;
+  default_tax_rate_bp: number;
+  notifications_email: string;
   version: number;
 }
 
@@ -506,9 +515,16 @@ export const adminConsoleApi = {
   settings: () => apiFetch<PlatformSettings>("/api/v1/admin/settings"),
   saveSettings: (body: {
     signup_enabled: boolean;
+    partner_applications_enabled: boolean;
     support_email: string;
     sales_email: string;
     public_catalog_currency: string;
+    company_name: string;
+    company_legal_name: string;
+    company_address: string;
+    company_tax_id: string;
+    tax_rate_bp: number | null;
+    notifications_email: string;
     version: number;
   }) => apiFetch<PlatformSettings>("/api/v1/admin/settings", { method: "PUT", body: json(body) }),
   roles: () => apiFetch<{ results: StaffRoleRow[] }>("/api/v1/admin/security/roles"),
