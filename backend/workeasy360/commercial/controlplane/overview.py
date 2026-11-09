@@ -96,6 +96,13 @@ def period(raw_from: str | None, raw_to: str | None, *, days: Any = None) -> dic
     }
 
 
+def optional_window(raw_from: str | None, raw_to: str | None) -> tuple[datetime | None, datetime | None]:
+    """Whole UTC days for a list's date filter; either end may be open."""
+    first = _parse_day(raw_from, "from")
+    last = _parse_day(raw_to, "to")
+    return (_at(first) if first else None, _at(last + timedelta(days=1)) if last else None)
+
+
 def change_percent(now: int, before: int) -> float | None:
     """Change against ``before``, one decimal; ``None`` when there is no base."""
     if before <= 0:

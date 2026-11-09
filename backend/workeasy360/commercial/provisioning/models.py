@@ -30,6 +30,8 @@ Only the **capacity** the entitlement computation produced is recorded.
 
 from __future__ import annotations
 
+import uuid
+
 from django.db import models
 
 
@@ -64,3 +66,66 @@ class CustomerSummary(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"summary of {self.organization_id}"
+
+
+class SetupRequirement(models.Model):
+    """One thing a product needs a customer to tell it. Data an Admin entered: with
+    none, a product needs no setup. Control plane, like ``CustomerSummary``."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    product_code = models.CharField(max_length=64)
+    key = models.CharField(max_length=32, unique=True)
+    label = models.CharField(max_length=120)
+    help_text = models.CharField(max_length=300, blank=True, default="")
+    is_required = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    display_order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "provisioning_setup_requirement"
+        indexes = [models.Index(fields=["product_code", "is_active"], name="ix_setup_req_product")]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.product_code}:{self.label}"
+
+
+class CustomerSetup(models.Model):
+    """Where one customer's setup of one product stands. Its own state: never a
+    subscription's, a payment's or a member's (``setup.py``). A plain ``organization_id``,
+    because the Admin's queue spans customers."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending setup"
+        SUBMITTED = "submitted", "Submitted"
+        CORRECTION_REQUIRED = "correction_required", "Correction required"
+        APPROVED = "approved", "Approved"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization_id = models.UUIDField()
+    product_code = models.CharField(max_length=64)
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.PENDING)
+    answers = models.JSONField(default=dict, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decided_by_id = models.UUIDField(null=True, blank=True)
+    decision_reason = models.CharField(max_length=500, blank=True, default="")
+    version = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "provisioning_customer_setup"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization_id", "product_code"], name="uq_customer_setup_once"
+            )
+        ]
+        indexes = [
+            models.Index(fields=["status", "-submitted_at"], name="ix_customer_setup_queue"),
+            models.Index(fields=["organization_id"], name="ix_customer_setup_org"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.organization_id}:{self.product_code} [{self.status}]"

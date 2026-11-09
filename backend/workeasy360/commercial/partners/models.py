@@ -1516,13 +1516,23 @@ class PartnerTicket(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     partner = models.ForeignKey(
-        PartnerAccount, on_delete=models.PROTECT, related_name="tickets"
+        PartnerAccount,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="tickets",
     )
     number = models.PositiveIntegerField()
     direction = models.CharField(max_length=8)
-    #: The customer organization of a ``customer`` ticket (a soft reference,
-    #: like the ledger's); empty for a ``platform`` ticket.
+    #: The customer organization of a ``customer`` or ``direct`` ticket (a soft
+    #: reference, like the ledger's); empty for a ``platform`` ticket.
     organization_id = models.UUIDField(null=True, blank=True)
+    #: Who at Workeasy360 is working it. ``direct`` and ``platform`` tickets only.
+    assigned_to = models.ForeignKey(
+        "identity.User", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    #: How it ended, in the desk's words. Shown to whoever asked.
+    resolution = models.CharField(max_length=500, blank=True, default="", db_default="")
     subject = models.CharField(max_length=200)
     category = models.CharField(max_length=16, default="general")
     priority = models.CharField(max_length=8, default="normal")
@@ -1548,8 +1558,13 @@ class PartnerTicket(models.Model):
                 fields=["partner", "number"], name="uq_partner_ticket_number"
             ),
             models.CheckConstraint(
-                condition=models.Q(direction="platform", organization_id__isnull=True)
-                | models.Q(direction="customer", organization_id__isnull=False),
+                condition=models.Q(
+                    direction="platform", organization_id__isnull=True, partner__isnull=False
+                )
+                | models.Q(
+                    direction="customer", organization_id__isnull=False, partner__isnull=False
+                )
+                | models.Q(direction="direct", organization_id__isnull=False, partner__isnull=True),
                 name="ck_partner_ticket_direction",
             ),
             models.CheckConstraint(

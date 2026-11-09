@@ -189,7 +189,7 @@ def _conversation(row: Any, *, show_internal: bool, viewer: Any) -> list[dict[st
         rows = [m for m in rows if not m.internal]
     labels = {
         "platform": "Workeasy360 Support",
-        "partner": row.partner.display_name,
+        "partner": row.partner.display_name if row.partner_id else "",
         "customer": _customer_names(row.partner_id, [row.organization_id]).get(
             row.organization_id, ""
         )

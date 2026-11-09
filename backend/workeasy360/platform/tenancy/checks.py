@@ -208,6 +208,11 @@ TENANT_SCOPE_EXEMPT = frozenset(
         # events spans customers, and organization_id is a plain UUID naming who it
         # concerns. No customer-facing endpoint reads it.
         "wallets.UsageEvent",
+        # Admin Panel (2026-11-09). Where each customer's setup of a product stands:
+        # the Admin's queue spans customers. organization_id is a plain UUID. A
+        # customer reaches only its own record, from the verified context
+        # (provisioning/setup.py), and answers are bounded text.
+        "provisioning.CustomerSetup",
     }
 )
 

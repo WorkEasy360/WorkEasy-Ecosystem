@@ -217,3 +217,77 @@ def assignment_history(organization_id: UUID) -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+def holders_of_products(products: Any) -> list[tuple[Any, str]]:
+    """``(organization, product)`` for each customer holding one of these products on
+    a subscription that has not ended. For the setup queue, whose caller authorized."""
+    now = timezone.now()
+    live = SubscriptionSummary.objects.exclude(status__in=("expired", "cancelled")).values(
+        "subscription_id"
+    )
+    rows = (
+        SubscriptionItemSummary.objects.filter(subscription_id__in=live, product_code__in=products)
+        .filter(Q(removed_at__isnull=True) | Q(removed_at__gt=now))
+        .values_list("organization_id", "product_code")
+        .distinct()
+    )
+    return list(rows)
+
+
+def report_renewals(
+    *, start: Any, end: Any, product: Any, search: Any, limit: int, offset: int
+) -> tuple[list[dict[str, Any]], int]:
+    """Running subscriptions whose period ends in the window. Callers authorize."""
+    rows = SubscriptionSummary.objects.filter(
+        status__in=RUNNING, current_period_end__gte=start, current_period_end__lt=end
+    )
+    if product:
+        rows = rows.filter(
+            subscription_id__in=SubscriptionItemSummary.objects.filter(
+                product_code=product, removed_at__isnull=True
+            ).values("subscription_id")
+        )
+    if search:
+        from workeasy360.platform.organizations.selectors import (
+            organizations_directory_page,
+        )
+
+        matches = organizations_directory_page(search=search, limit=100).items
+        rows = rows.filter(organization_id__in=[UUID(m["organization_id"]) for m in matches])
+    total = rows.count()
+    page = list(rows.order_by("current_period_end")[offset : offset + limit])
+    names = organization_names({r.organization_id for r in page})
+    lines = _lines([r.subscription_id for r in page])
+    return (
+        [
+            {
+                "subscription_id": str(r.subscription_id),
+                "organization_id": str(r.organization_id),
+                "organization_name": names.get(r.organization_id, ""),
+                "products": ", ".join(
+                    sorted({i["product_code"] or i["bundle_code"] for i in lines.get(r.subscription_id, [])})
+                ),
+                "status": r.status,
+                "billing_interval": r.billing_interval,
+                "renewal_policy": r.renewal_policy,
+                "current_period_end": r.current_period_end.isoformat(),
+            }
+            for r in page
+        ],
+        total,
+    )
+
+
+def running_plan_codes(organization_id: UUID) -> list[str]:
+    """The plans this customer holds on a running subscription now."""
+    now = timezone.now()
+    running = SubscriptionSummary.objects.filter(
+        organization_id=organization_id, status__in=RUNNING
+    ).values("subscription_id")
+    return list(
+        SubscriptionItemSummary.objects.filter(subscription_id__in=running)
+        .filter(Q(removed_at__isnull=True) | Q(removed_at__gt=now))
+        .exclude(plan_code="")
+        .values_list("plan_code", flat=True)
+    )

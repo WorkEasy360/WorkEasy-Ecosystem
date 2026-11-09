@@ -116,6 +116,10 @@ def request_refund(
                 f"At most {available} can be refunded on this payment.",
                 available_minor=available,
             )
+        from workeasy360.commercial.payments import wallet_orders
+
+        if attempt.provider_key != wallet_orders.WALLET_PROVIDER:
+            wallet_orders.assert_refundable(attempt.invoice, amount_minor)
         refund = Refund(
             organization_id=organization_id,
             attempt_id=attempt.id,
@@ -126,12 +130,16 @@ def request_refund(
             idempotency_key=idempotency_key,
         )
         refund.save()
-        scheduling.schedule(
-            REFUND_TIMER,
-            organization_id=organization_id,
-            target_id=refund.id,
-            due_at=timezone.now(),
-        )
+        if attempt.provider_key == wallet_orders.WALLET_PROVIDER:
+            # No provider to wait for: it goes straight back to the wallet it came from.
+            wallet_orders.refund_to_wallet(refund, attempt)
+        else:
+            scheduling.schedule(
+                REFUND_TIMER,
+                organization_id=organization_id,
+                target_id=refund.id,
+                due_at=timezone.now(),
+            )
         with tenant_context(rebound):
             audit.record(
                 rebound,

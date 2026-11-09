@@ -330,3 +330,77 @@ def record_staff_session(user: Any, *, signed_in: bool, where: dict[str, str]) -
         get_logger(__name__).error(
             "staff.session_audit_failed", error_type=type(exc).__name__
         )
+
+
+def sign_in_events(
+    *,
+    staff_only: bool = True,
+    kind: Any = None,
+    search: Any = None,
+    start: Any = None,
+    end: Any = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """The sign-in audit: who signed in, or failed to, from where, and when. Coarse
+    network and device only, never a password or a token. For a staff screen whose
+    caller has authorized."""
+    from workeasy360.platform.identity.models import AccountEvent
+
+    kinds = [
+        AccountEvent.Kind.SIGN_IN,
+        AccountEvent.Kind.SIGN_IN_FAILED,
+        AccountEvent.Kind.PASSWORD_RESET,
+        AccountEvent.Kind.ACCOUNT_UNLOCKED,
+    ]
+    rows = AccountEvent.objects.select_related("user").filter(kind__in=kinds)
+    if kind in AccountEvent.Kind.values:
+        rows = rows.filter(kind=kind)
+    if staff_only:
+        rows = rows.filter(user__is_staff=True)
+    if search:
+        term = str(search).strip()[:100]
+        rows = rows.filter(user__email__icontains=term)
+    if start is not None:
+        rows = rows.filter(occurred_at__gte=start)
+    if end is not None:
+        rows = rows.filter(occurred_at__lt=end)
+    total = rows.count()
+    page = rows.order_by("-occurred_at")[offset : offset + limit]
+    return {
+        "results": [
+            {
+                "id": str(row.id),
+                "user_id": str(row.user_id),
+                "email": row.user.email,
+                "name": row.user.full_name,
+                "is_staff": row.user.is_staff,
+                "kind": row.kind,
+                "kind_label": row.get_kind_display(),
+                "reason": getattr(row, "reason", "") or "",
+                "ip_prefix": getattr(row, "ip_prefix", "") or "",
+                "device_label": getattr(row, "device_label", "") or "",
+                "occurred_at": row.occurred_at.isoformat(),
+            }
+            for row in page
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+def active_staff() -> list[dict[str, str]]:
+    """Who a staff task can be given to. A name for each active staff identity."""
+    from workeasy360.platform.identity.models import User
+
+    return [
+        {"id": str(row.id), "name": row.full_name or row.email}
+        for row in User.objects.filter(is_staff=True, status="active").order_by("full_name", "email")[:200]
+    ]
+
+
+def is_active_staff(user_id: Any) -> bool:
+    from workeasy360.platform.identity.models import User
+
+    return User.objects.filter(id=user_id, is_staff=True, status="active").exists()

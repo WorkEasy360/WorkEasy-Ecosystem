@@ -91,6 +91,14 @@ def _units_used_this_month(organization_id: UUID, meter: str, moment: datetime) 
     return int(total or 0)
 
 
+def _plan_allowance(organization_id: UUID, meter: str) -> int:
+    """What this customer's running plans include of this meter each month."""
+    from workeasy360.commercial.catalog.selectors import included_usage_of
+    from workeasy360.commercial.subscriptions.admin_reads import running_plan_codes
+
+    return included_usage_of(running_plan_codes(organization_id)).get(meter, 0)
+
+
 def _ledger_key(event: Any) -> str:
     return f"usage:{event.organization_id}:{event.product_code}:{event.idempotency_key}"[:128]
 
@@ -163,7 +171,8 @@ def _decide(
         event.failure_code = "no_rate"
     else:
         used = _units_used_this_month(organization_id, meter, moment)
-        free_left = max(0, rate.included_units - used)
+        free = rate.included_units + _plan_allowance(organization_id, meter)
+        free_left = max(0, free - used)
         chargeable = max(0, units - free_left)
         event.charged_units = chargeable
         if chargeable == 0:

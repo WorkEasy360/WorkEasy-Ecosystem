@@ -277,6 +277,12 @@ def record_refund(
     invoice.version += 1
     invoice.save(update_fields=["amount_refunded_minor", "version", "updated_at"])
     _issue_credit_note(refund, invoice)
+    # A refund of a top-up or a credit pack takes it back out of the wallet. A refund
+    # of a wallet payment already put it back, before asking this to confirm it.
+    if attempt.provider_key != "wallet":
+        from workeasy360.commercial.payments import wallet_orders
+
+        wallet_orders.reverse_for_refund(refund, invoice)
     audit.record_system(
         refund.organization_id,
         "billing.refund_succeeded",

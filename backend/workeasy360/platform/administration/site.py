@@ -84,6 +84,12 @@ def partner_applications_enabled() -> bool:
     return bool(public_site().get("partner_applications_enabled", True))
 
 
+def tax_rate_override() -> int | None:
+    """The tax rate an Admin entered, or ``None`` for the deployment's default."""
+    row = _row()
+    return row.tax_rate_bp if row is not None else None
+
+
 def support_email() -> str:
     return str(public_site()["support_email"] or settings.DEFAULT_FROM_EMAIL)
 
@@ -95,6 +101,13 @@ def settings_view(ctx: TenantContext) -> dict[str, Any]:
     return {
         **_values(row),
         "public_catalog_currency": row.public_catalog_currency if row else "",
+        "company_name": row.company_name if row else "",
+        "company_legal_name": row.company_legal_name if row else "",
+        "company_address": row.company_address if row else "",
+        "company_tax_id": row.company_tax_id if row else "",
+        "tax_rate_bp": row.tax_rate_bp if row else None,
+        "default_tax_rate_bp": int(getattr(settings, "GST_RATE_BP", 0) or 0),
+        "notifications_email": row.notifications_email if row else "",
         "default_currency": str(settings.PUBLIC_CATALOG_DEFAULT_CURRENCY),
         "currencies": [code.value for code in CurrencyCode],
         "version": row.version if row else 0,
@@ -137,11 +150,29 @@ def update_settings(
             "Choose a supported currency or leave it empty.",
             field="public_catalog_currency",
         )
+    applications = body.get("partner_applications_enabled", True)
+    if not isinstance(applications, bool):
+        raise SecurityPolicyValidationError(
+            "partner_applications_enabled must be true or false.",
+            field="partner_applications_enabled",
+        )
+    tax = body.get("tax_rate_bp")
+    if tax in ("", None):
+        tax = None
+    elif isinstance(tax, bool) or not isinstance(tax, int) or not 0 <= tax <= 10_000:
+        raise SecurityPolicyValidationError("The tax rate must be 0% to 100%.", field="tax_rate_bp")
     after = {
         "signup_enabled": signup,
+        "partner_applications_enabled": applications,
         "support_email": _email(body.get("support_email"), "support_email"),
         "sales_email": _email(body.get("sales_email"), "sales_email"),
         "public_catalog_currency": currency,
+        "company_name": " ".join(str(body.get("company_name") or "").split())[:200],
+        "company_legal_name": " ".join(str(body.get("company_legal_name") or "").split())[:200],
+        "company_address": " ".join(str(body.get("company_address") or "").split())[:500],
+        "company_tax_id": " ".join(str(body.get("company_tax_id") or "").split())[:64],
+        "tax_rate_bp": tax,
+        "notifications_email": _email(body.get("notifications_email"), "notifications_email"),
     }
     with transaction.atomic():
         row = PlatformSettings.objects.select_for_update().filter(id=1).first()

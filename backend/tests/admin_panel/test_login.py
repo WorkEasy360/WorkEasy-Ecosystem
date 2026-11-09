@@ -6,7 +6,7 @@ import pytest
 from django.conf import settings
 from django.test import Client
 
-from tests.extension.conftest import PASSWORD, staff_login  # noqa: F401
+from tests.extension.conftest import PASSWORD
 
 pytestmark = pytest.mark.django_db
 

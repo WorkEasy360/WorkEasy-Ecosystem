@@ -110,6 +110,9 @@ class Order(TenantScopedModel):
         #: Several products' plans in one order and one payment (the Store's
         #: cart, ADR-052); each becomes its own subscription line.
         CART = "cart", "Cart"
+        #: Money into a wallet, or an AI credit pack (``wallet_orders.py``). What it
+        #: buys is in its one line; it adds nothing to a subscription.
+        WALLET = "wallet", "Wallet"
 
     class Status(models.TextChoices):
         PENDING_PAYMENT = "pending_payment", "Awaiting payment"
@@ -229,6 +232,12 @@ class Order(TenantScopedModel):
                         kind="cart",
                         plan_version__isnull=True,
                         bundle_version__isnull=True,
+                    )
+                    | models.Q(
+                        kind="wallet",
+                        plan_version__isnull=True,
+                        bundle_version__isnull=True,
+                        subscription__isnull=True,
                     )
                 ),
                 name="ck_order_names_what_it_buys",
@@ -406,6 +415,8 @@ class InvoiceLine(TenantScopedModel):
         SETUP_FEE = "setup_fee", "Set-up fee"
         #: GST (ADR-058), on the invoice's other lines.
         TAX = "tax", "Tax"
+        #: Money into a wallet or a credit pack. Never earns commission.
+        WALLET = "wallet", "Wallet"
 
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="lines")
     kind = models.CharField(

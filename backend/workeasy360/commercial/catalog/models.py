@@ -85,6 +85,8 @@ class Product(models.Model):
     tagline = models.CharField(max_length=160, blank=True, default="")
     #: An external marketing page, ``https`` only (validated in the service).
     marketing_url = models.URLField(max_length=500, blank=True, default="")
+    #: Where the product's apps are published: ``{"ios": url, "android": url, ...}``.
+    app_links = models.JSONField(default=dict, blank=True, db_default={})
     listing = models.CharField(
         max_length=16,
         choices=_choices(ProductListing),
@@ -405,11 +407,36 @@ class Feature(models.Model):
 class Plan(models.Model):
     """Stable plan identity. All commercial terms live on its versions."""
 
+    class RenewalRule(models.TextChoices):
+        AUTO_RENEW = "auto_renew", "Renews automatically"
+        MANUAL = "manual", "Customer renews by hand"
+        NONE = "none", "Does not renew"
+
+    class ChangeRule(models.TextChoices):
+        ANY = "any", "Upgrade or downgrade"
+        UPGRADE_ONLY = "upgrade_only", "Upgrade only"
+        NONE = "none", "No plan changes"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="plans")
     code = models.CharField(max_length=64, unique=True)
     name = models.CharField(max_length=128)
+    #: How a new subscription on this plan renews (read at purchase).
+    renewal_rule = models.CharField(
+        max_length=12,
+        choices=RenewalRule.choices,
+        default=RenewalRule.AUTO_RENEW,
+        db_default="auto_renew",
+    )
+    #: Which changes of plan a customer on this plan may make (enforced by
+    #: ``subscriptions.services.change_plan``).
+    change_rule = models.CharField(
+        max_length=14, choices=ChangeRule.choices, default=ChangeRule.ANY, db_default="any"
+    )
+    #: Usage included each month on this plan: ``{"sms": 100, "ai_tokens": 50000}``,
+    #: added to a meter's own free allowance (``wallets.usage``). Only meters that exist.
+    included_usage = models.JSONField(default=dict, blank=True, db_default={})
     #: Plain text with light markdown (``**bold**``, ``*italic*``, lists,
     #: links), rendered by the frontend as text - never as HTML.
     description = models.TextField(blank=True, default="")

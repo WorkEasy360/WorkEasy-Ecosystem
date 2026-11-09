@@ -436,3 +436,96 @@ def credit_notes(
         "next_cursor": token,
         "has_more": more,
     }
+
+
+# --- reports (callers authorize) -------------------------------------------------------
+
+
+def _with_product(rows: Any, product: Any, *, field: str = "invoice_id") -> Any:
+    if not product:
+        return rows
+    invoices = InvoiceLineSummary.objects.filter(product_code=product).values("invoice_id")
+    return rows.filter(**{f"{field}__in": invoices})
+
+
+def report_sales(
+    *, start: Any, end: Any, product: Any, search: Any, limit: int, offset: int
+) -> tuple[list[dict[str, Any]], int]:
+    rows = _with_product(sales_rows(start, end), product)
+    if search:
+        rows = rows.filter(number__icontains=search)
+    total = rows.count()
+    page = list(rows.order_by("-issued_at", "-invoice_id")[offset : offset + limit])
+    names = organization_names({r.organization_id for r in page})
+    return [invoice_row(r, names) for r in page], total
+
+
+def report_payments(
+    *, start: Any, end: Any, product: Any, search: Any, limit: int, offset: int
+) -> tuple[list[dict[str, Any]], int]:
+    rows = PaymentSummary.objects.filter(completed_at__gte=start, completed_at__lt=end)
+    rows = _with_product(rows, product)
+    if search:
+        rows = rows.filter(
+            invoice_id__in=InvoiceSummary.objects.filter(number__icontains=search).values("invoice_id")
+        )
+    total = rows.count()
+    page = list(rows.order_by("-completed_at", "-attempt_id")[offset : offset + limit])
+    names = organization_names({r.organization_id for r in page})
+    facts = _invoice_facts({r.invoice_id for r in page})
+    return [payment_row(r, names, facts) for r in page], total
+
+
+# --- the activation retry -----------------------------------------------------------------
+
+
+def retry_activation(ctx: TenantContext, order_id: Any) -> dict[str, Any]:
+    """Run a paid order's fulfilment again, for an order the clock has not got to.
+    Safe to press twice: it acts only on an order still ``paid``, and a subscription
+    or a wallet is credited once whichever way it arrives."""
+    from workeasy360.commercial.payments import orders
+    from workeasy360.platform.audit import services as audit
+    from workeasy360.platform.authz.control_plane import acting_scope
+    from workeasy360.platform.observability.metrics import metrics
+
+    authz.require(ctx, "platform.staff_payment.manage")
+    summary = OrderSummary.objects.filter(order_id=order_id).first()
+    if summary is None:
+        raise CatalogValidationError("No such order.", field="order")
+    if summary.status != "paid":
+        raise CatalogValidationError(
+            "Only a paid order that has not been activated can be retried.", field="status"
+        )
+    outcome = orders.fulfil(summary.organization_id, summary.order_id)
+    with acting_scope(ctx):
+        audit.record(
+            ctx,
+            "billing.activation_retried",
+            resource_type="payments.order",
+            resource_id=summary.order_id,
+            changes={"number": summary.number, "outcome": outcome},
+        )
+    metrics.increment("commercial_activation_retries_total", outcome=outcome)
+    return {"order_id": str(summary.order_id), "outcome": outcome}
+
+
+def stuck_orders(ctx: TenantContext, *, limit: Any = None) -> list[dict[str, Any]]:
+    """Paid but not activated, or failed: what the Failed Payments page lists beside
+    failed payments."""
+    authz.require(ctx, VIEW)
+    rows = list(OrderSummary.objects.filter(status__in=("paid", "failed")).order_by("-updated_at")[: _limit(limit)])
+    names = organization_names({r.organization_id for r in rows})
+    return [
+        {
+            "order_id": str(r.order_id),
+            "organization_id": str(r.organization_id),
+            "organization_name": names.get(r.organization_id, ""),
+            "number": r.number,
+            "status": r.status,
+            "description": r.description,
+            "amount_due_minor": r.amount_due_minor,
+            "currency": r.currency,
+            "paid_at": r.paid_at.isoformat() if r.paid_at else None,
+        }
+        for r in rows
+    ]

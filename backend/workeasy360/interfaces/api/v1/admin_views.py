@@ -144,10 +144,21 @@ def attention_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
 
 @staff_view(["GET"])
 def audit_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    from workeasy360.commercial.controlplane.overview import optional_window
+
+    start, end = optional_window(request.GET.get("from"), request.GET.get("to"))
+    actor = request.GET.get("actor") or None
+    try:
+        actor_id = UUID(actor) if actor else None
+    except ValueError:
+        raise CatalogValidationError("Unknown person.", field="actor") from None
     return page_response(
         cp_dashboard.control_plane_audit(
             ctx,
             action_prefix=request.GET.get("action") or None,
+            actor_user_id=actor_id,
+            start=start,
+            end=end,
             **query_page_args(request),
         )
     )

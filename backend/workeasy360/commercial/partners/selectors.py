@@ -946,3 +946,17 @@ def created_count(*, start: Any | None, end: Any) -> int:
     if start is not None:
         rows = rows.filter(created_at__gte=start)
     return rows.count()
+
+
+def partner_names(partner_ids: Any) -> dict[Any, str]:
+    """A display name for each of these partners. One query, for a staff list."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    return dict(PartnerAccount.objects.filter(id__in=partner_ids).values_list("id", "display_name"))
+
+
+def partner_ids_matching(search: str) -> Any:
+    """A subquery of the partners whose name matches, to compose into a staff list."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    return PartnerAccount.objects.filter(display_name__icontains=search[:80]).values("id")

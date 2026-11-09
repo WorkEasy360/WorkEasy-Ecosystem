@@ -11,7 +11,7 @@ import pytest
 from django.test import Client
 from django.utils import timezone
 
-from tests.extension.conftest import PASSWORD, login, staff_login  # noqa: F401
+from tests.extension.conftest import PASSWORD
 
 pytestmark = pytest.mark.django_db
 

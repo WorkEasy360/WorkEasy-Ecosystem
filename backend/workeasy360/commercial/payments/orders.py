@@ -1544,6 +1544,8 @@ def fulfil(organization_id: UUID, order_id: UUID) -> str:
             return "noop"
         now = timezone.now()
         added: dict[str, Any] = {}
+        if order.kind == Order.Kind.WALLET:
+            return _fulfil_wallet_order(order, organization_id, now)
         try:
             with transaction.atomic():
                 _attach_storefront(order, organization_id)
@@ -1653,6 +1655,30 @@ def fulfil(organization_id: UUID, order_id: UUID) -> str:
     metrics.increment("commercial_orders_fulfilment_total", outcome=outcome)
     logger.info("payments.order.fulfilment", order_id=str(order_id), outcome=outcome)
     return outcome
+
+
+def _fulfil_wallet_order(order: Any, organization_id: UUID, now: datetime) -> str:
+    """Credit the wallet a paid top-up or credit pack was for. Inside fulfilment's
+    transaction; re-driving it credits nothing, because the ledger's key is the order."""
+    from workeasy360.commercial.payments import wallet_orders
+    from workeasy360.commercial.payments.models import Order
+
+    entry = wallet_orders.credit_for_order(order)
+    order.status = Order.Status.FULFILLED
+    order.fulfilled_at = now
+    order.version += 1
+    order.save(update_fields=["status", "fulfilled_at", "version", "updated_at"])
+    _sync_summary(order)
+    audit.record_system(
+        organization_id,
+        "commercial.order.fulfilled",
+        resource_type="payments.order",
+        resource_id=order.id,
+        changes={"number": order.number, "wallet_entry": str(entry.id), "paid": True},
+        reason="The order's payment was confirmed.",
+    )
+    metrics.increment("commercial_orders_fulfilment_total", outcome="fulfilled")
+    return "fulfilled"
 
 
 def _succeeded_attempt(invoice: Any) -> UUID | None:

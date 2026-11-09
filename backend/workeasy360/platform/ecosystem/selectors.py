@@ -413,3 +413,23 @@ def _integration_dto(row: Any) -> IntegrationDTO:
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+def login_clients() -> list[dict[str, Any]]:
+    """Every product that signs in with Workeasy360 and the addresses it may return to.
+    Never a credential. For a staff screen whose caller has authorized."""
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    return [
+        {
+            "product_code": row.product_code,
+            "client_id": row.client_id,
+            "status": row.status,
+            "redirect_uris": list((row.manifest or {}).get("redirect_uris") or []),
+            "post_logout_redirect_uris": list(
+                (row.manifest or {}).get("post_logout_redirect_uris") or []
+            ),
+            "launch_url": (row.manifest or {}).get("launch_url") or "",
+        }
+        for row in ProductIntegration.objects.order_by("product_code")
+    ]

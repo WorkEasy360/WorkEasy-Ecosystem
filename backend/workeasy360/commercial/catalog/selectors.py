@@ -444,6 +444,7 @@ def product_row(product: Any) -> dict[str, Any]:
         "reseller_enabled": product.reseller_enabled,
         "affiliate_enabled": product.affiliate_enabled,
         "white_label_enabled": product.white_label_enabled,
+        "app_links": dict(product.app_links or {}),
         **merchandising(product),
         "created_at": product.created_at.isoformat() if product.created_at else None,
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
@@ -1338,3 +1339,28 @@ def search_products(term: str, *, limit: int = 5) -> list[dict[str, str]]:
         "sort_order", "code"
     )[: max(1, min(limit, 25))]
     return [{"id": str(row.id), "name": row.name, "code": row.code} for row in rows]
+
+
+def plan_rules(plan_code: str) -> dict[str, Any] | None:
+    """A plan's renewal and change rules and included usage. Unknown plan: ``None``."""
+    from workeasy360.commercial.catalog.models import Plan
+
+    return (
+        Plan.objects.filter(code=plan_code)
+        .values("renewal_rule", "change_rule", "included_usage")
+        .first()
+    )
+
+
+def included_usage_of(plan_codes: Any) -> dict[str, int]:
+    """What these plans include each month, added up per meter."""
+    from workeasy360.commercial.catalog.models import Plan
+
+    totals: dict[str, int] = {}
+    for usage in Plan.objects.filter(code__in=list(plan_codes)).values_list(
+        "included_usage", flat=True
+    ):
+        for meter, units in (usage or {}).items():
+            if isinstance(units, int) and not isinstance(units, bool) and units > 0:
+                totals[str(meter)] = totals.get(str(meter), 0) + units
+    return totals

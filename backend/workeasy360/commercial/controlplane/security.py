@@ -239,3 +239,68 @@ def role_catalog(ctx: TenantContext) -> list[dict[str, Any]]:
         }
         for r in staff_roles.roles()
     ]
+
+
+@in_scope
+def create_staff_account(
+    ctx: TenantContext, *, email: Any, full_name: Any, role: Any, reason: Any
+) -> dict[str, Any]:
+    """A new Admin: an account, the staff designation and a role, in one audited
+    transaction, then a link to set their own password. Nobody chooses a password for
+    someone else. An existing account is designated rather than created, so one person
+    never has two identities."""
+    from django.core.exceptions import ValidationError
+    from django.db import IntegrityError
+
+    from workeasy360.contracts.enums import UserStatus
+    from workeasy360.platform.administration.self_service import _clean_email, request_password_reset
+    from workeasy360.platform.authz import staff_roles
+    from workeasy360.platform.identity import lifecycle
+    from workeasy360.platform.identity.models import User
+
+    authz.require(ctx, MANAGE)
+    definition = staff_roles.role(str(role or ""))
+    if definition is None:
+        raise ControlPlaneInvariantViolation("Choose a role.", field="role")
+    why = str(reason or "").strip()
+    if len(why) < 10:
+        raise ControlPlaneInvariantViolation("Say why, in at least 10 characters.", field="reason")
+    typed, address = _clean_email(email)
+    name = " ".join(str(full_name or "").split())[:200]
+    if not name:
+        raise ControlPlaneInvariantViolation("Name this person.", field="full_name")
+    created = False
+    with transaction.atomic():
+        user = lifecycle.lock_by_email(address)
+        if user is None:
+            try:
+                with transaction.atomic():
+                    user = lifecycle.create_account(
+                        email=typed,
+                        password=None,
+                        full_name=name,
+                        status=UserStatus.ACTIVE,
+                        source=User.AcquisitionSource.OPERATOR,
+                        verified=False,
+                    )
+            except (IntegrityError, ValidationError) as exc:
+                raise ControlPlaneInvariantViolation(
+                    "That address cannot be used.", field="email"
+                ) from exc
+            created = True
+        elif user.status != UserStatus.ACTIVE.value:
+            raise ControlPlaneInvariantViolation("That account cannot be an Admin.", field="email")
+        lifecycle.set_staff(user, True)
+        audit.record(
+            ctx,
+            "staff.account_created",
+            resource_type="identity.user",
+            resource_id=user.pk,
+            # Kinds only: no name and no address in the audit trail.
+            changes={"role": definition.key, "new_account": created},
+            reason=why,
+        )
+        granted = grant_role(ctx, email=address, role=definition.key, reason=why)
+    if created:
+        request_password_reset(address, portal="admin")
+    return {"user_id": str(user.pk), "new_account": created, **granted}

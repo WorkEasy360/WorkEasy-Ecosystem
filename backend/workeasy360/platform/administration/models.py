@@ -18,6 +18,8 @@ dangerous, audited, optimistic version).
 
 from __future__ import annotations
 
+import uuid
+
 from django.db import models
 
 
@@ -31,6 +33,15 @@ class PlatformSettings(models.Model):
     public_catalog_currency = models.CharField(max_length=3, blank=True, default="")
     #: Whether the public partner application form accepts applications.
     partner_applications_enabled = models.BooleanField(default=True, db_default=True)
+    #: The company behind the platform, as invoices and emails name it.
+    company_name = models.CharField(max_length=200, blank=True, default="", db_default="")
+    company_legal_name = models.CharField(max_length=200, blank=True, default="", db_default="")
+    company_address = models.CharField(max_length=500, blank=True, default="", db_default="")
+    company_tax_id = models.CharField(max_length=64, blank=True, default="", db_default="")
+    #: The tax rate in basis points, or empty for the deployment's default.
+    tax_rate_bp = models.PositiveIntegerField(null=True, blank=True)
+    #: Where staff are told about new applications and tickets. Empty: nobody.
+    notifications_email = models.CharField(max_length=254, blank=True, default="", db_default="")
     version = models.PositiveIntegerField(default=1)
     updated_by_id = models.UUIDField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -45,3 +56,29 @@ class PlatformSettings(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return "platform settings"
+
+
+class HelpArticle(models.Model):
+    """One FAQ or setup guide. Plain text, never HTML. Archived rather than deleted."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    slug = models.SlugField(max_length=80, unique=True)
+    kind = models.CharField(max_length=16, default="faq")
+    audience = models.CharField(max_length=12, default="all")
+    status = models.CharField(max_length=12, default="draft")
+    title = models.CharField(max_length=200)
+    body = models.TextField()
+    product_code = models.CharField(max_length=64, blank=True, default="")
+    display_order = models.PositiveIntegerField(default=0)
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "administration_help_article"
+        indexes = [
+            models.Index(fields=["status", "audience", "display_order"], name="ix_help_reader"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return self.slug
