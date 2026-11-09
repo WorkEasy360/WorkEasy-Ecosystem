@@ -1,60 +1,70 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { firstName } from "@/components/sidebar/SidebarShell";
-import { adminConsoleApi } from "@/lib/api/adminConsole";
-import { adminApi, type Dashboard as DashboardData, type DashboardOverview } from "@/lib/api/controlPlane";
-import { useSession } from "@/lib/auth/useSession";
-import { can, useAdmin } from "./ControlShell";
-import { ColumnChart, Donut, LineChart, type DayValue } from "./dashboardCharts";
+import { Icon } from "@/components/sidebar/icons";
 import {
-  Avatar,
+  adminPanelApi,
+  type ActivityEvent,
+  type DashboardOverviewV2,
+  type PendingAction,
+  type RunningTotal,
+  type TopProduct,
+  type WalletTotal,
+} from "@/lib/api/adminPanel";
+import { can, useAdmin } from "./ControlShell";
+import {
   Delta,
   EmptyState,
+  InfoTip,
   Page,
   PageHeader,
   SectionHeader,
   Select,
-  StatCard,
-  StatGrid,
-  StatusBadge,
-  Trunc,
   formatDate,
   formatMoney,
   formatNumber,
+  formatRelative,
   kit,
   type SelectOption,
+  type StatTone,
 } from "./kit";
+import { GroupedBars, MultiLineChart, monthLabel } from "./trendCharts";
 import { LoadGate, useLoad } from "./ui";
 import styles from "./AdminDashboard.module.css";
 
 /**
- * The Super Admin dashboard (2026-11-07 design system): KPI cards, revenue and
- * sign-ups per day, orders per product and the latest users, orders and
- * partners - for one period, chosen once in the page header. The server
- * reports by calendar month, so the periods offered are this month (up to
- * today), last month and the ten before; nothing finer is offered because
- * nothing finer exists to show. Every section is drawn only when the backend
- * sent it (it sends only what the staff member's grants cover). Real figures
- * only: money stays per currency, never converted or added across currencies.
+ * The Admin dashboard (2026-11-09, the owner's reference image): six figures for the
+ * period chosen once in the header, two month-by-month charts each with its own range,
+ * the three balances, what is waiting, what just happened and the top products.
+ *
+ * Real figures only, from `commercial/controlplane/overview.py`, which also states what
+ * Sales and Collections mean. Every section is drawn only when the backend sent it (it
+ * sends only what the staff member's grants cover). Money stays per currency.
  */
 export function Dashboard() {
-  const session = useSession();
-  const { permissions } = useAdmin();
-  const [month, setMonth] = useState<string>("");
-  const [load] = useLoad(() => adminApi.dashboard(month || undefined), [month]);
-  const name = session.status === "ready" ? session.session.name || session.session.email || "" : "";
-  const greeting = name ? `Welcome back, ${firstName(name)}.` : "Welcome back.";
+  const [period, setPeriod] = useState<Period>({ days: 30 });
+  const [currency, setCurrency] = useState<string | undefined>(undefined);
+  const [load] = useLoad(() => adminPanelApi.overview({ ...period, currency }), [period.days, period.from, period.to, currency]);
   return (
     <Page>
       <PageHeader
         title="Dashboard"
-        subtitle={`${greeting} Here's what's happening across the platform.`}
-        primary={<PeriodPicker value={month} onChange={setMonth} />}
+        subtitle="Overview of platform performance, collections, subscriptions and pending actions."
+        primary={<PeriodPicker value={period} onChange={setPeriod} />}
+        actions={
+          load.status === "ready" && (load.data.currencies?.length ?? 0) > 1 ? (
+            <Select
+              label="Currency"
+              value={load.data.currency ?? ""}
+              options={(load.data.currencies ?? []).map((c) => ({ value: c, label: c }))}
+              onChange={setCurrency}
+            />
+          ) : undefined
+        }
       />
       <LoadGate load={load} what="the dashboard">
-        {(d) => <Overview d={d} permissions={permissions} />}
+        {(d) => <Overview d={d} />}
       </LoadGate>
     </Page>
   );
@@ -62,62 +72,341 @@ export function Dashboard() {
 
 // --- the period ----------------------------------------------------------------------
 
-const MONTHS_BACK = 12;
-const MONTH_SHORT = new Intl.DateTimeFormat("en-GB", { month: "short", timeZone: "UTC" });
-const MONTH_LONG = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+type Period = { days: number; from?: undefined; to?: undefined } | { days?: undefined; from: string; to: string };
 
-function monthKey(date: Date): string {
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+const PRESETS: SelectOption[] = [
+  { value: "7", label: "Last 7 Days" },
+  { value: "30", label: "Last 30 Days" },
+  { value: "90", label: "Last 90 Days" },
+  { value: "180", label: "Last 180 Days" },
+  { value: "365", label: "Last 365 Days" },
+  { value: "custom", label: "Custom range" },
+];
+
+const iso = (date: Date) => date.toISOString().slice(0, 10);
+
+function PeriodPicker({ value, onChange }: { value: Period; onChange: (next: Period) => void }) {
+  const custom = value.days === undefined;
+  const today = iso(new Date());
+  return (
+    <div className={styles.period}>
+      <Select
+        label="Period"
+        value={custom ? "custom" : String(value.days)}
+        options={PRESETS}
+        onChange={(next) => {
+          if (next === "custom") onChange({ from: iso(new Date(Date.now() - 29 * 86_400_000)), to: today });
+          else onChange({ days: Number(next) });
+        }}
+      />
+      {custom && (
+        <>
+          <label className={styles.dateField}>
+            <span className="w360-visually-hidden">From</span>
+            <input
+              type="date"
+              className="w360-input"
+              value={value.from}
+              max={value.to}
+              onChange={(e) => e.target.value && onChange({ from: e.target.value, to: value.to })}
+            />
+          </label>
+          <label className={styles.dateField}>
+            <span className="w360-visually-hidden">To</span>
+            <input
+              type="date"
+              className="w360-input"
+              value={value.to}
+              min={value.from}
+              max={today}
+              onChange={(e) => e.target.value && onChange({ from: value.from, to: e.target.value })}
+            />
+          </label>
+        </>
+      )}
+    </div>
+  );
 }
 
-/** The days a month covers, never past today: "1 Nov – 7 Nov 2026". */
-export function rangeLabel(key: string, today: Date = new Date()): string {
-  const [y, m] = key.split("-").map(Number);
-  const first = new Date(Date.UTC(y, m - 1, 1));
-  const end = new Date(Date.UTC(y, m, 0));
-  const last = monthKey(today) === key ? today : end;
-  const mon = MONTH_SHORT.format(first).replace("Sept", "Sep");
-  return `1 ${mon} – ${last.getUTCDate()} ${mon} ${y}`;
+// --- the figures ---------------------------------------------------------------------
+
+function Figure({
+  label,
+  value,
+  icon,
+  tone,
+  change,
+  note,
+  href,
+  info,
+}: {
+  label: string;
+  value: string;
+  icon: string;
+  tone: StatTone;
+  change?: number | null;
+  note?: string;
+  href?: string;
+  info?: string;
+}) {
+  const body = (
+    <>
+      <span className={styles.figureIcon} data-tone={tone}>
+        <Icon name={icon} size={22} />
+      </span>
+      <span className={styles.figureText}>
+        <span className={styles.figureLabel}>
+          {label}
+          {info && <InfoTip label={`What ${label} means`}>{info}</InfoTip>}
+        </span>
+        <strong className={styles.figureValue}>{value}</strong>
+        <span className={styles.figureFoot}>
+          {change !== undefined && change !== null ? <Delta value={change} /> : null}
+          <span>{change === null || change === undefined ? (note ?? "No earlier figure") : "vs previous period"}</span>
+        </span>
+      </span>
+    </>
+  );
+  return href ? (
+    <Link href={href} className={styles.figureCard}>
+      {body}
+    </Link>
+  ) : (
+    <div className={styles.figureCard}>{body}</div>
+  );
 }
 
-/** This month (up to today), last month and the ten before; "" is this month. */
-function PeriodPicker({ value, onChange }: { value: string; onChange: (month: string) => void }) {
-  const options = useMemo<SelectOption[]>(() => {
-    const now = new Date();
-    return Array.from({ length: MONTHS_BACK }, (_, i) => {
-      const key = monthKey(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)));
-      const label =
-        i === 0
-          ? `This month · ${rangeLabel(key, now)}`
-          : i === 1
-            ? `Last month · ${rangeLabel(key, now)}`
-            : MONTH_LONG.format(new Date(`${key}-01T00:00:00Z`));
-      return { value: i === 0 ? "" : key, label };
-    });
-  }, []);
-  return <Select label="Period" value={value} options={options} onChange={onChange} />;
+const walletMoney = (wallets: NonNullable<DashboardOverviewV2["wallets"]>, currency: string) =>
+  wallets.platform.balance + wallets.consumption.balance > 0 || currency
+    ? formatMoney(wallets.platform.balance + wallets.consumption.balance, currency)
+    : "—";
+
+function Overview({ d }: { d: DashboardOverviewV2 }) {
+  const { permissions } = useAdmin();
+  const c = d.cards;
+  const currency = d.currency ?? "";
+  const runningNote = (r: RunningTotal) => `+${formatNumber(r.added)} this period`;
+  return (
+    <>
+      <div className={styles.figures} role="group" aria-label="Figures">
+        <Figure
+          label="Customers"
+          value={formatNumber(c.customers.total)}
+          icon="users"
+          tone="green"
+          change={c.customers.change_percent}
+          note={runningNote(c.customers)}
+          href="/admin/customers"
+        />
+        {c.partners && (
+          <Figure
+            label="Partners"
+            value={formatNumber(c.partners.total)}
+            icon="handshake"
+            tone="blue"
+            change={c.partners.change_percent}
+            note={runningNote(c.partners)}
+            href={can(permissions, "platform.staff_partner.view") ? "/admin/partners/all" : undefined}
+          />
+        )}
+        <Figure
+          label="Active Subscriptions"
+          value={formatNumber(c.active_subscriptions.total)}
+          icon="card"
+          tone="purple"
+          change={c.active_subscriptions.change_percent}
+          note={runningNote(c.active_subscriptions)}
+          href="/admin/subscriptions"
+        />
+        {c.collections && (
+          <Figure
+            label="Collections"
+            value={formatMoney(c.collections.amount_minor, currency)}
+            icon="currency"
+            tone="orange"
+            change={c.collections.change_percent}
+            href="/admin/payments"
+            info={d.definitions.collections}
+          />
+        )}
+        {c.sales && (
+          <Figure
+            label="Sales"
+            value={formatMoney(c.sales.amount_minor, currency)}
+            icon="chart"
+            tone="green"
+            change={c.sales.change_percent}
+            href="/admin/invoices"
+            info={d.definitions.sales}
+          />
+        )}
+        {d.wallets && (
+          <Figure
+            label="Wallet Summary"
+            value={walletMoney(d.wallets, currency)}
+            icon="wallet"
+            tone="green"
+            note="Platform + Consumption, now"
+            href="/admin/wallets"
+            info="What customers and partners hold now in their Platform and Consumption wallets. AI Credits are counted separately. Partner commissions are earnings, not a wallet."
+          />
+        )}
+      </div>
+
+      <div className={styles.chartRow}>
+        <GrowthPanel showPartners={Boolean(c.partners)} />
+        {c.sales && <MoneyPanel currency={currency} />}
+        {d.wallets && <WalletPanel wallets={d.wallets} />}
+      </div>
+
+      <div className={styles.bottomRow}>
+        <PendingPanel items={d.pending} />
+        <ActivityPanel events={d.activity} />
+        {d.top_products && <TopProductsPanel rows={d.top_products} period={d.period} />}
+      </div>
+    </>
+  );
 }
 
-// --- the overview --------------------------------------------------------------------
+// --- panels --------------------------------------------------------------------------
 
-/** The days of the period up to today (a month still running is not drawn ahead). */
-function series(o: DashboardOverview, values: (number | null)[]): DayValue[] {
-  const start = new Date(`${o.first_day}T00:00:00Z`);
-  const today = new Date().toISOString().slice(0, 10);
-  return values
-    .map((value, i) => ({ day: new Date(start.getTime() + i * 86_400_000).toISOString().slice(0, 10), value }))
-    .filter((d) => d.day <= today || d.value !== null);
+function Panel({
+  id,
+  title,
+  description,
+  icon,
+  actions,
+  children,
+}: {
+  id: string;
+  title: string;
+  description?: React.ReactNode;
+  icon?: string;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className={`${kit.card} ${styles.panel}`} aria-labelledby={id}>
+      <div className={styles.panelBody}>
+        <div className={styles.panelHead}>
+          {icon && (
+            <span className={styles.panelIcon}>
+              <Icon name={icon} size={20} />
+            </span>
+          )}
+          <SectionHeader id={id} title={title} description={description} actions={actions} />
+        </div>
+        <div className={styles.panelContent}>{children}</div>
+      </div>
+    </section>
+  );
 }
 
-/** Growth of a total over the period: what was added against what was there before. */
-function growth(added: number, total: number): number | null {
-  const before = total - added;
-  return before > 0 ? Math.round((added / before) * 100) : null;
+const RANGE_OPTIONS: SelectOption[] = [
+  { value: "3", label: "Last 3 Months" },
+  { value: "6", label: "Last 6 Months" },
+  { value: "12", label: "Last 12 Months" },
+];
+
+function Legend({ items }: { items: { key: string; label: string; tone: string; value?: string; change?: number | null }[] }) {
+  return (
+    <ul className={styles.seriesLegend}>
+      {items.map((item) => (
+        <li key={item.key}>
+          <span aria-hidden="true" className={styles.swatch} data-tone={item.tone} />
+          <span className={styles.seriesLabel}>{item.label}</span>
+          {item.value && <strong>{item.value}</strong>}
+          {item.change !== undefined && item.change !== null && <Delta value={item.change} />}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
-/** Change against the period before; none when there was nothing before. */
-function change(now: number, before: number): number | null {
-  return before > 0 ? Math.round(((now - before) / before) * 100) : null;
+function GrowthPanel({ showPartners }: { showPartners: boolean }) {
+  const [months, setMonths] = useState("6");
+  const [load] = useLoad(() => adminPanelApi.growth(Number(months)), [months]);
+  return (
+    <Panel
+      id="dash-growth"
+      title={showPartners ? "Customer, Partner & Subscription Trend" : "Customer & Subscription Trend"}
+      description="Growth over time"
+      actions={<Select label="Trend range" size="sm" value={months} options={RANGE_OPTIONS} onChange={setMonths} />}
+    >
+      <LoadGate load={load} what="the trend">
+        {(t) => {
+          const series = [
+            { key: "customers", label: "Customers", tone: "green" as const, values: t.customers },
+            { key: "subscriptions", label: "Subscriptions", tone: "blue" as const, values: t.subscriptions },
+            ...(t.partners ? [{ key: "partners", label: "Partners", tone: "orange" as const, values: t.partners }] : []),
+          ];
+          const empty = series.every((s) => s.values.every((v) => v === 0));
+          return empty ? (
+            <EmptyState icon="chart" title="Nothing to chart yet" hint="Growth appears here as customers join." compact />
+          ) : (
+            <div className={styles.chartWithLegend}>
+              <MultiLineChart
+                caption={`Customers, subscriptions and partners at each month end, ${monthLabel(t.months[0])} to ${monthLabel(t.months[t.months.length - 1])}`}
+                months={t.months}
+                series={series}
+                format={compact}
+              />
+              <Legend
+                items={series.map((s) => {
+                  const last = s.values[s.values.length - 1] ?? 0;
+                  const first = s.values[0] ?? 0;
+                  return {
+                    key: s.key,
+                    label: s.label,
+                    tone: s.tone,
+                    value: formatNumber(last),
+                    change: first > 0 ? ((last - first) * 100) / first : null,
+                  };
+                })}
+              />
+            </div>
+          );
+        }}
+      </LoadGate>
+    </Panel>
+  );
+}
+
+function MoneyPanel({ currency }: { currency: string }) {
+  const [months, setMonths] = useState("6");
+  const [load] = useLoad(() => adminPanelApi.money(Number(months), currency || undefined), [months, currency]);
+  return (
+    <Panel
+      id="dash-money"
+      title="Collections vs Sales"
+      description={`Amount (${currency || "per currency"}) by month`}
+      actions={<Select label="Collections range" size="sm" value={months} options={RANGE_OPTIONS} onChange={setMonths} />}
+    >
+      <LoadGate load={load} what="collections and sales">
+        {(t) => {
+          const series = [
+            { key: "collections", label: "Collections", tone: "deep" as const, values: t.collections },
+            { key: "sales", label: "Sales", tone: "light" as const, values: t.sales },
+          ];
+          const empty = series.every((s) => s.values.every((v) => v === 0));
+          const major = (minor: number) => minor / 10 ** (t.currency === "JPY" ? 0 : 2);
+          return empty ? (
+            <EmptyState icon="currency" title="No money movement yet" hint={`Nothing was billed or received in ${t.currency}.`} compact />
+          ) : (
+            <>
+              <GroupedBars
+                caption={`Collections and sales per month in ${t.currency}`}
+                months={t.months}
+                series={series.map((s) => ({ ...s, values: s.values.map(major) }))}
+                format={(n) => compact(n, t.currency)}
+              />
+              <Legend items={series.map((s) => ({ key: s.key, label: s.label, tone: s.tone }))} />
+            </>
+          );
+        }}
+      </LoadGate>
+    </Panel>
+  );
 }
 
 /** 1.2K, 3.4L (lakh) and 1.1Cr (crore) for rupees; 1.2K, 3.4M elsewhere. */
@@ -133,358 +422,163 @@ function compact(n: number, currency?: string): string {
   return trim(n);
 }
 
-const toMajor = (minor: number, currency: string) => minor / 10 ** (currency === "JPY" ? 0 : 2);
-
-/** A row of cards of equal height, its columns set by how many cards it holds,
- * so no card is left alone on a row. */
-function CardRow({ children, label }: { children: React.ReactNode[]; label: string }) {
-  const shown = children.filter(Boolean);
-  if (shown.length === 0) return null;
+function WalletRow({ wallet, icon, credits = false }: { wallet: WalletTotal; icon: string; credits?: boolean }) {
   return (
-    <div className={styles.row} data-count={Math.min(shown.length, 3)} role="group" aria-label={label}>
-      {shown}
-    </div>
-  );
-}
-
-/** A dashboard card: its header, then its content filling the card's height. */
-function Panel({
-  id,
-  title,
-  description,
-  actions,
-  children,
-}: {
-  id: string;
-  title: string;
-  description?: React.ReactNode;
-  actions?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className={`${kit.card} ${styles.panel}`} aria-labelledby={id}>
-      <div className={styles.panelBody}>
-        <SectionHeader id={id} title={title} description={description} actions={actions} />
-        <div className={styles.panelContent}>{children}</div>
-      </div>
-    </section>
-  );
-}
-
-function Overview({ d, permissions }: { d: DashboardData; permissions: string[] }) {
-  const o = d.overview;
-  const range = rangeLabel(o.month);
-  const current = o.month === monthKey(new Date());
-  const period = current ? "this month" : `in ${MONTH_LONG.format(new Date(`${o.first_day}T00:00:00Z`))}`;
-  const subscriptions = Object.values(d.subscriptions).reduce((sum, n) => sum + n, 0);
-  const organizations = d.organizations.active;
-
-  const cards = [
-    o.users && (
-      <StatCard
-        key="users"
-        icon="users"
-        tone="blue"
-        label="Total users"
-        value={formatNumber(o.users.total)}
-        delta={growth(o.users.new, o.users.total)}
-        note={`+${formatNumber(o.users.new)} ${period}`}
-        href={can(permissions, "platform.staff_user.view") ? "/admin/users" : undefined}
-      />
-    ),
-    o.partners && (
-      <StatCard
-        key="partners"
-        icon="handshake"
-        tone="green"
-        label="Total partners"
-        value={formatNumber(o.partners.total)}
-        delta={growth(o.partners.new, o.partners.total)}
-        note={`+${formatNumber(o.partners.new)} ${period}`}
-        href={can(permissions, "platform.staff_partner.view") ? "/admin/partners/all" : undefined}
-      />
-    ),
-    o.products && (
-      <StatCard
-        key="products"
-        icon="box"
-        tone="purple"
-        label="Total products"
-        value={formatNumber(o.products.total)}
-        delta={growth(o.products.new, o.products.total)}
-        note={`${formatNumber(o.products.available)} on sale · +${formatNumber(o.products.new)} ${period}`}
-      />
-    ),
-    o.orders && (
-      <StatCard
-        key="orders"
-        icon="receipt"
-        tone="orange"
-        label="Paid orders"
-        value={formatNumber(o.orders.paid)}
-        delta={change(o.orders.paid, o.orders.previous)}
-        note={`${formatNumber(o.orders.previous)} in the period before`}
-      />
-    ),
-    <StatCard
-      key="subscriptions"
-      icon="card"
-      tone="red"
-      label="Active subscriptions"
-      value={formatNumber(d.subscriptions.active ?? 0)}
-      note={`${formatNumber(subscriptions)} in all states`}
-      href={can(permissions, "platform.staff_customer.view") ? "/admin/subscriptions" : undefined}
-    />,
-    organizations !== undefined && (
-      <StatCard
-        key="organizations"
-        icon="building"
-        tone="blue"
-        label="Active organizations"
-        value={formatNumber(organizations)}
-        note="Customer workspaces in use"
-      />
-    ),
-  ].filter(Boolean);
-
-  return (
-    <>
-      <StatGrid label="Figures">{cards}</StatGrid>
-
-      <CardRow label="Charts">
-        {[
-          o.revenue && <Revenue key="revenue" overview={o} range={range} />,
-          o.users && (
-            <Panel key="signups" id="dash-signups" title="User registrations" description={range}>
-              {o.users.new === 0 ? (
-                <EmptyState icon="users" title="No sign-ups yet" hint={`Nobody signed up ${period}.`} compact />
-              ) : (
-                <>
-                  <Headline value={formatNumber(o.users.new)} trend={change(o.users.new, o.users.previous)} />
-                  <p className={styles.muted}>New users {period}</p>
-                  <ColumnChart caption={`New users per day, ${range}`} days={series(o, o.users.daily)} format={(n) => compact(n)} />
-                </>
-              )}
-            </Panel>
-          ),
-          o.orders && (
-            <Panel key="sales" id="dash-sales" title="Product-wise sales" description={range}>
-              {o.orders.by_product.length === 0 ? (
-                <EmptyState icon="cart" title="No sales yet" hint={`No orders were paid ${period}.`} compact />
-              ) : (
-                <Donut
-                  caption={`Paid orders per product, ${range}`}
-                  centre="Sales"
-                  slices={o.orders.by_product.map((p) => ({ key: p.code, label: p.name, value: p.orders }))}
-                />
-              )}
-            </Panel>
-          ),
-        ]}
-      </CardRow>
-
-      <CardRow label="Latest activity">
-        {[
-          can(permissions, "platform.staff_user.view") && <RecentUsers key="users" />,
-          can(permissions, "platform.staff_payment.view") && <RecentOrders key="orders" />,
-          can(permissions, "platform.staff_partner.view") && <RecentPartners key="partners" />,
-        ]}
-      </CardRow>
-    </>
-  );
-}
-
-function Headline({ value, trend }: { value: string; trend: number | null }) {
-  return (
-    <p className={styles.headline}>
-      <span>{value}</span>
-      {trend !== null && (
-        <span className={styles.headlineDelta}>
-          <Delta value={trend} />
-          <span className={styles.vs}>vs period before</span>
+    <li>
+      <Link href={credits ? "/admin/wallets/ai-credits" : wallet.kind === "platform" ? "/admin/wallets" : "/admin/wallets/consumption"} className={styles.walletRow}>
+        <span className={styles.panelIcon}>
+          <Icon name={icon} size={20} />
         </span>
-      )}
-    </p>
-  );
-}
-
-/** Money collected per day in one currency; a choice when there are several
- * (amounts are never converted or added across currencies). */
-function Revenue({ overview, range }: { overview: DashboardOverview; range: string }) {
-  const rows = overview.revenue ?? [];
-  const largest = [...rows].sort((a, b) => b.amount_minor - a.amount_minor)[0]?.currency ?? "";
-  const [picked, setPicked] = useState("");
-  const row = rows.find((r) => r.currency === (picked || largest));
-  return (
-    <Panel
-      id="dash-revenue"
-      title="Revenue overview"
-      description={range}
-      actions={
-        rows.length > 1 && row ? (
-          <Select
-            label="Currency"
-            size="sm"
-            value={row.currency}
-            options={rows.map((r) => ({ value: r.currency, label: r.currency }))}
-            onChange={setPicked}
-          />
-        ) : undefined
-      }
-    >
-      {!row ? (
-        <EmptyState icon="currency" title="No payments yet" hint={`No payments were collected in ${range}.`} compact />
-      ) : (
-        <>
-          <Headline value={formatMoney(row.amount_minor, row.currency)} trend={change(row.amount_minor, row.previous_minor)} />
-          <p className={styles.muted}>
-            {formatNumber(row.payments)} {row.payments === 1 ? "payment" : "payments"} collected
-          </p>
-          <LineChart
-            caption={`Collected per day in ${row.currency}, ${range}`}
-            days={series(overview, row.daily.map((v) => (v === null ? null : toMajor(v, row.currency))))}
-            format={(n) => compact(n, row.currency)}
-          />
-        </>
-      )}
-    </Panel>
-  );
-}
-
-// --- the latest rows ---------------------------------------------------------------------
-
-function ListPanel({ id, title, href, children }: { id: string; title: string; href: string; children: React.ReactNode }) {
-  return (
-    <Panel
-      id={id}
-      title={title}
-      actions={
-        <Link href={href} className={styles.viewAll}>
-          View all<span className="w360-visually-hidden"> {title.toLowerCase().replace("recent ", "")}</span>
-        </Link>
-      }
-    >
-      {children}
-    </Panel>
-  );
-}
-
-/** One row of a latest-items list: avatar, name (a link) and a muted second
- * line cut to fit, then the status and date on the right. */
-function Item({
-  name,
-  sub,
-  href,
-  avatar = true,
-  side,
-  date,
-}: {
-  name: string;
-  sub?: string | null;
-  href: string;
-  avatar?: boolean;
-  side?: React.ReactNode;
-  date?: string;
-}) {
-  return (
-    <li className={styles.item}>
-      {avatar && <Avatar name={name} />}
-      <span className={styles.itemText}>
-        <Link href={href} className={styles.itemName}>
-          {name}
-        </Link>
-        {sub && (
-          <span className={styles.itemSub}>
-            <Trunc>{sub}</Trunc>
-          </span>
-        )}
-      </span>
-      <span className={styles.itemSide}>
-        {side}
-        {date && <span className={styles.itemDate}>{date}</span>}
-      </span>
+        <span className={styles.walletText}>
+          <span>{wallet.label}</span>
+          <strong>
+            {credits
+              ? `${formatNumber(wallet.balance)} credits`
+              : wallet.currency
+                ? formatMoney(wallet.balance, wallet.currency)
+                : formatNumber(wallet.balance)}
+          </strong>
+        </span>
+        <span className={styles.walletCount}>
+          {formatNumber(wallet.wallets)} {wallet.wallets === 1 ? "wallet" : "wallets"}
+        </span>
+      </Link>
     </li>
   );
 }
 
-function Items({ empty, icon, children }: { empty: string; icon: string; children: React.ReactNode[] }) {
-  if (children.length === 0) return <EmptyState icon={icon} title={empty} compact />;
-  return <ul className={styles.items}>{children}</ul>;
-}
-
-function RecentUsers() {
-  const [load] = useLoad(() => adminConsoleApi.users({ limit: 5 }), []);
+function WalletPanel({ wallets }: { wallets: NonNullable<DashboardOverviewV2["wallets"]> }) {
   return (
-    <ListPanel id="dash-recent-users" title="Recent users" href="/admin/users">
-      <LoadGate load={load} what="the latest users">
-        {(page) => (
-          <Items empty="No users yet." icon="users">
-            {page.results.map((u) => (
-              <Item
-                key={u.user_id}
-                name={u.name || u.email}
-                sub={u.name ? u.email : u.is_staff ? "Staff" : null}
-                href={`/admin/users/${u.user_id}`}
-                side={<StatusBadge value={u.status} />}
-                date={formatDate(u.created_at)}
-              />
-            ))}
-          </Items>
-        )}
-      </LoadGate>
-    </ListPanel>
+    <Panel id="dash-wallets" title="Wallet Balance Summary" description="Current platform wallet balances">
+      <ul className={styles.walletList}>
+        <WalletRow wallet={wallets.platform} icon="wallet" />
+        <WalletRow wallet={wallets.ai_credits} icon="sparkles" credits />
+        <WalletRow wallet={wallets.consumption} icon="bolt" />
+      </ul>
+    </Panel>
   );
 }
 
-function RecentOrders() {
-  const [load] = useLoad(() => adminConsoleApi.orders({ limit: 5 }), []);
+const PENDING_ICON: Record<string, { icon: string; tone: StatTone }> = {
+  kyc_reviews: { icon: "shield", tone: "red" },
+  failed_payments: { icon: "card", tone: "orange" },
+  low_balance: { icon: "wallet", tone: "orange" },
+};
+
+function PendingPanel({ items }: { items: PendingAction[] }) {
   return (
-    <ListPanel id="dash-recent-orders" title="Recent orders" href="/admin/orders">
-      <LoadGate load={load} what="the latest orders">
-        {(page) => (
-          <Items empty="No orders yet." icon="receipt">
-            {page.results.map((o) => (
-              <Item
-                key={o.order_id}
-                avatar={false}
-                name={o.number}
-                sub={[o.organization_name, o.description].filter(Boolean).join(" · ")}
-                href={`/admin/orders?q=${encodeURIComponent(o.number)}`}
-                side={
-                  <>
-                    <span className={styles.amount}>{formatMoney(o.amount_due_minor, o.currency)}</span>
-                    <StatusBadge value={o.status} />
-                  </>
-                }
-              />
-            ))}
-          </Items>
-        )}
-      </LoadGate>
-    </ListPanel>
+    <Panel id="dash-pending" title="Pending Actions" description="Items that need your attention" icon="alert">
+      {items.length === 0 ? (
+        <EmptyState icon="checkCircle" title="Nothing for you here" hint="Your access has no queues to work." compact />
+      ) : (
+        <ul className={styles.pendingList}>
+          {items.map((item) => {
+            const look = PENDING_ICON[item.key] ?? { icon: "alert", tone: "orange" as StatTone };
+            return (
+              <li key={item.key} className={styles.pendingItem} data-tone={item.count > 0 ? look.tone : undefined}>
+                <span className={styles.figureIcon} data-tone={look.tone}>
+                  <Icon name={look.icon} size={18} />
+                </span>
+                <span className={styles.pendingText}>
+                  <strong>{item.label}</strong>
+                  <span>{item.hint}</span>
+                </span>
+                <span className={styles.pendingCount}>{formatNumber(item.count)}</span>
+                <Link href={item.href} className={styles.pendingAction}>
+                  {item.action}
+                  <span className="w360-visually-hidden"> {item.label}</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Panel>
   );
 }
 
-function RecentPartners() {
-  const [load] = useLoad(() => adminApi.partners({ limit: 5 }), []);
+const ACTIVITY_ICON: Record<string, string> = {
+  customer_registered: "users",
+  partner_approved: "handshake",
+  partner_rejected: "xCircle",
+  partner_correction_required: "edit",
+  payment_succeeded: "currency",
+  payment_failed: "alert",
+  subscription_activated: "card",
+};
+
+function ActivityPanel({ events }: { events: ActivityEvent[] }) {
   return (
-    <ListPanel id="dash-recent-partners" title="Recent partners" href="/admin/partners/all">
-      <LoadGate load={load} what="the latest partners">
-        {(page) => (
-          <Items empty="No partners yet." icon="handshake">
-            {page.results.map((p) => (
-              <Item
-                key={p.id}
-                name={p.display_name}
-                sub={p.contact_email || p.code}
-                href={`/admin/partners/${p.id}`}
-                side={<StatusBadge value={p.status} />}
-                date={formatDate(p.created_at)}
-              />
-            ))}
-          </Items>
-        )}
-      </LoadGate>
-    </ListPanel>
+    <Panel id="dash-activity" title="Recent Activities" description="Latest platform activities" icon="diagnostics">
+      {events.length === 0 ? (
+        <EmptyState icon="diagnostics" title="No activity yet" hint="Registrations, approvals and payments appear here." compact />
+      ) : (
+        <ul className={styles.activityList}>
+          {events.map((event, i) => (
+            <li key={`${event.kind}-${event.at}-${i}`}>
+              <span className={styles.activityIcon}>
+                <Icon name={ACTIVITY_ICON[event.kind] ?? "info"} size={16} />
+              </span>
+              <span className={styles.activityText}>
+                <Link href={event.href}>
+                  {event.title}
+                  {event.amount_minor !== undefined && event.currency
+                    ? ` (${formatMoney(event.amount_minor, event.currency)})`
+                    : ""}
+                </Link>
+                {event.detail && <span>{event.detail}</span>}
+              </span>
+              <time className={styles.activityTime} dateTime={event.at}>
+                {formatRelative(event.at)}
+              </time>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
+function TopProductsPanel({ rows, period }: { rows: TopProduct[]; period: DashboardOverviewV2["period"] }) {
+  return (
+    <Panel
+      id="dash-products"
+      title="Top Products"
+      description="By active subscriptions"
+      icon="box"
+      actions={
+        <Link href="/admin/products" className={styles.viewAll}>
+          View all<span className="w360-visually-hidden"> products</span>
+        </Link>
+      }
+    >
+      {rows.length === 0 ? (
+        <EmptyState icon="box" title="No products sold yet" hint="Products appear once customers subscribe." compact />
+      ) : (
+        <div className={styles.tableScroll}>
+          <table className={styles.productTable}>
+            <caption className="w360-visually-hidden">
+              Top products, revenue from {formatDate(period.from)} to {formatDate(period.to)}
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Product</th>
+                <th scope="col">Active Subscriptions</th>
+                <th scope="col">Revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.code}>
+                  <th scope="row">{row.name}</th>
+                  <td>{formatNumber(row.active_subscriptions)}</td>
+                  <td>{formatMoney(row.revenue_minor, row.currency)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
   );
 }

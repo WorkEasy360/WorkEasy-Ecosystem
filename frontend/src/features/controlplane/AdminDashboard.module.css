@@ -1,31 +1,538 @@
-/* The Super Admin dashboard (2026-11-07 design system). Tokens only. The page,
-   header and KPI cards come from the kit; this file lays out the rows of
-   equal-height cards, the charts and the latest-items lists. Every grid child
-   that can hold wide content gets min-width: 0 (reflow at 320px). */
+/* The Admin dashboard (2026-11-09, the owner's reference image). Tokens only. Every
+   grid child that can hold wide content gets min-width: 0 (reflow at 320px). */
 
-/* --- rows of cards: columns follow the number of cards, never an orphan ---- */
+/* --- the period picker --------------------------------------------------------- */
 
-.row {
+.period {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+}
+
+.dateField input {
+  width: 150px;
+}
+
+/* --- the six figures ------------------------------------------------------------ */
+
+.figures {
   display: grid;
   gap: var(--w360-space-4);
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.figureCard {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--w360-space-3);
+  min-width: 0;
+  padding: var(--w360-space-4);
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-gray-200);
+  border-radius: 14px;
+  box-shadow: var(--w360-shadow-card);
+  color: inherit;
+  text-decoration: none;
+}
+
+a.figureCard:hover {
+  border-color: var(--w360-admin-action);
+}
+
+.figureIcon {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.figureIcon[data-tone="green"] {
+  background: var(--w360-tile-green-bg);
+  color: var(--w360-tile-green);
+}
+
+.figureIcon[data-tone="blue"] {
+  background: var(--w360-tile-blue-bg);
+  color: var(--w360-tile-blue);
+}
+
+.figureIcon[data-tone="purple"] {
+  background: var(--w360-tile-purple-bg);
+  color: var(--w360-tile-purple);
+}
+
+.figureIcon[data-tone="orange"] {
+  background: var(--w360-tile-orange-bg);
+  color: var(--w360-tile-orange);
+}
+
+.figureIcon[data-tone="red"] {
+  background: var(--w360-tile-red-bg);
+  color: var(--w360-tile-red);
+}
+
+.figureText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.figureLabel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--w360-text-secondary);
+  font-size: var(--w360-fs-body);
+  font-weight: 500;
+}
+
+.figureValue {
+  color: var(--w360-text);
+  font-size: var(--w360-fs-fig, 24px);
+  font-weight: 700;
+  line-height: 32px;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.figureFoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  color: var(--w360-text-muted);
+  font-size: var(--w360-fs-meta);
+}
+
+/* --- rows of panels ------------------------------------------------------------- */
+
+.chartRow,
+.bottomRow {
+  display: grid;
+  gap: var(--w360-space-4);
   align-items: stretch;
 }
 
-@media (min-width: 900px) {
-  .row[data-count="2"] {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.chartRow {
+  grid-template-columns: minmax(0, 5fr) minmax(0, 4fr) minmax(0, 3fr);
 }
 
-@media (min-width: 1180px) {
-  .row[data-count="3"] {
+.bottomRow {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.chartRow > *,
+.bottomRow > * {
+  min-width: 0;
+}
+
+/* A row with fewer panels than usual (fewer grants) shares its width equally. */
+.chartRow:has(> :nth-child(2):last-child),
+.bottomRow:has(> :nth-child(2):last-child) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.chartRow:has(> :only-child),
+.bottomRow:has(> :only-child) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (max-width: 1500px) {
+  .figures {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .chartRow,
+  .chartRow:has(> :nth-child(2):last-child) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chartRow > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
+  .bottomRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .bottomRow > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
 }
 
-.row > * {
+@media (max-width: 900px) {
+  .figures {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chartRow,
+  .bottomRow,
+  .chartRow:has(> :nth-child(2):last-child),
+  .bottomRow:has(> :nth-child(2):last-child) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .figures {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.panelHead {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--w360-space-3);
   min-width: 0;
+}
+
+.panelHead > :last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.panelIcon {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--w360-admin-accent-soft);
+  color: var(--w360-admin-action);
+}
+
+/* --- charts --------------------------------------------------------------------- */
+
+.chartWithLegend {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+@media (max-width: 640px) {
+  .chartWithLegend {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A chart too narrow to read scrolls by itself; the page never does. */
+.chartScroll {
+  overflow-x: auto;
+}
+
+.chartScroll > .plot {
+  min-width: 340px;
+}
+
+.seriesLegend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2) var(--w360-space-4);
+  font-size: var(--w360-fs-meta);
+}
+
+.chartWithLegend .seriesLegend {
+  flex-direction: column;
+}
+
+.seriesLegend li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+}
+
+.seriesLabel {
+  color: var(--w360-text-secondary);
+}
+
+.seriesLegend strong {
+  flex-basis: 100%;
+  order: 3;
+  color: var(--w360-text);
+  font-size: var(--w360-fs-body);
+}
+
+.tipRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch[data-tone="green"],
+.seriesGroup[data-tone="green"] {
+  --w360-series: var(--w360-admin-action);
+}
+
+.swatch[data-tone="blue"],
+.seriesGroup[data-tone="blue"] {
+  --w360-series: var(--w360-chart-3);
+}
+
+.swatch[data-tone="orange"],
+.seriesGroup[data-tone="orange"] {
+  --w360-series: var(--w360-chart-4);
+}
+
+.swatch[data-tone="deep"],
+.seriesBar[data-tone="deep"] {
+  --w360-series: var(--w360-admin-action);
+}
+
+.swatch[data-tone="light"],
+.seriesBar[data-tone="light"] {
+  --w360-series: var(--w360-hero-bar-soft);
+}
+
+.swatch[data-tone] {
+  background: var(--w360-series);
+}
+
+.seriesLine {
+  fill: none;
+  stroke: var(--w360-series);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.seriesArea {
+  fill: color-mix(in srgb, var(--w360-series) 10%, transparent);
+}
+
+.seriesPoint {
+  fill: var(--w360-surface);
+  stroke: var(--w360-series);
+  stroke-width: 2;
+}
+
+.seriesBar {
+  fill: var(--w360-series);
+}
+
+/* --- the three balances ------------------------------------------------------- */
+
+.walletList,
+.pendingList,
+.activityList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--w360-space-2);
+}
+
+.walletRow {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-3) 0;
+  border-bottom: 1px solid var(--w360-gray-200);
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+
+li:last-child > .walletRow {
+  border-bottom: none;
+}
+
+.walletRow:hover strong {
+  color: var(--w360-brand);
+}
+
+.walletText {
+  flex: 1;
+  display: grid;
+  min-width: 0;
+  font-size: var(--w360-fs-body);
+  color: var(--w360-text-secondary);
+}
+
+.walletText strong {
+  color: var(--w360-text);
+  font-size: var(--w360-fs-section);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.walletCount {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: var(--w360-radius-pill);
+  background: var(--w360-admin-accent-soft);
+  color: var(--w360-brand);
+  font-size: var(--w360-fs-meta);
+  font-weight: 600;
+}
+
+/* --- pending actions ------------------------------------------------------------ */
+
+.pendingItem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2) var(--w360-space-3);
+  padding: var(--w360-space-3);
+  border-radius: 12px;
+  background: var(--w360-gray-50);
+}
+
+.pendingItem[data-tone="red"] {
+  background: var(--w360-tile-red-bg);
+}
+
+.pendingItem[data-tone="orange"] {
+  background: var(--w360-tile-orange-bg);
+}
+
+.pendingText {
+  flex: 1 1 140px;
+  display: grid;
+  min-width: 0;
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-text-secondary);
+}
+
+.pendingText strong {
+  color: var(--w360-text);
+  font-size: var(--w360-fs-body);
+}
+
+.pendingCount {
+  flex: none;
+  min-width: 32px;
+  padding: 2px 8px;
+  border-radius: var(--w360-radius-pill);
+  background: var(--w360-surface);
+  color: var(--w360-text);
+  font-size: var(--w360-fs-body);
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.pendingAction {
+  flex: none;
+  padding: 6px 14px;
+  border: 1px solid var(--w360-admin-action);
+  border-radius: 8px;
+  background: var(--w360-surface);
+  color: var(--w360-brand);
+  font-size: var(--w360-fs-body);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.pendingAction:hover {
+  background: var(--w360-admin-action);
+  color: var(--w360-admin-action-text);
+}
+
+/* --- recent activity ------------------------------------------------------------- */
+
+.activityList li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--w360-space-3);
+  padding: var(--w360-space-2) 0;
+  border-bottom: 1px solid var(--w360-gray-200);
+  min-width: 0;
+}
+
+.activityList li:last-child {
+  border-bottom: none;
+}
+
+.activityIcon {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--w360-admin-accent-soft);
+  color: var(--w360-admin-action);
+}
+
+.activityText {
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.activityText a {
+  color: var(--w360-text);
+  font-size: var(--w360-fs-body);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.activityText a:hover {
+  color: var(--w360-brand);
+  text-decoration: underline;
+}
+
+.activityTime {
+  flex: none;
+  color: var(--w360-text-muted);
+  font-size: var(--w360-fs-meta);
+  white-space: nowrap;
+}
+
+/* --- top products ---------------------------------------------------------------- */
+
+.tableScroll {
+  overflow-x: auto;
+}
+
+.productTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--w360-fs-body);
+}
+
+.productTable th,
+.productTable td {
+  padding: var(--w360-space-2) var(--w360-space-3);
+  border-bottom: 1px solid var(--w360-gray-200);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.productTable thead th {
+  background: var(--w360-gray-50);
+  color: var(--w360-text-muted);
+  font-size: var(--w360-fs-meta);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.productTable th:first-child {
+  text-align: left;
+}
+
+.productTable tbody th {
+  color: var(--w360-text);
+  font-weight: 500;
+}
+
+.productTable tbody tr:last-child th,
+.productTable tbody tr:last-child td {
+  border-bottom: none;
 }
 
 /* A card whose content fills its height, so cards in a row end together. */

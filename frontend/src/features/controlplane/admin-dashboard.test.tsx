@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { AdminShell } from "./ControlShell";
-import { Dashboard, rangeLabel } from "./AdminDashboard";
+import { Dashboard } from "./AdminDashboard";
 import { AdminSearch } from "./AdminTopbar";
 import { foldSlices } from "./dashboardCharts";
 import { AdminContextForTest, SIGNED_IN, expectNoViolations, mockApi, ok } from "./testSupport";
@@ -27,224 +27,222 @@ beforeEach(() => {
   pathname = "/admin";
 });
 
-const thisMonth = () => {
-  const now = new Date();
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+const ALL = [
+  "platform.staff_customer.view",
+  "platform.staff_partner.view",
+  "platform.staff_payment.view",
+  "platform.staff_kyc.view",
+  "platform.staff_wallet.view",
+];
+
+const wallet = (kind: string, label: string, balance: number, currency = "INR") => ({
+  kind,
+  label,
+  currency,
+  balance,
+  wallets: 2,
+  other_currencies: [],
+});
+
+const OVERVIEW = {
+  period: { from: "2026-10-11", to: "2026-11-09", days: 30, compared_from: "2026-09-11", compared_to: "2026-10-10" },
+  definitions: { sales: "Invoices issued in the period.", collections: "Money received less refunds." },
+  currency: "INR",
+  currencies: ["INR"],
+  cards: {
+    customers: { total: 412, at_start: 400, added: 12, change_percent: 3 },
+    partners: { total: 28, at_start: 28, added: 0, change_percent: 0 },
+    active_subscriptions: { total: 97, at_start: 0, added: 97, change_percent: null },
+    collections: { amount_minor: 123456, previous_minor: 100000, change_percent: 23.5 },
+    sales: { amount_minor: 200000, previous_minor: 0, change_percent: null },
+  },
+  wallets: {
+    platform: wallet("platform", "Platform Wallet", 50000),
+    ai_credits: wallet("ai_credits", "AI Credits", 4200, ""),
+    consumption: wallet("consumption", "Consumption Wallet", 7000),
+  },
+  pending: [
+    { key: "kyc_reviews", label: "Partner KYC Reviews", hint: "Waiting", count: 3, action: "Review", href: "/admin/partners/applications" },
+    { key: "failed_payments", label: "Failed Payments / Activations", hint: "Waiting", count: 1, action: "Resolve", href: "/admin/payments/failed" },
+  ],
+  activity: [
+    { kind: "customer_registered", at: "2026-11-09T01:00:00Z", title: "New customer: Acme Logistics", href: "/admin/customers/o1" },
+    { kind: "payment_failed", at: "2026-11-09T00:30:00Z", title: "Payment failed for BrightMart", amount_minor: 2400000, currency: "INR", href: "/admin/customers/o2" },
+  ],
+  top_products: [{ code: "easy_crm", name: "Easy CRM", active_subscriptions: 40, revenue_minor: 150000, currency: "INR" }],
 };
 
-function overview(extra: Record<string, unknown> = {}) {
-  const month = thisMonth();
-  const days = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).getUTCDate();
-  const daily = Array.from({ length: days }, (_, i) => (i < 3 ? i + 1 : null));
-  return {
-    month,
-    first_day: `${month}-01`,
-    last_day: `${month}-${days}`,
-    compared_with: { first_day: "2026-09-01", last_day: "2026-09-03" },
-    ...extra,
-    ...(extra.users === undefined ? {} : { users: { ...(extra.users as object), daily } }),
-  };
+const GROWTH = { months: ["2026-10", "2026-11"], customers: [400, 412], subscriptions: [0, 97], partners: [28, 28] };
+const MONEY = { months: ["2026-10", "2026-11"], currency: "INR", currencies: ["INR"], sales: [100000, 200000], collections: [90000, 123456] };
+
+function dashboardApi(overview: unknown = OVERVIEW) {
+  return mockApi({
+    "GET /api/v1/admin/dashboard/overview": [ok(overview)],
+    "GET /api/v1/admin/dashboard/growth": [ok(GROWTH)],
+    "GET /api/v1/admin/dashboard/money": [ok(MONEY)],
+  });
 }
 
-const BASE = {
-  organizations: { active: 3 },
-  subscriptions: { active: 7, cancelled: 2 },
-  mrr: { available: false, reason: "No safe global figure exists." },
-  outbox: { pending: 0 },
-};
-
-const EMPTY_PAGE = { results: [], next_cursor: null, has_more: false };
-
 describe("the dashboard", () => {
-  it("shows the month's figures, charts and latest rows when the grants cover them", async () => {
-    const calls = mockApi({
-      "GET /api/v1/auth/session": [ok({ authenticated: true, user_id: "u1", email: "s@example.com", name: "Aman Gupta" })],
-      "GET /api/v1/admin/dashboard": [
-        ok({
-          ...BASE,
-          overview: overview({
-            users: { total: 1248, new: 134, previous: 110 },
-            partners: { total: 86, new: 6 },
-            products: { total: 24, available: 20, new: 4 },
-            orders: {
-              paid: 12,
-              previous: 10,
-              by_product: [
-                { code: "easy_crm", name: "Easy CRM", orders: 9 },
-                { code: "easybook", name: "EasyBook", orders: 3 },
-              ],
-            },
-            revenue: [
-              { currency: "INR", amount_minor: 42895000, payments: 12, previous_minor: 36351700, daily: [100000, null] },
-            ],
-          }),
-        }),
-      ],
-      "GET /api/v1/admin/users": [
-        ok({
-          ...EMPTY_PAGE,
-          results: [
-            {
-              user_id: "u9",
-              email: "rahul@example.com",
-              name: "Rahul Sharma",
-              status: "active",
-              is_staff: false,
-              created_at: "2026-10-25T10:00:00Z",
-            },
-          ],
-        }),
-      ],
-      "GET /api/v1/admin/orders": [
-        ok({
-          ...EMPTY_PAGE,
-          results: [
-            {
-              order_id: "o1",
-              organization_id: "org",
-              organization_name: "Rahul Co",
-              number: "ORD-1025",
-              kind: "plan",
-              status: "paid",
-              description: "Easy CRM Pro",
-              product_codes: ["easy_crm"],
-              currency: "INR",
-              amount_due_minor: 500000,
-              created_at: "2026-10-25T10:00:00Z",
-              paid_at: "2026-10-25T10:01:00Z",
-            },
-          ],
-        }),
-      ],
-      "GET /api/v1/admin/partners": [ok(EMPTY_PAGE)],
-    });
+  it("shows the six figures, what is waiting, what happened and the top products; passes axe", async () => {
+    dashboardApi();
     const { container } = render(
-      <AdminContextForTest
-        permissions={[
-          "platform.staff_customer.view",
-          "platform.staff_user.view",
-          "platform.staff_payment.view",
-          "platform.staff_partner.view",
-        ]}
-      >
-        <main>
-          <Dashboard />
-        </main>
+      <AdminContextForTest permissions={ALL}>
+        <Dashboard />
       </AdminContextForTest>,
     );
-    expect(await screen.findByText("Total users")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument();
-    expect(screen.getByText(/Welcome back, Aman\./)).toBeInTheDocument();
-    // Growth of the total: 134 added to the 1,114 there before is 12%.
-    expect(screen.getByText("1,248")).toBeInTheDocument();
-    expect(screen.getByText("+134 this month")).toBeInTheDocument();
-    expect(screen.getByText("Total users").parentElement).toHaveTextContent(/Up\s*12%/);
-    expect(screen.getByText("+6 this month")).toBeInTheDocument();
-    expect(screen.getByText("Active subscriptions").parentElement).toHaveTextContent("7");
-    expect(screen.getByText("9 in all states")).toBeInTheDocument();
-    // Six cards (3 + 3 or 6 across): no card is left alone on a row.
-    expect(screen.getByRole("group", { name: "Figures" })).toHaveAttribute("data-count", "6");
-    expect(screen.getByRole("group", { name: "Charts" })).toHaveAttribute("data-count", "3");
-    // Revenue per currency, compared with the period before (+18%).
-    const revenue = screen.getByRole("heading", { name: "Revenue overview" }).closest("section")!;
-    expect(revenue).toHaveTextContent(/Up\s*18%/);
-    expect(within(revenue).getByText(/12 payments/)).toBeInTheDocument();
-    // The donut's legend names every product with its share.
-    const sales = screen.getByRole("heading", { name: "Product-wise sales" }).closest("section")!;
-    expect(within(sales).getByText("Easy CRM")).toBeInTheDocument();
-    expect(within(sales).getByText("75%")).toBeInTheDocument();
-    // The latest rows, five at most.
-    expect(await screen.findByRole("link", { name: "Rahul Sharma" })).toHaveAttribute("href", "/admin/users/u9");
-    // Avatar, name and the email under it, cut to fit (shown whole on hover).
-    expect(screen.getByTitle("rahul@example.com")).toBeInTheDocument();
-    expect(await screen.findByText("ORD-1025")).toBeInTheDocument();
-    expect(await screen.findByText("No partners yet.")).toBeInTheDocument();
-    for (const key of ["GET /api/v1/admin/users", "GET /api/v1/admin/orders", "GET /api/v1/admin/partners"]) {
-      expect(calls.find((c) => c.key === key)?.url).toContain("limit=5");
+    const figures = await screen.findByRole("group", { name: "Figures" });
+    for (const label of ["Customers", "Partners", "Active Subscriptions", "Collections", "Sales", "Wallet Summary"]) {
+      expect(within(figures).getByText(label)).toBeInTheDocument();
     }
+    expect(within(figures).getByText("412")).toBeInTheDocument();
+    expect(within(figures).getByText("₹1,234.56")).toBeInTheDocument();
+    // Platform + Consumption only: credits are not money and are never added in.
+    expect(within(figures).getByText("₹570.00")).toBeInTheDocument();
+    expect(within(figures).getByRole("link", { name: /^Customers/ })).toHaveAttribute("href", "/admin/customers");
+    expect(within(figures).getByRole("link", { name: /^Wallet Summary/ })).toHaveAttribute("href", "/admin/wallets");
+    // No earlier figure means no invented percentage.
+    expect(within(figures).getByRole("link", { name: /^Sales/ }).textContent).toMatch(/No earlier figure/);
+
+    const pending = screen.getByRole("region", { name: "Pending Actions" });
+    expect(within(pending).getByText("Partner KYC Reviews", { selector: "strong" })).toBeInTheDocument();
+    expect(within(pending).getByRole("link", { name: /Review/ })).toHaveAttribute("href", "/admin/partners/applications");
+
+    const activity = screen.getByRole("region", { name: "Recent Activities" });
+    expect(within(activity).getByRole("link", { name: /Payment failed for BrightMart \(₹24,000\.00\)/ })).toHaveAttribute("href", "/admin/customers/o2");
+
+    const products = screen.getByRole("region", { name: "Top Products" });
+    expect(within(products).getByRole("rowheader", { name: "Easy CRM" })).toBeInTheDocument();
+
+    const wallets = screen.getByRole("region", { name: "Wallet Balance Summary" });
+    expect(within(wallets).getByText("4,200 credits")).toBeInTheDocument();
+    expect(screen.queryByText(/commission/i, { selector: "strong" })).toBeNull();
+
+    await screen.findByRole("table", { name: /Customers, subscriptions and partners/ });
+    await screen.findByRole("table", { name: /Collections and sales per month in INR/ });
     await expectNoViolations(container);
   });
 
-  it("leaves out every section the staff member isn't granted, and asks for nothing more", async () => {
+  it("leaves out what the grants do not cover, and asks for nothing more", async () => {
     const calls = mockApi({
-      "GET /api/v1/auth/session": [SIGNED_IN],
-      "GET /api/v1/admin/dashboard": [ok({ ...BASE, overview: overview() })],
-    });
-    const { container } = render(
-      <AdminContextForTest permissions={["platform.staff_customer.view"]}>
-        <main>
-          <Dashboard />
-        </main>
-      </AdminContextForTest>,
-    );
-    expect(await screen.findByText("Active subscriptions")).toBeInTheDocument();
-    // Two cards: two columns, no orphan.
-    expect(screen.getByRole("group", { name: "Figures" })).toHaveAttribute("data-count", "2");
-    for (const hidden of ["Total users", "Total partners", "Revenue overview", "User registrations", "Recent users", "Recent orders"]) {
-      expect(screen.queryByText(hidden)).not.toBeInTheDocument();
-    }
-    expect(calls.map((c) => c.key).filter((k) => k !== "GET /api/v1/auth/session")).toEqual(["GET /api/v1/admin/dashboard"]);
-    await expectNoViolations(container);
-  });
-
-  it("labels this month up to today, never the whole month", () => {
-    expect(rangeLabel("2026-11", new Date(Date.UTC(2026, 10, 7)))).toBe("1 Nov – 7 Nov 2026");
-    expect(rangeLabel("2026-10", new Date(Date.UTC(2026, 10, 7)))).toBe("1 Oct – 31 Oct 2026");
-  });
-
-  it("asks for the period chosen in the header's one period control", async () => {
-    const calls = mockApi({
-      "GET /api/v1/auth/session": [SIGNED_IN],
-      "GET /api/v1/admin/dashboard": [ok({ ...BASE, overview: overview() })],
+      "GET /api/v1/admin/dashboard/overview": [
+        ok({
+          period: OVERVIEW.period,
+          definitions: OVERVIEW.definitions,
+          cards: { customers: OVERVIEW.cards.customers, active_subscriptions: OVERVIEW.cards.active_subscriptions },
+          pending: [],
+          activity: [],
+        }),
+      ],
+      "GET /api/v1/admin/dashboard/growth": [ok({ months: GROWTH.months, customers: GROWTH.customers, subscriptions: GROWTH.subscriptions })],
     });
     render(
       <AdminContextForTest permissions={["platform.staff_customer.view"]}>
         <Dashboard />
       </AdminContextForTest>,
     );
-    const picker = await screen.findByRole("combobox", { name: "Period" });
-    expect(picker).toHaveTextContent(/^This month · 1 \w{3} – \d{1,2} \w{3} \d{4}/);
-    fireEvent.click(picker);
-    const options = within(screen.getByRole("listbox", { name: "Period" })).getAllByRole("option");
-    expect(options).toHaveLength(12);
-    expect(options[1]).toHaveTextContent(/^Last month · /);
-    fireEvent.click(options[1]);
-    const now = new Date();
-    const previous = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
-    await waitFor(() => expect(calls.some((c) => c.url.includes(`month=${previous}`))).toBe(true));
-    // One period control: no card carries its own month chip or picker.
-    expect(screen.getAllByRole("combobox")).toHaveLength(1);
+    const figures = await screen.findByRole("group", { name: "Figures" });
+    expect(within(figures).queryByText("Sales")).toBeNull();
+    expect(within(figures).queryByText("Wallet Summary")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Top Products" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Collections vs Sales" })).toBeNull();
+    await waitFor(() => expect(calls.map((c) => c.key)).toContain("GET /api/v1/admin/dashboard/growth"));
+    expect(calls.map((c) => c.key)).not.toContain("GET /api/v1/admin/dashboard/money");
   });
 
-  it("says plainly when nothing was collected or sold", async () => {
+  it("asks for the period chosen, including a custom range", async () => {
+    const calls = dashboardApi();
+    render(
+      <AdminContextForTest permissions={ALL}>
+        <Dashboard />
+      </AdminContextForTest>,
+    );
+    await screen.findByRole("group", { name: "Figures" });
+    fireEvent.click(screen.getByRole("combobox", { name: "Period" }));
+    fireEvent.click(screen.getByRole("option", { name: "Last 90 Days" }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.key === "GET /api/v1/admin/dashboard/overview" && c.url.includes("days=90"))).toBe(true),
+    );
+    fireEvent.click(screen.getByRole("combobox", { name: "Period" }));
+    fireEvent.click(screen.getByRole("option", { name: "Custom range" }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.key === "GET /api/v1/admin/dashboard/overview" && c.url.includes("from="))).toBe(true),
+    );
+  });
+
+  it("each chart has its own range", async () => {
+    const calls = dashboardApi();
+    render(
+      <AdminContextForTest permissions={ALL}>
+        <Dashboard />
+      </AdminContextForTest>,
+    );
+    await screen.findByRole("group", { name: "Figures" });
+    fireEvent.click(await screen.findByRole("combobox", { name: "Trend range" }));
+    fireEvent.click(screen.getByRole("option", { name: "Last 12 Months" }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.key === "GET /api/v1/admin/dashboard/growth" && c.url.includes("months=12"))).toBe(true),
+    );
+    expect(calls.some((c) => c.key === "GET /api/v1/admin/dashboard/money" && c.url.includes("months=12"))).toBe(false);
+  });
+
+  it("offers a currency only when there is more than one, and asks for the one chosen", async () => {
+    const calls = dashboardApi({ ...OVERVIEW, currencies: ["INR", "USD"] });
+    render(
+      <AdminContextForTest permissions={ALL}>
+        <Dashboard />
+      </AdminContextForTest>,
+    );
+    fireEvent.click(await screen.findByRole("combobox", { name: "Currency" }));
+    fireEvent.click(screen.getByRole("option", { name: "USD" }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.key === "GET /api/v1/admin/dashboard/overview" && c.url.includes("currency=USD"))).toBe(true),
+    );
+  });
+
+  it("says plainly when there is nothing yet, and shows an error rather than zeros when it fails", async () => {
+    const empty = {
+      ...OVERVIEW,
+      pending: [],
+      activity: [],
+      top_products: [],
+      cards: {
+        ...OVERVIEW.cards,
+        collections: { amount_minor: 0, previous_minor: 0, change_percent: null },
+        sales: { amount_minor: 0, previous_minor: 0, change_percent: null },
+      },
+    };
     mockApi({
-      "GET /api/v1/auth/session": [SIGNED_IN],
-      "GET /api/v1/admin/dashboard": [
-        ok({ ...BASE, overview: overview({ orders: { paid: 0, previous: 0, by_product: [] }, revenue: [] }) }),
-      ],
+      "GET /api/v1/admin/dashboard/overview": [ok(empty)],
+      "GET /api/v1/admin/dashboard/growth": [ok({ months: GROWTH.months, customers: [0, 0], subscriptions: [0, 0], partners: [0, 0] })],
+      "GET /api/v1/admin/dashboard/money": [ok({ ...MONEY, sales: [0, 0], collections: [0, 0] })],
     });
-    render(
-      <AdminContextForTest permissions={["platform.staff_customer.view"]}>
+    const view = render(
+      <AdminContextForTest permissions={ALL}>
         <Dashboard />
       </AdminContextForTest>,
     );
-    // An empty state, not bare axes.
-    expect(await screen.findByText("No payments yet")).toBeInTheDocument();
-    expect(screen.getByText(/No payments were collected in/)).toBeInTheDocument();
-    expect(screen.getByText("No sales yet")).toBeInTheDocument();
-    expect(screen.getByText("No orders were paid this month.")).toBeInTheDocument();
-    expect(document.querySelector("svg[viewBox='0 0 400 210']")).toBeNull();
+    expect(await screen.findByText("No activity yet")).toBeInTheDocument();
+    expect(screen.getByText("No products sold yet")).toBeInTheDocument();
+    expect(await screen.findByText("Nothing to chart yet")).toBeInTheDocument();
+    expect(await screen.findByText("No money movement yet")).toBeInTheDocument();
+    view.unmount();
+
+    mockApi({ "GET /api/v1/admin/dashboard/overview": [{ status: 500, body: { code: "boom" } }] });
+    render(
+      <AdminContextForTest permissions={ALL}>
+        <Dashboard />
+      </AdminContextForTest>,
+    );
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Figures" })).toBeNull();
   });
 
   it("folds a sixth and later product into Others, so no colour is generated", () => {
-    const slices = Array.from({ length: 8 }, (_, i) => ({ key: `p${i}`, label: `P${i}`, value: 8 - i }));
-    const folded = foldSlices(slices);
-    expect(folded.map((s) => s.label)).toEqual(["P0", "P1", "P2", "P3", "P4", "Others"]);
-    expect(folded[5].value).toBe(3 + 2 + 1);
+    const slices = Array.from({ length: 8 }, (_, i) => ({ key: `p${i}`, label: `P${i}`, value: 1 }));
+    expect(foldSlices(slices).map((s) => s.label)).toEqual(["P0", "P1", "P2", "P3", "P4", "Others"]);
   });
 });
-
-// --- the top bar -------------------------------------------------------------------------
 
 function shellApi(permissions: string[], attention: unknown = { items: [] }) {
   return mockApi({
@@ -340,25 +338,29 @@ describe("the Admin top bar", () => {
 });
 
 describe("the command palette", () => {
-  it("finds pages by name and live users, grouped, and opens the chosen one", async () => {
-    mockApi({
-      "GET /api/v1/admin/users": [ok({ results: [{ user_id: "u9", email: "planner@example.com", name: "Pla Nner" }], next_cursor: null, has_more: false })],
-      "GET /api/v1/admin/catalog/products": [ok({ results: [{ id: "p1", code: "easy_plan", name: "Easy Plan (easy_plan)", status: "active", licensing_mode: "seat" }] })],
+  it("finds pages by name and records from the server, grouped, and opens the chosen one", async () => {
+    const calls = mockApi({
+      "GET /api/v1/admin/search": [
+        ok({
+          query: "plan",
+          results: [
+            { kind: "user", id: "u9", label: "Pla Nner", hint: "planner@example.com", href: "/admin/users/u9" },
+            { kind: "invoice", id: "i1", label: "INV-PLAN", hint: "open", href: "/admin/invoices?q=INV-PLAN" },
+          ],
+        }),
+      ],
     });
-    render(
-      <AdminSearch permissions={["platform.staff_customer.view", "platform.staff_user.view", "platform.staff_catalog.view"]} />,
-    );
+    render(<AdminSearch permissions={["platform.staff_customer.view", "platform.staff_user.view", "platform.staff_catalog.view"]} />);
     fireEvent.click(screen.getByRole("button", { name: /Search customers, partners/ }));
     const box = screen.getByRole("combobox", { name: "Search anything" });
     fireEvent.change(box, { target: { value: "plan" } });
     expect(screen.getAllByRole("option")[0]).toHaveTextContent("Plans & add-ons");
-    await waitFor(() => expect(screen.getByRole("option", { name: /Pla Nner/ })).toBeInTheDocument());
-    expect(screen.getByRole("option", { name: /^Easy Plan/ })).toBeInTheDocument();
-    // No partner grant: no partner results were asked for.
+    const person = await screen.findByRole("option", { name: /Pla Nner/ });
+    expect(screen.getByRole("option", { name: /INV-PLAN/ })).toBeInTheDocument();
+    expect(calls.find((c) => c.key === "GET /api/v1/admin/search")?.url).toContain("q=plan");
     fireEvent.keyDown(box, { key: "ArrowDown" });
     expect(box.getAttribute("aria-activedescendant")).toBe(screen.getAllByRole("option")[1].id);
-    const target = screen.getByRole("option", { name: /Pla Nner/ });
-    fireEvent.mouseDown(target);
+    fireEvent.mouseDown(person);
     expect(nav.router.push).toHaveBeenCalledWith("/admin/users/u9");
   });
 

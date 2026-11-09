@@ -3,14 +3,14 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/sidebar/icons";
-import { adminConsoleApi } from "@/lib/api/adminConsole";
+import { adminPanelApi } from "@/lib/api/adminPanel";
 import { adminApi, type AttentionItem } from "@/lib/api/controlPlane";
 import { usePortalRouter } from "@/lib/portalRouter";
 import { adminModules } from "./adminModules";
 import { Modal } from "./Modal";
 import { Menu, type MenuItem } from "./kit/Menu";
 import { initialsOf } from "./kit/Layout";
-import { formatRelative, productName } from "./kit/format";
+import { formatRelative } from "./kit/format";
 
 import styles from "./AdminTopbar.module.css";
 
@@ -40,8 +40,8 @@ export function AdminTools({ permissions }: { permissions: string[] }) {
 
 // --- the command palette ------------------------------------------------------------
 
-type Group = "Recent" | "Pages" | "Settings" | "Users" | "Partners" | "Products" | "Orders";
-const GROUP_ORDER: Group[] = ["Recent", "Pages", "Settings", "Users", "Partners", "Products", "Orders"];
+type Group = "Recent" | "Pages" | "Settings" | "Customers" | "Subscriptions" | "Users" | "Partners" | "Products" | "Orders" | "Invoices";
+const GROUP_ORDER: Group[] = ["Recent", "Pages", "Settings", "Customers", "Subscriptions", "Users", "Partners", "Products", "Orders", "Invoices"];
 
 interface Result {
   id: string;
@@ -89,93 +89,51 @@ function pagesFor(permissions: string[]): Result[] {
   );
 }
 
-/** Live results from the server for the words typed (users, partners) and a
- * filter of the recent orders and the product list. A failed source is left
- * out, never shown as "no results". */
-function useLiveResults(permissions: string[], query: string): { results: Result[]; loading: boolean } {
-  const [state, setState] = useState<{ query: string; results: Result[] }>({ query: "", results: [] });
-  const cache = useRef<{ products?: Result[]; orders?: Result[] }>({});
+const KIND_TO_GROUP: Record<string, { group: Group; icon: string }> = {
+  customer: { group: "Customers", icon: "building" },
+  subscription: { group: "Subscriptions", icon: "card" },
+  user: { group: "Users", icon: "user" },
+  partner: { group: "Partners", icon: "handshake" },
+  product: { group: "Products", icon: "box" },
+  order: { group: "Orders", icon: "receipt" },
+  invoice: { group: "Invoices", icon: "receipt" },
+};
+
+/** Live results from the server for the words typed: only what this staff member's
+ * grants cover, decided there. A failure is said as a failure, never "no results". */
+function useLiveResults(query: string): { results: Result[]; loading: boolean; failed: boolean } {
+  const [state, setState] = useState<{ query: string; results: Result[]; failed: boolean }>({ query: "", results: [], failed: false });
 
   useEffect(() => {
     if (query.length < 2) return;
     let live = true;
     const t = window.setTimeout(() => {
-      const needle = query.toLowerCase();
-      const jobs: Promise<Result[]>[] = [];
-      if (can(permissions, "platform.staff_user.view")) {
-        jobs.push(
-          adminConsoleApi.users({ q: query, limit: 5 }).then((page) =>
-            page.results.map((u) => ({
-              id: `user-${u.user_id}`,
-              group: "Users" as const,
-              label: u.name || u.email,
-              hint: u.name ? u.email : "User",
-              href: `/admin/users/${u.user_id}`,
-              icon: "user",
-            })),
-          ),
-        );
-      }
-      if (can(permissions, "platform.staff_partner.view")) {
-        jobs.push(
-          adminApi.partners({ q: query, limit: 5 }).then((page) =>
-            page.results.map((p) => ({
-              id: `partner-${p.id}`,
-              group: "Partners" as const,
-              label: p.display_name,
-              hint: p.contact_email || p.code,
-              href: `/admin/partners/${p.id}`,
-              icon: "handshake",
-            })),
-          ),
-        );
-      }
-      if (can(permissions, "platform.staff_catalog.view")) {
-        const products = cache.current.products
-          ? Promise.resolve(cache.current.products)
-          : adminApi.products().then((r) => {
-              cache.current.products = r.results.map((p) => ({
-                id: `product-${p.id}`,
-                group: "Products" as const,
-                label: productName(p.name),
-                hint: p.code,
-                href: `/admin/products/${p.id}`,
-                icon: "box",
-              }));
-              return cache.current.products;
-            });
-        jobs.push(products.then((all) => all.filter((p) => `${p.label} ${p.hint}`.toLowerCase().includes(needle)).slice(0, 5)));
-      }
-      if (can(permissions, "platform.staff_payment.view")) {
-        const orders = cache.current.orders
-          ? Promise.resolve(cache.current.orders)
-          : adminConsoleApi.orders({ limit: 50 }).then((page) => {
-              cache.current.orders = page.results.map((o) => ({
-                id: `order-${o.order_id}`,
-                group: "Orders" as const,
-                label: `${o.number} · ${o.organization_name}`,
-                hint: o.description,
-                href: `/admin/orders?q=${encodeURIComponent(o.number)}`,
-                icon: "receipt",
-              }));
-              return cache.current.orders;
-            });
-        jobs.push(orders.then((all) => all.filter((o) => `${o.label} ${o.hint}`.toLowerCase().includes(needle)).slice(0, 5)));
-      }
-      Promise.allSettled(jobs).then((settled) => {
-        if (!live) return;
-        const results = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
-        setState({ query, results });
-      });
+      adminPanelApi.search(query).then(
+        (found) => {
+          if (!live) return;
+          setState({
+            query,
+            failed: false,
+            results: found.results.flatMap((row) => {
+              const look = KIND_TO_GROUP[row.kind];
+              return look
+                ? [{ id: `${row.kind}-${row.id}`, group: look.group, label: row.label, hint: row.hint, href: row.href, icon: look.icon }]
+                : [];
+            }),
+          });
+        },
+        () => live && setState({ query, results: [], failed: true }),
+      );
     }, 200);
     return () => {
       live = false;
       window.clearTimeout(t);
     };
-  }, [permissions, query]);
+  }, [query]);
 
-  if (query.length < 2) return { results: [], loading: false };
-  return { results: state.query === query ? state.results : [], loading: state.query !== query };
+  if (query.length < 2) return { results: [], loading: false, failed: false };
+  const current = state.query === query;
+  return { results: current ? state.results : [], loading: !current, failed: current && state.failed };
 }
 
 /**
@@ -224,7 +182,7 @@ function CommandPalette({ permissions, onClose }: { permissions: string[]; onClo
   const [recent] = useState<Result[]>(() => (typeof window === "undefined" ? [] : readRecent()));
   const pages = useMemo(() => pagesFor(permissions), [permissions]);
   const query = text.trim();
-  const live = useLiveResults(permissions, query);
+  const live = useLiveResults(query);
 
   const results = useMemo(() => {
     if (!query) return recent.length ? recent : pages.slice(0, 8);
@@ -267,7 +225,7 @@ function CommandPalette({ permissions, onClose }: { permissions: string[]; onClo
             aria-autocomplete="list"
             aria-activedescendant={results.length ? optionId(current) : undefined}
             autoComplete="off"
-            placeholder="Search users, partners, products, orders or pages…"
+            placeholder="Search customers, partners, subscriptions, invoices or pages…"
             value={text}
             maxLength={80}
             onChange={(e) => {
@@ -321,7 +279,7 @@ function CommandPalette({ permissions, onClose }: { permissions: string[]; onClo
           })}
         </ul>
         <p className={styles.paletteStatus} aria-live="polite">
-          {live.loading ? "Searching…" : query && results.length === 0 ? `No results for “${query}”.` : ""}
+          {live.loading ? "Searching…" : live.failed ? "Records could not be searched right now." : query && results.length === 0 ? `No results for “${query}”.` : ""}
         </p>
       </div>
     </Modal>
