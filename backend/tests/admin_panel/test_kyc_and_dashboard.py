@@ -815,3 +815,33 @@ class TestSearch:
         customer = login(user_factory(password=PASSWORD))
         assert customer.get("/api/v1/admin/search", {"q": "acme"}).status_code == 403
         assert Client().get("/api/v1/admin/search", {"q": "acme"}).status_code in (401, 403)
+
+
+class TestAdminCreatedPartner:
+    def test_an_invited_administrator_gets_the_link_now_because_activation_waits_on_them(
+        self, staff_login
+    ):
+        from workeasy360.commercial.partners.models import PartnerAccount, PartnerMember
+
+        manager, _ = staff_login("platform.staff_partner.manage", "platform.staff_partner.view")
+        response = _json(
+            manager,
+            "post",
+            "/api/v1/admin/partners/create",
+            {
+                "experience": "affiliate",
+                "partner": {"display_name": "Staff Added Partner", "country": "IN"},
+                "administrator": {
+                    "email": "invited-admin@example.com",
+                    "first_name": "Ina",
+                    "last_name": "Admin",
+                    "mode": "invite",
+                },
+            },
+        )
+        assert response.status_code in (200, 201), response.content
+        partner = PartnerAccount.objects.get(display_name="Staff Added Partner")
+        member = PartnerMember.objects.get(partner=partner)
+        assert member.invitation_deferred is False
+        assert member.invitation_sent_at is not None
+        assert partner.status == "draft"

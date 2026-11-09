@@ -1252,6 +1252,15 @@ _ROLE_NAMES = {
 }
 
 
+def send_setup_link_now(partner: Any, member: Any) -> bool:
+    """Email a member their setup link now rather than at activation, and record it."""
+    sent = _send_setup_link(partner, member, member.user_id)
+    if sent:
+        member.invitation_sent_at = timezone.now()
+        member.save(update_fields=["invitation_sent_at"])
+    return sent
+
+
 def _send_setup_link(partner: Any, member: Any, user_id: UUID) -> bool:
     """Email the one-time password-setup link to a member with no password.
 

@@ -66,6 +66,7 @@ from django.db import IntegrityError, connection, transaction
 from django.views.decorators.debug import sensitive_variables
 
 from workeasy360.commercial.partners import (
+    kyc,
     capabilities,
     experience,
     profile,
@@ -598,9 +599,14 @@ def create(ctx: TenantContext, raw: Any) -> Created:
             role=ADMIN_ROLE,  # type: ignore[arg-type]
         )
         if invited:
-            # Emailed when the partner is activated (the partner is a draft now).
-            member.invitation_deferred = True
-            member.save(update_fields=["invitation_deferred"])
+            if kyc.required():
+                # Activation now waits for an approved application, which this person
+                # has to send, so they need their setup link straight away.
+                services.send_setup_link_now(partner, member)
+            else:
+                # Emailed when the partner is activated (the partner is a draft now).
+                member.invitation_deferred = True
+                member.save(update_fields=["invitation_deferred"])
         audit.record(
             ctx,
             "partner.onboarded",
