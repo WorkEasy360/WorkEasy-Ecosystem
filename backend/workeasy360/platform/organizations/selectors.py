@@ -874,3 +874,31 @@ def access_rows_for_users(user_ids: Any) -> dict[UUID, list[dict[str, Any]]]:
             }
         )
     return result
+
+
+def customers_created_before(end: Any) -> int:
+    """Live customers created before ``end`` (the platform organization excluded)."""
+    from workeasy360.contracts.values.control_plane import PLATFORM_ORGANIZATION_ID
+    from workeasy360.platform.organizations.models import Organization
+
+    return (
+        Organization.objects.filter(deleted_at__isnull=True, created_at__lt=end)
+        .exclude(id=PLATFORM_ORGANIZATION_ID)
+        .count()
+    )
+
+
+def recently_created_customers(*, limit: int = 8) -> list[dict[str, Any]]:
+    """The newest customers, for the Admin dashboard's activity list."""
+    from workeasy360.contracts.values.control_plane import PLATFORM_ORGANIZATION_ID
+    from workeasy360.platform.organizations.models import Organization
+
+    rows = (
+        Organization.objects.filter(deleted_at__isnull=True)
+        .exclude(id=PLATFORM_ORGANIZATION_ID)
+        .order_by("-created_at")[: max(1, min(limit, 50))]
+    )
+    return [
+        {"id": str(row.id), "name": row.display_name, "created_at": row.created_at.isoformat()}
+        for row in rows
+    ]

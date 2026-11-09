@@ -384,3 +384,65 @@ class ProductTrial(TenantScopedModel):
     @property
     def status_enum(self) -> ProductTrialStatus:
         return ProductTrialStatus(self.status)
+
+
+# --- the Admin console's views across customers (2026-11-09) -----------------------
+#
+# The same class as ``payments.InvoiceSummary``: the Admin's Subscriptions list,
+# renewals and growth figures span customers; a subscription is a tenant row. Written
+# by database triggers in the subscription's own transaction (tenancy migration
+# 0013). Identifiers, codes and dates only. Read only behind
+# ``platform.staff_customer.view``. History stays on the tenant rows themselves.
+
+
+class SubscriptionSummary(models.Model):
+    subscription_id = models.UUIDField(primary_key=True)
+    organization_id = models.UUIDField()
+    status = models.CharField(max_length=16)
+    currency = models.CharField(max_length=3)
+    billing_interval = models.CharField(max_length=16)
+    renewal_policy = models.CharField(max_length=16)
+    current_period_start = models.DateTimeField()
+    current_period_end = models.DateTimeField()
+    trial_ends_at = models.DateTimeField(null=True, blank=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancel_at = models.DateTimeField(null=True, blank=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "subscriptions_summary"
+        indexes = [
+            models.Index(fields=["status", "current_period_end"], name="ix_sub_sum_status"),
+            models.Index(fields=["organization_id"], name="ix_sub_sum_org"),
+            models.Index(fields=["activated_at"], name="ix_sub_sum_activated"),
+            models.Index(fields=["-created_at", "-subscription_id"], name="ix_sub_sum_time"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"subscription {self.subscription_id} [{self.status}]"
+
+
+class SubscriptionItemSummary(models.Model):
+    item_id = models.UUIDField(primary_key=True)
+    subscription_id = models.UUIDField(db_index=True)
+    organization_id = models.UUIDField()
+    product_code = models.CharField(max_length=32, blank=True, default="")
+    plan_code = models.CharField(max_length=64, blank=True, default="")
+    bundle_code = models.CharField(max_length=64, blank=True, default="")
+    quantity = models.IntegerField()
+    total_amount_minor = models.BigIntegerField(null=True, blank=True)
+    currency = models.CharField(max_length=3, blank=True, default="")
+    interval = models.CharField(max_length=16, blank=True, default="")
+    added_at = models.DateTimeField()
+    removed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "subscriptions_item_summary"
+        indexes = [
+            models.Index(fields=["product_code", "removed_at"], name="ix_sub_item_sum_prod"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.plan_code or self.bundle_code} x{self.quantity}"

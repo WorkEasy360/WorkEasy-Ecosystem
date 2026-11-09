@@ -19,6 +19,7 @@ from config.settings.base import (
     EMAIL_USE_SSL,
     EMAIL_USE_TLS,
     FILE_STORAGE_BACKEND,
+    PARTNER_KYC_REQUIRED,
     PORTAL_HANDOFF_TTL_S,
     REDIS_URL,
     S3_BUCKET,
@@ -239,6 +240,11 @@ CELERY_TASK_ALWAYS_EAGER = False
 env.check(
     not DEBUG,
     "DEBUG must be False in production.",
+)
+env.check(
+    PARTNER_KYC_REQUIRED,
+    "W360_PARTNER_KYC_REQUIRED must stay on in production: registering must never "
+    "be enough to become an active partner.",
 )
 env.check(
     "*" not in ALLOWED_HOSTS,

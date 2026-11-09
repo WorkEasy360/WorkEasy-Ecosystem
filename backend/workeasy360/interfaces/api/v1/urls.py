@@ -24,6 +24,7 @@ from workeasy360.interfaces.api.v1 import (
     admin_product_views,
     admin_programme_views,
     admin_store_views,
+    admin_panel_views,
     admin_views,
     auth_views,
     commercial_views,
@@ -131,6 +132,11 @@ urlpatterns = [
         name="public-catalog-product",
     ),
     path("public/signup", public_site_views.signup_view, name="public-signup"),
+    path(
+        "public/partner-applications",
+        admin_panel_views.partner_application_view,
+        name="public-partner-application",
+    ),
     path(
         "public/storefront/<slug:slug>",
         public_views.storefront_view,
@@ -760,6 +766,57 @@ urlpatterns = [
 _admin = [
     path("admin/session", admin_views.session_view, name="admin-session"),
     path("admin/dashboard", admin_views.dashboard_view, name="admin-dashboard"),
+    path(
+        "admin/dashboard/overview",
+        admin_panel_views.dashboard_overview_view,
+        name="admin-dashboard-overview",
+    ),
+    path(
+        "admin/dashboard/growth",
+        admin_panel_views.dashboard_growth_view,
+        name="admin-dashboard-growth",
+    ),
+    path(
+        "admin/dashboard/money",
+        admin_panel_views.dashboard_money_view,
+        name="admin-dashboard-money",
+    ),
+    path("admin/search", admin_panel_views.search_view, name="admin-search"),
+    path(
+        "admin/kyc/requirements",
+        admin_panel_views.kyc_requirements_view,
+        name="admin-kyc-requirements",
+    ),
+    path(
+        "admin/kyc/requirements/<uuid:requirement_id>",
+        admin_panel_views.kyc_requirement_view,
+        name="admin-kyc-requirement",
+    ),
+    path(
+        "admin/kyc/applications",
+        admin_panel_views.kyc_applications_view,
+        name="admin-kyc-applications",
+    ),
+    path(
+        "admin/kyc/applications/<uuid:partner_id>",
+        admin_panel_views.kyc_application_view,
+        name="admin-kyc-application",
+    ),
+    path(
+        "admin/kyc/applications/<uuid:partner_id>/review",
+        admin_panel_views.kyc_start_review_view,
+        name="admin-kyc-review",
+    ),
+    path(
+        "admin/kyc/applications/<uuid:partner_id>/decision",
+        admin_panel_views.kyc_decision_view,
+        name="admin-kyc-decision",
+    ),
+    path(
+        "admin/kyc/applications/<uuid:partner_id>/documents/<uuid:document_id>/content",
+        admin_panel_views.kyc_document_content_view,
+        name="admin-kyc-document-content",
+    ),
     path("admin/attention", admin_views.attention_view, name="admin-attention"),
     path("admin/audit", admin_views.audit_view, name="admin-audit"),
     path("admin/customers", admin_views.customers_view, name="admin-customers"),
@@ -2006,6 +2063,31 @@ _partner = [
         "partner/<uuid:partner_id>/api-keys/<uuid:key_id>/revoke",
         partner_panel_views.api_key_revoke_view,
         name="partner-api-key-revoke",
+    ),
+    path(
+        "partner/<uuid:partner_id>/kyc",
+        admin_panel_views.partner_kyc_view,
+        name="partner-kyc",
+    ),
+    path(
+        "partner/<uuid:partner_id>/kyc/documents",
+        admin_panel_views.partner_kyc_documents_view,
+        name="partner-kyc-documents",
+    ),
+    path(
+        "partner/<uuid:partner_id>/kyc/documents/<uuid:document_id>",
+        admin_panel_views.partner_kyc_document_view,
+        name="partner-kyc-document",
+    ),
+    path(
+        "partner/<uuid:partner_id>/kyc/documents/<uuid:document_id>/content",
+        admin_panel_views.partner_kyc_document_content_view,
+        name="partner-kyc-document-content",
+    ),
+    path(
+        "partner/<uuid:partner_id>/kyc/submit",
+        admin_panel_views.partner_kyc_submit_view,
+        name="partner-kyc-submit",
     ),
     path(
         "partner/<uuid:partner_id>/notifications",

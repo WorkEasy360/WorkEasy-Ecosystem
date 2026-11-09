@@ -129,6 +129,7 @@ COMMERCIAL_APPS = [
     "workeasy360.commercial.pricing",
     "workeasy360.commercial.billing",
     "workeasy360.commercial.subscriptions",
+    "workeasy360.commercial.wallets",
     "workeasy360.commercial.provisioning",
     # Phase 8 extension. Beside provisioning: invoices, hosted checkout
     # through provider adapters, webhooks, refunds and dunning. Reads
@@ -373,6 +374,9 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_SAVE_EVERY_REQUEST = False
 SESSION_REFRESH_INTERVAL_S = env.int("W360_SESSION_REFRESH_INTERVAL_S", 60)
 SESSION_ABSOLUTE_TIMEOUT = 60 * 60 * 24 * 30  # 30d hard cap
+# Partner KYC: a draft partner cannot be activated until its application is
+# approved (commercial/partners/kyc.py). Production refuses to start with it off.
+PARTNER_KYC_REQUIRED = env.bool("W360_PARTNER_KYC_REQUIRED", True)
 # The Admin sign-in's "Remember me" idle window. Never past the hard cap above.
 SESSION_REMEMBER_ME_AGE = env.int("W360_SESSION_REMEMBER_ME_S", 60 * 60 * 24 * 7)
 

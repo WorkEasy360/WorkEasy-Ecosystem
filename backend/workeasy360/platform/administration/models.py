@@ -29,6 +29,8 @@ class PlatformSettings(models.Model):
     #: ISO 4217, or empty for the deployment default
     #: (``PUBLIC_CATALOG_DEFAULT_CURRENCY``).
     public_catalog_currency = models.CharField(max_length=3, blank=True, default="")
+    #: Whether the public partner application form accepts applications.
+    partner_applications_enabled = models.BooleanField(default=True, db_default=True)
     version = models.PositiveIntegerField(default=1)
     updated_by_id = models.UUIDField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)

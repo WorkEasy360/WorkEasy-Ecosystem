@@ -254,8 +254,33 @@ def set_partner_status(
     act, which the permission resolver reads from that status.
     """
     authz.require(ctx, MANAGE)
-    why = clean_reason(reason)
+    return _move_status(
+        ctx, partner_id, target=target, why=clean_reason(reason), expected_version=expected_version
+    )
 
+
+@in_scope
+def activate_after_kyc(ctx: TenantContext, partner_id: UUID, *, reason: Any) -> Any:
+    """Approving an application activates a draft partner, for whoever may review
+    applications. A partner already active or suspended keeps its status: approving
+    its paperwork says nothing about whether it may operate today."""
+    authz.require(ctx, "platform.staff_kyc.review")
+    current = selectors.partner_row(partner_id)
+    if current is None or current.status_enum is not PartnerStatus.DRAFT:
+        return current
+    return _move_status(
+        ctx, partner_id, target=PartnerStatus.ACTIVE, why=clean_reason(reason), expected_version=None
+    )
+
+
+def _move_status(
+    ctx: TenantContext,
+    partner_id: UUID,
+    *,
+    target: PartnerStatus,
+    why: str,
+    expected_version: int | None,
+) -> Any:
     with transaction.atomic():
         partner = _lock_partner(partner_id, expected_version=expected_version)
         current = partner.status_enum
@@ -263,6 +288,10 @@ def set_partner_status(
         if current is target:
             return partner
 
+        if target is PartnerStatus.ACTIVE and current is PartnerStatus.DRAFT:
+            from workeasy360.commercial.partners.kyc import assert_may_activate
+
+            assert_may_activate(partner.id)
         if target is PartnerStatus.ACTIVE and not _has_admin_member(partner.id):
             raise PartnerValidationError(
                 "Add at least one administrator before activating the partner: "

@@ -276,6 +276,7 @@ def record_refund(
     invoice.amount_refunded_minor += refund.amount_minor
     invoice.version += 1
     invoice.save(update_fields=["amount_refunded_minor", "version", "updated_at"])
+    _issue_credit_note(refund, invoice)
     audit.record_system(
         refund.organization_id,
         "billing.refund_succeeded",
@@ -290,3 +291,28 @@ def record_refund(
     )
     metrics.increment("payments_refunds_succeeded_total")
     return APPLIED
+
+
+def _issue_credit_note(refund: Any, invoice: Any) -> None:
+    """The document a confirmed refund leaves, naming what it reversed. In the
+    refund's own transaction; one per refund, whichever way it was confirmed."""
+    from django.db import connection
+
+    from workeasy360.commercial.payments.models import CreditNote
+
+    if CreditNote.objects.filter(refund_id=refund.id).exists():
+        return
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT nextval('payments_credit_note_number_seq')")
+        sequence = cursor.fetchone()[0]
+    CreditNote.objects.create(
+        number=f"CN-{sequence:06d}",
+        organization_id=refund.organization_id,
+        refund_id=refund.id,
+        attempt_id=refund.attempt_id,
+        invoice_id=invoice.id,
+        invoice_number=invoice.number,
+        amount_minor=refund.amount_minor,
+        currency=refund.currency,
+        reason=refund.reason,
+    )

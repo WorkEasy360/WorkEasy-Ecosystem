@@ -690,3 +690,157 @@ class PartnerFeePayment(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.purpose}:{self.status}"
+
+
+# --- the Admin console's views across customers (2026-11-09) -----------------------
+#
+# Invoices, payments and refunds are tenant rows, read by the customer under row
+# level security. The Admin's lists across customers cannot enter one organization's
+# scope per row, so they read these: the same class as ``OrderSummary``. Unlike that
+# one they are written by database triggers on the tenant tables, in the same
+# transaction (tenancy migration 0013), because those tables are written through
+# ``.save()`` and conditional ``.update()`` alike. Identifiers, codes and amounts
+# only: no name, email, address or provider payload. Read only behind
+# ``platform.staff_payment.view``.
+
+
+class InvoiceSummary(models.Model):
+    invoice_id = models.UUIDField(primary_key=True)
+    organization_id = models.UUIDField()
+    subscription_id = models.UUIDField(null=True, blank=True)
+    order_id = models.UUIDField(null=True, blank=True)
+    number = models.CharField(max_length=32)
+    status = models.CharField(max_length=8)
+    currency = models.CharField(max_length=3)
+    total_minor = models.BigIntegerField()
+    amount_paid_minor = models.BigIntegerField(default=0)
+    amount_refunded_minor = models.BigIntegerField(default=0)
+    collection_mode = models.CharField(max_length=16)
+    issued_at = models.DateTimeField()
+    due_at = models.DateTimeField()
+    paid_at = models.DateTimeField(null=True, blank=True)
+    voided_at = models.DateTimeField(null=True, blank=True)
+    dunning_stage = models.CharField(max_length=16, blank=True, default="")
+
+    class Meta:
+        db_table = "payments_invoice_summary"
+        indexes = [
+            models.Index(fields=["-issued_at", "-invoice_id"], name="ix_inv_sum_issued"),
+            models.Index(fields=["status", "-issued_at"], name="ix_inv_sum_status"),
+            models.Index(fields=["organization_id", "-issued_at"], name="ix_inv_sum_org"),
+            models.Index(fields=["number"], name="ix_inv_sum_number"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return self.number
+
+
+class InvoiceLineSummary(models.Model):
+    """What each invoice sold, for revenue per product. Its currency is the
+    invoice's; find it through ``invoice_id``."""
+
+    line_id = models.UUIDField(primary_key=True)
+    invoice_id = models.UUIDField(db_index=True)
+    organization_id = models.UUIDField()
+    kind = models.CharField(max_length=16)
+    product_code = models.CharField(max_length=64, blank=True, default="")
+    plan_code = models.CharField(max_length=64, blank=True, default="")
+    quantity = models.IntegerField()
+    amount_minor = models.BigIntegerField()
+
+    class Meta:
+        db_table = "payments_invoice_line_summary"
+        indexes = [
+            models.Index(fields=["product_code", "kind"], name="ix_inv_line_sum_product"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.product_code} {self.amount_minor}"
+
+
+class PaymentSummary(models.Model):
+    attempt_id = models.UUIDField(primary_key=True)
+    organization_id = models.UUIDField()
+    invoice_id = models.UUIDField(db_index=True)
+    provider_key = models.CharField(max_length=32)
+    status = models.CharField(max_length=20)
+    amount_minor = models.BigIntegerField()
+    currency = models.CharField(max_length=3)
+    amount_refunded_minor = models.BigIntegerField(default=0)
+    failure_code = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField()
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "payments_attempt_summary"
+        indexes = [
+            models.Index(fields=["-created_at", "-attempt_id"], name="ix_pay_sum_time"),
+            models.Index(fields=["status", "-created_at"], name="ix_pay_sum_status"),
+            models.Index(fields=["status", "completed_at"], name="ix_pay_sum_completed"),
+            models.Index(fields=["organization_id", "-created_at"], name="ix_pay_sum_org"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.provider_key}:{self.status}"
+
+
+class RefundSummary(models.Model):
+    refund_id = models.UUIDField(primary_key=True)
+    organization_id = models.UUIDField()
+    attempt_id = models.UUIDField(db_index=True)
+    amount_minor = models.BigIntegerField()
+    currency = models.CharField(max_length=3)
+    reason = models.CharField(max_length=255)
+    status = models.CharField(max_length=16)
+    failure_code = models.CharField(max_length=64, blank=True, default="")
+    requested_by_user_id = models.UUIDField()
+    created_at = models.DateTimeField()
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "payments_refund_summary"
+        indexes = [
+            models.Index(fields=["-created_at", "-refund_id"], name="ix_ref_sum_time"),
+            models.Index(fields=["status", "-created_at"], name="ix_ref_sum_status"),
+            models.Index(fields=["status", "completed_at"], name="ix_ref_sum_completed"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"refund {self.amount_minor} {self.currency}"
+
+
+class CreditNote(models.Model):
+    """The document a confirmed refund leaves behind. One per refund (the unique
+    key is what makes issuing it idempotent), numbered from its own sequence, and
+    append-only: it is never edited, only answered by another document.
+
+    Names the original invoice, payment and refund, so a refund can always be
+    traced to what it reversed. Moves no money: the refund did that.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    number = models.CharField(max_length=32, unique=True)
+    organization_id = models.UUIDField()
+    refund_id = models.UUIDField(unique=True)
+    attempt_id = models.UUIDField()
+    invoice_id = models.UUIDField()
+    invoice_number = models.CharField(max_length=32)
+    amount_minor = models.BigIntegerField()
+    currency = models.CharField(max_length=3)
+    reason = models.CharField(max_length=255)
+    issued_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "payments_credit_note"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount_minor__gt=0), name="ck_credit_note_amount"
+            )
+        ]
+        indexes = [
+            models.Index(fields=["-issued_at", "-id"], name="ix_credit_note_time"),
+            models.Index(fields=["organization_id", "-issued_at"], name="ix_credit_note_org"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return self.number

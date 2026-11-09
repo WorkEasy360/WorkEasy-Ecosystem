@@ -188,6 +188,26 @@ TENANT_SCOPE_EXEMPT = frozenset(
         # amount only, read by pricing.coupons for its limits and behind
         # platform.staff_catalog.view for the Super Admin's coupon list.
         "pricing.CouponRedemption",
+        # Admin Panel (2026-11-09). The Admin's lists across customers, the same
+        # class as payments.OrderSummary: every one is a derived copy of tenant
+        # rows, written by a database trigger in the source row's transaction,
+        # holding identifiers, codes and amounts only, and read only behind a
+        # staff grant. No customer-facing endpoint reads them.
+        "payments.InvoiceSummary",
+        "payments.InvoiceLineSummary",
+        "payments.PaymentSummary",
+        "payments.RefundSummary",
+        "subscriptions.SubscriptionSummary",
+        "subscriptions.SubscriptionItemSummary",
+        # The document a refund leaves. Issued by payments.settlement in the
+        # refund's transaction, append-only, numbers and amounts only, read
+        # behind platform.staff_payment.view.
+        "payments.CreditNote",
+        # The record of what products reported, the same class as
+        # commissions.CommissionAccrual: the Admin's review of failed and duplicate
+        # events spans customers, and organization_id is a plain UUID naming who it
+        # concerns. No customer-facing endpoint reads it.
+        "wallets.UsageEvent",
     }
 )
 

@@ -52,8 +52,8 @@ def _declared() -> tuple[StaffRole, ...]:
     return (
         StaffRole(
             "SUPER_ADMIN",
-            "Super Admin",
-            "Everything on the control plane, including granting staff access.",
+            "Admin",
+            "Everything on the Admin console, including granting staff access.",
             everything,
         ),
         StaffRole(
@@ -98,6 +98,9 @@ def _declared() -> tuple[StaffRole, ...]:
                     "platform.staff_commission.view",
                     "platform.staff_commission.manage",
                     "platform.staff_payout.manage",
+                    "platform.staff_wallet.view",
+                    "platform.staff_wallet.manage",
+                    "platform.staff_report.view",
                 }
             ),
         ),
@@ -115,6 +118,8 @@ def _declared() -> tuple[StaffRole, ...]:
                     "platform.staff_payment.view",
                     "platform.staff_audit.view",
                     "platform.staff_partner.view",
+                    "platform.staff_support.manage",
+                    "platform.staff_wallet.view",
                 }
             ),
         ),

@@ -562,3 +562,96 @@ def enable_system_template_rls(
         """,
         elidable=False,
     )
+
+
+def project_rows(
+    source: str,
+    target: str,
+    *,
+    key: tuple[str, str],
+    columns: dict[str, str],
+) -> migrations.RunSQL:
+    """Keep ``target`` (a control-plane projection) in step with ``source`` (a
+    tenant table) from inside the database (Admin Panel, 2026-11-09).
+
+    A trigger rather than application code, because application code has more
+    than one way to write these rows: ``.save()``, conditional ``.update()`` and
+    raw status moves. The projection is written in the source row's own
+    transaction, so it can never show a state that was rolled back, and nothing
+    that writes the source can forget it.
+
+    ``key`` is ``(target column, source column)``; ``columns`` maps every other
+    target column to its source column. The function runs as the caller: the
+    application role needs its ordinary grant on ``target`` (``grant_app_role``).
+    """
+    t, src = _ident(target), _ident(source)
+    target_key, source_key = _ident(key[0]), _ident(key[1])
+    function = _ident(f"w360_project_{source}")
+    trigger = _ident(f"w360_project_{source}_row")
+    names = ", ".join(_ident(c) for c in columns)
+    values = ", ".join(f"NEW.{_ident(c)}" for c in columns.values())
+    updates = ", ".join(f"{_ident(c)} = EXCLUDED.{_ident(c)}" for c in columns)
+    return migrations.RunSQL(
+        sql=f"""
+        CREATE OR REPLACE FUNCTION {function}() RETURNS trigger
+        LANGUAGE plpgsql AS $w360$
+        BEGIN
+            IF TG_OP = 'DELETE' THEN
+                DELETE FROM {t} WHERE {target_key} = OLD.{source_key};
+                RETURN NULL;
+            END IF;
+            INSERT INTO {t} ({target_key}, {names})
+            VALUES (NEW.{source_key}, {values})
+            ON CONFLICT ({target_key}) DO UPDATE SET {updates};
+            RETURN NULL;
+        END;
+        $w360$;
+
+        CREATE TRIGGER {trigger}
+        AFTER INSERT OR UPDATE OR DELETE ON {src}
+        FOR EACH ROW EXECUTE FUNCTION {function}();
+        """,
+        reverse_sql=f"""
+        DROP TRIGGER IF EXISTS {trigger} ON {src};
+        DROP FUNCTION IF EXISTS {function}();
+        """,
+        elidable=False,
+    )
+
+
+def backfill_projection(
+    source: str,
+    target: str,
+    *,
+    key: tuple[str, str],
+    columns: dict[str, str],
+) -> migrations.RunPython:
+    """Fill a projection from the rows that predate its trigger.
+
+    One organization at a time: the migration role is subject to FORCE ROW LEVEL
+    SECURITY like everyone else, so each customer's rows are only visible inside
+    that customer's own scope. Safe to re-run (``ON CONFLICT``). The reverse does
+    nothing: dropping the projection's table is what undoes it.
+    """
+    t, src = _ident(target), _ident(source)
+    names = ", ".join(_ident(c) for c in (key[0], *columns))
+    picks = ", ".join(_ident(c) for c in (key[1], *columns.values()))
+    updates = ", ".join(f"{_ident(c)} = EXCLUDED.{_ident(c)}" for c in columns)
+    statement = (
+        f"INSERT INTO {t} ({names}) SELECT {picks} FROM {src} "
+        f"ON CONFLICT ({_ident(key[0])}) DO UPDATE SET {updates}"
+    )
+
+    enter_scope = "SELECT set_config('" + TENANT_SETTING + "', %s, true)"
+
+    def forwards(apps, schema_editor):  # type: ignore[no-untyped-def]
+        connection = schema_editor.connection
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id FROM organizations_organization")
+            organizations = [row[0] for row in cursor.fetchall()]
+            for organization_id in organizations:
+                cursor.execute(enter_scope, [str(organization_id)])
+                cursor.execute(statement)
+            cursor.execute(enter_scope, [""])
+
+    return migrations.RunPython(forwards, migrations.RunPython.noop, elidable=False)

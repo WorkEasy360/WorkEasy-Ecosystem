@@ -154,6 +154,20 @@ def grant_experience(
     return result
 
 
+def grant_for_approved_application(
+    ctx: TenantContext, partner_id: UUID, *, experience: Any, reason: Any
+) -> Transition:
+    """What approval grants: the capabilities of what the partner asked to become,
+    for whoever may review applications. Additive and idempotent, like
+    ``grant_experience``. No products: an Admin assigns those."""
+    authz.require(ctx, "platform.staff_kyc.review")
+    key = capabilities.require_experience(experience)
+    why = _reason(reason)
+    with transaction.atomic():
+        partner = _editable_partner(partner_id)
+        return _grant(ctx, partner, key, why, [], True)
+
+
 def _product_codes(key: str, products: Any) -> list[str]:
     if products and not isinstance(products, list | tuple):
         # A string would be split into letters and a number would crash.

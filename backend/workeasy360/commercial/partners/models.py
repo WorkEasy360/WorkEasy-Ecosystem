@@ -33,6 +33,7 @@ import uuid
 from typing import Any
 
 from django.db import models
+from django.utils import timezone
 
 from workeasy360.contracts.enums import (
     DomainStatus,
@@ -1785,3 +1786,167 @@ class PartnerWithdrawalRequest(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.partner_id}: {self.amount_minor} {self.currency} [{self.status}]"
+
+
+# --- KYC (2026-11-09): commercial/partners/kyc.py ---------------------------------
+
+
+class KycRequirement(models.Model):
+    """One document an Admin requires of an application. Data, never code: with
+    none entered, an application is business details alone."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    key = models.SlugField(max_length=48, unique=True)
+    label = models.CharField(max_length=120)
+    help_text = models.CharField(max_length=300, blank=True, default="")
+    is_required = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    display_order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "partners_kyc_requirement"
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return self.key
+
+
+class PartnerKyc(models.Model):
+    """A partner's application. Its status is **not** the partner's: a partner may
+    be suspended and approved at once."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        SUBMITTED = "submitted", "Submitted"
+        UNDER_REVIEW = "under_review", "Under review"
+        CORRECTION_REQUIRED = "correction_required", "Correction required"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
+    partner = models.OneToOneField(
+        PartnerAccount, primary_key=True, on_delete=models.PROTECT, related_name="kyc"
+    )
+    status = models.CharField(
+        max_length=24, choices=Status.choices, default=Status.DRAFT, db_index=True
+    )
+    #: ``application`` (the public form) or ``staff`` (an Admin added the partner).
+    source = models.CharField(max_length=16, default="staff", db_default="staff")
+    #: What the person asked to become. Grants nothing until approval.
+    requested_experience = models.CharField(max_length=16, blank=True, default="")
+    #: The business details, bounded field by field in ``kyc._clean_details``.
+    details = models.JSONField(default=dict, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    #: Who has picked this up.
+    reviewer = models.ForeignKey(
+        "identity.User", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decided_by = models.ForeignKey(
+        "identity.User", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    decision_reason = models.CharField(max_length=500, blank=True, default="")
+    version = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "partners_kyc"
+        indexes = [
+            models.Index(fields=["status", "submitted_at"], name="ix_partner_kyc_queue"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.partner_id} [{self.status}]"
+
+
+class PartnerKycDocument(models.Model):
+    """One uploaded document. ``file_id`` is a soft reference into the files
+    platform, under the platform's own scope. Replaced documents stay, with
+    ``removed_at`` set, so what a reviewer saw is never lost."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="kyc_documents"
+    )
+    requirement_key = models.CharField(max_length=48)
+    file_id = models.UUIDField()
+    filename = models.CharField(max_length=200)
+    content_type = models.CharField(max_length=64)
+    size_bytes = models.BigIntegerField()
+    uploaded_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    removed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "partners_kyc_document"
+        indexes = [
+            models.Index(fields=["partner", "removed_at"], name="ix_kyc_doc_partner"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["partner", "requirement_key"],
+                condition=models.Q(removed_at__isnull=True),
+                name="uq_kyc_doc_one_live_per_requirement",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.partner_id}:{self.requirement_key}"
+
+
+class PartnerKycDecision(models.Model):
+    """Every review step: who, when, from what, to what and why. Append-only."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="kyc_decisions"
+    )
+    decision = models.CharField(max_length=24)
+    from_status = models.CharField(max_length=24)
+    to_status = models.CharField(max_length=24)
+    reason = models.CharField(max_length=500, blank=True, default="")
+    flagged_requirements = models.JSONField(default=list, blank=True)
+    decided_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    decided_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "partners_kyc_decision"
+        indexes = [
+            models.Index(fields=["partner", "-decided_at"], name="ix_kyc_decision_partner"),
+            models.Index(fields=["-decided_at"], name="ix_kyc_decision_time"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.partner_id}:{self.to_status}"
+
+
+class PartnerKycDocumentAccess(models.Model):
+    """Every time staff opened a KYC document. Append-only, written before the bytes
+    leave."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="+"
+    )
+    document = models.ForeignKey(
+        PartnerKycDocument, on_delete=models.PROTECT, related_name="+"
+    )
+    accessed_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    ip_prefix = models.CharField(max_length=64, blank=True, default="")
+    accessed_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "partners_kyc_document_access"
+        indexes = [
+            models.Index(fields=["partner", "-accessed_at"], name="ix_kyc_access_partner"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.document_id} by {self.accessed_by_id}"

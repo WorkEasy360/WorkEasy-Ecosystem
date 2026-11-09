@@ -1328,3 +1328,13 @@ def store_counts() -> dict[str, int]:
         **{f"products_{k}": int(v or 0) for k, v in products.items()},
         **{f"plans_{k}": int(v or 0) for k, v in plans.items()},
     }
+
+
+def search_products(term: str, *, limit: int = 5) -> list[dict[str, str]]:
+    """Products by name or code, for the Admin console's search."""
+    from workeasy360.commercial.catalog.models import Product
+
+    rows = Product.objects.filter(Q(name__icontains=term) | Q(code__icontains=term)).order_by(
+        "sort_order", "code"
+    )[: max(1, min(limit, 25))]
+    return [{"id": str(row.id), "name": row.name, "code": row.code} for row in rows]

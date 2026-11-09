@@ -52,6 +52,7 @@ def _values(row: Any) -> dict[str, Any]:
     )
     return {
         "signup_enabled": bool(row.signup_enabled) if row else True,
+        "partner_applications_enabled": bool(row.partner_applications_enabled) if row else True,
         "support_email": row.support_email if row else "",
         "sales_email": row.sales_email if row else "",
         "catalog_currency": currency,
@@ -77,6 +78,10 @@ def public_site() -> dict[str, Any]:
 
 def signup_enabled() -> bool:
     return bool(public_site()["signup_enabled"])
+
+
+def partner_applications_enabled() -> bool:
+    return bool(public_site().get("partner_applications_enabled", True))
 
 
 def support_email() -> str:
