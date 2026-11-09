@@ -1,6 +1,6 @@
-# Super Admin design system (2026-11-07)
+# Admin console design system (2026-11-07, shell updated 2026-11-09)
 
-The Super Admin console (`admin.workeasy360.com`) is built from one set of shared components, so buttons, tabs, tables, badges, filters, KPI cards and empty states look and behave the same on every page. This document is the reference for anyone adding or changing a console page.
+The Admin console (`admin.workeasy360.com`) is built from one set of shared components, so buttons, tabs, tables, badges, filters, KPI cards and empty states look and behave the same on every page. This document is the reference for anyone adding or changing a console page.
 
 Code: `frontend/src/features/controlplane/kit/` (import from `./kit`). Tests: `kit/kit.test.tsx`.
 
@@ -79,19 +79,20 @@ The older helpers in `ui.tsx` now draw with the kit, so pages not rebuilt yet st
 
 ## App shell
 
-- **Sidebar.** Groups use plural names: Users, Partners, Store, Communication, Staff, Settings.
-  - It works as an accordion: only the current page's group is open.
-  - The parent of the current page is bold, with a green icon.
-  - The chevron is an icon that rotates.
-  - The scrollbar is thin.
+Changed by the Admin Panel programme (2026-11-09). `adminModules.ts` is the single source for the sidebar, the rows inside a module and the search palette. The UI says "Admin"; the internal key stays `SUPER_ADMIN`.
+
+- **Sidebar.** Exactly nine main menus: Dashboard, Customers, Partners, Products & Pricing, Billing & Subscriptions, Wallets & Credits, Support, Reports, Settings. A module is drawn only if the person may see something in it.
   - "Collapse menu" folds the sidebar to a 64px icon rail. Names appear on hover and focus. The choice is remembered in `localStorage` under `w360.admin.rail`.
   - Below 1024px the sidebar becomes a drawer behind the Menu button.
+- **Inside a module.** `ModuleNav` draws the module's sections, then the current section's pages, above the page. A row with one entry is not drawn. Rows wrap on a narrow screen, so no entry is cut off at the edge.
 - **Names.** A page's menu label is also its title, its breadcrumb and its browser tab: "Users · WorkEasy360 Admin". Titles live in `adminNav.ts` `ADMIN_PAGE_TITLES`. A record's own page sets its name through `PageHeader`.
 - **Top bar.**
-  - **Command palette** (the box, or Ctrl/⌘K). It searches pages and settings by name, and shows live Users and Partners results from the server. Products and recent Orders are filtered in the browser. It keeps the 5 most recent picks.
-  - **New menu.** Items have icons: New partner, New product, New plan, Grant staff access.
-  - **Notifications.** An unread count, "Mark all read" (remembered on the browser) and "View all", which opens `/admin/notifications`.
-  - **Account menu.** Shows the avatar, full name and role. The role (Super Admin, Administrator, Staff (read-only)) is worked out from the person's grants.
+  - **Search** (the box, or Ctrl/⌘K). It finds pages by name and asks the server for customers, organizations, partners, products, subscriptions, orders and invoices the person may see.
+  - **Create menu.** New customer, New partner, New product, New plan, New credit pack, New help article, New Admin, each shown only with the permission behind it.
+  - **Notifications.** A count of what is really waiting. Which ones are read is remembered per browser.
+  - **Help and settings.** Help opens the help content; the gear opens Settings.
+  - **Account menu.** Shows the avatar, full name and role. The role is worked out from the person's grants.
+- **Responsive.** Header actions, tab rows and filter chips wrap on a phone. Only tables and charts scroll sideways, each inside its own focusable region, and a chart opens on its latest month. The page itself never scrolls sideways at 1920, 1366, 1024, 768, 390 or 360px.
 
 ## Adding a page
 

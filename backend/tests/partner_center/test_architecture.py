@@ -181,7 +181,11 @@ def test_no_new_tables_for_partners_staff_or_identity():
         # tests/affiliate_products pin what they do. 0007 adds the rule's plan,
         # fixed amount and recurring duration (ADR-056) - tests/store_upgrade.
         "commercial/commissions": "0007_rule_plan_fixed_duration.py",
-        "platform/authz": "0009_billing_manage_not_dangerous.py",
+        # 0010 adds no table and no column: it grants the Admin Panel's six new
+        # staff permissions to each security administrator, so the live Admin
+        # keeps the whole role after an upgrade (ADR-060 decision 13);
+        # tests/admin_panel/test_upgrade_grants.py pins what it does.
+        "platform/authz": "0010_admin_panel_staff_permissions.py",
         "platform/identity": "0008_password_change_required.py",
     }
     for app, newest in expected.items():
