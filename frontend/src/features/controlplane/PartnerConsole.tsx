@@ -485,7 +485,7 @@ export function AllPartnersList() {
       render: (r) => (r.country ? <abbr title={countryName(r.country)}>{r.country}</abbr> : "—"),
     },
     { key: "currency", header: "Currency", value: (r) => r.payout_currency, render: (r) => r.payout_currency },
-    { key: "wallet", header: "Wallet", align: "right", value: (r) => r.commission[0]?.balance_minor ?? 0, render: (r) => wallet(r) },
+    { key: "wallet", header: "Earnings", align: "right", value: (r) => r.commission[0]?.balance_minor ?? 0, render: (r) => wallet(r) },
     {
       key: "login",
       header: "Last login",

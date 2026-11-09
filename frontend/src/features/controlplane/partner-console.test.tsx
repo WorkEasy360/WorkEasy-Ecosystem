@@ -129,11 +129,14 @@ describe("the Admin sidebar", () => {
     expect(within(tabs).getByRole("link", { name: "Partner overview" })).not.toHaveAttribute("aria-current");
   });
 
-  it("is absent for someone who may not view partners", async () => {
-    for (const permissions of [["platform.staff_customer.view"], [MONEY]]) {
-      const links = await sidebarLinks(permissions);
-      expect(links.map((a) => a.textContent)).not.toContain("Partners");
-    }
+  it("is absent for someone who may not view partners or commission rules", async () => {
+    const links = await sidebarLinks(["platform.staff_customer.view"]);
+    expect(links.map((a) => a.textContent)).not.toContain("Partners");
+  });
+
+  it("opens on Commission rules for someone who may only read commissions", async () => {
+    const links = await sidebarLinks([MONEY]);
+    expect(links.find((a) => a.textContent === "Partners")).toHaveAttribute("href", "/admin/partners/commission-rules");
   });
 });
 
@@ -284,7 +287,7 @@ describe("All partners", () => {
       "Status",
       "Country",
       "Currency",
-      "Wallet",
+      "Earnings",
       "Last login",
       "Joined",
       "Actions",
