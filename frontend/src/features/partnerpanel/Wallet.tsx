@@ -9,7 +9,7 @@ import { useFieldChecks, useNote } from "./workspaceKit";
 import styles from "./PartnerPanel.module.css";
 
 /**
- * Wallet & Payouts (2026-11-03): the balance, where payouts go, and asking for
+ * Earnings & Payouts (2026-11-03): what has been earned, where payouts go, and asking for
  * one. Every amount is the server's - the browser sends none: a withdrawal asks
  * for the whole available balance, and the server works out the TDS. Payout
  * details are verified by Workeasy360 staff before the first withdrawal; the
@@ -22,7 +22,7 @@ export function Wallet() {
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Wallet & payouts"
+        title="Earnings & payouts"
         lead="Your commission balance, where we pay it and your withdrawal requests. Amounts are worked out by Workeasy360 from your ledger."
       />
       <LoadGate load={load} what="your wallet">

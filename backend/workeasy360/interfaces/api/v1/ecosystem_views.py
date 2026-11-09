@@ -50,7 +50,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from workeasy360.contracts.values import json_input
-from workeasy360.interfaces.api.v1 import intelligence_product_views
+from workeasy360.interfaces.api.v1 import intelligence_product_views, usage_product_views
 from workeasy360.platform.ecosystem import (
     authorization,
     chooser,
@@ -1091,4 +1091,5 @@ CREDENTIALED_VIEWS: tuple[Callable[..., Any], ...] = (
     # Phase 8: the product-facing AI, retrieval and analytics endpoints share
     # this trust boundary exactly (intelligence_product_views).
     *intelligence_product_views.CREDENTIALED_VIEWS,
+    *usage_product_views.CREDENTIALED_VIEWS,
 )

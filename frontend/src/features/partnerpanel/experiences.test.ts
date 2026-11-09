@@ -47,7 +47,7 @@ const FOURTEEN = [
   "Customers",
   "Sales & Orders",
   "Commission & Earnings",
-  "Wallet & Payouts",
+  "Earnings & Payouts",
   "Communication",
   "Staff",
   "Helpdesk",

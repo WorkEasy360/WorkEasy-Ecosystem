@@ -20,6 +20,7 @@ import { AdminInsights } from "./DashboardScreen";
 import { PageHeader, Panel, UUID_RE, intervalLabel } from "./consoleUi";
 import { useOrgAccess } from "./OrgAccess";
 import { ProviderSupport } from "./ProviderSupport";
+import { CustomerSetupPanel, HelpLibrary, PlatformSupport } from "./CustomerDesk";
 
 /**
  * The customer's side of the ecosystem (Phase 9): the dashboard every member
@@ -679,6 +680,14 @@ export function OrdersScreen() {
 // --- support ------------------------------------------------------------------------------------
 
 /** Support: where to write, and what to quote so support can find you. */
+/** An organization a partner looks after asks that partner (ProviderSupport); any other
+ * asks Workeasy360. The server says which: it knows the live partner link. */
+function PlatformSupportIfDirect({ slug }: { slug: string }) {
+  const [load] = useLoad(() => consoleApi.supportTickets(slug), [slug]);
+  if (load.status !== "ready" || load.data.provider) return null;
+  return <PlatformSupport slug={slug} />;
+}
+
 export function HelpScreen() {
   const { slug, access } = useOrgAccess();
   const site = useSiteSettings();
@@ -706,6 +715,9 @@ export function HelpScreen() {
         </dl>
       </Panel>
       <ProviderSupport slug={slug} />
+      <CustomerSetupPanel slug={slug} />
+      <PlatformSupportIfDirect slug={slug} />
+      <HelpLibrary />
       <Panel title="Common questions">
         <ul className={local.includes}>
           <li>

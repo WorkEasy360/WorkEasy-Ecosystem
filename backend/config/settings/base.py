@@ -848,6 +848,8 @@ ECOSYSTEM_RATE_LIMITS = {
     # the *rate* guard and degrade with the cache (Task 100); spend and
     # concurrency are decided by the database and never degrade open.
     "ai_invoke": (env.int("W360_RL_AI_INVOKE", 1200), 60),
+    # A product reporting billable usage: one event per message or call.
+    "usage_events": (env.int("W360_RL_USAGE_EVENTS", 6000), 60),
     "ai_invoke_org": (env.int("W360_RL_AI_INVOKE_ORG", 300), 60),
     "ai_invoke_skill": (env.int("W360_RL_AI_INVOKE_SKILL", 120), 60),
     # Registering skills and metrics is rare; a loop doing it is a bug.

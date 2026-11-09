@@ -141,7 +141,7 @@ const FOURTEEN = [
   "Customers",
   "Sales & Orders",
   "Commission & Earnings",
-  "Wallet & Payouts",
+  "Earnings & Payouts",
   "Communication",
   "Staff",
   "Helpdesk",
@@ -185,7 +185,7 @@ describe("the affiliate workspace", () => {
       "Affiliate",
       "Product Store",
       "Commission & Earnings",
-      "Wallet & Payouts",
+      "Earnings & Payouts",
       "Helpdesk",
       "Reports & Analytics",
       "Settings",
@@ -250,14 +250,14 @@ describe("the affiliate workspace", () => {
       "GET /api/v1/partner/portal": [portal(partner({ permissions: perm("payout.view") }))],
       [`GET /api/v1/partner/${ID}/payouts`]: [ok({ results: [], next_cursor: null, has_more: false, balances: [], not_implemented: {} })],
     });
-    expect(await screen.findByRole("link", { name: "Wallet & Payouts" })).toHaveAttribute("aria-current", "page");
+    expect(await screen.findByRole("link", { name: "Earnings & Payouts" })).toHaveAttribute("aria-current", "page");
     // Its tabs: the wallet and the payout history (current here).
     const tabs = screen.getByRole("navigation", { name: "Sections" });
     expect(within(tabs).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("aria-current")])).toEqual([
-      ["Wallet", null],
+      ["Earnings", null],
       ["Payout History", "page"],
     ]);
-    expect(sidebar()).toEqual(["Wallet & Payouts"]);
+    expect(sidebar()).toEqual(["Earnings & Payouts"]);
   });
 
   it("a locked page shows what unlocks it - whatever the person's permissions - and loads nothing", async () => {

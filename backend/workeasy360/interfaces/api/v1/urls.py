@@ -25,6 +25,7 @@ from workeasy360.interfaces.api.v1 import (
     admin_programme_views,
     admin_store_views,
     admin_panel_views,
+    usage_product_views,
     admin_views,
     auth_views,
     commercial_views,
@@ -558,6 +559,7 @@ urlpatterns = [
     # The same trust boundary as event ingestion - a product's client
     # credential, no session, no tenant path; the organization is bound by
     # the live entitlement decision inside each service.
+    path("integrations/usage/events", usage_product_views.usage_events, name="usage-events"),
     path(
         "integrations/ai/skills",
         intelligence_product_views.ai_skills,

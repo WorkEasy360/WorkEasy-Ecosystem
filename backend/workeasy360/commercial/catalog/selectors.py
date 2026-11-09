@@ -978,6 +978,9 @@ def plan_listing(*, product_code: str | None = None) -> list[dict[str, Any]]:
             "sort_order": p.sort_order,
             "billing_type": p.billing_type,
             "kind": p.kind,
+            "renewal_rule": p.renewal_rule,
+            "change_rule": p.change_rule,
+            "included_usage": dict(p.included_usage or {}),
             "recommended": p.product.recommended_plan_id == p.id,
             "product": {
                 "id": str(p.product_id),

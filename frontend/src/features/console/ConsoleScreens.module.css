@@ -352,3 +352,8 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.preWrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -264,8 +264,8 @@ const commission = (): WorkspaceEntry =>
   );
 
 const wallet = (): WorkspaceEntry =>
-  tabbed({ key: "wallet", label: "Wallet & Payouts", icon: "card", needs: (can) => can("payout.view") }, [
-    { label: "Wallet", path: "wallet" },
+  tabbed({ key: "wallet", label: "Earnings & Payouts", icon: "card", needs: (can) => can("payout.view") }, [
+    { label: "Earnings", path: "wallet" },
     { label: "Payout History", path: "payouts", also: ["affiliates/payouts"] },
   ]);
 
