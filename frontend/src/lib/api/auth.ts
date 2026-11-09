@@ -19,10 +19,12 @@ export function getSession(): Promise<SessionState> {
   return apiFetch<SessionState>("/api/v1/auth/session");
 }
 
-export function login(email: string, password: string): Promise<LoginResult> {
+/** `remember` is the Admin sign-in's "Remember me": left out by every other form,
+ * which keep the normal session. */
+export function login(email: string, password: string, options: { remember?: boolean } = {}): Promise<LoginResult> {
   return apiFetch<LoginResult>("/api/v1/auth/login", {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, ...options }),
   });
 }
 

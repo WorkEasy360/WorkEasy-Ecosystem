@@ -73,9 +73,9 @@ afterEach(() => {
 });
 
 async function signIn(email = "a@example.com", password = "correct horse battery staple") {
-  fireEvent.change(await screen.findByLabelText("Email"), { target: { value: email } });
+  fireEvent.change(await screen.findByLabelText(/^Email/), { target: { value: email } });
   fireEvent.change(screen.getByLabelText("Password"), { target: { value: password } });
-  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Sign in$|^Sign In to Admin$/ }));
 }
 
 // --- the helpers ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ describe("the sign-in page", () => {
     query = "mode=admin";
     mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT] });
     render(<LoginScreen />);
-    expect(await screen.findByRole("heading", { name: "Sign in as Administrator" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Admin Login" })).toBeInTheDocument();
     expect(screen.queryByText(/authenticator|verification code/i)).not.toBeInTheDocument();
   });
 
@@ -150,14 +150,14 @@ describe("the sign-in page", () => {
       "POST /api/v1/auth/login": [SIGNED_IN],
     });
     const { container } = render(<LoginScreen />);
-    expect(await screen.findByRole("heading", { name: "Sign in as Administrator" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Admin Login" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Change/ })).not.toBeInTheDocument();
     await expectNoViolations(container);
     await signIn();
     await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/admin"));
     const login = calls.find((c) => c.key === "POST /api/v1/auth/login")!;
-    // Only an email and a password reach the server - never the mode.
-    expect(login.body).toEqual({ email: "a@example.com", password: "correct horse battery staple" });
+    // An email, a password and "Remember me" reach the server - never the mode.
+    expect(login.body).toEqual({ email: "a@example.com", password: "correct horse battery staple", remember: false });
     expect(login.url).not.toMatch(/mode|role/);
   });
 

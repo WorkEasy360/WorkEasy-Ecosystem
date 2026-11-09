@@ -373,6 +373,8 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_SAVE_EVERY_REQUEST = False
 SESSION_REFRESH_INTERVAL_S = env.int("W360_SESSION_REFRESH_INTERVAL_S", 60)
 SESSION_ABSOLUTE_TIMEOUT = 60 * 60 * 24 * 30  # 30d hard cap
+# The Admin sign-in's "Remember me" idle window. Never past the hard cap above.
+SESSION_REMEMBER_ME_AGE = env.int("W360_SESSION_REMEMBER_ME_S", 60 * 60 * 24 * 7)
 
 # --- CSRF / security -----------------------------------------------------
 

@@ -3,9 +3,11 @@
 import { Suspense, useEffect } from "react";
 import { Logo } from "@/components/brand/Logo";
 import { useSearchParams } from "next/navigation";
+import { StatusScreen } from "@/components/StatusScreen";
 import { useSession } from "@/lib/auth/useSession";
 import { usePortalRouter } from "@/lib/portalRouter";
 import { PORTAL_TO_MODE, type Portal } from "@/lib/portals";
+import { AdminLoginScreen } from "@/features/auth/AdminLogin";
 import { LoginForm } from "@/features/auth/LoginForm";
 import { destinationAfterSignIn, parseMode, type SignInMode } from "@/features/auth/signInMode";
 import { SignInSupport } from "@/features/controlplane/brandDisplay";
@@ -127,7 +129,7 @@ function Heading({ brand }: { brand: HostBrand | null }) {
 }
 
 const SIGN_IN_TITLE: Record<SignInMode, string> = {
-  admin: "Sign in as Administrator",
+  admin: "Admin Login",
   partner: "Sign in as Partner",
   user: "Sign in as User",
 };
@@ -144,11 +146,6 @@ function SignInCard({ portal }: { portal: HostPortal }) {
           {reauthenticating(searchParams) ? "Confirm it's you" : platform || mode === "admin" ? SIGN_IN_TITLE[mode] : "Sign in"}
         </h2>
       </div>
-      {mode === "admin" && (
-        <p className={styles.note}>
-          Access to the Admin Console is checked for your account after you sign in.
-        </p>
-      )}
       {reauthenticating(searchParams) && (
         <p className={styles.note}>
           The product you are opening asked Workeasy360 to check it is really you. Enter your Workeasy360 email and password
@@ -160,7 +157,30 @@ function SignInCard({ portal }: { portal: HostPortal }) {
   );
 }
 
+/** The Admin portal's sign-in has its own screen (AdminLogin.tsx); a product's
+ * or a partner's sign-in on that host (`?resume=`, `?brand=`) never does. */
+function ScreenForMode({ portal }: { portal: HostPortal }) {
+  const searchParams = useSearchParams();
+  if (modeFor(portal, searchParams) === "admin") {
+    return (
+      <>
+        <AlreadySignedInRedirect portal={portal} />
+        <AdminLoginScreen />
+      </>
+    );
+  }
+  return <StandardSignIn portal={portal} />;
+}
+
 export function LoginScreen({ portal }: { portal?: Portal } = {}) {
+  return (
+    <Suspense fallback={<StatusScreen>Loading…</StatusScreen>}>
+      <ScreenForMode portal={portal} />
+    </Suspense>
+  );
+}
+
+function StandardSignIn({ portal }: { portal?: Portal }) {
   return (
     <main id="w360-main" className={`w360-container ${styles.main}`}>
       <Suspense fallback={null}>

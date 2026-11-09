@@ -85,18 +85,30 @@ const PAIRS: [string, string, number][] = [
   ["--w360-text", "--w360-cream", 4.5],
   ["--w360-text-muted", "--w360-cream", 4.5],
   ["--w360-brand", "--w360-cream", 4.5],
-  // The Super Admin shell: navy top bar and sidebar, the current page, the canvas.
+  // The Admin shell: dark teal top bar and sidebar, the current page, the canvas.
   ["--w360-shell-text", "--w360-shell", 4.5],
   ["--w360-shell-muted", "--w360-shell", 4.5],
+  ["--w360-shell-text", "--w360-shell-deep", 4.5],
   ["--w360-shell-text", "--w360-shell-raised", 4.5],
   ["--w360-shell-muted", "--w360-shell-raised", 4.5],
   ["--w360-shell-text", "--w360-shell-active", 4.5],
-  ["--w360-shell-marker", "--w360-shell-active", 3],
+  ["--w360-shell-active-bar", "--w360-shell-active", 3],
   ["--w360-shell-border", "--w360-shell", 1],
   ["--w360-text", "--w360-shell-canvas", 4.5],
   ["--w360-text-muted", "--w360-shell-canvas", 4.5],
   ["--w360-brand", "--w360-shell-canvas", 4.5],
-  ["--w360-cta-contrast", "--w360-shell-marker", 4.5], // the green "New" button
+  ["--w360-cta-contrast", "--w360-shell-marker", 4.5], // navy on vivid green outside the console
+  // The Admin console's green actions and its sign-in panel.
+  ["--w360-admin-action-text", "--w360-admin-action", 4.5],
+  ["--w360-admin-action-text", "--w360-admin-action-hover", 4.5],
+  ["--w360-brand", "--w360-admin-accent-soft", 4.5],
+  ["--w360-hero-text", "--w360-hero-start", 4.5],
+  ["--w360-hero-text", "--w360-hero-mid", 4.5],
+  ["--w360-hero-text", "--w360-hero-end", 4.5],
+  ["--w360-hero-muted", "--w360-hero-start", 4.5],
+  ["--w360-hero-muted", "--w360-hero-mid", 4.5],
+  ["--w360-hero-muted", "--w360-hero-end", 4.5],
+  ["--w360-hero-text", "--w360-hero-tile", 4.5],
   // The dashboard's tiles (icons) and charts.
   ["--w360-tile-blue", "--w360-tile-blue-bg", 3],
   ["--w360-tile-green", "--w360-tile-green-bg", 3],

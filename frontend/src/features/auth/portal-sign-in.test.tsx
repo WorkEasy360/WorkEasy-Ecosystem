@@ -84,16 +84,16 @@ describe("each portal's own sign-in page (ADR-059)", () => {
   const LOGIN_OK: Reply = { status: 200, body: { user_id: "u1", email: "a@example.com", name: "A" } };
 
   async function signIn() {
-    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: "a@example.com" } });
+    fireEvent.change(await screen.findByLabelText(/^Email/), { target: { value: "a@example.com" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Sign in$|^Sign In to Admin$/ }));
   }
 
   it("the Admin portal signs in on its own host and opens the console page asked for", async () => {
     query = `next=${encodeURIComponent("/admin/partners")}`;
     const calls = mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT], "POST /api/v1/auth/login": [LOGIN_OK] });
     renderPortal(<LoginScreen portal="admin" />);
-    expect(await screen.findByRole("heading", { name: "Sign in as Administrator" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Admin Login" })).toBeInTheDocument();
     await signIn();
     await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/admin/partners"));
     // No central sign-in, no hand-off: the session is this host's.

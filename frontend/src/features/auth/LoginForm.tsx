@@ -18,6 +18,13 @@ const ERROR_COPY: Record<LoginErrorCode | "unknown", string> = {
   unknown: "Something went wrong. Please try again.",
 };
 
+/** What a failed sign-in says, for any sign-in form. */
+export function loginErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.status === 429) return "Too many sign-in attempts. Wait a minute, then try again.";
+  const code = err instanceof ApiError ? (err.code as LoginErrorCode) : "unknown";
+  return ERROR_COPY[code] ?? ERROR_COPY.unknown;
+}
+
 /**
  * The one sign-in form. `mode` only chooses where to go afterwards: the request
  * is the same email and password for everyone, and whether the person may use
@@ -75,9 +82,8 @@ export function LoginForm({
       // Phase 9.
       router.replace(destinationAfterSignIn(mode, searchParams.get("next")));
     } catch (err) {
-      const code = err instanceof ApiError ? (err.code as LoginErrorCode) : "unknown";
-      setError(ERROR_COPY[code] ?? ERROR_COPY.unknown);
-      setUnverified(code === "email_not_verified");
+      setError(loginErrorMessage(err));
+      setUnverified(err instanceof ApiError && err.code === "email_not_verified");
     } finally {
       setSubmitting(false);
     }

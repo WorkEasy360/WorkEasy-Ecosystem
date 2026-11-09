@@ -9,6 +9,7 @@ import { useSession } from "@/lib/auth/useSession";
 import { takeFragmentToken } from "@/lib/auth/fragmentToken";
 import { rememberIntent, useSiteSettings } from "@/features/site/SiteShell";
 import styles from "@/features/site/Site.module.css";
+import { AdminAuthFrame } from "./AdminLogin";
 import { usePortalRouter } from "@/lib/portalRouter";
 
 /**
@@ -339,7 +340,14 @@ export function VerifyEmailScreen() {
 
 // --- forgot / reset ---------------------------------------------------------------------------
 
-export function ForgotPasswordScreen() {
+/** The frame for the password pages: the Admin sign-in's on the Admin portal,
+ * the public site's everywhere else. */
+function passwordFrame(admin: boolean) {
+  return admin ? AdminAuthFrame : AuthFrame;
+}
+
+export function ForgotPasswordScreen({ admin = false }: { admin?: boolean } = {}) {
+  const Frame = passwordFrame(admin);
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "busy" | "sent">("idle");
   const [problems, setProblems] = useState<string[]>([]);
@@ -347,7 +355,7 @@ export function ForgotPasswordScreen() {
 
   if (state === "sent") {
     return (
-      <AuthFrame title="Check your email">
+      <Frame title="Check your email">
         <p role="status">
           If an account uses <strong>{email}</strong>, a link to reset its password is on its way. It works once, for 60
           minutes.
@@ -355,12 +363,12 @@ export function ForgotPasswordScreen() {
         <p className={styles.below}>
           <Link href="/login">Back to sign in</Link>
         </p>
-      </AuthFrame>
+      </Frame>
     );
   }
 
   return (
-    <AuthFrame title="Reset your password">
+    <Frame title="Reset your password">
       <form
         noValidate
         aria-describedby={problems.length ? errorId : undefined}
@@ -386,11 +394,12 @@ export function ForgotPasswordScreen() {
       <p className={styles.below}>
         <Link href="/login">Back to sign in</Link>
       </p>
-    </AuthFrame>
+    </Frame>
   );
 }
 
-export function ResetPasswordScreen() {
+export function ResetPasswordScreen({ admin = false }: { admin?: boolean } = {}) {
+  const Frame = passwordFrame(admin);
   const token = useFragmentToken();
   const errorId = useId();
   const [password, setPassword] = useState("");
@@ -400,34 +409,34 @@ export function ResetPasswordScreen() {
 
   if (token === null) {
     return (
-      <AuthFrame title="Choose a new password">
+      <Frame title="Choose a new password">
         <p aria-live="polite">Loading…</p>
-      </AuthFrame>
+      </Frame>
     );
   }
   if (state === "done") {
     return (
-      <AuthFrame title="Password changed">
+      <Frame title="Password changed">
         <p role="status">Your password was changed and every session was signed out.</p>
         <Link href="/login" className={`w360-btn w360-btn-primary ${styles.fullWidth}`}>
           Sign in
         </Link>
-      </AuthFrame>
+      </Frame>
     );
   }
   if (token === "") {
     return (
-      <AuthFrame title="Choose a new password">
+      <Frame title="Choose a new password">
         <p role="alert">This link is not valid. Ask for a new one.</p>
         <p className={styles.below}>
           <Link href="/forgot-password">Reset your password</Link>
         </p>
-      </AuthFrame>
+      </Frame>
     );
   }
 
   return (
-    <AuthFrame title="Choose a new password">
+    <Frame title="Choose a new password">
       <form
         noValidate
         aria-describedby={problems.length ? errorId : undefined}
@@ -459,6 +468,6 @@ export function ResetPasswordScreen() {
           Change password
         </button>
       </form>
-    </AuthFrame>
+    </Frame>
   );
 }
