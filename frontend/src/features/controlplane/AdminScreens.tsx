@@ -5,11 +5,15 @@ import Link from "next/link";
 import { Icon } from "@/components/sidebar/icons";
 import { adminApi, type AuditRow, type CustomerDetail, type CustomerRow, type Diagnosis } from "@/lib/api/controlPlane";
 import { adminConsoleApi } from "@/lib/api/adminConsole";
+import { accessApi } from "@/lib/api/adminPanel";
 import { can, useAdmin } from "./ControlShell";
 import { CustomerBilling } from "./AdminBilling";
-import { StaffRolesPanel, TableSection } from "./AdminCommerce";
+import { ROLES, StaffRolesPanel, TableSection } from "./AdminCommerce";
+import { DateRange } from "./AdminListParts";
 import { DateText } from "./AdminUsers";
+import { AssignPlanPopup, AssignmentHistoryCard, CustomerMembersCard, NewCustomerPopup } from "./CustomerExtras";
 import { FormPopup } from "./Modal";
+import { TextField } from "./widgets";
 import { LoadGate, ReasonAction, autoReason, useAction, useLoad, usePaged } from "./ui";
 import {
   Alert,
@@ -59,6 +63,7 @@ const CUSTOMER_STATUS = [
 ];
 
 export function Customers() {
+  const { permissions } = useAdmin();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const paged = usePaged((cursor) => adminApi.customers({ q: query || undefined, status: status || undefined, cursor }), [query, status]);
@@ -98,6 +103,7 @@ export function Customers() {
         title="Customers"
         subtitle="Every customer organization on the platform."
         info="Subscription, products and seats reflect the last reconciliation."
+        primary={can(permissions, "platform.staff_customer.manage") ? <NewCustomerPopup onCreated={paged.reload} /> : undefined}
       />
       <FilterBar
         onClear={
@@ -143,6 +149,7 @@ export function CustomerDetailScreen({ organizationId }: { organizationId: strin
   const manage = can(permissions, "platform.staff_customer.manage");
   const subs = can(permissions, "platform.staff_subscription.manage");
   const payments = can(permissions, "platform.staff_payment.view");
+  const [assigned, setAssigned] = useState(0);
 
   return (
     <Page>
@@ -197,7 +204,21 @@ export function CustomerDetailScreen({ organizationId }: { organizationId: strin
               />
               {feedback}
 
-              <Card title="Subscription">
+              <Card
+                title="Subscription"
+                actions={
+                  subs ? (
+                    <AssignPlanPopup
+                      organizationId={organizationId}
+                      // The customer's page announces it and reloads, with any new subscription listed.
+                      onAssigned={(message) => {
+                        setAssigned((n) => n + 1);
+                        void act(async () => {}, message ?? "Plan assigned.");
+                      }}
+                    />
+                  ) : undefined
+                }
+              >
                 <SubscriptionPanel detail={d} canManage={subs} busy={busy} act={act} organizationId={organizationId} />
               </Card>
 
@@ -273,6 +294,9 @@ export function CustomerDetailScreen({ organizationId }: { organizationId: strin
                   ]}
                 />
               </Card>
+
+              <CustomerMembersCard organizationId={organizationId} />
+              <AssignmentHistoryCard organizationId={organizationId} refresh={assigned} />
 
               {payments && <CustomerBilling organizationId={organizationId} />}
 
@@ -655,13 +679,6 @@ const AUDIT_COLUMNS: Column<AuditRow>[] = [
   },
 ];
 
-const AUDIT_DATES = [
-  { value: "", label: "Any time" },
-  { value: "1", label: "Last 24 hours" },
-  { value: "7", label: "Last 7 days" },
-  { value: "30", label: "Last 30 days" },
-];
-
 const AUDIT_AREAS = [
   { value: "", label: "All actions" },
   { value: "staff.", label: "Staff" },
@@ -673,29 +690,32 @@ const AUDIT_AREAS = [
   { value: "platform.", label: "Platform" },
 ];
 
+const PERSON_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function AuditScreen() {
   const [prefix, setPrefix] = useState("");
   const [area, setArea] = useState("");
+  const [actorId, setActorId] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [actor, setActor] = useState("");
   const [resource, setResource] = useState("");
-  const [days, setDays] = useState("");
-  const [now] = useState(() => Date.now());
   const action = prefix || area;
-  const paged = usePaged((cursor) => adminApi.audit(cursor, action || undefined), [action]);
+  // The server refuses anything but a whole ID: an incomplete one is said here and not sent.
+  const actorValid = !actorId || PERSON_ID.test(actorId);
+  const sentActor = actorValid ? actorId : "";
+  const paged = usePaged(
+    (cursor) => adminApi.audit(cursor, action || undefined, { actor: sentActor || undefined, from: from || undefined, to: to || undefined }),
+    [action, sentActor, from, to],
+  );
 
-  // The audit endpoint filters by action prefix; who, what and when narrow
-  // the entries loaded so far.
+  // The audit endpoint filters by action prefix, person and dates; the kind of
+  // actor and the resource narrow the entries loaded so far.
   const actors = useMemo(() => [...new Set(paged.rows.map((a) => a.actor_kind).filter(Boolean))].sort(), [paged.rows]);
   const resources = useMemo(() => [...new Set(paged.rows.map((a) => a.resource_type).filter(Boolean))].sort(), [paged.rows]);
   const rows = useMemo(
-    () =>
-      paged.rows.filter(
-        (a) =>
-          (!actor || a.actor_kind === actor) &&
-          (!resource || a.resource_type === resource) &&
-          (!days || now - Date.parse(a.occurred_at) <= Number(days) * 24 * 60 * 60 * 1000),
-      ),
-    [paged.rows, actor, resource, days, now],
+    () => paged.rows.filter((a) => (!actor || a.actor_kind === actor) && (!resource || a.resource_type === resource)),
+    [paged.rows, actor, resource],
   );
 
   const columns: Column<AuditRow>[] = [
@@ -709,7 +729,7 @@ export function AuditScreen() {
     { key: "reason", header: "Reason", value: (a) => a.reason, render: (a) => <Trunc max="lg">{a.reason}</Trunc> },
     AUDIT_COLUMNS[3],
   ];
-  const filtered = Boolean(prefix || area || actor || resource || days);
+  const filtered = Boolean(prefix || area || actorId || from || to || actor || resource);
   return (
     <Page>
       <PageHeader title="Audit log" subtitle="Every staff action in the admin console, newest first." />
@@ -719,9 +739,11 @@ export function AuditScreen() {
             ? () => {
                 setPrefix("");
                 setArea("");
+                setActorId("");
+                setFrom("");
+                setTo("");
                 setActor("");
                 setResource("");
-                setDays("");
               }
             : undefined
         }
@@ -751,8 +773,14 @@ export function AuditScreen() {
           onChange={setResource}
           options={[{ value: "", label: "Any" }, ...resources.map((r) => ({ value: r, label: eventLabel(r) }))]}
         />
-        <Select label="Date" prefix="Date:" value={days} onChange={setDays} options={AUDIT_DATES} />
+        <SearchInput label="Filter by the person's ID" value={actorId} onSearch={setActorId} placeholder="Person's ID" maxLength={36} />
+        <DateRange from={from} to={to} onFrom={setFrom} onTo={setTo} />
       </FilterBar>
+      {!actorValid && (
+        <p className="w360-error-text" role="alert">
+          Enter the person&apos;s whole ID, as shown on their user page.
+        </p>
+      )}
       <DataTable
         caption="Audit entries"
         columns={columns}
@@ -778,14 +806,71 @@ function permissionParts(key: string): { area: string; verb: string } {
   return m ? { area: sentence(m[1]), verb: sentence(m[2]) } : { area: key, verb: "" };
 }
 
+const LOOKS_LIKE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** A new Admin: an account, the staff designation and a role, in one audited step. Nobody
+ * chooses a password for someone else; the server sends a link to set their own. Someone
+ * who already has an account keeps it, and their password. */
+function NewAdminPopup({ onDone }: { onDone: () => void }) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("SUPPORT_ADMIN");
+  const [reason, setReason] = useState("");
+  const emailText = email.trim();
+  const emailBad = Boolean(emailText) && !LOOKS_LIKE_EMAIL.test(emailText);
+  return (
+    <FormPopup
+      label={plus("New Admin")}
+      title="New Admin"
+      intro="They will get a link to set their own password. Nobody chooses it for them."
+      size="sm"
+      submitLabel="Create Admin"
+      canSubmit={Boolean(name.trim() && emailText && !emailBad && reason.trim().length >= 10)}
+      onOpen={() => {
+        setName("");
+        setEmail("");
+        setRole("SUPPORT_ADMIN");
+        setReason("");
+      }}
+      onSubmit={async () => {
+        const made = await accessApi.createStaff({ full_name: name.trim(), email: emailText, role, reason: reason.trim() });
+        return made.new_account
+          ? "Admin created. They will get a link to set their own password."
+          : "This person already had an account, so they keep their password. The role has been added.";
+      }}
+      onDone={onDone}
+    >
+      <TextField label="Full name" required value={name} onChange={setName} maxLength={200} autoComplete="off" />
+      <TextField
+        label="Email"
+        type="email"
+        required
+        value={email}
+        onChange={setEmail}
+        maxLength={254}
+        autoComplete="off"
+        error={emailBad ? "Enter a valid email address." : undefined}
+      />
+      <div className={local.field}>
+        <Select label="Role" showLabel fullWidth value={role} onChange={setRole} options={ROLES} />
+      </div>
+      <TextField label="Reason" required hint="At least 10 characters. Kept in the audit log." value={reason} onChange={setReason} maxLength={200} autoComplete="off" />
+    </FormPopup>
+  );
+}
+
 export function SecurityScreen() {
+  const { permissions } = useAdmin();
   const [tab, setTab] = useState<"roles" | "permissions">("roles");
+  // A new Admin changes who holds what: the lists below read it again.
+  const [changes, setChanges] = useState(0);
   return (
     <Page>
       <PageHeader
         title="Staff access"
         subtitle="Who can do what in the admin console."
         info="Grants take effect and end immediately, a time-boxed grant ends on its own when it expires, and the last permanent security administrator cannot be removed."
+        primary={can(permissions, "platform.staff_security.manage") ? <NewAdminPopup onDone={() => setChanges((n) => n + 1)} /> : undefined}
         tabs={
           <Tabs
             label="Staff access"
@@ -798,7 +883,7 @@ export function SecurityScreen() {
           />
         }
       />
-      {tab === "roles" ? <StaffRolesPanel /> : <PermissionsPanel />}
+      {tab === "roles" ? <StaffRolesPanel key={changes} /> : <PermissionsPanel key={changes} />}
     </Page>
   );
 }

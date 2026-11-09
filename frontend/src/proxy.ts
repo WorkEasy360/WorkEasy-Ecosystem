@@ -60,6 +60,8 @@ const PUBLIC_PATHS = [
   "/sign-out",
   // 2026-11-02: the public Store - browsing is open; buying signs in first.
   "/store",
+  // 2026-11-09: the partner application, filled in before any account exists.
+  "/partner/apply",
 ];
 
 /** ADR-053: a partner's branded Store (`/store/<partner>`) is browsable signed

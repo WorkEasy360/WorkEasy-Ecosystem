@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { routePortalRequest } from "./proxy";
+import { isPublicPath, routePortalRequest } from "./proxy";
 import {
   pageOwner,
   parseOrigin,
@@ -256,6 +256,22 @@ describe("routing a page request", () => {
     expect(route("auth.workeasy360.com", "/organizations/select?resume=r")).toEqual({
       kind: "redirect",
       location: `${ORIGINS.auth}/login?resume=r`,
+    });
+  });
+
+  it("serves the partner application signed out on the partner host, and moves it there from any other", () => {
+    expect(isPublicPath("/partner/apply")).toBe(true);
+    expect(isPublicPath("/partner/applyx")).toBe(false);
+    expect(isPublicPath("/partner")).toBe(false);
+    expect(pageOwner("/partner/apply")).toBe("partner");
+    expect(route("partner.workeasy360.com", "/partner/apply")).toEqual({ kind: "serve" });
+    expect(route("partner.workeasy360.com", "/partner/apply", { session: true })).toEqual({ kind: "serve" });
+    expect(route("app.workeasy360.com", "/partner/apply")).toEqual({ kind: "redirect", location: `${ORIGINS.partner}/partner/apply` });
+    expect(route("admin.workeasy360.com", "/partner/apply")).toEqual({ kind: "redirect", location: `${ORIGINS.partner}/partner/apply` });
+    // Only that one page: the portal around it still asks a signed-out visit to sign in.
+    expect(route("partner.workeasy360.com", "/partner/applyx")).toEqual({
+      kind: "redirect",
+      location: `${ORIGINS.partner}/login?next=${encodeURIComponent("/partner/applyx")}`,
     });
   });
 

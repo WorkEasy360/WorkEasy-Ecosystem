@@ -350,7 +350,7 @@ export function usePaged<T>(
       const page = await fetchPage(current.next);
       setData((d) =>
         d && d.stamp === stamp
-          ? { ...d, rows: [...d.rows, ...page.results], next: page.has_more ? page.next_cursor : null }
+          ? { ...d, state: "ready", rows: [...d.rows, ...page.results], next: page.has_more ? page.next_cursor : null }
           : d,
       );
     } catch {

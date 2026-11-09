@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect } from "react";
+import Link from "next/link";
 import { Logo } from "@/components/brand/Logo";
 import { useSearchParams } from "next/navigation";
 import { StatusScreen } from "@/components/StatusScreen";
@@ -153,6 +154,11 @@ function SignInCard({ portal }: { portal: HostPortal }) {
         </p>
       )}
       <LoginForm mode={mode} />
+      {mode === "partner" && (
+        <p className="w360-hint">
+          <Link href="/partner/apply">Apply to become a partner</Link>
+        </p>
+      )}
     </>
   );
 }

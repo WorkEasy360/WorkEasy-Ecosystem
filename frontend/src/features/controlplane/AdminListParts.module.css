@@ -1,0 +1,38 @@
+/* The page controls and date pair of the Admin console's offset-paged lists. Tokens only. */
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-3);
+  flex-wrap: wrap;
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-text-muted);
+}
+
+.pagerButtons {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-1);
+}
+
+.dates {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  min-width: 0;
+}
+
+.dateField {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-1);
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-text-muted);
+}
+
+.dateField input {
+  width: 150px;
+  max-width: 100%;
+}

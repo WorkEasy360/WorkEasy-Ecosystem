@@ -177,9 +177,9 @@ function Toast({ item, onClose }: { item: ToastItem; onClose: () => void }) {
     return () => window.clearTimeout(t);
   }, [item.tone, onClose]);
   return (
-    <li className={k.toast} data-tone={item.tone} role={item.tone === "danger" ? "alert" : "status"}>
+    <li className={k.toast} data-tone={item.tone}>
       <Icon name={item.tone === "danger" ? "alert" : item.tone === "success" ? "checkCircle" : "info"} size={16} />
-      <p>{item.text}</p>
+      <p role={item.tone === "danger" ? "alert" : "status"}>{item.text}</p>
       <button type="button" className={k.toastClose} aria-label="Dismiss" onClick={onClose}>
         <Icon name="x" size={14} />
       </button>

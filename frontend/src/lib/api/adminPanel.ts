@@ -370,10 +370,10 @@ export const billingApi = {
     apiFetch<KeysetPage<InvoiceRow>>("/api/v1/admin/invoices", { query }),
   payments: (query: PageQuery & { status?: string; failed?: "1" }) =>
     apiFetch<KeysetPage<PaymentRow>>("/api/v1/admin/payments/all", { query }),
-  stuckOrders: () => apiFetch<{ results: StuckOrderRow[] }>("/api/v1/admin/orders/stuck"),
+  stuckOrders: () => apiFetch<{ results: StuckOrderRow[] }>("/api/v1/admin/orders/stuck", { query: { limit: 100 } }),
   retryActivation: (orderId: string) =>
     apiFetch<{ order_id: string; outcome: string }>(`/api/v1/admin/orders/${orderId}/retry-activation`, post({})),
-  refunds: (query: PageQuery & { status?: string }) => apiFetch<KeysetPage<RefundRow>>("/api/v1/admin/refunds", { query }),
+  refunds: (query: PageQuery & { status?: string; waiting?: string }) => apiFetch<KeysetPage<RefundRow>>("/api/v1/admin/refunds", { query }),
   creditNotes: (query: PageQuery & { q?: string }) =>
     apiFetch<KeysetPage<CreditNoteRow>>("/api/v1/admin/credit-notes", { query }),
   subscriptions: (query: PageQuery & { status?: string; product?: string; renewing?: number; q?: string }) =>
@@ -700,7 +700,7 @@ export const customersApi = {
     apiFetch<{ results: AssignmentRow[] }>(`/api/v1/admin/customers/${organizationId}/assignment-history`),
   assignPlan: (
     organizationId: string,
-    body: { plan_version_id: string; billing_interval: string; quantity: number; reason: string },
+    body: { plan_version_id: string; billing_interval: string; quantity: number; reason: string; currency?: string },
     commandId: string,
   ) =>
     apiFetch<{ order_id: string; number: string; status: string; requires_payment: boolean }>(

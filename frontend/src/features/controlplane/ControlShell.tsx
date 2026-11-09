@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { StatusScreen } from "@/components/StatusScreen";
 import {
@@ -379,6 +380,12 @@ export function PartnerShell({ partnerId, children }: { partnerId: string; child
             {partner.status !== "active" && (
               <p role="status" className={`w360-badge w360-badge-warning ${consoleStyles.banner} ${consoleStyles.notice}`}>
                 {STATUS_NOTICE[partner.status] ?? `This partner account is ${partner.status}.`}
+                {/* A draft partner's menu is empty: this link is the way in to its application. */}
+                {partner.status === "draft" && (
+                  <Link href={`/partner/${partner.partner_id}/kyc`} className="w360-btn w360-btn-secondary">
+                    Complete your application
+                  </Link>
+                )}
               </p>
             )}
           </>
