@@ -55,7 +55,9 @@ def _app_row(product: dict[str, Any]) -> dict[str, Any]:
         "documentation_url": product.get("documentation_url") or "",
         "support_url": product.get("support_url") or "",
         "app_links": product.get("app_links") or {},
-        "store_link": f"/store/product/{product.get('slug')}" if product.get("slug") else "",
+        "store_link": f"/store/product/{product.get('slug')}"
+        if product.get("slug")
+        else "",
         "purchase_routes": {
             "store": bool(product.get("customer_store_enabled")),
             "reseller": bool(product.get("reseller_enabled")),
@@ -95,7 +97,9 @@ def check_host(ctx: TenantContext, raw: Any) -> dict[str, Any]:
     authz.require(ctx, VIEW)
     host = str(raw or "").strip().lower()
     if host not in _known_hosts():
-        raise CatalogValidationError("That address is not one of the platform's.", field="host")
+        raise CatalogValidationError(
+            "That address is not one of the platform's.", field="host"
+        )
     result = probe_url("settings-domains", f"https://{host}/")
     answered = result.detail.startswith("http_")
     return {

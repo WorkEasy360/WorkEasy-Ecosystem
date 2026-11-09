@@ -61,7 +61,7 @@ def _applicant(email):
     return user, member.partner
 
 
-def _signed_in(login, user):  # noqa: F811
+def _signed_in(login, user):
     return login(user, password=PASSWORD)
 
 
@@ -136,7 +136,7 @@ class TestPublicApplication:
 
 
 class TestWholeJourney:
-    def test_registration_to_activation(self, login, staff_login):  # noqa: F811
+    def test_registration_to_activation(self, login, staff_login):
         """Workflow 1: registration, KYC submission, review, approval, activation."""
         from workeasy360.commercial.partners import selectors
         from workeasy360.commercial.partners.models import (
@@ -162,7 +162,13 @@ class TestWholeJourney:
             client,
             "put",
             base,
-            {"details": {"legal_name": "Acme Traders Pvt Ltd", "country": "IN", "city": "Pune"}},
+            {
+                "details": {
+                    "legal_name": "Acme Traders Pvt Ltd",
+                    "country": "IN",
+                    "city": "Pune",
+                }
+            },
         )
         assert saved.status_code == 200
         assert saved.json()["details"]["city"] == "Pune"
@@ -195,7 +201,9 @@ class TestWholeJourney:
         assert opened["Cache-Control"].startswith("no-store")
         assert opened["X-Content-Type-Options"] == "nosniff"
         assert opened.content == PNG
-        assert PartnerKycDocumentAccess.objects.filter(document_id=document_id).count() == 1
+        assert (
+            PartnerKycDocumentAccess.objects.filter(document_id=document_id).count() == 1
+        )
 
         approved = _json(
             reviewer,
@@ -212,9 +220,11 @@ class TestWholeJourney:
 
         partner.refresh_from_db()
         assert partner.status == "active"
-        assert selectors.active_capabilities(partner.id), "approval granted what was asked for"
+        assert selectors.active_capabilities(partner.id), (
+            "approval granted what was asked for"
+        )
 
-    def test_correction_then_resubmission(self, login, staff_login):  # noqa: F811
+    def test_correction_then_resubmission(self, login, staff_login):
         requirement = _requirement()
         _, body = _apply()
         user, partner = _applicant(body["email"])
@@ -230,7 +240,9 @@ class TestWholeJourney:
 
         reviewer, _ = staff_login(REVIEW)
         decision = f"/api/v1/admin/kyc/applications/{partner.id}/decision"
-        too_short = _json(reviewer, "post", decision, {"decision": "request_correction", "reason": "no"})
+        too_short = _json(
+            reviewer, "post", decision, {"decision": "request_correction", "reason": "no"}
+        )
         assert too_short.status_code == 400
         asked = _json(
             reviewer,
@@ -242,7 +254,9 @@ class TestWholeJourney:
                 "flagged_requirements": [requirement.key],
             },
         )
-        assert asked.status_code == 200 and asked.json()["status"] == "correction_required"
+        assert (
+            asked.status_code == 200 and asked.json()["status"] == "correction_required"
+        )
         state = client.get(base).json()
         assert state["editable"] is True
         assert state["correction"]["flagged_requirements"] == [requirement.key]
@@ -252,7 +266,7 @@ class TestWholeJourney:
         partner.refresh_from_db()
         assert partner.status == "draft"
 
-    def test_rejection_is_final_and_leaves_no_rights(self, login, staff_login):  # noqa: F811
+    def test_rejection_is_final_and_leaves_no_rights(self, login, staff_login):
         from workeasy360.commercial.partners import selectors
 
         _, body = _apply()
@@ -264,19 +278,26 @@ class TestWholeJourney:
         reviewer, _ = staff_login(REVIEW)
         decision = f"/api/v1/admin/kyc/applications/{partner.id}/decision"
         rejected = _json(
-            reviewer, "post", decision, {"decision": "reject", "reason": "Could not verify this business."}
+            reviewer,
+            "post",
+            decision,
+            {"decision": "reject", "reason": "Could not verify this business."},
         )
         assert rejected.json()["status"] == "rejected"
-        assert rejected.json()["decisions"][0]["reason"] == "Could not verify this business."
+        assert (
+            rejected.json()["decisions"][0]["reason"] == "Could not verify this business."
+        )
         partner.refresh_from_db()
         assert partner.status == "draft"
         assert selectors.active_capabilities(partner.id) == frozenset()
         # And it cannot be decided again.
-        assert _json(reviewer, "post", decision, {"decision": "approve"}).status_code == 409
+        assert (
+            _json(reviewer, "post", decision, {"decision": "approve"}).status_code == 409
+        )
 
 
 class TestTheGate:
-    def test_a_draft_partner_cannot_be_activated_without_approval(self, staff_login):  # noqa: F811
+    def test_a_draft_partner_cannot_be_activated_without_approval(self, staff_login):
         manager, _ = staff_login("platform.staff_partner.manage")
         from workeasy360.commercial.partners.kyc import assert_may_activate
         from workeasy360.commercial.partners.models import PartnerAccount, PartnerKyc
@@ -300,7 +321,7 @@ class TestTheGate:
 
 
 class TestPermissions:
-    def test_documents_need_review_not_just_view(self, login, staff_login):  # noqa: F811
+    def test_documents_need_review_not_just_view(self, login, staff_login):
         requirement = _requirement()
         _, body = _apply()
         user, partner = _applicant(body["email"])
@@ -315,10 +336,20 @@ class TestPermissions:
         admin_base = f"/api/v1/admin/kyc/applications/{partner.id}"
         assert viewer.get(admin_base).status_code == 200
         assert viewer.get(f"{admin_base}/documents/{document}/content").status_code == 403
-        assert _json(viewer, "post", f"{admin_base}/decision", {"decision": "approve"}).status_code == 403
-        assert _json(viewer, "post", "/api/v1/admin/kyc/requirements", {"label": "X"}).status_code == 403
+        assert (
+            _json(
+                viewer, "post", f"{admin_base}/decision", {"decision": "approve"}
+            ).status_code
+            == 403
+        )
+        assert (
+            _json(
+                viewer, "post", "/api/v1/admin/kyc/requirements", {"label": "X"}
+            ).status_code
+            == 403
+        )
 
-    def test_another_partner_cannot_read_this_application(self, login):  # noqa: F811
+    def test_another_partner_cannot_read_this_application(self, login):
         _, first = _apply()
         _, second = _apply()
         user, _partner = _applicant(first["email"])
@@ -326,7 +357,7 @@ class TestPermissions:
         client = _signed_in(login, user)
         assert client.get(f"/api/v1/partner/{other.id}/kyc").status_code == 404
 
-    def test_a_non_administrator_member_cannot_change_it(self, login):  # noqa: F811
+    def test_a_non_administrator_member_cannot_change_it(self, login):
         from workeasy360.commercial.partners.models import PartnerMember
 
         _, body = _apply()
@@ -342,7 +373,7 @@ class TestPermissions:
         )
         assert response.status_code == 403
 
-    def test_the_wrong_type_of_file_is_refused(self, login):  # noqa: F811
+    def test_the_wrong_type_of_file_is_refused(self, login):
         requirement = _requirement()
         _, body = _apply()
         user, partner = _applicant(body["email"])
@@ -354,7 +385,9 @@ class TestPermissions:
         assert html.status_code == 400
         # A declared PNG that is not one: the bytes decide.
         fake = client.post(
-            f"{base}?requirement={requirement.key}", b"not an image", content_type="image/png"
+            f"{base}?requirement={requirement.key}",
+            b"not an image",
+            content_type="image/png",
         )
         assert fake.status_code == 415
 
@@ -371,8 +404,12 @@ class TestLedger:
         from workeasy360.commercial.wallets import ledger
 
         wallet = self._wallet()
-        first = ledger.post(wallet.id, amount=500, entry_type="top_up", reason="t", idempotency_key="k1")
-        second = ledger.post(wallet.id, amount=500, entry_type="top_up", reason="t", idempotency_key="k1")
+        first = ledger.post(
+            wallet.id, amount=500, entry_type="top_up", reason="t", idempotency_key="k1"
+        )
+        second = ledger.post(
+            wallet.id, amount=500, entry_type="top_up", reason="t", idempotency_key="k1"
+        )
         assert first.id == second.id
         wallet.refresh_from_db()
         assert wallet.balance == 500
@@ -382,17 +419,33 @@ class TestLedger:
         from workeasy360.commercial.wallets import ledger
 
         wallet = self._wallet()
-        ledger.post(wallet.id, amount=500, entry_type="top_up", reason="t", idempotency_key="k2")
+        ledger.post(
+            wallet.id, amount=500, entry_type="top_up", reason="t", idempotency_key="k2"
+        )
         with pytest.raises(ledger.WalletConflict):
-            ledger.post(wallet.id, amount=900, entry_type="top_up", reason="t", idempotency_key="k2")
+            ledger.post(
+                wallet.id,
+                amount=900,
+                entry_type="top_up",
+                reason="t",
+                idempotency_key="k2",
+            )
 
     def test_no_overdraft(self):
         from workeasy360.commercial.wallets import ledger
 
         wallet = self._wallet()
-        ledger.post(wallet.id, amount=100, entry_type="top_up", reason="t", idempotency_key="k3")
+        ledger.post(
+            wallet.id, amount=100, entry_type="top_up", reason="t", idempotency_key="k3"
+        )
         with pytest.raises(ledger.InsufficientBalance):
-            ledger.post(wallet.id, amount=-101, entry_type="usage", reason="t", idempotency_key="k4")
+            ledger.post(
+                wallet.id,
+                amount=-101,
+                entry_type="usage",
+                reason="t",
+                idempotency_key="k4",
+            )
         wallet.refresh_from_db()
         assert wallet.balance == 100
 
@@ -400,7 +453,9 @@ class TestLedger:
         from workeasy360.commercial.wallets import ledger
 
         wallet = self._wallet()
-        entry = ledger.post(wallet.id, amount=100, entry_type="top_up", reason="t", idempotency_key="k5")
+        entry = ledger.post(
+            wallet.id, amount=100, entry_type="top_up", reason="t", idempotency_key="k5"
+        )
         part = ledger.reverse(entry.id, reason="part", amount=40, idempotency_key="k6")
         assert part.reverses_id == entry.id and part.amount == -40
         with pytest.raises(ledger.WalletConflict):
@@ -419,7 +474,9 @@ class TestLedger:
         from workeasy360.commercial.wallets.models import WalletEntry
 
         wallet = self._wallet()
-        entry = ledger.post(wallet.id, amount=100, entry_type="top_up", reason="t", idempotency_key="k10")
+        entry = ledger.post(
+            wallet.id, amount=100, entry_type="top_up", reason="t", idempotency_key="k10"
+        )
         with pytest.raises(DatabaseError), transaction.atomic():
             WalletEntry.objects.filter(id=entry.id).update(amount=999)
         with pytest.raises(DatabaseError), transaction.atomic():
@@ -434,7 +491,9 @@ class TestLedger:
         with pytest.raises(IntegrityError), transaction.atomic():
             Wallet.objects.filter(id=wallet.id).update(balance=-1)
         with pytest.raises(IntegrityError), transaction.atomic():
-            Wallet.objects.create(owner_type="partner", owner_id=uuid.uuid4(), kind="ai_credits")
+            Wallet.objects.create(
+                owner_type="partner", owner_id=uuid.uuid4(), kind="ai_credits"
+            )
 
 
 class TestUsage:
@@ -453,9 +512,15 @@ class TestUsage:
     def _funded(self, org, *, kind="consumption", currency="INR", amount=1000):
         from workeasy360.commercial.wallets import ledger
 
-        wallet = ledger.ensure(owner_type="organization", owner_id=org, kind=kind, currency=currency)
+        wallet = ledger.ensure(
+            owner_type="organization", owner_id=org, kind=kind, currency=currency
+        )
         ledger.post(
-            wallet.id, amount=amount, entry_type="top_up", reason="t", idempotency_key=f"fund:{org}:{kind}"
+            wallet.id,
+            amount=amount,
+            entry_type="top_up",
+            reason="t",
+            idempotency_key=f"fund:{org}:{kind}",
         )
         return wallet
 
@@ -465,7 +530,12 @@ class TestUsage:
         org = uuid.uuid4()
         wallet = self._funded(org)
         event = usage.record(
-            organization_id=org, product_code="p", meter="sms", quantity=5, idempotency_key="e1", currency="INR"
+            organization_id=org,
+            product_code="p",
+            meter="sms",
+            quantity=5,
+            idempotency_key="e1",
+            currency="INR",
         )
         assert event.outcome == "not_rated" and event.amount == 0
         wallet.refresh_from_db()
@@ -479,7 +549,12 @@ class TestUsage:
         wallet = self._funded(org)
         self._rate()
         event = usage.record(
-            organization_id=org, product_code="p", meter="sms", quantity=3, idempotency_key="e2", currency="INR"
+            organization_id=org,
+            product_code="p",
+            meter="sms",
+            quantity=3,
+            idempotency_key="e2",
+            currency="INR",
         )
         assert event.outcome == "charged" and event.amount == 150
         wallet.refresh_from_db()
@@ -495,7 +570,12 @@ class TestUsage:
         self._rate()
         for _ in range(3):
             event = usage.record(
-                organization_id=org, product_code="p", meter="sms", quantity=1, idempotency_key="e3", currency="INR"
+                organization_id=org,
+                product_code="p",
+                meter="sms",
+                quantity=1,
+                idempotency_key="e3",
+                currency="INR",
             )
         wallet.refresh_from_db()
         assert wallet.balance == 950
@@ -508,13 +588,27 @@ class TestUsage:
         wallet = self._funded(org)
         self._rate(included=2)
         first = usage.record(
-            organization_id=org, product_code="p", meter="sms", quantity=2, idempotency_key="e4", currency="INR"
+            organization_id=org,
+            product_code="p",
+            meter="sms",
+            quantity=2,
+            idempotency_key="e4",
+            currency="INR",
         )
         second = usage.record(
-            organization_id=org, product_code="p", meter="sms", quantity=3, idempotency_key="e5", currency="INR"
+            organization_id=org,
+            product_code="p",
+            meter="sms",
+            quantity=3,
+            idempotency_key="e5",
+            currency="INR",
         )
         assert first.outcome == "included" and first.amount == 0
-        assert second.outcome == "charged" and second.charged_units == 3 and second.amount == 150
+        assert (
+            second.outcome == "charged"
+            and second.charged_units == 3
+            and second.amount == 150
+        )
         wallet.refresh_from_db()
         assert wallet.balance == 850
 
@@ -525,12 +619,19 @@ class TestUsage:
         wallet = self._funded(org, amount=10)
         self._rate()
         event = usage.record(
-            organization_id=org, product_code="p", meter="sms", quantity=1, idempotency_key="e6", currency="INR"
+            organization_id=org,
+            product_code="p",
+            meter="sms",
+            quantity=1,
+            idempotency_key="e6",
+            currency="INR",
         )
         assert event.outcome == "failed" and event.failure_code == "insufficient_balance"
         wallet.refresh_from_db()
         assert wallet.balance == 10
-        ledger.post(wallet.id, amount=100, entry_type="top_up", reason="t", idempotency_key="more")
+        ledger.post(
+            wallet.id, amount=100, entry_type="top_up", reason="t", idempotency_key="more"
+        )
         done = usage.retry(event.id)
         assert done.outcome == "charged"
         wallet.refresh_from_db()
@@ -573,12 +674,16 @@ class TestUsage:
 
 def _organization(organization_factory, user_factory, name="Acme"):
     owner = user_factory(password=PASSWORD)
-    org, _membership, _ = organization_factory(slug=f"{name.lower()}-{uuid.uuid4().hex[:6]}", owner=owner)
+    org, _membership, _ = organization_factory(
+        slug=f"{name.lower()}-{uuid.uuid4().hex[:6]}", owner=owner
+    )
     return org
 
 
 class TestDashboard:
-    def _invoice(self, org, *, status="paid", total=1000, currency="INR", order=None, issued=None):
+    def _invoice(
+        self, org, *, status="paid", total=1000, currency="INR", order=None, issued=None
+    ):
         from workeasy360.commercial.payments.models import InvoiceSummary
 
         return InvoiceSummary.objects.create(
@@ -595,7 +700,16 @@ class TestDashboard:
             due_at=timezone.now(),
         )
 
-    def _payment(self, org, *, amount=1000, status="succeeded", currency="INR", when=None, invoice=None):
+    def _payment(
+        self,
+        org,
+        *,
+        amount=1000,
+        status="succeeded",
+        currency="INR",
+        when=None,
+        invoice=None,
+    ):
         from workeasy360.commercial.payments.models import PaymentSummary
 
         return PaymentSummary.objects.create(
@@ -611,7 +725,10 @@ class TestDashboard:
         )
 
     def test_definitions_of_sales_and_collections(
-        self, staff_login, organization_factory, user_factory  # noqa: F811
+        self,
+        staff_login,
+        organization_factory,
+        user_factory,
     ):
         from workeasy360.commercial.payments.models import RefundSummary
 
@@ -620,7 +737,9 @@ class TestDashboard:
         self._invoice(org, total=1000)  # a renewal, whatever its status: billed
         self._invoice(org, total=500, status="open")  # billed, not yet collected
         self._invoice(org, total=700, status="void")  # never counted
-        self._invoice(org, total=900, status="open", order=order)  # an unpaid checkout sold nothing
+        self._invoice(
+            org, total=900, status="open", order=order
+        )  # an unpaid checkout sold nothing
         self._invoice(org, total=300, status="paid", order=uuid.uuid4())  # a paid order
         self._invoice(org, total=9999, currency="USD")  # another currency: never added
         self._payment(org, amount=1000)
@@ -637,7 +756,9 @@ class TestDashboard:
             created_at=timezone.now(),
             completed_at=timezone.now(),
         )
-        client, _ = staff_login("platform.staff_customer.view", "platform.staff_payment.view")
+        client, _ = staff_login(
+            "platform.staff_customer.view", "platform.staff_payment.view"
+        )
         data = client.get("/api/v1/admin/dashboard/overview", {"currency": "INR"}).json()
         assert data["cards"]["sales"]["amount_minor"] == 1800
         assert data["cards"]["collections"]["amount_minor"] == 900
@@ -646,22 +767,31 @@ class TestDashboard:
         assert usd["cards"]["sales"]["amount_minor"] == 9999
 
     def test_change_compares_the_equally_long_period_before(
-        self, staff_login, organization_factory, user_factory  # noqa: F811
+        self,
+        staff_login,
+        organization_factory,
+        user_factory,
     ):
         org = _organization(organization_factory, user_factory)
         now = timezone.now()
         self._invoice(org, total=2000, issued=now - timedelta(days=2))
         self._invoice(org, total=1000, issued=now - timedelta(days=12))
         self._invoice(org, total=7777, issued=now - timedelta(days=40))
-        client, _ = staff_login("platform.staff_customer.view", "platform.staff_payment.view")
-        data = client.get("/api/v1/admin/dashboard/overview", {"days": "10", "currency": "INR"}).json()
+        client, _ = staff_login(
+            "platform.staff_customer.view", "platform.staff_payment.view"
+        )
+        data = client.get(
+            "/api/v1/admin/dashboard/overview", {"days": "10", "currency": "INR"}
+        ).json()
         assert data["period"]["days"] == 10
         assert data["cards"]["sales"]["amount_minor"] == 2000
         assert data["cards"]["sales"]["previous_minor"] == 1000
         assert data["cards"]["sales"]["change_percent"] == 100.0
 
-    def test_no_invented_percentage_when_there_was_nothing_before(self, staff_login):  # noqa: F811
-        client, _ = staff_login("platform.staff_customer.view", "platform.staff_payment.view")
+    def test_no_invented_percentage_when_there_was_nothing_before(self, staff_login):
+        client, _ = staff_login(
+            "platform.staff_customer.view", "platform.staff_payment.view"
+        )
         data = client.get("/api/v1/admin/dashboard/overview").json()
         assert data["cards"]["sales"]["change_percent"] is None
 
@@ -676,11 +806,13 @@ class TestDashboard:
             {"currency": "RUPEES"},
         ],
     )
-    def test_a_bad_period_is_refused(self, staff_login, params):  # noqa: F811
-        client, _ = staff_login("platform.staff_customer.view", "platform.staff_payment.view")
+    def test_a_bad_period_is_refused(self, staff_login, params):
+        client, _ = staff_login(
+            "platform.staff_customer.view", "platform.staff_payment.view"
+        )
         assert client.get("/api/v1/admin/dashboard/overview", params).status_code == 400
 
-    def test_sections_follow_the_grants(self, staff_login):  # noqa: F811
+    def test_sections_follow_the_grants(self, staff_login):
         client, _ = staff_login("platform.staff_customer.view")
         data = client.get("/api/v1/admin/dashboard/overview").json()
         assert set(data["cards"]) == {"customers", "active_subscriptions"}
@@ -689,7 +821,10 @@ class TestDashboard:
         assert client.get("/api/v1/admin/dashboard/money").status_code == 403
 
     def test_pending_actions_have_real_counts_and_a_failure_retried_is_not_one(
-        self, staff_login, organization_factory, user_factory  # noqa: F811
+        self,
+        staff_login,
+        organization_factory,
+        user_factory,
     ):
         from workeasy360.commercial.partners.models import PartnerKyc
         from workeasy360.commercial.wallets import ledger
@@ -704,7 +839,9 @@ class TestDashboard:
         _, partner = _applicant(body["email"])
         PartnerKyc.objects.filter(partner=partner).update(status="submitted")
 
-        wallet = ledger.ensure(owner_type="organization", owner_id=org.id, kind="platform", currency="INR")
+        wallet = ledger.ensure(
+            owner_type="organization", owner_id=org.id, kind="platform", currency="INR"
+        )
         wallet.low_balance_threshold = 100
         wallet.save()
 
@@ -714,29 +851,51 @@ class TestDashboard:
             "platform.staff_kyc.view",
             "platform.staff_wallet.view",
         )
-        pending = {p["key"]: p for p in client.get("/api/v1/admin/dashboard/overview").json()["pending"]}
+        pending = {
+            p["key"]: p
+            for p in client.get("/api/v1/admin/dashboard/overview").json()["pending"]
+        }
         assert pending["kyc_reviews"]["count"] == 1
         assert pending["failed_payments"]["count"] == 1
         assert pending["low_balance"]["count"] == 1
         assert all(p["href"].startswith("/admin/") for p in pending.values())
 
-    def test_wallet_summary_has_exactly_three_balances_and_no_commission(self, staff_login):  # noqa: F811
+    def test_wallet_summary_has_exactly_three_balances_and_no_commission(
+        self, staff_login
+    ):
         from workeasy360.commercial.wallets import ledger
 
         org_a, org_b = uuid.uuid4(), uuid.uuid4()
         for org, amount in ((org_a, 300), (org_b, 200)):
-            wallet = ledger.ensure(owner_type="organization", owner_id=org, kind="platform", currency="INR")
-            ledger.post(wallet.id, amount=amount, entry_type="top_up", reason="t", idempotency_key=f"w:{org}")
-        client, _ = staff_login("platform.staff_customer.view", "platform.staff_wallet.view")
-        wallets = client.get("/api/v1/admin/dashboard/overview", {"currency": "INR"}).json()["wallets"]
+            wallet = ledger.ensure(
+                owner_type="organization", owner_id=org, kind="platform", currency="INR"
+            )
+            ledger.post(
+                wallet.id,
+                amount=amount,
+                entry_type="top_up",
+                reason="t",
+                idempotency_key=f"w:{org}",
+            )
+        client, _ = staff_login(
+            "platform.staff_customer.view", "platform.staff_wallet.view"
+        )
+        wallets = client.get(
+            "/api/v1/admin/dashboard/overview", {"currency": "INR"}
+        ).json()["wallets"]
         assert set(wallets) == {"platform", "ai_credits", "consumption"}
         assert wallets["platform"]["balance"] == 500
 
     def test_recent_activity_and_trend_read_real_rows(
-        self, staff_login, organization_factory, user_factory  # noqa: F811
+        self,
+        staff_login,
+        organization_factory,
+        user_factory,
     ):
         org = _organization(organization_factory, user_factory, name="Globex")
-        client, _ = staff_login("platform.staff_customer.view", "platform.staff_partner.view")
+        client, _ = staff_login(
+            "platform.staff_customer.view", "platform.staff_partner.view"
+        )
         data = client.get("/api/v1/admin/dashboard/overview").json()
         assert any(org.display_name in event["title"] for event in data["activity"])
         trend = client.get("/api/v1/admin/dashboard/growth", {"months": "6"}).json()
@@ -787,7 +946,10 @@ class TestProjections:
 
 class TestSearch:
     def test_it_returns_only_what_the_grants_cover(
-        self, staff_login, organization_factory, user_factory  # noqa: F811
+        self,
+        staff_login,
+        organization_factory,
+        user_factory,
     ):
         from workeasy360.commercial.payments.models import OrderSummary
 
@@ -803,18 +965,33 @@ class TestSearch:
             created_at=timezone.now(),
         )
         limited, _ = staff_login("platform.staff_customer.view")
-        kinds = {r["kind"] for r in limited.get("/api/v1/admin/search", {"q": "initech"}).json()["results"]}
+        kinds = {
+            r["kind"]
+            for r in limited.get("/api/v1/admin/search", {"q": "initech"}).json()[
+                "results"
+            ]
+        }
         assert "customer" in kinds and "order" not in kinds
-        wider, _ = staff_login("platform.staff_customer.view", "platform.staff_payment.view")
-        kinds = {r["kind"] for r in wider.get("/api/v1/admin/search", {"q": "initech"}).json()["results"]}
+        wider, _ = staff_login(
+            "platform.staff_customer.view", "platform.staff_payment.view"
+        )
+        kinds = {
+            r["kind"]
+            for r in wider.get("/api/v1/admin/search", {"q": "initech"}).json()["results"]
+        }
         assert {"customer", "order"} <= kinds
 
-    def test_too_short_a_query_searches_nothing_and_it_is_staff_only(self, staff_login, user_factory, login):  # noqa: F811
+    def test_too_short_a_query_searches_nothing_and_it_is_staff_only(
+        self, staff_login, user_factory, login
+    ):
         client, _ = staff_login("platform.staff_customer.view")
         assert client.get("/api/v1/admin/search", {"q": "a"}).json()["results"] == []
         customer = login(user_factory(password=PASSWORD))
         assert customer.get("/api/v1/admin/search", {"q": "acme"}).status_code == 403
-        assert Client().get("/api/v1/admin/search", {"q": "acme"}).status_code in (401, 403)
+        assert Client().get("/api/v1/admin/search", {"q": "acme"}).status_code in (
+            401,
+            403,
+        )
 
 
 class TestAdminCreatedPartner:
@@ -823,7 +1000,9 @@ class TestAdminCreatedPartner:
     ):
         from workeasy360.commercial.partners.models import PartnerAccount, PartnerMember
 
-        manager, _ = staff_login("platform.staff_partner.manage", "platform.staff_partner.view")
+        manager, _ = staff_login(
+            "platform.staff_partner.manage", "platform.staff_partner.view"
+        )
         response = _json(
             manager,
             "post",

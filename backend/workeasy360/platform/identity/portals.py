@@ -51,7 +51,7 @@ def request_portal(request: Any) -> str:
         return portals.APP
     try:
         host = request.get_host()
-    except Exception:  # noqa: BLE001 - a disallowed host never reaches a view
+    except Exception:
         return portals.APP
     found = portals.portal_for_host(host, getattr(settings, "W360_PORTAL_ORIGINS", {}))
     return found if found in portals.DESTINATIONS else portals.APP

@@ -253,7 +253,10 @@ def create_staff_account(
     from django.db import IntegrityError
 
     from workeasy360.contracts.enums import UserStatus
-    from workeasy360.platform.administration.self_service import _clean_email, request_password_reset
+    from workeasy360.platform.administration.self_service import (
+        _clean_email,
+        request_password_reset,
+    )
     from workeasy360.platform.authz import staff_roles
     from workeasy360.platform.identity import lifecycle
     from workeasy360.platform.identity.models import User
@@ -264,7 +267,9 @@ def create_staff_account(
         raise ControlPlaneInvariantViolation("Choose a role.", field="role")
     why = str(reason or "").strip()
     if len(why) < 10:
-        raise ControlPlaneInvariantViolation("Say why, in at least 10 characters.", field="reason")
+        raise ControlPlaneInvariantViolation(
+            "Say why, in at least 10 characters.", field="reason"
+        )
     typed, address = _clean_email(email)
     name = " ".join(str(full_name or "").split())[:200]
     if not name:
@@ -289,7 +294,9 @@ def create_staff_account(
                 ) from exc
             created = True
         elif user.status != UserStatus.ACTIVE.value:
-            raise ControlPlaneInvariantViolation("That account cannot be an Admin.", field="email")
+            raise ControlPlaneInvariantViolation(
+                "That account cannot be an Admin.", field="email"
+            )
         lifecycle.set_staff(user, True)
         audit.record(
             ctx,

@@ -62,7 +62,9 @@ def _parse_day(raw: str | None, field: str) -> date | None:
         raise CatalogValidationError("Use a date like 2026-11-09.", field=field) from exc
 
 
-def period(raw_from: str | None, raw_to: str | None, *, days: Any = None) -> dict[str, Any]:
+def period(
+    raw_from: str | None, raw_to: str | None, *, days: Any = None
+) -> dict[str, Any]:
     """The period asked for and the equally long one before it. Whole UTC days;
     ``to`` is included. Defaults to the last 30 days, ending today."""
     today = timezone.now().date()
@@ -96,11 +98,16 @@ def period(raw_from: str | None, raw_to: str | None, *, days: Any = None) -> dic
     }
 
 
-def optional_window(raw_from: str | None, raw_to: str | None) -> tuple[datetime | None, datetime | None]:
+def optional_window(
+    raw_from: str | None, raw_to: str | None
+) -> tuple[datetime | None, datetime | None]:
     """Whole UTC days for a list's date filter; either end may be open."""
     first = _parse_day(raw_from, "from")
     last = _parse_day(raw_to, "to")
-    return (_at(first) if first else None, _at(last + timedelta(days=1)) if last else None)
+    return (
+        _at(first) if first else None,
+        _at(last + timedelta(days=1)) if last else None,
+    )
 
 
 def change_percent(now: int, before: int) -> float | None:
@@ -163,7 +170,9 @@ def overview(
             "to": window["to"].isoformat(),
             "days": window["days"],
             "compared_from": window["compared_start"].date().isoformat(),
-            "compared_to": (window["compared_end"] - timedelta(days=1)).date().isoformat(),
+            "compared_to": (window["compared_end"] - timedelta(days=1))
+            .date()
+            .isoformat(),
         },
         "definitions": {
             "sales": "Invoices issued in the period, tax included, except void "
@@ -183,12 +192,14 @@ def overview(
     }
     if authz.check(ctx, PARTNER_VIEW).allowed:
         cards["partners"] = _running_total(
-            partner_selectors.created_count(start=None, end=window["end"]),
-            partner_selectors.created_count(start=None, end=window["start"]),
+            partner_selectors.active_partner_count(window["end"]),
+            partner_selectors.active_partner_count(window["start"]),
         )
     if authz.check(ctx, PAYMENT_VIEW).allowed:
         sales = payment_reads.sales_by_currency(window["start"], window["end"])
-        sales_before = payment_reads.sales_by_currency(window["compared_start"], window["compared_end"])
+        sales_before = payment_reads.sales_by_currency(
+            window["compared_start"], window["compared_end"]
+        )
         money = payment_reads.collections_by_currency(window["start"], window["end"])
         money_before = payment_reads.collections_by_currency(
             window["compared_start"], window["compared_end"]
@@ -230,7 +241,10 @@ def wallet_summary(currency: str | None) -> dict[str, Any]:
 
 def _month_starts(months: int, *, today: date) -> list[date]:
     index = today.year * 12 + today.month - 1
-    return [date((index - i) // 12, (index - i) % 12 + 1, 1) for i in range(months - 1, -1, -1)]
+    return [
+        date((index - i) // 12, (index - i) % 12 + 1, 1)
+        for i in range(months - 1, -1, -1)
+    ]
 
 
 def _next_month(first: date) -> date:
@@ -262,9 +276,7 @@ def growth_trend(ctx: TenantContext, *, months: Any = None) -> dict[str, Any]:
         "subscriptions": [subscription_reads.running_at(end) for end in ends],
     }
     if authz.check(ctx, PARTNER_VIEW).allowed:
-        result["partners"] = [
-            partner_selectors.created_count(start=None, end=end) for end in ends
-        ]
+        result["partners"] = [partner_selectors.active_partner_count(end) for end in ends]
     return result
 
 
@@ -318,7 +330,9 @@ def pending_actions(ctx: TenantContext) -> list[dict[str, Any]]:
                 "key": "failed_payments",
                 "label": "Failed Payments / Activations",
                 "hint": "Payments failed or activations pending",
-                "count": payment_reads.failed_payment_count() + payment_reads.stuck_activation_count(),
+                "count": payment_reads.failed_payment_count()
+                + payment_reads.stuck_activation_count()
+                + payment_reads.refunds_waiting_count(),
                 "action": "Resolve",
                 "href": "/admin/payments/failed",
             }
@@ -378,7 +392,9 @@ def recent_activity(ctx: TenantContext, *, limit: int = 8) -> list[dict[str, Any
 # --- top products ------------------------------------------------------------------------
 
 
-def top_products(window: dict[str, Any], currency: str, *, limit: int = 5) -> list[dict[str, Any]]:
+def top_products(
+    window: dict[str, Any], currency: str, *, limit: int = 5
+) -> list[dict[str, Any]]:
     """Products by customers on a running subscription now, with what they sold in the
     period in this currency."""
     counts = subscription_reads.running_by_product()

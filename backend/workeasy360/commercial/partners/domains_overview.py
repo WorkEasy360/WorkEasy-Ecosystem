@@ -23,7 +23,9 @@ def partner_domains(*, limit: int = 200) -> list[dict[str, Any]]:
 
 
 def partner_brands(*, limit: int = 200) -> list[dict[str, Any]]:
-    rows = PartnerBrand.objects.select_related("partner").order_by("partner__display_name")[:limit]
+    rows = PartnerBrand.objects.select_related("partner").order_by(
+        "partner__display_name"
+    )[:limit]
     return [
         {
             "partner_id": str(row.partner_id),

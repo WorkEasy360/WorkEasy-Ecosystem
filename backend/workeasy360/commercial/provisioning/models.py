@@ -85,7 +85,11 @@ class SetupRequirement(models.Model):
 
     class Meta:
         db_table = "provisioning_setup_requirement"
-        indexes = [models.Index(fields=["product_code", "is_active"], name="ix_setup_req_product")]
+        indexes = [
+            models.Index(
+                fields=["product_code", "is_active"], name="ix_setup_req_product"
+            )
+        ]
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.product_code}:{self.label}"
@@ -105,7 +109,9 @@ class CustomerSetup(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization_id = models.UUIDField()
     product_code = models.CharField(max_length=64)
-    status = models.CharField(max_length=24, choices=Status.choices, default=Status.PENDING)
+    status = models.CharField(
+        max_length=24, choices=Status.choices, default=Status.PENDING
+    )
     answers = models.JSONField(default=dict, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     decided_at = models.DateTimeField(null=True, blank=True)
@@ -123,7 +129,9 @@ class CustomerSetup(models.Model):
             )
         ]
         indexes = [
-            models.Index(fields=["status", "-submitted_at"], name="ix_customer_setup_queue"),
+            models.Index(
+                fields=["status", "-submitted_at"], name="ix_customer_setup_queue"
+            ),
             models.Index(fields=["organization_id"], name="ix_customer_setup_org"),
         ]
 

@@ -16,12 +16,15 @@ from uuid import UUID
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
+from workeasy360.commercial.billing import services as billing
 from workeasy360.commercial.controlplane.customers import customer_context
 from workeasy360.commercial.payments import orders
 from workeasy360.commercial.subscriptions import admin_reads as subscription_reads
 from workeasy360.contracts.enums import UserStatus
 from workeasy360.contracts.errors import CatalogValidationError
+from workeasy360.contracts.values.money import CurrencyCode
 from workeasy360.contracts.values.tenant import TenantContext
+from workeasy360.platform.administration import site
 from workeasy360.platform.audit import services as audit
 from workeasy360.platform.authz import services as authz
 from workeasy360.platform.authz.control_plane import acting_scope, organization_scope
@@ -48,7 +51,9 @@ def create_customer(
     authz.require(ctx, MANAGE)
     why = str(reason or "").strip()
     if len(why) < 10:
-        raise CatalogValidationError("Say why, in at least 10 characters.", field="reason")
+        raise CatalogValidationError(
+            "Say why, in at least 10 characters.", field="reason"
+        )
     typed, address = _clean_email(owner_email)
     full_name = " ".join(str(owner_name or "").split())[:200]
     if not full_name:
@@ -73,7 +78,9 @@ def create_customer(
                 ) from exc
             invited = True
         elif user.status != UserStatus.ACTIVE.value:
-            raise CatalogValidationError("That account cannot own an organization.", field="owner_email")
+            raise CatalogValidationError(
+                "That account cannot own an organization.", field="owner_email"
+            )
         result = onboarding.create_organization(user_id=user.pk, name=name)
     with acting_scope(ctx):
         audit.record(
@@ -109,6 +116,15 @@ def assignment_history(ctx: TenantContext, organization_id: UUID) -> list[dict[s
         return subscription_reads.assignment_history(organization_id)
 
 
+def _currency_of(value: Any) -> CurrencyCode:
+    """What the Admin chose, else the currency the platform sells in."""
+    text = str(value or "").strip().upper() or site.public_site()["catalog_currency"]
+    try:
+        return CurrencyCode(text)
+    except ValueError as exc:
+        raise CatalogValidationError("Unsupported currency.", field="currency") from exc
+
+
 def assign_plan(
     ctx: TenantContext,
     organization_id: UUID,
@@ -118,18 +134,24 @@ def assign_plan(
     quantity: Any,
     reason: Any,
     idempotency_key: Any,
+    currency: Any = None,
 ) -> dict[str, Any]:
     """Place the order the customer would have placed. Returns whether its invoice now
     waits for payment, which an Admin may record on the customer's billing tab."""
     authz.require(ctx, SUBSCRIPTION_MANAGE)
     why = str(reason or "").strip()
     if len(why) < 10:
-        raise CatalogValidationError("Say why, in at least 10 characters.", field="reason")
+        raise CatalogValidationError(
+            "Say why, in at least 10 characters.", field="reason"
+        )
     key = str(idempotency_key or "").strip()
     if not key:
         raise CatalogValidationError("A command id is required.", field="idempotency_key")
     rebound = customer_context(ctx, organization_id)
     with organization_scope(ctx, organization_id):
+        # A customer an Admin created has no billing account yet. Opening one is idempotent
+        # and never changes an existing account's currency.
+        billing.open_billing_account(rebound, currency=_currency_of(currency))
         placed = orders.place(
             rebound,
             idempotency_key=key,
@@ -142,7 +164,10 @@ def assign_plan(
             "customer.plan_assigned",
             resource_type="payments.order",
             resource_id=placed["order_id"],
-            changes={"number": placed["number"], "requires_payment": placed.get("requires_payment")},
+            changes={
+                "number": placed["number"],
+                "requires_payment": placed.get("requires_payment"),
+            },
             reason=why,
         )
     return placed

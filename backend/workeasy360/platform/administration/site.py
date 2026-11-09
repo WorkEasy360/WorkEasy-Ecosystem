@@ -46,13 +46,21 @@ def _row() -> Any:
     return PlatformSettings.objects.filter(id=1).first()
 
 
+def notifications_email() -> str:
+    """Where staff are told that something waits. Empty means nobody is emailed."""
+    row = _row()
+    return str(row.notifications_email or "") if row else ""
+
+
 def _values(row: Any) -> dict[str, Any]:
     currency = (row.public_catalog_currency if row else "") or str(
         settings.PUBLIC_CATALOG_DEFAULT_CURRENCY
     )
     return {
         "signup_enabled": bool(row.signup_enabled) if row else True,
-        "partner_applications_enabled": bool(row.partner_applications_enabled) if row else True,
+        "partner_applications_enabled": bool(row.partner_applications_enabled)
+        if row
+        else True,
         "support_email": row.support_email if row else "",
         "sales_email": row.sales_email if row else "",
         "catalog_currency": currency,
@@ -160,7 +168,9 @@ def update_settings(
     if tax in ("", None):
         tax = None
     elif isinstance(tax, bool) or not isinstance(tax, int) or not 0 <= tax <= 10_000:
-        raise SecurityPolicyValidationError("The tax rate must be 0% to 100%.", field="tax_rate_bp")
+        raise SecurityPolicyValidationError(
+            "The tax rate must be 0% to 100%.", field="tax_rate_bp"
+        )
     after = {
         "signup_enabled": signup,
         "partner_applications_enabled": applications,
@@ -168,11 +178,15 @@ def update_settings(
         "sales_email": _email(body.get("sales_email"), "sales_email"),
         "public_catalog_currency": currency,
         "company_name": " ".join(str(body.get("company_name") or "").split())[:200],
-        "company_legal_name": " ".join(str(body.get("company_legal_name") or "").split())[:200],
+        "company_legal_name": " ".join(str(body.get("company_legal_name") or "").split())[
+            :200
+        ],
         "company_address": " ".join(str(body.get("company_address") or "").split())[:500],
         "company_tax_id": " ".join(str(body.get("company_tax_id") or "").split())[:64],
         "tax_rate_bp": tax,
-        "notifications_email": _email(body.get("notifications_email"), "notifications_email"),
+        "notifications_email": _email(
+            body.get("notifications_email"), "notifications_email"
+        ),
     }
     with transaction.atomic():
         row = PlatformSettings.objects.select_for_update().filter(id=1).first()

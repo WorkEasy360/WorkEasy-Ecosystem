@@ -1362,6 +1362,11 @@ def commission_rules_view(request, ctx, **_kw: Any) -> JsonResponse:
 
 
 @staff_view(["GET"])
+def commission_terms_view(request, ctx, **_kw: Any) -> JsonResponse:
+    return JsonResponse(cp_reads.commission_terms(ctx))
+
+
+@staff_view(["GET"])
 def commission_accruals_view(request, ctx, **_kw: Any) -> JsonResponse:
     return page_response(
         cp_reads.accruals(

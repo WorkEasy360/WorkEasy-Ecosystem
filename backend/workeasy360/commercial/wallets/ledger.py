@@ -69,7 +69,9 @@ def post(
         replay = WalletEntry.objects.filter(idempotency_key=idempotency_key).first()
         if replay is not None:
             if replay.wallet_id != wallet.id or replay.amount != amount:
-                raise WalletConflict("This key was already used for a different movement.")
+                raise WalletConflict(
+                    "This key was already used for a different movement."
+                )
             return replay
         after = wallet.balance + amount
         if after < 0:
@@ -97,7 +99,9 @@ def post(
 def reversible_amount(entry: WalletEntry) -> int:
     """How much of ``entry`` has not been reversed yet, as a positive number."""
     already = (
-        WalletEntry.objects.filter(reverses_id=entry.id).aggregate(total=Sum("amount"))["total"]
+        WalletEntry.objects.filter(reverses_id=entry.id).aggregate(total=Sum("amount"))[
+            "total"
+        ]
         or 0
     )
     return abs(entry.amount) - abs(already)
@@ -117,7 +121,9 @@ def reverse(
     """Answer an entry with its opposite, in whole or in part, naming it. Never
     more than it moved, and never a reversal of a reversal."""
     with transaction.atomic():
-        original = WalletEntry.objects.select_related("wallet").filter(id=entry_id).first()
+        original = (
+            WalletEntry.objects.select_related("wallet").filter(id=entry_id).first()
+        )
         if original is None:
             raise CommercialRecordNotFound("No such transaction.")
         # The same order of locks as ``post``: the wallet first.
@@ -132,7 +138,9 @@ def reverse(
         if isinstance(wanted, bool) or not isinstance(wanted, int) or wanted <= 0:
             raise WalletConflict("Nothing of this transaction is left to reverse.")
         if wanted > left:
-            raise WalletConflict(f"At most {left} of this transaction can still be reversed.")
+            raise WalletConflict(
+                f"At most {left} of this transaction can still be reversed."
+            )
         sign = -1 if original.amount > 0 else 1
         return post(
             original.wallet_id,
@@ -150,7 +158,9 @@ def reverse(
 def reconcile() -> list[dict[str, Any]]:
     """Wallets whose balance is not what their entries add up to. Empty, always,
     unless someone wrote to these tables behind this file."""
-    totals = dict(WalletEntry.objects.values_list("wallet_id").annotate(total=Sum("amount")))
+    totals = dict(
+        WalletEntry.objects.values_list("wallet_id").annotate(total=Sum("amount"))
+    )
     return [
         {
             "wallet_id": str(wallet.id),

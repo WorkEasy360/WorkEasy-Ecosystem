@@ -179,7 +179,9 @@ def _clean_requirement(body: dict[str, Any]) -> dict[str, Any]:
         raise PartnerValidationError("Order must be 0 to 999.", field="display_order")
     return {
         "label": label,
-        "help_text": clean_text(body.get("help_text"), max_length=300, field="help_text", required=False),
+        "help_text": clean_text(
+            body.get("help_text"), max_length=300, field="help_text", required=False
+        ),
         "is_required": bool(body.get("is_required", True)),
         "is_active": bool(body.get("is_active", True)),
         "display_order": order,
@@ -192,7 +194,9 @@ def _key_from(label: str) -> str:
     base = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")[:40] or "document"
     m = _models()
     taken = set(
-        m.KycRequirement.objects.filter(key__startswith=base).values_list("key", flat=True)
+        m.KycRequirement.objects.filter(key__startswith=base).values_list(
+            "key", flat=True
+        )
     )
     n = 1
     while True:
@@ -227,7 +231,9 @@ def update_requirement(
     m = _models()
     fields = _clean_requirement(body)
     with transaction.atomic():
-        row = m.KycRequirement.objects.select_for_update().filter(id=requirement_id).first()
+        row = (
+            m.KycRequirement.objects.select_for_update().filter(id=requirement_id).first()
+        )
         if row is None:
             raise PartnerRecordNotFound("No such requirement.")
         for name, value in fields.items():
@@ -312,15 +318,21 @@ def _decision_json(row: Any, names: dict[Any, str] | None = None) -> dict[str, A
 def _latest_correction(partner_id: UUID) -> dict[str, Any] | None:
     m = _models()
     row = (
-        m.PartnerKycDecision.objects.filter(partner_id=partner_id, to_status="correction_required")
+        m.PartnerKycDecision.objects.filter(
+            partner_id=partner_id, to_status="correction_required"
+        )
         .order_by("-decided_at")
         .first()
     )
-    return {
-        "reason": row.reason,
-        "flagged_requirements": list(row.flagged_requirements or []),
-        "decided_at": row.decided_at.isoformat(),
-    } if row else None
+    return (
+        {
+            "reason": row.reason,
+            "flagged_requirements": list(row.flagged_requirements or []),
+            "decided_at": row.decided_at.isoformat(),
+        }
+        if row
+        else None
+    )
 
 
 def application(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
@@ -364,7 +376,9 @@ def _clean_details(raw: Any) -> dict[str, str]:
         raise PartnerValidationError("Send the business details.", field="details")
     details: dict[str, str] = {}
     for name, limit in DETAIL_FIELDS.items():
-        details[name] = clean_text(raw.get(name), max_length=limit, field=name, required=False)
+        details[name] = clean_text(
+            raw.get(name), max_length=limit, field=name, required=False
+        )
     if details["country"] and not (
         len(details["country"]) == 2 and details["country"].isalpha()
     ):
@@ -392,7 +406,11 @@ def update_details(
 def _check_version(row: Any, expected: Any) -> None:
     if expected is None:
         return
-    if isinstance(expected, bool) or not isinstance(expected, int) or expected != row.version:
+    if (
+        isinstance(expected, bool)
+        or not isinstance(expected, int)
+        or expected != row.version
+    ):
         raise PartnerValidationError(
             "This application changed in the meantime. Reload and try again.",
             field="expected_version",
@@ -418,7 +436,9 @@ def upload_document(
     key = str(requirement_key or "").strip()
     requirement = m.KycRequirement.objects.filter(key=key, is_active=True).first()
     if requirement is None:
-        raise PartnerValidationError("Choose a document to upload.", field="requirement_key")
+        raise PartnerValidationError(
+            "Choose a document to upload.", field="requirement_key"
+        )
     declared = (content_type or "").split(";")[0].strip().lower()
     if declared not in DOCUMENT_TYPES:
         raise PartnerValidationError(
@@ -461,7 +481,11 @@ def upload_document(
             resource_type="partners.kyc_document",
             resource_id=document.id,
             # A key and a size only: never a file name, which can carry a person's.
-            changes={"partner_id": str(partner_id), "requirement": key, "size_bytes": len(content)},
+            changes={
+                "partner_id": str(partner_id),
+                "requirement": key,
+                "size_bytes": len(content),
+            },
         )
     return _document_json(document)
 
@@ -495,7 +519,20 @@ def missing_requirements(partner_id: UUID) -> list[str]:
             partner_id=partner_id, removed_at__isnull=True
         ).values_list("requirement_key", flat=True)
     )
-    return [r.label for r in _active_requirements() if r.is_required and r.key not in held]
+    return [
+        r.label for r in _active_requirements() if r.is_required and r.key not in held
+    ]
+
+
+def _tell_staff_submitted(partner_id: UUID) -> None:
+    from workeasy360.commercial.partners.selectors import partner_names
+    from workeasy360.platform.administration.notices import tell_staff
+
+    name = partner_names([partner_id]).get(partner_id, "A partner")
+    tell_staff(
+        "A partner application is waiting for review",
+        f"{name} submitted its KYC application.",
+    )
 
 
 @in_scope
@@ -527,6 +564,7 @@ def submit(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
             changes={"from": before, "to": "submitted"},
         )
     metrics.increment(OPERATIONS, operation="submit", outcome="ok")
+    _tell_staff_submitted(partner_id)
     return application(ctx, partner_id)
 
 
@@ -597,7 +635,9 @@ def queue(
         )
     total = rows.count()
     page = list(rows.order_by("submitted_at", "created_at")[start : start + size])
-    names = _user_names({row.decided_by_id for row in page} | {row.reviewer_id for row in page})
+    names = _user_names(
+        {row.decided_by_id for row in page} | {row.reviewer_id for row in page}
+    )
     return {
         "results": [_queue_json(row, names) for row in page],
         "total": total,
@@ -651,14 +691,18 @@ def detail(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
         m.PartnerKycDecision.objects.filter(partner_id=partner_id).order_by("-decided_at")
     )
     access = list(
-        m.PartnerKycDocumentAccess.objects.filter(partner_id=partner_id).order_by("-accessed_at")[:50]
+        m.PartnerKycDocumentAccess.objects.filter(partner_id=partner_id).order_by(
+            "-accessed_at"
+        )[:50]
     )
     names = _user_names(
         {d.decided_by_id for d in decisions}
         | {a.accessed_by_id for a in access}
         | {row.reviewer_id, row.decided_by_id}
     )
-    documents = m.PartnerKycDocument.objects.filter(partner_id=partner_id).order_by("-uploaded_at")
+    documents = m.PartnerKycDocument.objects.filter(partner_id=partner_id).order_by(
+        "-uploaded_at"
+    )
     may_review = authz.check(ctx, REVIEW).allowed
     return {
         **_queue_json(row, names),
@@ -667,7 +711,10 @@ def detail(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
         "decision_reason": row.decision_reason,
         "requirements": [requirement_json(r) for r in _active_requirements()],
         "documents": [
-            {**_document_json(d), "removed_at": d.removed_at.isoformat() if d.removed_at else None}
+            {
+                **_document_json(d),
+                "removed_at": d.removed_at.isoformat() if d.removed_at else None,
+            }
             for d in documents
         ],
         "missing": missing_requirements(partner_id),
@@ -714,10 +761,16 @@ def start_review(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
         row = _record(partner_id, lock=True)
         if row.status != "submitted":
             raise InvalidStateTransition(
-                entity="partners.PartnerKyc", from_status=row.status, to_status="under_review"
+                entity="partners.PartnerKyc",
+                from_status=row.status,
+                to_status="under_review",
             )
         _record_decision(
-            ctx, row, decision="start_review", to_status="under_review", reason="Review started."
+            ctx,
+            row,
+            decision="start_review",
+            to_status="under_review",
+            reason="Review started.",
         )
         row.status = "under_review"
         row.reviewer_id = ctx.user_id
@@ -763,7 +816,9 @@ def decide(
         raise PartnerValidationError(
             "Say why, in at least 10 characters: the partner reads this.", field="reason"
         )
-    flagged = _clean_flags(flagged_requirements) if target == "correction_required" else []
+    flagged = (
+        _clean_flags(flagged_requirements) if target == "correction_required" else []
+    )
     with transaction.atomic():
         row = _record(partner_id, lock=True)
         _check_version(row, expected_version)
@@ -772,7 +827,12 @@ def decide(
                 entity="partners.PartnerKyc", from_status=row.status, to_status=target
             )
         _record_decision(
-            ctx, row, decision=str(decision), to_status=target, reason=why, flagged=flagged
+            ctx,
+            row,
+            decision=str(decision),
+            to_status=target,
+            reason=why,
+            flagged=flagged,
         )
         now = timezone.now()
         row.status = target
@@ -804,7 +864,9 @@ def decide(
                 experiences.grant_for_approved_application(
                     ctx, partner_id, experience=key, reason="KYC application approved."
                 )
-            services.activate_after_kyc(ctx, partner_id, reason=why or "KYC application approved.")
+            services.activate_after_kyc(
+                ctx, partner_id, reason=why or "KYC application approved."
+            )
     metrics.increment(OPERATIONS, operation=target, outcome="ok")
     _notify_decision(partner_id, target, why)
     return detail(ctx, partner_id)
@@ -814,7 +876,9 @@ def _clean_flags(raw: Any) -> list[str]:
     if raw in (None, ""):
         return []
     if not isinstance(raw, list) or len(raw) > 50:
-        raise PartnerValidationError("Choose the documents to correct.", field="flagged_requirements")
+        raise PartnerValidationError(
+            "Choose the documents to correct.", field="flagged_requirements"
+        )
     m = _models()
     known = set(m.KycRequirement.objects.values_list("key", flat=True))
     flags = [str(item) for item in raw]
@@ -852,7 +916,9 @@ def document_content(
         authz.require(ctx, REVIEW)
     else:
         _assert_own_administrator(ctx, partner_id)
-    row = m.PartnerKycDocument.objects.filter(id=document_id, partner_id=partner_id).first()
+    row = m.PartnerKycDocument.objects.filter(
+        id=document_id, partner_id=partner_id
+    ).first()
     if row is None:
         raise PartnerRecordNotFound("No such document.")
     with acting_scope(ctx), transaction.atomic():
@@ -871,7 +937,10 @@ def document_content(
                 "partner.kyc_document_opened",
                 resource_type="partners.kyc_document",
                 resource_id=row.id,
-                changes={"partner_id": str(partner_id), "requirement": row.requirement_key},
+                changes={
+                    "partner_id": str(partner_id),
+                    "requirement": row.requirement_key,
+                },
             )
     data, detected = found
     return data, detected, row.filename

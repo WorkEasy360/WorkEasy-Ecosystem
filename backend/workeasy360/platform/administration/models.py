@@ -35,13 +35,21 @@ class PlatformSettings(models.Model):
     partner_applications_enabled = models.BooleanField(default=True, db_default=True)
     #: The company behind the platform, as invoices and emails name it.
     company_name = models.CharField(max_length=200, blank=True, default="", db_default="")
-    company_legal_name = models.CharField(max_length=200, blank=True, default="", db_default="")
-    company_address = models.CharField(max_length=500, blank=True, default="", db_default="")
-    company_tax_id = models.CharField(max_length=64, blank=True, default="", db_default="")
+    company_legal_name = models.CharField(
+        max_length=200, blank=True, default="", db_default=""
+    )
+    company_address = models.CharField(
+        max_length=500, blank=True, default="", db_default=""
+    )
+    company_tax_id = models.CharField(
+        max_length=64, blank=True, default="", db_default=""
+    )
     #: The tax rate in basis points, or empty for the deployment's default.
     tax_rate_bp = models.PositiveIntegerField(null=True, blank=True)
     #: Where staff are told about new applications and tickets. Empty: nobody.
-    notifications_email = models.CharField(max_length=254, blank=True, default="", db_default="")
+    notifications_email = models.CharField(
+        max_length=254, blank=True, default="", db_default=""
+    )
     version = models.PositiveIntegerField(default=1)
     updated_by_id = models.UUIDField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -77,7 +85,9 @@ class HelpArticle(models.Model):
     class Meta:
         db_table = "administration_help_article"
         indexes = [
-            models.Index(fields=["status", "audience", "display_order"], name="ix_help_reader"),
+            models.Index(
+                fields=["status", "audience", "display_order"], name="ix_help_reader"
+            ),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - display only

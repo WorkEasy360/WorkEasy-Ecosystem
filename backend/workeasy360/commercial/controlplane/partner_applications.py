@@ -76,12 +76,10 @@ def apply(
     full_name = f"{first} {last}"
     check_new_password(secret, user=User(email=address, full_name=full_name))
 
-    from django.contrib.auth.hashers import make_password
-
     with transaction.atomic():
         existing = lifecycle.lock_by_email(address)
         if existing is not None:
-            make_password(secret)
+            lifecycle.spend_password_time(secret)
             if existing.status == UserStatus.ACTIVE.value:
                 _send_existing_notice(existing)
             outcome = "existing"
@@ -98,7 +96,7 @@ def apply(
             except IntegrityError:
                 # The same address applied a moment ago in another request; that
                 # request sent the link. Same answer to this one.
-                make_password(secret)
+                lifecycle.spend_password_time(secret)
                 outcome = "race"
             else:
                 applications.create_draft_for_applicant(

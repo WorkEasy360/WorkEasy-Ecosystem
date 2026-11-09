@@ -32,7 +32,15 @@ VIEW = "platform.staff_customer.view"
 
 #: Running and billable.
 RUNNING = ("active", "past_due", "grace")
-KNOWN_STATUSES = {"trialing", "active", "past_due", "grace", "suspended", "cancelled", "expired"}
+KNOWN_STATUSES = {
+    "trialing",
+    "active",
+    "past_due",
+    "grace",
+    "suspended",
+    "cancelled",
+    "expired",
+}
 MAX_PAGE = 100
 
 
@@ -48,7 +56,9 @@ def running_at(end: Any | None) -> int:
 def running_by_product() -> dict[str, int]:
     """Customers holding each product on a running subscription now."""
     now = timezone.now()
-    running = SubscriptionSummary.objects.filter(status__in=RUNNING).values("subscription_id")
+    running = SubscriptionSummary.objects.filter(status__in=RUNNING).values(
+        "subscription_id"
+    )
     rows = (
         SubscriptionItemSummary.objects.filter(subscription_id__in=running)
         .filter(Q(removed_at__isnull=True) | Q(removed_at__gt=now))
@@ -60,9 +70,9 @@ def running_by_product() -> dict[str, int]:
 
 
 def for_organizations(organization_ids: Any, *, limit: int = 5) -> list[dict[str, Any]]:
-    rows = SubscriptionSummary.objects.filter(organization_id__in=list(organization_ids)).order_by(
-        "-created_at"
-    )[:limit]
+    rows = SubscriptionSummary.objects.filter(
+        organization_id__in=list(organization_ids)
+    ).order_by("-created_at")[:limit]
     return [
         {
             "subscription_id": str(row.subscription_id),
@@ -77,16 +87,18 @@ def for_organizations(organization_ids: Any, *, limit: int = 5) -> list[dict[str
 def status_counts() -> dict[str, int]:
     return {
         row["status"]: row["n"]
-        for row in SubscriptionSummary.objects.values("status").annotate(n=Count("subscription_id"))
+        for row in SubscriptionSummary.objects.values("status").annotate(
+            n=Count("subscription_id")
+        )
     }
 
 
 def _lines(subscription_ids: list[Any]) -> dict[Any, list[dict[str, Any]]]:
     now = timezone.now()
     out: dict[Any, list[dict[str, Any]]] = {}
-    for row in SubscriptionItemSummary.objects.filter(subscription_id__in=subscription_ids).filter(
-        Q(removed_at__isnull=True) | Q(removed_at__gt=now)
-    ):
+    for row in SubscriptionItemSummary.objects.filter(
+        subscription_id__in=subscription_ids
+    ).filter(Q(removed_at__isnull=True) | Q(removed_at__gt=now)):
         out.setdefault(row.subscription_id, []).append(
             {
                 "product_code": row.product_code,
@@ -147,7 +159,9 @@ def subscriptions(
         )
 
         matches = organizations_directory_page(search=str(search), limit=100).items
-        rows = rows.filter(organization_id__in=[UUID(m["organization_id"]) for m in matches])
+        rows = rows.filter(
+            organization_id__in=[UUID(m["organization_id"]) for m in matches]
+        )
     try:
         size = max(1, min(int(limit or 25), MAX_PAGE))
     except (TypeError, ValueError):
@@ -155,7 +169,8 @@ def subscriptions(
     after = decode_cursor(cursor)
     if after is not None:
         rows = rows.filter(
-            Q(created_at__lt=after[0]) | Q(created_at=after[0], subscription_id__lt=after[1])
+            Q(created_at__lt=after[0])
+            | Q(created_at=after[0], subscription_id__lt=after[1])
         )
     page = list(rows.order_by("-created_at", "-subscription_id")[: size + 1])
     more = len(page) > size
@@ -193,11 +208,13 @@ def assignment_history(organization_id: UUID) -> list[dict[str, Any]]:
     """Every line this customer has held, newest first: what was assigned, when, and
     when it ended. For a caller already inside this customer's scope. The lines are
     never deleted (``SubscriptionItem``), so this is the whole history."""
-    rows = SubscriptionItem.objects.filter(organization_id=organization_id).order_by("-added_at")[
-        :200
-    ]
+    rows = SubscriptionItem.objects.filter(organization_id=organization_id).order_by(
+        "-added_at"
+    )[:200]
     statuses = dict(
-        Subscription.objects.filter(organization_id=organization_id).values_list("id", "status")
+        Subscription.objects.filter(organization_id=organization_id).values_list(
+            "id", "status"
+        )
     )
     return [
         {
@@ -223,11 +240,13 @@ def holders_of_products(products: Any) -> list[tuple[Any, str]]:
     """``(organization, product)`` for each customer holding one of these products on
     a subscription that has not ended. For the setup queue, whose caller authorized."""
     now = timezone.now()
-    live = SubscriptionSummary.objects.exclude(status__in=("expired", "cancelled")).values(
-        "subscription_id"
-    )
+    live = SubscriptionSummary.objects.exclude(
+        status__in=("expired", "cancelled")
+    ).values("subscription_id")
     rows = (
-        SubscriptionItemSummary.objects.filter(subscription_id__in=live, product_code__in=products)
+        SubscriptionItemSummary.objects.filter(
+            subscription_id__in=live, product_code__in=products
+        )
         .filter(Q(removed_at__isnull=True) | Q(removed_at__gt=now))
         .values_list("organization_id", "product_code")
         .distinct()
@@ -254,7 +273,9 @@ def report_renewals(
         )
 
         matches = organizations_directory_page(search=search, limit=100).items
-        rows = rows.filter(organization_id__in=[UUID(m["organization_id"]) for m in matches])
+        rows = rows.filter(
+            organization_id__in=[UUID(m["organization_id"]) for m in matches]
+        )
     total = rows.count()
     page = list(rows.order_by("current_period_end")[offset : offset + limit])
     names = organization_names({r.organization_id for r in page})
@@ -266,7 +287,12 @@ def report_renewals(
                 "organization_id": str(r.organization_id),
                 "organization_name": names.get(r.organization_id, ""),
                 "products": ", ".join(
-                    sorted({i["product_code"] or i["bundle_code"] for i in lines.get(r.subscription_id, [])})
+                    sorted(
+                        {
+                            i["product_code"] or i["bundle_code"]
+                            for i in lines.get(r.subscription_id, [])
+                        }
+                    )
                 ),
                 "status": r.status,
                 "billing_interval": r.billing_interval,

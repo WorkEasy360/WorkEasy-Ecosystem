@@ -15,6 +15,7 @@ from workeasy360.commercial.wallets import admin as wallets
 from workeasy360.commercial.wallets import api as wallet_api
 from workeasy360.contracts.errors import CatalogValidationError, CommercialRecordNotFound
 from workeasy360.contracts.values.tenant import TenantContext
+from workeasy360.platform.authz import services as authz
 from workeasy360.platform.organizations import selectors as org_selectors
 
 
@@ -26,7 +27,9 @@ def _named(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _owners_matching(search: str) -> list[UUID]:
     customers = org_selectors.organizations_directory_page(search=search, limit=100).items
     partners = partner_selectors.partners_page(query=search, limit=100).items
-    return [UUID(row["organization_id"]) for row in customers] + [UUID(row["id"]) for row in partners]
+    return [UUID(row["organization_id"]) for row in customers] + [
+        UUID(row["id"]) for row in partners
+    ]
 
 
 def list_wallets(
@@ -64,7 +67,9 @@ def list_entries(ctx: TenantContext, **filters: Any) -> dict[str, Any]:
 
 def list_events(ctx: TenantContext, **filters: Any) -> dict[str, Any]:
     page = wallets.events(ctx, **filters)
-    names = org_selectors.organization_names({UUID(r["organization_id"]) for r in page["results"]})
+    names = org_selectors.organization_names(
+        {UUID(r["organization_id"]) for r in page["results"]}
+    )
     return {
         **page,
         "results": [
@@ -77,7 +82,9 @@ def list_events(ctx: TenantContext, **filters: Any) -> dict[str, Any]:
 def open_wallet(
     ctx: TenantContext, *, owner_type: Any, owner_id: Any, kind: Any, currency: Any
 ) -> dict[str, Any]:
-    """Open a wallet for an owner that really exists."""
+    """Open a wallet for an owner that really exists. Authorized before the owner is looked
+    up, so the answer cannot say whether someone exists to a person who may not ask."""
+    authz.require(ctx, "platform.staff_wallet.manage")
     try:
         owner = UUID(str(owner_id))
     except (TypeError, ValueError) as exc:

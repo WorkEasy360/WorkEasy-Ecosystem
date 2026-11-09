@@ -92,7 +92,10 @@ def create_draft_for_applicant(
             resource_type="partners.partner",
             resource_id=partner.id,
             # Kinds only: no name and no address in the audit trail.
-            changes={"requested_experience": requested_experience, "source": "public_form"},
+            changes={
+                "requested_experience": requested_experience,
+                "source": "public_form",
+            },
             reason="A person applied through the public partner form.",
         )
     return partner

@@ -788,7 +788,9 @@ class PaymentSummary(models.Model):
             models.Index(fields=["-created_at", "-attempt_id"], name="ix_pay_sum_time"),
             models.Index(fields=["status", "-created_at"], name="ix_pay_sum_status"),
             models.Index(fields=["status", "completed_at"], name="ix_pay_sum_completed"),
-            models.Index(fields=["organization_id", "-created_at"], name="ix_pay_sum_org"),
+            models.Index(
+                fields=["organization_id", "-created_at"], name="ix_pay_sum_org"
+            ),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - display only
@@ -850,7 +852,9 @@ class CreditNote(models.Model):
         ]
         indexes = [
             models.Index(fields=["-issued_at", "-id"], name="ix_credit_note_time"),
-            models.Index(fields=["organization_id", "-issued_at"], name="ix_credit_note_org"),
+            models.Index(
+                fields=["organization_id", "-issued_at"], name="ix_credit_note_org"
+            ),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - display only

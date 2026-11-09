@@ -291,6 +291,7 @@ def _process_one(
             and subscription.renewal_policy == RenewalPolicy.AUTO_RENEW.value
             and status.is_live
         ):
+            _end_lines_that_do_not_renew(subscription)
             _roll_period(subscription, moment)
             applied["periods_rolled"] = 1
 
@@ -348,6 +349,46 @@ def _expire_cancelled(subscription: Any, moment: datetime) -> None:
         reason="Scheduled cancellation reached its effective date.",
     )
     metrics.increment(SYSTEM_TRANSITIONS, transition="cancellation_applied")
+
+
+def _end_lines_that_do_not_renew(subscription: Any) -> None:
+    """Lines on a plan an Admin set to renew by hand, or not at all, end with the period
+    the customer paid for, and leave the renewal with it. The rule is read when the period
+    ends, so changing it reaches subscriptions already running. A bundle's derived line
+    follows its bundle, which has no plan rule to read. Entitlements follow from the sweep
+    that called this, which recomputes after any transition."""
+    from workeasy360.commercial.catalog import selectors as catalog
+    from workeasy360.commercial.subscriptions.models import SubscriptionItem
+
+    lines = list(
+        SubscriptionItem.unscoped.filter(
+            organization_id=subscription.organization_id,
+            subscription=subscription,
+            removed_at__isnull=True,
+            parent_item__isnull=True,
+        ).exclude(plan_code="")
+    )
+    rules = catalog.renewal_rules_of(line.plan_code for line in lines)
+    ended_at = subscription.current_period_end
+    for line in lines:
+        rule = rules.get(line.plan_code, RenewalPolicy.AUTO_RENEW.value)
+        if rule == RenewalPolicy.AUTO_RENEW.value:
+            continue
+        line.removed_at = ended_at
+        line.save(update_fields=["removed_at", "updated_at"])
+        audit.record_system(
+            subscription.organization_id,
+            "commercial.subscription.line_not_renewed",
+            resource_type="subscriptions.item",
+            resource_id=line.id,
+            changes={
+                "plan": line.plan_code,
+                "rule": rule,
+                "ended_at": ended_at.isoformat(),
+            },
+            reason="The plan is set not to renew automatically.",
+        )
+        metrics.increment(SYSTEM_TRANSITIONS, transition="line_not_renewed")
 
 
 def _roll_period(subscription: Any, moment: datetime) -> None:

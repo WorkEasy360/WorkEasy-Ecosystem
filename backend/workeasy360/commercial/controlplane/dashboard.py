@@ -260,7 +260,8 @@ def attention(ctx: TenantContext) -> dict[str, Any]:
             {
                 "key": "failed_payments",
                 "count": payment_reads.failed_payment_count()
-                + payment_reads.stuck_activation_count(),
+                + payment_reads.stuck_activation_count()
+                + payment_reads.refunds_waiting_count(),
             }
         )
     if authz.check(ctx, "platform.staff_wallet.view").allowed:

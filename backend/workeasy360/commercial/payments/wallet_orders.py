@@ -258,7 +258,9 @@ def assert_refundable(invoice: Any, refund_minor: int) -> None:
 
     if invoice.order_id is None:
         return
-    order = Order.unscoped.filter(id=invoice.order_id, organization_id=invoice.organization_id).first()
+    order = Order.unscoped.filter(
+        id=invoice.order_id, organization_id=invoice.organization_id
+    ).first()
     if order is None or order.kind != Order.Kind.WALLET:
         return
     entry = _original_entry(order)
@@ -278,7 +280,9 @@ def reverse_for_refund(refund: Any, invoice: Any) -> Any:
 
     if invoice.order_id is None:
         return None
-    order = Order.unscoped.filter(id=invoice.order_id, organization_id=invoice.organization_id).first()
+    order = Order.unscoped.filter(
+        id=invoice.order_id, organization_id=invoice.organization_id
+    ).first()
     if order is None or order.kind != Order.Kind.WALLET:
         return None
     entry = _original_entry(order)
@@ -315,7 +319,9 @@ def pay_invoice_from_wallet(
     authz.require(actor, MANAGE)
     why = str(reason or "").strip()
     if len(why) < 10:
-        raise CatalogValidationError("Say why, in at least 10 characters.", field="reason")
+        raise CatalogValidationError(
+            "Say why, in at least 10 characters.", field="reason"
+        )
     rebound = context_for_organization(actor, organization_id)
     after = settlement.AfterCommit()
     with (
@@ -334,7 +340,9 @@ def pay_invoice_from_wallet(
             raise PaymentNotAllowed("The invoice changed. Reload and retry.")
         if invoice.status != Invoice.Status.OPEN or invoice.amount_due_minor <= 0:
             raise PaymentNotAllowed("This invoice has nothing to pay.")
-        wallet = wallets.organization_wallet(organization_id, wallets.PLATFORM, invoice.currency)
+        wallet = wallets.organization_wallet(
+            organization_id, wallets.PLATFORM, invoice.currency
+        )
         if wallet is None or wallet["balance"] < invoice.amount_due_minor:
             raise PaymentNotAllowed(
                 "The Platform Wallet does not hold enough to pay this invoice.",
@@ -399,4 +407,6 @@ def refund_to_wallet(refund: Any, attempt: Any) -> None:
         source_type="refund",
         source_id=refund.id,
     )
-    settlement.record_refund(refund, succeeded=True, reference=f"wallet:{deduction}"[:128])
+    settlement.record_refund(
+        refund, succeeded=True, reference=f"wallet:{deduction}"[:128]
+    )

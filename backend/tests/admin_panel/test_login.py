@@ -43,7 +43,9 @@ def _row(client):
     return UserSession.objects.get(session_key=client.session.session_key)
 
 
-def test_left_unticked_the_cookie_ends_with_the_browser_and_the_idle_window_is_normal(staff_user):
+def test_left_unticked_the_cookie_ends_with_the_browser_and_the_idle_window_is_normal(
+    staff_user,
+):
     client, response = _sign_in(staff_user, remember=False)
     cookie = _session_cookie(response)
     assert not cookie["max-age"] and not cookie["expires"]

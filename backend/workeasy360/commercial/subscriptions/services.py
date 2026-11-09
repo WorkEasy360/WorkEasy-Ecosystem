@@ -764,28 +764,22 @@ def activate_subscription(
     return subscription
 
 
-def _assert_plan_change_allowed(item_id: UUID, target: Any) -> None:
-    """The rule an Admin set on the plan a customer is moving away from. ``any`` is
-    the default, so a plan nobody configured behaves as it always did."""
+def _assert_plan_change_allowed(plan_code: str, direction: str) -> None:
+    """The rule an Admin set on the plan a customer is moving away from. ``any`` is the
+    default, so a plan nobody configured behaves as it always did. ``direction`` is the
+    classification the change itself uses: anything smaller makes it a downgrade."""
     from workeasy360.commercial.catalog import selectors as catalog_selectors
-    from workeasy360.commercial.subscriptions.models import SubscriptionItem
 
-    item = SubscriptionItem.objects.filter(id=item_id).first()
-    if item is None or not item.plan_code:
-        return  # Reported as not found, by the lookup that follows.
-    rules = catalog_selectors.plan_rules(item.plan_code)
-    if rules is None or rules["change_rule"] == "any":
-        return
-    if rules["change_rule"] == "none":
+    rules = catalog_selectors.plan_rules(plan_code)
+    rule = rules["change_rule"] if rules else "any"
+    if rule == "none":
         raise CatalogValidationError(
             "This plan does not allow plan changes.", field="to_plan_version_id"
         )
-    if item.plan_version_id is not None and item.plan_version is not None:
-        moving_up = (target.included_seats or 0) >= (item.plan_version.included_seats or 0)
-        if not moving_up:
-            raise CatalogValidationError(
-                "This plan can only be upgraded.", field="to_plan_version_id"
-            )
+    if rule == "upgrade_only" and direction == "downgrade":
+        raise CatalogValidationError(
+            "This plan can only be upgraded.", field="to_plan_version_id"
+        )
 
 
 def change_plan(
@@ -815,7 +809,6 @@ def change_plan(
     now = timezone.now()
     target = catalog.require_plan_version(to_plan_version_id)
     _assert_sellable(target)
-    _assert_plan_change_allowed(subscription_item_id, target)
 
     with transaction.atomic():
         claim = idempotency.claim(
@@ -879,6 +872,7 @@ def change_plan(
             from_features=source.feature_map(),
             to_features=target.feature_map(),
         )
+        _assert_plan_change_allowed(source.plan_code, direction)
         chosen = timing or default_timing(direction)
         effective_at = effective_moment(
             timing=chosen, now=now, period_end=subscription.current_period_end

@@ -24,3 +24,8 @@ class AdministrationConfig(AppConfig):
     name = "workeasy360.platform.administration"
     label = "administration"
     verbose_name = "Platform | Organization administration"
+
+    def ready(self) -> None:
+        from workeasy360.platform.administration import (
+            notices,  # noqa: F401 - registers its template
+        )

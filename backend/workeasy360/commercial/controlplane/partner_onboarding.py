@@ -66,9 +66,9 @@ from django.db import IntegrityError, connection, transaction
 from django.views.decorators.debug import sensitive_variables
 
 from workeasy360.commercial.partners import (
-    kyc,
     capabilities,
     experience,
+    kyc,
     profile,
     selectors,
     services,

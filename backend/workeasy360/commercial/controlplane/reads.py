@@ -72,6 +72,11 @@ def rules_list(ctx: TenantContext, *, live_only: bool) -> list[dict[str, Any]]:
     return commission_selectors.rules_list(live_only=live_only)
 
 
+def commission_terms(ctx: TenantContext) -> dict[str, Any]:
+    authz.require(ctx, COMMISSION_VIEW)
+    return commission_selectors.terms()
+
+
 def accruals(
     ctx: TenantContext,
     *,

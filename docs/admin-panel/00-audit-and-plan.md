@@ -57,7 +57,7 @@ currency, never converted or summed across currencies. Append-only ledgers
 | Partners | Status, grants, products, links, suspend | Exists | |
 | Partners | KYC states, documents, decisions, access audit | New | No document upload of any kind |
 | Partners | Public application | New | Owner decision above |
-| Partners | Accrual while suspended | Fix | `accrual.py:343` keeps earning on new sales |
+| Partners | Accrual while suspended | Open question | `accrual.py:343` keeps earning on new sales while suspended. Whether suspension stops earning is the owner's rule, so it is unchanged and listed in `status.md` |
 | Partners | Commission rules | Extend | Backend exists; `rules` API has no screen |
 | Products | Catalog, plans, prices, add-ons | Exists | |
 | Products | App links, approved return destinations view | Extend | Destinations are in the integration manifest |

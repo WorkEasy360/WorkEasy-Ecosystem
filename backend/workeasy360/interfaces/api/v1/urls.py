@@ -20,12 +20,11 @@ from workeasy360.interfaces.api.v1 import (
     account_views,
     admin_catalog_views,
     admin_console_views,
+    admin_panel_views,
     admin_product_manager_views,
     admin_product_views,
     admin_programme_views,
     admin_store_views,
-    admin_panel_views,
-    usage_product_views,
     admin_views,
     auth_views,
     commercial_views,
@@ -44,6 +43,7 @@ from workeasy360.interfaces.api.v1 import (
     public_site_views,
     public_views,
     trial_views,
+    usage_product_views,
     views,
 )
 
@@ -375,10 +375,26 @@ urlpatterns = [
     # Phase 9: pay-first orders replace the direct purchase and activation
     # routes. The order's invoice is paid through billing/invoices/<id>/pay.
     path("orgs/<slug:org_slug>/orders", payment_views.orders_view, name="orders"),
-    path("orgs/<slug:org_slug>/support-tickets", admin_panel_views.org_support_tickets_view, name="orgs-org-slug-support-tickets"),
-    path("orgs/<slug:org_slug>/support-tickets/<uuid:ticket_id>", admin_panel_views.org_support_ticket_view, name="orgs-org-slug-support-tickets-ticket-id"),
-    path("orgs/<slug:org_slug>/setup", admin_panel_views.org_setup_view, name="orgs-org-slug-setup"),
-    path("orgs/<slug:org_slug>/setup/<uuid:record_id>/submit", admin_panel_views.org_setup_submit_view, name="orgs-org-slug-setup-record-id-submit"),
+    path(
+        "orgs/<slug:org_slug>/support-tickets",
+        admin_panel_views.org_support_tickets_view,
+        name="orgs-org-slug-support-tickets",
+    ),
+    path(
+        "orgs/<slug:org_slug>/support-tickets/<uuid:ticket_id>",
+        admin_panel_views.org_support_ticket_view,
+        name="orgs-org-slug-support-tickets-ticket-id",
+    ),
+    path(
+        "orgs/<slug:org_slug>/setup",
+        admin_panel_views.org_setup_view,
+        name="orgs-org-slug-setup",
+    ),
+    path(
+        "orgs/<slug:org_slug>/setup/<uuid:record_id>/submit",
+        admin_panel_views.org_setup_submit_view,
+        name="orgs-org-slug-setup-record-id-submit",
+    ),
     # Phase 11: a per-product free trial (not a subscription; see
     # commercial/subscriptions/models.py ProductTrial).
     path("orgs/<slug:org_slug>/trials", trial_views.trials_view, name="trials"),
@@ -559,7 +575,9 @@ urlpatterns = [
     # The same trust boundary as event ingestion - a product's client
     # credential, no session, no tenant path; the organization is bound by
     # the live entitlement decision inside each service.
-    path("integrations/usage/events", usage_product_views.usage_events, name="usage-events"),
+    path(
+        "integrations/usage/events", usage_product_views.usage_events, name="usage-events"
+    ),
     path(
         "integrations/ai/skills",
         intelligence_product_views.ai_skills,
@@ -790,53 +808,217 @@ _admin = [
     ),
     path("admin/search", admin_panel_views.search_view, name="admin-search"),
     path("admin/invoices", admin_panel_views.invoices_view, name="admin-invoices"),
-    path("admin/payments/all", admin_panel_views.payments_view, name="admin-payments-all"),
-    path("admin/orders/stuck", admin_panel_views.stuck_orders_view, name="admin-orders-stuck"),
-    path("admin/orders/<uuid:order_id>/retry-activation", admin_panel_views.retry_activation_view, name="admin-orders-order-id-retry-activation"),
+    path(
+        "admin/payments/all", admin_panel_views.payments_view, name="admin-payments-all"
+    ),
+    path(
+        "admin/orders/stuck",
+        admin_panel_views.stuck_orders_view,
+        name="admin-orders-stuck",
+    ),
+    path(
+        "admin/orders/<uuid:order_id>/retry-activation",
+        admin_panel_views.retry_activation_view,
+        name="admin-orders-order-id-retry-activation",
+    ),
     path("admin/refunds", admin_panel_views.refunds_view, name="admin-refunds"),
-    path("admin/credit-notes", admin_panel_views.credit_notes_view, name="admin-credit-notes"),
-    path("admin/subscriptions", admin_panel_views.subscriptions_view, name="admin-subscriptions"),
-    path("admin/customers/<uuid:organization_id>/invoices/<uuid:invoice_id>/pay-from-wallet", admin_panel_views.pay_invoice_from_wallet_view, name="admin-customers-organization-id-invoices-invoice-id-pay-from-wallet"),
+    path(
+        "admin/credit-notes",
+        admin_panel_views.credit_notes_view,
+        name="admin-credit-notes",
+    ),
+    path(
+        "admin/subscriptions",
+        admin_panel_views.subscriptions_view,
+        name="admin-subscriptions",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/invoices/<uuid:invoice_id>/pay-from-wallet",
+        admin_panel_views.pay_invoice_from_wallet_view,
+        name="admin-customers-organization-id-invoices-invoice-id-pay-from-wallet",
+    ),
     path("admin/wallets", admin_panel_views.wallets_view, name="admin-wallets"),
-    path("admin/wallets/entries", admin_panel_views.wallet_entries_view, name="admin-wallets-entries"),
-    path("admin/wallets/entries/<uuid:entry_id>/reverse", admin_panel_views.wallet_reverse_view, name="admin-wallets-entries-entry-id-reverse"),
-    path("admin/wallets/reconcile", admin_panel_views.wallet_reconcile_view, name="admin-wallets-reconcile"),
-    path("admin/wallets/events", admin_panel_views.usage_events_view, name="admin-wallets-events"),
-    path("admin/wallets/events/<uuid:event_id>/retry", admin_panel_views.usage_event_retry_view, name="admin-wallets-events-event-id-retry"),
-    path("admin/wallets/events/<uuid:event_id>/review", admin_panel_views.usage_event_review_view, name="admin-wallets-events-event-id-review"),
-    path("admin/wallets/<uuid:wallet_id>", admin_panel_views.wallet_view, name="admin-wallets-wallet-id"),
-    path("admin/wallets/<uuid:wallet_id>/top-up", admin_panel_views.wallet_top_up_view, name="admin-wallets-wallet-id-top-up"),
-    path("admin/wallets/<uuid:wallet_id>/adjust", admin_panel_views.wallet_adjust_view, name="admin-wallets-wallet-id-adjust"),
-    path("admin/customers/<uuid:organization_id>/wallet-orders", admin_panel_views.wallet_order_view, name="admin-customers-organization-id-wallet-orders"),
-    path("admin/usage-rates", admin_panel_views.usage_rates_view, name="admin-usage-rates"),
-    path("admin/usage-rates/<uuid:rate_id>/remove", admin_panel_views.usage_rate_remove_view, name="admin-usage-rates-rate-id-remove"),
-    path("admin/credit-packs", admin_panel_views.credit_packs_view, name="admin-credit-packs"),
-    path("admin/credit-packs/<uuid:pack_id>", admin_panel_views.credit_pack_view, name="admin-credit-packs-pack-id"),
-    path("admin/catalog/products/<uuid:product_id>/app-links", admin_panel_views.product_app_links_view, name="admin-catalog-products-product-id-app-links"),
-    path("admin/catalog/plans/<uuid:plan_id>/rules", admin_panel_views.plan_rules_view, name="admin-catalog-plans-plan-id-rules"),
+    path(
+        "admin/wallets/entries",
+        admin_panel_views.wallet_entries_view,
+        name="admin-wallets-entries",
+    ),
+    path(
+        "admin/wallets/entries/<uuid:entry_id>/reverse",
+        admin_panel_views.wallet_reverse_view,
+        name="admin-wallets-entries-entry-id-reverse",
+    ),
+    path(
+        "admin/wallets/reconcile",
+        admin_panel_views.wallet_reconcile_view,
+        name="admin-wallets-reconcile",
+    ),
+    path(
+        "admin/wallets/events",
+        admin_panel_views.usage_events_view,
+        name="admin-wallets-events",
+    ),
+    path(
+        "admin/wallets/events/<uuid:event_id>/retry",
+        admin_panel_views.usage_event_retry_view,
+        name="admin-wallets-events-event-id-retry",
+    ),
+    path(
+        "admin/wallets/events/<uuid:event_id>/review",
+        admin_panel_views.usage_event_review_view,
+        name="admin-wallets-events-event-id-review",
+    ),
+    path(
+        "admin/wallets/<uuid:wallet_id>",
+        admin_panel_views.wallet_view,
+        name="admin-wallets-wallet-id",
+    ),
+    path(
+        "admin/wallets/<uuid:wallet_id>/top-up",
+        admin_panel_views.wallet_top_up_view,
+        name="admin-wallets-wallet-id-top-up",
+    ),
+    path(
+        "admin/wallets/<uuid:wallet_id>/adjust",
+        admin_panel_views.wallet_adjust_view,
+        name="admin-wallets-wallet-id-adjust",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/wallet-orders",
+        admin_panel_views.wallet_order_view,
+        name="admin-customers-organization-id-wallet-orders",
+    ),
+    path(
+        "admin/usage-rates", admin_panel_views.usage_rates_view, name="admin-usage-rates"
+    ),
+    path(
+        "admin/usage-rates/<uuid:rate_id>/remove",
+        admin_panel_views.usage_rate_remove_view,
+        name="admin-usage-rates-rate-id-remove",
+    ),
+    path(
+        "admin/credit-packs",
+        admin_panel_views.credit_packs_view,
+        name="admin-credit-packs",
+    ),
+    path(
+        "admin/credit-packs/<uuid:pack_id>",
+        admin_panel_views.credit_pack_view,
+        name="admin-credit-packs-pack-id",
+    ),
+    path(
+        "admin/catalog/products/<uuid:product_id>/app-links",
+        admin_panel_views.product_app_links_view,
+        name="admin-catalog-products-product-id-app-links",
+    ),
+    path(
+        "admin/catalog/plans/<uuid:plan_id>/rules",
+        admin_panel_views.plan_rules_view,
+        name="admin-catalog-plans-plan-id-rules",
+    ),
     path("admin/reports", admin_panel_views.reports_view, name="admin-reports"),
-    path("admin/reports/<slug:kind>", admin_panel_views.report_view, name="admin-reports-kind"),
+    path(
+        "admin/reports/<slug:kind>",
+        admin_panel_views.report_view,
+        name="admin-reports-kind",
+    ),
     path("admin/tickets", admin_panel_views.support_tickets_view, name="admin-tickets"),
-    path("admin/tickets/<uuid:ticket_id>", admin_panel_views.support_ticket_view, name="admin-tickets-ticket-id"),
-    path("admin/tickets/<uuid:ticket_id>/assign", admin_panel_views.support_assign_view, name="admin-tickets-ticket-id-assign"),
-    path("admin/tickets/<uuid:ticket_id>/resolve", admin_panel_views.support_resolve_view, name="admin-tickets-ticket-id-resolve"),
-    path("admin/ticket-people", admin_panel_views.support_people_view, name="admin-ticket-people"),
-    path("admin/help-content", admin_panel_views.help_articles_view, name="admin-help-content"),
-    path("admin/help-content/<uuid:article_id>", admin_panel_views.help_article_view, name="admin-help-content-article-id"),
-    path("admin/help-content/<uuid:article_id>/status", admin_panel_views.help_article_status_view, name="admin-help-content-article-id-status"),
-    path("admin/customers/create", admin_panel_views.customer_create_view, name="admin-customers-create"),
-    path("admin/customers/<uuid:organization_id>/members", admin_panel_views.customer_members_view, name="admin-customers-organization-id-members"),
-    path("admin/customers/<uuid:organization_id>/assignment-history", admin_panel_views.customer_history_view, name="admin-customers-organization-id-assignment-history"),
-    path("admin/customers/<uuid:organization_id>/assign-plan", admin_panel_views.customer_assign_plan_view, name="admin-customers-organization-id-assign-plan"),
+    path(
+        "admin/tickets/<uuid:ticket_id>",
+        admin_panel_views.support_ticket_view,
+        name="admin-tickets-ticket-id",
+    ),
+    path(
+        "admin/tickets/<uuid:ticket_id>/assign",
+        admin_panel_views.support_assign_view,
+        name="admin-tickets-ticket-id-assign",
+    ),
+    path(
+        "admin/tickets/<uuid:ticket_id>/resolve",
+        admin_panel_views.support_resolve_view,
+        name="admin-tickets-ticket-id-resolve",
+    ),
+    path(
+        "admin/ticket-people",
+        admin_panel_views.support_people_view,
+        name="admin-ticket-people",
+    ),
+    path(
+        "admin/help-content",
+        admin_panel_views.help_articles_view,
+        name="admin-help-content",
+    ),
+    path(
+        "admin/help-content/<uuid:article_id>",
+        admin_panel_views.help_article_view,
+        name="admin-help-content-article-id",
+    ),
+    path(
+        "admin/help-content/<uuid:article_id>/status",
+        admin_panel_views.help_article_status_view,
+        name="admin-help-content-article-id-status",
+    ),
+    path(
+        "admin/customers/create",
+        admin_panel_views.customer_create_view,
+        name="admin-customers-create",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/members",
+        admin_panel_views.customer_members_view,
+        name="admin-customers-organization-id-members",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/assignment-history",
+        admin_panel_views.customer_history_view,
+        name="admin-customers-organization-id-assignment-history",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/assign-plan",
+        admin_panel_views.customer_assign_plan_view,
+        name="admin-customers-organization-id-assign-plan",
+    ),
     path("admin/setup", admin_panel_views.setup_queue_view, name="admin-setup"),
-    path("admin/setup/requirements", admin_panel_views.setup_requirements_view, name="admin-setup-requirements"),
-    path("admin/setup/requirements/<uuid:requirement_id>", admin_panel_views.setup_requirement_view, name="admin-setup-requirements-requirement-id"),
-    path("admin/setup/<uuid:record_id>/decision", admin_panel_views.setup_decision_view, name="admin-setup-record-id-decision"),
-    path("admin/settings/domains", admin_panel_views.domains_overview_view, name="admin-settings-domains"),
-    path("admin/settings/domains/check", admin_panel_views.domains_check_view, name="admin-settings-domains-check"),
-    path("admin/settings/login-clients", admin_panel_views.login_clients_view, name="admin-settings-login-clients"),
-    path("admin/security/accounts", admin_panel_views.staff_account_create_view, name="admin-security-accounts"),
-    path("admin/security/sign-ins", admin_panel_views.sign_in_audit_view, name="admin-security-sign-ins"),
+    path(
+        "admin/setup/requirements",
+        admin_panel_views.setup_requirements_view,
+        name="admin-setup-requirements",
+    ),
+    path(
+        "admin/setup/requirements/<uuid:requirement_id>",
+        admin_panel_views.setup_requirement_view,
+        name="admin-setup-requirements-requirement-id",
+    ),
+    path(
+        "admin/setup/<uuid:record_id>/decision",
+        admin_panel_views.setup_decision_view,
+        name="admin-setup-record-id-decision",
+    ),
+    path(
+        "admin/settings/domains",
+        admin_panel_views.domains_overview_view,
+        name="admin-settings-domains",
+    ),
+    path(
+        "admin/settings/domains/check",
+        admin_panel_views.domains_check_view,
+        name="admin-settings-domains-check",
+    ),
+    path(
+        "admin/settings/login-clients",
+        admin_panel_views.login_clients_view,
+        name="admin-settings-login-clients",
+    ),
+    path(
+        "admin/security/accounts",
+        admin_panel_views.staff_account_create_view,
+        name="admin-security-accounts",
+    ),
+    path(
+        "admin/security/sign-ins",
+        admin_panel_views.sign_in_audit_view,
+        name="admin-security-sign-ins",
+    ),
     path(
         "admin/kyc/requirements",
         admin_panel_views.kyc_requirements_view,
@@ -1639,6 +1821,11 @@ _admin = [
         "admin/commission/rules",
         admin_views.commission_rules_view,
         name="admin-commission-rules",
+    ),
+    path(
+        "admin/commission/terms",
+        admin_views.commission_terms_view,
+        name="admin-commission-terms",
     ),
     path(
         "admin/commission/accruals",

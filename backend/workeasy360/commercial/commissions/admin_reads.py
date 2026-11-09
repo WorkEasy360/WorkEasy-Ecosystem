@@ -65,7 +65,8 @@ def report_commissions(
         rows = rows.filter(product_code=product)
     if search:
         rows = rows.filter(
-            Q(partner_id__in=_partners_matching(search)) | Q(reason_code__icontains=search)
+            Q(partner_id__in=_partners_matching(search))
+            | Q(reason_code__icontains=search)
         )
     total = rows.count()
     page = list(rows.order_by("-created_at")[offset : offset + limit])
@@ -97,7 +98,8 @@ def report_payouts(
     rows = Payout.objects.filter(created_at__gte=start, created_at__lt=end)
     if search:
         rows = rows.filter(
-            Q(partner_id__in=_partners_matching(search)) | Q(paid_reference__icontains=search)
+            Q(partner_id__in=_partners_matching(search))
+            | Q(paid_reference__icontains=search)
         )
     total = rows.count()
     page = list(rows.order_by("-created_at")[offset : offset + limit])

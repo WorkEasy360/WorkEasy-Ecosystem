@@ -107,6 +107,13 @@ def test_the_partner_models_are_unchanged_by_this_work():
         "PartnerCannedResponse",
         "PartnerPayoutMethod",
         "PartnerWithdrawalRequest",
+        # The Admin Panel programme (ADR-060): KYC is a record beside the partner's status,
+        # with its own requirements, documents, decisions and access log.
+        "KycRequirement",
+        "PartnerKyc",
+        "PartnerKycDocument",
+        "PartnerKycDecision",
+        "PartnerKycDocumentAccess",
         # ADR-054: which products a partner may promote - a permission, not a
         # kind of partner (tests/affiliate_products pins what it does).
         "PartnerPromotionGrant",
@@ -422,9 +429,11 @@ def test_the_password_is_sent_only_to_create_an_account():
     created with a password typed here; linking an existing account or inviting
     the administrator (the default since 2026-11-07) sends none (ADR-048)."""
     model = _code(ADD_PARTNER / "model.ts")
-    assert re.search(r'const typed = d\.mode === "create" && d\.access === "password";', model)
     assert re.search(
-        r'\.\.\.\(typed \? \{ password: d\.password, password_confirm: d\.confirm \} : \{\}\)',
+        r'const typed = d\.mode === "create" && d\.access === "password";', model
+    )
+    assert re.search(
+        r"\.\.\.\(typed \? \{ password: d\.password, password_confirm: d\.confirm \} : \{\}\)",
         model,
     )
     assert len(re.findall(r"password: d\.password", model)) == 1

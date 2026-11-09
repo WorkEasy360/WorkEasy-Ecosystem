@@ -16,7 +16,7 @@ from collections import Counter, defaultdict
 from datetime import timezone as dt_timezone
 from typing import Any
 
-from django.db.models import Q, Sum
+from django.db.models import Exists, OuterRef, Q, Sum
 from django.db.models.functions import TruncMonth
 
 from workeasy360.commercial.payments.models import (
@@ -68,9 +68,13 @@ def _refunded(start: Any, end: Any) -> Any:
 def collections_by_currency(start: Any, end: Any) -> dict[str, int]:
     """Received less refunded, per currency, in ``[start, end)``."""
     totals: Counter[str] = Counter()
-    for row in _received(start, end).values("currency").annotate(total=Sum("amount_minor")):
+    for row in (
+        _received(start, end).values("currency").annotate(total=Sum("amount_minor"))
+    ):
         totals[row["currency"]] += int(row["total"] or 0)
-    for row in _refunded(start, end).values("currency").annotate(total=Sum("amount_minor")):
+    for row in (
+        _refunded(start, end).values("currency").annotate(total=Sum("amount_minor"))
+    ):
         totals[row["currency"]] -= int(row["total"] or 0)
     return dict(totals)
 
@@ -118,7 +122,9 @@ def failed_invoice_ids() -> Any:
     return (
         PaymentSummary.objects.filter(
             status="failed",
-            invoice_id__in=InvoiceSummary.objects.filter(status="open").values("invoice_id"),
+            invoice_id__in=InvoiceSummary.objects.filter(status="open").values(
+                "invoice_id"
+            ),
         )
         .values_list("invoice_id", flat=True)
         .distinct()
@@ -130,8 +136,27 @@ def failed_payment_count() -> int:
 
 
 def stuck_activation_count() -> int:
-    """Orders that were paid but never became subscriptions, or that failed."""
-    return OrderSummary.objects.filter(status__in=("paid", "failed")).count()
+    """Orders that were paid but never became subscriptions. An order that could not be
+    fulfilled is refunded automatically, so it waits for no one unless that refund fails,
+    which ``refunds_waiting`` counts."""
+    return OrderSummary.objects.filter(status="paid").count()
+
+
+def refunds_waiting() -> Any:
+    """Refunds that failed or need a person, with nothing later on the same payment
+    answering them. A later attempt that is under way or succeeded clears the older one."""
+    answered = RefundSummary.objects.filter(
+        attempt_id=OuterRef("attempt_id"),
+        created_at__gt=OuterRef("created_at"),
+        status__in=("requested", "submitting", "pending", "succeeded"),
+    )
+    return RefundSummary.objects.filter(status__in=("failed", "needs_review")).filter(
+        ~Exists(answered)
+    )
+
+
+def refunds_waiting_count() -> int:
+    return refunds_waiting().count()
 
 
 # --- recent activity --------------------------------------------------------------------
@@ -152,7 +177,11 @@ def recent_activity(*, limit: int = 8) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for payment in payments:
         who = names.get(payment.organization_id, "A customer")
-        verb = "Payment received from" if payment.status == "succeeded" else "Payment failed for"
+        verb = (
+            "Payment received from"
+            if payment.status == "succeeded"
+            else "Payment failed for"
+        )
         events.append(
             {
                 "kind": f"payment_{payment.status}",
@@ -185,13 +214,18 @@ def search_orders(term: str, *, limit: int) -> list[dict[str, str]]:
         Q(number__icontains=term) | Q(description__icontains=term)
     ).order_by("-created_at")[:limit]
     return [
-        {"id": str(r.order_id), "number": r.number, "description": r.description} for r in rows
+        {"id": str(r.order_id), "number": r.number, "description": r.description}
+        for r in rows
     ]
 
 
 def search_invoices(term: str, *, limit: int) -> list[dict[str, str]]:
-    rows = InvoiceSummary.objects.filter(number__icontains=term).order_by("-issued_at")[:limit]
-    return [{"id": str(r.invoice_id), "number": r.number, "status": r.status} for r in rows]
+    rows = InvoiceSummary.objects.filter(number__icontains=term).order_by("-issued_at")[
+        :limit
+    ]
+    return [
+        {"id": str(r.invoice_id), "number": r.number, "status": r.status} for r in rows
+    ]
 
 
 # --- the lists --------------------------------------------------------------------------
@@ -204,7 +238,9 @@ def _limit(raw: Any) -> int:
         return 25
 
 
-def _page(rows: Any, *, limit: Any, cursor: Any, time_field: str, id_field: str) -> tuple[list[Any], str | None, bool]:
+def _page(
+    rows: Any, *, limit: Any, cursor: Any, time_field: str, id_field: str
+) -> tuple[list[Any], str | None, bool]:
     """A keyset page, newest first."""
     size = _limit(limit)
     after = decode_cursor(cursor)
@@ -286,7 +322,9 @@ def invoices(
     }
 
 
-def payment_row(row: Any, names: dict[Any, str], numbers: dict[Any, dict[str, Any]]) -> dict[str, Any]:
+def payment_row(
+    row: Any, names: dict[Any, str], numbers: dict[Any, dict[str, Any]]
+) -> dict[str, Any]:
     invoice = numbers.get(row.invoice_id, {})
     return {
         "attempt_id": str(row.attempt_id),
@@ -350,11 +388,16 @@ def payments(
 
 
 def refunds(
-    ctx: TenantContext, *, status: Any = None, limit: Any = None, cursor: Any = None
+    ctx: TenantContext,
+    *,
+    status: Any = None,
+    waiting: bool = False,
+    limit: Any = None,
+    cursor: Any = None,
 ) -> dict[str, Any]:
     """Refunds across customers, each naming the payment and invoice it answers."""
     authz.require(ctx, VIEW)
-    rows = RefundSummary.objects.all()
+    rows = refunds_waiting() if waiting else RefundSummary.objects.all()
     chosen = _choice(
         status,
         {"requested", "submitting", "pending", "succeeded", "failed", "needs_review"},
@@ -375,9 +418,9 @@ def refunds(
     facts = _invoice_facts({a["invoice_id"] for a in attempts.values()})
     notes = {
         n["refund_id"]: n["number"]
-        for n in CreditNote.objects.filter(refund_id__in={r.refund_id for r in page}).values(
-            "refund_id", "number"
-        )
+        for n in CreditNote.objects.filter(
+            refund_id__in={r.refund_id for r in page}
+        ).values("refund_id", "number")
     }
 
     def row_json(row: Any) -> dict[str, Any]:
@@ -402,7 +445,11 @@ def refunds(
             "completed_at": row.completed_at.isoformat() if row.completed_at else None,
         }
 
-    return {"results": [row_json(r) for r in page], "next_cursor": token, "has_more": more}
+    return {
+        "results": [row_json(r) for r in page],
+        "next_cursor": token,
+        "has_more": more,
+    }
 
 
 def credit_notes(
@@ -413,7 +460,9 @@ def credit_notes(
     if search:
         term = str(search).strip()[:40]
         rows = rows.filter(Q(number__icontains=term) | Q(invoice_number__icontains=term))
-    page, token, more = _page(rows, limit=limit, cursor=cursor, time_field="issued_at", id_field="id")
+    page, token, more = _page(
+        rows, limit=limit, cursor=cursor, time_field="issued_at", id_field="id"
+    )
     names = organization_names({r.organization_id for r in page})
     return {
         "results": [
@@ -444,7 +493,9 @@ def credit_notes(
 def _with_product(rows: Any, product: Any, *, field: str = "invoice_id") -> Any:
     if not product:
         return rows
-    invoices = InvoiceLineSummary.objects.filter(product_code=product).values("invoice_id")
+    invoices = InvoiceLineSummary.objects.filter(product_code=product).values(
+        "invoice_id"
+    )
     return rows.filter(**{f"{field}__in": invoices})
 
 
@@ -467,7 +518,9 @@ def report_payments(
     rows = _with_product(rows, product)
     if search:
         rows = rows.filter(
-            invoice_id__in=InvoiceSummary.objects.filter(number__icontains=search).values("invoice_id")
+            invoice_id__in=InvoiceSummary.objects.filter(number__icontains=search).values(
+                "invoice_id"
+            )
         )
     total = rows.count()
     page = list(rows.order_by("-completed_at", "-attempt_id")[offset : offset + limit])
@@ -494,7 +547,8 @@ def retry_activation(ctx: TenantContext, order_id: Any) -> dict[str, Any]:
         raise CatalogValidationError("No such order.", field="order")
     if summary.status != "paid":
         raise CatalogValidationError(
-            "Only a paid order that has not been activated can be retried.", field="status"
+            "Only a paid order that has not been activated can be retried.",
+            field="status",
         )
     outcome = orders.fulfil(summary.organization_id, summary.order_id)
     with acting_scope(ctx):
@@ -510,10 +564,13 @@ def retry_activation(ctx: TenantContext, order_id: Any) -> dict[str, Any]:
 
 
 def stuck_orders(ctx: TenantContext, *, limit: Any = None) -> list[dict[str, Any]]:
-    """Paid but not activated, or failed: what the Failed Payments page lists beside
-    failed payments."""
+    """Paid but not activated: what the Failed Payments page lists beside failed payments."""
     authz.require(ctx, VIEW)
-    rows = list(OrderSummary.objects.filter(status__in=("paid", "failed")).order_by("-updated_at")[: _limit(limit)])
+    rows = list(
+        OrderSummary.objects.filter(status="paid").order_by("-updated_at")[
+            : _limit(limit)
+        ]
+    )
     names = organization_names({r.organization_id for r in rows})
     return [
         {

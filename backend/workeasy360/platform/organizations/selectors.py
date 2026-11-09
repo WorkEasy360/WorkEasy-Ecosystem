@@ -832,6 +832,13 @@ def organization_slug(organization_id: UUID) -> str | None:
     )
 
 
+def organization_ids_matching(search: str) -> Any:
+    """A subquery of the organizations whose name matches, for a staff list to compose."""
+    from workeasy360.platform.organizations.models import Organization
+
+    return Organization.objects.filter(display_name__icontains=search[:80]).values("id")
+
+
 def organization_names(organization_ids: Any) -> dict[UUID, str]:
     """Display names for these organizations - one query, for staff lists
     that page through a control-plane projection (Phase 9)."""
@@ -899,7 +906,11 @@ def recently_created_customers(*, limit: int = 8) -> list[dict[str, Any]]:
         .order_by("-created_at")[: max(1, min(limit, 50))]
     )
     return [
-        {"id": str(row.id), "name": row.display_name, "created_at": row.created_at.isoformat()}
+        {
+            "id": str(row.id),
+            "name": row.display_name,
+            "created_at": row.created_at.isoformat(),
+        }
         for row in rows
     ]
 

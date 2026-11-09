@@ -22,6 +22,10 @@ DANGEROUS_STAFF = frozenset(
         "platform.staff_pricing.manage",
         "platform.staff_subscription.manage",
         "platform.staff_partner.manage",
+        # ADR-060: decides whether a partner may operate, moves wallet money, answers customers.
+        "platform.staff_kyc.review",
+        "platform.staff_wallet.manage",
+        "platform.staff_support.manage",
         "platform.staff_commission.manage",
         "platform.staff_payout.manage",
         "platform.staff_payout.approve",

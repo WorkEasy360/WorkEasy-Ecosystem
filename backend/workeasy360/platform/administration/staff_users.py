@@ -396,7 +396,9 @@ def active_staff() -> list[dict[str, str]]:
 
     return [
         {"id": str(row.id), "name": row.full_name or row.email}
-        for row in User.objects.filter(is_staff=True, status="active").order_by("full_name", "email")[:200]
+        for row in User.objects.filter(is_staff=True, status="active").order_by(
+            "full_name", "email"
+        )[:200]
     ]
 
 

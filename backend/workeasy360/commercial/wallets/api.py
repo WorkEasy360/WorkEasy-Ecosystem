@@ -43,7 +43,11 @@ def active_pack(code: Any) -> dict[str, Any] | None:
 
 def entry_id_for_key(key: str) -> UUID | None:
     """The entry a key produced, if it ran."""
-    return WalletEntry.objects.filter(idempotency_key=key).values_list("id", flat=True).first()
+    return (
+        WalletEntry.objects.filter(idempotency_key=key)
+        .values_list("id", flat=True)
+        .first()
+    )
 
 
 def balance_for_entry(entry_id: UUID) -> int:
@@ -51,7 +55,9 @@ def balance_for_entry(entry_id: UUID) -> int:
     return WalletEntry.objects.select_related("wallet").get(id=entry_id).wallet.balance
 
 
-def organization_wallet(organization_id: UUID, kind: str, currency: str) -> dict[str, Any] | None:
+def organization_wallet(
+    organization_id: UUID, kind: str, currency: str
+) -> dict[str, Any] | None:
     """This customer's wallet of this kind and currency, if it has one."""
     row = Wallet.objects.filter(
         owner_type=ORGANIZATION, owner_id=organization_id, kind=kind, currency=currency

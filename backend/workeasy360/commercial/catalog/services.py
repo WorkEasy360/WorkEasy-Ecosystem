@@ -1924,11 +1924,15 @@ def clean_app_links(raw: Any) -> dict[str, str]:
     from urllib.parse import urlsplit
 
     if not isinstance(raw, dict):
-        raise CatalogValidationError("App links must name a platform and a link.", field="app_links")
+        raise CatalogValidationError(
+            "App links must name a platform and a link.", field="app_links"
+        )
     links: dict[str, str] = {}
     for platform, value in raw.items():
         if platform not in _APP_PLATFORMS:
-            raise CatalogValidationError(f"Unknown platform: {platform}.", field="app_links")
+            raise CatalogValidationError(
+                f"Unknown platform: {platform}.", field="app_links"
+            )
         url = str(value or "").strip()
         if not url:
             continue
@@ -1944,7 +1948,6 @@ def clean_app_links(raw: Any) -> dict[str, str]:
 def set_app_links(ctx: TenantContext, product_id: UUID, raw: Any) -> dict[str, str]:
     """Where a product's apps are published. Audited."""
     from workeasy360.commercial.catalog.models import Product
-
     from workeasy360.platform.authz.control_plane import acting_scope
 
     authz.require(ctx, "platform.staff_catalog.manage")
@@ -1965,7 +1968,9 @@ def set_app_links(ctx: TenantContext, product_id: UUID, raw: Any) -> dict[str, s
     return links
 
 
-def set_plan_rules(ctx: TenantContext, plan_id: UUID, body: dict[str, Any]) -> dict[str, Any]:
+def set_plan_rules(
+    ctx: TenantContext, plan_id: UUID, body: dict[str, Any]
+) -> dict[str, Any]:
     """A plan's renewal and change rules and included usage. Audited. Only meters that
     exist, only whole positive units: an empty rule set means none."""
     from workeasy360.commercial.catalog.models import Plan
@@ -1977,16 +1982,24 @@ def set_plan_rules(ctx: TenantContext, plan_id: UUID, body: dict[str, Any]) -> d
     if renewal not in Plan.RenewalRule.values:
         raise CatalogValidationError("Choose how this plan renews.", field="renewal_rule")
     if change not in Plan.ChangeRule.values:
-        raise CatalogValidationError("Choose which plan changes are allowed.", field="change_rule")
+        raise CatalogValidationError(
+            "Choose which plan changes are allowed.", field="change_rule"
+        )
     included = body.get("included_usage") or {}
     if not isinstance(included, dict):
-        raise CatalogValidationError("Included usage must name a meter and units.", field="included_usage")
+        raise CatalogValidationError(
+            "Included usage must name a meter and units.", field="included_usage"
+        )
     clean: dict[str, int] = {}
     for meter, units in included.items():
         if meter not in _USAGE_METERS:
-            raise CatalogValidationError(f"Unknown meter: {meter}.", field="included_usage")
+            raise CatalogValidationError(
+                f"Unknown meter: {meter}.", field="included_usage"
+            )
         if isinstance(units, bool) or not isinstance(units, int) or units < 0:
-            raise CatalogValidationError("Units must be a whole number.", field="included_usage")
+            raise CatalogValidationError(
+                "Units must be a whole number.", field="included_usage"
+            )
         if units:
             clean[str(meter)] = units
     with acting_scope(ctx), transaction.atomic():
@@ -1996,12 +2009,18 @@ def set_plan_rules(ctx: TenantContext, plan_id: UUID, body: dict[str, Any]) -> d
         plan.renewal_rule = renewal
         plan.change_rule = change
         plan.included_usage = clean
-        plan.save(update_fields=["renewal_rule", "change_rule", "included_usage", "updated_at"])
+        plan.save(
+            update_fields=["renewal_rule", "change_rule", "included_usage", "updated_at"]
+        )
         audit.record(
             ctx,
             "catalog.plan_rules_set",
             resource_type="catalog.plan",
             resource_id=plan.id,
-            changes={"renewal_rule": renewal, "change_rule": change, "included_usage": clean},
+            changes={
+                "renewal_rule": renewal,
+                "change_rule": change,
+                "included_usage": clean,
+            },
         )
     return {"renewal_rule": renewal, "change_rule": change, "included_usage": clean}

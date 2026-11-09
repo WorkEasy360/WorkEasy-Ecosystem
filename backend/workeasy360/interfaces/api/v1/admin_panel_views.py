@@ -95,7 +95,9 @@ def kyc_requirements_view(request: HttpRequest, ctx: TenantContext) -> JsonRespo
 def kyc_requirement_view(
     request: HttpRequest, ctx: TenantContext, requirement_id: UUID
 ) -> JsonResponse:
-    return JsonResponse(kyc.update_requirement(ctx, requirement_id, read_json_body(request)))
+    return JsonResponse(
+        kyc.update_requirement(ctx, requirement_id, read_json_body(request))
+    )
 
 
 @staff_view(["GET"])
@@ -126,7 +128,9 @@ def kyc_start_review_view(
 
 
 @staff_view(["POST"])
-def kyc_decision_view(request: HttpRequest, ctx: TenantContext, partner_id: UUID) -> JsonResponse:
+def kyc_decision_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID
+) -> JsonResponse:
     body = read_json_body(request)
     return JsonResponse(
         kyc.decide(
@@ -144,13 +148,19 @@ def kyc_decision_view(request: HttpRequest, ctx: TenantContext, partner_id: UUID
 def _document_response(data: bytes, content_type: str, filename: str) -> HttpResponse:
     """A restricted document, opened in place and never cached or framed. The type
     is what the bytes were found to be, never what was declared, and the sandbox
-    stops anything in it from running as this site."""
+    stops anything in it from running as this site. A PDF has no sandbox because
+    Chrome's viewer refuses to open inside one, which would leave a reviewer unable to
+    read the commonest document; ``nosniff`` keeps it a PDF, and the viewer runs it apart
+    from this site."""
     safe = "".join(ch if ch.isalnum() or ch in "._- " else "_" for ch in filename)[:120]
     response = HttpResponse(data, content_type=content_type)
     response["Content-Disposition"] = f'inline; filename="{safe or "document"}"'
     response["Cache-Control"] = "no-store, private"
     response["X-Content-Type-Options"] = "nosniff"
-    response["Content-Security-Policy"] = "sandbox; default-src 'none'; style-src 'unsafe-inline'; object-src 'self'"
+    policy = "default-src 'none'; style-src 'unsafe-inline'; object-src 'self'; frame-ancestors 'none'"
+    response["Content-Security-Policy"] = (
+        policy if content_type == "application/pdf" else f"sandbox; {policy}"
+    )
     return response
 
 
@@ -286,11 +296,15 @@ def payments_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
 
 @staff_view(["GET"])
 def stuck_orders_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
-    return JsonResponse({"results": payment_reads.stuck_orders(ctx, limit=request.GET.get("limit"))})
+    return JsonResponse(
+        {"results": payment_reads.stuck_orders(ctx, limit=request.GET.get("limit"))}
+    )
 
 
 @staff_view(["POST"])
-def retry_activation_view(request: HttpRequest, ctx: TenantContext, order_id: UUID) -> JsonResponse:
+def retry_activation_view(
+    request: HttpRequest, ctx: TenantContext, order_id: UUID
+) -> JsonResponse:
     return JsonResponse(payment_reads.retry_activation(ctx, order_id))
 
 
@@ -300,6 +314,7 @@ def refunds_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
         payment_reads.refunds(
             ctx,
             status=request.GET.get("status") or None,
+            waiting=request.GET.get("waiting") == "1",
             limit=request.GET.get("limit"),
             cursor=request.GET.get("cursor") or None,
         )
@@ -380,7 +395,9 @@ def wallets_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
 
 
 @staff_view(["GET", "PUT"])
-def wallet_view(request: HttpRequest, ctx: TenantContext, wallet_id: UUID) -> JsonResponse:
+def wallet_view(
+    request: HttpRequest, ctx: TenantContext, wallet_id: UUID
+) -> JsonResponse:
     if request.method == "PUT":
         return JsonResponse(
             wallets_admin.set_threshold(
@@ -391,7 +408,9 @@ def wallet_view(request: HttpRequest, ctx: TenantContext, wallet_id: UUID) -> Js
 
 
 @staff_view(["POST"])
-def wallet_top_up_view(request: HttpRequest, ctx: TenantContext, wallet_id: UUID) -> JsonResponse:
+def wallet_top_up_view(
+    request: HttpRequest, ctx: TenantContext, wallet_id: UUID
+) -> JsonResponse:
     body = read_json_body(request)
     return JsonResponse(
         wallets_admin.record_offline_top_up(
@@ -407,7 +426,9 @@ def wallet_top_up_view(request: HttpRequest, ctx: TenantContext, wallet_id: UUID
 
 
 @staff_view(["POST"])
-def wallet_adjust_view(request: HttpRequest, ctx: TenantContext, wallet_id: UUID) -> JsonResponse:
+def wallet_adjust_view(
+    request: HttpRequest, ctx: TenantContext, wallet_id: UUID
+) -> JsonResponse:
     body = read_json_body(request)
     return JsonResponse(
         wallets_admin.adjust(
@@ -437,7 +458,9 @@ def wallet_entries_view(request: HttpRequest, ctx: TenantContext) -> JsonRespons
 
 
 @staff_view(["POST"])
-def wallet_reverse_view(request: HttpRequest, ctx: TenantContext, entry_id: UUID) -> JsonResponse:
+def wallet_reverse_view(
+    request: HttpRequest, ctx: TenantContext, entry_id: UUID
+) -> JsonResponse:
     body = read_json_body(request)
     return JsonResponse(
         wallets_admin.reverse_entry(
@@ -457,7 +480,9 @@ def wallet_reconcile_view(request: HttpRequest, ctx: TenantContext) -> JsonRespo
 
 
 @staff_view(["POST"])
-def wallet_order_view(request: HttpRequest, ctx: TenantContext, organization_id: UUID) -> JsonResponse:
+def wallet_order_view(
+    request: HttpRequest, ctx: TenantContext, organization_id: UUID
+) -> JsonResponse:
     """A top-up or credit pack order for a customer, settled like any other order."""
     body = read_json_body(request)
     key = str(request.headers.get("Idempotency-Key") or "")
@@ -493,14 +518,20 @@ def usage_events_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
 
 
 @staff_view(["POST"])
-def usage_event_retry_view(request: HttpRequest, ctx: TenantContext, event_id: UUID) -> JsonResponse:
+def usage_event_retry_view(
+    request: HttpRequest, ctx: TenantContext, event_id: UUID
+) -> JsonResponse:
     return JsonResponse(wallets_admin.retry_event(ctx, event_id))
 
 
 @staff_view(["POST"])
-def usage_event_review_view(request: HttpRequest, ctx: TenantContext, event_id: UUID) -> JsonResponse:
+def usage_event_review_view(
+    request: HttpRequest, ctx: TenantContext, event_id: UUID
+) -> JsonResponse:
     return JsonResponse(
-        wallets_admin.review_event(ctx, event_id, note=read_json_body(request).get("note"))
+        wallets_admin.review_event(
+            ctx, event_id, note=read_json_body(request).get("note")
+        )
     )
 
 
@@ -510,7 +541,9 @@ def usage_event_review_view(request: HttpRequest, ctx: TenantContext, event_id: 
 @staff_view(["GET", "POST"])
 def usage_rates_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     if request.method == "GET":
-        return JsonResponse(wallets_admin.rates(ctx, history=request.GET.get("history") == "1"))
+        return JsonResponse(
+            wallets_admin.rates(ctx, history=request.GET.get("history") == "1")
+        )
     body = read_json_body(request)
     return JsonResponse(
         wallets_admin.set_rate(
@@ -527,7 +560,9 @@ def usage_rates_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
 
 
 @staff_view(["POST"])
-def usage_rate_remove_view(request: HttpRequest, ctx: TenantContext, rate_id: UUID) -> JsonResponse:
+def usage_rate_remove_view(
+    request: HttpRequest, ctx: TenantContext, rate_id: UUID
+) -> JsonResponse:
     wallets_admin.remove_rate(ctx, rate_id, reason=read_json_body(request).get("reason"))
     return JsonResponse({"ok": True})
 
@@ -536,24 +571,38 @@ def usage_rate_remove_view(request: HttpRequest, ctx: TenantContext, rate_id: UU
 def credit_packs_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     if request.method == "GET":
         return JsonResponse(wallets_admin.packs(ctx))
-    return JsonResponse(wallets_admin.create_pack(ctx, read_json_body(request)), status=201)
-
-
-@staff_view(["PUT"])
-def credit_pack_view(request: HttpRequest, ctx: TenantContext, pack_id: UUID) -> JsonResponse:
-    return JsonResponse(wallets_admin.update_pack(ctx, pack_id, read_json_body(request)))
-
-
-@staff_view(["PUT"])
-def product_app_links_view(request: HttpRequest, ctx: TenantContext, product_id: UUID) -> JsonResponse:
     return JsonResponse(
-        {"app_links": catalog_services.set_app_links(ctx, product_id, read_json_body(request).get("app_links"))}
+        wallets_admin.create_pack(ctx, read_json_body(request)), status=201
     )
 
 
 @staff_view(["PUT"])
-def plan_rules_view(request: HttpRequest, ctx: TenantContext, plan_id: UUID) -> JsonResponse:
-    return JsonResponse(catalog_services.set_plan_rules(ctx, plan_id, read_json_body(request)))
+def credit_pack_view(
+    request: HttpRequest, ctx: TenantContext, pack_id: UUID
+) -> JsonResponse:
+    return JsonResponse(wallets_admin.update_pack(ctx, pack_id, read_json_body(request)))
+
+
+@staff_view(["PUT"])
+def product_app_links_view(
+    request: HttpRequest, ctx: TenantContext, product_id: UUID
+) -> JsonResponse:
+    return JsonResponse(
+        {
+            "app_links": catalog_services.set_app_links(
+                ctx, product_id, read_json_body(request).get("app_links")
+            )
+        }
+    )
+
+
+@staff_view(["PUT"])
+def plan_rules_view(
+    request: HttpRequest, ctx: TenantContext, plan_id: UUID
+) -> JsonResponse:
+    return JsonResponse(
+        catalog_services.set_plan_rules(ctx, plan_id, read_json_body(request))
+    )
 
 
 # --- reports -------------------------------------------------------------------------------
@@ -595,7 +644,9 @@ def support_tickets_view(request: HttpRequest, ctx: TenantContext) -> JsonRespon
 
 
 @staff_view(["GET", "POST"])
-def support_ticket_view(request: HttpRequest, ctx: TenantContext, ticket_id: UUID) -> JsonResponse:
+def support_ticket_view(
+    request: HttpRequest, ctx: TenantContext, ticket_id: UUID
+) -> JsonResponse:
     if request.method == "GET":
         return JsonResponse(support_desk.detail(ctx, ticket_id))
     body = read_json_body(request)
@@ -611,14 +662,24 @@ def support_ticket_view(request: HttpRequest, ctx: TenantContext, ticket_id: UUI
 
 
 @staff_view(["POST"])
-def support_assign_view(request: HttpRequest, ctx: TenantContext, ticket_id: UUID) -> JsonResponse:
-    return JsonResponse(support_desk.assign(ctx, ticket_id, user_id=read_json_body(request).get("user_id")))
+def support_assign_view(
+    request: HttpRequest, ctx: TenantContext, ticket_id: UUID
+) -> JsonResponse:
+    return JsonResponse(
+        support_desk.assign(
+            ctx, ticket_id, user_id=read_json_body(request).get("user_id")
+        )
+    )
 
 
 @staff_view(["POST"])
-def support_resolve_view(request: HttpRequest, ctx: TenantContext, ticket_id: UUID) -> JsonResponse:
+def support_resolve_view(
+    request: HttpRequest, ctx: TenantContext, ticket_id: UUID
+) -> JsonResponse:
     return JsonResponse(
-        support_desk.resolve(ctx, ticket_id, resolution=read_json_body(request).get("resolution"))
+        support_desk.resolve(
+            ctx, ticket_id, resolution=read_json_body(request).get("resolution")
+        )
     )
 
 
@@ -644,13 +705,19 @@ def help_articles_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse
 
 
 @staff_view(["PUT"])
-def help_article_view(request: HttpRequest, ctx: TenantContext, article_id: UUID) -> JsonResponse:
+def help_article_view(
+    request: HttpRequest, ctx: TenantContext, article_id: UUID
+) -> JsonResponse:
     return JsonResponse(help_content.update(ctx, article_id, read_json_body(request)))
 
 
 @staff_view(["POST"])
-def help_article_status_view(request: HttpRequest, ctx: TenantContext, article_id: UUID) -> JsonResponse:
-    return JsonResponse(help_content.set_status(ctx, article_id, read_json_body(request).get("status")))
+def help_article_status_view(
+    request: HttpRequest, ctx: TenantContext, article_id: UUID
+) -> JsonResponse:
+    return JsonResponse(
+        help_content.set_status(ctx, article_id, read_json_body(request).get("status"))
+    )
 
 
 @require_http_methods(["GET"])
@@ -687,17 +754,25 @@ def customer_create_view(request: HttpRequest, ctx: TenantContext) -> JsonRespon
 
 
 @staff_view(["GET"])
-def customer_members_view(request: HttpRequest, ctx: TenantContext, organization_id: UUID) -> JsonResponse:
+def customer_members_view(
+    request: HttpRequest, ctx: TenantContext, organization_id: UUID
+) -> JsonResponse:
     return JsonResponse({"results": customer_admin.members(ctx, organization_id)})
 
 
 @staff_view(["GET"])
-def customer_history_view(request: HttpRequest, ctx: TenantContext, organization_id: UUID) -> JsonResponse:
-    return JsonResponse({"results": customer_admin.assignment_history(ctx, organization_id)})
+def customer_history_view(
+    request: HttpRequest, ctx: TenantContext, organization_id: UUID
+) -> JsonResponse:
+    return JsonResponse(
+        {"results": customer_admin.assignment_history(ctx, organization_id)}
+    )
 
 
 @staff_view(["POST"])
-def customer_assign_plan_view(request: HttpRequest, ctx: TenantContext, organization_id: UUID) -> JsonResponse:
+def customer_assign_plan_view(
+    request: HttpRequest, ctx: TenantContext, organization_id: UUID
+) -> JsonResponse:
     body = read_json_body(request)
     return JsonResponse(
         customer_admin.assign_plan(
@@ -708,6 +783,7 @@ def customer_assign_plan_view(request: HttpRequest, ctx: TenantContext, organiza
             quantity=body.get("quantity"),
             reason=body.get("reason"),
             idempotency_key=request.headers.get("Idempotency-Key"),
+            currency=body.get("currency"),
         ),
         status=201,
     )
@@ -729,7 +805,9 @@ def setup_queue_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
 
 
 @staff_view(["POST"])
-def setup_decision_view(request: HttpRequest, ctx: TenantContext, record_id: UUID) -> JsonResponse:
+def setup_decision_view(
+    request: HttpRequest, ctx: TenantContext, record_id: UUID
+) -> JsonResponse:
     body = read_json_body(request)
     return JsonResponse(
         customer_setup.decide(
@@ -746,15 +824,25 @@ def setup_decision_view(request: HttpRequest, ctx: TenantContext, record_id: UUI
 def setup_requirements_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     if request.method == "GET":
         return JsonResponse(
-            {"results": customer_setup.requirements(ctx, product_code=request.GET.get("product"))}
+            {
+                "results": customer_setup.requirements(
+                    ctx, product_code=request.GET.get("product")
+                )
+            }
         )
-    return JsonResponse(customer_setup.save_requirement(ctx, read_json_body(request)), status=201)
+    return JsonResponse(
+        customer_setup.save_requirement(ctx, read_json_body(request)), status=201
+    )
 
 
 @staff_view(["PUT"])
-def setup_requirement_view(request: HttpRequest, ctx: TenantContext, requirement_id: UUID) -> JsonResponse:
+def setup_requirement_view(
+    request: HttpRequest, ctx: TenantContext, requirement_id: UUID
+) -> JsonResponse:
     return JsonResponse(
-        customer_setup.save_requirement(ctx, read_json_body(request), requirement_id=requirement_id)
+        customer_setup.save_requirement(
+            ctx, read_json_body(request), requirement_id=requirement_id
+        )
     )
 
 
@@ -768,7 +856,9 @@ def domains_overview_view(request: HttpRequest, ctx: TenantContext) -> JsonRespo
 
 @staff_view(["POST"])
 def domains_check_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
-    return JsonResponse(domains_console.check_host(ctx, read_json_body(request).get("host")))
+    return JsonResponse(
+        domains_console.check_host(ctx, read_json_body(request).get("host"))
+    )
 
 
 @staff_view(["GET"])
@@ -793,8 +883,8 @@ def staff_account_create_view(request: HttpRequest, ctx: TenantContext) -> JsonR
 
 @staff_view(["GET"])
 def sign_in_audit_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
-    from workeasy360.platform.authz import services as authz
     from workeasy360.platform.administration.staff_users import sign_in_events
+    from workeasy360.platform.authz import services as authz
 
     authz.require(ctx, "platform.staff_audit.view")
     start, end = overview.optional_window(request.GET.get("from"), request.GET.get("to"))
@@ -845,12 +935,16 @@ def org_support_tickets_view(request: HttpRequest, org_slug: str) -> JsonRespons
 
 
 @require_http_methods(["GET", "POST"])
-def org_support_ticket_view(request: HttpRequest, org_slug: str, ticket_id: UUID) -> JsonResponse:
+def org_support_ticket_view(
+    request: HttpRequest, org_slug: str, ticket_id: UUID
+) -> JsonResponse:
     ctx = request.tenant_context  # type: ignore[attr-defined]
     if request.method == "GET":
         return JsonResponse(support_desk.customer_detail(ctx, ticket_id))
     return JsonResponse(
-        support_desk.customer_reply(ctx, ticket_id, message=read_json_body(request).get("message"))
+        support_desk.customer_reply(
+            ctx, ticket_id, message=read_json_body(request).get("message")
+        )
     )
 
 
@@ -860,7 +954,9 @@ def org_setup_view(request: HttpRequest, org_slug: str) -> JsonResponse:
 
 
 @require_http_methods(["POST"])
-def org_setup_submit_view(request: HttpRequest, org_slug: str, record_id: UUID) -> JsonResponse:
+def org_setup_submit_view(
+    request: HttpRequest, org_slug: str, record_id: UUID
+) -> JsonResponse:
     return JsonResponse(
         customer_setup.customer_submit(
             request.tenant_context,  # type: ignore[attr-defined]

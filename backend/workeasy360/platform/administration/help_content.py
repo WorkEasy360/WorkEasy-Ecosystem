@@ -55,18 +55,26 @@ def _clean(body: dict[str, Any]) -> dict[str, Any]:
     title = " ".join(str(body.get("title") or "").split())
     text = str(body.get("body") or "").strip()
     if not title or len(title) > 200:
-        raise SecurityPolicyValidationError("Give it a title of at most 200 characters.", field="title")
+        raise SecurityPolicyValidationError(
+            "Give it a title of at most 200 characters.", field="title"
+        )
     if not text or len(text) > 20_000:
-        raise SecurityPolicyValidationError("Write the content, at most 20,000 characters.", field="body")
+        raise SecurityPolicyValidationError(
+            "Write the content, at most 20,000 characters.", field="body"
+        )
     kind = body.get("kind", "faq")
     audience = body.get("audience", "all")
     if kind not in KINDS:
-        raise SecurityPolicyValidationError("Choose what kind of content this is.", field="kind")
+        raise SecurityPolicyValidationError(
+            "Choose what kind of content this is.", field="kind"
+        )
     if audience not in AUDIENCES:
         raise SecurityPolicyValidationError("Choose who this is for.", field="audience")
     order = body.get("display_order", 0)
     if isinstance(order, bool) or not isinstance(order, int) or not 0 <= order <= 9999:
-        raise SecurityPolicyValidationError("Order must be 0 to 9999.", field="display_order")
+        raise SecurityPolicyValidationError(
+            "Order must be 0 to 9999.", field="display_order"
+        )
     return {
         "title": title,
         "body": text,
@@ -94,7 +102,9 @@ def articles(
 
 def _slug(title: str) -> str:
     base = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60] or "article"
-    taken = set(_model().objects.filter(slug__startswith=base).values_list("slug", flat=True))
+    taken = set(
+        _model().objects.filter(slug__startswith=base).values_list("slug", flat=True)
+    )
     slug, n = base, 1
     while slug in taken:
         n += 1
@@ -107,7 +117,9 @@ def create(ctx: TenantContext, body: dict[str, Any]) -> dict[str, Any]:
     authz.require(ctx, MANAGE)
     fields = _clean(body)
     with transaction.atomic():
-        row = _model().objects.create(slug=_slug(fields["title"]), status="draft", **fields)
+        row = _model().objects.create(
+            slug=_slug(fields["title"]), status="draft", **fields
+        )
         audit.record(
             ctx,
             "support.help_created",

@@ -42,7 +42,9 @@ def _currency(organization_id: UUID) -> str:
         return default
     with tenant_context(ctx), organization_db_scope(organization_id):
         account = billing_account_or_none(organization_id)
-        return str(account.currency) if account is not None and account.currency else default
+        return (
+            str(account.currency) if account is not None and account.currency else default
+        )
 
 
 def report(
@@ -63,9 +65,13 @@ def report(
         try:
             moment = datetime.fromisoformat(str(occurred_at))
         except ValueError as exc:
-            raise CatalogValidationError("Use an ISO 8601 time.", field="occurred_at") from exc
+            raise CatalogValidationError(
+                "Use an ISO 8601 time.", field="occurred_at"
+            ) from exc
         if moment.tzinfo is None:
-            raise CatalogValidationError("The time needs a timezone.", field="occurred_at")
+            raise CatalogValidationError(
+                "The time needs a timezone.", field="occurred_at"
+            )
     event = usage.record(
         organization_id=organization_id,
         product_code=product_code,

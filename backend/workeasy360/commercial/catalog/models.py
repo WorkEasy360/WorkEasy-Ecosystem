@@ -432,7 +432,10 @@ class Plan(models.Model):
     #: Which changes of plan a customer on this plan may make (enforced by
     #: ``subscriptions.services.change_plan``).
     change_rule = models.CharField(
-        max_length=14, choices=ChangeRule.choices, default=ChangeRule.ANY, db_default="any"
+        max_length=14,
+        choices=ChangeRule.choices,
+        default=ChangeRule.ANY,
+        db_default="any",
     )
     #: Usage included each month on this plan: ``{"sms": 100, "ai_tokens": 50000}``,
     #: added to a meter's own free allowance (``wallets.usage``). Only meters that exist.

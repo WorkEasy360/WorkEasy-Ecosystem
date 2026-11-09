@@ -15,6 +15,7 @@ class PartnersConfig(AppConfig):
         # Declares the partner permissions and event schemas. A permission or
         # an event that is not declared here cannot be granted or published.
         from workeasy360.commercial.partners import (
+            notices,  # noqa: F401 - registers its email template
             permissions,  # noqa: F401
             promotion_requests,  # noqa: F401 - registers its email template
             tasks,  # noqa: F401

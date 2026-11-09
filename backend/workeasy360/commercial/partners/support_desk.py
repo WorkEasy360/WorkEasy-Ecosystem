@@ -23,15 +23,21 @@ from workeasy360.commercial.partners import tickets
 from workeasy360.commercial.partners.models import PartnerTicket, PartnerTicketMessage
 from workeasy360.contracts.errors import PartnerRecordNotFound, PartnerValidationError
 from workeasy360.contracts.values.tenant import TenantContext
+from workeasy360.platform.administration.notices import tell_staff
 from workeasy360.platform.audit import services as audit
 from workeasy360.platform.authz import services as authz
 from workeasy360.platform.authz.control_plane import in_scope
+from workeasy360.platform.organizations.selectors import organization_ids_matching
 
 VIEW = "platform.staff_support.view"
 MANAGE = "platform.staff_support.manage"
 DIRECT = "direct"
 DESK_DIRECTIONS = (tickets.PLATFORM, DIRECT)
-AUDIENCES = {"partner": (tickets.PLATFORM,), "customer": (DIRECT,), "all": DESK_DIRECTIONS}
+AUDIENCES = {
+    "partner": (tickets.PLATFORM,),
+    "customer": (DIRECT,),
+    "all": DESK_DIRECTIONS,
+}
 
 
 def _user_names(ids: set[Any]) -> dict[Any, str]:
@@ -40,17 +46,23 @@ def _user_names(ids: set[Any]) -> dict[Any, str]:
     return display_names(ids)
 
 
-def _with_people(items: list[dict[str, Any]], rows: dict[str, Any]) -> list[dict[str, Any]]:
+def _with_people(
+    items: list[dict[str, Any]], rows: dict[str, Any]
+) -> list[dict[str, Any]]:
     from workeasy360.platform.organizations.selectors import organization_names
 
     people = _user_names({r.assigned_to_id for r in rows.values()})
-    customers = organization_names({r.organization_id for r in rows.values() if r.organization_id})
+    customers = organization_names(
+        {r.organization_id for r in rows.values() if r.organization_id}
+    )
     for item in items:
         row = rows[item["id"]]
         item["audience"] = "partner" if row.direction == tickets.PLATFORM else "customer"
         item["partner_id"] = str(row.partner_id) if row.partner_id else None
         item["partner_name"] = row.partner.display_name if row.partner_id else ""
-        item["organization_id"] = str(row.organization_id) if row.organization_id else None
+        item["organization_id"] = (
+            str(row.organization_id) if row.organization_id else None
+        )
         item["organization_name"] = customers.get(row.organization_id, "")
         item["assigned_to"] = str(row.assigned_to_id) if row.assigned_to_id else None
         item["assigned_to_name"] = people.get(row.assigned_to_id, "")
@@ -73,23 +85,29 @@ def queue(
     directions = AUDIENCES.get(str(audience or "all"))
     if directions is None:
         raise PartnerValidationError("Unknown audience.", field="audience")
-    rows = PartnerTicket.objects.filter(direction__in=directions).select_related("partner")
+    rows = PartnerTicket.objects.filter(direction__in=directions).select_related(
+        "partner"
+    )
     if assigned == "me":
         rows = rows.filter(assigned_to_id=ctx.user_id)
     elif assigned == "none":
         rows = rows.filter(assigned_to__isnull=True)
     text = str(search or "").strip()[:80]
     if text:
-        filters = Q(subject__icontains=text) | Q(partner__display_name__icontains=text)
+        filters = (
+            Q(subject__icontains=text)
+            | Q(partner__display_name__icontains=text)
+            | Q(organization_id__in=organization_ids_matching(text))
+        )
         if text.lstrip("#").isdigit():
             filters |= Q(number=int(text.lstrip("#")))
         rows = rows.filter(filters)
     page = tickets._page(rows, status=status, limit=limit, offset=offset)
     found = {
         str(r.id): r
-        for r in PartnerTicket.objects.filter(id__in=[i["id"] for i in page["items"]]).select_related(
-            "partner"
-        )
+        for r in PartnerTicket.objects.filter(
+            id__in=[i["id"] for i in page["items"]]
+        ).select_related("partner")
     }
     page["items"] = _with_people(page["items"], found)
     return page
@@ -117,7 +135,12 @@ def detail(ctx: TenantContext, ticket_id: UUID) -> dict[str, Any]:
 
 @in_scope
 def reply(
-    ctx: TenantContext, ticket_id: UUID, *, message: Any, status: Any = None, internal: Any = False
+    ctx: TenantContext,
+    ticket_id: UUID,
+    *,
+    message: Any,
+    status: Any = None,
+    internal: Any = False,
 ) -> dict[str, Any]:
     authz.require(ctx, MANAGE)
     row = _row(ticket_id)
@@ -144,7 +167,9 @@ def assign(ctx: TenantContext, ticket_id: UUID, *, user_id: Any) -> dict[str, An
         try:
             assignee = UUID(str(user_id))
         except (TypeError, ValueError) as exc:
-            raise PartnerValidationError("Choose a staff member.", field="user_id") from exc
+            raise PartnerValidationError(
+                "Choose a staff member.", field="user_id"
+            ) from exc
         if not is_active_staff(assignee):
             raise PartnerValidationError("Choose a staff member.", field="user_id")
     with transaction.atomic():
@@ -167,7 +192,9 @@ def resolve(ctx: TenantContext, ticket_id: UUID, *, resolution: Any) -> dict[str
     authz.require(ctx, MANAGE)
     text = str(resolution or "").strip()
     if len(text) < 5 or len(text) > 500:
-        raise PartnerValidationError("Say how it was resolved, in 5 to 500 characters.", field="resolution")
+        raise PartnerValidationError(
+            "Say how it was resolved, in 5 to 500 characters.", field="resolution"
+        )
     now = timezone.now()
     with transaction.atomic():
         row = _row(ticket_id, lock=True)
@@ -198,18 +225,32 @@ def staff_people(ctx: TenantContext) -> list[dict[str, str]]:
 
 
 def customer_open(
-    ctx: TenantContext, *, subject: Any, message: Any, category: Any = None, priority: Any = None
+    ctx: TenantContext,
+    *,
+    subject: Any,
+    message: Any,
+    category: Any = None,
+    priority: Any = None,
 ) -> dict[str, Any]:
     """A member of a customer organization asks Workeasy360. The organization comes from
     the verified context; there is nothing to send that could name another."""
     title = tickets._subject(subject)
     body = tickets._body(message)
-    kind = tickets._choice(category, tickets.CATEGORIES, field="category", default="general")
-    level = tickets._choice(priority, tickets.PRIORITIES, field="priority", default="normal")
+    kind = tickets._choice(
+        category, tickets.CATEGORIES, field="category", default="general"
+    )
+    level = tickets._choice(
+        priority, tickets.PRIORITIES, field="priority", default="normal"
+    )
     now = timezone.now()
     first_due, resolve_due = tickets._deadlines(level, now)
     with transaction.atomic():
-        number = (PartnerTicket.objects.filter(partner__isnull=True).aggregate(n=Max("number"))["n"] or 0) + 1
+        number = (
+            PartnerTicket.objects.filter(partner__isnull=True).aggregate(n=Max("number"))[
+                "n"
+            ]
+            or 0
+        ) + 1
         row = PartnerTicket.objects.create(
             partner_id=None,
             number=number,
@@ -234,11 +275,19 @@ def customer_open(
             resource_id=row.id,
             changes={"category": kind, "priority": level},
         )
+    tell_staff(
+        "A customer opened a support ticket",
+        f"Ticket #{number} is waiting for an answer.",
+    )
     return tickets.ticket_dict(row)
 
 
-def customer_list(ctx: TenantContext, *, status: Any = None, limit: Any = None, offset: Any = None) -> dict[str, Any]:
-    rows = PartnerTicket.objects.filter(direction=DIRECT, organization_id=ctx.organization_id)
+def customer_list(
+    ctx: TenantContext, *, status: Any = None, limit: Any = None, offset: Any = None
+) -> dict[str, Any]:
+    rows = PartnerTicket.objects.filter(
+        direction=DIRECT, organization_id=ctx.organization_id
+    )
     return tickets._page(rows, status=status or "all", limit=limit, offset=offset)
 
 
@@ -259,7 +308,9 @@ def customer_detail(ctx: TenantContext, ticket_id: UUID) -> dict[str, Any]:
     return out
 
 
-def customer_reply(ctx: TenantContext, ticket_id: UUID, *, message: Any) -> dict[str, Any]:
+def customer_reply(
+    ctx: TenantContext, ticket_id: UUID, *, message: Any
+) -> dict[str, Any]:
     tickets._append(
         ctx, _own(ctx, ticket_id), side="customer", answering=False, message=message
     )

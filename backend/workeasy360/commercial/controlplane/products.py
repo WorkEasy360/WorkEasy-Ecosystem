@@ -87,6 +87,7 @@ PRODUCT_FIELDS = (
     "licensing_mode",
     "sort_order",
     "marketing_url",
+    "app_links",
     "store_title",
     "store_summary",
     "application_url",

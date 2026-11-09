@@ -414,10 +414,14 @@ class SubscriptionSummary(models.Model):
     class Meta:
         db_table = "subscriptions_summary"
         indexes = [
-            models.Index(fields=["status", "current_period_end"], name="ix_sub_sum_status"),
+            models.Index(
+                fields=["status", "current_period_end"], name="ix_sub_sum_status"
+            ),
             models.Index(fields=["organization_id"], name="ix_sub_sum_org"),
             models.Index(fields=["activated_at"], name="ix_sub_sum_activated"),
-            models.Index(fields=["-created_at", "-subscription_id"], name="ix_sub_sum_time"),
+            models.Index(
+                fields=["-created_at", "-subscription_id"], name="ix_sub_sum_time"
+            ),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - display only
@@ -441,7 +445,9 @@ class SubscriptionItemSummary(models.Model):
     class Meta:
         db_table = "subscriptions_item_summary"
         indexes = [
-            models.Index(fields=["product_code", "removed_at"], name="ix_sub_item_sum_prod"),
+            models.Index(
+                fields=["product_code", "removed_at"], name="ix_sub_item_sum_prod"
+            ),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - display only

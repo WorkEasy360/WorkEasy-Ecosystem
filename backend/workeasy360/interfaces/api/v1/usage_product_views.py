@@ -9,7 +9,6 @@ the JSON payload is one more field (``event``).
 
 from __future__ import annotations
 
-import json
 from typing import Any
 from uuid import UUID
 
@@ -20,6 +19,7 @@ from django.views.decorators.http import require_POST
 
 from workeasy360.commercial.controlplane import usage_intake
 from workeasy360.contracts.errors import CatalogValidationError
+from workeasy360.contracts.values import json_input
 from workeasy360.platform.ecosystem import clientauth, protocol, ratelimit, verification
 from workeasy360.platform.observability.correlation import current_correlation_id
 
@@ -56,15 +56,19 @@ def usage_events(request: HttpRequest) -> JsonResponse:
         return response
     try:
         organization = UUID(str(request.POST.get("organization_id")))
-        event: Any = json.loads(request.POST.get("event") or "")
+        event: Any = json_input.loads(request.POST.get("event") or "")
     except (ValueError, TypeError):
         return _error("invalid_request", "Send organization_id and event.", 400)
     if not isinstance(event, dict):
         return _error("invalid_request", "event must be an object.", 400)
-    decision = verification.verify(organization_id=organization, product_code=client.product_code)
+    decision = verification.verify(
+        organization_id=organization, product_code=client.product_code
+    )
     if not decision.allowed:
         return _error(
-            "organization_not_entitled", "This organization does not hold this product.", 403
+            "organization_not_entitled",
+            "This organization does not hold this product.",
+            403,
         )
     try:
         answer = usage_intake.report(

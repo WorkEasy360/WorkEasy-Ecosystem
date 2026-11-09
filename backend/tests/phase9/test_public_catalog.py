@@ -247,6 +247,8 @@ def test_platform_settings_are_permissioned_versioned_and_public_in_part(staff_l
     )
     assert invalid.status_code == 400
     public = Client().get("/api/v1/public/site").json()
+    # Whether to offer the public partner application (ADR-060) is public by nature.
+    assert public.pop("partner_applications_enabled") is True
     assert public == {
         "signup_enabled": False,
         "support_email": "help@example.com",

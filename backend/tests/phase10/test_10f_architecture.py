@@ -195,6 +195,13 @@ def test_the_partner_models_are_the_frozen_set():
         "PartnerCannedResponse",
         "PartnerPayoutMethod",
         "PartnerWithdrawalRequest",
+        # The Admin Panel programme (ADR-060): KYC is a record beside the partner's status,
+        # with its own requirements, documents, decisions and access log.
+        "KycRequirement",
+        "PartnerKyc",
+        "PartnerKycDocument",
+        "PartnerKycDecision",
+        "PartnerKycDocumentAccess",
         # ADR-054: which products a partner may promote (a permission, not a
         # kind of partner; tests/affiliate_products pins it).
         "PartnerPromotionGrant",
@@ -473,4 +480,5 @@ def test_phase_10_leaves_the_legacy_catalog_alone():
         "0010_marketplace_filters.py",
         # ADR-058: one nullable presentation column (Product.refund_days).
         "0011_product_refund_days.py",
+        "0012_app_links_and_plan_rules.py",
     ]

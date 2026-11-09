@@ -254,8 +254,12 @@ def set_partner_status(
     act, which the permission resolver reads from that status.
     """
     authz.require(ctx, MANAGE)
-    return _move_status(
-        ctx, partner_id, target=target, why=clean_reason(reason), expected_version=expected_version
+    return _set_partner_status(
+        ctx,
+        partner_id,
+        target=target,
+        why=clean_reason(reason),
+        expected_version=expected_version,
     )
 
 
@@ -268,12 +272,16 @@ def activate_after_kyc(ctx: TenantContext, partner_id: UUID, *, reason: Any) -> 
     current = selectors.partner_row(partner_id)
     if current is None or current.status_enum is not PartnerStatus.DRAFT:
         return current
-    return _move_status(
-        ctx, partner_id, target=PartnerStatus.ACTIVE, why=clean_reason(reason), expected_version=None
+    return _set_partner_status(
+        ctx,
+        partner_id,
+        target=PartnerStatus.ACTIVE,
+        why=clean_reason(reason),
+        expected_version=None,
     )
 
 
-def _move_status(
+def _set_partner_status(
     ctx: TenantContext,
     partner_id: UUID,
     *,

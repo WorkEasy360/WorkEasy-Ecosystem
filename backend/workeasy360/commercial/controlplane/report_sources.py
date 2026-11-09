@@ -17,7 +17,9 @@ from workeasy360.platform.organizations.selectors import organization_names
 def owner_names(rows: list[dict[str, Any]]) -> dict[str, str]:
     """A display name for each wallet owner in these rows, whichever kind it is."""
     organizations = {
-        UUID(row["owner_id"]) for row in rows if row["owner_type"] == wallet_api.ORGANIZATION
+        UUID(row["owner_id"])
+        for row in rows
+        if row["owner_type"] == wallet_api.ORGANIZATION
     }
     partners = {
         row["owner_id"] for row in rows if row["owner_type"] == wallet_api.PARTNER
@@ -46,7 +48,9 @@ def usage(
     *, start: Any, end: Any, product: Any, search: Any, limit: int, offset: int
 ) -> tuple[list[dict[str, Any]], int]:
     rows = wallet_admin.usage_by_product(start, end)
-    names = catalog_selectors.product_names(sorted({r["product_code"] for r in rows if r["product_code"]}))
+    names = catalog_selectors.product_names(
+        sorted({r["product_code"] for r in rows if r["product_code"]})
+    )
     out = []
     for row in rows:
         name = names.get(row["product_code"], row["product_code"] or "No product")

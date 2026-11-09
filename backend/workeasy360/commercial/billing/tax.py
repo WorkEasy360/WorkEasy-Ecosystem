@@ -58,7 +58,11 @@ def gst_rate_bp() -> int:
     from workeasy360.platform.administration.site import tax_rate_override
 
     override = tax_rate_override()
-    rate = override if override is not None else int(getattr(settings, "GST_RATE_BP", 1800) or 0)
+    rate = (
+        override
+        if override is not None
+        else int(getattr(settings, "GST_RATE_BP", 1800) or 0)
+    )
     return max(0, min(rate, 10_000))
 
 

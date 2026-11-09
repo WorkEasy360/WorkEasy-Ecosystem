@@ -548,9 +548,13 @@ def test_an_invitation_takes_no_password(catalog, admin):
     nothing_was_created()
 
 
-def test_an_invitation_to_an_address_that_has_an_account_is_refused(catalog, admin, existing):
+def test_an_invitation_to_an_address_that_has_an_account_is_refused(
+    catalog, admin, existing
+):
     response = send(
-        admin, CREATE, make_body("reseller", email=existing.email, mode="invite", password=None)
+        admin,
+        CREATE,
+        make_body("reseller", email=existing.email, mode="invite", password=None),
     )
     assert response.status_code == 400
     assert "administrator.email" in fields(response)

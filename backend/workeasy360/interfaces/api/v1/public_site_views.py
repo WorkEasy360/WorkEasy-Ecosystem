@@ -118,7 +118,9 @@ def forgot_password_view(request: HttpRequest) -> JsonResponse:
         return blocked
     from workeasy360.platform.identity import portals as portal_links
 
-    self_service.request_password_reset(email, portal=portal_links.request_portal(request))
+    self_service.request_password_reset(
+        email, portal=portal_links.request_portal(request)
+    )
     return JsonResponse(_ACCEPTED, status=202)
 
 

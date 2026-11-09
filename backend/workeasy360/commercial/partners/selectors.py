@@ -948,11 +948,27 @@ def created_count(*, start: Any | None, end: Any) -> int:
     return rows.count()
 
 
+def active_partner_count(at: Any) -> int:
+    """Partners activated by ``at`` and not ended by it. An application that has not been
+    approved is not a partner yet, and a suspended partner still is one."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    return (
+        PartnerAccount.objects.filter(activated_at__lt=at)
+        .exclude(terminated_at__lt=at)
+        .count()
+    )
+
+
 def partner_names(partner_ids: Any) -> dict[Any, str]:
     """A display name for each of these partners. One query, for a staff list."""
     from workeasy360.commercial.partners.models import PartnerAccount
 
-    return dict(PartnerAccount.objects.filter(id__in=partner_ids).values_list("id", "display_name"))
+    return dict(
+        PartnerAccount.objects.filter(id__in=partner_ids).values_list(
+            "id", "display_name"
+        )
+    )
 
 
 def partner_ids_matching(search: str) -> Any:

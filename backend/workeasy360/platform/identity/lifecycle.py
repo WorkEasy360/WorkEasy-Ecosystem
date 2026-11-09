@@ -34,6 +34,15 @@ from workeasy360.contracts.enums import UserStatus
 _LOCKOUT_FIELDS = ["failed_login_count", "locked_until"]
 
 
+def spend_password_time(password: str) -> None:
+    """Take as long as hashing this password would, and keep nothing. A request that creates
+    no account answers no sooner than one that does, so the time taken cannot say whether an
+    address is registered."""
+    from django.contrib.auth.hashers import make_password
+
+    make_password(password)
+
+
 def create_account(
     *,
     email: str,

@@ -100,7 +100,9 @@ def _plan_allowance(organization_id: UUID, meter: str) -> int:
 
 
 def _ledger_key(event: Any) -> str:
-    return f"usage:{event.organization_id}:{event.product_code}:{event.idempotency_key}"[:128]
+    return f"usage:{event.organization_id}:{event.product_code}:{event.idempotency_key}"[
+        :128
+    ]
 
 
 def record(
@@ -129,11 +131,15 @@ def record(
         # One charge at a time per wallet, so the allowance and the balance agree.
         Wallet.objects.select_for_update().filter(id=wallet.id).first()
         existing = UsageEvent.objects.filter(
-            organization_id=organization_id, product_code=product_code, idempotency_key=key
+            organization_id=organization_id,
+            product_code=product_code,
+            idempotency_key=key,
         ).first()
         if existing is not None:
             return _note_duplicate(existing)
-        event = _decide(wallet, organization_id, product_code, meter, units, key, moment, currency)
+        event = _decide(
+            wallet, organization_id, product_code, meter, units, key, moment, currency
+        )
     metrics.increment(OPERATIONS, meter=str(meter), outcome=event.outcome)
     return event
 
@@ -200,7 +206,9 @@ def _decide(
         # The same key arrived for another currency's wallet at the same moment.
         # The first one's answer stands.
         return UsageEvent.objects.get(
-            organization_id=organization_id, product_code=product_code, idempotency_key=key
+            organization_id=organization_id,
+            product_code=product_code,
+            idempotency_key=key,
         )
     return event
 

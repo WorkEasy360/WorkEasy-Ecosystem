@@ -63,6 +63,13 @@ def test_the_partner_models_are_the_frozen_set_plus_the_declared_additions():
         "PartnerCannedResponse",
         "PartnerPayoutMethod",
         "PartnerWithdrawalRequest",
+        # The Admin Panel programme (ADR-060): KYC is a record beside the partner's status,
+        # with its own requirements, documents, decisions and access log.
+        "KycRequirement",
+        "PartnerKyc",
+        "PartnerKycDocument",
+        "PartnerKycDecision",
+        "PartnerKycDocumentAccess",
         # ADR-054: which products a partner may promote (a permission, not a
         # kind of partner; tests/affiliate_products pins it).
         "PartnerPromotionGrant",

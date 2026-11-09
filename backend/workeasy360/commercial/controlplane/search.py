@@ -72,7 +72,9 @@ def _partners(term: str) -> list[dict[str, str]]:
 
 def _products(term: str) -> list[dict[str, str]]:
     return [
-        _row("product", row["id"], row["name"], row["code"], f"/admin/products/{row['id']}")
+        _row(
+            "product", row["id"], row["name"], row["code"], f"/admin/products/{row['id']}"
+        )
         for row in catalog_selectors.search_products(term, limit=PER_GROUP)
     ]
 
@@ -83,7 +85,9 @@ def _subscriptions(term: str) -> list[dict[str, str]]:
 
     from workeasy360.commercial.subscriptions.admin_reads import for_organizations
 
-    customers = org_selectors.organizations_directory_page(search=term, limit=PER_GROUP).items
+    customers = org_selectors.organizations_directory_page(
+        search=term, limit=PER_GROUP
+    ).items
     names = {UUID(row["organization_id"]): row["display_name"] for row in customers}
     return [
         _row(
@@ -101,7 +105,13 @@ def _orders(term: str) -> list[dict[str, str]]:
     from workeasy360.commercial.payments.admin_reads import search_orders
 
     return [
-        _row("order", row["id"], row["number"], row["description"], f"/admin/orders?q={row['number']}")
+        _row(
+            "order",
+            row["id"],
+            row["number"],
+            row["description"],
+            f"/admin/orders?q={row['number']}",
+        )
         for row in search_orders(term, limit=PER_GROUP)
     ]
 
@@ -110,7 +120,13 @@ def _invoices(term: str) -> list[dict[str, str]]:
     from workeasy360.commercial.payments.admin_reads import search_invoices
 
     return [
-        _row("invoice", row["id"], row["number"], row["status"], f"/admin/invoices?q={row['number']}")
+        _row(
+            "invoice",
+            row["id"],
+            row["number"],
+            row["status"],
+            f"/admin/invoices?q={row['number']}",
+        )
         for row in search_invoices(term, limit=PER_GROUP)
     ]
 

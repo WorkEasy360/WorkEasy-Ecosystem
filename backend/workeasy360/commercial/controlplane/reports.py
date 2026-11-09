@@ -107,6 +107,7 @@ REPORTS: dict[str, dict[str, Any]] = {
             _column("outcome", "Outcome", "status"),
             _column("quantity", "Units", "number"),
             _column("amount", "Charged", "amount"),
+            _column("currency", "Currency"),
         ],
     },
     "partner-conversions": {
@@ -167,7 +168,11 @@ def _window(raw_from: Any, raw_to: Any) -> tuple[datetime, datetime, date, date]
     today = timezone.now().date()
     try:
         last = date.fromisoformat(raw_to) if raw_to else today
-        first = date.fromisoformat(raw_from) if raw_from else last - timedelta(days=DEFAULT_DAYS - 1)
+        first = (
+            date.fromisoformat(raw_from)
+            if raw_from
+            else last - timedelta(days=DEFAULT_DAYS - 1)
+        )
     except (TypeError, ValueError) as exc:
         raise CatalogValidationError("Use a date like 2026-11-09.", field="from") from exc
     if first > last:

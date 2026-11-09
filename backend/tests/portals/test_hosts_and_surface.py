@@ -269,7 +269,6 @@ def test_a_reset_link_opens_the_portal_it_was_asked_on(
     assert ORIGINS["partner"] + "/reset-password#token=" in mail.outbox[-1].body
 
 
-
 def test_single_host_links_stay_on_the_one_frontend(settings):
     from workeasy360.platform.identity import portals
 

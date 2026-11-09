@@ -1559,12 +1559,20 @@ class PartnerTicket(models.Model):
             ),
             models.CheckConstraint(
                 condition=models.Q(
-                    direction="platform", organization_id__isnull=True, partner__isnull=False
+                    direction="platform",
+                    organization_id__isnull=True,
+                    partner__isnull=False,
                 )
                 | models.Q(
-                    direction="customer", organization_id__isnull=False, partner__isnull=False
+                    direction="customer",
+                    organization_id__isnull=False,
+                    partner__isnull=False,
                 )
-                | models.Q(direction="direct", organization_id__isnull=False, partner__isnull=True),
+                | models.Q(
+                    direction="direct",
+                    organization_id__isnull=False,
+                    partner__isnull=True,
+                ),
                 name="ck_partner_ticket_direction",
             ),
             models.CheckConstraint(
@@ -1932,7 +1940,9 @@ class PartnerKycDecision(models.Model):
     class Meta:
         db_table = "partners_kyc_decision"
         indexes = [
-            models.Index(fields=["partner", "-decided_at"], name="ix_kyc_decision_partner"),
+            models.Index(
+                fields=["partner", "-decided_at"], name="ix_kyc_decision_partner"
+            ),
             models.Index(fields=["-decided_at"], name="ix_kyc_decision_time"),
         ]
 
@@ -1960,7 +1970,9 @@ class PartnerKycDocumentAccess(models.Model):
     class Meta:
         db_table = "partners_kyc_document_access"
         indexes = [
-            models.Index(fields=["partner", "-accessed_at"], name="ix_kyc_access_partner"),
+            models.Index(
+                fields=["partner", "-accessed_at"], name="ix_kyc_access_partner"
+            ),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - display only

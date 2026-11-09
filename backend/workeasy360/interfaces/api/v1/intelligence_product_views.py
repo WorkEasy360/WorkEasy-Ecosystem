@@ -133,7 +133,8 @@ def _charge_for(client: Any, organization: UUID | None, answer: Any) -> None:
     if organization is None or not isinstance(usage, dict) or not body.get("request_id"):
         return
     tokens = sum(
-        int(usage.get(field) or 0) for field in ("input_tokens", "output_tokens", "embedding_tokens")
+        int(usage.get(field) or 0)
+        for field in ("input_tokens", "output_tokens", "embedding_tokens")
     )
     usage_intake.charge_ai_tokens(
         product_code=client.product_code,
@@ -224,7 +225,9 @@ def ai_request_status(request: HttpRequest) -> JsonResponse:
         )
         # An asynchronous call is charged when the product collects its result; the
         # key is the request, so asking again charges nothing.
-        _charge_for(client, _organization_or_none(request.POST.get("organization_id")), answer)
+        _charge_for(
+            client, _organization_or_none(request.POST.get("organization_id")), answer
+        )
         return answer.status, answer.body
 
     return _handle(request, endpoint="ai_invoke", limit_bytes=4_096, call=call)

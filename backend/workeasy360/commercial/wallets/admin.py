@@ -117,7 +117,9 @@ def wallets(
     page = page[:size]
     return {
         "results": [wallet_row(r) for r in page],
-        "next_cursor": encode_cursor(page[-1].created_at, page[-1].id) if more and page else None,
+        "next_cursor": encode_cursor(page[-1].created_at, page[-1].id)
+        if more and page
+        else None,
         "has_more": more,
         "totals": selectors.platform_totals(None),
     }
@@ -149,7 +151,10 @@ def open_wallet(
     if uses_money and (len(code) != 3 or not code.isalpha()):
         raise CatalogValidationError("Choose a currency.", field="currency")
     row = ledger.ensure(
-        owner_type=owner_type, owner_id=owner_id, kind=kind, currency=code if uses_money else ""
+        owner_type=owner_type,
+        owner_id=owner_id,
+        kind=kind,
+        currency=code if uses_money else "",
     )
     return wallet_row(row)
 
@@ -157,9 +162,13 @@ def open_wallet(
 @in_scope
 def set_threshold(ctx: TenantContext, wallet_id: UUID, threshold: Any) -> dict[str, Any]:
     authz.require(ctx, MANAGE)
-    value = None if threshold in (None, "") else _whole(threshold, "low_balance_threshold")
+    value = (
+        None if threshold in (None, "") else _whole(threshold, "low_balance_threshold")
+    )
     if value is not None and value < 0:
-        raise CatalogValidationError("A threshold cannot be negative.", field="low_balance_threshold")
+        raise CatalogValidationError(
+            "A threshold cannot be negative.", field="low_balance_threshold"
+        )
     with transaction.atomic():
         row = Wallet.objects.select_for_update().filter(id=wallet_id).first()
         if row is None:
@@ -201,7 +210,9 @@ def record_offline_top_up(
         if row is None:
             raise CommercialRecordNotFound("No such wallet.")
         if row.kind == Wallet.Kind.AI_CREDITS:
-            raise CatalogValidationError("AI Credits come from credit packs.", field="wallet")
+            raise CatalogValidationError(
+                "AI Credits come from credit packs.", field="wallet"
+            )
         entry = ledger.post(
             row.id,
             amount=value,
@@ -256,7 +267,12 @@ def adjust(
 
 @in_scope
 def reverse_entry(
-    ctx: TenantContext, entry_id: UUID, *, amount: Any = None, reason: Any, idempotency_key: Any
+    ctx: TenantContext,
+    entry_id: UUID,
+    *,
+    amount: Any = None,
+    reason: Any,
+    idempotency_key: Any,
 ) -> dict[str, Any]:
     authz.require(ctx, MANAGE)
     why = _reason(reason)
@@ -345,7 +361,9 @@ def entries(
             }
             for r in page
         ],
-        "next_cursor": encode_cursor(page[-1].created_at, page[-1].id) if more and page else None,
+        "next_cursor": encode_cursor(page[-1].created_at, page[-1].id)
+        if more and page
+        else None,
         "has_more": more,
     }
 
@@ -377,7 +395,9 @@ def event_row(row: UsageEvent) -> dict[str, Any]:
         "currency": row.rate.currency if row.rate_id else "",
         "entry_id": str(row.entry_id) if row.entry_id else None,
         "duplicate_count": row.duplicate_count,
-        "last_duplicate_at": row.last_duplicate_at.isoformat() if row.last_duplicate_at else None,
+        "last_duplicate_at": row.last_duplicate_at.isoformat()
+        if row.last_duplicate_at
+        else None,
         "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
         "review_note": row.review_note,
     }
@@ -418,7 +438,9 @@ def events(
     page = page[:size]
     return {
         "results": [event_row(r) for r in page],
-        "next_cursor": encode_cursor(page[-1].received_at, page[-1].id) if more and page else None,
+        "next_cursor": encode_cursor(page[-1].received_at, page[-1].id)
+        if more and page
+        else None,
         "has_more": more,
     }
 
@@ -462,7 +484,9 @@ def review_event(ctx: TenantContext, event_id: UUID, *, note: Any) -> dict[str, 
     return event_row(row)
 
 
-def usage_by_product(start: datetime | None, end: datetime | None) -> list[dict[str, Any]]:
+def usage_by_product(
+    start: datetime | None, end: datetime | None
+) -> list[dict[str, Any]]:
     """For the Usage report, whose caller has authorized."""
     rows = UsageEvent.objects.all()
     if start is not None:
@@ -470,9 +494,9 @@ def usage_by_product(start: datetime | None, end: datetime | None) -> list[dict[
     if end is not None:
         rows = rows.filter(occurred_at__lt=end)
     grouped = (
-        rows.values("product_code", "meter", "outcome")
+        rows.values("product_code", "meter", "outcome", "rate__currency")
         .annotate(quantity=Sum("quantity"), amount=Sum("amount"))
-        .order_by("product_code", "meter", "outcome")
+        .order_by("product_code", "meter", "outcome", "rate__currency")
     )
     return [
         {
@@ -481,6 +505,8 @@ def usage_by_product(start: datetime | None, end: datetime | None) -> list[dict[
             "outcome": row["outcome"],
             "quantity": int(row["quantity"] or 0),
             "amount": int(row["amount"] or 0),
+            # Minor units of this currency. Empty for AI Credits, which are whole credits.
+            "currency": row["rate__currency"] or "",
         }
         for row in grouped
     ]
@@ -610,7 +636,9 @@ def pack_row(row: CreditPack) -> dict[str, Any]:
 
 def packs(ctx: TenantContext) -> dict[str, Any]:
     authz.require(ctx, PRICES_VIEW)
-    return {"results": [pack_row(p) for p in CreditPack.objects.order_by("status", "credits")]}
+    return {
+        "results": [pack_row(p) for p in CreditPack.objects.order_by("status", "credits")]
+    }
 
 
 def _clean_pack(body: dict[str, Any]) -> dict[str, Any]:
@@ -620,7 +648,9 @@ def _clean_pack(body: dict[str, Any]) -> dict[str, Any]:
     credits = _whole(body.get("credits"), "credits")
     price = _whole(body.get("price_minor"), "price_minor")
     if credits <= 0 or price <= 0:
-        raise CatalogValidationError("Credits and price must be above zero.", field="credits")
+        raise CatalogValidationError(
+            "Credits and price must be above zero.", field="credits"
+        )
     code = str(body.get("currency") or "").strip().upper()
     if len(code) != 3 or not code.isalpha():
         raise CatalogValidationError("Choose a currency.", field="currency")
@@ -634,7 +664,9 @@ def create_pack(ctx: TenantContext, body: dict[str, Any]) -> dict[str, Any]:
     authz.require(ctx, PRICES_MANAGE)
     fields = _clean_pack(body)
     base = re.sub(r"[^a-z0-9]+", "-", fields["name"].lower()).strip("-")[:40] or "pack"
-    taken = set(CreditPack.objects.filter(code__startswith=base).values_list("code", flat=True))
+    taken = set(
+        CreditPack.objects.filter(code__startswith=base).values_list("code", flat=True)
+    )
     code, n = base, 1
     while code in taken:
         n += 1
@@ -652,7 +684,9 @@ def create_pack(ctx: TenantContext, body: dict[str, Any]) -> dict[str, Any]:
 
 
 @in_scope
-def update_pack(ctx: TenantContext, pack_id: UUID, body: dict[str, Any]) -> dict[str, Any]:
+def update_pack(
+    ctx: TenantContext, pack_id: UUID, body: dict[str, Any]
+) -> dict[str, Any]:
     authz.require(ctx, PRICES_MANAGE)
     fields = _clean_pack(body)
     status = body.get("status", "active")

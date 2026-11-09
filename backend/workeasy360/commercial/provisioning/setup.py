@@ -24,6 +24,7 @@ from django.utils import timezone
 from workeasy360.commercial.provisioning.models import CustomerSetup, SetupRequirement
 from workeasy360.contracts.errors import CatalogValidationError, CommercialRecordNotFound
 from workeasy360.contracts.values.tenant import TenantContext
+from workeasy360.platform.administration.notices import tell_staff
 from workeasy360.platform.audit import services as audit
 from workeasy360.platform.authz import services as authz
 from workeasy360.platform.authz.control_plane import in_scope
@@ -59,7 +60,9 @@ def requirements(ctx: TenantContext, *, product_code: Any = None) -> list[dict[s
 def _clean_requirement(body: dict[str, Any]) -> dict[str, Any]:
     label = " ".join(str(body.get("label") or "").split())[:120]
     if not label:
-        raise CatalogValidationError("Say what you need from the customer.", field="label")
+        raise CatalogValidationError(
+            "Say what you need from the customer.", field="label"
+        )
     code = str(body.get("product_code") or "").strip()[:64]
     if not code:
         raise CatalogValidationError("Choose a product.", field="product_code")
@@ -86,7 +89,11 @@ def save_requirement(
         if requirement_id is None:
             row = SetupRequirement.objects.create(key=uuid4().hex[:12], **fields)
         else:
-            row = SetupRequirement.objects.select_for_update().filter(id=requirement_id).first()
+            row = (
+                SetupRequirement.objects.select_for_update()
+                .filter(id=requirement_id)
+                .first()
+            )
             if row is None:
                 raise CommercialRecordNotFound("No such requirement.")
             for name, value in fields.items():
@@ -108,7 +115,9 @@ def _sync_pending() -> None:
     from workeasy360.commercial.subscriptions.admin_reads import holders_of_products
 
     products = set(
-        SetupRequirement.objects.filter(is_active=True).values_list("product_code", flat=True)
+        SetupRequirement.objects.filter(is_active=True).values_list(
+            "product_code", flat=True
+        )
     )
     if not products:
         return
@@ -121,7 +130,9 @@ def _sync_pending() -> None:
     )
 
 
-def record_json(row: CustomerSetup, names: dict[Any, str], people: dict[Any, str]) -> dict[str, Any]:
+def record_json(
+    row: CustomerSetup, names: dict[Any, str], people: dict[Any, str]
+) -> dict[str, Any]:
     return {
         "id": str(row.id),
         "organization_id": str(row.organization_id),
@@ -193,7 +204,12 @@ def queue(
 
 @in_scope
 def decide(
-    ctx: TenantContext, record_id: UUID, *, decision: Any, reason: Any, expected_version: Any = None
+    ctx: TenantContext,
+    record_id: UUID,
+    *,
+    decision: Any,
+    reason: Any,
+    expected_version: Any = None,
 ) -> dict[str, Any]:
     """Approve what a customer sent, or ask them to correct it. Touches nothing of the
     subscription: setup is its own state."""
@@ -201,37 +217,58 @@ def decide(
     from workeasy360.platform.organizations.selectors import organization_names
 
     authz.require(ctx, MANAGE)
-    target = {"approve": "approved", "request_correction": "correction_required"}.get(str(decision or ""))
+    target = {"approve": "approved", "request_correction": "correction_required"}.get(
+        str(decision or "")
+    )
     if target is None:
         raise CatalogValidationError("Choose a decision.", field="decision")
     why = str(reason or "").strip()[:500]
     if target == "correction_required" and len(why) < 10:
         raise CatalogValidationError(
-            "Say what to correct, in at least 10 characters: the customer reads this.", field="reason"
+            "Say what to correct, in at least 10 characters: the customer reads this.",
+            field="reason",
         )
     with transaction.atomic():
         row = CustomerSetup.objects.select_for_update().filter(id=record_id).first()
         if row is None:
             raise CommercialRecordNotFound("No such setup record.")
         if expected_version is not None and expected_version != row.version:
-            raise CatalogValidationError("This changed in the meantime. Reload.", field="expected_version")
+            raise CatalogValidationError(
+                "This changed in the meantime. Reload.", field="expected_version"
+            )
         if row.status != "submitted":
-            raise CatalogValidationError("Only something submitted can be decided.", field="status")
+            raise CatalogValidationError(
+                "Only something submitted can be decided.", field="status"
+            )
         row.status = target
         row.decision_reason = why
         row.decided_at = timezone.now()
         row.decided_by_id = ctx.user_id
         row.version += 1
-        row.save(update_fields=["status", "decision_reason", "decided_at", "decided_by_id", "version", "updated_at"])
+        row.save(
+            update_fields=[
+                "status",
+                "decision_reason",
+                "decided_at",
+                "decided_by_id",
+                "version",
+                "updated_at",
+            ]
+        )
         audit.record(
             ctx,
             f"setup.{target}",
             resource_type="provisioning.customer_setup",
             resource_id=row.id,
-            changes={"product": row.product_code, "organization": str(row.organization_id)},
+            changes={
+                "product": row.product_code,
+                "organization": str(row.organization_id),
+            },
             reason=why or "Setup approved.",
         )
-    return record_json(row, organization_names({row.organization_id}), display_names({row.decided_by_id}))
+    return record_json(
+        row, organization_names({row.organization_id}), display_names({row.decided_by_id})
+    )
 
 
 # --- a customer's side ---------------------------------------------------------------------
@@ -240,12 +277,16 @@ def decide(
 def customer_view(ctx: TenantContext) -> dict[str, Any]:
     """What this organization still owes, per product it holds."""
     _sync_pending()
-    rows = CustomerSetup.objects.filter(organization_id=ctx.organization_id).order_by("product_code")
+    rows = CustomerSetup.objects.filter(organization_id=ctx.organization_id).order_by(
+        "product_code"
+    )
     requirements_by_product: dict[str, list[dict[str, Any]]] = {}
     for req in SetupRequirement.objects.filter(
         is_active=True, product_code__in={r.product_code for r in rows}
     ).order_by("display_order"):
-        requirements_by_product.setdefault(req.product_code, []).append(requirement_json(req))
+        requirements_by_product.setdefault(req.product_code, []).append(
+            requirement_json(req)
+        )
     return {
         "results": [
             {
@@ -253,7 +294,9 @@ def customer_view(ctx: TenantContext) -> dict[str, Any]:
                 "product_code": r.product_code,
                 "status": r.status,
                 "answers": dict(r.answers or {}),
-                "decision_reason": r.decision_reason if r.status == "correction_required" else "",
+                "decision_reason": r.decision_reason
+                if r.status == "correction_required"
+                else "",
                 "requirements": requirements_by_product.get(r.product_code, []),
                 "editable": r.status in ("pending", "correction_required"),
                 "version": r.version,
@@ -263,7 +306,9 @@ def customer_view(ctx: TenantContext) -> dict[str, Any]:
     }
 
 
-def customer_submit(ctx: TenantContext, record_id: UUID, *, answers: Any) -> dict[str, Any]:
+def customer_submit(
+    ctx: TenantContext, record_id: UUID, *, answers: Any
+) -> dict[str, Any]:
     if not isinstance(answers, dict):
         raise CatalogValidationError("Send your answers.", field="answers")
     with transaction.atomic():
@@ -289,7 +334,9 @@ def customer_submit(ctx: TenantContext, record_id: UUID, *, answers: Any) -> dic
         row.status = "submitted"
         row.submitted_at = timezone.now()
         row.version += 1
-        row.save(update_fields=["answers", "status", "submitted_at", "version", "updated_at"])
+        row.save(
+            update_fields=["answers", "status", "submitted_at", "version", "updated_at"]
+        )
         audit.record(
             ctx,
             "setup.submitted",
@@ -297,4 +344,5 @@ def customer_submit(ctx: TenantContext, record_id: UUID, *, answers: Any) -> dic
             resource_id=row.id,
             changes={"product": row.product_code},
         )
+    tell_staff("A customer sent setup details", "Their answers are waiting for review.")
     return customer_view(ctx)

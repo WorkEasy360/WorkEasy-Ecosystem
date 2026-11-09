@@ -1,0 +1,39 @@
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  align-items: start;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scope {
+  margin: 0;
+  color: var(--w360-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.check {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ok,
+.problem {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ok {
+  color: var(--w360-success-text, var(--w360-text));
+}
+
+.problem {
+  color: var(--w360-danger-text, var(--w360-text));
+}

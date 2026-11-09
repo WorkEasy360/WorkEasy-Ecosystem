@@ -1338,9 +1338,9 @@ def search_products(term: str, *, limit: int = 5) -> list[dict[str, str]]:
     """Products by name or code, for the Admin console's search."""
     from workeasy360.commercial.catalog.models import Product
 
-    rows = Product.objects.filter(Q(name__icontains=term) | Q(code__icontains=term)).order_by(
-        "sort_order", "code"
-    )[: max(1, min(limit, 25))]
+    rows = Product.objects.filter(
+        Q(name__icontains=term) | Q(code__icontains=term)
+    ).order_by("sort_order", "code")[: max(1, min(limit, 25))]
     return [{"id": str(row.id), "name": row.name, "code": row.code} for row in rows]
 
 
@@ -1352,6 +1352,15 @@ def plan_rules(plan_code: str) -> dict[str, Any] | None:
         Plan.objects.filter(code=plan_code)
         .values("renewal_rule", "change_rule", "included_usage")
         .first()
+    )
+
+
+def renewal_rules_of(plan_codes: Any) -> dict[str, str]:
+    """The renewal rule of each of these plans. A plan not found is simply absent."""
+    from workeasy360.commercial.catalog.models import Plan
+
+    return dict(
+        Plan.objects.filter(code__in=set(plan_codes)).values_list("code", "renewal_rule")
     )
 
 

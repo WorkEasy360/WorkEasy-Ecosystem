@@ -113,7 +113,9 @@ class WalletEntry(models.Model):
     class Meta:
         db_table = "wallets_entry"
         constraints = [
-            models.CheckConstraint(condition=~Q(amount=0), name="ck_wallet_entry_not_zero"),
+            models.CheckConstraint(
+                condition=~Q(amount=0), name="ck_wallet_entry_not_zero"
+            ),
             models.CheckConstraint(
                 condition=Q(balance_after__gte=0), name="ck_wallet_entry_balance_after"
             ),
@@ -125,8 +127,12 @@ class WalletEntry(models.Model):
         indexes = [
             models.Index(fields=["wallet", "-created_at"], name="ix_wallet_entry_wallet"),
             models.Index(fields=["-created_at", "-id"], name="ix_wallet_entry_time"),
-            models.Index(fields=["entry_type", "-created_at"], name="ix_wallet_entry_type"),
-            models.Index(fields=["source_type", "source_id"], name="ix_wallet_entry_source"),
+            models.Index(
+                fields=["entry_type", "-created_at"], name="ix_wallet_entry_type"
+            ),
+            models.Index(
+                fields=["source_type", "source_id"], name="ix_wallet_entry_source"
+            ),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - display only
@@ -169,7 +175,9 @@ class UsageRate(models.Model):
                 name="uq_usage_rate_one_live",
             ),
             models.CheckConstraint(
-                condition=Q(unit_amount__gt=0) & Q(per_units__gt=0) & Q(included_units__gte=0),
+                condition=Q(unit_amount__gt=0)
+                & Q(per_units__gt=0)
+                & Q(included_units__gte=0),
                 name="ck_usage_rate_positive",
             ),
             models.CheckConstraint(
@@ -178,7 +186,9 @@ class UsageRate(models.Model):
                 name="ck_usage_rate_currency_matches_meter",
             ),
         ]
-        indexes = [models.Index(fields=["meter", "-effective_from"], name="ix_usage_rate_meter")]
+        indexes = [
+            models.Index(fields=["meter", "-effective_from"], name="ix_usage_rate_meter")
+        ]
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.meter} {self.unit_amount}/{self.per_units}"
@@ -198,7 +208,9 @@ class CreditPack(models.Model):
     credits = models.BigIntegerField()
     price_minor = models.BigIntegerField()
     currency = models.CharField(max_length=3)
-    status = models.CharField(max_length=12, choices=Status.choices, default=Status.ACTIVE)
+    status = models.CharField(
+        max_length=12, choices=Status.choices, default=Status.ACTIVE
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -206,7 +218,8 @@ class CreditPack(models.Model):
         db_table = "wallets_credit_pack"
         constraints = [
             models.CheckConstraint(
-                condition=Q(credits__gt=0) & Q(price_minor__gt=0), name="ck_credit_pack_positive"
+                condition=Q(credits__gt=0) & Q(price_minor__gt=0),
+                name="ck_credit_pack_positive",
             ),
         ]
 
@@ -258,18 +271,26 @@ class UsageEvent(models.Model):
                 fields=["organization_id", "product_code", "idempotency_key"],
                 name="uq_usage_event_once",
             ),
-            models.CheckConstraint(condition=Q(quantity__gt=0), name="ck_usage_event_quantity"),
             models.CheckConstraint(
-                condition=Q(charged_units__lte=F("quantity")), name="ck_usage_event_charged_units"
+                condition=Q(quantity__gt=0), name="ck_usage_event_quantity"
+            ),
+            models.CheckConstraint(
+                condition=Q(charged_units__lte=F("quantity")),
+                name="ck_usage_event_charged_units",
             ),
         ]
         indexes = [
             models.Index(fields=["-received_at", "-id"], name="ix_usage_event_time"),
-            models.Index(fields=["outcome", "-received_at"], name="ix_usage_event_outcome"),
             models.Index(
-                fields=["organization_id", "meter", "occurred_at"], name="ix_usage_event_org_meter"
+                fields=["outcome", "-received_at"], name="ix_usage_event_outcome"
             ),
-            models.Index(fields=["product_code", "occurred_at"], name="ix_usage_event_product"),
+            models.Index(
+                fields=["organization_id", "meter", "occurred_at"],
+                name="ix_usage_event_org_meter",
+            ),
+            models.Index(
+                fields=["product_code", "occurred_at"], name="ix_usage_event_product"
+            ),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - display only
