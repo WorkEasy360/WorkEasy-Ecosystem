@@ -38,6 +38,11 @@ const PARTNER_VIEW = "platform.staff_partner.view";
 const CATALOG_VIEW = "platform.staff_catalog.view";
 const PAYMENT_VIEW = "platform.staff_payment.view";
 const PAYOUT_MANAGE = "platform.staff_payout.manage";
+const COMMISSION_VIEW = "platform.staff_commission.view";
+const KYC_VIEW = "platform.staff_kyc.view";
+const WALLET_VIEW = "platform.staff_wallet.view";
+const SUPPORT_VIEW = "platform.staff_support.view";
+const REPORT_VIEW = "platform.staff_report.view";
 
 /** One partner's page and its Complete Your Profile belong to All partners. */
 const PARTNER_PAGE = /^\/admin\/partners\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/|$)/i;
@@ -63,7 +68,10 @@ export const ADMIN_MODULES: AdminModule[] = [
       },
       {
         label: "Products & Setup",
-        pages: [{ href: "/admin/entitlements", label: "Entitlements", needs: CUSTOMER_VIEW }],
+        pages: [
+          { href: "/admin/customers/setup", label: "Setup", needs: CUSTOMER_VIEW },
+          { href: "/admin/entitlements", label: "Entitlements", needs: CUSTOMER_VIEW },
+        ],
       },
     ],
   },
@@ -73,6 +81,13 @@ export const ADMIN_MODULES: AdminModule[] = [
     icon: "handshake",
     sections: [
       {
+        label: "Applications & KYC",
+        pages: [
+          { href: "/admin/partners/applications", label: "Applications", needs: KYC_VIEW },
+          { href: "/admin/partners/kyc-requirements", label: "KYC requirements", needs: KYC_VIEW },
+        ],
+      },
+      {
         label: "Approved Partners",
         pages: [
           { href: "/admin/partners/all", label: "All partners", needs: PARTNER_VIEW, alsoMatch: PARTNER_PAGE },
@@ -80,6 +95,10 @@ export const ADMIN_MODULES: AdminModule[] = [
           { href: "/admin/partners/product-requests", label: "Product requests", needs: PARTNER_VIEW },
           { href: "/admin/partners/upgrade-fees", label: "Upgrade fees", needs: PARTNER_VIEW },
         ],
+      },
+      {
+        label: "Commission Rules",
+        pages: [{ href: "/admin/partners/commission-rules", label: "Commission rules", needs: COMMISSION_VIEW }],
       },
     ],
   },
@@ -102,6 +121,13 @@ export const ADMIN_MODULES: AdminModule[] = [
           { href: "/admin/pricing", label: "Currency & pricing", needs: CATALOG_VIEW },
         ],
       },
+      {
+        label: "Usage Pricing",
+        pages: [
+          { href: "/admin/usage-pricing", label: "Usage rates", needs: CATALOG_VIEW },
+          { href: "/admin/usage-pricing/credit-packs", label: "Credit packs", needs: CATALOG_VIEW },
+        ],
+      },
     ],
   },
   {
@@ -113,7 +139,11 @@ export const ADMIN_MODULES: AdminModule[] = [
         label: "Orders & Payments",
         pages: [
           { href: "/admin/orders", label: "Orders", needs: PAYMENT_VIEW },
+          { href: "/admin/invoices", label: "Invoices", needs: PAYMENT_VIEW },
           { href: "/admin/payments", label: "Payments", needs: PAYMENT_VIEW },
+          { href: "/admin/payments/failed", label: "Failed & stuck", needs: PAYMENT_VIEW },
+          { href: "/admin/refunds", label: "Refunds", needs: PAYMENT_VIEW },
+          { href: "/admin/credit-notes", label: "Credit notes", needs: PAYMENT_VIEW },
         ],
       },
       {
@@ -122,8 +152,23 @@ export const ADMIN_MODULES: AdminModule[] = [
       },
       {
         label: "Partner Earnings & Payouts",
-        pages: [{ href: "/admin/partners/withdrawals", label: "Withdrawals", needs: PAYOUT_MANAGE }],
+        pages: [
+          { href: "/admin/commissions", label: "Commission entries", needs: COMMISSION_VIEW },
+          { href: "/admin/payouts", label: "Payouts", needs: COMMISSION_VIEW },
+          { href: "/admin/partners/withdrawals", label: "Withdrawals", needs: PAYOUT_MANAGE },
+        ],
       },
+    ],
+  },
+  {
+    key: "wallets",
+    label: "Wallets & Credits",
+    icon: "wallet",
+    sections: [
+      { label: "Platform Wallet", pages: [{ href: "/admin/wallets", label: "Platform Wallet", needs: WALLET_VIEW, exact: true }] },
+      { label: "AI Credits", pages: [{ href: "/admin/wallets/ai-credits", label: "AI Credits", needs: WALLET_VIEW }] },
+      { label: "Consumption Wallet", pages: [{ href: "/admin/wallets/consumption", label: "Consumption Wallet", needs: WALLET_VIEW }] },
+      { label: "Transaction Controls", pages: [{ href: "/admin/wallets/transactions", label: "Transaction Controls", needs: WALLET_VIEW }] },
     ],
   },
   {
@@ -134,8 +179,30 @@ export const ADMIN_MODULES: AdminModule[] = [
       {
         label: "Tickets",
         pages: [
+          { href: "/admin/tickets", label: "Tickets", needs: SUPPORT_VIEW },
           { href: "/admin/partners/tickets", label: "Partner tickets", needs: PARTNER_VIEW },
-          { href: "/admin/diagnostics", label: "Diagnostics", needs: "platform.staff_support.view" },
+          { href: "/admin/diagnostics", label: "Diagnostics", needs: SUPPORT_VIEW },
+        ],
+      },
+      { label: "Help Content", pages: [{ href: "/admin/help-content", label: "Help Content", needs: SUPPORT_VIEW }] },
+    ],
+  },
+  {
+    key: "reports",
+    label: "Reports",
+    icon: "chart",
+    sections: [
+      {
+        label: "Reports",
+        pages: [
+          { href: "/admin/reports/sales", label: "Sales", needs: REPORT_VIEW },
+          { href: "/admin/reports/payments", label: "Payments", needs: REPORT_VIEW },
+          { href: "/admin/reports/renewals", label: "Subscription Renewals", needs: REPORT_VIEW },
+          { href: "/admin/reports/wallet-movements", label: "Wallet Movements", needs: REPORT_VIEW },
+          { href: "/admin/reports/usage", label: "Usage by Product", needs: REPORT_VIEW },
+          { href: "/admin/reports/partner-conversions", label: "Partner Conversions", needs: REPORT_VIEW },
+          { href: "/admin/reports/commissions", label: "Commissions", needs: REPORT_VIEW },
+          { href: "/admin/reports/payouts", label: "Payouts", needs: REPORT_VIEW },
         ],
       },
     ],
@@ -148,15 +215,21 @@ export const ADMIN_MODULES: AdminModule[] = [
       {
         label: "Platform Configuration",
         pages: [
-          { href: "/admin/settings", label: "Platform settings", needs: "platform.staff_settings.view" },
+          { href: "/admin/settings", label: "Platform settings", needs: "platform.staff_settings.view", exact: true },
           { href: "/admin/communication", label: "Email templates", needs: "platform.staff_communication.view" },
           { href: "/admin/ai", label: "AI platform", needs: "platform.staff_ai.view" },
         ],
       },
       {
+        label: "Domains & Apps",
+        pages: [{ href: "/admin/settings/domains", label: "Domains & Apps", needs: "platform.staff_settings.view" }],
+      },
+      {
         label: "Access & Security",
         pages: [
-          { href: "/admin/security", label: "Staff access", needs: "platform.staff_security.view" },
+          { href: "/admin/security", label: "Staff access", needs: "platform.staff_security.view", exact: true },
+          { href: "/admin/settings/login-clients", label: "Login clients", needs: ["platform.staff_settings.view", "platform.staff_integration.view"] },
+          { href: "/admin/security/sign-ins", label: "Sign-in audit", needs: "platform.staff_audit.view" },
           { href: "/admin/audit", label: "Audit log", needs: "platform.staff_audit.view" },
         ],
       },
@@ -192,14 +265,14 @@ export interface Location {
 export function locate(pathname: string, modules: AdminModule[]): Location | null {
   const path = pathname.replace(/\/$/, "") || "/admin";
   let best: { location: Location; weight: number } | null = null;
-  for (const module of modules) {
-    for (const section of module.sections) {
+  for (const mod of modules) {
+    for (const section of mod.sections) {
       for (const page of section.pages) {
         const matches = page.exact
           ? path === page.href
           : path === page.href || path.startsWith(`${page.href}/`) || Boolean(page.alsoMatch?.test(path));
         if (matches && (!best || page.href.length > best.weight)) {
-          best = { location: { module, section, page }, weight: page.href.length };
+          best = { location: { module: mod, section, page }, weight: page.href.length };
         }
       }
     }
