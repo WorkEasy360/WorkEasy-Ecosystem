@@ -629,7 +629,7 @@ describe("payment providers", () => {
     expect(screen.getByRole("table", { name: "Payment event log" })).toHaveTextContent("Payment succeeded");
     await expectNoViolations(container);
 
-    fireEvent.click(screen.getByRole("button", { name: "Switch Stripe EU to live mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch to live mode: Stripe EU" }));
     await screen.findByText("Stripe EU is now in live mode.");
     expect(bodyOf(calls, "PATCH /api/v1/admin/payments/providers/stripe-eu")).toEqual({ mode: "live", version: 4 });
   });

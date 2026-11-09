@@ -129,6 +129,20 @@ describe("the Admin sidebar", () => {
     expect(within(tabs).getByRole("link", { name: "Partner overview" })).not.toHaveAttribute("aria-current");
   });
 
+  it("asks for a new password first when the current one is temporary", async () => {
+    mockApi({
+      "GET /api/v1/auth/session": [ok({ ...(SIGNED_IN.body as object), password_change_required: true })],
+      "GET /api/v1/admin/session": [{ status: 403, body: { code: "password_change_required" } }],
+    });
+    render(
+      <AdminShell>
+        <h1>Page</h1>
+      </AdminShell>,
+    );
+    expect(await screen.findByRole("heading", { name: "Choose your own password" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Page" })).toBeNull();
+  });
+
   it("is absent for someone who may not view partners or commission rules", async () => {
     const links = await sidebarLinks(["platform.staff_customer.view"]);
     expect(links.map((a) => a.textContent)).not.toContain("Partners");

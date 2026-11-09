@@ -159,7 +159,7 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
   ];
 
   return (
-    <form
+    <form method="post"
       className={dialog.form}
       noValidate
       aria-busy={busy}

@@ -190,7 +190,7 @@ function Overview({ d }: { d: DashboardOverviewV2 }) {
     <>
       <div className={styles.figures} role="group" aria-label="Figures">
         <Figure
-          label="Customers"
+          label="Total Customers"
           value={formatNumber(c.customers.total)}
           icon="users"
           tone="green"
@@ -200,7 +200,7 @@ function Overview({ d }: { d: DashboardOverviewV2 }) {
         />
         {c.partners && (
           <Figure
-            label="Partners"
+            label="Total Partners"
             value={formatNumber(c.partners.total)}
             icon="handshake"
             tone="blue"
@@ -555,7 +555,7 @@ function TopProductsPanel({ rows, period }: { rows: TopProduct[]; period: Dashbo
       {rows.length === 0 ? (
         <EmptyState icon="box" title="No products sold yet" hint="Products appear once customers subscribe." compact />
       ) : (
-        <div className={styles.tableScroll}>
+        <div className={styles.tableScroll} tabIndex={0} role="group" aria-label="Top products table, scrolls sideways on a small screen">
           <table className={styles.productTable}>
             <caption className="w360-visually-hidden">
               Top products, revenue from {formatDate(period.from)} to {formatDate(period.to)}

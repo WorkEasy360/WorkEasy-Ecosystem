@@ -10,7 +10,7 @@ import styles from "./ModuleNav.module.css";
  * A module's own navigation, drawn above every page in it: its sections, then the
  * pages of the current section. The sidebar stays at nine entries; this is where
  * everything beneath them lives. A row with a single entry says nothing, so it is
- * not drawn. On a narrow screen each row scrolls sideways by itself.
+ * not drawn. On a narrow screen a row wraps.
  */
 export function ModuleNav({ permissions }: { permissions: string[] }) {
   const pathname = usePathname() ?? "";

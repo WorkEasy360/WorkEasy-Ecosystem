@@ -5,7 +5,7 @@ import { AdminShell } from "./ControlShell";
 import { Dashboard } from "./AdminDashboard";
 import { AdminSearch } from "./AdminTopbar";
 import { foldSlices } from "./dashboardCharts";
-import { AdminContextForTest, SIGNED_IN, expectNoViolations, mockApi, ok } from "./testSupport";
+import { AdminContextForTest, expectNoViolations, mockApi, ok } from "./testSupport";
 
 /**
  * The Admin console redesign (2026-10-26): the dashboard's month
@@ -92,14 +92,14 @@ describe("the dashboard", () => {
       </AdminContextForTest>,
     );
     const figures = await screen.findByRole("group", { name: "Figures" });
-    for (const label of ["Customers", "Partners", "Active Subscriptions", "Collections", "Sales", "Wallet Summary"]) {
+    for (const label of ["Total Customers", "Total Partners", "Active Subscriptions", "Collections", "Sales", "Wallet Summary"]) {
       expect(within(figures).getByText(label)).toBeInTheDocument();
     }
     expect(within(figures).getByText("412")).toBeInTheDocument();
     expect(within(figures).getByText("₹1,234.56")).toBeInTheDocument();
     // Platform + Consumption only: credits are not money and are never added in.
     expect(within(figures).getByText("₹570.00")).toBeInTheDocument();
-    expect(within(figures).getByRole("link", { name: /^Customers/ })).toHaveAttribute("href", "/admin/customers");
+    expect(within(figures).getByRole("link", { name: /^Total Customers/ })).toHaveAttribute("href", "/admin/customers");
     expect(within(figures).getByRole("link", { name: /^Wallet Summary/ })).toHaveAttribute("href", "/admin/wallets");
     // No earlier figure means no invented percentage.
     expect(within(figures).getByRole("link", { name: /^Sales/ }).textContent).toMatch(/No earlier figure/);
@@ -275,12 +275,12 @@ describe("the Admin top bar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mark all read" }));
     expect(screen.queryByText("Unread")).not.toBeInTheDocument();
     // Avatar, full name and role beside it; the menu opens from it.
-    const account = screen.getByRole("button", { name: "Account menu for Aman Gupta" });
+    const account = screen.getByRole("button", { name: /^Account menu for Aman Gupta/ });
     expect(account).toHaveTextContent("Aman Gupta");
     expect(account).toHaveTextContent("Staff (read-only)");
     await expectNoViolations(container);
     fireEvent.click(account);
-    const menu = screen.getByRole("menu", { name: "Account menu for Aman Gupta" });
+    const menu = screen.getByRole("menu", { name: /^Account menu for Aman Gupta/ });
     expect(within(menu).getByText("admin@example.com")).toBeInTheDocument();
     expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
       "Sign-in preferences",

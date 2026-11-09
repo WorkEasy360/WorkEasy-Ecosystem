@@ -90,7 +90,7 @@ export function LoginForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate>
+    <form method="post" onSubmit={handleSubmit} noValidate>
       <div style={{ marginBottom: "var(--w360-space-4)" }}>
         <label className="w360-label" htmlFor={emailId}>
           Email

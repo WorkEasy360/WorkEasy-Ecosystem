@@ -56,6 +56,9 @@ describe("the partner application", () => {
     mockApi({ [`GET ${SESSION}`]: [SIGNED_OUT] });
     const { container } = render(<PartnerApplyScreen />);
     expect(screen.getByRole("heading", { level: 1, name: "Apply to become a partner" })).toBeInTheDocument();
+    // The real logo, not a letter and a word in plain text.
+    expect(container.querySelector("[data-w360-logo]")).not.toBeNull();
+    expect(screen.queryByText("W")).toBeNull();
     expect(screen.getByText(/does not grant any partner rights/)).toHaveTextContent(/only once your KYC is approved/);
     expect(screen.getAllByRole("radio").map((r) => (r as HTMLInputElement).value)).toEqual(["affiliate", "reseller", "white_label"]);
     expect(screen.getByRole("radio", { name: "Affiliate" })).toBeInTheDocument();
@@ -78,7 +81,7 @@ describe("the partner application", () => {
       first_name: "Asha",
       last_name: "Rao",
       email: "asha@acme.example",
-      password: "correct horse battery",
+      password: "correct horse battery",  // pragma: allowlist secret
       country: "IN",
       phone: "+91 98765 43210",
       interest: "white_label",
@@ -107,7 +110,7 @@ describe("the partner application", () => {
     for (const text of ["Enter your business name.", "Enter your email address.", "at least 12 characters", "Choose your country.", "Choose how you want to partner."]) {
       expect(alert).toHaveTextContent(text);
     }
-    fill({ password: "too short" });
+    fill({ password: "too short" });  // pragma: allowlist secret
     send();
     expect(await screen.findByRole("alert")).toHaveTextContent("Choose a password of at least 12 characters.");
     expect(calls.some((c) => c.key === `POST ${APPLY}`)).toBe(false);

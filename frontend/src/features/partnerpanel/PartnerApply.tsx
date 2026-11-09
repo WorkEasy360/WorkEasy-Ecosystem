@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useId, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { partnerApplicationApi } from "@/lib/api/adminPanel";
 import { ApiError } from "@/lib/api/client";
@@ -48,6 +48,14 @@ function Field({ label, hint, ...input }: React.InputHTMLAttributes<HTMLInputEle
   );
 }
 
+// The names come from the runtime's own locale data, and Node's and Chrome's differ. Reading
+// them only in the browser keeps the first render the same on both sides.
+const neverChanges = () => () => {};
+const NO_COUNTRIES: ReturnType<typeof countryOptions> = [];
+const noCountries = () => NO_COUNTRIES;
+let cachedCountries: ReturnType<typeof countryOptions> | null = null;
+const browserCountries = () => (cachedCountries ??= countryOptions());
+
 const EMPTY_FORM = { business_name: "", first_name: "", last_name: "", email: "", password: "", country: "", phone: "" };
 
 export function PartnerApplyScreen() {
@@ -83,7 +91,7 @@ function ApplyForm({ onSent }: { onSent: (email: string) => void }) {
   const [interest, setInterest] = useState<ExperienceChoice | "">("");
   const [problems, setProblems] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const countries = useMemo(() => countryOptions(), []);
+  const countries = useSyncExternalStore(neverChanges, browserCountries, noCountries);
 
   const set = (key: keyof typeof EMPTY_FORM) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -129,7 +137,7 @@ function ApplyForm({ onSent }: { onSent: (email: string) => void }) {
   return (
     <>
       <p className={styles.applyLead}>Applying does not grant any partner rights. You can start selling or promoting only once your KYC is approved.</p>
-      <form onSubmit={(e) => void submit(e)} noValidate aria-describedby={problems.length ? errorId : undefined}>
+      <form method="post" onSubmit={(e) => void submit(e)} noValidate aria-describedby={problems.length ? errorId : undefined}>
         <Field label="Business name" autoComplete="organization" required maxLength={120} value={form.business_name} onChange={set("business_name")} />
         <div className={siteStyles.formRow}>
           <Field label="First name" autoComplete="given-name" required maxLength={100} value={form.first_name} onChange={set("first_name")} />

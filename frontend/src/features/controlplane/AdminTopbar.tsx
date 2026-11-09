@@ -548,7 +548,7 @@ export function AdminAccount({
   const shownName = name || email || "Your account";
   return (
     <Menu
-      label={`Account menu for ${shownName}`}
+      label={`Account menu for ${shownName} ${role}`}
       items={entries}
       align="end"
       triggerClassName={styles.accountButton}
@@ -561,11 +561,9 @@ export function AdminAccount({
       }
       triggerContent={
         <>
-          <span aria-hidden="true" className={styles.avatar}>
-            {initialsOf(shownName)}
-          </span>
+          <span aria-hidden="true" className={styles.avatar} data-initials={initialsOf(shownName)} />
           <span aria-hidden="true" className={styles.accountText}>
-            <span className={styles.accountName}>{shownName}</span>
+            <span className={styles.accountName}>{shownName}</span>{" "}
             <span className={styles.accountRole}>{role}</span>
           </span>
           <span className={styles.accountChevron} aria-hidden="true">

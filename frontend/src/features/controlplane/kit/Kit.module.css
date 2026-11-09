@@ -122,12 +122,15 @@
   gap: var(--w360-space-1);
 }
 
+/* May shrink, or its buttons could never wrap and a phone would scroll sideways. */
 .headActions {
   display: flex;
   align-items: center;
   gap: var(--w360-space-2);
   flex-wrap: wrap;
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .headAvatar {
@@ -269,10 +272,9 @@
 
 .tabs {
   display: flex;
-  gap: var(--w360-space-5);
+  flex-wrap: wrap;
+  gap: 0 var(--w360-space-5);
   border-bottom: 1px solid var(--w360-border);
-  overflow-x: auto;
-  scrollbar-width: thin;
 }
 
 .tab {
@@ -327,10 +329,9 @@
 
 .chips {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--w360-space-2);
-  overflow-x: auto;
   padding-bottom: 2px;
-  scrollbar-width: thin;
 }
 
 .chip {

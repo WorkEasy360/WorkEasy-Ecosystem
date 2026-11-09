@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
+import { Logo } from "@/components/brand/Logo";
 import { useSearchParams } from "next/navigation";
 import { ApiError } from "@/lib/api/client";
 import { publicApi } from "@/lib/api/public";
@@ -75,10 +76,7 @@ export function AuthFrame({ title, children }: { title: string; children: React.
       <div className={styles.authColumn}>
         <div className={styles.authHeading}>
           <Link href="/" className={styles.logo} aria-label="Workeasy360 home">
-            <span className={styles.logoMark} aria-hidden="true">
-              W
-            </span>
-            Workeasy360
+            <Logo size="lg" />
           </Link>
           <h1 className={styles.authTitle}>{title}</h1>
         </div>
@@ -188,7 +186,7 @@ export function SignupForm({ onSent, signInHref }: { onSent?: () => void; signIn
       {site && !site.signup_enabled ? (
         <p role="status">Signing up is closed at the moment. Please try again later.</p>
       ) : (
-        <form onSubmit={submit} noValidate aria-describedby={problems.length ? errorId : undefined}>
+        <form method="post" onSubmit={submit} noValidate aria-describedby={problems.length ? errorId : undefined}>
           <div className={styles.formRow}>
             <Field label="First name" autoComplete="given-name" required maxLength={100} value={form.first_name} onChange={set("first_name")} />
             <Field label="Last name" autoComplete="family-name" required maxLength={100} value={form.last_name} onChange={set("last_name")} />
@@ -323,7 +321,7 @@ export function VerifyEmailScreen() {
 
   return (
     <AuthFrame title="Confirm your email">
-      <form onSubmit={submit} noValidate aria-describedby={problems.length ? errorId : undefined}>
+      <form method="post" onSubmit={submit} noValidate aria-describedby={problems.length ? errorId : undefined}>
         <p>Enter the password you chose when you signed up to confirm your address and sign in.</p>
         <Field label="Password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
         <Problems id={errorId} problems={problems} />
@@ -340,14 +338,9 @@ export function VerifyEmailScreen() {
 
 // --- forgot / reset ---------------------------------------------------------------------------
 
-/** The frame for the password pages: the Admin sign-in's on the Admin portal,
- * the public site's everywhere else. */
-function passwordFrame(admin: boolean) {
-  return admin ? AdminAuthFrame : AuthFrame;
-}
-
+/** `admin`: the frame of the Admin sign-in, on the Admin portal. */
 export function ForgotPasswordScreen({ admin = false }: { admin?: boolean } = {}) {
-  const Frame = passwordFrame(admin);
+  const Frame = admin ? AdminAuthFrame : AuthFrame;
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "busy" | "sent">("idle");
   const [problems, setProblems] = useState<string[]>([]);
@@ -369,7 +362,7 @@ export function ForgotPasswordScreen({ admin = false }: { admin?: boolean } = {}
 
   return (
     <Frame title="Reset your password">
-      <form
+      <form method="post"
         noValidate
         aria-describedby={problems.length ? errorId : undefined}
         onSubmit={(e) => {
@@ -398,8 +391,9 @@ export function ForgotPasswordScreen({ admin = false }: { admin?: boolean } = {}
   );
 }
 
+/** `admin`: the frame of the Admin sign-in, on the Admin portal. */
 export function ResetPasswordScreen({ admin = false }: { admin?: boolean } = {}) {
-  const Frame = passwordFrame(admin);
+  const Frame = admin ? AdminAuthFrame : AuthFrame;
   const token = useFragmentToken();
   const errorId = useId();
   const [password, setPassword] = useState("");
@@ -437,7 +431,7 @@ export function ResetPasswordScreen({ admin = false }: { admin?: boolean } = {})
 
   return (
     <Frame title="Choose a new password">
-      <form
+      <form method="post"
         noValidate
         aria-describedby={problems.length ? errorId : undefined}
         onSubmit={(e) => {

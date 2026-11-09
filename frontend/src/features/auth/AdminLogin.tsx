@@ -219,7 +219,7 @@ export function AdminLoginScreen() {
       footer={<Ecosystem />}
     >
       <PortalBadge />
-      <form onSubmit={submit} noValidate className={styles.form}>
+      <form method="post" onSubmit={submit} noValidate className={styles.form}>
         <div>
           <label className={styles.label} htmlFor={emailId}>
             Email Address
@@ -274,7 +274,7 @@ export function AdminLoginScreen() {
         <div className={styles.row}>
           <label className={styles.check}>
             <input type="checkbox" name="remember" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-            Remember me
+            Remember Me
           </label>
           <Link href="/forgot-password?mode=admin" className={styles.forgot}>
             Forgot Password?

@@ -285,7 +285,7 @@ export function NewAccountForm({
   const [confirm, setConfirm] = useState("");
 
   return (
-    <form
+    <form method="post"
       className="w360-stack-form"
       noValidate
       onSubmit={(e) => {

@@ -3,6 +3,11 @@
 import { useState } from "react";
 import styles from "./AdminDashboard.module.css";
 
+/** A chart can be wider than a phone. It opens on the latest month, which is the one that matters. */
+function showLatest(scroller: HTMLDivElement | null) {
+  if (scroller) scroller.scrollLeft = scroller.scrollWidth;
+}
+
 /**
  * The dashboard's month-by-month charts (2026-11-09): several lines, and pairs of
  * columns. Dependency-free SVG like `dashboardCharts.tsx`, with the same rule: the SVG
@@ -79,29 +84,31 @@ function Tip({ x, y, children }: { x: number; y: number; children: React.ReactNo
 
 function HiddenTable({ caption, months, series, format }: { caption: string; months: string[]; series: Series[]; format: (n: number) => string }) {
   return (
-    <table className="w360-visually-hidden">
-      <caption>{caption}</caption>
-      <thead>
-        <tr>
-          <th scope="col">Month</th>
-          {series.map((s) => (
-            <th key={s.key} scope="col">
-              {s.label}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {months.map((m, i) => (
-          <tr key={m}>
-            <th scope="row">{monthLong(m)}</th>
+    <div className="w360-visually-hidden">
+      <table>
+        <caption>{caption}</caption>
+        <thead>
+          <tr>
+            <th scope="col">Month</th>
             {series.map((s) => (
-              <td key={s.key}>{format(s.values[i] ?? 0)}</td>
+              <th key={s.key} scope="col">
+                {s.label}
+              </th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {months.map((m, i) => (
+            <tr key={m}>
+              <th scope="row">{monthLong(m)}</th>
+              {series.map((s) => (
+                <td key={s.key}>{format(s.values[i] ?? 0)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -140,7 +147,7 @@ export function MultiLineChart({
     values.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
   return (
     <figure className={styles.figure}>
-      <div className={styles.chartScroll}>
+      <div ref={showLatest} className={styles.chartScroll} tabIndex={0} role="group" aria-label="Chart, scrolls sideways on a small screen">
         <div className={styles.plot}>
           <svg viewBox={`0 0 ${W} ${H}`} className={styles.svg} aria-hidden="true" focusable="false">
             <Grid months={months} max={max} format={format} />
@@ -203,7 +210,7 @@ export function GroupedBars({
   const groupX = (i: number) => PAD.left + step * i + step / 2 - (barW * series.length) / 2;
   return (
     <figure className={styles.figure}>
-      <div className={styles.chartScroll}>
+      <div ref={showLatest} className={styles.chartScroll} tabIndex={0} role="group" aria-label="Chart, scrolls sideways on a small screen">
         <div className={styles.plot}>
           <svg viewBox={`0 0 ${W} ${H}`} className={styles.svg} aria-hidden="true" focusable="false">
             <Grid months={months} max={max} format={format} />

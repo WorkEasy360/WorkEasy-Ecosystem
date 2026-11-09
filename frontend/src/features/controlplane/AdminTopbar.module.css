@@ -349,6 +349,12 @@
   max-width: 260px;
 }
 
+/* The initials are drawn, not text: the button's name is the person's, as a screen reader
+ * and voice control both expect. */
+.avatar::before {
+  content: attr(data-initials);
+}
+
 .accountButton:hover {
   background: var(--w360-shell-raised);
 }
@@ -360,7 +366,7 @@
   width: 32px;
   height: 32px;
   border-radius: var(--w360-radius-pill);
-  background: var(--w360-shell-marker);
+  background: var(--w360-cta);
   color: var(--w360-cta-contrast);
   font-size: var(--w360-fs-meta);
   font-weight: 700;

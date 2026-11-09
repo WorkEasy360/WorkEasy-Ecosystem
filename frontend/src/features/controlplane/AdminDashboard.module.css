@@ -563,7 +563,7 @@ li:last-child > .walletRow {
   margin-top: auto;
 }
 
-.panelContent > :only-child:not(ul):not(figure) {
+.panelContent > :only-child:not(ul):not(figure):not(.tableScroll) {
   margin-block: auto;
 }
 

@@ -269,7 +269,18 @@ describe("assigning a plan", () => {
     const popup = await openPopup();
     await expectNoViolations(popup);
     fireEvent.click(within(popup).getByRole("combobox", { name: /^Plan/ }));
-    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Easy CRM: Starter", "Easy CRM: Free"]);
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Easy CRM: Starter", "Easy CRM: Free"]);
+  });
+
+  it("sends the billing currency only when one is chosen", async () => {
+    const calls = mockApi(detailRoutes({ [`GET ${CATALOG}`]: [ok(OVERVIEW)], [`POST ${ASSIGN}`]: [placed(true)] }));
+    await openDetail(SUBSCRIPTIONS);
+    const popup = await openPopup();
+    fireEvent.change(within(popup).getByLabelText("Billing currency"), { target: { value: "GBP" } });
+    fireEvent.change(within(popup).getByLabelText("Reason"), { target: { value: "Agreed on the renewal call." } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Assign plan" }));
+    await waitFor(() => expect(calls.some((c) => c.key === `POST ${ASSIGN}`)).toBe(true));
+    expect(calls.find((c) => c.key === `POST ${ASSIGN}`)!.body).toMatchObject({ currency: "GBP" });
   });
 
   it("sends the exact body and a command id, and says the invoice waits for payment", async () => {
@@ -278,7 +289,7 @@ describe("assigning a plan", () => {
     const popup = await openPopup();
     // Starter has direct prices for monthly and annual; the partner's quarterly price is not offered.
     fireEvent.click(within(popup).getByRole("combobox", { name: /^Interval/ }));
-    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Monthly (30 days)", "Annual (360 days)"]);
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Monthly (30 days)", "Annual (360 days)"]);
     fireEvent.click(screen.getByRole("option", { name: "Annual (360 days)" }));
     fireEvent.change(within(popup).getByLabelText("Quantity"), { target: { value: "4" } });
     fireEvent.change(within(popup).getByLabelText("Reason"), { target: { value: "Agreed on the renewal call." } });

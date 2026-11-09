@@ -314,7 +314,7 @@ function ProviderCard({
           </Button>
           <Button
             size="sm"
-            aria-label={`Switch ${p.display_name} to ${p.mode === "live" ? "test" : "live"} mode`}
+            aria-label={`Switch to ${p.mode === "live" ? "test" : "live"} mode: ${p.display_name}`}
             disabled={busy}
             onClick={() =>
               act(

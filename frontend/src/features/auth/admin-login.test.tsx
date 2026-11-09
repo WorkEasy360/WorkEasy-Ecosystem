@@ -112,7 +112,7 @@ describe("the Admin sign-in page", () => {
     await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/admin"));
     expect(calls.find((c) => c.key === "POST /api/v1/auth/login")?.body).toEqual({
       email: "a@example.com",
-      password: "correct horse",
+      password: "correct horse",  // pragma: allowlist secret
       remember: false,
     });
   });
@@ -123,7 +123,7 @@ describe("the Admin sign-in page", () => {
     render(<LoginScreen portal="admin" />);
     await screen.findByRole("heading", { level: 1 });
     fill("a@example.com", "correct horse");
-    fireEvent.click(screen.getByLabelText("Remember me"));
+    fireEvent.click(screen.getByLabelText("Remember Me"));
     submit();
     await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/admin/orders"));
     expect((calls.find((c) => c.key === "POST /api/v1/auth/login")?.body as { remember: boolean }).remember).toBe(true);
@@ -180,7 +180,7 @@ describe("the Admin sign-in page", () => {
     mockApi({ "GET /api/v1/auth/session": SIGNED_OUT });
     render(<LoginScreen portal="partner" />);
     expect(await screen.findByRole("heading", { name: "Sign in as Partner" })).toBeTruthy();
-    expect(screen.queryByText("Remember me")).toBeNull();
+    expect(screen.queryByText("Remember Me")).toBeNull();
   });
 });
 

@@ -165,6 +165,11 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       });
   }, [session, router, pathname]);
 
+  // The server refuses every other call until a temporary password is replaced, so this comes
+  // first: otherwise that refusal would read as "you may not use the console".
+  if (session.status === "ready" && session.session.password_change_required) {
+    return <ForcedPasswordChange />;
+  }
   if (session.status === "loading" || state.status === "loading") {
     return <StatusScreen>Loading the admin console…</StatusScreen>;
   }

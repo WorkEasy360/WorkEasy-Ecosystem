@@ -303,7 +303,7 @@ function SignIn({ email, onSignedIn }: { email: string; onSignedIn: (email: stri
   const [problem, setProblem] = useState<string | null>(null);
 
   return (
-    <form
+    <form method="post"
       className="w360-stack-form"
       noValidate
       onSubmit={(e) => {

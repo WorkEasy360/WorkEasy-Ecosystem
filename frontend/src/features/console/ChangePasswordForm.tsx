@@ -160,7 +160,7 @@ export function ChangePasswordForm({ onChanged, popup = false }: { onChanged?: (
         </div>
         {open && (
           <Modal labelledBy={titleId} onClose={close} size="sm">
-            <form className={dialog.form} onSubmit={submit} noValidate>
+            <form method="post" className={dialog.form} onSubmit={submit} noValidate>
               <DialogHead titleId={titleId} title="Change password" onClose={close} />
               <div className={dialog.body}>
                 <p className={dialog.intro}>Every other session is signed out; this one stays signed in.</p>
@@ -183,7 +183,7 @@ export function ChangePasswordForm({ onChanged, popup = false }: { onChanged?: (
   }
 
   return (
-    <form className="w360-stack-form" onSubmit={submit} noValidate>
+    <form method="post" className="w360-stack-form" onSubmit={submit} noValidate>
       {fields}
       {problemList}
       {done && <p role="status">Password changed. Your other sessions have been signed out.</p>}

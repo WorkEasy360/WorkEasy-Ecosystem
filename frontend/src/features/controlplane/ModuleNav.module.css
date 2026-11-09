@@ -1,5 +1,5 @@
-/* A module's sections and pages, above the page. Each row scrolls sideways by
-   itself on a narrow screen, so the page never does. */
+/* A module's sections and pages, above the page. A row wraps on a narrow screen,
+   so no entry is ever cut off at the edge. */
 
 .wrap {
   display: grid;
@@ -12,10 +12,9 @@
 .sections,
 .pages {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--w360-space-1);
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: thin;
 }
 
 .sections {
