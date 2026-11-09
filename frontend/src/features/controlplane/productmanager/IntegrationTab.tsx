@@ -6,6 +6,7 @@ import { AuthenticationEditor, AuthenticationFacts, CredentialsPanel, RegisterIn
 import { FormPopup } from "../Modal";
 import { ReasonAction, Status, when } from "../ui";
 import { TextField } from "../widgets";
+import { AppLinksPanel } from "./AppLinksPanel";
 import { INTEGRATION_BADGE, INTEGRATION_LABEL, integrationState, looksLikeHttps } from "./model";
 import cp from "../ControlPlane.module.css";
 import styles from "./ProductManager.module.css";
@@ -307,6 +308,7 @@ export function IntegrationTab({
           </div>
         )}
       </section>
+      <AppLinksPanel product={p} manage={manageCatalog} busy={busy} reload={reload} />
       {canSeeIntegrations ? (
         <section className={styles.card} aria-label="Launch, sign-in and credentials">
           <IntegrationPanel code={p.code} name={p.name} integration={p.integration} busy={busy} manage={manageIntegration} act={act} reload={reload} />

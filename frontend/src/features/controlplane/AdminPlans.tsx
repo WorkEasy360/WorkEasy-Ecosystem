@@ -23,6 +23,7 @@ import {
 } from "./catalogUi";
 import { DialogHead, Modal, dialog } from "./Modal";
 import { PlanBuilder, type BuilderOutcome } from "./PlanBuilder";
+import { PlanRulesDialog } from "./AdminUsagePricing";
 import { DescriptionField, ErrorSummary, ProgressList, Segmented, TextField, useStepRunner, type StepDef } from "./widgets";
 import { Alert, Badge, Button, Page, PageHeader, SectionHeader, StatusBadge, Tabs } from "./kit";
 import cp from "./ControlPlane.module.css";
@@ -42,7 +43,7 @@ import styles from "./AdminConsole.module.css";
  */
 
 type Row = PlanRow | BundleRow;
-type Panel = { mode: "new" } | { mode: "edit"; id: string } | { mode: "version"; id: string };
+type Panel = { mode: "new" } | { mode: "edit"; id: string } | { mode: "version"; id: string } | { mode: "rules"; id: string };
 
 const TAB_TITLE: Record<BuilderKind, string> = {
   bundle: "Plans",
@@ -79,6 +80,7 @@ function rowsOf(overview: CatalogOverview, kind: BuilderKind, productCode?: stri
 export function PlansScreen({ productCode }: { productCode?: string } = {}) {
   const { permissions } = useAdmin();
   const manage = can(permissions, "platform.staff_catalog.manage");
+  const managePricing = can(permissions, "platform.staff_pricing.manage");
   const [load, reload] = useLoad(() => adminConsoleApi.catalogOverview(), []);
   const [tab, setTab] = useState<BuilderKind>(productCode ? "package" : "bundle");
   const [panel, setPanel] = useState<Panel | null>(null);
@@ -136,6 +138,7 @@ export function PlansScreen({ productCode }: { productCode?: string } = {}) {
                 overview={overview}
                 productCode={productCode}
                 manage={manage}
+                managePricing={managePricing}
                 panel={panel}
                 open={(p) => {
                   setNotice(null);
@@ -156,6 +159,7 @@ function OfferTab({
   overview,
   productCode,
   manage,
+  managePricing,
   panel,
   open,
   onClose,
@@ -164,6 +168,7 @@ function OfferTab({
   overview: CatalogOverview;
   productCode?: string;
   manage: boolean;
+  managePricing: boolean;
   panel: Panel | null;
   open: (panel: Panel) => void;
   onClose: (outcome: BuilderOutcome) => void;
@@ -187,6 +192,7 @@ function OfferTab({
         <PlanBuilder key={`version-${row.id}`} kind={kind} overview={overview} existing={row} onClose={onClose} />
       )}
       {panel?.mode === "edit" && row && <DetailsEditor key={`edit-${row.id}`} kind={kind} row={row} onClose={onClose} />}
+      {panel?.mode === "rules" && row && isPlanRow(row) && <PlanRulesDialog key={`rules-${row.id}`} plan={row} onClose={onClose} />}
 
       <Table
         caption={TAB_TITLE[kind]}
@@ -203,7 +209,7 @@ function OfferTab({
         }
       >
         {rows.map((r) => (
-          <OfferRow key={r.id} row={r} kind={kind} manage={manage} open={open} />
+          <OfferRow key={r.id} row={r} kind={kind} manage={manage} managePricing={managePricing} open={open} />
         ))}
       </Table>
     </div>
@@ -214,11 +220,13 @@ function OfferRow({
   row,
   kind,
   manage,
+  managePricing,
   open,
 }: {
   row: Row;
   kind: BuilderKind;
   manage: boolean;
+  managePricing: boolean;
   open: (panel: Panel) => void;
 }) {
   const status = uiStatusOf(row);
@@ -252,18 +260,20 @@ function OfferRow({
         {latest && !latest.published_at && <div className={cp.muted}>draft v{latest.version}</div>}
       </td>
       <td>
-        {manage && (
+        {(manage || (managePricing && isPlanRow(row))) && (
           <div className={styles.actions}>
-            <button
-              type="button"
-              className="w360-btn w360-btn-secondary"
-              aria-label={`Edit details of ${row.name}`}
-              aria-haspopup="dialog"
-              onClick={() => open({ mode: "edit", id: row.id })}
-            >
-              Edit details
-            </button>
-            {status !== "retired" && (
+            {manage && (
+              <button
+                type="button"
+                className="w360-btn w360-btn-secondary"
+                aria-label={`Edit details of ${row.name}`}
+                aria-haspopup="dialog"
+                onClick={() => open({ mode: "edit", id: row.id })}
+              >
+                Edit details
+              </button>
+            )}
+            {manage && status !== "retired" && (
               <button
                 type="button"
                 className="w360-btn w360-btn-secondary"
@@ -272,6 +282,17 @@ function OfferRow({
                 onClick={() => open({ mode: "version", id: row.id })}
               >
                 Publish new version
+              </button>
+            )}
+            {managePricing && isPlanRow(row) && (
+              <button
+                type="button"
+                className="w360-btn w360-btn-secondary"
+                aria-label={`Rules for ${row.name}`}
+                aria-haspopup="dialog"
+                onClick={() => open({ mode: "rules", id: row.id })}
+              >
+                Rules
               </button>
             )}
           </div>
