@@ -863,7 +863,10 @@ class TestWorkflow10PermissionChange:
         post(
             anonymous,
             "/api/v1/auth/login",
-            {"email": target.email, "password": "wrong password here"},
+            {
+                "email": target.email,
+                "password": "wrong password here",
+            },  # pragma: allowlist secret
         )
         reader, _ = staff_login("platform.staff_audit.view")
         rows = reader.get(

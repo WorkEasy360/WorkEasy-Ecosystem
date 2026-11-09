@@ -121,7 +121,7 @@ class TestPublicApplication:
         [
             {"business_name": ""},
             {"email": "nope"},
-            {"password": "short"},
+            {"password": "short"},  # pragma: allowlist secret
             {"country": "India"},
             {"interest": "platinum"},
         ],

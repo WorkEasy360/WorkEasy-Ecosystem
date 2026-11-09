@@ -101,7 +101,10 @@ def test_wrong_passwords_lock_the_account_and_say_nothing_more(staff_user):
     codes = [
         client.post(
             LOGIN,
-            {"email": staff_user.email, "password": "wrong password here"},
+            {
+                "email": staff_user.email,
+                "password": "wrong password here",
+            },  # pragma: allowlist secret
             content_type="application/json",
         ).json()["code"]
         for _ in range(11)

@@ -610,7 +610,7 @@ def project_rows(
         CREATE TRIGGER {trigger}
         AFTER INSERT OR UPDATE OR DELETE ON {src}
         FOR EACH ROW EXECUTE FUNCTION {function}();
-        """,
+        """,  # nosec B608 - identifiers from the migration's own source, through _ident
         reverse_sql=f"""
         DROP TRIGGER IF EXISTS {trigger} ON {src};
         DROP FUNCTION IF EXISTS {function}();
@@ -638,7 +638,8 @@ def backfill_projection(
     picks = ", ".join(_ident(c) for c in (key[1], *columns.values()))
     updates = ", ".join(f"{_ident(c)} = EXCLUDED.{_ident(c)}" for c in columns)
     statement = (
-        f"INSERT INTO {t} ({names}) SELECT {picks} FROM {src} "
+        # Identifiers come from the migration's own source and pass through _ident.
+        f"INSERT INTO {t} ({names}) SELECT {picks} FROM {src} "  # nosec B608
         f"ON CONFLICT ({_ident(key[0])}) DO UPDATE SET {updates}"
     )
 
