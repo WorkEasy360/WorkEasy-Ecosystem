@@ -101,8 +101,8 @@ export function SidebarShell({
   brandLogoUrl?: string | null;
   /** `admin`: the Super Admin's deep-navy top bar and sidebar (2026-10-26). */
   variant?: "admin";
-  /** A small heading above the navigation ("Admin panel"). */
-  navTitle?: string;
+  /** A small heading above the navigation (the Admin's portal badge). */
+  navTitle?: React.ReactNode;
   /** Controls in the top bar between the brand and the account menu (search,
    * quick actions); they take the free space the spacer would. */
   tools?: React.ReactNode;

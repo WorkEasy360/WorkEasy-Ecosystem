@@ -221,7 +221,7 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
       : []),
     { label: "Switch partner account", href: "/partner" },
     { label: "My organizations", href: portalHref(portals, "app", "/organizations/select") },
-    ...(who?.consoles?.staff ? [{ label: "Super Admin console", href: portalHref(portals, "admin", "/admin") }] : []),
+    ...(who?.consoles?.staff ? [{ label: "Admin console", href: portalHref(portals, "admin", "/admin") }] : []),
     { label: "Sign out", onSelect: signOut },
   ];
   return (

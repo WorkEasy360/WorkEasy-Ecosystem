@@ -133,7 +133,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     { label: "Profile", href: `/o/${orgSlug}/settings/profile` },
     { label: "My Security", href: `/o/${orgSlug}/settings/security` },
     { label: "Sign-in Preferences", href: `/o/${orgSlug}/settings/sign-in-preferences` },
-    ...(consoles?.staff ? [{ label: "Super Admin console", href: portalHref(portals, "admin", "/admin") }] : []),
+    ...(consoles?.staff ? [{ label: "Admin console", href: portalHref(portals, "admin", "/admin") }] : []),
     ...(consoles?.partner ? [{ label: "Partner portal", href: portalHref(portals, "partner", "/partner") }] : []),
     { label: "Switch organization", href: "/organizations/select" },
     {

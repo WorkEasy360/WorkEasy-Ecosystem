@@ -124,7 +124,7 @@ beforeEach(() => {
   pathname = "/admin";
 });
 
-describe("the Super Admin shell", () => {
+describe("the Admin shell", () => {
   it("shows only the navigation the staff member's permissions allow", async () => {
     mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
@@ -138,7 +138,7 @@ describe("the Super Admin shell", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(navLabels()).toEqual(["Dashboard", "Subscriptions", "Entitlements", "Audit log"]);
+    expect(navLabels()).toEqual(["Dashboard", "Customers", "Billing & Subscriptions", "Settings"]);
   });
 
   it("says plainly that the account has no administrator access when the backend refuses, and offers the User way in", async () => {
@@ -411,7 +411,7 @@ describe("Super Admin screens", () => {
     expect(screen.queryByLabelText(/Reason for/)).not.toBeInTheDocument();
     expect(await screen.findByRole("status")).toHaveTextContent(/Payout approved/);
     expect(calls.find((c) => c.key === "POST /api/v1/admin/payouts/p1/approve")!.body).toMatchObject({
-      reason: "Approve - Super Admin console",
+      reason: "Approve - Admin console",
     });
   });
 

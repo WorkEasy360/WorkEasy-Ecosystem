@@ -10,7 +10,7 @@
   gap: var(--w360-space-5);
   grid-template-columns: minmax(0, 1fr);
   width: 100%;
-  max-width: 1440px;
+  max-width: 1640px;
   margin-inline: auto;
 }
 

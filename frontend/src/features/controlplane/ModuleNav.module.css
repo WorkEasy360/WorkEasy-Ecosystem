@@ -1,0 +1,84 @@
+/* A module's sections and pages, above the page. Each row scrolls sideways by
+   itself on a narrow screen, so the page never does. */
+
+.wrap {
+  display: grid;
+  gap: var(--w360-space-2);
+  max-width: 1640px;
+  margin: 0 auto var(--w360-space-4);
+  min-width: 0;
+}
+
+.sections,
+.pages {
+  display: flex;
+  gap: var(--w360-space-1);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.sections {
+  width: fit-content;
+  max-width: 100%;
+  padding: var(--w360-space-1);
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-gray-200);
+  border-radius: var(--w360-radius-card);
+  box-shadow: var(--w360-shadow-card);
+}
+
+.section {
+  flex: none;
+  padding: 7px 14px;
+  border-radius: 9px;
+  color: var(--w360-text-secondary);
+  font-size: var(--w360-fs-body);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.section:hover {
+  background: var(--w360-gray-100);
+  color: var(--w360-text);
+}
+
+/* Not colour alone: the fill is backed by aria-current and heavier text. */
+.section[data-current] {
+  background: var(--w360-admin-action);
+  color: var(--w360-admin-action-text);
+  font-weight: 700;
+}
+
+.pages {
+  border-bottom: 1px solid var(--w360-gray-200);
+}
+
+.page {
+  flex: none;
+  padding: 8px 12px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--w360-text-muted);
+  font-size: var(--w360-fs-body);
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.page:hover {
+  color: var(--w360-text);
+}
+
+.page[data-current] {
+  border-bottom-color: var(--w360-admin-action);
+  color: var(--w360-brand);
+  font-weight: 700;
+}
+
+.section:focus-visible,
+.page:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: -2px;
+}

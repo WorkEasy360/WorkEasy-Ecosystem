@@ -8,7 +8,7 @@ import { UserDetailScreen, Users } from "./AdminUsers";
 import { EntitlementsScreen, PlatformSettingsScreen, StaffOrdersScreen, StaffRolesPanel, SubscriptionsScreen } from "./AdminCommerce";
 
 /**
- * Phase 8 extension: the Super Admin console screens (plan builder, pricing,
+ * Phase 8 extension: the Admin console screens (plan builder, pricing,
  * payments, customer billing, users, communication). What the browser sends -
  * and never sends - plus the same non-visual axe pass per state as the other
  * consoles. Contrast, focus visibility and reflow remain manual.
@@ -76,24 +76,11 @@ beforeEach(() => {
 
 // --- navigation ------------------------------------------------------------------------
 
-describe("the Super Admin navigation", () => {
-  /** The menu's sections, then every page in it with each section opened. */
-  function openMenu(): { sections: string[]; links: string[] } {
-    const nav = screen.getByRole("navigation");
-    // The sections are an accordion: open each in turn and collect its pages.
-    const buttons = within(nav).queryAllByRole("button").filter((b) => b.hasAttribute("aria-expanded"));
-    const sections = buttons.map((b) => (b.textContent ?? "").trim());
-    const links: string[] = [];
-    const collect = () => {
-      for (const a of within(nav).getAllByRole("link")) if (!links.includes(a.textContent ?? "")) links.push(a.textContent ?? "");
-    };
-    collect();
-    for (const b of buttons) {
-      if (b.getAttribute("aria-expanded") === "false") fireEvent.click(b);
-      collect();
-    }
-    return { sections, links };
-  }
+describe("the Admin navigation", () => {
+  const modules = () =>
+    within(screen.getByRole("navigation", { name: "Admin Portal" }))
+      .getAllByRole("link")
+      .map((a) => a.textContent ?? "");
 
   it("shows the new areas to staff holding their grants", async () => {
     mockApi({
@@ -120,21 +107,7 @@ describe("the Super Admin navigation", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    const menu = openMenu();
-    expect(menu.sections).toEqual(["Users", "Store", "Communication"]);
-    expect(menu.links).toEqual([
-      "Dashboard",
-      "Users",
-      "Subscriptions",
-      "Entitlements",
-      "Products",
-      "Store",
-      "Plans & add-ons",
-      "Currency & pricing",
-      "Orders",
-      "Payments",
-      "Email templates",
-    ]);
+    expect(modules()).toEqual(["Dashboard", "Customers", "Products & Pricing", "Billing & Subscriptions", "Settings"]);
   });
 
   it("hides them from staff without the grants", async () => {
@@ -150,9 +123,7 @@ describe("the Super Admin navigation", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    const menu = openMenu();
-    expect(menu.sections).toEqual(["Users"]);
-    expect(menu.links).toEqual(["Dashboard", "Subscriptions", "Entitlements"]);
+    expect(modules()).toEqual(["Dashboard", "Customers", "Billing & Subscriptions"]);
   });
 });
 
@@ -273,7 +244,7 @@ function choose(name: string | RegExp, option: string | RegExp) {
   fireEvent.click(screen.getByRole("option", { name: option }));
 }
 
-const recorded = (action: string) => `${action} - Super Admin console`;
+const recorded = (action: string) => `${action} - Admin console`;
 
 describe("a customer's billing", () => {
   it("lists invoices with attempts and refunds, and passes axe", async () => {

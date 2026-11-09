@@ -161,7 +161,7 @@ export function useAction(after?: () => void) {
 /** The reason recorded for an audited action. Nobody is asked to type one (the
  * owner's call, 2026-10-27); the server still requires a reason, so the action
  * states what was done and where, and the audit entry keeps who and when. */
-export function autoReason(action: string, where = "Super Admin console"): string {
+export function autoReason(action: string, where = "Admin console"): string {
   return `${action} - ${where}`.slice(0, 200);
 }
 

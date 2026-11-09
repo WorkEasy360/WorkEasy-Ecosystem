@@ -10,7 +10,7 @@ import { CommunicationScreen } from "./AdminCommunication";
 import { toMajor, toMinor } from "./amounts";
 
 /**
- * Phase 8 extension: the Super Admin console screens (plan builder, pricing,
+ * Phase 8 extension: the Admin console screens (plan builder, pricing,
  * payments, customer billing, users, communication). What the browser sends -
  * and never sends - plus the same non-visual axe pass per state as the other
  * consoles. Contrast, focus visibility and reflow remain manual.

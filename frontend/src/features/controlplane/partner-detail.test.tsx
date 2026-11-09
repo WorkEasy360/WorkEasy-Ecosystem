@@ -309,7 +309,7 @@ describe("the header", () => {
     await screen.findByText("Partner activated.");
     expect(calls.find((c) => c.key === `POST /api/v1/admin/partners/${ID}/status`)!.body).toEqual({
       status: "active",
-      reason: "Activate - Super Admin console",
+      reason: "Activate - Admin console",
       expected_version: 3,
     });
   });
@@ -351,7 +351,7 @@ describe("the header", () => {
     await screen.findByText("Partner terminated. Its customers were not touched.");
     expect(calls.find((c) => c.key === `POST /api/v1/admin/partners/${ID}/status`)!.body).toEqual({
       status: "terminated",
-      reason: "Terminate - Super Admin console",
+      reason: "Terminate - Admin console",
       expected_version: 3,
     });
   });
@@ -740,7 +740,7 @@ describe("Commission", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(calls.find((c) => c.key.endsWith("/commission") && c.key.startsWith("POST"))!.body).toEqual({
       rate_bp: 1750,
-      reason: "Assign commission rate - Super Admin console",
+      reason: "Assign commission rate - Admin console",
       expected_version: 2,
     });
   });

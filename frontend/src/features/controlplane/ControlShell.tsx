@@ -22,6 +22,8 @@ import { PARTNER_MENU, type Can } from "@/features/partnerpanel/menu";
 import { ForcedPasswordChange } from "./ForcedPasswordChange";
 import { AdminAccount, AdminTools, roleLabel } from "./AdminTopbar";
 import { ADMIN_PAGE_TITLES, adminNav } from "./adminNav";
+import { ModuleNav } from "./ModuleNav";
+import { Icon } from "@/components/sidebar/icons";
 import { ToastProvider } from "./kit/Confirm";
 import { ADMIN_TITLE_SUFFIX } from "./kit/Layout";
 import { usePortalRouter } from "@/lib/portalRouter";
@@ -48,7 +50,7 @@ export function useSignOut() {
   return { signOut, signOutTo, banner };
 }
 
-// --- Super Admin -----------------------------------------------------------------
+// --- Admin ---------------------------------------------------------------------
 
 /** Exported so a screen can be rendered under a chosen permission set in tests. */
 export const AdminContext = createContext<{ permissions: string[] }>({ permissions: [] });
@@ -198,12 +200,15 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     <AdminContext.Provider value={{ permissions: state.permissions }}>
       <ToastProvider>
         <SidebarShell
-          area="Super Admin"
+          area="Admin Portal"
           variant="admin"
-          navTitle="Admin panel"
-          accordion
+          navTitle={
+            <>
+              <Icon name="shield" size={16} /> Admin Portal
+            </>
+          }
           railKey="w360.admin.rail"
-          groups={adminNav(state.permissions)}
+          groups={adminNav(state.permissions, pathname ?? "")}
           tools={<AdminTools permissions={state.permissions} />}
           account={
             <AdminAccount
@@ -215,6 +220,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           }
           banner={banner}
         >
+          <ModuleNav permissions={state.permissions} />
           {children}
         </SidebarShell>
       </ToastProvider>
@@ -356,7 +362,7 @@ export function PartnerShell({ partnerId, children }: { partnerId: string; child
   const entries: AccountMenuEntry[] = [
     { label: "Switch partner account", href: "/partner" },
     { label: "My organizations", href: portalHref(portals, "app", "/organizations/select") },
-    ...(who?.consoles?.staff ? [{ label: "Super Admin console", href: portalHref(portals, "admin", "/admin") }] : []),
+    ...(who?.consoles?.staff ? [{ label: "Admin console", href: portalHref(portals, "admin", "/admin") }] : []),
     { label: "Sign out", onSelect: signOut },
   ];
   return (

@@ -8,7 +8,7 @@ import { foldSlices } from "./dashboardCharts";
 import { AdminContextForTest, SIGNED_IN, expectNoViolations, mockApi, ok } from "./testSupport";
 
 /**
- * The Super Admin console redesign (2026-10-26): the dashboard's month
+ * The Admin console redesign (2026-10-26): the dashboard's month
  * overview, the latest rows, and the top bar (search, New, the bell). Real
  * figures only, and only what the backend sent for the staff member's grants.
  */
@@ -254,7 +254,7 @@ function shellApi(permissions: string[], attention: unknown = { items: [] }) {
   });
 }
 
-describe("the Super Admin top bar", () => {
+describe("the Admin top bar", () => {
   it("shows the bell's count and where each waiting item is dealt with", async () => {
     shellApi(["platform.staff_customer.view", "platform.staff_partner.view"], {
       items: [
@@ -292,18 +292,18 @@ describe("the Super Admin top bar", () => {
     ]);
   });
 
-  it("offers in New only what the staff member may create, and nothing without a grant", async () => {
+  it("offers in Create only what the staff member may create, and nothing without a grant", async () => {
     shellApi(["platform.staff_customer.view", "platform.staff_partner.manage", "platform.staff_partner.view"]);
     render(
       <AdminShell>
         <h1>Page</h1>
       </AdminShell>,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "New" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create" }));
     expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["New partner"]);
   });
 
-  it("has no New button and no settings shortcut for a read-only staff member", async () => {
+  it("has no Create button and no settings shortcut for a read-only staff member", async () => {
     shellApi(["platform.staff_customer.view"]);
     render(
       <AdminShell>
@@ -311,11 +311,11 @@ describe("the Super Admin top bar", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(screen.queryByRole("button", { name: "New" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Platform settings" })).not.toBeInTheDocument();
   });
 
-  it("opens the section of the current page and hides a section with nothing in it", async () => {
+  it("marks the module holding the page, shows its sections and pages as tabs, and hides a module with nothing in it", async () => {
     pathname = "/admin/orders";
     shellApi(["platform.staff_customer.view", "platform.staff_payment.view"]);
     render(
@@ -323,16 +323,19 @@ describe("the Super Admin top bar", () => {
         <h1>Page</h1>
       </AdminShell>,
     );
-    const nav = await screen.findByRole("navigation", { name: "Super Admin" });
-    expect(within(nav).getByRole("button", { name: /^Store/ })).toHaveAttribute("aria-expanded", "true");
-    expect(within(nav).getByRole("link", { name: "Orders" })).toHaveAttribute("aria-current", "page");
-    expect(within(nav).getByRole("button", { name: /^Users/ })).toHaveAttribute("aria-expanded", "false");
-    // An accordion: opening another section closes this one.
-    fireEvent.click(within(nav).getByRole("button", { name: /^Users/ }));
-    expect(within(nav).getByRole("button", { name: /^Users/ })).toHaveAttribute("aria-expanded", "true");
-    expect(within(nav).getByRole("button", { name: /^Store/ })).toHaveAttribute("aria-expanded", "false");
-    expect(within(nav).queryByRole("button", { name: /Staff/ })).not.toBeInTheDocument();
-    expect(within(nav).getByText("Admin panel")).toBeInTheDocument();
+    const nav = await screen.findByRole("navigation", { name: "Admin Portal" });
+    expect(within(nav).getByRole("link", { name: "Billing & Subscriptions" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "Customers" })).not.toHaveAttribute("aria-current");
+    // Nothing beneath the nine entries: no disclosure buttons, no sub-pages.
+    expect(within(nav).queryAllByRole("button").filter((b) => b.hasAttribute("aria-expanded"))).toEqual([]);
+    expect(within(nav).queryByRole("link", { name: "Orders" })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
+    expect(within(nav).getByText("Admin Portal")).toBeInTheDocument();
+    const sections = screen.getByRole("navigation", { name: "Billing & Subscriptions sections" });
+    expect(within(sections).getByRole("link", { name: "Orders & Payments" })).toHaveAttribute("aria-current", "true");
+    const pages = screen.getByRole("navigation", { name: "Orders & Payments pages" });
+    expect(within(pages).getByRole("link", { name: "Orders" })).toHaveAttribute("aria-current", "page");
+    expect(within(pages).getByRole("link", { name: "Payments" })).toHaveAttribute("href", "/admin/payments");
   });
 });
 
@@ -345,7 +348,7 @@ describe("the command palette", () => {
     render(
       <AdminSearch permissions={["platform.staff_customer.view", "platform.staff_user.view", "platform.staff_catalog.view"]} />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /Search users, partners, pages/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Search customers, partners/ }));
     const box = screen.getByRole("combobox", { name: "Search anything" });
     fireEvent.change(box, { target: { value: "plan" } });
     expect(screen.getAllByRole("option")[0]).toHaveTextContent("Plans & add-ons");

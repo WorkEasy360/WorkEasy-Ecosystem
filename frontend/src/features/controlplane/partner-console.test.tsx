@@ -99,7 +99,7 @@ const listRoutes = (rows: unknown[], extra: Record<string, Reply[]> = {}) => ({
 
 // --- navigation ------------------------------------------------------------------------------
 
-describe("the Super Admin sidebar", () => {
+describe("the Admin sidebar", () => {
   async function sidebarLinks(permissions: string[]) {
     mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
@@ -111,31 +111,28 @@ describe("the Super Admin sidebar", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    return within(screen.getByRole("navigation", { name: /Super Admin/ })).getAllByRole("link");
+    return within(screen.getByRole("navigation", { name: "Admin Portal" })).getAllByRole("link");
   }
 
-  it("has one Partners section holding the Partners area's pages - New partner is an action, not a page", async () => {
-    await sidebarLinks([VIEW, MANAGE, MONEY]);
-    const nav = screen.getByRole("navigation", { name: /Super Admin/ });
-    const section = within(nav).getByRole("button", { name: /^Partners/ });
-    if (section.getAttribute("aria-expanded") === "false") fireEvent.click(section);
-    const links = within(nav).getAllByRole("link");
-    expect(links.map((a) => a.textContent)).toEqual(["Dashboard", "Partner overview", "All partners", "Product requests", "Upgrade fees", "Partner tickets"]);
-    expect(links[1]).toHaveAttribute("href", "/admin/partners");
+  it("has one Partners entry opening the Partners area - its pages are tabs inside it", async () => {
+    const links = await sidebarLinks([VIEW, MANAGE, MONEY]);
+    expect(links.find((a) => a.textContent === "Partners")).toHaveAttribute("href", "/admin/partners/all");
+    expect(links.map((a) => a.textContent)).not.toContain("All partners");
   });
 
   it("stays current on a partner's own page", async () => {
     pathname = "/admin/partners/0b8f6a52-6c1e-4f39-9d55-1f0f6f0e2a11/profile";
     const links = await sidebarLinks([VIEW]);
-    expect(links.find((a) => a.textContent === "All partners")).toHaveAttribute("aria-current", "page");
-    expect(links.find((a) => a.textContent === "Partner overview")).not.toHaveAttribute("aria-current");
+    expect(links.find((a) => a.textContent === "Partners")).toHaveAttribute("aria-current", "page");
+    const tabs = screen.getByRole("navigation", { name: "Approved Partners pages" });
+    expect(within(tabs).getByRole("link", { name: "All partners" })).toHaveAttribute("aria-current", "page");
+    expect(within(tabs).getByRole("link", { name: "Partner overview" })).not.toHaveAttribute("aria-current");
   });
 
   it("is absent for someone who may not view partners", async () => {
     for (const permissions of [["platform.staff_customer.view"], [MONEY]]) {
       const links = await sidebarLinks(permissions);
-      expect(links.map((a) => a.textContent)).not.toContain("All partners");
-      expect(within(screen.getByRole("navigation", { name: /Super Admin/ })).queryByRole("button", { name: /^Partners/ })).toBeNull();
+      expect(links.map((a) => a.textContent)).not.toContain("Partners");
     }
   });
 });

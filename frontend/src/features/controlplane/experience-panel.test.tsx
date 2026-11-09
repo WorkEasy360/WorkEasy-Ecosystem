@@ -71,7 +71,7 @@ describe("the experience panel", () => {
     expect(calls.find((c) => c.key === CHANGE)?.body).toEqual({
       action: "grant",
       experience: "reseller",
-      reason: "Add an experience - Super Admin console",
+      reason: "Add an experience - Admin console",
       make_default: true,
       products: ["crm"],
     });

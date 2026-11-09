@@ -320,7 +320,7 @@ describe("Super Admin AI", () => {
     await waitFor(() =>
       expect(calls.find((c) => c.key === "POST /api/v1/admin/ai/providers/anthropic/status")?.body).toEqual({
         status: "disabled",
-        reason: "Disable Anthropic - Super Admin console",
+        reason: "Disable Anthropic - Admin console",
       }),
     );
   });

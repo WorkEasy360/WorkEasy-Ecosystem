@@ -534,7 +534,7 @@ function SettingsSections({ settings, manage, onSaved }: { settings: PlatformSet
 // --- staff roles -----------------------------------------------------------------------------------
 
 const ROLES = [
-  { value: "SUPER_ADMIN", label: "Super Admin" },
+  { value: "SUPER_ADMIN", label: "Admin" },
   { value: "USER_ADMIN", label: "User Admin" },
   { value: "PRODUCT_ADMIN", label: "Product Admin" },
   { value: "BILLING_ADMIN", label: "Billing Admin" },

@@ -3,11 +3,10 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/sidebar/icons";
-import type { SidebarItem } from "@/components/sidebar/SidebarShell";
 import { adminConsoleApi } from "@/lib/api/adminConsole";
 import { adminApi, type AttentionItem } from "@/lib/api/controlPlane";
 import { usePortalRouter } from "@/lib/portalRouter";
-import { adminNav } from "./adminNav";
+import { adminModules } from "./adminModules";
 import { Modal } from "./Modal";
 import { Menu, type MenuItem } from "./kit/Menu";
 import { initialsOf } from "./kit/Layout";
@@ -18,8 +17,8 @@ import styles from "./AdminTopbar.module.css";
 const can = (permissions: string[], key: string) => permissions.includes(key);
 
 /**
- * The Super Admin's top bar (2026-11-07 design system): the command palette
- * (Ctrl/⌘K), the New menu, notifications and the settings shortcut. Everything
+ * The Admin's top bar (2026-11-09): the command palette (Ctrl/⌘K), the Create
+ * menu, notifications, help and the settings shortcut. Everything
  * here is a way to a page the staff member could already reach from the menu -
  * each page and each request behind it checks the grant again.
  */
@@ -74,26 +73,20 @@ function remember(result: Result) {
   }
 }
 
-/** Every page in this staff member's menu, with the section it sits in. */
+/** Every page this staff member may open, with the module it sits in. */
 function pagesFor(permissions: string[]): Result[] {
-  const out: Result[] = [];
-  const walk = (items: SidebarItem[], section: string, icon: string) => {
-    for (const item of items) {
-      if (item.when === false) continue;
-      if (item.children) walk(item.children, item.label, item.icon ?? icon);
-      else
-        out.push({
-          id: `page-${item.href}`,
-          group: section === "Settings" ? "Settings" : "Pages",
-          label: item.label,
-          hint: section || "Page",
-          href: item.href,
-          icon: item.icon ?? icon,
-        });
-    }
-  };
-  for (const group of adminNav(permissions)) walk(group.items, "", "dashboard");
-  return out;
+  return adminModules(permissions).flatMap((module) =>
+    module.sections.flatMap((section) =>
+      section.pages.map((page) => ({
+        id: `page-${page.href}`,
+        group: (module.key === "settings" ? "Settings" : "Pages") as Group,
+        label: page.label,
+        hint: module.label,
+        href: page.href,
+        icon: module.icon,
+      })),
+    ),
+  );
 }
 
 /** Live results from the server for the words typed (users, partners) and a
@@ -210,7 +203,7 @@ export function AdminSearch({ permissions }: { permissions: string[] }) {
     <div className={styles.search}>
       <button ref={opener} type="button" className={styles.searchOpener} aria-haspopup="dialog" onClick={() => setOpen(true)}>
         <Icon name="search" size={16} />
-        <span className={styles.searchPlaceholder}>Search users, partners, pages…</span>
+        <span className={styles.searchPlaceholder}>Search customers, partners, subscriptions, invoices…</span>
         <kbd className={styles.kbd} aria-hidden="true">
           Ctrl K
         </kbd>
@@ -353,13 +346,13 @@ function NewMenu({ permissions }: { permissions: string[] }) {
   if (items.length === 0) return null;
   return (
     <Menu
-      label="New"
+      label="Create"
       items={items}
       triggerClassName={styles.newButton}
       triggerContent={
         <>
           <Icon name="plus" size={16} />
-          <span className={styles.newLabel}>New</span>
+          <span className={styles.newLabel}>Create</span>
           <Icon name="chevronDown" size={16} />
         </>
       }
@@ -532,8 +525,8 @@ function Bell({ permissions }: { permissions: string[] }) {
 
 /** The staff member's role, as far as the console can tell from the grants it holds. */
 export function roleLabel(permissions: string[]): string {
-  if (permissions.includes("platform.staff_security.manage")) return "Super Admin";
-  if (permissions.some((p) => p.endsWith(".manage"))) return "Administrator";
+  if (permissions.includes("platform.staff_security.manage")) return "Admin";
+  if (permissions.some((p) => p.endsWith(".manage"))) return "Staff admin";
   return "Staff (read-only)";
 }
 

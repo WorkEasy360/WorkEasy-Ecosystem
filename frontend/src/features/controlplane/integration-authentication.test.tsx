@@ -187,7 +187,7 @@ describe("product integration in the Product Manager", () => {
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${ADMIN}/products/future_product/integration/status`)).toBe(true));
     expect(calls.find((c) => c.key === `POST ${ADMIN}/products/future_product/integration/status`)?.body).toEqual({
       status: "suspended",
-      reason: "Suspend - Super Admin console",
+      reason: "Suspend - Admin console",
     });
   });
 

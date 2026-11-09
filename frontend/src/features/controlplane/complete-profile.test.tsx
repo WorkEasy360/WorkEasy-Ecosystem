@@ -327,7 +327,7 @@ describe("the review step", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Activate partner" }));
     expect(screen.queryByLabelText(/Reason for/)).not.toBeInTheDocument();
     await waitFor(() => expect(calls.some((c) => c.key.endsWith("/status"))).toBe(true));
-    expect(calls.find((c) => c.key.endsWith("/status"))!.body).toEqual({ status: "active", reason: "Activate partner - Super Admin console", expected_version: 2 });
+    expect(calls.find((c) => c.key.endsWith("/status"))!.body).toEqual({ status: "active", reason: "Activate partner - Admin console", expected_version: 2 });
   });
 
   it("does not offer activation while something required is missing", async () => {
