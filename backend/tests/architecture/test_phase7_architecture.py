@@ -157,6 +157,9 @@ def test_the_partner_portal_has_no_partner_type_branch():
 _IS_STAFF_READERS = {
     # The grant mechanism: a grant on a non-staff account is inert.
     "workeasy360/platform/authz/staff.py",
+    # ADR-062: a Login as Guest session is read only for a staff identity whose
+    # guest view is live; the flag can only end it, never grant anything.
+    "workeasy360/interfaces/api/guest_session.py",
     # The admin API refuses a non-staff session before building a context.
     "workeasy360/interfaces/api/v1/control_plane_http.py",
     # Operator commands that designate staff identities.

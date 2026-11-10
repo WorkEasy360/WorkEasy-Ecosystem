@@ -310,6 +310,18 @@ STAFF_PERMISSIONS: Final = (
         control_plane=True,
         implies=("platform.staff_partner.view", "platform.staff_customer.view"),
     ),
+    # ADR-062 (2026-11-10): Login as Guest - open one partner's portal read-only,
+    # for a reason, for a limited time, and revoke another Admin's guest view.
+    # Dangerous: every use is audited, and it is refused under impersonation, so
+    # a guest view can never start another.
+    _p(
+        "platform.staff_partner.guest",
+        "Log in as a guest to a partner's portal (read-only, time-limited)",
+        category="control_plane",
+        dangerous=True,
+        control_plane=True,
+        implies=("platform.staff_partner.view",),
+    ),
     _p(
         "platform.staff_commission.view",
         "View commission rules, accruals and payouts",

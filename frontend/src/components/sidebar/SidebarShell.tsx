@@ -39,6 +39,10 @@ export interface SidebarItem {
   /** What a locked entry does when chosen (the upgrade dialog). */
   onSelect?: () => void;
   children?: SidebarItem[];
+  /** A section whose entries the person may put in their own order (dragged, or
+   * Alt+Arrow keys), remembered on this browser under this key (ADR-062: the
+   * Admin's Partners menu). Order only: what an entry opens never changes. */
+  reorderKey?: string;
 }
 
 export interface SidebarGroup {
@@ -129,7 +133,7 @@ export function SidebarShell({
   const sectionOf = (path: string | null) => {
     for (const group of groups) {
       for (const item of visible(group.items)) {
-        if (item.children && visible(item.children).some((c) => isActive(path ?? "", c))) return item.href;
+        if (item.children && (item.current || visible(item.children).some((c) => isActive(path ?? "", c)))) return item.href;
       }
     }
     return null;
@@ -279,24 +283,68 @@ export function SidebarShell({
   );
 }
 
+/** The order a person chose for a section's entries, remembered on this browser;
+ * entries added since are kept, in their place at the end. */
+function useEntryOrder(key: string | undefined, hrefs: string[]): [string[], (next: string[]) => void] {
+  const [stored, setStored] = useState<string[] | null>(() => {
+    if (!key || typeof window === "undefined") return null;
+    try {
+      const raw = JSON.parse(window.localStorage.getItem(key) ?? "null");
+      return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : null;
+    } catch {
+      return null;
+    }
+  });
+  const order = stored ? [...stored.filter((h) => hrefs.includes(h)), ...hrefs.filter((h) => !stored.includes(h))] : hrefs;
+  const save = (next: string[]) => {
+    setStored(next);
+    if (!key) return;
+    try {
+      window.localStorage.setItem(key, JSON.stringify(next));
+    } catch {
+      /* private mode: the order lasts for this page only */
+    }
+  };
+  return [order, save];
+}
+
+/** What a reorderable section gives each of its entries' list items. */
+type EntryProps = React.LiHTMLAttributes<HTMLLIElement> & { "data-dragging"?: boolean };
+
 function NavEntry({
   item,
   pathname,
   expandedOverride,
   onToggle,
+  entryProps,
+  describedBy,
 }: {
   item: SidebarItem;
   pathname: string;
   /** Set by an accordion: whether this section is the open one. */
   expandedOverride?: boolean;
   onToggle?: () => void;
+  /** Drag-and-drop and keyboard handlers of a reorderable section's entry. */
+  entryProps?: EntryProps;
+  /** The instructions of a reorderable section, for its links. */
+  describedBy?: string;
 }) {
   const children = item.children ? visible(item.children) : [];
-  const containsCurrent = children.some((c) => isActive(pathname, c));
+  // A section can say it holds the current page (the Admin's Partners, whose
+  // tabs live elsewhere) as well as find it among its entries.
+  const containsCurrent = children.length > 0 && (item.current === true || children.some((c) => isActive(pathname, c)));
   const [expandedOwn, setExpanded] = useState(containsCurrent);
   const expanded = expandedOverride ?? expandedOwn;
   const [contained, setContained] = useState(containsCurrent);
   const listId = useId();
+  const helpId = useId();
+  const [order, saveOrder] = useEntryOrder(
+    item.reorderKey,
+    children.map((c) => c.href),
+  );
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const list = useRef<HTMLUListElement | null>(null);
 
   // Arriving on one of its pages opens the section (adjusted while rendering,
   // React's pattern for state that follows a prop).
@@ -308,6 +356,47 @@ function NavEntry({
   // A section none of whose pages this person may open is not shown at all.
   if (item.children && children.length === 0) return null;
   if (children.length > 0) {
+    const byHref = new Map(children.map((c) => [c.href, c]));
+    const ordered = item.reorderKey ? order.map((h) => byHref.get(h)).filter((c): c is SidebarItem => Boolean(c)) : children;
+    const move = (href: string, to: number, focus: boolean) => {
+      const from = order.indexOf(href);
+      if (from < 0 || to < 0 || to >= order.length || from === to) return;
+      const next = [...order];
+      next.splice(from, 1);
+      next.splice(to, 0, href);
+      saveOrder(next);
+      const label = byHref.get(href)?.label ?? "";
+      setAnnouncement(`${label} moved to position ${to + 1} of ${next.length}.`);
+      if (focus) {
+        // The link is the same element, moved: keep the keyboard on it.
+        requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(`[data-entry="${CSS.escape(href)}"] a, [data-entry="${CSS.escape(href)}"] button`)?.focus());
+      }
+    };
+    const reorderProps = (child: SidebarItem): EntryProps => ({
+      draggable: true,
+      "data-dragging": dragging === child.href || undefined,
+      onDragStart: (e) => {
+        setDragging(child.href);
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", child.label);
+      },
+      onDragOver: (e) => {
+        if (!dragging) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+      },
+      onDrop: (e) => {
+        e.preventDefault();
+        if (dragging) move(dragging, order.indexOf(child.href), false);
+        setDragging(null);
+      },
+      onDragEnd: () => setDragging(null),
+      onKeyDown: (e) => {
+        if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+        e.preventDefault();
+        move(child.href, order.indexOf(child.href) + (e.key === "ArrowUp" ? -1 : 1), true);
+      },
+    });
     return (
       <li>
         <button
@@ -325,11 +414,27 @@ function NavEntry({
           </span>
         </button>
         {expanded && (
-          <ul id={listId} className={styles.subList}>
-            {children.map((child) => (
-              <NavEntry key={child.href} item={child} pathname={pathname} />
+          <ul id={listId} ref={list} className={styles.subList}>
+            {ordered.map((child) => (
+              <NavEntry
+                key={child.href}
+                item={child}
+                pathname={pathname}
+                entryProps={item.reorderKey ? reorderProps(child) : undefined}
+                describedBy={item.reorderKey ? helpId : undefined}
+              />
             ))}
           </ul>
+        )}
+        {item.reorderKey && expanded && (
+          <>
+            <span id={helpId} className="w360-visually-hidden">
+              To reorder, drag an entry, or press Alt with the Up or Down arrow.
+            </span>
+            <span className="w360-visually-hidden" aria-live="polite">
+              {announcement}
+            </span>
+          </>
         )}
       </li>
     );
@@ -337,8 +442,15 @@ function NavEntry({
 
   if (item.locked && item.onSelect) {
     return (
-      <li>
-        <button type="button" className={styles.link} data-locked onClick={item.onSelect} aria-haspopup="dialog">
+      <li data-entry={item.href} {...entryProps}>
+        <button
+          type="button"
+          className={styles.link}
+          data-locked
+          onClick={item.onSelect}
+          aria-haspopup="dialog"
+          aria-describedby={describedBy}
+        >
           <NavIcon name={item.icon} />
           <span className={styles.linkText}>{item.label}</span>
           <span className={styles.lockMark}>
@@ -351,12 +463,13 @@ function NavEntry({
   }
   const active = isActive(pathname, item);
   return (
-    <li>
+    <li data-entry={item.href} {...entryProps}>
       <Link
         href={item.href}
         className={styles.link}
         aria-current={active ? "page" : undefined}
         data-active={active || undefined}
+        aria-describedby={describedBy}
       >
         <NavIcon name={item.icon} />
         <span className={styles.linkText}>{item.label}</span>
@@ -418,7 +531,7 @@ export function AccountMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        aria-label={`Account menu for ${name || "your account"}`}
+        aria-label={showName ? `Account menu for ${name || "your account"}` : undefined}
         onClick={() => setOpen((v) => !v)}
       >
         {showName ? (
@@ -434,7 +547,12 @@ export function AccountMenu({
             </span>
           </>
         ) : (
-          initials(name)
+          // The initials are a picture of the name; the button's name, from its
+          // content, says it in full (so the visible text is never left out of it).
+          <>
+            <span aria-hidden="true">{initials(name)}</span>
+            <span className="w360-visually-hidden">Account menu for {name || "your account"}</span>
+          </>
         )}
       </button>
       {open && (

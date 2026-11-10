@@ -44,8 +44,11 @@ const WALLET_VIEW = "platform.staff_wallet.view";
 const SUPPORT_VIEW = "platform.staff_support.view";
 const REPORT_VIEW = "platform.staff_report.view";
 
-/** One partner's page and its Complete Your Profile belong to All partners. */
-const PARTNER_PAGE = /^\/admin\/partners\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/|$)/i;
+/** One partner's page and its Complete Your Profile belong to All partners - and so
+ * do the Affiliate, Reseller and White Label pages (ADR-062), which are All partners
+ * with its type fixed: the module's tabs stay exactly as they are. */
+const PARTNER_PAGE =
+  /^\/admin\/partners\/((affiliate|reseller|white-label)$|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/|$))/i;
 
 export const ADMIN_MODULES: AdminModule[] = [
   {

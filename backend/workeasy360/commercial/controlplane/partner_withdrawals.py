@@ -155,10 +155,30 @@ def wallet(ctx: TenantContext) -> dict[str, Any]:
     tds, net = _split(available, rate)
     may = REQUEST in authz.effective_permissions(ctx)
     blocker = _blocker(partner, method, available, has_open)
+    shown = withdrawals.method_dict(method)
+    if ctx.is_break_glass and shown is not None:
+        # A staff guest view (Login as Guest, ADR-062): that payout details are on
+        # file and where they stand, never the account, IFSC, UPI id or holder.
+        shown = {
+            "method": shown["method"],
+            "account_holder": "",
+            "bank_name": "",
+            "ifsc": "",
+            "account_hint": "",
+            "upi_vpa": "",
+            "pan_on_file": shown["pan_on_file"],
+            "pan_hint": "",
+            "verification": shown["verification"],
+            "verification_note": "",
+            "verified_at": shown["verified_at"],
+            "updated_at": shown["updated_at"],
+            "destination": "On file (hidden in Guest Mode)",
+            "redacted": True,
+        }
     return {
         "currency": partner.payout_currency,
         "balances": commission_selectors.partner_money(partner_id, timezone.now()),
-        "method": withdrawals.method_dict(method),
+        "method": shown,
         "rules": {
             "minimum_minor": _minimum(),
             "tds_rate_bp": rate,

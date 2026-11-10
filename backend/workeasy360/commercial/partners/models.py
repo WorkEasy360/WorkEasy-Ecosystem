@@ -1977,3 +1977,91 @@ class PartnerKycDocumentAccess(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.document_id} by {self.accessed_by_id}"
+
+
+class PartnerGuestSession(models.Model):
+    """One staff member's read-only guest view of one partner's portal
+    (``guest.py``, ADR-062): All Partners → Login as Guest.
+
+    The record of who looked at which partner, why, from which sign-in, for how
+    long, and how it ended. It is the authority for the view while it lasts:
+    every partner request of a guest reads its row (live = not ended and not
+    expired), so ending or revoking it takes effect on the next request.
+
+    Never the partner's identity or credentials: ``staff_user`` is who acts.
+    ``sign_in_id`` is the staff member's own sign-in (``UserSession.sign_in_id``),
+    so signing out of the Admin ends the view. ``entry_digest`` is the SHA-256
+    of a one-time, sixty-second ticket that opens the partner portal's own
+    session on its host; the ticket itself is never stored, and the digest is
+    cleared when it is spent.
+    """
+
+    END_REASONS = ("exited", "revoked", "signed_out", "replaced", "expired")
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="+"
+    )
+    staff_user = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    sign_in_id = models.UUIDField()
+    reason = models.CharField(max_length=200)
+    #: Where "Exit Guest Mode" returns in the Admin (a validated path).
+    return_path = models.CharField(max_length=200, blank=True, default="")
+    started_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    entry_digest = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    entry_expires_at = models.DateTimeField(null=True, blank=True)
+    entered_at = models.DateTimeField(null=True, blank=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    end_reason = models.CharField(max_length=16, blank=True, default="")
+    ended_by = models.ForeignKey(
+        "identity.User",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        db_table = "partners_guest_session"
+        indexes = [
+            models.Index(
+                fields=["partner", "-started_at"], name="ix_guest_session_partner"
+            ),
+            models.Index(
+                fields=["staff_user", "sign_in_id"], name="ix_guest_session_sign_in"
+            ),
+        ]
+        constraints = [
+            # One open guest view per sign-in: starting another ends the first.
+            models.UniqueConstraint(
+                fields=["sign_in_id"],
+                condition=models.Q(ended_at__isnull=True),
+                name="uq_guest_session_open_per_sign_in",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(expires_at__gt=models.F("started_at")),
+                name="ck_guest_session_expires_after_start",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(ended_at__isnull=True, end_reason="")
+                    | models.Q(
+                        ended_at__isnull=False,
+                        end_reason__in=[
+                            "exited",
+                            "revoked",
+                            "signed_out",
+                            "replaced",
+                            "expired",
+                        ],
+                    )
+                ),
+                name="ck_guest_session_end_reason",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"guest {self.staff_user_id} -> {self.partner_id}"

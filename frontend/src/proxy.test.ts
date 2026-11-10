@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { NextRequest } from "next/server";
-import { contentSecurityPolicy, isPublicPath, proxy } from "./proxy";
+import { contentSecurityPolicy, formTargetsFor, isPublicPath, proxy } from "./proxy";
 
 /**
  * The CSP is the one piece of this app that is *only* exercised by a real
@@ -69,6 +69,23 @@ describe("contentSecurityPolicy", () => {
     expect(directive(prod, "base-uri")).toBe("base-uri 'self'");
     expect(directive(prod, "form-action")).toBe("form-action 'self'");
     expect(prod).not.toContain("*");
+  });
+
+  it("lets the Super Admin host, and only it, post a form to the partner portal (Login as Guest, ADR-062)", () => {
+    const origins = {
+      admin: "https://admin.workeasy360.com",
+      partner: "https://partner.workeasy360.com",
+      app: "https://app.workeasy360.com",
+      auth: "https://auth.workeasy360.com",
+    };
+    expect(formTargetsFor("admin.workeasy360.com", origins)).toEqual(["https://partner.workeasy360.com"]);
+    for (const host of ["partner.workeasy360.com", "app.workeasy360.com", "auth.workeasy360.com", "brand.example.org", ""]) {
+      expect(formTargetsFor(host, origins)).toEqual([]);
+    }
+    const admin = contentSecurityPolicy("N", false, formTargetsFor("admin.workeasy360.com", origins));
+    expect(directive(admin, "form-action")).toBe("form-action 'self' https://partner.workeasy360.com");
+    // Nothing else of the policy changes.
+    expect(admin.replace(" https://partner.workeasy360.com", "")).toBe(contentSecurityPolicy("N", false));
   });
 });
 

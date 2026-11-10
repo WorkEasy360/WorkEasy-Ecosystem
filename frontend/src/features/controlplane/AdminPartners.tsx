@@ -6,6 +6,8 @@ import { adminApi } from "@/lib/api/controlPlane";
 import { partnerConsoleApi, type PartnerSummaryView } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
 import { ExperiencePanel } from "./ExperiencePanel";
+import { GUEST_PERMISSION, ManageGuestAccess, currentReturnPath, guestAvailable, loginAsGuest } from "./GuestAccess";
+import { usePortals } from "@/lib/portalContext";
 import { TypeBadges } from "./labels";
 import { CompletionMeter, SetupStatusBadge } from "./PartnerConsole";
 import { BusinessDetailsTab, ContactsTab } from "./PartnerProfileTabs";
@@ -90,6 +92,10 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
   };
   const { act, busy, feedback } = useAction(bump);
   const manage = can(permissions, "platform.staff_partner.manage");
+  // Login as Guest (ADR-062), from the partner's own page as from its row.
+  const canGuest = can(permissions, GUEST_PERMISSION);
+  const portals = usePortals();
+  const [guestAccess, setGuestAccess] = useState(false);
 
   const confirm = useConfirm();
 
@@ -113,6 +119,18 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
               href: `/admin/partners/${p.id}/profile`,
               when: manage,
             },
+            {
+              label: guestAvailable(p.status) ? "Login as Guest" : "Login as Guest (once active)",
+              icon: "login",
+              when: canGuest,
+              disabled: busy || !guestAvailable(p.status),
+              onSelect: () =>
+                void act(
+                  () => loginAsGuest(p.id, "Partner page", currentReturnPath(), portals),
+                  `Opening ${p.display_name}'s dashboard in Guest Mode…`,
+                ),
+            },
+            { label: "Manage Guest Access", icon: "eye", onSelect: () => setGuestAccess(true) },
             {
               label: "Terminate partner",
               icon: "ban",
@@ -193,6 +211,15 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
               />
               {feedback}
               {confirm.dialog}
+              {guestAccess && (
+                <ManageGuestAccess
+                  partnerId={p.id}
+                  partnerName={p.display_name}
+                  partnerStatus={p.status}
+                  canGuest={canGuest}
+                  onClose={() => setGuestAccess(false)}
+                />
+              )}
               <Tabs label="Partner sections" tabs={items} selected={selected} onSelect={setTab}>
                 <div className={styles.stack}>
                   <UpgradeNotice load={upgrades} onOpen={() => setTab("users")} />

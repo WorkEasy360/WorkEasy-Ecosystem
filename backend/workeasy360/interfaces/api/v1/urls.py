@@ -1605,6 +1605,17 @@ _admin = [
         admin_views.partner_guest_view_start_view,
         name="admin-partner-guest-view",
     ),
+    # ADR-062: Manage Guest Access - this partner's guest views, and revoking one.
+    path(
+        "admin/partners/<uuid:partner_id>/guest-sessions",
+        admin_views.partner_guest_sessions_view,
+        name="admin-partner-guest-sessions",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/guest-sessions/<uuid:session_id>/revoke",
+        admin_views.partner_guest_session_revoke_view,
+        name="admin-partner-guest-session-revoke",
+    ),
     path(
         "admin/partners/white-label",
         admin_views.partner_white_label_view,
@@ -1918,6 +1929,13 @@ _partner = [
         "partner/guest-view/end",
         partner_views.guest_view_end_view,
         name="partner-guest-view-end",
+    ),
+    # ADR-062: Login as Guest's second step, on the partner host (a form post
+    # of a one-time ticket from the Admin page).
+    path(
+        "partner/guest-view/enter",
+        auth_views.guest_enter_view,
+        name="partner-guest-view-enter",
     ),
     path(
         "partner/<uuid:partner_id>/customers",

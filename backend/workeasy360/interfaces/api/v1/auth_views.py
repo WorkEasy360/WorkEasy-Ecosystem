@@ -30,8 +30,8 @@ from typing import Any
 from django.conf import settings
 from django.contrib.auth import login as django_login
 from django.contrib.auth import logout as django_logout
-from django.http import HttpRequest, JsonResponse
-from django.views.decorators.csrf import ensure_csrf_cookie
+from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 
 from workeasy360.contracts.errors import OrganizationValidationError
@@ -260,10 +260,20 @@ def sign_out(request: HttpRequest) -> None:
     """The one sign-out: this session and every other session of the same
     sign-in (ADR-043). Also what the access chooser's "use another account"
     and a product's "sign out of Workeasy360 too" do (ADR-044)."""
+    from workeasy360.interfaces.api.guest_session import guest_session_id
     from workeasy360.platform.identity import handoff
     from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
 
     user = getattr(request, "user", None)
+    marker = guest_session_id(request)
+    if user is not None and user.is_authenticated and marker is not None:
+        # A session opened by Login as Guest (ADR-062) shares the Admin's sign-in
+        # id, so that signing out of the Admin ends it. Signing out of *it* ends
+        # that guest view and this session only - never the Admin's own session
+        # (ADR-059: a portal's sign-out is that portal's).
+        _end_guest_session(user, marker)
+        django_logout(request)
+        return
     if user is not None and user.is_authenticated:
         if user.is_staff:
             from workeasy360.platform.administration.staff_users import (
@@ -274,6 +284,20 @@ def sign_out(request: HttpRequest) -> None:
             _end_guest_view(request, user)
         handoff.end_sign_in(user.id, request.session.get(SESSION_SIGN_IN_ID_KEY))
     django_logout(request)
+
+
+def _end_guest_session(user: Any, marker: str) -> None:
+    """Signing out of a guest-only session: its guest view ends, recorded as
+    ``signed_out``. Never blocks the sign-out."""
+    from workeasy360.commercial.partners import guest
+    from workeasy360.platform.authz.control_plane import platform_context
+
+    try:
+        guest.end_session(
+            platform_context(user_id=user.id), marker, end_reason="signed_out"
+        )
+    except Exception:  # the sign-out itself must still happen
+        logger.warning("identity.sign_out.guest_session_end_failed", exc_info=True)
 
 
 def _end_guest_view(request: HttpRequest, user: Any) -> None:
@@ -287,6 +311,7 @@ def _end_guest_view(request: HttpRequest, user: Any) -> None:
         guest.end(
             platform_context(user_id=user.id),
             request.session.get(SESSION_SIGN_IN_ID_KEY),
+            end_reason="signed_out",
         )
     except Exception:  # the sign-out itself must still happen
         logger.warning("identity.sign_out.guest_view_end_failed", exc_info=True)
@@ -312,26 +337,27 @@ def _refused(code: str, status: int) -> JsonResponse:
     return JsonResponse({"code": code}, status=status)
 
 
-def _guest_hand_off(request: HttpRequest) -> int | None:
-    """When this sign-in's guest view ends (epoch seconds), if the staff member
-    may still hold it: a live guest view and the staff partner view grant in
-    force. ``None`` otherwise."""
+def _guest_hand_off(request: HttpRequest) -> Any | None:
+    """This sign-in's live guest view, if the staff member may still hold it
+    (the guest permission in force). ``None`` otherwise. The hand-off is kept,
+    not used (ADR-059); Login as Guest enters through ``guest_enter_view``."""
     from workeasy360.commercial.partners import guest
     from workeasy360.contracts.errors import AccessPolicyDenied, PermissionDenied
-    from workeasy360.interfaces.api.v1.control_plane_http import (
-        live_guest_view,
-        staff_context,
-    )
+    from workeasy360.interfaces.api.v1.control_plane_http import staff_context
     from workeasy360.platform.authz import services as authz
+    from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
 
-    view = live_guest_view(request)
+    user = request.user
+    if not user.is_staff:
+        return None
+    view = guest.current(user.id, request.session.get(SESSION_SIGN_IN_ID_KEY))
     if view is None:
         return None
     try:
-        authz.require(staff_context(request), guest.STAFF_VIEW)
+        authz.require(staff_context(request), guest.STAFF_GUEST)
     except (PermissionDenied, AccessPolicyDenied):
         return None
-    return int(view.expires_at.timestamp())
+    return view
 
 
 @require_http_methods(["POST"])
@@ -374,15 +400,15 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
         # A password sign-in opens the admin portal (owner decision
         # 2026-10-24).
         return _refused("portal_access_denied", 403)
-    guest_until: int | None = None
+    guest_view: Any | None = None
     if portal == portals.PARTNER and not consoles["partner"]:
         # A staff member's Guest login (commercial.partners.guest) is the
         # other way in: a live guest view of *this* sign-in, which only a
         # staff member with the manage grant and a
         # reason could start - and the staff view grant is checked again now. It opens a session and nothing else:
         # every partner request is authorized again, read-only (guest_context).
-        guest_until = _guest_hand_off(request)
-        if guest_until is None:
+        guest_view = _guest_hand_off(request)
+        if guest_view is None:
             return _refused("portal_access_denied", 403)
 
     source = session_public_id(request.session)
@@ -399,10 +425,14 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
     origin = settings.W360_PORTAL_ORIGINS[portal]
     keys = _handed_off_keys()
     auth_state = {k: request.session[k] for k in keys if k in request.session}
-    if guest_until is not None:
-        from workeasy360.platform.identity.sessions import SESSION_GUEST_UNTIL_KEY
+    if guest_view is not None:
+        from workeasy360.platform.identity.sessions import (
+            SESSION_GUEST_SESSION_KEY,
+            SESSION_GUEST_UNTIL_KEY,
+        )
 
-        auth_state[SESSION_GUEST_UNTIL_KEY] = guest_until
+        auth_state[SESSION_GUEST_UNTIL_KEY] = int(guest_view.expires_at.timestamp())
+        auth_state[SESSION_GUEST_SESSION_KEY] = str(guest_view.id)
     code = handoff.issue(
         user=user,
         portal=portal,
@@ -469,9 +499,12 @@ def handoff_redeem_view(request: HttpRequest) -> JsonResponse:
     # belonged to anyone else on this host.
     django_login(request, user, backend="django.contrib.auth.backends.ModelBackend")
     request.session[SESSION_EPOCH_KEY] = user.session_epoch
-    from workeasy360.platform.identity.sessions import SESSION_GUEST_UNTIL_KEY
+    from workeasy360.platform.identity.sessions import (
+        SESSION_GUEST_SESSION_KEY,
+        SESSION_GUEST_UNTIL_KEY,
+    )
 
-    allowed = {*_handed_off_keys(), SESSION_GUEST_UNTIL_KEY}
+    allowed = {*_handed_off_keys(), SESSION_GUEST_UNTIL_KEY, SESSION_GUEST_SESSION_KEY}
     for key, value in redemption.auth_state.items():
         if key in allowed:
             request.session[key] = value
@@ -498,6 +531,116 @@ def handoff_redeem_view(request: HttpRequest) -> JsonResponse:
     response["Cache-Control"] = "no-store"
     _clear_state_cookie(response)
     return response
+
+
+#: Login as Guest's second step (ADR-062): the partner host's own path.
+GUEST_ENTER_PATH = "/api/v1/partner/guest-view/enter"
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def guest_enter_view(request: HttpRequest) -> HttpResponse:
+    """Login as Guest, on the partner portal's host: spend the one-time ticket
+    the Admin was given and open this host's guest-only session (ADR-062).
+
+    The Admin page posts the ticket here in a form body - a top-level
+    navigation from the Admin's origin, so never a URL, a log line or a
+    Referer. CSRF is replaced by what makes this request unforgeable: the
+    ``Origin`` must be the configured Admin origin, and the ticket is random,
+    single use, sixty seconds, bound to one guest view, and stored only as a
+    digest. Refused - one answer for every reason - unless the ticket is good
+    and its staff member is still active staff holding the guest permission.
+
+    The session it opens is the staff member's own identity, never the
+    partner's: no partner password, code or secret is read. It carries the
+    guest view's id and the Admin's sign-in id (so signing out of the Admin
+    ends it), no authentication time (anything that asks for a recent password
+    refuses it), and ends with the view (``GuestSessionMiddleware``).
+    """
+    import uuid
+
+    from django.http import HttpResponseRedirect
+
+    from workeasy360.commercial.partners import guest
+    from workeasy360.contracts.values import portals
+    from workeasy360.platform.authz import services as authz
+    from workeasy360.platform.authz.control_plane import platform_context
+    from workeasy360.platform.identity.models import User
+    from workeasy360.platform.identity.sessions import (
+        SESSION_DEVICE_KEY,
+        SESSION_GUEST_SESSION_KEY,
+        SESSION_GUEST_UNTIL_KEY,
+        SESSION_IP_PREFIX_KEY,
+        SESSION_SIGN_IN_ID_KEY,
+        date_from_sign_in,
+    )
+
+    if not settings.PORTALS_ENABLED:
+        return _refused("not_found", 404)
+    origins = settings.W360_PORTAL_ORIGINS
+    admin_origin = origins[portals.ADMIN]
+
+    def back(outcome: str) -> HttpResponse:
+        # A fixed Admin page from configuration, never the request's.
+        response = HttpResponseRedirect(
+            f"{admin_origin}{guest.DEFAULT_RETURN}?guest={outcome}"
+        )
+        response.status_code = 303
+        response["Cache-Control"] = "no-store"
+        return response
+
+    origin = request.META.get("HTTP_ORIGIN")
+    if origin is None or portals.parse_origin(origin) != portals.parse_origin(
+        admin_origin
+    ):
+        return _refused("csrf_failed", 403)
+    limited = _throttle(
+        request, "guest_enter_ip", rate_limit_identity(client_ip(request))
+    )
+    if limited is not None:
+        return limited
+
+    view = guest.enter(request.POST.get("ticket"))
+    if view is None:
+        metrics.increment("partner_guest_entries_total", result="refused")
+        return back("expired")
+    user = User.objects.filter(id=view.user_id, is_staff=True).first()
+    staff_ctx = platform_context(user_id=view.user_id)
+    if (
+        user is None
+        or not user.is_active
+        or not authz.check(staff_ctx, guest.STAFF_GUEST).allowed
+    ):
+        if user is not None:
+            guest.end_session(staff_ctx, view.id)
+        metrics.increment("partner_guest_entries_total", result="refused")
+        return back("denied")
+
+    # A clean session for the guest view alone: nothing of whatever this
+    # browser had on this host survives, and the key is new (fixation).
+    request.session.flush()
+    django_login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+    request.session[SESSION_EPOCH_KEY] = user.session_epoch
+    request.session[SESSION_SIGN_IN_ID_KEY] = uuid.UUID(str(view.sign_in_id)).hex
+    request.session[SESSION_GUEST_SESSION_KEY] = str(view.id)
+    request.session[SESSION_GUEST_UNTIL_KEY] = int(view.expires_at.timestamp())
+    where = connection_facts(request)
+    request.session[SESSION_IP_PREFIX_KEY] = where["ip_prefix"]
+    request.session[SESSION_DEVICE_KEY] = where["device_label"]
+    from workeasy360.platform.administration.staff_users import record_staff_session
+
+    record_staff_session(user, signed_in=True, where=where)
+    date_from_sign_in(request.session)
+    metrics.increment("partner_guest_entries_total", result="entered")
+    response = HttpResponseRedirect(guest.portal_path(view.partner_id))
+    response.status_code = 303
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+#: CSRF-exempt because a credential authenticates them, not the session cookie
+#: (tests/architecture: every exempt view must say so).
+TICKET_VIEWS = (guest_enter_view,)
 
 
 def _clear_state_cookie(response: JsonResponse) -> None:

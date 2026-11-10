@@ -755,9 +755,19 @@ export const adminApi = {
     contact_email?: string;
   }) =>
     apiFetch<PartnerSummary>(`${admin}/partners`, { method: "POST", body: json(body) }),
-  /** Guest login: open the partner's portal read-only, for a reason, for a limited time. */
-  startGuestView: (id: string, reason: string) =>
-    apiFetch<GuestView & { portal_path: string }>(`${admin}/partners/${id}/guest-view`, {
+  /** Login as Guest (ADR-062): open the partner's portal read-only, for a reason, for
+   * a limited time. Multi-portal mode answers `entry`: where to post the one-time
+   * ticket that opens the partner host's session. */
+  startGuestView: (id: string, reason: string, returnPath?: string) =>
+    apiFetch<GuestStart>(`${admin}/partners/${id}/guest-view`, {
+      method: "POST",
+      body: json({ reason, return_path: returnPath }),
+    }),
+  /** Manage Guest Access: this partner's recent guest views. */
+  guestSessions: (id: string) => apiFetch<GuestAccess>(`${admin}/partners/${id}/guest-sessions`),
+  /** Manage Guest Access → Revoke: end that guest view now. */
+  revokeGuestSession: (id: string, sessionId: string, reason: string) =>
+    apiFetch<GuestAccess>(`${admin}/partners/${id}/guest-sessions/${sessionId}/revoke`, {
       method: "POST",
       body: json({ reason }),
     }),
@@ -922,10 +932,41 @@ export interface PortalPartner {
 
 /** A staff guest view of one partner's portal: read-only, time-boxed, audited. */
 export interface GuestView {
+  id?: string;
   partner_id: string;
   reason: string;
   started_at?: string;
   expires_at: string;
+  /** Who is looking - the staff member, never the partner. */
+  viewer?: { name: string; email: string };
+}
+
+/** The answer to Login as Guest. `entry` only in multi-portal mode. */
+export interface GuestStart extends GuestView {
+  portal_path: string;
+  entry?: { action: string; ticket: string };
+}
+
+export type GuestSessionStatus = "active" | "exited" | "revoked" | "signed_out" | "replaced" | "expired";
+
+export interface GuestSessionRow {
+  id: string;
+  staff: { id: string; name: string; email: string } | null;
+  reason: string;
+  started_at: string;
+  expires_at: string;
+  entered_at: string | null;
+  ended_at: string | null;
+  ended_by: { id: string; name: string; email: string } | null;
+  status: GuestSessionStatus;
+  mine: boolean;
+}
+
+/** Manage Guest Access: a partner's recent guest views, newest first. */
+export interface GuestAccess {
+  minutes: number;
+  may_start: boolean;
+  sessions: GuestSessionRow[];
 }
 
 export interface PartnerCustomerRow {
@@ -1015,7 +1056,8 @@ const partner = (id: string) => `/api/v1/partner/${encodeURIComponent(id)}`;
 
 export const partnerApi = {
   portal: () => apiFetch<{ partners: PortalPartner[] }>("/api/v1/partner/portal"),
-  endGuestView: () => apiFetch<{ ended: boolean }>("/api/v1/partner/guest-view/end", { method: "POST" }),
+  /** Exit Guest Mode: the answer says where the Admin is (from the server's configuration). */
+  endGuestView: () => apiFetch<{ ended: boolean; return_url: string }>("/api/v1/partner/guest-view/end", { method: "POST" }),
   customers: (id: string, cursor?: string, q?: string) =>
     apiFetch<Page<PartnerCustomerRow>>(`${partner(id)}/customers`, { query: { cursor, q: q || undefined } }),
   provision: (id: string, organizationName: string, ownerEmail: string, key: string, owner?: { first?: string; last?: string }) =>

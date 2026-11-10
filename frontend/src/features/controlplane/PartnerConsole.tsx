@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { adminApi } from "@/lib/api/controlPlane";
@@ -13,10 +13,12 @@ import {
   type SetupStatus,
 } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
+import { GUEST_PERMISSION, ManageGuestAccess, currentReturnPath, guestAvailable, guestOutcomeMessage, loginAsGuest } from "./GuestAccess";
 import { ExperienceLabels, PrimaryType, TypeBadges } from "./labels";
 import { LoadGate, Status, autoReason, money, useAction, useLoad, usePaged } from "./ui";
 import { usePortals } from "@/lib/portalContext";
 import { portalHref } from "@/lib/portals";
+import { CATEGORY_PATH, categoryHref, isCategory, type PartnerCategory } from "./partnerCategories";
 import {
   Alert,
   Avatar,
@@ -127,9 +129,11 @@ const upgradeTarget = (key: string): string => (key === "white_label" ? "White-l
 const CARD_LINKS: Record<string, string> = {
   total_partners: "/admin/partners/all",
   active_partners: "/admin/partners/all?status=active",
-  resellers: "/admin/partners/all?type=reseller",
-  white_label: "/admin/partners/all?type=white_label",
-  affiliates: "/admin/partners/all?type=affiliate",
+  // ADR-062: each type card opens its own page (Partners → Reseller, White Label,
+  // Affiliate), whose list is exactly what the card counts.
+  resellers: CATEGORY_PATH.reseller,
+  white_label: CATEGORY_PATH.white_label,
+  affiliates: CATEGORY_PATH.affiliate,
   suspended_partners: "/admin/partners/all?status=suspended",
   profiles_incomplete: "/admin/partners/all?profile=incomplete",
 };
@@ -168,12 +172,13 @@ function OverviewCardView({ card }: { card: OverviewCard }) {
   );
 }
 
-/** The Partners area's one way to create a partner (also in the top bar's New menu). */
-export function NewPartnerButton() {
+/** The Partners area's one way to create a partner (also in the top bar's New menu).
+ * On a type's own page the form opens with that type chosen. */
+export function NewPartnerButton({ category }: { category?: PartnerCategory } = {}) {
   const { permissions } = useAdmin();
   if (!can(permissions, "platform.staff_partner.manage")) return null;
   return (
-    <ButtonLink variant="primary" icon="plus" href="/admin/partners/new">
+    <ButtonLink variant="primary" icon="plus" href={category ? `/admin/partners/new?type=${category}` : "/admin/partners/new"}>
       New partner
     </ButtonLink>
   );
@@ -411,24 +416,62 @@ function CreatedBanner({ partnerId, invite }: { partnerId: string; invite: Creat
   );
 }
 
+const CATEGORY_TITLE: Record<PartnerCategory, string> = {
+  affiliate: "Affiliate partners",
+  reseller: "Reseller partners",
+  white_label: "White Label partners",
+};
+
+const CATEGORY_SUBTITLE: Record<PartnerCategory, string> = {
+  affiliate: "Every partner whose type is Affiliate, with its status and balance.",
+  reseller: "Every partner whose type is Reseller, with its status and balance.",
+  white_label: "Every partner whose type is White-label, with its status and balance.",
+};
+
+const CATEGORY_NOUN: Record<PartnerCategory, string> = {
+  affiliate: "affiliate partners",
+  reseller: "reseller partners",
+  white_label: "white-label partners",
+};
+
 /** Partners → All partners: one table, filtered by the server (search, partner
  * type, status, profile). The filters are kept in the address so a filtered
  * view can be linked to and survives a reload. A partner's actions are in its
- * row's menu; a status change asks to confirm. */
-export function AllPartnersList() {
+ * row's menu; a status change asks to confirm.
+ *
+ * ADR-062: Partners → Affiliate, Reseller and White Label are this same table
+ * with `category` fixed - the server lists only the partners of that type, each
+ * partner under exactly one. "Partner type" moves between those pages (and back
+ * to All partners), so the filter always means the type the Type column shows. */
+export function AllPartnersList({ category }: { category?: PartnerCategory } = {}) {
   const { permissions } = useAdmin();
   const params = useSearchParams();
   const router = useRouter();
   const pathname = usePathname() ?? "/admin/partners/all";
   const [filters, setFilters] = useState({
     q: (params.get("q") ?? "").slice(0, 80),
-    type: pick(params.get("type"), TYPE_OPTIONS),
+    type: category ?? "",
     status: pick(params.get("status"), STATUS_OPTIONS),
     profile: pick(params.get("profile"), PROFILE_OPTIONS),
     kyc: pick(params.get("kyc"), KYC_OPTIONS),
   });
   const manage = can(permissions, "platform.staff_partner.manage");
+  const canGuest = can(permissions, GUEST_PERMISSION);
+  const canKyc = can(permissions, "platform.staff_kyc.view");
+  const [guestAccess, setGuestAccess] = useState<ResellerRow | null>(null);
+  // Login as Guest came back with an outcome (a used or expired link, or refused).
+  const [guestOutcome] = useState(() => guestOutcomeMessage(params.get("guest")));
   const portals = usePortals();
+
+  // An old address (`/admin/partners/all?type=reseller`, a bookmark or the
+  // overview's old link) opens the type's own page, keeping the other filters.
+  // Only there: on New partner, `?type=` chooses the form's type.
+  const legacyType = !category && pathname === "/admin/partners/all" ? params.get("type") : null;
+  useEffect(() => {
+    if (legacyType && isCategory(legacyType)) {
+      router.replace(categoryHref(legacyType, Object.fromEntries(params.entries())));
+    }
+  }, [legacyType, params, router]);
   const confirm = useConfirm();
   // New partner lands here with the new partner's id: the banner says where its
   // setup continues.
@@ -442,20 +485,26 @@ export function AllPartnersList() {
       partnerConsoleApi.resellers({
         scope: "all",
         q: filters.q || undefined,
-        type: filters.type || undefined,
+        category: category || undefined,
         status: filters.status || undefined,
         profile: filters.profile || undefined,
         kyc: filters.kyc || undefined,
         cursor,
       }),
-    [filters.q, filters.type, filters.status, filters.profile, filters.kyc],
+    [filters.q, category, filters.status, filters.profile, filters.kyc],
   );
   const { act, busy, feedback } = useAction(() => paged.reload());
 
   function apply(next: typeof filters) {
+    const { type, ...rest } = next;
+    if (type !== (category ?? "")) {
+      // Partner type is the page: Affiliate, Reseller, White Label or All partners.
+      router.push(categoryHref(isCategory(type) ? type : null, rest));
+      return;
+    }
     setFilters(next);
     const query = new URLSearchParams();
-    for (const [key, value] of Object.entries(next)) if (value) query.set(key, value);
+    for (const [key, value] of Object.entries(rest)) if (value) query.set(key, value);
     const text = query.toString();
     router.replace(text ? `${pathname}?${text}` : pathname, { scroll: false });
   }
@@ -490,20 +539,31 @@ export function AllPartnersList() {
     });
   };
 
+  // Login as Guest (ADR-062): the server opens a read-only, time-limited view of
+  // exactly this partner and the browser goes to its dashboard.
   const guest = (r: ResellerRow) =>
-    act(async () => {
-      const view = await adminApi.startGuestView(r.id, autoReason("Guest login", "All Partners"));
-      window.location.assign(portalHref(portals, "partner", view.portal_path));
-    }, `Opening the portal of ${r.display_name} as a guest…`);
+    act(
+      () => loginAsGuest(r.id, category ? CATEGORY_TITLE[category] : "All Partners", currentReturnPath(), portals),
+      `Opening ${r.display_name}'s dashboard in Guest Mode…`,
+    );
 
   const rowMenu = (r: ResellerRow): MenuItem[] => {
     const url = panelUrl(r);
     return [
       { label: "View partner", icon: "user", href: `/admin/partners/${r.id}` },
       { label: r.profile_completion.complete ? "Edit setup" : "Complete setup", icon: "settings", href: `/admin/partners/${r.id}/profile` },
+      { label: "Manage KYC", icon: "shield", href: `/admin/partners/applications/${r.id}`, when: canKyc },
       { label: "Open partner panel", icon: "external", href: url, external: true },
       { label: "Copy panel link", icon: "copy", onSelect: () => void navigator.clipboard?.writeText(url) },
-      { label: "Guest login (read-only)", icon: "login", onSelect: () => void guest(r), when: manage, disabled: busy },
+      {
+        // A draft has no dashboard yet; the server refuses it too.
+        label: guestAvailable(r.status) ? "Login as Guest" : "Login as Guest (once active)",
+        icon: "login",
+        onSelect: () => void guest(r),
+        when: canGuest,
+        disabled: busy || !guestAvailable(r.status),
+      },
+      { label: "Manage Guest Access", icon: "eye", onSelect: () => setGuestAccess(r) },
       { label: "Suspend", icon: "pause", danger: true, separator: true, when: manage && r.status === "active", onSelect: () => changeStatus(r, "suspended") },
       { label: "Reactivate", icon: "play", separator: true, when: manage && r.status === "suspended", onSelect: () => changeStatus(r, "active") },
       {
@@ -605,16 +665,24 @@ export function AllPartnersList() {
     { key: "joined", header: "Joined", value: (r) => r.created_at, render: (r) => formatDate(r.created_at) },
   ];
 
-  const filtered = Boolean(filters.q || filters.type || filters.status || filters.profile || filters.kyc);
+  const filtered = Boolean(filters.q || (!category && filters.type) || filters.status || filters.profile || filters.kyc);
   const select = (key: "type" | "status" | "profile" | "kyc", label: string, options: { value: string; label: string }[]) => (
     <Select label={label} value={filters[key]} options={options} onChange={(value) => apply({ ...filters, [key]: value })} />
   );
 
   return (
     <Page>
-      <PageHeader title="All partners" subtitle="Every partner account, with its type, status and balance." primary={<NewPartnerButton />} />
+      <PageHeader
+        title={category ? CATEGORY_TITLE[category] : "All partners"}
+        subtitle={category ? CATEGORY_SUBTITLE[category] : "Every partner account, with its type, status and balance."}
+        primary={<NewPartnerButton category={category} />}
+      />
       {created && <CreatedBanner partnerId={created} invite={createdInvite} />}
-      <FilterBar label="Filter partners" onClear={filtered ? () => apply({ q: "", type: "", status: "", profile: "", kyc: "" }) : undefined}>
+      {guestOutcome && <Alert tone="warning" title={guestOutcome} />}
+      <FilterBar
+        label="Filter partners"
+        onClear={filtered ? () => apply({ q: "", type: category ?? "", status: "", profile: "", kyc: "" }) : undefined}
+      >
         <SearchInput label="Search by partner name or email" value={filters.q} onSearch={(q) => apply({ ...filters, q: q.slice(0, 80) })} />
         {select("type", "Partner type", TYPE_OPTIONS)}
         {select("status", "Status", STATUS_OPTIONS)}
@@ -637,13 +705,26 @@ export function AllPartnersList() {
         empty={
           <EmptyState
             icon="search"
-            title={filtered ? "No partners match these filters." : "No partners yet."}
+            title={filtered ? "No partners match these filters." : category ? `No ${CATEGORY_NOUN[category]} yet.` : "No partners yet."}
             hint={filtered ? "Try another search or clear the filters." : "Partners you create appear here."}
-            action={manage && !filtered ? { label: "New partner", href: "/admin/partners/new" } : undefined}
+            action={
+              manage && !filtered
+                ? { label: "New partner", href: category ? `/admin/partners/new?type=${category}` : "/admin/partners/new" }
+                : undefined
+            }
           />
         }
       />
       {confirm.dialog}
+      {guestAccess && (
+        <ManageGuestAccess
+          partnerId={guestAccess.id}
+          partnerName={guestAccess.display_name}
+          partnerStatus={guestAccess.status}
+          canGuest={canGuest}
+          onClose={() => setGuestAccess(null)}
+        />
+      )}
     </Page>
   );
 }

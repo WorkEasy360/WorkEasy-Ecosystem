@@ -280,23 +280,44 @@ const STATUS_NOTICE: Record<string, string> = {
     "This partner account has ended. Its commission and payout history stays visible; nothing else is available.",
 };
 
-/** The portal layout for one partner. Navigation comes from the partner's
- * **capabilities** - there is no partner type anywhere in this file. */
-/** A staff member viewing a partner's portal as a guest (All Partners → Guest
- * login): said on every page, with the way out. The server makes it read-only
- * and ends it by itself; this only explains it. Exiting ends the guest view
- * (and this portal's session) on the server, then returns to the partner's
- * page in the Super Admin console. */
+/** Where "Exit Guest Mode" goes: the Admin page the server named, only if it is
+ * one of the Admin's partner pages on the Admin's own origin; else the partner's
+ * own page in the Admin. */
+export function guestReturnUrl(returnUrl: string | undefined, portals: ReturnType<typeof usePortals>, partnerId: string): string {
+  const fallback = portalHref(portals, "admin", `/admin/partners/${encodeURIComponent(partnerId)}`);
+  if (!returnUrl) return fallback;
+  try {
+    const base = portals ? portals.admin : window.location.origin;
+    const target = new URL(returnUrl, base);
+    const home = new URL(base);
+    if (target.origin !== home.origin || !/^\/admin\/partners(\/|$)/.test(target.pathname)) return fallback;
+    // Single host: a path on this origin, like every other link here.
+    return portals ? target.toString() : `${target.pathname}${target.search}`;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Guest Mode (Login as Guest, ADR-062): a Super Admin viewing a partner's own
+ * dashboard. Said on every page - which partner, of which type, who is looking,
+ * until when - with a prominent way out. The server makes it read-only and ends
+ * it by itself; this only explains it. Exiting ends the guest view (and this
+ * portal's session) on the server, then returns to the Admin page it came from,
+ * where the Admin's own session is untouched. */
 export function GuestViewBanner({ partner, guest }: { partner: PortalPartner; guest: NonNullable<PortalPartner["guest"]> }) {
   const portals = usePortals();
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const ends = new Date(guest.expires_at);
+  // The partner's type as the server words it: the workspace it lands in.
+  const kind = partner.workspaces?.find((w) => w.key === (partner.level ?? partner.landing))?.label ?? "";
+  const viewer = guest.viewer ? guest.viewer.name || guest.viewer.email : "";
   async function exit() {
     setBusy(true);
     setFailed(false);
+    let answer: { return_url?: string };
     try {
-      await partnerApi.endGuestView();
+      answer = await partnerApi.endGuestView();
     } catch {
       // Not ended: stay here and say so, rather than leave the view running
       // behind a page that looks like it was left.
@@ -304,21 +325,25 @@ export function GuestViewBanner({ partner, guest }: { partner: PortalPartner; gu
       setFailed(true);
       return;
     }
-    window.location.assign(portalHref(portals, "admin", `/admin/partners/${encodeURIComponent(partner.partner_id)}`));
+    window.location.assign(guestReturnUrl(answer.return_url, portals, partner.partner_id));
   }
   return (
-    <div role="status" className={`w360-badge w360-badge-info ${consoleStyles.banner} ${consoleStyles.notice}`}>
-      Viewing Partner Portal as {partner.display_name}. Read-only
-      {Number.isNaN(ends.getTime()) ? "" : `, ends at ${ends.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}: you cannot change
-      anything here.{" "}
-      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => void exit()} disabled={busy}>
-        Exit Guest Session
+    <div role="status" aria-label="Guest Mode" className={`w360-badge w360-badge-info ${consoleStyles.banner} ${consoleStyles.notice}`}>
+      <strong>Guest Mode – Read Only.</strong> Viewing <strong>{partner.display_name}</strong>
+      {kind && ` (${kind})`}
+      {viewer && ` as ${viewer}`}
+      {Number.isNaN(ends.getTime()) ? "" : `, until ${ends.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}. Nothing can be changed
+      here.{" "}
+      <button type="button" className="w360-btn w360-btn-primary" onClick={() => void exit()} disabled={busy}>
+        Exit Guest Mode
       </button>
-      {failed && <span role="alert"> The guest session could not be ended. Try again.</span>}
+      {failed && <span role="alert"> Guest Mode could not be ended. Try again.</span>}
     </div>
   );
 }
 
+/** The portal layout for one partner. Navigation comes from the partner's
+ * **capabilities** - there is no partner type anywhere in this file. */
 export function PartnerShell({ partnerId, children }: { partnerId: string; children: React.ReactNode }) {
   const router = usePortalRouter();
   const portals = usePortals();

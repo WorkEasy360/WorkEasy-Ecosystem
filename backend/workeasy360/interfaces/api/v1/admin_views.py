@@ -20,6 +20,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.debug import sensitive_variables
 
@@ -484,7 +485,8 @@ def partners_recent_view(request: HttpRequest, ctx: TenantContext) -> JsonRespon
 @staff_view(["GET"])
 def partner_resellers_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     """The reseller list: partners wearing the Reseller label (a filter over
-    capability grants), or every partner with ``scope=all``."""
+    capability grants), or every partner with ``scope=all``; ``category``
+    (ADR-062) narrows it to the partners listed under one type."""
     return page_response(
         partner_console.resellers_page(
             ctx,
@@ -496,6 +498,7 @@ def partner_resellers_view(request: HttpRequest, ctx: TenantContext) -> JsonResp
             label=request.GET.get("type") or None,
             profile=request.GET.get("profile") or None,
             kyc_filter=request.GET.get("kyc") or None,
+            category=request.GET.get("category") or None,
             **query_page_args(request),
         )
     )
@@ -706,20 +709,68 @@ def partner_referral_code_create_view(
 def partner_guest_view_start_view(
     request: HttpRequest, ctx: TenantContext, partner_id: UUID
 ) -> JsonResponse:
-    """All Partners → Guest login: open this partner's portal read-only, for a
-    reason, for a limited time (``commercial.partners.guest``)."""
+    """Login as Guest: open this partner's portal read-only, for a reason, for a
+    limited time (``commercial.partners.guest``, ADR-062).
+
+    Multi-portal mode also answers ``entry``: where the browser posts the
+    one-time ticket that opens the partner host's guest-only session. The
+    ticket is in this response body only, which is never cached; the action is
+    built from configuration."""
+    import uuid
+
     from workeasy360.commercial.partners import guest
     from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
 
-    view = guest.start(
+    blocked = limited(request, "partner_guest_start", user=request.user)
+    if blocked is not None:
+        return blocked
+    body = _body(request)
+    # A sign-in from before sign-in ids existed gets one now (as the hand-off did).
+    if not request.session.get(SESSION_SIGN_IN_ID_KEY):
+        request.session[SESSION_SIGN_IN_ID_KEY] = uuid.uuid4().hex
+    portals_on = bool(getattr(settings, "PORTALS_ENABLED", False))
+    view, ticket = guest.start(
         ctx,
         partner_id,
-        reason=_body(request).get("reason", ""),
+        reason=body.get("reason", ""),
         sign_in_id=request.session.get(SESSION_SIGN_IN_ID_KEY),
+        return_path=body.get("return_path"),
+        with_entry=portals_on,
     )
+    payload: dict[str, Any] = {
+        **view.as_json(),
+        "portal_path": guest.portal_path(view.partner_id),
+    }
+    if ticket is not None:
+        payload["entry"] = {
+            "action": f"{settings.W360_PORTAL_ORIGINS['partner']}"
+            "/api/v1/partner/guest-view/enter",
+            "ticket": ticket,
+        }
+    response = JsonResponse(payload, status=201)
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@staff_view(["GET"])
+def partner_guest_sessions_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID
+) -> JsonResponse:
+    """Manage Guest Access: this partner's recent guest views (ADR-062)."""
+    from workeasy360.commercial.partners import guest
+
+    return JsonResponse(guest.history(ctx, partner_id))
+
+
+@staff_view(["POST"])
+def partner_guest_session_revoke_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID, session_id: UUID
+) -> JsonResponse:
+    """Manage Guest Access → Revoke: end that guest view now (ADR-062)."""
+    from workeasy360.commercial.partners import guest
+
     return JsonResponse(
-        {**view.as_json(), "portal_path": guest.portal_path(view.partner_id)},
-        status=201,
+        guest.revoke(ctx, partner_id, session_id, reason=_body(request).get("reason", ""))
     )
 
 

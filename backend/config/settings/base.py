@@ -210,6 +210,9 @@ MIDDLEWARE = [
     # Directly after: a session whose password was chosen by someone else (a
     # temporary one) is served only the calls that let its owner replace it.
     "workeasy360.platform.identity.middleware.PasswordChangeRequiredMiddleware",
+    # ADR-062: a partner-portal session opened by Login as Guest reads only, and
+    # ends the moment its guest view is ended, revoked or expired.
+    "workeasy360.interfaces.api.guest_session.GuestSessionMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "workeasy360.platform.observability.middleware.RequestLogMiddleware",
@@ -918,6 +921,9 @@ AUTH_RATE_LIMITS = {
     # an online guessing budget against a 256-bit code - bounded anyway.
     "handoff_issue": (env.int("W360_RL_HANDOFF_ISSUE", 30), 60),
     "handoff_redeem_ip": (env.int("W360_RL_HANDOFF_REDEEM_IP", 30), 60),
+    # ADR-062: Login as Guest's entry on the partner host - an online guessing
+    # budget against a 256-bit, sixty-second, single-use ticket.
+    "guest_enter_ip": (env.int("W360_RL_GUEST_ENTER_IP", 30), 60),
 }
 
 # Phase 5, Task 11. Deliberately generous: this is abuse protection (a
@@ -1390,6 +1396,23 @@ CELERY_BEAT_SCHEDULE["files-rescan-quarantined"] = {
     "schedule": env.float("W360_BEAT_FILES_RESCAN_S", 300.0),
     "options": {"queue": "default", "expires": 280},
 }
+
+# ADR-062: write down the end of guest views that ran out (they were refused
+# from the moment they expired; this records that they ended).
+CELERY_BEAT_SCHEDULE["partners-close-guest-sessions"] = {
+    "task": "commercial.partners.close_guest_sessions",
+    "schedule": env.float("W360_BEAT_GUEST_SESSIONS_S", 300.0),
+    "options": {"queue": "default", "expires": 280},
+}
+
+CONTROL_PLANE_RATE_LIMITS.update(
+    {
+        # ADR-062: Login as Guest. Each start is an audited impersonation-class
+        # act; a person needs a few a minute at most.
+        "partner_guest_start_user": (env.int("W360_RL_GUEST_START_USER", 10), 60),
+        "partner_guest_start_ip": (env.int("W360_RL_GUEST_START_IP", 30), 60),
+    }
+)
 
 CELERY_BEAT_SCHEDULE["payments-process-due"] = {
     "task": "commercial.payments.process_due",

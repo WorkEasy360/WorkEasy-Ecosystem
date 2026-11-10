@@ -49,6 +49,11 @@ SESSION_SIGN_IN_ID_KEY: Final = "w360_sign_in_id"
 #: ends with it: ``SessionStore.load`` refuses it afterwards, whatever sliding
 #: did to its row's expiry.
 SESSION_GUEST_UNTIL_KEY: Final = "w360_guest_until"
+#: ...and the id of that guest view (``PartnerGuestSession``, ADR-062). A session
+#: carrying it exists only for that view: it reads, never writes, never reaches
+#: another partner, and ends the moment the view is ended or revoked
+#: (``interfaces.api.guest_session``).
+SESSION_GUEST_SESSION_KEY: Final = "w360_guest_session"
 
 #: ``django.contrib.auth.SESSION_KEY`` - repeated rather than imported so this
 #: module stays importable before the auth app is ready.

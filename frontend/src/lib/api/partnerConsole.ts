@@ -162,6 +162,9 @@ export interface ResellerRow {
   /** The workspace this partner's portal opens first: derived from its grants
    * and the stored preference. A landing, never an authority. */
   primary_experience: string | null;
+  /** The one category it is listed under (ADR-062): `primary_experience`, or for a
+   * partner whose grants earn none yet (a new draft) the type it was created as. */
+  category?: string | null;
   capability_count: number;
   capabilities: string[];
   administrator: ListAdministrator | null;
@@ -304,8 +307,11 @@ export interface ResellerFilters {
   product?: string;
   capability?: string;
   scope?: string;
-  /** All Partners' "Partner type": a label, i.e. a filter over the grants. */
+  /** A label, i.e. a filter over the grants (a partner holding several is in each). */
   type?: string;
+  /** Partners → Affiliate, Reseller, White Label (ADR-062): the one type a partner
+   * is listed under - the type its row shows. The server filters. */
+  category?: string;
   /** "complete" or "incomplete". */
   profile?: string;
   /** "legacy", "ready", "approved" or "not_approved". */

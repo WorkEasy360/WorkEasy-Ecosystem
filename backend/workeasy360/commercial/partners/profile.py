@@ -492,6 +492,12 @@ def get_own_profile(ctx: TenantContext) -> dict[str, Any]:
         raise PartnerRecordNotFound("No such partner.", partner_id=str(partner_id))
     view.pop("internal_notes", None)
     view["payout"] = {"currency": view["payout"]["currency"]}
+    if ctx.is_break_glass:
+        # A staff guest view (Login as Guest, ADR-062): the business as it
+        # presents itself, not its registration and tax identifiers.
+        view["business"]["registration_number"] = ""
+        view["business"]["tax_number"] = ""
+        view["redacted"] = True
     return view
 
 

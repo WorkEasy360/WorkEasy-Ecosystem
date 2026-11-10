@@ -211,6 +211,9 @@ def test_the_partner_models_are_the_frozen_set():
         # ADR-056: Super Admin's bounds on a selling partner's own price - a
         # boundary, never a price (tests/store_upgrade pins what it allows).
         "SellingPriceRange",
+        # ADR-062: a staff member's guest view of one partner - a record of
+        # who looked and why, not a kind of partner (tests/guest_login pins it).
+        "PartnerGuestSession",
     }
 
 

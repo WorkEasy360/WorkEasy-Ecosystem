@@ -95,6 +95,40 @@ def _holds_any(now: datetime, keys: frozenset[str]) -> Any:
     )
 
 
+def category_q(now: datetime, category: str) -> Q:
+    """The partners listed under ``category`` (Partners → Affiliate, Reseller,
+    White Label; ADR-062): ``capabilities.partner_category`` as one filter
+    expression, so the database decides and every partner is under exactly one.
+
+    - It holds the grants of its stored type: that type.
+    - Otherwise, with any workspace earned: the largest one it earns
+      (``LANDING_ORDER``), as the portal would open it.
+    - With none earned (a new draft): the type it was created as.
+    """
+    from workeasy360.commercial.partners import capabilities
+
+    if category not in capabilities.EXPERIENCES:
+        raise ValueError(category)
+    earns = {
+        key: Q(_holds_any(now, capabilities.experience_keys(key)))
+        for key in capabilities.EXPERIENCES
+    }
+    earned_any = Q()
+    stored_earned = Q()
+    for key, holds in earns.items():
+        earned_any |= holds
+        stored_earned |= Q(default_experience=key) & holds
+    largest = earns[category]
+    for key in capabilities.LANDING_ORDER:
+        if key == category:
+            break
+        largest &= ~earns[key]
+    landing = (Q(default_experience=category) & earns[category]) | (
+        ~stored_earned & largest
+    )
+    return landing | (~earned_any & Q(default_experience=category))
+
+
 def _live_links() -> Any:
     from workeasy360.commercial.partners.models import PartnerOrganizationLink
 
@@ -128,29 +162,21 @@ def held_capabilities(partner_ids: list[UUID], now: datetime) -> dict[UUID, set[
 # --- overview -----------------------------------------------------------------
 
 
-def overview_counts(
-    now: datetime,
-    *,
-    reseller_keys: frozenset[str],
-    white_label_keys: frozenset[str],
-    affiliate_keys: frozenset[str],
-    incomplete: Any,
-) -> dict[str, int]:
+def overview_counts(now: datetime, *, incomplete: Any) -> dict[str, int]:
     """The counts the Partners dashboard shows (ADR-048), each the size of the
-    All Partners list its card opens: the three labels over every partner that
-    holds the grants, in any state (a partner holding several is counted under
-    each), and ``profiles_incomplete`` with the same filter as
-    ``profile=incomplete`` (``incomplete`` - a terminated partner is history,
-    not unfinished)."""
+    list its card opens: the three types are the Affiliate, Reseller and White
+    Label pages (``category_q``, ADR-062: each partner under exactly one), and
+    ``profiles_incomplete`` uses the same filter as ``profile=incomplete``
+    (``incomplete`` - a terminated partner is history, not unfinished)."""
     from workeasy360.commercial.partners.models import PartnerAccount
 
     every = PartnerAccount.objects.all()
     return {
         "total_partners": every.count(),
         "active_partners": every.filter(status=PartnerStatus.ACTIVE.value).count(),
-        "resellers": every.filter(_holds_any(now, reseller_keys)).count(),
-        "white_label": every.filter(_holds_any(now, white_label_keys)).count(),
-        "affiliates": every.filter(_holds_any(now, affiliate_keys)).count(),
+        "resellers": every.filter(category_q(now, "reseller")).count(),
+        "white_label": every.filter(category_q(now, "white_label")).count(),
+        "affiliates": every.filter(category_q(now, "affiliate")).count(),
         "suspended_partners": every.filter(status=PartnerStatus.SUSPENDED.value).count(),
         "profiles_incomplete": every.filter(incomplete).count(),
     }
@@ -314,11 +340,13 @@ def partner_rows(
     cursor: str | None,
     page_size: int,
     extra: Any = None,
+    category: str | None = None,
 ) -> tuple[list[Any], bool]:
     """One page of partner rows, newest first, and whether there is another.
 
     ``experience_keys`` restricts the list to partners holding one of them (a
-    label); ``None`` lists every partner. ``query`` matches the partner's name,
+    label); ``None`` lists every partner. ``category`` restricts it to the
+    partners listed under one type (``category_q``). ``query`` matches the partner's name,
     code or legal name, or an email it is reached at - its contact, its business
     email or an active member's sign-in address. ``extra`` is one more filter
     expression the caller built (the profile-completion filter). Filters compose
@@ -334,6 +362,8 @@ def partner_rows(
     queryset = PartnerAccount.objects.order_by("-created_at", "-id")
     if experience_keys is not None:
         queryset = queryset.filter(_holds_any(now, experience_keys))
+    if category is not None:
+        queryset = queryset.filter(category_q(now, category))
     if status:
         queryset = queryset.filter(status=status)
     if query:

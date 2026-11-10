@@ -9,10 +9,34 @@ const EVERYTHING = [
 ];
 
 describe("the Admin console's map", () => {
-  it("has the modules the brief names, in its order, and nothing beneath them in the sidebar", () => {
+  it("has the modules the brief names, in its order, and only Partners opens beneath it", () => {
     const items = adminNav(EVERYTHING)[0].items;
     expect(items.map((i) => i.label)).toEqual(ADMIN_MODULES.map((m) => m.label));
-    expect(items.every((i) => !i.children)).toBe(true);
+    // ADR-062 (2026-11-10): Partners, then Affiliate, Reseller, White Label and All Partners.
+    expect(items.filter((i) => i.children).map((i) => i.label)).toEqual(["Partners"]);
+    const partners = items.find((i) => i.label === "Partners")!;
+    expect(partners.children!.map((c) => [c.label, c.href])).toEqual([
+      ["Affiliate", "/admin/partners/affiliate"],
+      ["Reseller", "/admin/partners/reseller"],
+      ["White Label", "/admin/partners/white-label"],
+      ["All Partners", "/admin/partners/all"],
+    ]);
+    expect(partners.reorderKey).toBe("w360.admin.menu.partners");
+  });
+
+  it("keeps Partners a plain entry for someone who may not see the partner lists", () => {
+    const items = adminNav(["platform.staff_kyc.view"])[0].items;
+    const partners = items.find((i) => i.label === "Partners")!;
+    expect(partners.children).toBeUndefined();
+    expect(partners.href).toBe("/admin/partners/applications");
+  });
+
+  it("files each type's page under All partners, so the module's tabs do not change", () => {
+    for (const path of ["/admin/partners/affiliate", "/admin/partners/reseller", "/admin/partners/white-label"]) {
+      expect(locate(path, adminModules(EVERYTHING))?.page.href).toBe("/admin/partners/all");
+    }
+    // The old white-label sub-addresses are not mistaken for the type's page.
+    expect(locate("/admin/partners/white-label/new", adminModules(EVERYTHING))?.page.href).not.toBe("/admin/partners/all");
   });
 
   it("lists each address once", () => {

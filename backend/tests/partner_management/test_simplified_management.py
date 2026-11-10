@@ -455,8 +455,9 @@ def test_the_dashboard_counts_are_factual(catalog, admin):
     ]
     assert cards["total_partners"] == 3
     assert cards["active_partners"] == 1
-    # The white-label bundle includes selling, so that partner wears both labels.
-    assert cards["resellers"] == 2
+    # ADR-062: each partner counts under the one type its row shows. The
+    # white-label bundle includes selling, but that partner is a White-label one.
+    assert cards["resellers"] == 1
     assert cards["white_label"] == 1
     assert cards["affiliates"] == 1
     assert cards["suspended_partners"] == 1
@@ -675,6 +676,6 @@ def test_a_terminated_partner_is_listed_by_type_but_never_counted_as_incomplete(
     assert created["id"] in listed(admin, type="affiliate")
     assert created["id"] not in listed(admin, profile="incomplete")
     cards = {c["key"]: c["count"] for c in admin.get(OVERVIEW).json()["cards"]}
-    # Each card is the size of the list it opens.
-    assert cards["affiliates"] == len(listed(admin, type="affiliate"))
+    # Each card is the size of the list it opens (ADR-062: the type's own page).
+    assert cards["affiliates"] == len(listed(admin, category="affiliate"))
     assert cards["profiles_incomplete"] == len(listed(admin, profile="incomplete"))

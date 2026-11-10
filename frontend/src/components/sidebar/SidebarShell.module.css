@@ -727,3 +727,13 @@
   width: 14px;
   height: 14px;
 }
+
+/* ADR-062: a section whose entries can be put in the person's own order (the
+   Admin's Partners menu): dragged with the pointer, or Alt+Arrow keys. */
+.subList > li[draggable="true"] {
+  cursor: grab;
+}
+
+.subList > li[data-dragging] {
+  opacity: 0.5;
+}

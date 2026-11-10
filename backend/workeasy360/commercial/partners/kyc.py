@@ -432,10 +432,30 @@ def _latest_correction(partner_id: UUID) -> dict[str, Any] | None:
 
 
 def application(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
-    """What a partner sees of its own application. Never who reviewed it."""
+    """What a partner sees of its own application. Never who reviewed it.
+
+    A staff guest view (Login as Guest, ADR-062) sees where the application
+    stands and nothing it contains: no details (PAN, GSTIN, addresses), no
+    document names, no decision text."""
     _assert_partner_member(ctx, partner_id)
     m = _models()
     row = _record(partner_id)
+    if ctx.is_break_glass:
+        return {
+            "status": row.status,
+            "version": row.version,
+            "details": {},
+            "requested_experience": row.requested_experience,
+            "submitted_at": row.submitted_at.isoformat() if row.submitted_at else None,
+            "decided_at": row.decided_at.isoformat() if row.decided_at else None,
+            "decision_reason": "",
+            "correction": None,
+            "requirements": [requirement_json(r) for r in _active_requirements()],
+            "documents": [],
+            "editable": False,
+            "may_edit": False,
+            "redacted": True,
+        }
     documents = list(
         m.PartnerKycDocument.objects.filter(
             partner_id=partner_id, removed_at__isnull=True

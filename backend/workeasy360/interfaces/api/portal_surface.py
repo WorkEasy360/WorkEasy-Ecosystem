@@ -70,6 +70,22 @@ def allowed_portals(path: str) -> frozenset[str] | None:
 
 _SAFE_METHODS: Final = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 
+#: Login as Guest's second step (ADR-062): the one write a portal accepts from
+#: another portal's origin - the Admin page's form post of a one-time ticket to
+#: the partner host. Exactly this path, exactly that pair of origins; the view
+#: checks the Origin again and spends the ticket (``auth_views.guest_enter_view``).
+GUEST_ENTER_PATH: Final = "/api/v1/partner/guest-view/enter"
+
+
+def _guest_entry_from_admin(
+    path: str, portal: str | None, origin: str, origins: dict[str, str]
+) -> bool:
+    return (
+        path == GUEST_ENTER_PATH
+        and portal == portals.PARTNER
+        and portals.parse_origin(origin) == portals.parse_origin(origins[portals.ADMIN])
+    )
+
 
 class PortalSurfaceMiddleware:
     """Refuse (404) a portal-owned API prefix on any other host, and (403) a
@@ -78,7 +94,9 @@ class PortalSurfaceMiddleware:
     The second rule is the per-portal half of CSRF. ``CSRF_TRUSTED_ORIGINS``
     is one list for the whole process - all four portals - so Django's own
     Origin check accepts a write from ``app.`` to ``admin.``. No portal ever
-    legitimately writes to another: each calls its own ``/api`` same-origin.
+    legitimately writes to another: each calls its own ``/api`` same-origin -
+    except Login as Guest's entry, the Admin page posting a one-time ticket to
+    the partner host (``GUEST_ENTER_PATH``, ADR-062).
     A request with no ``Origin`` header (a server-to-server caller) is left to
     Django's checks, unchanged.
     """
@@ -99,6 +117,7 @@ class PortalSurfaceMiddleware:
                 and portal in portals.WEB_PORTALS
                 and request.method not in _SAFE_METHODS
                 and portals.parse_origin(origin) != portals.parse_origin(origins[portal])
+                and not _guest_entry_from_admin(request.path, portal, origin, origins)
             ):
                 return JsonResponse(
                     {"code": "csrf_failed", "detail": "Refused: another origin."},

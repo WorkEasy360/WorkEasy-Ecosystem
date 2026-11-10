@@ -308,17 +308,41 @@ describe("a staff guest view (Super Admin → Guest login)", () => {
   it("opens in the partner's own workspace, says whose portal it is and leads back to the partner's admin page", async () => {
     const assign = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign });
-    const guest = { partner_id: ID, reason: "Support ticket 42", expires_at: "2026-03-01T10:30:00Z" };
+    const guest = {
+      partner_id: ID,
+      reason: "Support ticket 42",
+      expires_at: "2026-03-01T10:30:00Z",
+      viewer: { name: "Sam Staff", email: "sam@workeasy360.com" },
+    };
     const calls = mount("affiliate", ["dashboard"], {
       "GET /api/v1/partner/portal": [portal(partner({ role: "viewer", is_admin: false, guest }))],
       ...dashboardRoutes(),
-      "POST /api/v1/partner/guest-view/end": [ok({ ended: true })],
+      "POST /api/v1/partner/guest-view/end": [ok({ ended: true, return_url: "/admin/partners/affiliate" })],
     });
     expect(await screen.findByRole("heading", { level: 1, name: "Partner Dashboard" })).toBeInTheDocument();
-    const banner = screen.getByText(/Viewing Partner Portal as Acme Partners\./);
-    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Session" }));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith(`/admin/partners/${ID}`));
+    const banner = screen.getByRole("status", { name: "Guest Mode" });
+    expect(banner).toHaveTextContent("Guest Mode – Read Only.");
+    // Which partner, of which type, and who is looking.
+    expect(banner).toHaveTextContent("Viewing Acme Partners (Affiliate) as Sam Staff");
+    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Mode" }));
+    // Back to the Admin page Login as Guest was chosen on.
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/admin/partners/affiliate"));
     expect(calls.some((c) => c.key === "POST /api/v1/partner/guest-view/end")).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it("never follows a way back that is not one of the Admin's partner pages", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    const guest = { partner_id: ID, reason: "Support ticket 42", expires_at: "2026-03-01T10:30:00Z" };
+    mount("affiliate", ["dashboard"], {
+      "GET /api/v1/partner/portal": [portal(partner({ role: "viewer", is_admin: false, guest }))],
+      ...dashboardRoutes(),
+      "POST /api/v1/partner/guest-view/end": [ok({ ended: true, return_url: "https://evil.example.com/admin/partners/all" })],
+    });
+    const banner = await screen.findByRole("status", { name: "Guest Mode" });
+    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Mode" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(`/admin/partners/${ID}`));
     vi.unstubAllGlobals();
   });
 });
@@ -333,9 +357,9 @@ describe("exiting a guest view that cannot be ended", () => {
       ...dashboardRoutes(),
       "POST /api/v1/partner/guest-view/end": [{ status: 503, body: { code: "unavailable" } }],
     });
-    const banner = await screen.findByText(/Viewing Partner Portal as Acme Partners\./);
-    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Session" }));
-    expect(await within(banner).findByRole("alert")).toHaveTextContent("The guest session could not be ended.");
+    const banner = await screen.findByRole("status", { name: "Guest Mode" });
+    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Mode" }));
+    expect(await within(banner).findByRole("alert")).toHaveTextContent("Guest Mode could not be ended.");
     expect(assign).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });

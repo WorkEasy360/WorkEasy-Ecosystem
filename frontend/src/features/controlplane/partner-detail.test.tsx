@@ -265,8 +265,10 @@ describe("the header", () => {
     const notice = await banner("Profile incomplete");
     expect(within(notice).getByText(/Still needed:/)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Complete partner profile" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "More actions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Suspend" })).not.toBeInTheDocument();
+    // Reading who opened the portal as a guest is a view (ADR-062); nothing else is offered.
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Manage Guest Access"]);
   });
 
   it("says a draft with an incomplete profile needs setup, and keeps Activate disabled with the reason on the page", async () => {
@@ -337,7 +339,35 @@ describe("the header", () => {
     const suspend = screen.getByRole("button", { name: "Suspend" });
     expect(suspend.compareDocumentPosition(screen.getByRole("tablist", { name: "Partner sections" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Complete partner profile", "Terminate partner"]);
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Complete partner profile", "Manage Guest Access", "Terminate partner"]);
+  });
+
+  it("offers Login as Guest from the partner's own page, returning there on exit", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign, pathname: `/admin/partners/${ID}` });
+    const calls = mockApi(
+      routes({
+        [`POST /api/v1/admin/partners/${ID}/guest-view`]: [
+          ok({ partner_id: ID, reason: "x", expires_at: "2026-03-01T00:30:00Z", portal_path: "/partner/reseller/dashboard" }),
+        ],
+      }),
+    );
+    mount([...ALL, "platform.staff_partner.guest"]);
+    await screen.findByRole("button", { name: "Suspend" });
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Complete partner profile",
+      "Login as Guest",
+      "Manage Guest Access",
+      "Terminate partner",
+    ]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Login as Guest" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/partner/reseller/dashboard"));
+    expect(calls.find((c) => c.key === `POST /api/v1/admin/partners/${ID}/guest-view`)!.body).toEqual({
+      reason: "Login as Guest - Partner page",
+      return_path: `/admin/partners/${ID}`,
+    });
+    vi.unstubAllGlobals();
   });
 
   it("terminates only once TERMINATE is typed, with its version", async () => {

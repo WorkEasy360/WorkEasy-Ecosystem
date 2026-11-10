@@ -123,6 +123,9 @@ def test_the_partner_models_are_unchanged_by_this_work():
         # ADR-056: Super Admin's bounds on a selling partner's own price - a
         # boundary, never a price (tests/store_upgrade pins what it allows).
         "SellingPriceRange",
+        # ADR-062: a staff member's guest view of one partner - a record of
+        # who looked and why, not a kind of partner (tests/guest_login pins it).
+        "PartnerGuestSession",
     }
 
 
@@ -152,6 +155,9 @@ def test_the_landing_preference_is_read_only_by_presentation_code():
         "commercial/controlplane/partner_onboarding.py",
         # The HTTP adapter that answers "what is the landing now" - no decision.
         "interfaces/api/v1/admin_views.py",
+        # ADR-062: which Admin list (Affiliate, Reseller, White Label) a partner
+        # is shown in - the same landing, as a SQL filter. A listing, no decision.
+        "commercial/partners/console_reads.py",
     }
     readers = {
         path.relative_to(PACKAGE).as_posix()

@@ -172,8 +172,10 @@ def test_no_new_tables_for_partners_staff_or_identity():
         # 0016 adds the helpdesk, payout-details and withdrawal tables
         # (ADR-057) - tests/partner_dashboard pins what they do.
         # 0017 adds the KYC tables and 0018 a ticket's assignee and resolution (ADR-060);
-        # tests/admin_panel pins what they do.
-        "commercial/partners": "0018_ticket_assignment.py",
+        # tests/admin_panel pins what they do. 0019 adds the guest-session record
+        # (Login as Guest, ADR-062) - a staff member's read-only view of one
+        # partner, not a kind of partner; tests/guest_login pins what it does.
+        "commercial/partners": "0019_guest_sessions.py",
         # 0004 adds one column to the rule table (recurring, ADR-052); 0005 the
         # margin rule, campaigns and the funnel/ledger columns (ADR-053); 0006
         # the referral policy, link kinds, the trial step and the payment
@@ -184,8 +186,9 @@ def test_no_new_tables_for_partners_staff_or_identity():
         # 0010 adds no table and no column: it grants the Admin Panel's six new
         # staff permissions to each security administrator, so the live Admin
         # keeps the whole role after an upgrade (ADR-060 decision 13);
-        # tests/admin_panel/test_upgrade_grants.py pins what it does.
-        "platform/authz": "0010_admin_panel_staff_permissions.py",
+        # tests/admin_panel/test_upgrade_grants.py pins what it does. 0011 does the
+        # same for Login as Guest's permission (ADR-062); tests/guest_login.
+        "platform/authz": "0011_partner_guest_permission.py",
         "platform/identity": "0008_password_change_required.py",
     }
     for app, newest in expected.items():

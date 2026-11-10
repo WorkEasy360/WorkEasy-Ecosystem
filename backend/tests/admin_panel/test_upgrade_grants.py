@@ -44,6 +44,7 @@ KNOWN_STAFF_KEYS = {
     "platform.staff_integration.view",
     "platform.staff_kyc.review",
     "platform.staff_kyc.view",
+    "platform.staff_partner.guest",
     "platform.staff_partner.manage",
     "platform.staff_partner.view",
     "platform.staff_payment.manage",

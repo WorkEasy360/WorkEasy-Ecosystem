@@ -373,6 +373,29 @@ def resolve_landing(stored: str, held: frozenset[str] | set[str]) -> str | None:
     return min(options, key=LANDING_ORDER.index)
 
 
+#: The Admin's three partner categories (2026-11-10, ADR-062), in menu order.
+CATEGORIES: Final = (AFFILIATE, RESELLER, WHITE_LABEL)
+
+
+def partner_category(stored: str, held: frozenset[str] | set[str]) -> str | None:
+    """The one category a partner is listed under in the Admin (Partners →
+    Affiliate, Reseller, White Label): the type the All Partners table already
+    shows (``resolve_landing``), and - for a partner whose grants earn no
+    workspace yet, such as a new draft - the type it was created as
+    (``default_experience``), so it is listed from the moment it exists.
+    ``None`` for a partner with neither (All Partners lists it).
+
+    A **listing**, never an authority: what a partner may do still comes from
+    its grants alone. ``console_reads.category_q`` is the same rule in SQL; a
+    test holds the two together over every combination."""
+    landing = resolve_landing(stored, held)
+    if landing is not None:
+        return landing
+    if workspaces(held):  # pragma: no cover - resolve_landing returned one
+        return None
+    return stored if stored in EXPERIENCES else None
+
+
 def experience_keys(label: str) -> frozenset[str]:
     """The capabilities any one of which earns ``label`` (for a SQL filter)."""
     return EXPERIENCES[label][1]

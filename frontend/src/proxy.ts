@@ -191,8 +191,13 @@ export function routePortalRequest(args: {
  * no-cookie player or Vimeo's player - those two origins only, and the page
  * frames a player address the server built from a parsed video id, never a
  * typed link. Nothing else of this app embeds a frame.
+ *
+ * `form-action` (2026-11-10, ADR-062): `'self'`, plus `formTargets` - on the
+ * Super Admin host only, the partner portal's origin, so Login as Guest can post
+ * its one-time ticket there in a form body (never a URL). Nothing else of this
+ * app submits a form to another origin, and no other host gets a target.
  */
-export function contentSecurityPolicy(nonce: string, isDev: boolean): string {
+export function contentSecurityPolicy(nonce: string, isDev: boolean, formTargets: readonly string[] = []): string {
   return `
     default-src 'self';
     script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""};
@@ -203,7 +208,7 @@ export function contentSecurityPolicy(nonce: string, isDev: boolean): string {
     frame-src 'self' https://www.youtube-nocookie.com https://player.vimeo.com;
     object-src 'none';
     base-uri 'self';
-    form-action 'self';
+    form-action 'self'${formTargets.map((target) => ` ${target}`).join("")};
     frame-ancestors 'none';
     upgrade-insecure-requests;
   `
@@ -276,7 +281,7 @@ export function proxy(request: NextRequest): NextResponse {
       return NextResponse.redirect(new URL(routed.location, request.url), 302);
     }
     if (routed?.kind === "serve") {
-      return withSecurityHeaders(request, nonce, isDev, true);
+      return withSecurityHeaders(request, nonce, isDev, true, formTargetsFor(host, origins));
     }
   }
 
@@ -315,12 +320,24 @@ export function proxy(request: NextRequest): NextResponse {
   }
 
   const onCanonicalHost = offCanonicalRedirect(host, "/", "", canonical) === null;
-  return withSecurityHeaders(request, nonce, isDev, onCanonicalHost);
+  return withSecurityHeaders(request, nonce, isDev, onCanonicalHost, origins ? formTargetsFor(host, origins) : []);
+}
+
+/** The other origins a page on `host` may submit a form to: the partner
+ * portal, from the Super Admin host only (Login as Guest, ADR-062). */
+export function formTargetsFor(host: string, origins: PortalOrigins): string[] {
+  return portalForHost(host, origins) === "admin" ? [origins.partner] : [];
 }
 
 /** Serve the page, with the CSP and the security headers every page gets. */
-function withSecurityHeaders(request: NextRequest, nonce: string, isDev: boolean, onCanonicalHost: boolean): NextResponse {
-  const csp = contentSecurityPolicy(nonce, isDev);
+function withSecurityHeaders(
+  request: NextRequest,
+  nonce: string,
+  isDev: boolean,
+  onCanonicalHost: boolean,
+  formTargets: readonly string[] = [],
+): NextResponse {
+  const csp = contentSecurityPolicy(nonce, isDev, formTargets);
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
