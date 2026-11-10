@@ -1013,7 +1013,8 @@ describe("Users & Permissions", () => {
     const ops = cells("ops@acme.example");
     expect(ops[0]).toBe("-");
     expect(ops[1]).toBe("Viewer");
-    expect(ops[2]).toBe(`Invitation sent ${formatDateTime("2026-02-10T10:00:00Z")}`);
+    // Queued, not claimed as delivered: no delivery record came with it.
+    expect(ops[2]).toBe(`Invitation queued ${formatDateTime("2026-02-10T10:00:00Z")}`);
     expect(ops[3]).toBe("Never signed in");
     // Named, but the invitation waits for activation.
     expect(cells("later@acme.example")[2]).toBe("Invitation not sent yet (sent when the partner is activated)");
@@ -1040,10 +1041,10 @@ describe("Users & Permissions", () => {
     mount("users");
     await screen.findByRole("table", { name: "Members" });
     fireEvent.click(screen.getByRole("button", { name: "Resend setup link to ops@acme.example" }));
-    await screen.findByText("A new setup link was sent. The old one no longer works.");
+    await screen.findByText("A new setup link was queued for email. The old one no longer works.");
     expect(calls.some((c) => c.key === `POST ${BASE}/members/m2/resend-setup`)).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Resend setup link to later@acme.example" }));
-    await screen.findByText("The setup link was sent now, instead of when the partner is activated.");
+    await screen.findByText("A setup link was queued for email now, instead of when the partner is activated.");
   });
 
   it("says so when the person had already chosen a password and nothing was sent", async () => {

@@ -218,6 +218,32 @@ def customer_detail_view(
     return JsonResponse(cp_customers.detail(ctx, organization_id))
 
 
+@staff_view(["GET", "POST"])
+def customer_partner_view(
+    request: HttpRequest, ctx: TenantContext, organization_id: UUID
+) -> JsonResponse:
+    """The customer's partner: GET the current one and the history; POST
+    ``{partner_id, reason}`` to assign one or change it (2026-11-10)."""
+    if request.method == "POST":
+        body = _body(request)
+        return JsonResponse(
+            cp_customers.assign_partner(
+                ctx,
+                organization_id,
+                partner_id=body.get("partner_id"),
+                reason=body.get("reason"),
+            )
+        )
+    return JsonResponse(cp_customers.partner_assignment(ctx, organization_id))
+
+
+@staff_view(["GET"])
+def assignable_partners_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    return JsonResponse(
+        {"results": cp_customers.assignable_partners(ctx, request.GET.get("q") or "")}
+    )
+
+
 @staff_view(["POST"])
 def customer_suspend_view(
     request: HttpRequest, ctx: TenantContext, organization_id: UUID
@@ -469,6 +495,7 @@ def partner_resellers_view(request: HttpRequest, ctx: TenantContext) -> JsonResp
             scope=request.GET.get("scope") or None,
             label=request.GET.get("type") or None,
             profile=request.GET.get("profile") or None,
+            kyc_filter=request.GET.get("kyc") or None,
             **query_page_args(request),
         )
     )
@@ -1080,6 +1107,19 @@ def partner_create_view(request, ctx) -> JsonResponse:
                     "account_created": created.account_created,
                     "invited": created.invited,
                 },
+                # Where the invitation stands right now: queued, deferred,
+                # not_sent or null. Never "delivered" - that is not known yet;
+                # the partner's page shows sent or failed once the worker ran.
+                "invitation": (
+                    {
+                        "state": created.invitation_state,
+                        "delivery_mode": created.email_delivery_mode,
+                    }
+                    if created.invited
+                    else None
+                ),
+                "contact_email": created.contact_email,
+                "phone": created.phone,
                 "capabilities": created.capabilities,
                 "payout_currency": created.payout_currency,
             },

@@ -591,10 +591,7 @@ def test_every_commercial_mutation_is_audited():
                 # core (ADR-045 split the staff-only partner commands so the
                 # partner's own team and sub-partner commands share the core)
                 # is audited when the core is.
-                # Approving an application activates its partner through that same
-                # core, behind the KYC reviewer's grant rather than the partner manager's.
-                shared_core = {"activate_after_kyc": "_set_partner_status"}
-                wanted = shared_core.get(node.name, f"_{node.name}")
+                wanted = f"_{node.name}"
                 core = next(
                     (
                         other

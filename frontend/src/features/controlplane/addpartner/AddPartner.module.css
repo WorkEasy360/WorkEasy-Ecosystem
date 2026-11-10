@@ -307,3 +307,25 @@
   font-size: 12px;
   color: var(--w360-text-muted);
 }
+
+/* The optional "different contact email" switch, sized like a field so the grid
+   keeps two aligned columns. */
+.contactToggle {
+  display: grid;
+  align-content: end;
+  gap: var(--w360-space-1);
+  min-width: 0;
+}
+
+.contactToggle p {
+  margin: 0;
+  font-size: var(--w360-fs-meta);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  font-size: var(--w360-fs-body);
+  color: var(--w360-text);
+}

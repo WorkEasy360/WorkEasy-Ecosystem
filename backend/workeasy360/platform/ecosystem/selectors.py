@@ -260,6 +260,23 @@ def launch_target(product_code: str) -> LaunchTargetDTO | None:
     )
 
 
+def has_return_destinations(product_code: str) -> bool | None:
+    """Whether this product's integration lists at least one approved return
+    destination (``redirect_uris``), or ``None`` when it has no integration and so
+    nothing to approve. A yes or no only - never the addresses themselves, so this
+    is as ungated as :func:`launch_target`."""
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    row = (
+        ProductIntegration.objects.filter(product_code=str(product_code))
+        .values("manifest")
+        .first()
+    )
+    if row is None:
+        return None
+    return bool((row["manifest"] or {}).get("redirect_uris"))
+
+
 def launch_urls(product_codes: Iterable[str]) -> dict[str, str]:
     """``{product_code: launch_url}`` for the registered integrations of these
     products, in one query (the Product Manager's list, ADR-051). Ungated for

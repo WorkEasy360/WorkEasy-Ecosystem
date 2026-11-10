@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Icon } from "@/components/sidebar/icons";
 import { reportsApi, type ReportColumn, type ReportQuery } from "@/lib/api/adminPanel";
 import { adminApi } from "@/lib/api/controlPlane";
 import { can, useAdmin } from "./ControlShell";
 import { DateRange, OffsetPager, dayBefore } from "./AdminListParts";
 import { LoadGate, useLoad } from "./ui";
+import local from "./AdminListParts.module.css";
 import {
   Alert,
   DataTable,
@@ -91,6 +92,7 @@ export function ReportScreen({ kind }: { kind: ReportKind }) {
   const [product, setProduct] = useState("");
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
+  const exportWhy = useId();
 
   // The catalog needs its own grant. Without it the report still runs, unfiltered by product.
   const offerProducts = meta.product && can(permissions, CATALOG_VIEW);
@@ -140,7 +142,26 @@ export function ReportScreen({ kind }: { kind: ReportKind }) {
               <Icon name="download" size={16} />
               <span>Export CSV</span>
             </a>
-          ) : undefined
+          ) : (
+            // Always on the page (2026-11-10: an inspection of an empty period found
+            // no export at all). Disabled with the reason beside it, so the words
+            // are readable even though a disabled button cannot be focused.
+            <span className={local.exportOff}>
+              <button type="button" className={buttonClass("secondary")} disabled aria-describedby={exportWhy}>
+                <Icon name="download" size={16} />
+                <span>Export CSV</span>
+              </button>
+              <span id={exportWhy} className={local.exportWhy}>
+                {load.status === "loading"
+                  ? "Loading the report…"
+                  : load.status === "forbidden"
+                    ? "You do not have access to this report."
+                    : load.status === "error"
+                      ? "The report could not be loaded."
+                      : "Nothing to export in this period."}
+              </span>
+            </span>
+          )
         }
       >
         <SearchInput label={meta.search} value={query} onSearch={first(setQuery)} />

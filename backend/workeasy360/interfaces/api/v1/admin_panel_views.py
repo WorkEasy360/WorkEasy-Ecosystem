@@ -101,6 +101,16 @@ def kyc_requirement_view(
 
 
 @staff_view(["GET"])
+def kyc_access_log_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """Who opened which KYC document, across every application (2026-11-10)."""
+    return JsonResponse(
+        kyc.access_log(
+            ctx, limit=request.GET.get("limit"), offset=request.GET.get("offset")
+        )
+    )
+
+
+@staff_view(["GET"])
 def kyc_applications_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     return JsonResponse(
         kyc.queue(

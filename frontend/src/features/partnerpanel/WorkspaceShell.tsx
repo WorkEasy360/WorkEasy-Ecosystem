@@ -57,7 +57,7 @@ import styles from "./PartnerPanel.module.css";
 const SWITCHER_ORDER: ExperienceKey[] = ["affiliate", "reseller", "white_label"];
 
 const STATUS_NOTICE: Record<string, string> = {
-  draft: "This partner account isn't active yet. Nothing can be done until it is.",
+  draft: "This partner account isn't active yet: it becomes active once its KYC application is approved and an Admin activates it.",
   suspended: "This partner account is suspended. History stays visible; new actions are unavailable.",
   terminated: "This partner account has ended. Its commission and payout history stays visible; nothing else is available.",
 };
@@ -253,7 +253,13 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
             )}
             {partner.status !== "active" && (
               <p role="status" className={`w360-badge w360-badge-warning ${consoleStyles.banner} ${consoleStyles.notice}`}>
-                {STATUS_NOTICE[partner.status] ?? `This partner account is ${partner.status}.`}
+                {STATUS_NOTICE[partner.status] ?? `This partner account is ${partner.status}.`}{" "}
+                {/* 2026-11-10: a draft's workspace menu is empty, so this is its way to the application. */}
+                {partner.status === "draft" && (
+                  <Link href={`/partner/${partner.partner_id}/kyc`} className="w360-btn w360-btn-secondary">
+                    Complete your KYC application
+                  </Link>
+                )}
               </p>
             )}
           </>
@@ -283,7 +289,10 @@ export function WorkspaceContent({ experience, path }: { experience: ExperienceK
   // page, or - when the person cannot read the dashboard (an ended partner reads
   // its money and nothing else) - the first page they can.
   let redirect: string | null = null;
-  if (clean === "") redirect = `${base}/dashboard`;
+  // A draft partner can do nothing in a workspace yet (2026-11-10: staff-created
+  // drafts landed on "You don't have access"): its one task is the KYC application.
+  if (partner?.status === "draft") redirect = `/partner/${partner.partner_id}/kyc`;
+  else if (clean === "") redirect = `${base}/dashboard`;
   else if (def.aliases[clean] !== undefined) redirect = `${base}/${def.aliases[clean]}`;
   else if (clean === "dashboard" && !pageAllowed(def, "dashboard", can)) {
     const first = firstAllowedPath(def, can);

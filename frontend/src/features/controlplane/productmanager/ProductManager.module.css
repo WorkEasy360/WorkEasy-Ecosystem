@@ -1161,3 +1161,10 @@
   color: var(--w360-text-muted);
 }
 
+
+/* What a missing publish requirement asks for, under its label. */
+.checkDetail {
+  display: block;
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-text-muted);
+}

@@ -1,9 +1,11 @@
 """Add Partner: the credentials check and the one atomic command (ADR-047, ADR-048).
 
 Super Admin creates a partner with **only what the account needs**: the
-partner's name, the administrator's email, the password Super Admin types (twice)
-and a partner type - Reseller, White-label or Affiliate - with the country as an
-option. Everything else (business details, products, prices, commission, brand,
+partner's name, the **Partner Email** (the partner's own login and, unless a
+separate contact email is given, its contact address - never a Workeasy360 staff
+address), how that person gets in (an invitation, or a password Super Admin types
+twice) and a partner type - Reseller, White-label or Affiliate - with the country,
+a mobile number and a separate contact email as options. Everything else (business details, products, prices, commission, brand,
 domain, referral program, team) is set afterwards on the partner's own page, in
 its *Complete Your Profile* wizard. Two functions:
 
@@ -74,7 +76,7 @@ from workeasy360.commercial.partners import (
     services,
 )
 from workeasy360.commercial.partners.domain import clean_text
-from workeasy360.commercial.partners.inputs import Problems
+from workeasy360.commercial.partners.inputs import Problems, clean_phone
 from workeasy360.contracts.enums import UserStatus
 from workeasy360.contracts.errors import PartnerValidationError, PasswordPolicyViolation
 from workeasy360.contracts.values.countries import COUNTRY_CODES
@@ -86,6 +88,7 @@ from workeasy360.platform.authz.control_plane import in_scope
 from workeasy360.platform.identity import lifecycle
 from workeasy360.platform.identity import selectors as identity
 from workeasy360.platform.identity.email import normalize_email
+from workeasy360.platform.notifications.services import email_delivery_mode
 from workeasy360.platform.observability.metrics import metrics
 
 MANAGE: Final = services.MANAGE
@@ -115,7 +118,11 @@ ADMIN_ROLE: Final = "owner"
 #: The keys the Add Partner request may carry. Anything else is refused, so the
 #: browser cannot slip in capabilities, products, prices or a status.
 _BODY_KEYS: Final = frozenset({"experience", "partner", "administrator"})
-_PARTNER_KEYS: Final = frozenset({"display_name", "country"})
+#: ``contact_email`` and ``phone`` are optional (2026-11-10): the Partner Email is
+#: the login and, unless a separate contact email is given, the contact address too.
+_PARTNER_KEYS: Final = frozenset(
+    {"display_name", "country", "contact_email", "phone", "allow_same_name"}
+)
 
 #: The preferred currency a new partner starts with, from its country when the
 #: platform keeps that country's currency; otherwise the platform's default. It
@@ -143,6 +150,18 @@ _CANNOT_LINK: Final = "That account cannot be added."
 _STAFF_ACCOUNT: Final = (
     "A Workeasy360 staff account cannot be a partner administrator. Use another email."
 )
+_PENDING_INVITATION: Final = (
+    "This email already has a partner invitation waiting to be accepted ({name}). "
+    "Resend that invitation from the partner's page instead of creating another partner."
+)
+_DUPLICATE_NAME: Final = (
+    "A partner named {name} already exists. Open it from All Partners, give this "
+    "partner a name that tells them apart, or confirm that it is a different partner."
+)
+_DUPLICATE_CONTACT: Final = (
+    "Another partner ({name}) already uses this email as its contact address. "
+    "Open that partner instead of creating a duplicate."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +180,17 @@ class Created:
     payout_currency: str
     #: The administrator will be emailed a link to set a password (``invite``).
     invited: bool = False
+    #: Where that invitation stands right after creation: ``queued`` (handed to
+    #: the mail queue, not yet sent), ``deferred`` (emailed when the partner is
+    #: activated - only with the KYC gate off), ``not_sent`` (nothing queued), or
+    #: ``None`` when nobody was invited. Never "delivered": that is not known yet.
+    invitation_state: str | None = None
+    #: ``smtp`` when mail leaves this server; ``console`` and the like on a
+    #: development or test server, where nothing reaches a real inbox.
+    email_delivery_mode: str = ""
+    #: The optional contact details given beside the login email.
+    contact_email: str = ""
+    phone: str = ""
 
 
 # --- the administrator's input ---------------------------------------------------------
@@ -182,6 +212,9 @@ class _Admin:
     # object must not print what was typed.
     password: str = field(repr=False)
     confirm: str = field(repr=False)
+    #: 2026-11-10: with a password typed by staff, the person must choose their own
+    #: at first sign-in (the identity middleware blocks everything else until then).
+    require_change: bool = False
 
     @property
     def full_name(self) -> str:
@@ -239,6 +272,7 @@ def _admin_input(raw: Any, problems: Problems, *, with_password: bool) -> _Admin
         mode=mode,
         password=secret("password"),
         confirm=secret("password_confirm"),
+        require_change=spec.get("require_password_change") is True,
     )
 
 
@@ -268,10 +302,24 @@ def _account_state(email: str) -> tuple[str, UUID | None]:
     return "existing", facts["user_id"]
 
 
+def _pending_invitation(email: str) -> str | None:
+    """The partner whose invitation this address has not accepted yet, if any:
+    an account with no password that is an active member of a partner. Creating
+    a second partner for it would send a second, competing invitation."""
+    facts = identity.user_facts_for_email(email) if email else None
+    if facts is None or identity.has_usable_password(facts["user_id"]):
+        return None
+    return selectors.pending_member_partner_name(facts["user_id"])
+
+
 def _check_account(admin: _Admin, problems: Problems) -> tuple[str, UUID | None]:
     state, user_id = _account_state(admin.email)
     if admin.mode in NEW_ACCOUNT_MODES and state != "new":
-        problems.add("administrator.email", _EXISTING_ACCOUNT)
+        waiting = _pending_invitation(admin.email) if state == "unavailable" else None
+        problems.add(
+            "administrator.email",
+            _PENDING_INVITATION.format(name=waiting) if waiting else _EXISTING_ACCOUNT,
+        )
     if admin.mode == "link_existing":
         if state == "new":
             problems.add(
@@ -396,6 +444,9 @@ class _Plan:
     account: str
     user_id: UUID | None
     problems: list[dict[str, str]]
+    contact_email: str = ""
+    phone: str = ""
+    allow_same_name: bool = False
 
 
 def _plan(raw: Any, *, with_password: bool) -> _Plan:
@@ -426,21 +477,51 @@ def _plan(raw: Any, *, with_password: bool) -> _Plan:
     if country and (not isinstance(country, str) or country not in COUNTRY_CODES):
         problems.add("partner.country", "Choose a country from the list.")
         country = ""
+    contact = problems.run(
+        "partner.contact_email",
+        services.clean_email,
+        partner.get("contact_email"),
+        required=False,
+        field="contact_email",
+    )
+    phone = problems.run(
+        "partner.phone", clean_phone, partner.get("phone"), field="phone"
+    )
     admin = _admin_input(body.get("administrator"), problems, with_password=with_password)
     if not admin.email:
         problems.add("administrator.email", "Enter a valid email address.")
     state, user_id = ("new", None)
     if admin.email:
         state, user_id = _check_account(admin, problems)
+    allow_same_name = partner.get("allow_same_name") is True
+    _check_duplicates(
+        "" if allow_same_name else (name or ""), contact or admin.typed_email, problems
+    )
     return _Plan(
+        allow_same_name=allow_same_name,
         experience=key or "",
         display_name=name or "",
         country=country,
+        contact_email=contact or "",
+        phone=phone or "",
         admin=admin,
         account=state,
         user_id=user_id,
         problems=problems.items,
     )
+
+
+def _check_duplicates(display_name: str, contact_email: str, problems: Problems) -> None:
+    """Refuse what is almost certainly a second copy of a partner that exists: the
+    same name, or the same contact address, on a partner that is not terminated."""
+    if display_name:
+        same = selectors.live_partner_named(display_name)
+        if same is not None:
+            problems.add("partner.display_name", _DUPLICATE_NAME.format(name=same))
+    if contact_email:
+        holder = selectors.live_partner_with_contact(normalize_email(contact_email))
+        if holder is not None:
+            problems.add("administrator.email", _DUPLICATE_CONTACT.format(name=holder))
 
 
 def default_currency(country: str) -> str:
@@ -518,6 +599,9 @@ def _new_account(admin: _Admin, *, invited: bool = False) -> Any:
                 status=UserStatus.ACTIVE,
                 source=User.AcquisitionSource.OPERATOR,
                 verified=False,
+                # Staff know a password they typed: when asked, the person
+                # replaces it at first sign-in.
+                password_change_required=not invited and admin.require_change,
             )
     except (IntegrityError, ValidationError) as exc:
         # Another request took the address between the check and the insert (the
@@ -574,19 +658,42 @@ def create(ctx: TenantContext, raw: Any) -> Created:
             user = _new_account(plan.admin, invited=invited)
             user_id = user.id
 
+        # Re-check duplicates under a lock: two staff creating the same partner at
+        # once must not both succeed.
+        _lock(f"partner-onboard:name:{plan.display_name.casefold()}")
+        late = Problems()
+        _check_duplicates(
+            "" if plan.allow_same_name else plan.display_name,
+            plan.contact_email or plan.admin.typed_email,
+            late,
+        )
+        if late.items:
+            _raise(late.items)
+
+        contact_address = plan.contact_email or plan.admin.typed_email
         partner = services.create_partner(
             ctx,
             code=_free_code(plan.display_name),
             display_name=plan.display_name,
             payout_currency=default_currency(plan.country),
+            # The Partner Email is the contact address unless another was given.
+            contact_email=contact_address,
         )
-        if plan.country:
-            profile.update_profile(
-                ctx,
-                partner.id,
-                expected_version=partner.version,
-                data={"business": {"country": plan.country}},
+        business = {
+            key: value
+            for key, value in (
+                ("country", plan.country),
+                ("phone", plan.phone),
+                ("business_email", contact_address),
             )
+            if value
+        }
+        profile.update_profile(
+            ctx,
+            partner.id,
+            expected_version=partner.version,
+            data={"business": business},
+        )
 
         # The type: its capability bundle and the landing preference, in one call.
         transition = experience.grant_experience(
@@ -598,15 +705,20 @@ def create(ctx: TenantContext, raw: Any) -> Created:
             user_id=user_id,
             role=ADMIN_ROLE,  # type: ignore[arg-type]
         )
+        invitation_state: str | None = None
         if invited:
             if kyc.required():
                 # Activation now waits for an approved application, which this person
-                # has to send, so they need their setup link straight away.
-                services.send_setup_link_now(partner, member)
+                # has to send, so they need their setup link straight away. Queued,
+                # not delivered: the mail worker sends it after this commits, and the
+                # partner's page shows whether it was sent or failed.
+                queued = services.send_setup_link_now(partner, member)
+                invitation_state = "queued" if queued else "not_sent"
             else:
                 # Emailed when the partner is activated (the partner is a draft now).
                 member.invitation_deferred = True
                 member.save(update_fields=["invitation_deferred"])
+                invitation_state = "deferred"
         audit.record(
             ctx,
             "partner.onboarded",
@@ -637,4 +749,8 @@ def create(ctx: TenantContext, raw: Any) -> Created:
         invited=invited,
         capabilities=sorted(selectors.active_capabilities(partner.id)),
         payout_currency=current.payout_currency,
+        invitation_state=invitation_state,
+        email_delivery_mode=email_delivery_mode(),
+        contact_email=plan.contact_email,
+        phone=plan.phone,
     )

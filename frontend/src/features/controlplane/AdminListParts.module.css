@@ -36,3 +36,18 @@
   width: 150px;
   max-width: 100%;
 }
+
+/* A report's Export CSV when there is nothing to export: the button stays on the
+   page, disabled, with the reason written next to it. Wraps under 360px. */
+.exportOff {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  min-width: 0;
+}
+
+.exportWhy {
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-text-muted);
+}

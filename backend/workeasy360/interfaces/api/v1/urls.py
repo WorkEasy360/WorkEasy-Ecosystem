@@ -1035,6 +1035,11 @@ _admin = [
         name="admin-kyc-applications",
     ),
     path(
+        "admin/kyc/document-access",
+        admin_panel_views.kyc_access_log_view,
+        name="admin-kyc-document-access",
+    ),
+    path(
         "admin/kyc/applications/<uuid:partner_id>",
         admin_panel_views.kyc_application_view,
         name="admin-kyc-application",
@@ -1095,6 +1100,17 @@ _admin = [
         "admin/customers/<uuid:organization_id>",
         admin_views.customer_detail_view,
         name="admin-customer-detail",
+    ),
+    # 2026-11-10: assign or change a customer's partner, and the history.
+    path(
+        "admin/customers/<uuid:organization_id>/partner",
+        admin_views.customer_partner_view,
+        name="admin-customer-partner",
+    ),
+    path(
+        "admin/partners/assignable",
+        admin_views.assignable_partners_view,
+        name="admin-partners-assignable",
     ),
     path(
         "admin/customers/<uuid:organization_id>/suspend",

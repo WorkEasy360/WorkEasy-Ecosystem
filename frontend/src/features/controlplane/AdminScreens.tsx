@@ -3,15 +3,15 @@
 import { useId, useMemo, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/sidebar/icons";
-import { adminApi, type AuditRow, type CustomerDetail, type CustomerRow, type Diagnosis } from "@/lib/api/controlPlane";
+import { adminApi, type AuditRow, type CustomerDetail, type CustomerRow, type Diagnosis, type ProductTrialView } from "@/lib/api/controlPlane";
 import { adminConsoleApi } from "@/lib/api/adminConsole";
 import { accessApi } from "@/lib/api/adminPanel";
 import { can, useAdmin } from "./ControlShell";
 import { CustomerBilling } from "./AdminBilling";
-import { ROLES, StaffRolesPanel, TableSection } from "./AdminCommerce";
+import { ROLES, StaffRolesPanel, TableSection, sourceLabel } from "./AdminCommerce";
 import { DateRange } from "./AdminListParts";
 import { DateText } from "./AdminUsers";
-import { AssignPlanPopup, AssignmentHistoryCard, CustomerMembersCard, NewCustomerPopup } from "./CustomerExtras";
+import { AssignPlanPopup, AssignmentHistoryCard, CustomerMembersCard, NewCustomerPopup, PartnerAssignmentCard } from "./CustomerExtras";
 import { FormPopup } from "./Modal";
 import { TextField } from "./widgets";
 import { LoadGate, ReasonAction, autoReason, useAction, useLoad, usePaged } from "./ui";
@@ -38,6 +38,7 @@ import {
   Trunc,
   EMPTY,
   eventLabel,
+  formatDate,
   formatDateTime,
   productName,
   sentence,
@@ -222,12 +223,16 @@ export function CustomerDetailScreen({ organizationId }: { organizationId: strin
                 <SubscriptionPanel detail={d} canManage={subs} busy={busy} act={act} organizationId={organizationId} />
               </Card>
 
-              <Card title="Entitlements and seats" description="Rebuilt from subscriptions; staff overrides are time-boxed grants.">
+              <Card
+                title="Entitlements and seats"
+                description="Rebuilt from subscriptions, bundles, staff overrides (time-boxed grants) and product trials. The Source column names which one gives each product."
+              >
                 <DataTable
                   caption="Products this customer holds"
                   columns={[
                     { key: "product", header: "Product", value: ([code]) => code, render: ([code]) => productName(code) },
                     { key: "status", header: "Status", value: ([, e]) => e.status, render: ([, e]) => <StatusBadge value={e.status} /> },
+                    { key: "source", header: "Source", value: ([, e]) => sourceLabel(e.source_kind), render: ([, e]) => sourceLabel(e.source_kind) },
                     {
                       key: "seats",
                       header: "Seats",
@@ -257,6 +262,10 @@ export function CustomerDetailScreen({ organizationId }: { organizationId: strin
                 />
                 <OverridePanel detail={d} canManage={subs} busy={busy} act={act} organizationId={organizationId} />
               </Card>
+
+              <ProductTrialsCard trials={d.product_trials ?? []} />
+
+              {can(permissions, "platform.staff_partner.view") && <PartnerAssignmentCard organizationId={organizationId} onChanged={reload} />}
 
               <Card title="Members, billing and partner">
                 <DescriptionList
@@ -321,6 +330,47 @@ export function CustomerDetailScreen({ organizationId }: { organizationId: strin
       </LoadGate>
     </Page>
   );
+}
+
+/** Product trials (Phase 11) are their own record, not a subscription and not an
+ * override, so they are listed here and never folded into either. "In effect"
+ * comes from the server's clock: a trial past its end has ended even before the
+ * scheduled job marks its record. */
+function ProductTrialsCard({ trials }: { trials: ProductTrialView[] }) {
+  return (
+    <Card
+      title="Product trials"
+      description="Free trials of one product each. A trial is not a subscription, so the Subscriptions page does not count it."
+    >
+      <DataTable
+        caption="Product trials"
+        columns={[
+          { key: "product", header: "Product", value: (t) => t.product_code, render: (t) => productName(t.product_code) },
+          {
+            key: "state",
+            header: "State",
+            value: (t) => trialState(t),
+            render: (t) => <Badge tone={t.in_effect ? "warning" : "neutral"}>{trialState(t)}</Badge>,
+          },
+          { key: "started", header: "Started", value: (t) => t.started_at, render: (t) => formatDate(t.started_at) },
+          { key: "ends", header: "Ends", value: (t) => t.ends_at, render: (t) => formatDate(t.ends_at) },
+          { key: "seats", header: "Seats", align: "right", value: (t) => t.seats, render: (t) => t.seats },
+        ]}
+        rows={trials}
+        rowKey={(t) => t.id}
+        pageSize={0}
+        maxHeight={false}
+        empty={<EmptyState icon="box" title="No product trials" compact />}
+      />
+    </Card>
+  );
+}
+
+function trialState(t: ProductTrialView): string {
+  if (t.in_effect) return "Active";
+  if (t.status === "converted") return "Converted to paid";
+  if (t.status === "cancelled") return "Cancelled";
+  return "Ended";
 }
 
 const OVERRIDE_DAYS = [7, 30, 90];

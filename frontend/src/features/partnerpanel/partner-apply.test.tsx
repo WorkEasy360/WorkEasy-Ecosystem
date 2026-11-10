@@ -186,3 +186,12 @@ describe("the link from the sign-in page", () => {
     expect(screen.queryByRole("link", LINK)).not.toBeInTheDocument();
   });
 });
+
+describe("Continue as Guest (2026-11-10)", () => {
+  it("is offered on the partner sign-in page and opens the static preview", async () => {
+    mockApi({ [`GET ${SESSION}`]: [SIGNED_OUT] });
+    render(<LoginScreen portal="partner" />);
+    expect(await screen.findByRole("link", { name: "Continue as Guest" })).toHaveAttribute("href", "/partner/preview");
+    expect(screen.getByText(/Not a partner account/)).toBeInTheDocument();
+  });
+});

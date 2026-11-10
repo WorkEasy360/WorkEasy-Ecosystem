@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { adminApi } from "@/lib/api/controlPlane";
 import {
   kycApi,
   type KycApplicationDetail,
@@ -96,10 +97,24 @@ export function KycApplicationsScreen() {
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
   // The last answer: the chips and the pager stay put, and keep focus, while the next one loads.
-  const [seen, setSeen] = useState<{ counts: Record<string, number>; total: number; limit: number; shown: number } | null>(null);
+  const [seen, setSeen] = useState<{
+    counts: Record<string, number>;
+    total: number;
+    limit: number;
+    shown: number;
+    awaiting: number;
+    legacy: number;
+  } | null>(null);
   const [load] = useLoad(async () => {
     const page = await kycApi.queue({ status: status || undefined, q: query || undefined, limit: PAGE_SIZE, offset });
-    setSeen({ counts: page.counts, total: page.total, limit: page.limit, shown: page.results.length });
+    setSeen({
+      counts: page.counts,
+      total: page.total,
+      limit: page.limit,
+      shown: page.results.length,
+      awaiting: page.awaiting_activation ?? 0,
+      legacy: page.legacy_active ?? 0,
+    });
     return page;
   }, [status, query, offset]);
 
@@ -142,8 +157,25 @@ export function KycApplicationsScreen() {
       <PageHeader
         title="Applications"
         subtitle="Partner applications and where each one stands."
-        info="KYC status says where an application stands. Partner account status says whether the partner may operate. Approving an application activates a draft partner; nothing else does."
+        info="KYC status says where an application stands. Partner account status says whether the partner may operate. An active partner needs both: an approved application, then an Admin's activation."
       />
+      {seen && seen.awaiting > 0 && (
+        <Alert tone="info" title={`${seen.awaiting} approved ${seen.awaiting === 1 ? "partner is" : "partners are"} waiting to be activated`}>
+          Approving an application does not activate the partner. Open an approved application and choose Activate partner, or{" "}
+          <button type="button" className={styles.linkButton} onClick={() => choose("approved")}>
+            show approved applications
+          </button>
+          .
+        </Alert>
+      )}
+      {seen && seen.legacy > 0 && (
+        <Alert tone="neutral" title={`${seen.legacy} ${seen.legacy === 1 ? "partner was" : "partners were"} active before KYC was required`}>
+          {seen.legacy === 1 ? "It keeps its" : "They keep their"} status and {seen.legacy === 1 ? "has" : "have"} no approved application on file. Marking{" "}
+          {seen.legacy === 1 ? "it" : "them"} approved would record a review nobody made, so they are listed on{" "}
+          <Link href="/admin/partners/all?kyc=legacy">Approved Partners</Link> with the label &ldquo;Active before KYC&rdquo;. Any partner leaving draft now
+          needs an approved application.
+        </Alert>
+      )}
       <StatusChips
         label="KYC status"
         value={status}
@@ -219,6 +251,22 @@ function Application({ app, reload }: { app: KycApplicationDetail; reload: () =>
     if (message) toast.success(message);
     reload();
   };
+  const readyToActivate = app.status === "approved" && app.partner_status === "draft";
+  const mayActivate = readyToActivate && can(permissions, "platform.staff_partner.manage") && app.partner_version !== undefined;
+
+  function activate() {
+    ask({
+      title: `Activate ${app.partner_name}?`,
+      message:
+        "Its KYC application is approved. Activating gives the partner the capabilities approved for it, and its administrators can start working in the partner portal.",
+      confirmLabel: "Activate partner",
+      onConfirm: async () => {
+        await adminApi.setPartnerStatus(app.partner_id, "active", "Activated after KYC approval.", app.partner_version as number);
+        reload();
+        return `${app.partner_name} is now active.`;
+      },
+    });
+  }
 
   async function startReview() {
     setBusy(true);
@@ -253,7 +301,11 @@ function Application({ app, reload }: { app: KycApplicationDetail; reload: () =>
           `Reviewer: ${app.reviewer_name || "nobody yet"}`,
         ]}
         actions={
-          app.may_decide ? (
+          mayActivate ? (
+            <Button variant="primary" onClick={activate}>
+              Activate partner
+            </Button>
+          ) : app.may_decide ? (
             <>
               {app.status === "submitted" && (
                 <Button loading={busy} onClick={() => void startReview()}>
@@ -272,6 +324,13 @@ function Application({ app, reload }: { app: KycApplicationDetail; reload: () =>
         }
       />
       {error && <Alert tone="danger">{error}</Alert>}
+      {readyToActivate && (
+        <Alert tone="info" title="Approved, not yet active">
+          {mayActivate
+            ? "Approval does not activate a partner. Choose Activate partner when it should start operating."
+            : "Approval does not activate a partner. Someone who may manage partners has to activate it."}
+        </Alert>
+      )}
       {app.decision_reason && (app.status === "correction_required" || app.status === "rejected") && (
         <Alert tone="warning" title={app.status === "rejected" ? "Why it was rejected" : "What the partner was asked to correct"}>
           {app.decision_reason}
@@ -282,7 +341,10 @@ function Application({ app, reload }: { app: KycApplicationDetail; reload: () =>
         <BusinessDetails details={app.details} />
       </Card>
 
-      <Card title="Documents" description="Documents come from the applicant and are not scanned for malware, so treat them as untrusted. Every open is written to the access log below.">
+      <Card
+        title="Documents"
+        description="Documents come from the applicant. Each is opened only after the malware scan says it is clean, and an application cannot be approved while one is still waiting. Every open is written to the access log below."
+      >
         <Documents app={app} />
       </Card>
 
@@ -395,6 +457,15 @@ function RequirementDocuments({ requirement, app }: { requirement: KycRequiremen
   );
 }
 
+/** The malware scan of one document, in words: never only a colour. */
+function ScanBadge({ scan }: { scan: KycDocument["scan"] }) {
+  if (scan === "clean") return <Badge tone="success">Scanned: clean</Badge>;
+  if (scan === "infected") return <Badge tone="danger">Threat found: content deleted</Badge>;
+  if (scan === "pending") return <Badge tone="warning">Waiting for malware scan: cannot be opened yet</Badge>;
+  if (scan === "not_required") return <Badge tone="neutral">Not scanned (scanning is off on this server)</Badge>;
+  return null;
+}
+
 function DocumentList({ documents, app, showRequirement = false }: { documents: KycDocument[]; app: KycApplicationDetail; showRequirement?: boolean }) {
   return (
     <ul className={styles.files}>
@@ -406,7 +477,8 @@ function DocumentList({ documents, app, showRequirement = false }: { documents: 
             {fileSize(d.size_bytes)}, uploaded {formatDate(d.uploaded_at)}
           </span>
           {d.removed_at && <Badge tone="neutral">Replaced {formatDate(d.removed_at)}</Badge>}
-          {app.may_review && (
+          <ScanBadge scan={d.scan} />
+          {app.may_review && (d.scan === "clean" || d.scan === "not_required" || d.scan === undefined) && (
             <a href={kycApi.documentUrl(app.partner_id, d.id)} target="_blank" rel="noopener" aria-label={`Open ${d.filename}`}>
               Open
             </a>
@@ -478,7 +550,7 @@ function ApproveDialog({ app, onDone, onClose }: { app: KycApplicationDetail; on
   return (
     <FormDialog
       title={`Approve ${app.partner_name}`}
-      intro="Approving grants the experience chosen here and activates a draft partner. A partner already active or suspended keeps its status."
+      intro="Approving records your decision and the experience chosen here. It does not activate the partner: that is a separate step for someone who may manage partners. A partner already active or suspended keeps its status."
       size="sm"
       submitLabel="Approve"
       onSubmit={async () => {
@@ -672,3 +744,50 @@ function RequirementDialog({
     </FormDialog>
   );
 }
+
+// --- KYC document access, across every application (2026-11-10) ------------------------------
+
+/** Settings → KYC document access: the restricted KYC store's read log. Who may open
+ * KYC documents at all is the KYC review permission, granted in Staff access; every
+ * opening is written here before the bytes leave, and the log cannot be edited. */
+export function KycAccessLogScreen() {
+  const [offset, setOffset] = useState(0);
+  const [load] = useLoad(() => kycApi.accessLog({ limit: PAGE_SIZE, offset }), [offset]);
+  const columns: Column<{ accessed_at: string; accessed_by_name: string; partner_id: string; partner_name: string; requirement_key: string; ip_prefix: string }>[] = [
+    { key: "when", header: "When", value: (r) => r.accessed_at, render: (r) => formatDateTime(r.accessed_at) },
+    { key: "who", header: "Opened by", value: (r) => r.accessed_by_name, render: (r) => r.accessed_by_name || EMPTY },
+    {
+      key: "partner",
+      header: "Partner",
+      value: (r) => r.partner_name,
+      render: (r) => (
+        <Link href={applicationHref(r.partner_id)}>
+          <Trunc>{r.partner_name}</Trunc>
+        </Link>
+      ),
+    },
+    { key: "document", header: "Document", value: (r) => r.requirement_key, render: (r) => sentence(r.requirement_key) },
+    { key: "network", header: "Network", value: (r) => r.ip_prefix, render: (r) => <KeyText>{r.ip_prefix || EMPTY}</KeyText> },
+  ];
+  return (
+    <Page>
+      <PageHeader
+        title="KYC document access"
+        subtitle="Every time staff opened a partner's KYC document, newest first."
+        info="KYC documents are restricted files: only staff with the KYC review permission can open them, each only after a clean malware scan, and every opening is recorded here and in the audit log. Grant or withdraw the permission in Staff access."
+      />
+      <DataTable
+        caption="KYC document access"
+        columns={columns}
+        rows={load.status === "ready" ? load.data.results : []}
+        rowKey={(r) => `${r.accessed_at}-${r.partner_id}-${r.requirement_key}`}
+        pageSize={0}
+        hideEmptyColumns={false}
+        {...tableState(load, "the KYC access log")}
+        empty={<EmptyState icon="shield" title="No KYC document has been opened" />}
+      />
+      {load.status === "ready" && <OffsetPager total={load.data.total} limit={load.data.limit} offset={offset} shown={load.data.results.length} onOffset={setOffset} />}
+    </Page>
+  );
+}
+

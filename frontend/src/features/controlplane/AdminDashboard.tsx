@@ -461,6 +461,7 @@ function WalletPanel({ wallets }: { wallets: NonNullable<DashboardOverviewV2["wa
 
 const PENDING_ICON: Record<string, { icon: string; tone: StatTone }> = {
   kyc_reviews: { icon: "shield", tone: "red" },
+  kyc_awaiting_activation: { icon: "checkCircle", tone: "green" },
   failed_payments: { icon: "card", tone: "orange" },
   low_balance: { icon: "wallet", tone: "orange" },
 };

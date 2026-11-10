@@ -62,6 +62,10 @@ const PUBLIC_PATHS = [
   "/store",
   // 2026-11-09: the partner application, filled in before any account exists.
   "/partner/apply",
+  // 2026-11-10: a new partner's invitation link, opened before they have a password.
+  "/partner/accept-invitation",
+  // 2026-11-10: "Continue as Guest" - a static preview, no session and no API call.
+  "/partner/preview",
 ];
 
 /** ADR-053: a partner's branded Store (`/store/<partner>`) is browsable signed

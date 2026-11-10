@@ -2,7 +2,7 @@
 
 import { useId, useMemo, useState } from "react";
 import Link from "next/link";
-import { adminApi, type CatalogProduct, type CustomerRow } from "@/lib/api/controlPlane";
+import { adminApi, type CatalogProduct, type CustomerRow, type ProductSource } from "@/lib/api/controlPlane";
 import { adminConsoleApi, type PlatformSettings, type StaffOrderRow, type StaffRoleRow } from "@/lib/api/adminConsole";
 import { can, useAdmin } from "./ControlShell";
 import { LoadGate, autoReason, describeError, useLoad, usePaged } from "./ui";
@@ -28,6 +28,7 @@ import {
   Trunc,
   kit,
   EMPTY,
+  formatDate,
   formatMoney,
   productName,
   sentence,
@@ -37,7 +38,7 @@ import {
 } from "./kit";
 import { downloadCsv } from "./kit/csv";
 import { DateText } from "./AdminUsers";
-import { formatBasisPoints, toBasisPoints } from "./amounts";
+import { formatBasisPoints, toBasisPoints, toMajor } from "./amounts";
 import local from "./AdminPeople.module.css";
 
 /**
@@ -105,15 +106,29 @@ const ORDER_TABS = [
   { key: "cancelled", label: "Cancelled" },
 ] as const;
 
+/** Purchase sources (ADR-053): the Store, a partner placing it for its customer
+ * (a partner activation), or a white-label partner's branded Store. */
+const SOURCES = [
+  { value: "", label: "All" },
+  { value: "direct", label: "Store (direct)" },
+  { value: "partner", label: "Partner activation" },
+  { value: "storefront", label: "Partner storefront" },
+];
+const SOURCE_TEXT: Record<string, string> = { direct: "Store", partner: "Partner activation", storefront: "Partner storefront" };
+
 /** `initialQuery`: an order number from the address (the command palette). */
-export function StaffOrdersScreen({ initialQuery = "" }: { initialQuery?: string } = {}) {
+export function StaffOrdersScreen({ initialQuery = "", initialSource = "" }: { initialQuery?: string; initialSource?: string } = {}) {
   const [status, setStatus] = useState("");
+  const [source, setSource] = useState(SOURCES.some((s) => s.value === initialSource) ? initialSource : "");
   const [query, setQuery] = useState(initialQuery);
   const [created, setCreated] = useState("");
   const [now] = useState(() => Date.now());
-  const paged = usePaged((cursor) => adminConsoleApi.orders({ status: status || undefined, cursor }), [status]);
-  // The orders endpoint filters by status only: the search and the date range
-  // narrow the orders loaded so far.
+  const paged = usePaged(
+    (cursor) => adminConsoleApi.orders({ status: status || undefined, channel: source || undefined, cursor }),
+    [status, source],
+  );
+  // The orders endpoint filters by status and purchase source: the search and the
+  // date range narrow the orders loaded so far.
   const rows = useMemo(() => {
     const needle = query.toLowerCase();
     return paged.rows.filter(
@@ -137,6 +152,23 @@ export function StaffOrdersScreen({ initialQuery = "" }: { initialQuery?: string
     },
     { key: "item", header: "Item", value: (o) => o.description, render: (o) => <Trunc max="lg">{o.description}</Trunc> },
     {
+      key: "source",
+      header: "Purchase source",
+      value: (o) => o.channel ?? "direct",
+      render: (o) => (
+        <Stack
+          main={SOURCE_TEXT[o.channel ?? "direct"] ?? sentence(o.channel ?? "")}
+          sub={
+            o.partner_id ? (
+              <Link href={`/admin/partners/${o.partner_id}`}>
+                <Trunc>{o.partner_name || o.partner_id}</Trunc>
+              </Link>
+            ) : undefined
+          }
+        />
+      ),
+    },
+    {
       key: "amount",
       header: "Amount",
       align: "right",
@@ -147,12 +179,18 @@ export function StaffOrdersScreen({ initialQuery = "" }: { initialQuery?: string
     {
       key: "payment",
       header: "Payment",
-      value: (o) => o.paid_at,
+      // Never empty, so the column is not hidden when no order on the page is paid
+      // (the table hides columns whose every value is empty).
+      value: (o) => o.paid_at ?? (o.status === "pending_payment" ? "verify" : "not_paid"),
       render: (o) =>
         o.paid_at ? (
           <span>
             Paid <DateText iso={o.paid_at} />
           </span>
+        ) : o.status === "pending_payment" ? (
+          // Payment verification (an offline payment marked as received) happens on
+          // the customer's invoice, where the reference and reason are recorded.
+          <Link href={`/admin/customers/${o.organization_id}#billing-h`}>Verify payment</Link>
         ) : (
           "Not paid"
         ),
@@ -160,7 +198,7 @@ export function StaffOrdersScreen({ initialQuery = "" }: { initialQuery?: string
     { key: "created", header: "Created", value: (o) => o.created_at, render: (o) => <DateText iso={o.created_at} /> },
   ];
 
-  const filtered = Boolean(query || created);
+  const filtered = Boolean(query || created || source);
   return (
     <Page>
       <PageHeader
@@ -175,6 +213,7 @@ export function StaffOrdersScreen({ initialQuery = "" }: { initialQuery?: string
             ? () => {
                 setQuery("");
                 setCreated("");
+                setSource("");
               }
             : undefined
         }
@@ -185,8 +224,20 @@ export function StaffOrdersScreen({ initialQuery = "" }: { initialQuery?: string
             onClick={() =>
               downloadCsv(
                 "orders.csv",
-                ["Order", "Customer", "Item", "Amount", "Currency", "Status", "Paid", "Created"],
-                rows.map((o) => [o.number, o.organization_name, o.description, (o.amount_due_minor / 100).toFixed(2), o.currency, o.status, o.paid_at ?? "", o.created_at]),
+                ["Order", "Customer", "Item", "Purchase source", "Source reference", "Amount", "Currency", "Status", "Paid", "Created"],
+                rows.map((o) => [
+                  o.number,
+                  o.organization_name,
+                  o.description,
+                  SOURCE_TEXT[o.channel ?? "direct"] ?? (o.channel ?? ""),
+                  o.partner_name ?? "",
+                  // In the currency's own minor unit (a yen has none): never a fixed /100.
+                  toMajor(o.amount_due_minor, o.currency),
+                  o.currency,
+                  o.status,
+                  o.paid_at ?? "",
+                  o.created_at,
+                ]),
               )
             }
           >
@@ -196,6 +247,7 @@ export function StaffOrdersScreen({ initialQuery = "" }: { initialQuery?: string
       >
         <SearchInput label="Search by order number or customer" value={query} onSearch={setQuery} />
         <Select label="Created" prefix="Created:" value={created} onChange={setCreated} options={CREATED} />
+        <Select label="Purchase source" prefix="Source:" value={source} onChange={setSource} options={SOURCES} />
       </FilterBar>
       <DataTable
         caption="Orders"
@@ -294,7 +346,7 @@ export function EntitlementsScreen() {
       <PageHeader
         title="Entitlements"
         subtitle="Which customers hold a product now."
-        info="Entitlements are derived from subscriptions and staff overrides; grant or revoke an override on the customer's page."
+        info="Access comes from four sources, kept apart: a subscription, a bundle, a staff override (granted on the customer's page) or a product trial, which is not a subscription. The Source column names which one."
       />
       <LoadGate load={products} what="products">
         {({ results }: { results: CatalogProduct[] }) => {
@@ -320,6 +372,29 @@ export function EntitlementsScreen() {
   );
 }
 
+const SOURCE_LABEL: Record<string, string> = {
+  subscription: "Subscription",
+  bundle: "Bundle",
+  grant: "Staff override",
+  trial: "Product trial",
+};
+
+export const sourceLabel = (kind: string | null | undefined): string => (kind ? (SOURCE_LABEL[kind] ?? sentence(kind)) : "Unknown");
+
+/** Where one product's access comes from, with "ended" when it is no longer in
+ * effect (a trial past its end shows here until the next recalculation). */
+function SourceBadge({ source }: { source: ProductSource | null | undefined }) {
+  if (!source) return <span>{EMPTY}</span>;
+  const tone = source.kind === "subscription" || source.kind === "bundle" ? "success" : source.kind === "trial" ? "warning" : "info";
+  const ended = !source.effective_now;
+  return (
+    <Badge tone={ended ? "neutral" : tone}>
+      {sourceLabel(source.kind)}
+      {ended ? ", ended" : source.kind === "trial" && source.effective_to ? `, ends ${formatDate(source.effective_to)}` : ""}
+    </Badge>
+  );
+}
+
 function Holders({ code, name }: { code: string; name: string }) {
   const paged = usePaged((cursor) => adminApi.customers({ product: code, cursor }), [code]);
   const columns: Column<CustomerRow>[] = [
@@ -336,15 +411,15 @@ function Holders({ code, name }: { code: string; name: string }) {
     {
       key: "source",
       header: "Source",
-      value: (c) => (c.subscription_status ? "Subscription" : "Override"),
-      render: (c) => (c.subscription_status ? <Badge tone="success">Subscription</Badge> : <Badge tone="info">Override</Badge>),
+      value: (c) => sourceLabel(c.product_source?.kind),
+      render: (c) => <SourceBadge source={c.product_source} />,
     },
     { key: "access", header: "Access", value: (c) => c.access_class, render: (c) => (c.access_class ? sentence(c.access_class) : EMPTY) },
     {
       key: "subscription",
       header: "Subscription",
       value: (c) => c.subscription_status,
-      render: (c) => (c.subscription_status ? <StatusBadge value={c.subscription_status} /> : "Override only"),
+      render: (c) => (c.subscription_status ? <StatusBadge value={c.subscription_status} /> : "No subscription"),
     },
     { key: "seats", header: "Seats", align: "right", value: (c) => c.seat_capacity, render: (c) => c.seat_capacity ?? EMPTY },
   ];
@@ -356,7 +431,9 @@ function Holders({ code, name }: { code: string; name: string }) {
       rowKey={(c) => c.organization_id}
       rowHref={(c) => `/admin/customers/${c.organization_id}`}
       {...pagedProps(paged, "holders")}
-      empty={<EmptyState icon="users" title="Nobody holds this product" hint="Customers appear here when a subscription or an override gives them access." />}
+      empty={
+        <EmptyState icon="users" title="Nobody holds this product" hint="Customers appear here when a subscription, bundle, override or product trial gives them access." />
+      }
     />
   );
 }

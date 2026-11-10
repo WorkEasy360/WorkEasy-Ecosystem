@@ -549,7 +549,9 @@ export function BillingSubscriptionsScreen() {
       />
       <p className={local.note}>
         Pending setup is not a subscription status, because setup is a separate state. It lives on{" "}
-        <Link href="/admin/customers/setup">Customers &gt; Products &amp; Setup</Link>.
+        <Link href="/admin/customers/setup">Customers &gt; Products &amp; Setup</Link>. The Trial chip counts subscriptions in a trial period only: a
+        free product trial is its own record, not a subscription, so it is not counted here. Customers on a product trial appear under{" "}
+        <Link href="/admin/users?segment=trial">Customers &gt; Users</Link> and on each customer&apos;s page, under Product trials.
       </p>
       <StatusChips label="Subscription status" value={status} onChange={setStatus} chips={chips} />
       <FilterBar

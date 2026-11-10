@@ -73,28 +73,28 @@ function fill({
   confirm = PASSWORD as string | null,
   type = "reseller",
 } = {}) {
-  fireEvent.change(field(/^Partner name/), { target: { value: name } });
-  fireEvent.change(field(/^Admin email/), { target: { value: email } });
+  fireEvent.change(field(/^Partner \/ Business name/), { target: { value: name } });
+  fireEvent.change(field(/^Partner Email/), { target: { value: email } });
   if (password !== null) fireEvent.click(screen.getByRole("radio", { name: /Set a password now/ }));
   if (password !== null) fireEvent.change(field(/^Password/), { target: { value: password } });
   if (confirm !== null) fireEvent.change(field(/^Confirm password/), { target: { value: confirm } });
   if (type) fireEvent.change(field(/^Partner type/), { target: { value: type } });
 }
 
-const create = () => fireEvent.click(screen.getByRole("button", { name: "Create partner" }));
+const create = () => fireEvent.click(screen.getByRole("button", { name: /^Create partner/ }));
 const createCalls = (calls: Call[]) => calls.filter((c) => c.key === "POST /api/v1/admin/partners/create");
 
 describe("the short form", () => {
   // A large form plus an axe pass: slow in jsdom when the whole suite runs in parallel.
-  it("asks only for the name, the admin email, how they sign in, the type and an optional country", async () => {
+  it("asks for the business name, the Partner Email, the type, then optional country and mobile, and how they sign in", async () => {
     mockApi({});
     const { container } = mount();
     const dialog = screen.getByRole("dialog", { name: "New partner" });
     expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(within(dialog).getByRole("heading", { level: 2, name: "New partner" })).toBeInTheDocument();
-    expect(field(/^Partner name/)).toHaveAttribute("placeholder", "Enter partner name");
-    expect(field(/^Partner name/)).toBeRequired();
-    expect(field(/^Admin email/)).toBeRequired();
+    expect(field(/^Partner \/ Business name/)).toHaveAttribute("placeholder", "Enter the partner's business name");
+    expect(field(/^Partner \/ Business name/)).toBeRequired();
+    expect(field(/^Partner Email/)).toBeRequired();
     // An invitation by default: no password to type or share.
     expect(screen.getByRole("radio", { name: /Send an invitation email/ })).toBeChecked();
     expect(screen.queryByLabelText(/^Password/, { selector: "input" })).not.toBeInTheDocument();
@@ -124,8 +124,14 @@ describe("the short form", () => {
     for (const absent of [/business email/i, /products?/i, /price/i, /commission rate/i, /legal/i, /partner code/i]) {
       expect(screen.queryByLabelText(absent)).not.toBeInTheDocument();
     }
-    // Two text inputs (name, email) and two lists (type, country); the passwords are not textboxes.
-    expect(screen.getAllByRole("textbox").length + screen.getAllByRole("combobox").length).toBeLessThanOrEqual(4);
+    // The Partner Email is the partner's own login, never a staff address.
+    expect(field(/^Partner Email/)).toHaveAttribute("placeholder", "Enter partner email address");
+    expect(screen.getByText(/Not a Workeasy360 staff email/)).toBeInTheDocument();
+    expect(field(/^Mobile number/)).not.toBeRequired();
+    // A separate contact email only when asked for.
+    expect(screen.queryByLabelText(/^Contact email/, { selector: "input" })).not.toBeInTheDocument();
+    // Three text inputs (name, email, mobile) and two lists (type, country); the passwords are not textboxes.
+    expect(screen.getAllByRole("textbox").length + screen.getAllByRole("combobox").length).toBeLessThanOrEqual(5);
     fireEvent.click(screen.getByRole("radio", { name: /Send an invitation email/ }));
     await expectNoViolations(container);
   }, 60_000);
@@ -142,8 +148,8 @@ describe("the short form", () => {
     mount();
     create();
     const summary = await screen.findByRole("alert");
-    expect(summary).toHaveTextContent("Enter the partner's name.");
-    expect(summary).toHaveTextContent("Enter the partner administrator's email address.");
+    expect(summary).toHaveTextContent("Enter the partner's business name.");
+    expect(summary).toHaveTextContent("Enter the partner's email address.");
     expect(summary).toHaveTextContent("Choose the partner type.");
     // An invitation needs no password.
     expect(summary).not.toHaveTextContent("Enter a password.");
@@ -168,7 +174,7 @@ describe("the short form", () => {
     mockApi({});
     mount(["platform.staff_partner.view"]);
     expect(screen.getByRole("alert")).toHaveTextContent(/permission to manage partners/);
-    expect(screen.queryByLabelText(/^Partner name/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Partner \/ Business name/)).not.toBeInTheDocument();
   });
 });
 
@@ -176,9 +182,9 @@ describe("the dialog", () => {
   it("starts on the first field and keeps the keyboard inside", () => {
     mockApi({});
     mount();
-    expect(field(/^Partner name/)).toHaveFocus();
+    expect(field(/^Partner \/ Business name/)).toHaveFocus();
     const dialog = screen.getByRole("dialog");
-    const add = within(dialog).getByRole("button", { name: "Create partner" });
+    const add = within(dialog).getByRole("button", { name: "Create partner & send invitation" });
     add.focus();
     fireEvent.keyDown(document, { key: "Tab" });
     expect(dialog.contains(document.activeElement)).toBe(true);
@@ -211,7 +217,8 @@ describe("creating", () => {
     expect(call.body).toEqual({
       experience: "reseller",
       partner: { display_name: "ABC Technologies", country: "IN" },
-      administrator: { email: "admin@abctech.example", mode: "create", password: PASSWORD, password_confirm: PASSWORD },
+      // A password typed by staff must be replaced at first sign-in, unless unticked.
+      administrator: { email: "admin@abctech.example", mode: "create", password: PASSWORD, password_confirm: PASSWORD, require_password_change: true },
     });
     // No other request carried the password, and nothing was stored.
     expect(calls.filter((c) => JSON.stringify(c.body ?? {}).includes(PASSWORD))).toHaveLength(1);
@@ -221,17 +228,83 @@ describe("creating", () => {
 
   it("invites the administrator by default: no password is typed or sent", async () => {
     const calls = mockApi({
-      "POST /api/v1/admin/partners/create": [{ status: 201, body: { ...CREATED, administrator: { ...CREATED.administrator, invited: true } } }],
+      "POST /api/v1/admin/partners/create": [
+        {
+          status: 201,
+          body: {
+            ...CREATED,
+            administrator: { ...CREATED.administrator, invited: true },
+            invitation: { state: "queued", delivery_mode: "smtp" },
+          },
+        },
+      ],
     });
     mount();
     fill({ password: null, confirm: null });
+    // The button says an invitation goes out.
+    expect(screen.getByRole("button", { name: "Create partner & send invitation" })).toBeInTheDocument();
     create();
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/partners/all?created=p-new"));
+    // What happened to the invitation travels with the new row: queued, not "delivered".
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/partners/all?created=p-new&invite=queued&mail=smtp"));
     expect(createCalls(calls)[0].body).toEqual({
       experience: "reseller",
       partner: { display_name: "ABC Technologies" },
       administrator: { email: "admin@abctech.example", mode: "invite" },
     });
+  });
+
+  it("sends the optional mobile number and a separate contact email when given", async () => {
+    const calls = mockApi({ "POST /api/v1/admin/partners/create": [{ status: 201, body: CREATED }] });
+    mount();
+    fill({ password: null, confirm: null });
+    fireEvent.change(field(/^Mobile number/), { target: { value: "+91 98765 43210" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Use a different contact email" }));
+    fireEvent.change(field(/^Contact email/), { target: { value: "accounts@abctech.example" } });
+    create();
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect((createCalls(calls)[0].body as { partner: unknown }).partner).toEqual({
+      display_name: "ABC Technologies",
+      phone: "+91 98765 43210",
+      contact_email: "accounts@abctech.example",
+    });
+  });
+
+  it("refuses a malformed mobile number or a contact email equal to the Partner Email, and sends nothing", async () => {
+    const calls = mockApi({});
+    mount();
+    fill({ password: null, confirm: null });
+    fireEvent.change(field(/^Mobile number/), { target: { value: "call me" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Use a different contact email" }));
+    fireEvent.change(field(/^Contact email/), { target: { value: "ADMIN@abctech.example" } });
+    create();
+    const summary = await screen.findByRole("alert");
+    expect(summary).toHaveTextContent("Enter a valid mobile number");
+    expect(summary).toHaveTextContent("The contact email is the same as the Partner Email");
+    expect(createCalls(calls)).toHaveLength(0);
+  });
+
+  it("offers to confirm a different partner when a live one has the same name, then sends that confirmation", async () => {
+    const calls = mockApi({
+      "POST /api/v1/admin/partners/create": [
+        {
+          status: 400,
+          body: {
+            code: "partner_validation_error",
+            detail: "A partner named ABC Technologies (abc-technologies) already exists.",
+            problems: [{ field: "partner.display_name", message: "A partner named ABC Technologies (abc-technologies) already exists. Open it from All Partners, give this partner a name that tells them apart, or confirm that it is a different partner." }],
+          },
+        },
+        { status: 201, body: CREATED },
+      ],
+    });
+    mount();
+    fill({ password: null, confirm: null });
+    create();
+    const confirmButton = await screen.findByRole("button", { name: "It is a different partner: create it" });
+    expect(createCalls(calls)[0].body).not.toHaveProperty("partner.allow_same_name");
+    fireEvent.click(confirmButton);
+    await waitFor(() => expect(createCalls(calls)).toHaveLength(2));
+    expect((createCalls(calls)[1].body as { partner: { allow_same_name?: boolean } }).partner.allow_same_name).toBe(true);
   });
 
   it("leaves the country out when none is chosen", async () => {
@@ -313,7 +386,7 @@ describe("an email that already has an account", () => {
     await screen.findByText(EXISTING);
     fireEvent.click(screen.getByRole("button", { name: "Use another email" }));
     expect(screen.queryByText(EXISTING)).not.toBeInTheDocument();
-    expect(field(/^Admin email/).value).toBe("");
+    expect(field(/^Partner Email/).value).toBe("");
     expect(field(/^Password/)).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });

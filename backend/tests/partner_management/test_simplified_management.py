@@ -105,7 +105,8 @@ def test_the_country_is_optional_and_sets_the_starting_currency(catalog, admin):
 
 def test_a_second_partner_with_the_same_name_gets_its_own_code(catalog, admin):
     first = create(admin, "reseller")
-    second = create(admin, "affiliate", email="other@acme.example.com")
+    # Confirmed as a different partner: without that it is refused as a duplicate.
+    second = create(admin, "affiliate", email="other@acme.example.com", same_name=True)
     codes = set(
         PartnerAccount.objects.filter(id__in=[first["id"], second["id"]]).values_list(
             "code", flat=True

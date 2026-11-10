@@ -15,6 +15,9 @@ export default function Page() {
 }
 
 function OrdersFromAddress() {
-  const q = (useSearchParams().get("q") ?? "").trim().slice(0, 80);
-  return <StaffOrdersScreen key={q} initialQuery={q} />;
+  const params = useSearchParams();
+  const q = (params.get("q") ?? "").trim().slice(0, 80);
+  // ?source=direct|partner|storefront: Store orders or partner activations.
+  const source = params.get("source") ?? "";
+  return <StaffOrdersScreen key={`${q}|${source}`} initialQuery={q} initialSource={source} />;
 }

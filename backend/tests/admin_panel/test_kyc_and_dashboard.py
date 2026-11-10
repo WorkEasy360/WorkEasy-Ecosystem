@@ -218,11 +218,35 @@ class TestWholeJourney:
         assert result["decided_at"]
         assert result["document_access"], "the read is listed"
 
+        # Approval is a decision, not an activation (2026-11-10): the partner
+        # stays a draft, its grants are recorded but confer nothing yet.
+        partner.refresh_from_db()
+        assert partner.status == "draft"
+        from workeasy360.commercial.partners.models import PartnerCapabilityGrant
+
+        assert PartnerCapabilityGrant.objects.filter(
+            partner_id=partner.id, status="active"
+        ).exists(), "approval recorded what was asked for"
+
+        # The reviewer alone cannot activate: that needs the partner manager.
+        refused = _json(
+            reviewer,
+            "post",
+            f"/api/v1/admin/partners/{partner.id}/status",
+            {"status": "active", "reason": "Activated after KYC approval."},
+        )
+        assert refused.status_code == 403
+        manager, _ = staff_login("platform.staff_partner.manage")
+        activated = _json(
+            manager,
+            "post",
+            f"/api/v1/admin/partners/{partner.id}/status",
+            {"status": "active", "reason": "Activated after KYC approval."},
+        )
+        assert activated.status_code == 200, activated.content
         partner.refresh_from_db()
         assert partner.status == "active"
-        assert selectors.active_capabilities(partner.id), (
-            "approval granted what was asked for"
-        )
+        assert selectors.active_capabilities(partner.id), "rights arrive with activation"
 
     def test_correction_then_resubmission(self, login, staff_login):
         requirement = _requirement()
@@ -297,6 +321,61 @@ class TestWholeJourney:
 
 
 class TestTheGate:
+    @pytest.mark.parametrize(
+        "state", ["draft", "submitted", "under_review", "correction_required", "rejected"]
+    )
+    def test_no_state_but_approved_lets_staff_activate(self, staff_login, state):
+        from workeasy360.commercial.partners.models import PartnerAccount, PartnerKyc
+
+        manager, _ = staff_login("platform.staff_partner.manage")
+        _, body = _apply()
+        row = PartnerAccount.objects.get(contact_email=body["email"])
+        PartnerKyc.objects.filter(partner=row).update(status=state)
+        response = _json(
+            manager,
+            "post",
+            f"/api/v1/admin/partners/{row.id}/status",
+            {"status": "active", "reason": "Trying to skip the KYC review."},
+        )
+        assert response.status_code == 400, (state, response.content)
+        row.refresh_from_db()
+        assert row.status == "draft"
+
+    def test_the_list_and_record_say_what_kyc_stands_in_the_way(self, staff_login):
+        from workeasy360.commercial.partners.models import PartnerAccount, PartnerKyc
+
+        viewer, _ = staff_login("platform.staff_partner.view")
+        _, body = _apply()
+        row = PartnerAccount.objects.get(contact_email=body["email"])
+        summary = viewer.get(f"/api/v1/admin/partners/{row.id}/summary").json()
+        assert summary["activation"]["can_activate"] is False
+        assert "kyc" in [m["key"] for m in summary["activation"]["missing"]]
+        assert summary["kyc"]["status"] == "draft"
+        PartnerKyc.objects.filter(partner=row).update(status="approved")
+        summary = viewer.get(f"/api/v1/admin/partners/{row.id}/summary").json()
+        assert "kyc" not in [m["key"] for m in summary["activation"]["missing"]]
+        assert summary["kyc"]["ready_to_activate"] is True
+        listed = viewer.get(
+            "/api/v1/admin/partners/resellers", {"scope": "all", "kyc": "ready"}
+        ).json()["results"]
+        assert [r["id"] for r in listed] == [str(row.id)]
+
+    def test_a_partner_active_before_kyc_is_marked_legacy_and_keeps_its_status(
+        self, staff_login, partner_factory, settings
+    ):
+        viewer, _ = staff_login("platform.staff_partner.view", "platform.staff_kyc.view")
+        # Activated as the live partners were, before the gate existed.
+        settings.PARTNER_KYC_REQUIRED = False
+        legacy = partner_factory()["partner"]
+        settings.PARTNER_KYC_REQUIRED = True
+        listed = viewer.get(
+            "/api/v1/admin/partners/resellers", {"scope": "all", "kyc": "legacy"}
+        ).json()["results"]
+        row = next(r for r in listed if r["id"] == str(legacy.id))
+        assert row["kyc"]["legacy"] is True and row["status"] == "active"
+        queue = viewer.get("/api/v1/admin/kyc/applications").json()
+        assert queue["legacy_active"] >= 1
+
     def test_a_draft_partner_cannot_be_activated_without_approval(self, staff_login):
         manager, _ = staff_login("platform.staff_partner.manage")
         from workeasy360.commercial.partners.kyc import assert_may_activate
@@ -1024,3 +1103,155 @@ class TestAdminCreatedPartner:
         assert member.invitation_deferred is False
         assert member.invitation_sent_at is not None
         assert partner.status == "draft"
+
+
+class TestNewPartnerForm:
+    """The New Partner form of 2026-11-10: Partner Email, optional mobile and contact
+    email, no duplicates, and an invitation described as what really happened."""
+
+    CREATE = "/api/v1/admin/partners/create"
+
+    def _body(self, **partner):
+        email = partner.pop("email", f"p-{uuid.uuid4().hex[:8]}@example.com")
+        return {
+            "experience": "affiliate",
+            "partner": {"display_name": f"Partner {uuid.uuid4().hex[:6]}", **partner},
+            "administrator": {"email": email, "mode": "invite"},
+        }
+
+    def test_the_partner_email_is_the_contact_and_the_invitation_is_queued_not_delivered(
+        self, staff_login
+    ):
+        from workeasy360.commercial.partners.models import PartnerAccount, PartnerProfile
+
+        manager, _ = staff_login("platform.staff_partner.manage")
+        body = self._body(phone="+91 98765 43210")
+        response = _json(manager, "post", self.CREATE, body)
+        assert response.status_code == 201, response.content
+        result = response.json()
+        # Queued for the mail worker - never claimed as delivered.
+        assert result["invitation"]["state"] == "queued"
+        assert result["invitation"]["delivery_mode"] == "memory"
+        assert result["status"] == "draft"
+        partner = PartnerAccount.objects.get(id=result["id"])
+        assert partner.contact_email == body["administrator"]["email"]
+        profile = PartnerProfile.objects.get(partner=partner)
+        assert profile.phone == "+91 98765 43210"
+        assert profile.business_email == body["administrator"]["email"]
+
+    def test_a_separate_contact_email_is_kept_apart_from_the_login(self, staff_login):
+        from workeasy360.commercial.partners.models import PartnerAccount, PartnerMember
+
+        manager, _ = staff_login("platform.staff_partner.manage")
+        body = self._body(contact_email="accounts@contact.example.com")
+        result = _json(manager, "post", self.CREATE, body).json()
+        partner = PartnerAccount.objects.get(id=result["id"])
+        assert partner.contact_email == "accounts@contact.example.com"
+        member = PartnerMember.objects.select_related("user").get(partner=partner)
+        assert member.user.email == body["administrator"]["email"]
+
+    def test_the_members_list_reports_the_invitation_delivery(self, staff_login):
+        manager, _ = staff_login(
+            "platform.staff_partner.manage", "platform.staff_partner.view"
+        )
+        result = _json(manager, "post", self.CREATE, self._body()).json()
+        detail = manager.get(f"/api/v1/admin/partners/{result['id']}").json()
+        [member] = detail["members"]
+        delivery = member["invitation_delivery"]
+        assert delivery is not None
+        assert delivery["state"] in {"queued", "sent"}
+        assert "token" not in str(delivery) and "@" not in str(delivery)
+
+    @pytest.mark.parametrize("bad", [{"phone": "call me"}, {"contact_email": "nope"}])
+    def test_bad_optional_details_are_refused_and_nothing_is_created(
+        self, staff_login, bad
+    ):
+        from workeasy360.commercial.partners.models import PartnerAccount
+
+        manager, _ = staff_login("platform.staff_partner.manage")
+        before = PartnerAccount.objects.count()
+        response = _json(manager, "post", self.CREATE, self._body(**bad))
+        assert response.status_code == 400
+        assert PartnerAccount.objects.count() == before
+
+    def test_a_duplicate_name_or_contact_is_refused(self, staff_login):
+        from workeasy360.commercial.partners.models import PartnerAccount
+
+        manager, _ = staff_login("platform.staff_partner.manage")
+        first = self._body()
+        assert _json(manager, "post", self.CREATE, first).status_code == 201
+        same_name = self._body()
+        same_name["partner"]["display_name"] = first["partner"]["display_name"].upper()
+        refused = _json(manager, "post", self.CREATE, same_name)
+        assert refused.status_code == 400
+        assert "already exists" in refused.content.decode()
+        same_contact = self._body(contact_email=first["administrator"]["email"])
+        refused = _json(manager, "post", self.CREATE, same_contact)
+        assert refused.status_code == 400
+        assert "already uses this email" in refused.content.decode()
+        assert (
+            PartnerAccount.objects.filter(
+                display_name__iexact=first["partner"]["display_name"]
+            ).count()
+            == 1
+        )
+
+    def test_a_second_invitation_to_a_waiting_address_names_the_partner_waiting(
+        self, staff_login
+    ):
+        manager, _ = staff_login("platform.staff_partner.manage")
+        first = self._body()
+        assert _json(manager, "post", self.CREATE, first).status_code == 201
+        again = self._body(email=first["administrator"]["email"])
+        refused = _json(manager, "post", self.CREATE, again)
+        assert refused.status_code == 400
+        text = refused.content.decode()
+        assert "invitation waiting" in text and first["partner"]["display_name"] in text
+
+    def test_creating_activates_nothing_and_signing_in_activates_nothing(
+        self, staff_login, login
+    ):
+        from workeasy360.commercial.partners import selectors
+        from workeasy360.commercial.partners.models import PartnerAccount
+        from workeasy360.platform.identity.models import User
+
+        manager, _ = staff_login("platform.staff_partner.manage")
+        body = self._body()
+        body["administrator"] = {
+            "email": body["administrator"]["email"],
+            "mode": "create",
+            "password": PASSWORD,
+            "password_confirm": PASSWORD,
+        }
+        result = _json(manager, "post", self.CREATE, body).json()
+        partner = PartnerAccount.objects.get(id=result["id"])
+        assert partner.status == "draft"
+        user = User.objects.get(email=body["administrator"]["email"])
+        client = login(user, password=PASSWORD)
+        assert client.get(f"/api/v1/partner/{partner.id}/kyc").status_code == 200
+        partner.refresh_from_db()
+        assert partner.status == "draft"
+        # The type's grants are recorded, but a draft's grants confer nothing: the
+        # partner's own operations are refused until it is activated.
+        assert selectors.active_capabilities(partner.id)
+        assert client.get(f"/api/v1/partner/{partner.id}/dashboard").status_code == 403
+
+    def test_a_password_typed_by_staff_must_be_replaced_when_asked(self, staff_login):
+        """2026-11-10: with "Set a password now", the form asks by default that the
+        partner choose their own at first sign-in; staff know the typed one. The
+        identity middleware then allows little else until it is changed."""
+        from workeasy360.platform.identity.models import User
+
+        manager, _ = staff_login("platform.staff_partner.manage")
+        for asked in (True, False):
+            body = self._body()
+            body["administrator"] = {
+                "email": body["administrator"]["email"],
+                "mode": "create",
+                "password": PASSWORD,
+                "password_confirm": PASSWORD,
+                "require_password_change": asked,
+            }
+            assert _json(manager, "post", self.CREATE, body).status_code == 201
+            user = User.objects.get(email=body["administrator"]["email"])
+            assert user.password_change_required is asked

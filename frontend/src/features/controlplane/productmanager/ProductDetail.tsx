@@ -66,6 +66,7 @@ function Checklist({ items }: { items: ReadinessItem[] }) {
           <span>
             {i.label}
             <span className="w360-visually-hidden">{i.ok ? ": done" : ": missing"}</span>
+            {!i.ok && i.detail && <span className={styles.checkDetail}>{i.detail}</span>}
           </span>
         </li>
       ))}
@@ -100,6 +101,16 @@ function Overview({ product: p, readiness }: { product: ConsoleProduct; readines
         description={missing === 0 ? "Everything the store needs is in place." : `${missing} item${missing === 1 ? "" : "s"} missing.`}
         fill
       >
+        {p.status === "available" && p.listing === "listed" && missing > 0 && (
+          // Published before the checklist covered this (2026-11-10): said plainly,
+          // not hidden, and not unpublished behind anyone's back.
+          <Alert tone="danger" title="Published, but not ready">
+            <p className={styles.note}>
+              Customers can see this product in the store, but it does not meet the publish checklist. Complete the missing items, or
+              unpublish it until they are done.
+            </p>
+          </Alert>
+        )}
         <Checklist items={readiness} />
         {!p.channels.direct.ready && (
           <Alert tone="warning">

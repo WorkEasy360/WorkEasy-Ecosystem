@@ -264,6 +264,11 @@ export interface StaffOrderRow {
   amount_due_minor: number;
   created_at: string;
   paid_at: string | null;
+  /** Purchase source (ADR-053): direct (the Store), partner (a reseller placed it) or storefront. */
+  channel?: "direct" | "partner" | "storefront" | string;
+  /** Source reference: the partner that sold it, if any. */
+  partner_id?: string | null;
+  partner_name?: string;
 }
 
 export interface PlatformSettings {
@@ -508,9 +513,9 @@ export const adminConsoleApi = {
       { method: "POST" },
     ),
   // Phase 9: orders, platform settings, staff roles, billing terms
-  orders: (opts: { status?: string; cursor?: string; limit?: number } = {}) =>
+  orders: (opts: { status?: string; channel?: string; cursor?: string; limit?: number } = {}) =>
     apiFetch<Page<StaffOrderRow>>("/api/v1/admin/orders", {
-      query: { status: opts.status, cursor: opts.cursor, limit: opts.limit },
+      query: { status: opts.status, channel: opts.channel, cursor: opts.cursor, limit: opts.limit },
     }),
   settings: () => apiFetch<PlatformSettings>("/api/v1/admin/settings"),
   saveSettings: (body: {

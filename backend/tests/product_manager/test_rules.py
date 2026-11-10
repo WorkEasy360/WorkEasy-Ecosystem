@@ -54,13 +54,64 @@ def test_the_checklist_names_each_missing_requirement_in_order():
         launch_url="https://app.workeasy360.com/",
         status=ProductStatus.DEPRECATED,
     )
+    # The integration's launch URL is a launch destination: no Application URL
+    # is needed beside it (2026-11-10).
     assert [i["label"] for i in items if not i["ok"]] == [
         "Category",
         "Short description",
         "Logo",
-        "Application URL",
+        "At least one active plan",
+        "At least one sales channel",
         "Not archived",
     ]
+
+
+@pytest.mark.parametrize(
+    ("application_url", "launch_url", "app_link", "ok"),
+    [
+        ("https://app.example.com/", "", False, True),
+        ("", "https://crm.workeasy360.com/", False, True),
+        ("", "", True, True),  # an app-only product: an approved native destination
+        ("", "", False, False),
+    ],
+)
+def test_any_one_launch_destination_is_enough(application_url, launch_url, app_link, ok):
+    items = domain.publish_checklist(
+        name="App",
+        slug="app",
+        category="crm",
+        tagline="t",
+        has_logo=True,
+        application_url=application_url,
+        launch_url=launch_url,
+        status=ProductStatus.DRAFT,
+        has_app_link=app_link,
+        has_active_plan=True,
+        channel_open=True,
+    )
+    assert {i["key"]: i["ok"] for i in items}["launch"] is ok
+
+
+def test_a_connected_product_needs_return_destinations_and_a_plain_one_does_not():
+    def check(returns):
+        items = domain.publish_checklist(
+            name="App",
+            slug="app",
+            category="crm",
+            tagline="t",
+            has_logo=True,
+            application_url="",
+            launch_url="https://crm.workeasy360.com/",
+            status=ProductStatus.DRAFT,
+            return_destinations=returns,
+            has_active_plan=True,
+            channel_open=True,
+        )
+        return {i["key"]: i["ok"] for i in items}["return_destinations"]
+
+    assert check(True) is True
+    assert check(None) is True  # no integration: nothing to approve
+    assert check(False) is False
 
 
 @pytest.mark.parametrize(

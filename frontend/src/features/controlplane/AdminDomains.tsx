@@ -189,6 +189,13 @@ function Apps({ apps, customerOrigin, productHref }: { apps: App[]; customerOrig
     },
     { key: "status", header: "Status", render: (a) => <StatusBadge value={a.status} /> },
     { key: "application", header: "Application", render: (a) => <Address url={a.application_url} /> },
+    {
+      key: "check",
+      header: "Live check",
+      wrap: true,
+      // 2026-11-10: product addresses get the same DNS and TLS check as the portals.
+      render: (a) => (isWebUrl(a.application_url) ? <HostCheck label={productName(a.name)} host={hostOf(a.application_url)} /> : EMPTY),
+    },
     { key: "marketing", header: "Marketing", render: (a) => <Address url={a.marketing_url} /> },
     {
       key: "links",
@@ -260,6 +267,8 @@ function PartnerDomains({ rows }: { rows: PartnerDomain[] }) {
     { key: "partner", header: "Partner", render: (r) => <Link href={`/admin/partners/${r.partner_id}`}>{r.partner_name}</Link> },
     { key: "status", header: "Status", render: (r) => <StatusBadge value={r.status} /> },
     { key: "verified", header: "Verified", render: (r) => <DateText iso={r.verified_at} never="Not verified" /> },
+    // 2026-11-10: the same live DNS and TLS check as the primary domains.
+    { key: "check", header: "Live check", wrap: true, render: (r) => <HostCheck label={r.hostname} host={r.hostname} /> },
   ];
   return (
     <TableSection title="Partner domains" description="Addresses partners have asked to use. Verified on the partner's page.">
@@ -284,16 +293,19 @@ function Brands({ rows }: { rows: PartnerBrand[] }) {
     { key: "logo", header: "Logo", render: (r) => <BoolBadge value={r.has_logo} yes="Has logo" no="No logo" noTone="neutral" /> },
   ];
   return (
-    <TableSection title="Approved branding" description="Partners whose own brand has been approved.">
+    <TableSection
+      title="Partner branding"
+      description="Partners that have set up their own brand. Whether a partner may use its brand at all comes from the white-label capability, granted or withdrawn on the partner's page."
+    >
       <DataTable
-        caption="Approved branding"
+        caption="Partner branding"
         columns={columns}
         rows={rows}
         rowKey={(r) => r.partner_id}
         pageSize={0}
         maxHeight={false}
         hideEmptyColumns={false}
-        empty={<EmptyState icon="palette" title="No approved branding yet" compact />}
+        empty={<EmptyState icon="palette" title="No partner has set up a brand yet" compact />}
       />
     </TableSection>
   );

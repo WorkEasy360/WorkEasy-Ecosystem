@@ -287,3 +287,63 @@ def stored_snapshot(organization_id: UUID) -> SnapshotDTO | None:
         products=row["products"] or {},
         features=row["features"] or {},
     )
+
+
+#: Which source names a product's access when several give it at once: a paid
+#: subscription before a bundle, a bundle before a staff override, an override
+#: before a free trial.
+_SOURCE_ORDER = ("subscription", "bundle", "grant", "trial")
+
+
+def access_sources(organization_id: UUID) -> list[dict[str, Any]]:
+    """Every entitlement row of one organization: product, status, the kind of
+    source that gave it (``subscription``, ``bundle``, ``grant`` - a staff
+    override - or ``trial`` - a product trial) and its window, and whether it is
+    in effect now. Read for the staff console so a trial is never shown as an
+    override nor an override as a subscription (2026-11-10)."""
+    from django.utils import timezone
+
+    from workeasy360.platform.entitlements.models import Entitlement
+    from workeasy360.platform.tenancy.db import assert_tenant_scope, organization_db_scope
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    now = timezone.now()
+    with (
+        unscoped_access(
+            reason="The staff console names where each product's access comes from",
+            module="platform.entitlements.selectors",
+        ),
+        organization_db_scope(organization_id),
+    ):
+        assert_tenant_scope(organization_id, what="access_sources")
+        rows = list(
+            Entitlement.unscoped.filter(organization_id=organization_id).order_by(
+                "product_code", "effective_from"
+            )
+        )
+    return [
+        {
+            "product_code": row.product_code,
+            "status": row.status,
+            "source_kind": row.source_kind,
+            "effective_from": row.effective_from.isoformat(),
+            "effective_to": row.effective_to.isoformat() if row.effective_to else None,
+            "effective_now": row.is_effective_at(now),
+        }
+        for row in rows
+    ]
+
+
+def main_source(rows: list[dict[str, Any]], product_code: str) -> dict[str, Any] | None:
+    """The row that names this product's access: in effect now first, then by
+    ``_SOURCE_ORDER``; ``None`` when the organization has no row for it."""
+    mine = [r for r in rows if r["product_code"] == product_code]
+    if not mine:
+        return None
+
+    def rank(row: dict[str, Any]) -> tuple[int, int]:
+        kind = row["source_kind"]
+        order = _SOURCE_ORDER.index(kind) if kind in _SOURCE_ORDER else len(_SOURCE_ORDER)
+        return (0 if row["effective_now"] else 1, order)
+
+    return sorted(mine, key=rank)[0]

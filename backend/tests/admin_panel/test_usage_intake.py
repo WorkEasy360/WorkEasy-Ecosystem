@@ -73,6 +73,45 @@ class TestService:
         wallet.refresh_from_db()
         assert wallet.balance == 970
 
+    def test_an_event_dated_in_the_future_is_refused_and_charges_nothing(self):
+        """2026-11-10 audit: a free allowance counts from the start of the event's
+        month, so a future-dated event would draw on one that has not started."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from workeasy360.commercial.controlplane.usage_intake import report
+        from workeasy360.contracts.errors import CatalogValidationError
+
+        org = uuid.uuid4()
+        wallet = _fund(org)
+        _rate("whatsapp")
+        later = (timezone.now() + timedelta(days=40)).isoformat()
+        with pytest.raises(CatalogValidationError):
+            report(
+                product_code="p",
+                organization_id=org,
+                meter="whatsapp",
+                quantity=3,
+                idempotency_key="future-1",
+                occurred_at=later,
+            )
+        wallet.refresh_from_db()
+        assert wallet.balance == 1000
+        # A little clock skew is fine, and so is the past.
+        for i, moment in enumerate(
+            [timezone.now() + timedelta(minutes=2), timezone.now() - timedelta(days=3)]
+        ):
+            ok = report(
+                product_code="p",
+                organization_id=org,
+                meter="whatsapp",
+                quantity=1,
+                idempotency_key=f"near-{i}",
+                occurred_at=moment.isoformat(),
+            )
+            assert ok["outcome"] == "charged"
+
     def test_a_product_cannot_claim_ai_tokens(self):
         from workeasy360.commercial.controlplane.usage_intake import report
         from workeasy360.contracts.errors import CatalogValidationError

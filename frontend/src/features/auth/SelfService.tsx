@@ -392,8 +392,11 @@ export function ForgotPasswordScreen({ admin = false }: { admin?: boolean } = {}
 }
 
 /** `admin`: the frame of the Admin sign-in, on the Admin portal. */
-export function ResetPasswordScreen({ admin = false }: { admin?: boolean } = {}) {
+export function ResetPasswordScreen({ admin = false, invitation = false }: { admin?: boolean; invitation?: boolean } = {}) {
   const Frame = admin ? AdminAuthFrame : AuthFrame;
+  // A partner's invitation (2026-11-10) uses the same one-time link, worded for a
+  // person choosing their first password rather than replacing one.
+  const title = invitation ? "Accept your invitation" : "Choose a new password";
   const token = useFragmentToken();
   const errorId = useId();
   const [password, setPassword] = useState("");
@@ -403,13 +406,23 @@ export function ResetPasswordScreen({ admin = false }: { admin?: boolean } = {})
 
   if (token === null) {
     return (
-      <Frame title="Choose a new password">
+      <Frame title={title}>
         <p aria-live="polite">Loading…</p>
       </Frame>
     );
   }
   if (state === "done") {
-    return (
+    return invitation ? (
+      <Frame title="Your password is set">
+        <p role="status">
+          Sign in to the partner portal to complete your KYC application. Your partner account becomes active once the application is approved
+          and an Admin activates it.
+        </p>
+        <Link href="/login" className={`w360-btn w360-btn-primary ${styles.fullWidth}`}>
+          Sign in
+        </Link>
+      </Frame>
+    ) : (
       <Frame title="Password changed">
         <p role="status">Your password was changed and every session was signed out.</p>
         <Link href="/login" className={`w360-btn w360-btn-primary ${styles.fullWidth}`}>
@@ -420,8 +433,8 @@ export function ResetPasswordScreen({ admin = false }: { admin?: boolean } = {})
   }
   if (token === "") {
     return (
-      <Frame title="Choose a new password">
-        <p role="alert">This link is not valid. Ask for a new one.</p>
+      <Frame title={title}>
+        <p role="alert">{invitation ? "This invitation link is not valid. Ask the Workeasy360 team to send a new one." : "This link is not valid. Ask for a new one."}</p>
         <p className={styles.below}>
           <Link href="/forgot-password">Reset your password</Link>
         </p>
@@ -430,7 +443,8 @@ export function ResetPasswordScreen({ admin = false }: { admin?: boolean } = {})
   }
 
   return (
-    <Frame title="Choose a new password">
+    <Frame title={title}>
+      {invitation && <p className={styles.below}>Choose the password you will use to sign in to the Workeasy360 partner portal.</p>}
       <form method="post"
         noValidate
         aria-describedby={problems.length ? errorId : undefined}
@@ -447,7 +461,11 @@ export function ResetPasswordScreen({ admin = false }: { admin?: boolean } = {})
             (err) => {
               setProblems(
                 err instanceof ApiError && err.code === "link_invalid"
-                  ? ["This link is not valid or has expired. Ask for a new one."]
+                  ? [
+                      invitation
+                        ? "This invitation link is not valid or has expired. Ask the Workeasy360 team to send a new one."
+                        : "This link is not valid or has expired. Ask for a new one.",
+                    ]
                   : problemsOf(err),
               );
               setState("idle");
@@ -455,11 +473,26 @@ export function ResetPasswordScreen({ admin = false }: { admin?: boolean } = {})
           );
         }}
       >
-        <Field label="New password" type="password" autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} hint="At least 12 characters." />
-        <Field label="Repeat the new password" type="password" autoComplete="new-password" required value={again} onChange={(e) => setAgain(e.target.value)} />
+        <Field
+          label={invitation ? "Password" : "New password"}
+          type="password"
+          autoComplete="new-password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          hint="At least 12 characters."
+        />
+        <Field
+          label={invitation ? "Repeat the password" : "Repeat the new password"}
+          type="password"
+          autoComplete="new-password"
+          required
+          value={again}
+          onChange={(e) => setAgain(e.target.value)}
+        />
         <Problems id={errorId} problems={problems} />
         <button type="submit" className={`w360-btn w360-btn-primary ${styles.fullWidth}`} disabled={state === "busy" || !password}>
-          Change password
+          {invitation ? "Set password" : "Change password"}
         </button>
       </form>
     </Frame>

@@ -46,7 +46,9 @@ def future_product(staff_client, signing_key):
     staff, _user = staff_client(*GRANTS)
     created = staff.post(
         f"{ADMIN}/catalog/products",
-        {"code": CODE, "name": "Future Product"},
+        # Hidden: made available here for its sign-in, not put in the store
+        # (a listed product is checked like publishing since 2026-11-10).
+        {"code": CODE, "name": "Future Product", "listing": "hidden"},
         content_type="application/json",
     )
     assert created.status_code in (200, 201), created.content

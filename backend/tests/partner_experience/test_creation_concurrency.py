@@ -100,7 +100,10 @@ def test_six_creators_naming_one_partner_get_six_partners_with_distinct_codes(
             partner_onboarding.create(
                 staff_ctx,
                 make_body(
-                    "reseller", name="Race Code", email=f"admin{i}@race-code.example.com"
+                    "reseller",
+                    name="Race Code",
+                    email=f"admin{i}@race-code.example.com",
+                    same_name=True,
                 ),
             )
             return "created"
@@ -138,7 +141,12 @@ def test_a_name_and_a_suffixed_name_racing_never_share_a_code(catalog, staff_ctx
         try:
             partner_onboarding.create(
                 staff_ctx,
-                make_body("reseller", name=name, email=f"admin{i}@race-acme.example.com"),
+                make_body(
+                    "reseller",
+                    name=name,
+                    email=f"admin{i}@race-acme.example.com",
+                    same_name=True,
+                ),
             )
             return "created"
         except Workeasy360Error:

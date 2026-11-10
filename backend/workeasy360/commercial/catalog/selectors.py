@@ -493,12 +493,21 @@ def publish_readiness(
     its own fields (with ``overrides`` applied, for an edit not yet saved),
     whether it has a logo, and its integration's launch URL - read through the
     registry's ungated, narrow ``launch_target``."""
-    from workeasy360.commercial.catalog.models import ProductMedia
+    from workeasy360.commercial.catalog.models import Plan, ProductMedia
     from workeasy360.platform.ecosystem import selectors as ecosystem_selectors
 
-    fields = ("name", "slug", "category", "tagline", "application_url")
+    fields = (
+        "name",
+        "slug",
+        "category",
+        "tagline",
+        "application_url",
+        "app_links",
+        *CHANNEL_FLAGS.values(),
+    )
     values = {**{f: getattr(product, f) for f in fields}, **(overrides or {})}
     target = ecosystem_selectors.launch_target(product.code)
+    links = values["app_links"] if isinstance(values["app_links"], dict) else {}
     return publish_checklist(
         name=values["name"],
         slug=values["slug"],
@@ -510,6 +519,14 @@ def publish_readiness(
         application_url=values["application_url"],
         launch_url=target.launch_url if target is not None else "",
         status=product.status_enum,
+        has_app_link=any(str(url).strip() for url in links.values()),
+        return_destinations=ecosystem_selectors.has_return_destinations(product.code),
+        has_active_plan=Plan.objects.filter(
+            product_id=product.id,
+            addon_for__isnull=True,
+            status=CatalogStatus.AVAILABLE.value,
+        ).exists(),
+        channel_open=any(bool(values[flag]) for flag in CHANNEL_FLAGS.values()),
     )
 
 

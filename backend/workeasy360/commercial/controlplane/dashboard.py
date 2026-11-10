@@ -250,9 +250,16 @@ def attention(ctx: TenantContext) -> dict[str, Any]:
         payouts = commission_selectors.pending_payout_summary()
         items.append({"key": "payouts", "count": sum(row["count"] for row in payouts)})
     if authz.check(ctx, "platform.staff_kyc.view").allowed:
-        from workeasy360.commercial.partners.kyc import awaiting_review_count
+        from workeasy360.commercial.partners.kyc import (
+            awaiting_activation_count,
+            awaiting_review_count,
+        )
 
         items.append({"key": "kyc_reviews", "count": awaiting_review_count()})
+        # Approved, but approval does not activate: an Admin still has to.
+        items.append(
+            {"key": "kyc_awaiting_activation", "count": awaiting_activation_count()}
+        )
     if authz.check(ctx, PAYMENT_VIEW).allowed:
         from workeasy360.commercial.payments import admin_reads as payment_reads
 

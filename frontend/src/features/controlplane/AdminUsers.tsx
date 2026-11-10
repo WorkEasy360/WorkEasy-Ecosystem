@@ -89,13 +89,13 @@ function withinDays(iso: string, days: string, now: number): boolean {
  *
  * `initialQuery`: a search arriving in the address (`/admin/users?q=...`).
  */
-export function Users({ initialQuery = "" }: { initialQuery?: string } = {}) {
+export function Users({ initialQuery = "", initialSegment = "" }: { initialQuery?: string; initialSegment?: string } = {}) {
   const { permissions } = useAdmin();
   const session = useSession();
   const me = session.status === "ready" ? session.session.user_id : undefined;
   const manage = can(permissions, "platform.staff_user.manage");
   const [query, setQuery] = useState(initialQuery);
-  const [segment, setSegment] = useState("");
+  const [segment, setSegment] = useState(initialSegment);
   const [product, setProduct] = useState("");
   const [signedUp, setSignedUp] = useState("");
   const [now] = useState(() => Date.now());

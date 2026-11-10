@@ -311,7 +311,9 @@ function RequirementRow({
           <span className={styles.note}>
             {fileSize(document.size_bytes)}, uploaded {formatDate(document.uploaded_at)}
           </span>
-          {mayOpen && (
+          {document.scan === "pending" && <Badge tone="warning">Waiting for the malware scan</Badge>}
+          {document.scan === "infected" && <Badge tone="danger">A threat was found and the file deleted: upload it again</Badge>}
+          {mayOpen && document.scan !== "pending" && document.scan !== "infected" && (
             <a href={partnerKycApi.documentUrl(partnerId, document.id)} target="_blank" rel="noopener" aria-label={`Open ${document.filename}`}>
               Open
             </a>

@@ -475,3 +475,63 @@ describe("KYC requirements", () => {
     expect(screen.queryByRole("button", { name: /^Edit/ })).not.toBeInTheDocument();
   });
 });
+
+describe("two-step activation and the malware scan (2026-11-10)", () => {
+  const MANAGER = [...REVIEW, "platform.staff_partner.manage"];
+  const approved = { ...APP, status: "approved", may_decide: false, partner_status: "draft", partner_version: 4 };
+
+  it("approved but not active: an Admin who may manage partners activates it as a second step", async () => {
+    const calls = mockApi({
+      [`GET ${DETAIL}`]: [ok(approved), ok({ ...approved, partner_status: "active" })],
+      [`POST /api/v1/admin/partners/${PARTNER}/status`]: [ok({ id: PARTNER, status: "active" })],
+    });
+    screenAs(MANAGER, <KycApplicationScreen partnerId={PARTNER} />);
+    await screen.findByRole("heading", { level: 1, name: "Acme Partners" });
+    expect(screen.getByText("Approved, not yet active")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Activate partner" }));
+    const confirm = await screen.findByRole("dialog");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Activate partner" }));
+    await waitFor(() => expect(calls.some((c) => c.key === `POST /api/v1/admin/partners/${PARTNER}/status`)).toBe(true));
+    expect(bodyOf(calls, `POST /api/v1/admin/partners/${PARTNER}/status`)).toEqual({
+      status: "active",
+      reason: "Activated after KYC approval.",
+      expected_version: 4,
+    });
+  });
+
+  it("a reviewer without partner management sees who must activate it, and no button", async () => {
+    mockApi({ [`GET ${DETAIL}`]: [ok(approved)] });
+    screenAs(REVIEW, <KycApplicationScreen partnerId={PARTNER} />);
+    await screen.findByRole("heading", { level: 1, name: "Acme Partners" });
+    expect(screen.queryByRole("button", { name: "Activate partner" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Someone who may manage partners has to activate it/)).toBeInTheDocument();
+  });
+
+  it("names each document's scan, and offers no Open link until it is clean", async () => {
+    mockApi(
+      reviewer({
+        ...APP,
+        documents: [
+          { id: "p1", requirement_key: "certificate", filename: "waiting.pdf", content_type: "application/pdf", size_bytes: 10, uploaded_at: T, removed_at: null, scan: "pending" },
+          { id: "p2", requirement_key: "tax_card", filename: "clean.pdf", content_type: "application/pdf", size_bytes: 10, uploaded_at: T, removed_at: null, scan: "clean" },
+          { id: "p3", requirement_key: "bank", filename: "bad.pdf", content_type: "application/pdf", size_bytes: 10, uploaded_at: T, removed_at: null, scan: "infected" },
+        ],
+      }),
+    );
+    await openDetail();
+    expect(screen.getByText("Waiting for malware scan: cannot be opened yet")).toBeInTheDocument();
+    expect(screen.getByText("Scanned: clean")).toBeInTheDocument();
+    expect(screen.getByText("Threat found: content deleted")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open waiting.pdf" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open bad.pdf" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open clean.pdf" })).toBeInTheDocument();
+  });
+
+  it("the queue says how many approved partners wait for activation, and names the legacy ones", async () => {
+    mockApi({ [`GET ${QUEUE}`]: [page([ROW], { awaiting_activation: 2, legacy_active: 3 })] });
+    screenAs(VIEW, <KycApplicationsScreen />);
+    expect(await screen.findByText("2 approved partners are waiting to be activated")).toBeInTheDocument();
+    expect(screen.getByText("3 partners were active before KYC was required")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Approved Partners" })).toHaveAttribute("href", "/admin/partners/all?kyc=legacy");
+  });
+});

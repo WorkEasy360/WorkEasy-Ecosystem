@@ -99,6 +99,9 @@ INTEGRATION_APPS = [
     "workeasy360.integration.events",
     "workeasy360.integration.idempotency",
     "workeasy360.integration.scheduling",
+    # 2026-11-10: no models; registers the socket-owning adapters (the clamd
+    # malware scanner) with the platform below it at start-up.
+    "workeasy360.integration.egress",
     "workeasy360.integration.connectors",
     "workeasy360.integration.webhooks",
     "workeasy360.integration.automation",
@@ -377,6 +380,20 @@ SESSION_ABSOLUTE_TIMEOUT = 60 * 60 * 24 * 30  # 30d hard cap
 # Partner KYC: a draft partner cannot be activated until its application is
 # approved (commercial/partners/kyc.py). Production refuses to start with it off.
 PARTNER_KYC_REQUIRED = env.bool("W360_PARTNER_KYC_REQUIRED", True)
+
+# 2026-11-10: malware scanning of uploaded files. "clamd" is ClamAV's daemon over
+# TCP (INSTREAM); "none" keeps the allowlist check alone, which is enough for
+# images but not for KYC documents. With KYC_MALWARE_SCAN_REQUIRED on, a file of
+# a strict module is never served until a real scanner has said it is clean:
+# with no scanner, or a scanner that gives no verdict, it stays quarantined.
+FILES_MALWARE_SCANNER = env.choice(
+    "W360_FILES_MALWARE_SCANNER", ("none", "clamd"), default="none"
+)
+CLAMD_HOST = env.str("W360_CLAMD_HOST", "clamav")
+CLAMD_PORT = env.int("W360_CLAMD_PORT", 3310)
+CLAMD_TIMEOUT_SECONDS = env.float("W360_CLAMD_TIMEOUT_SECONDS", 30.0)
+KYC_MALWARE_SCAN_REQUIRED = env.bool("W360_KYC_MALWARE_SCAN_REQUIRED", True)
+FILES_STRICT_SCAN_MODULES = ("partner_kyc",)
 # The Admin sign-in's "Remember me" idle window. Never past the hard cap above.
 SESSION_REMEMBER_ME_AGE = env.int("W360_SESSION_REMEMBER_ME_S", 60 * 60 * 24 * 7)
 
@@ -1366,6 +1383,13 @@ PAYMENT_TOTAL_TIMEOUT_S = env.float("W360_PAYMENT_TOTAL_TIMEOUT_S", 20.0)
 PAYMENT_MAX_REQUEST_BYTES = env.int("W360_PAYMENT_MAX_REQUEST_BYTES", 64 * 1024)
 PAYMENT_MAX_RESPONSE_BYTES = env.int("W360_PAYMENT_MAX_RESPONSE_BYTES", 256 * 1024)
 PAYMENT_WEBHOOK_MAX_BYTES = env.int("W360_PAYMENT_WEBHOOK_MAX_BYTES", 256 * 1024)
+
+# 2026-11-10: strict files (KYC documents) that got no scan verdict are retried.
+CELERY_BEAT_SCHEDULE["files-rescan-quarantined"] = {
+    "task": "platform.files.rescan_quarantined",
+    "schedule": env.float("W360_BEAT_FILES_RESCAN_S", 300.0),
+    "options": {"queue": "default", "expires": 280},
+}
 
 CELERY_BEAT_SCHEDULE["payments-process-due"] = {
     "task": "commercial.payments.process_due",

@@ -309,3 +309,132 @@ function AssignPlanDialog({
     </FormDialog>
   );
 }
+
+// --- the customer's partner (2026-11-10) -------------------------------------------------------
+
+const END_REASONS: Record<string, string> = {
+  partner_changed_by_staff: "Changed by an Admin",
+  ended_by_staff: "Ended by an Admin",
+  partner_terminated: "Partner terminated",
+};
+
+/** Assign a partner, change it, and every relationship this customer has had. A change
+ * ends the current relationship and starts the new one; past commissions stay with the
+ * partner of the relationship live at the time of each sale. */
+export function PartnerAssignmentCard({ organizationId, onChanged }: { organizationId: string; onChanged?: () => void }) {
+  const [refresh, setRefresh] = useState(0);
+  const [load] = useLoad(() => customersApi.partner(organizationId), [organizationId, refresh]);
+  const data = load.status === "ready" ? load.data : null;
+  const action =
+    data?.may_manage ? (
+      <PartnerPicker
+        organizationId={organizationId}
+        current={data.current}
+        onDone={() => {
+          setRefresh((n) => n + 1);
+          onChanged?.();
+        }}
+      />
+    ) : undefined;
+  return (
+    <Card
+      title="Partner"
+      description="The partner that serves this customer. Changing it never moves commissions already earned."
+      actions={action}
+    >
+      <p>
+        {data?.current ? (
+          <>
+            <strong>{data.current.partner_name}</strong> <Trunc>{data.current.partner_code}</Trunc> <StatusBadge value={data.current.status} />{" "}
+            since {formatDate(data.current.started_at)}
+          </>
+        ) : data ? (
+          "No partner is assigned."
+        ) : null}
+      </p>
+      <DataTable
+        caption="Partner assignment history"
+        columns={[
+          { key: "partner", header: "Partner", value: (r) => r.partner_name, render: (r) => <Trunc>{r.partner_name}</Trunc> },
+          { key: "status", header: "Status", value: (r) => r.status, render: (r) => <StatusBadge value={r.status} /> },
+          { key: "started", header: "Started", value: (r) => r.started_at, render: (r) => formatDate(r.started_at) },
+          { key: "by", header: "Assigned by", value: (r) => r.started_by_name, render: (r) => r.started_by_name || EMPTY },
+          { key: "ended", header: "Ended", value: (r) => r.ended_at, render: (r) => (r.ended_at ? formatDate(r.ended_at) : EMPTY) },
+          {
+            key: "why",
+            header: "Why it ended",
+            value: (r) => r.end_reason,
+            render: (r) => (r.end_reason ? (END_REASONS[r.end_reason] ?? sentence(r.end_reason)) : EMPTY),
+          },
+        ]}
+        rows={data?.history ?? []}
+        rowKey={(r) => r.link_id}
+        pageSize={0}
+        maxHeight={false}
+        hideEmptyColumns={false}
+        {...tableState(load, "this customer's partner history")}
+        empty={<EmptyState icon="handshake" title="This customer has never had a partner" compact />}
+      />
+    </Card>
+  );
+}
+
+function PartnerPicker({
+  organizationId,
+  current,
+  onDone,
+}: {
+  organizationId: string;
+  current: { partner_id: string; partner_name: string } | null;
+  onDone: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [chosen, setChosen] = useState("");
+  const [reason, setReason] = useState("");
+  const [options] = useLoad(() => customersApi.assignablePartners(query), [query]);
+  const list = options.status === "ready" ? options.data.results.filter((p) => p.id !== current?.partner_id) : [];
+  const verb = current ? "Change partner" : "Assign partner";
+  return (
+    <FormPopup
+      label={verb}
+      buttonClassName="w360-btn w360-btn-secondary"
+      title={verb}
+      intro={
+        current
+          ? `${current.partner_name} stops serving this customer and the partner you choose starts. Commissions already earned stay where they are.`
+          : "The partner you choose starts serving this customer. Only active partners that can serve customers are listed."
+      }
+      submitLabel={verb}
+      onOpen={() => {
+        setChosen("");
+        setReason("");
+        setQuery("");
+      }}
+      // A partner and a reason of at least MIN_REASON characters; the server checks again.
+      canSubmit={Boolean(chosen) && reason.trim().length >= MIN_REASON}
+      onSubmit={async () => {
+        await customersApi.assignPartner(organizationId, { partner_id: chosen, reason: reason.trim() });
+        return current ? "Partner changed." : "Partner assigned.";
+      }}
+      onDone={onDone}
+    >
+      <TextField label="Find a partner" value={query} onChange={setQuery} placeholder="Name or code" maxLength={80} />
+      <SelectField
+        label="Partner"
+        value={chosen}
+        onChange={setChosen}
+        required
+        showRequired
+        options={[{ value: "", label: options.status === "loading" ? "Loading…" : list.length ? "Select…" : "No matching partner" }, ...list.map((p) => ({ value: p.id, label: `${p.display_name} (${p.code})` }))]}
+      />
+      <TextAreaField
+        label="Reason"
+        value={reason}
+        onChange={setReason}
+        maxLength={500}
+        hint={`At least ${MIN_REASON} characters. Recorded in the audit log.`}
+      />
+    </FormPopup>
+  );
+}
+

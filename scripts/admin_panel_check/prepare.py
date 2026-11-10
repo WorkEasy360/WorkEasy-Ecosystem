@@ -147,13 +147,32 @@ def run(
 def release_backend(into: Path) -> Path:
     archive = into / "release.zip"
     subprocess.run(
-        ["git", "archive", "--format=zip", "-o", str(archive), PREVIOUS_RELEASE, "backend", "infra/ecosystem"],
+        [
+            "git",
+            "archive",
+            "--format=zip",
+            "-o",
+            str(archive),
+            PREVIOUS_RELEASE,
+            "backend",
+            "infra/ecosystem",
+        ],
         cwd=ROOT,
         check=True,
     )
     with zipfile.ZipFile(archive) as z:
         z.extractall(into)
     return into / "backend"
+
+
+def truncate_guards() -> int:
+    """tenancy.0016: the wallet ledger and the KYC logs refuse TRUNCATE (2026-11-10)."""
+    return q(
+        DB,
+        "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgname IN ("
+        "'wallets_entry_reject_truncate', 'partners_kyc_decision_reject_truncate', "
+        "'partners_kyc_document_access_reject_truncate')",
+    )[0][0]
 
 
 def fingerprints() -> dict[str, tuple[int, str]]:
@@ -181,7 +200,9 @@ def main() -> int:
     failures: list[str] = []
 
     def check(name: str, ok: bool, detail: str = "") -> None:
-        print(f"  [{'PASS' if ok else 'FAIL'}] {name}" + (f" - {detail}" if detail else ""))
+        print(
+            f"  [{'PASS' if ok else 'FAIL'}] {name}" + (f" - {detail}" if detail else "")
+        )
         if not ok:
             failures.append(name)
 
@@ -206,7 +227,9 @@ def main() -> int:
             for table, (count, _digest) in before.items():
                 print(f"    {table}: {count} rows")
             check("history exists before the upgrade", before["partners_account"][0] >= 1)
-            active_before = q(DB, "SELECT count(*) FROM partners_account WHERE status = 'active'")[0][0]
+            active_before = q(
+                DB, "SELECT count(*) FROM partners_account WHERE status = 'active'"
+            )[0][0]
 
             print("== 2. the working tree applies its migrations")
             run(new, "migrate", "--noinput")
@@ -218,8 +241,14 @@ def main() -> int:
                 "partners.0018_ticket_assignment",
                 "administration.0003_help_and_company",
                 "tenancy.0015_support_setup_help",
+                "tenancy.0016_ledger_truncate_guard",
             ):
                 check(f"{name} applied", f"[X]  {name}" in plan)
+            check(
+                "the ledgers refuse TRUNCATE",
+                truncate_guards() == 3,
+                f"{truncate_guards()} of 3",
+            )
             check(
                 "the Admin from the live release holds every new permission",
                 live_new_grants() == len(NEW_STAFF_KEYS),
@@ -229,10 +258,20 @@ def main() -> int:
             print("== 3. every existing row is unchanged")
             after = fingerprints()
             for table in FINGERPRINTS:
-                check(f"{table} identical", after[table] == before[table], f"{after[table][0]} rows")
-            active = q(DB, "SELECT count(*) FROM partners_account WHERE status = 'active'")[0][0]
-            check("every active partner stays active", active == active_before, f"{active}")
-            approved = q(DB, "SELECT count(*) FROM partners_kyc WHERE status = 'approved'")[0][0]
+                check(
+                    f"{table} identical",
+                    after[table] == before[table],
+                    f"{after[table][0]} rows",
+                )
+            active = q(
+                DB, "SELECT count(*) FROM partners_account WHERE status = 'active'"
+            )[0][0]
+            check(
+                "every active partner stays active", active == active_before, f"{active}"
+            )
+            approved = q(
+                DB, "SELECT count(*) FROM partners_kyc WHERE status = 'approved'"
+            )[0][0]
             check("no KYC approval was forged", approved == 0, f"{approved}")
             wallets = q(DB, "SELECT count(*) FROM wallets_wallet")[0][0]
             check("no wallet appeared by itself", wallets == 0, f"{wallets}")
@@ -242,17 +281,31 @@ def main() -> int:
                 run(new, "migrate", app, target, "--noinput")
             check("reversed: rows intact", fingerprints() == before)
             check("reversed: the new permissions are withdrawn", live_new_grants() == 0)
+            check(
+                "reversed: the TRUNCATE guards are gone",
+                truncate_guards() == 0,
+                truncate_guards(),
+            )
             run(new, "migrate", "--noinput")
             check("re-applied: rows intact", fingerprints() == before)
             check(
                 "re-applied: the Admin holds every new permission again",
                 live_new_grants() == len(NEW_STAFF_KEYS),
             )
+            check(
+                "re-applied: the ledgers refuse TRUNCATE again",
+                truncate_guards() == 3,
+                truncate_guards(),
+            )
 
         print("== 5. the acceptance data")
         # The ecosystem seed's partners predate KYC: active with KYC in draft, as the
         # migration leaves the partners production already has.
-        out = run(new, script=ECOSYSTEM / "seed.py", extra_env={"W360_PARTNER_KYC_REQUIRED": "false"})
+        out = run(
+            new,
+            script=ECOSYSTEM / "seed.py",
+            extra_env={"W360_PARTNER_KYC_REQUIRED": "false"},
+        )
         for line in out.splitlines():
             if line.startswith(("ORG ", "PARTNER ")):
                 print("   ", line)

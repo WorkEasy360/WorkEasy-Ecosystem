@@ -13,7 +13,7 @@ AI tokens arrive the same way, from the view that returned the AI answer (see
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -47,6 +47,10 @@ def _currency(organization_id: UUID) -> str:
         )
 
 
+#: How far ahead of the platform's clock an event may be dated (clock skew).
+FUTURE_SKEW = timedelta(minutes=5)
+
+
 def report(
     *,
     product_code: str,
@@ -71,6 +75,17 @@ def report(
         if moment.tzinfo is None:
             raise CatalogValidationError(
                 "The time needs a timezone.", field="occurred_at"
+            )
+        # 2026-11-10 audit: a plan's free allowance counts from the start of the
+        # event's month, so an event dated in a future month would draw on an
+        # allowance that has not started. Usage happens now or in the past; a
+        # few minutes of clock skew are tolerated.
+        from django.utils import timezone
+
+        if moment > timezone.now() + FUTURE_SKEW:
+            raise CatalogValidationError(
+                "Usage cannot be reported for a time in the future.",
+                field="occurred_at",
             )
     event = usage.record(
         organization_id=organization_id,

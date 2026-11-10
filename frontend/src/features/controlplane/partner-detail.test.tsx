@@ -240,7 +240,9 @@ describe("the header", () => {
     const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(within(crumbs).getByRole("link", { name: "All partners" })).toHaveAttribute("href", "/admin/partners/all");
     expect(within(crumbs).getByText("Acme Partners")).toHaveAttribute("aria-current", "page");
-    expect(document.title).toBe("Acme Partners · WorkEasy360 Admin");
+    // The title is set by an effect after the header renders: waited for, not read once
+    // (on a loaded machine the single read could run before the effect).
+    await waitFor(() => expect(document.title).toBe("Acme Partners · WorkEasy360 Admin"));
     // The key facts, one each.
     for (const fact of ["acme", "Preferred currency GBP", "2 live customers"]) expect(screen.getByText(fact)).toBeInTheDocument();
     await screen.findByRole("heading", { name: "Profile completion" });
@@ -879,7 +881,8 @@ describe("Users & Permissions", () => {
     expect(experience.compareDocumentPosition(caps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const members = await screen.findByRole("table", { name: "Members" });
     const boss = within(members).getByText("boss@acme.example").closest("tr")!;
-    expect(within(boss).getByText(/^Invitation sent/)).toBeInTheDocument();
+    // Queued, not claimed as sent: no delivery record came with this member.
+    expect(within(boss).getByText(/^Invitation queued/)).toBeInTheDocument();
     expect(within(boss).getByRole("button", { name: /Resend setup link/ })).toBeInTheDocument();
     const ops = within(members).getByText("ops@acme.example").closest("tr")!;
     expect(within(ops).getByText("Active")).toBeInTheDocument();

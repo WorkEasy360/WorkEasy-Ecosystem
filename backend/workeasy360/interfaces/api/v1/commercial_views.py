@@ -210,6 +210,9 @@ def product_status_view(
         ctx,
         product_id=product_id,
         status=_enum(body, "status", ProductStatus),
+        # A listed product made available goes into the store: through the
+        # console or the API it is checked like publishing (2026-11-10).
+        require_publishable=True,
     )
     return JsonResponse({"id": str(product.id), "status": product.status})
 

@@ -207,7 +207,11 @@ describe("a report", () => {
     mockApi(routes("sales", ok({ ...SALES, results: [], total: 0 })));
     const { container } = asStaff([VIEW], <ReportScreen kind="sales" />);
     expect(await screen.findByText("Nothing in this period")).toBeInTheDocument();
+    // The export stays on the page, disabled, with the reason written beside it.
     expect(screen.queryByRole("link", { name: "Export CSV" })).toBeNull();
+    const off = screen.getByRole("button", { name: "Export CSV" });
+    expect(off).toBeDisabled();
+    expect(off).toHaveAccessibleDescription("Nothing to export in this period.");
     expect(screen.queryByRole("navigation", { name: "Pages" })).toBeNull();
     await expectNoViolations(container);
   });

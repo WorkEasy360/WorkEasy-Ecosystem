@@ -116,3 +116,21 @@
   flex-wrap: wrap;
   gap: var(--w360-space-2);
 }
+
+/* A filter shortcut written inside a sentence: looks like a link, is a button. */
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.linkButton:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}

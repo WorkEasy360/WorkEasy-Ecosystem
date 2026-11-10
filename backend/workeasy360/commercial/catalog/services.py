@@ -877,7 +877,11 @@ def reorder_screenshots(ctx: TenantContext, *, product_id: UUID, order: Any) -> 
 
 
 def set_product_status(
-    ctx: TenantContext, *, product_id: UUID, status: ProductStatus
+    ctx: TenantContext,
+    *,
+    product_id: UUID,
+    status: ProductStatus,
+    require_publishable: bool = False,
 ) -> Any:
     """Move a product through its lifecycle.
 
@@ -886,6 +890,13 @@ def set_product_status(
     when deciding whether a *new* subscription may be created. That is what
     makes "a retired product must not invalidate historical records" a
     structural property rather than a promise.
+
+    Making a *listed* product available puts it in the store, so a person doing
+    it through the console or the API is checked like publishing
+    (``require_publishable=True``, passed by the HTTP view; 2026-11-10). The
+    operator's ``register_products`` command and the catalog fixtures keep the
+    unchecked path: changing what a deployment's seeding step does could
+    unpublish a live product.
     """
     from workeasy360.commercial.catalog.models import Product
 
@@ -898,6 +909,15 @@ def set_product_status(
         if current is status:
             return product
 
+        if (
+            require_publishable
+            and status is ProductStatus.AVAILABLE
+            and product.listing == ProductListing.LISTED.value
+        ):
+            # A product is created listed, so making it available would put it in
+            # the store with no check at all (2026-11-10: a duplicate "crm" with
+            # no plans went live that way). Publishing is the checked step.
+            _assert_publishable(product)
         now = timezone.now()
         product.status = status.value
         stamps = {

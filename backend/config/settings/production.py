@@ -19,6 +19,7 @@ from config.settings.base import (
     EMAIL_USE_SSL,
     EMAIL_USE_TLS,
     FILE_STORAGE_BACKEND,
+    KYC_MALWARE_SCAN_REQUIRED,
     PARTNER_KYC_REQUIRED,
     PORTAL_HANDOFF_TTL_S,
     REDIS_URL,
@@ -245,6 +246,14 @@ env.check(
     PARTNER_KYC_REQUIRED,
     "W360_PARTNER_KYC_REQUIRED must stay on in production: registering must never "
     "be enough to become an active partner.",
+)
+# 2026-11-10: KYC documents are served only after a real malware scan. Without a
+# scanner (W360_FILES_MALWARE_SCANNER=clamd) they wait in quarantine and no
+# application can be approved: closed, not open. Turning this off is refused.
+env.check(
+    KYC_MALWARE_SCAN_REQUIRED,
+    "W360_KYC_MALWARE_SCAN_REQUIRED must stay on in production: an unscanned KYC "
+    "document must never be treated as safe.",
 )
 env.check(
     "*" not in ALLOWED_HOSTS,

@@ -141,6 +141,9 @@ export interface KycDocument {
   size_bytes: number;
   uploaded_at: string;
   removed_at?: string | null;
+  /** The malware scan (2026-11-10): clean, infected, pending (waiting for a
+   * scanner; it cannot be opened yet) or not_required (scanning is off here). */
+  scan?: "clean" | "infected" | "pending" | "not_required";
 }
 
 export interface KycQueueRow {
@@ -148,6 +151,8 @@ export interface KycQueueRow {
   partner_name: string;
   partner_code: string;
   partner_status: string;
+  /** The partner account's version, for the separate activation step. */
+  partner_version?: number;
   contact_email: string;
   status: KycStatus;
   requested_experience: string;
@@ -186,11 +191,27 @@ export interface KycApplicationDetail extends KycQueueRow {
 
 export const kycApi = {
   queue: (query: { status?: string; q?: string; limit?: number; offset?: number }) =>
-    apiFetch<{ results: KycQueueRow[]; total: number; limit: number; offset: number; counts: Record<string, number> }>(
+    apiFetch<{
+      results: KycQueueRow[];
+      total: number;
+      limit: number;
+      offset: number;
+      counts: Record<string, number>;
+      awaiting_activation?: number;
+      legacy_active?: number;
+    }>(
       "/api/v1/admin/kyc/applications",
       { query },
     ),
   detail: (partnerId: string) => apiFetch<KycApplicationDetail>(`/api/v1/admin/kyc/applications/${partnerId}`),
+  /** Every staff opening of a KYC document, across all applications (2026-11-10). */
+  accessLog: (query: { limit?: number; offset?: number }) =>
+    apiFetch<{
+      results: { accessed_at: string; accessed_by_name: string; partner_id: string; partner_name: string; requirement_key: string; ip_prefix: string }[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>("/api/v1/admin/kyc/document-access", { query }),
   startReview: (partnerId: string) =>
     apiFetch<KycApplicationDetail>(`/api/v1/admin/kyc/applications/${partnerId}/review`, post({})),
   decide: (
@@ -692,7 +713,33 @@ export interface SetupRecordRow {
   version: number;
 }
 
+/** One partner relationship of a customer, as staff see it (2026-11-10). */
+export interface PartnerLinkRow {
+  link_id: string;
+  partner_id: string;
+  partner_code: string;
+  partner_name: string;
+  status: string;
+  started_at: string;
+  ended_at: string | null;
+  end_reason: string;
+  started_by_name: string;
+  ended_by_name: string;
+}
+
+export interface CustomerPartnerAssignment {
+  current: PartnerLinkRow | null;
+  history: PartnerLinkRow[];
+  may_manage: boolean;
+}
+
 export const customersApi = {
+  partner: (organizationId: string) => apiFetch<CustomerPartnerAssignment>(`/api/v1/admin/customers/${organizationId}/partner`),
+  /** Assign a partner, or change it: the current relationship ends and the new one starts. */
+  assignPartner: (organizationId: string, body: { partner_id: string; reason: string }) =>
+    apiFetch<CustomerPartnerAssignment>(`/api/v1/admin/customers/${organizationId}/partner`, post(body)),
+  assignablePartners: (q: string) =>
+    apiFetch<{ results: { id: string; code: string; display_name: string }[] }>("/api/v1/admin/partners/assignable", { query: { q } }),
   create: (body: { name: string; owner_email: string; owner_name: string; reason: string }) =>
     apiFetch<{ organization_id: string; slug: string; owner_invited: boolean }>("/api/v1/admin/customers/create", post(body)),
   members: (organizationId: string) => apiFetch<{ results: MemberRow[] }>(`/api/v1/admin/customers/${organizationId}/members`),

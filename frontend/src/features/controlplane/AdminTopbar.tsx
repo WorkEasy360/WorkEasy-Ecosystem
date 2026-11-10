@@ -370,6 +370,12 @@ const ATTENTION: Record<AttentionItem["key"], { one: string; many: string; href:
     href: "/admin/partners/applications",
     icon: "shield",
   },
+  kyc_awaiting_activation: {
+    one: "partner with approved KYC waits to be activated",
+    many: "partners with approved KYC wait to be activated",
+    href: "/admin/partners/applications?status=approved",
+    icon: "checkCircle",
+  },
   failed_payments: {
     one: "failed payment or activation needs attention",
     many: "failed payments or activations need attention",

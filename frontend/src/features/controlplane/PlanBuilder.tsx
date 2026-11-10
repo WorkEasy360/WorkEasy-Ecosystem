@@ -10,6 +10,7 @@ import {
   type FeatureRow,
   type PlanRow,
 } from "@/lib/api/adminConsole";
+import { usagePricingApi } from "@/lib/api/adminPanel";
 import { can, useAdmin } from "./ControlShell";
 import { LoadGate, money, useAction, useLoad, type Load } from "./ui";
 import { toMajor, toMinor } from "./amounts";
@@ -81,6 +82,11 @@ interface Form {
   bookId: string;
   features: Record<string, FeatureValue>;
   inclusions: Record<string, Inclusion>;
+  /** 2026-11-10: a package's renewal and change rules and included usage, in the
+   * New Plan form itself (they were only in the Rules dialog after creation). */
+  renewalRule: string;
+  changeRule: string;
+  includedUsage: Record<string, string>;
 }
 
 export interface BuilderOutcome {
@@ -114,6 +120,9 @@ function initialForm(overview: CatalogOverview, existing?: PlanRow | BundleRow):
     bookId: book?.id ?? "",
     features: {},
     inclusions: {},
+    renewalRule: "auto_renew",
+    changeRule: "any",
+    includedUsage: {},
   };
   if (!existing) return form;
 
@@ -222,6 +231,9 @@ function validate(form: Form, x: Checks): Record<string, string> {
     else if (!form.hardLimit && form.maxSeats.trim()) {
       const max = wholeNumber(form.maxSeats);
       if (max === null || max < seats) e.maxSeats = "Maximum seats must be a whole number no lower than the included seats.";
+    }
+    for (const [meter, text] of Object.entries(form.includedUsage)) {
+      if (text.trim() !== "" && wholeNumber(text) === null) e[`usage:${meter}`] = "Included usage must be a whole number.";
     }
     for (const feature of x.features) {
       if (feature.kind !== "quota") continue;
@@ -341,6 +353,30 @@ export function PlanBuilder({
                   addon_for_product_id: kind === "addon" ? f.addonForId : undefined,
                 });
           created.current.id = row.id;
+        },
+      });
+    }
+
+    const rulesChanged =
+      f.renewalRule !== "auto_renew" || f.changeRule !== "any" || Object.values(f.includedUsage).some((text) => (wholeNumber(text) ?? 0) > 0);
+    if (mode === "create" && kind !== "bundle" && rulesChanged) {
+      // Renewal and change rules and included usage (2026-11-10): applied right
+      // after the plan exists, with the same command as the Rules dialog. Only
+      // when something differs from the defaults the plan already starts with.
+      defs.push({
+        key: "rules",
+        label: "Save its renewal rule, change rule and included usage",
+        run: async () => {
+          const included_usage: Record<string, number> = {};
+          for (const [meter, text] of Object.entries(f.includedUsage)) {
+            const units = wholeNumber(text);
+            if (units) included_usage[meter] = units;
+          }
+          await usagePricingApi.setPlanRules(created.current.id as string, {
+            renewal_rule: f.renewalRule,
+            change_rule: f.changeRule,
+            included_usage,
+          });
         },
       });
     }
@@ -591,6 +627,17 @@ export function PlanBuilder({
                     onChange={(key, value) => setForm((f) => ({ ...f, features: { ...f.features, [key]: value } }))}
                   />
                 </div>
+                {mode === "create" && (
+                  <div className={dialog.span}>
+                    <RulesEditor
+                      form={form}
+                      errors={errors}
+                      onRenewal={(v) => set("renewalRule", v)}
+                      onChange={(v) => set("changeRule", v)}
+                      onUsage={(meter, v) => setForm((f) => ({ ...f, includedUsage: { ...f.includedUsage, [meter]: v } }))}
+                    />
+                  </div>
+                )}
               </>
             ) : (
               <>
@@ -885,3 +932,69 @@ function Inclusions({
     </fieldset>
   );
 }
+
+const RENEWAL_CHOICES = [
+  { value: "auto_renew", label: "Renews automatically" },
+  { value: "manual", label: "Renewed by hand" },
+  { value: "none", label: "Does not renew" },
+];
+
+const CHANGE_CHOICES = [
+  { value: "any", label: "Upgrade or downgrade" },
+  { value: "upgrade_only", label: "Upgrade only" },
+  { value: "none", label: "No plan changes" },
+];
+
+/** Renewal, plan changes and the usage included each month, for a new package. The
+ * meters are the usage-pricing meters; a blank means none is included. Partner
+ * purchase rates are not per plan: they are set per product and partner type in
+ * Commercial rules, so this says where. */
+function RulesEditor({
+  form,
+  errors,
+  onRenewal,
+  onChange,
+  onUsage,
+}: {
+  form: Form;
+  errors: Record<string, string>;
+  onRenewal: (value: string) => void;
+  onChange: (value: string) => void;
+  onUsage: (meter: string, value: string) => void;
+}) {
+  const [meters] = useLoad(() => usagePricingApi.rates(), []);
+  return (
+    <fieldset className={styles.fieldset}>
+      <legend className="w360-label">Renewal, plan changes and included usage</legend>
+      <div className={dialog.grid}>
+        <SelectField label="Renewal rule" value={form.renewalRule} onChange={onRenewal} options={RENEWAL_CHOICES} />
+        <SelectField label="Upgrade / downgrade rule" value={form.changeRule} onChange={onChange} options={CHANGE_CHOICES} />
+      </div>
+      {meters.status === "ready" ? (
+        <div className={dialog.grid}>
+          {meters.data.meters.map((m) => (
+            <TextField
+              key={m.meter}
+              label={`Included ${m.label.toLowerCase()} each month`}
+              value={form.includedUsage[m.meter] ?? ""}
+              onChange={(v) => onUsage(m.meter, v)}
+              inputMode="numeric"
+              hint="Leave blank for none."
+              error={errors[`usage:${m.meter}`]}
+            />
+          ))}
+        </div>
+      ) : (
+        // Not an error for this form: usage can be set later with the plan's Rules.
+        <p className={cp.muted}>
+          {meters.status === "loading" ? "Loading the usage meters…" : "Included usage can be set after creating the plan, from its Rules."}
+        </p>
+      )}
+      <p className={cp.muted}>
+        Partner purchase rates are set per product and partner type, not per plan: see{" "}
+        <Link href="/admin/store/commercial-rules">Commercial rules</Link>.
+      </p>
+    </fieldset>
+  );
+}
+

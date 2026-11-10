@@ -9,8 +9,10 @@ customers'.
 
 **The rule.** Registering grants nothing. A draft partner holds no permission at all
 (``resolver.py``), and leaving draft needs an approved application
-(``assert_may_activate``, called by the one status command). Approval is what grants
-the capabilities the partner asked for and activates it, in one transaction.
+(``assert_may_activate``, called by the staff status command and by a parent partner
+activating a sub-partner). Approval records the decision and the capabilities the
+partner asked for; an Admin holding ``platform.staff_partner.manage`` then activates
+it. KYC approved + authorized activation = active partner (2026-11-10).
 
 **A partner that was already active when this arrived stays active.** Its KYC reads
 ``draft``: marking it approved would forge a decision nobody made, and every decision
@@ -130,8 +132,70 @@ def status_of(partner_id: UUID) -> str:
     return row["status"] if row else "draft"
 
 
+def statuses_for(partner_ids: Any) -> dict[UUID, str]:
+    """Each partner's application status in one query; ``draft`` when none was
+    ever started."""
+    ids = list(partner_ids)
+    if not ids:
+        return {}
+    m = _models()
+    found = dict(
+        m.PartnerKyc.objects.filter(partner_id__in=ids).values_list(
+            "partner_id", "status"
+        )
+    )
+    return {pid: found.get(pid, "draft") for pid in ids}
+
+
+def standing(partner_status: str, kyc_status: str) -> dict[str, Any]:
+    """What a list or record page says about a partner's KYC beside its status.
+
+    ``legacy`` marks a partner that is active or suspended without an approved
+    application. Since activation needs one, such a partner was activated before
+    KYC was required (or on a development database with the gate off). It keeps
+    its status: approving it now would forge a review nobody made, so the page says
+    so instead of showing nothing. ``ready_to_activate`` is a draft whose
+    application is approved, waiting for an Admin's activation."""
+    return {
+        "status": kyc_status,
+        "legacy": partner_status in ("active", "suspended") and kyc_status != "approved",
+        "ready_to_activate": partner_status == "draft" and kyc_status == "approved",
+        "required": required(),
+    }
+
+
+ACTIVATION_NEEDS_KYC = "KYC approval"
+
+
+def activation_gap(partner_id: UUID) -> dict[str, str] | None:
+    """The activation checklist's KYC line for a draft partner, or ``None`` when
+    nothing about KYC stands in the way."""
+    if not required():
+        return None
+    status = status_of(partner_id)
+    if status == "approved":
+        return None
+    words = {
+        "draft": "the partner has not sent its KYC application yet",
+        "submitted": "the KYC application is waiting for review",
+        "under_review": "the KYC application is being reviewed",
+        "correction_required": "the partner has to correct its KYC application",
+        "rejected": "the KYC application was rejected",
+    }
+    return {
+        "key": "kyc",
+        "label": ACTIVATION_NEEDS_KYC,
+        "detail": words.get(status, "the KYC application is not approved"),
+    }
+
+
 def assert_may_activate(partner_id: UUID) -> None:
-    """Refuse a draft partner's activation until its application is approved."""
+    """Refuse a draft partner's activation until its application is approved.
+
+    The one rule every activation path calls: the staff status command, a parent
+    partner activating a sub-partner, and nothing else may move a partner out of
+    draft. Draft, submitted, under review, correction required and rejected are all
+    refused; only ``approved`` passes."""
     if not required():
         return
     if status_of(partner_id) != "approved":
@@ -290,7 +354,7 @@ def _editable(row: Any) -> None:
         )
 
 
-def _document_json(row: Any) -> dict[str, Any]:
+def _document_json(row: Any, scans: dict[Any, str] | None = None) -> dict[str, Any]:
     return {
         "id": str(row.id),
         "requirement_key": row.requirement_key,
@@ -298,7 +362,39 @@ def _document_json(row: Any) -> dict[str, Any]:
         "content_type": row.content_type,
         "size_bytes": row.size_bytes,
         "uploaded_at": row.uploaded_at.isoformat(),
+        # The malware scan (2026-11-10): clean, infected, pending (waiting for a
+        # scanner's verdict - it cannot be opened yet) or not_required (served on
+        # the allowlist check alone, only where the scan rule is off).
+        "scan": (scans or {}).get(row.file_id, "pending"),
     }
+
+
+def _scan_states(ctx: TenantContext, file_ids: Any) -> dict[Any, str]:
+    """Each document file's scan state, read in the platform scope the files live in."""
+    from workeasy360.platform.files import selectors as file_selectors
+
+    ids = [i for i in file_ids if i]
+    if not ids:
+        return {}
+    with acting_scope(ctx):
+        return file_selectors.scan_states(ids)
+
+
+def unscanned_documents(ctx: TenantContext, partner_id: UUID) -> list[str]:
+    """The current documents that have not passed the malware scan, by requirement
+    key. Empty when the scan rule is off. Approval waits until this is empty."""
+    from workeasy360.platform.files.scanning import is_strict
+
+    if not is_strict(FILES_MODULE):
+        return []
+    m = _models()
+    rows = list(
+        m.PartnerKycDocument.objects.filter(
+            partner_id=partner_id, removed_at__isnull=True
+        )
+    )
+    scans = _scan_states(ctx, [r.file_id for r in rows])
+    return [r.requirement_key for r in rows if scans.get(r.file_id) != "clean"]
 
 
 def _decision_json(row: Any, names: dict[Any, str] | None = None) -> dict[str, Any]:
@@ -340,9 +436,12 @@ def application(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
     _assert_partner_member(ctx, partner_id)
     m = _models()
     row = _record(partner_id)
-    documents = m.PartnerKycDocument.objects.filter(
-        partner_id=partner_id, removed_at__isnull=True
-    ).order_by("uploaded_at")
+    documents = list(
+        m.PartnerKycDocument.objects.filter(
+            partner_id=partner_id, removed_at__isnull=True
+        ).order_by("uploaded_at")
+    )
+    scans = _scan_states(ctx, [d.file_id for d in documents])
     return {
         "status": row.status,
         "version": row.version,
@@ -357,7 +456,7 @@ def application(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
         if row.status == "correction_required"
         else None,
         "requirements": [requirement_json(r) for r in _active_requirements()],
-        "documents": [_document_json(d) for d in documents],
+        "documents": [_document_json(d, scans) for d in documents],
         "editable": row.status in ("draft", "correction_required"),
         "may_edit": _may_edit(ctx, partner_id),
     }
@@ -487,7 +586,7 @@ def upload_document(
                 "size_bytes": len(content),
             },
         )
-    return _document_json(document)
+    return _document_json(document, _scan_states(ctx, [file_id]))
 
 
 @in_scope
@@ -644,7 +743,56 @@ def queue(
         "limit": size,
         "offset": start,
         "counts": status_counts(),
+        # Approved applications whose partner an Admin has not activated yet.
+        "awaiting_activation": awaiting_activation_count(),
+        # Partners active or suspended without an approved application: activated
+        # before KYC was required. They keep their status; the page names them.
+        "legacy_active": legacy_active_count(),
     }
+
+
+def awaiting_activation_count() -> int:
+    m = _models()
+    return m.PartnerKyc.objects.filter(
+        status="approved", partner__status=PartnerStatus.DRAFT.value
+    ).count()
+
+
+#: The partner list's ``kyc=`` filter: ``legacy`` (active or suspended with no
+#: approved application) and ``ready`` (a draft whose application is approved).
+LIST_FILTERS = ("legacy", "ready", "approved", "not_approved")
+
+
+def list_filter(value: str | None) -> Any:
+    """A ``Q`` over ``PartnerAccount`` for the list's ``kyc=`` filter, or ``None``."""
+    from django.db.models import Exists, OuterRef
+
+    if not value:
+        return None
+    if value not in LIST_FILTERS:
+        raise PartnerValidationError("Unknown KYC filter.", field="kyc")
+    m = _models()
+    approved = Exists(
+        m.PartnerKyc.objects.filter(partner=OuterRef("pk"), status="approved")
+    )
+    if value == "legacy":
+        return Q(
+            status__in=[PartnerStatus.ACTIVE.value, PartnerStatus.SUSPENDED.value]
+        ) & ~Q(approved)
+    if value == "ready":
+        return Q(status=PartnerStatus.DRAFT.value) & Q(approved)
+    return Q(approved) if value == "approved" else ~Q(approved)
+
+
+def legacy_active_count() -> int:
+    m = _models()
+    return (
+        m.PartnerAccount.objects.filter(
+            status__in=[PartnerStatus.ACTIVE.value, PartnerStatus.SUSPENDED.value]
+        )
+        .exclude(kyc__status="approved")
+        .count()
+    )
 
 
 def status_counts() -> dict[str, int]:
@@ -670,6 +818,8 @@ def _queue_json(row: Any, names: dict[Any, str]) -> dict[str, Any]:
         "partner_name": row.partner.display_name,
         "partner_code": row.partner.code,
         "partner_status": row.partner.status,
+        # For the separate activation step (``expected_version`` on the status command).
+        "partner_version": row.partner.version,
         "contact_email": row.partner.contact_email,
         "status": row.status,
         "requested_experience": row.requested_experience,
@@ -700,9 +850,12 @@ def detail(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
         | {a.accessed_by_id for a in access}
         | {row.reviewer_id, row.decided_by_id}
     )
-    documents = m.PartnerKycDocument.objects.filter(partner_id=partner_id).order_by(
-        "-uploaded_at"
+    documents = list(
+        m.PartnerKycDocument.objects.filter(partner_id=partner_id).order_by(
+            "-uploaded_at"
+        )
     )
+    scans = _scan_states(ctx, [d.file_id for d in documents])
     may_review = authz.check(ctx, REVIEW).allowed
     return {
         **_queue_json(row, names),
@@ -712,7 +865,7 @@ def detail(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
         "requirements": [requirement_json(r) for r in _active_requirements()],
         "documents": [
             {
-                **_document_json(d),
+                **_document_json(d, scans),
                 "removed_at": d.removed_at.isoformat() if d.removed_at else None,
             }
             for d in documents
@@ -799,13 +952,16 @@ def decide(
 ) -> dict[str, Any]:
     """Approve, ask for corrections or reject. Each records who, when and why.
 
-    Approval grants what the partner asked for and activates it in this one
-    transaction, so a partner is never approved and left unable to act, nor active
-    with no approval. A partner that is already active or suspended keeps its status:
-    approving its paperwork changes nothing about whether it may operate.
+    **Approval does not activate (2026-11-10, the owner's brief).** An active
+    partner is *KYC approved + an authorized Admin's activation*: two decisions by
+    two permissions (``platform.staff_kyc.review`` here, ``platform.staff_partner.manage``
+    on the status command, which checks the approval again). Approval records the
+    decision and grants the capabilities of what the partner asked to become, but a
+    draft partner's grants confer nothing (``resolver.py``), so it can do nothing
+    until it is activated. A partner that is already active or suspended keeps its
+    status: approving its paperwork changes nothing about whether it may operate.
     """
     from workeasy360.commercial.partners import experience as experiences
-    from workeasy360.commercial.partners import services
 
     authz.require(ctx, REVIEW)
     target = DECISIONS.get(str(decision or ""))
@@ -826,6 +982,17 @@ def decide(
             raise InvalidStateTransition(
                 entity="partners.PartnerKyc", from_status=row.status, to_status=target
             )
+        if target == "approved":
+            waiting = unscanned_documents(ctx, partner_id)
+            if waiting:
+                # Fail closed (2026-11-10): no approval rests on a document no
+                # scanner has passed. Corrections and rejections stay possible.
+                raise PartnerValidationError(
+                    "This application cannot be approved yet: "
+                    f"{len(waiting)} document(s) have not passed the malware scan.",
+                    field="documents",
+                    documents=waiting,
+                )
         _record_decision(
             ctx,
             row,
@@ -861,12 +1028,10 @@ def decide(
         if target == "approved":
             key = str(experience or row.requested_experience or "")
             if key:
+                # Recorded now, effective only once an Admin activates the partner.
                 experiences.grant_for_approved_application(
                     ctx, partner_id, experience=key, reason="KYC application approved."
                 )
-            services.activate_after_kyc(
-                ctx, partner_id, reason=why or "KYC application approved."
-            )
     metrics.increment(OPERATIONS, operation=target, outcome="ok")
     _notify_decision(partner_id, target, why)
     return detail(ctx, partner_id)
@@ -897,6 +1062,39 @@ def _notify_decision(partner_id: UUID, target: str, reason: str) -> None:
         metrics.increment(OPERATIONS, operation="notify", outcome="failed")
 
 
+# --- who opened KYC documents, across every application (2026-11-10) -------------------
+
+
+def access_log(ctx: TenantContext, *, limit: Any = 50, offset: Any = 0) -> dict[str, Any]:
+    """Every staff opening of a KYC document, newest first, across all partners:
+    who, which partner and requirement, when, from which network. For whoever may
+    review applications - the same people who may open the documents."""
+    authz.require(ctx, REVIEW)
+    m = _models()
+    size = max(1, min(_int(limit, 50), 200))
+    start = max(0, _int(offset, 0))
+    rows = m.PartnerKycDocumentAccess.objects.select_related("document", "partner")
+    total = rows.count()
+    page = list(rows.order_by("-accessed_at")[start : start + size])
+    names = _user_names({r.accessed_by_id for r in page})
+    return {
+        "results": [
+            {
+                "accessed_at": r.accessed_at.isoformat(),
+                "accessed_by_name": names.get(r.accessed_by_id, ""),
+                "partner_id": str(r.partner_id),
+                "partner_name": r.partner.display_name,
+                "requirement_key": r.document.requirement_key,
+                "ip_prefix": r.ip_prefix,
+            }
+            for r in page
+        ],
+        "total": total,
+        "limit": size,
+        "offset": start,
+    }
+
+
 # --- reading a document ---------------------------------------------------------------------
 
 
@@ -924,6 +1122,19 @@ def document_content(
     with acting_scope(ctx), transaction.atomic():
         found = file_selectors.servable_content(row.file_id, max_bytes=DOCUMENT_MAX_BYTES)
         if found is None:
+            state = file_selectors.scan_states([row.file_id]).get(row.file_id)
+            if state == "pending":
+                raise PartnerValidationError(
+                    "This document has not passed the malware scan yet, so it cannot "
+                    "be opened. It is scanned again automatically.",
+                    field="document",
+                )
+            if state == "infected":
+                raise PartnerValidationError(
+                    "The malware scan found a threat in this document. Its content was "
+                    "deleted; ask the partner to upload it again.",
+                    field="document",
+                )
             raise PartnerRecordNotFound("That document cannot be opened.")
         if staff:
             m.PartnerKycDocumentAccess.objects.create(

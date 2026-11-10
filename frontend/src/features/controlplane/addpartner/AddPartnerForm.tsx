@@ -17,6 +17,7 @@ import {
   DEFAULT_MIN_PASSWORD,
   EXISTING_ACCOUNT,
   EXPERIENCE_KEYS,
+  SAME_NAME_PREFIX,
   TYPE_CARDS,
   emptyAddPartner,
   errorsFromProblems,
@@ -30,11 +31,12 @@ import {
 /**
  * Partners → New partner (ADR-048), shown as a dialog over All partners
  * (2026-10-26, the owner's reference design): the short form that creates a partner's
- * account - its name, the administrator's email, how they get in, the partner
- * type, and optionally the country. By default (2026-11-07) the administrator is
- * invited: when the partner is activated they are emailed a link to set their
- * own password, so nobody has to share one. Setting a password here is the
- * advanced option. Nothing more: business
+ * account - its business name, the **Partner Email** (the partner's own login, never
+ * a Workeasy360 staff address; 2026-11-10), the partner type, and optionally the
+ * country, a mobile number and a separate contact email. By default the partner is
+ * invited: the email with a link to set their own password is queued at once, so
+ * they can sign in and send their KYC while still a draft. Signing in activates
+ * nothing. Setting a password here is the advanced option. Nothing more: business
  * details, products, prices, commission, brand, domain, referral program and
  * team are set afterwards in the partner's **Complete Your Profile**, which this
  * page opens on success.
@@ -61,6 +63,8 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
   const [errors, setErrors] = useState<FieldErrors>({});
   const [summary, setSummary] = useState<string[]>([]);
   const [existing, setExisting] = useState(false);
+  // The server found a live partner with this name: offer to confirm it is another one.
+  const [sameName, setSameName] = useState<string | null>(null);
   const summaryRef = useRef<HTMLDivElement | null>(null);
   const guidanceId = useId();
   const { act, busy, feedback } = useAction();
@@ -87,6 +91,9 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
       const fields: Record<string, string[]> = {
         name: ["partner.display_name", "partner"],
         country: ["partner.country"],
+        phone: ["partner.phone"],
+        contactEmail: ["partner.contact_email"],
+        separateContact: ["partner.contact_email"],
         email: ["administrator.email"],
         password: ["administrator.password"],
         confirm: ["administrator.password_confirm"],
@@ -118,12 +125,16 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
     await act(async () => {
       try {
         const created = await partnerConsoleApi.createWithLogin(body);
-        // All Partners, with the new row marked: Complete setup and Guest login are in it.
-        router.push(`/admin/partners/all?created=${created.id}`);
+        // All Partners, with the new row marked and what really happened to the
+        // invitation (queued, deferred or not sent - never "delivered").
+        const invite = created.invitation ? `&invite=${created.invitation.state}&mail=${created.invitation.delivery_mode === "smtp" ? "smtp" : "local"}` : "";
+        router.push(`/admin/partners/all?created=${created.id}${invite}`);
       } catch (err) {
         const problems = err instanceof ApiError && err.status === 400 ? (err.body as { problems?: ReviewProblem[] })?.problems : undefined;
         if (Array.isArray(problems)) {
           const found = errorsFromProblems(problems);
+          const nameProblem = found["partner.display_name"];
+          if (nameProblem?.startsWith(SAME_NAME_PREFIX) && !current.allowSameName) setSameName(nameProblem);
           if (found["administrator.email"] === EXISTING_ACCOUNT && current.mode === "create") {
             // The panel under the email is the message (and the alert); the
             // password problems of a password that will not be used are not shown.
@@ -138,7 +149,14 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
       } finally {
         clearSecrets();
       }
-    }, current.access === "invite" && current.mode === "create" ? "Partner created. Its administrator is emailed a link to set a password when you activate it." : "Partner created.");
+    }, "Partner created as a draft.");
+  }
+
+  function confirmSameName() {
+    const next = { ...draft, allowSameName: true };
+    setDraft(next);
+    setSameName(null);
+    void submit(next);
   }
 
   function linkExisting() {
@@ -173,22 +191,27 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
         <ErrorSummary errors={summary} focusRef={summaryRef} />
         {feedback}
 
-        {/* Two aligned columns, as every popup form (2026-11-05); the password,
-            its guidance and the notes run across both. */}
+        {/* Two aligned columns, as every popup form (2026-11-05). The order follows
+            the owner's brief of 2026-11-10: business name, Partner Email, type,
+            country, mobile, then how the partner gets in. */}
         <div className={dialog.grid}>
           <TextField
-            label="Partner name"
+            label="Partner / Business name"
             value={draft.name}
-            onChange={(v) => set("name", v)}
+            onChange={(v) => {
+              set("name", v);
+              set("allowSameName", false);
+              setSameName(null);
+            }}
             maxLength={120}
             autoComplete="organization"
-            placeholder="Enter partner name"
+            placeholder="Enter the partner's business name"
             required
             showRequired
             error={errors["partner.display_name"] ?? errors.partner}
           />
           <TextField
-            label="Admin email"
+            label="Partner Email"
             type="email"
             value={draft.email}
             onChange={(v) => {
@@ -198,11 +221,26 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
             }}
             maxLength={254}
             autoComplete="off"
-            placeholder="Enter admin email"
+            placeholder="Enter partner email address"
+            hint="The partner's own sign-in email for the partner portal. Not a Workeasy360 staff email."
             required
             showRequired
             error={errors["administrator.email"]}
           />
+
+          {sameName && (
+            <div className={`${mine.existing} ${dialog.span}`}>
+              <p>
+                <strong>A partner with this name already exists.</strong>
+              </p>
+              <p>Open it from All Partners if it is the same business. If it is a different partner that happens to share the name, confirm it.</p>
+              <div className={mine.existingActions}>
+                <Button disabled={busy} onClick={confirmSameName}>
+                  It is a different partner: create it
+                </Button>
+              </div>
+            </div>
+          )}
 
           {existing && (
             <div className={`${mine.existing} ${dialog.span}`} role="alert">
@@ -210,8 +248,8 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
                 <strong>{EXISTING_ACCOUNT}</strong>
               </p>
               <p>
-                Its password will not be changed. You can link that person as this partner&apos;s administrator - they keep signing in with
-                the password they already have - or cancel and use another email.
+                Its password will not be changed. You can link that person as this partner&apos;s account administrator - they keep signing in
+                with the password they already have - or cancel and use another email.
               </p>
               <div className={mine.existingActions}>
                 <Button variant="primary" disabled={busy} onClick={linkExisting}>
@@ -222,21 +260,81 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
             </div>
           )}
 
+          <SelectField
+            label="Partner type"
+            value={draft.experience ?? ""}
+            onChange={(v) => set("experience", experienceFromParam(v))}
+            options={typeOptions}
+            required
+            showRequired
+            hint={draft.experience ? TYPE_CARDS[draft.experience].text : "What the partner applies to become. Nothing is granted until its KYC is approved and it is activated."}
+            error={errors.experience}
+          />
+
+          <SelectField
+            label="Country"
+            value={draft.country}
+            onChange={(v) => set("country", v)}
+            options={countryOptions("Select…")}
+            hint="Optional. Sets the starting currency, which can be changed until the partner is activated."
+            error={errors["partner.country"]}
+          />
+
+          <TextField
+            label="Mobile number"
+            type="tel"
+            value={draft.phone}
+            onChange={(v) => set("phone", v)}
+            maxLength={32}
+            autoComplete="off"
+            inputMode="tel"
+            placeholder="+91 98765 43210"
+            hint="Optional."
+            error={errors["partner.phone"]}
+          />
+
+          <div className={mine.contactToggle}>
+            <label className={mine.check}>
+              <input type="checkbox" checked={draft.separateContact} onChange={(e) => set("separateContact", e.target.checked)} />
+              Use a different contact email
+            </label>
+            <p className={mine.muted}>Optional. By default the Partner Email is also the contact address.</p>
+          </div>
+
+          {draft.separateContact && (
+            <TextField
+              label="Contact email"
+              type="email"
+              value={draft.contactEmail}
+              onChange={(v) => set("contactEmail", v)}
+              maxLength={254}
+              autoComplete="off"
+              placeholder="Enter contact email address"
+              hint="Where business emails go. Sign-in stays on the Partner Email."
+              required
+              showRequired
+              error={errors["partner.contact_email"]}
+            />
+          )}
+
           {draft.mode === "create" && !existing && (
             <fieldset className={`${mine.access} ${dialog.span}`}>
-              <legend>How the administrator signs in</legend>
+              <legend>Invitation method: how the partner signs in</legend>
               <label className={mine.choice}>
                 <input type="radio" name="access" checked={draft.access === "invite"} onChange={() => set("access", "invite")} />
                 <span className={mine.choiceText}>
-                  <strong>Send an invitation email</strong>
-                  <span>When you activate the partner, they get a link to set their own password.</span>
+                  <strong>Send an invitation email (recommended)</strong>
+                  <span>
+                    The partner gets a link to set their own password, signs in to the partner portal and sends their KYC. Signing in does not
+                    activate the partner.
+                  </span>
                 </span>
               </label>
               <label className={mine.choice}>
                 <input type="radio" name="access" checked={draft.access === "password"} onChange={() => set("access", "password")} />
                 <span className={mine.choiceText}>
                   <strong>Set a password now (advanced)</strong>
-                  <span>You type the password and tell the administrator yourself. Nothing is emailed.</span>
+                  <span>You type the password and tell the partner yourself, privately. Nothing is emailed; they can change it after signing in.</span>
                 </span>
               </label>
             </fieldset>
@@ -266,38 +364,25 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
               <div className={dialog.span}>
                 <PasswordGuidance id={guidanceId} password={draft.password} confirm={draft.confirm} minLength={DEFAULT_MIN_PASSWORD} compact />
               </div>
+              <label className={`${mine.check} ${dialog.span}`}>
+                <input type="checkbox" checked={draft.forceChange} onChange={(e) => set("forceChange", e.target.checked)} />
+                Ask them to choose their own password the first time they sign in (recommended)
+              </label>
+              <p className={`${mine.note} ${dialog.span}`}>
+                Nothing is emailed: tell the partner this password privately, never by email. It is never shown again or stored readable.
+              </p>
             </>
           )}
 
-          <SelectField
-            label="Partner type"
-            value={draft.experience ?? ""}
-            onChange={(v) => set("experience", experienceFromParam(v))}
-            options={typeOptions}
-            required
-            showRequired
-            hint={draft.experience ? TYPE_CARDS[draft.experience].text : "Sets the partner's first capabilities and the workspace it opens."}
-            error={errors.experience}
-          />
-
-          <SelectField
-            label="Country"
-            value={draft.country}
-            onChange={(v) => set("country", v)}
-            options={countryOptions("Select…")}
-            hint="Optional. Sets the starting currency, which can be changed until the partner is activated."
-            error={errors["partner.country"]}
-          />
-
-          {draft.mode === "create" && !existing && draft.access === "password" && (
-            <p className={`${mine.note} ${dialog.span}`}>Nothing is emailed: tell the administrator this password privately. They can change it after signing in.</p>
-          )}
+          <p className={`${mine.note} ${dialog.span}`}>
+            The partner is created as a draft with no partner rights. It becomes active only after its KYC is approved and an Admin activates it.
+          </p>
         </div>
       </div>
       <div className={`${dialog.foot} ${mine.foot}`}>
         <Button onClick={onClose}>Cancel</Button>
         <Button type="submit" variant="primary" loading={busy}>
-          Create partner
+          {draft.mode === "create" && !existing && draft.access === "invite" ? "Create partner & send invitation" : "Create partner"}
         </Button>
       </div>
     </form>

@@ -155,9 +155,19 @@ function SignInCard({ portal }: { portal: HostPortal }) {
       )}
       <LoginForm mode={mode} />
       {mode === "partner" && (
-        <p className="w360-hint">
-          <Link href="/partner/apply">Apply to become a partner</Link>
-        </p>
+        <>
+          <p className="w360-hint">
+            <Link href="/partner/apply">Apply to become a partner</Link>
+          </p>
+          {/* 2026-11-10: a read-only preview with example data. A guest is never a
+              partner: no account, no session, no partner rights. */}
+          <p className="w360-hint">
+            <Link href="/partner/preview" className="w360-btn w360-btn-secondary">
+              Continue as Guest
+            </Link>{" "}
+            A read-only preview with example data. Not a partner account.
+          </p>
+        </>
       )}
     </>
   );

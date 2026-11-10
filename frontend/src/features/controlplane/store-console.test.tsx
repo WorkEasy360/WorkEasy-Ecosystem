@@ -308,6 +308,34 @@ describe("the plan builder", () => {
     expect(bodyOf(calls, "POST /api/v1/admin/catalog/plans/new-plan/status")).toEqual({ status: "available" });
   });
 
+  it("saves a renewal rule, change rule and included usage chosen in the form, right after creating the plan", async () => {
+    const calls = mockApi(
+      catalogRoutes({
+        "GET /api/v1/admin/usage-rates": [{ status: 200, body: { meters: [{ meter: "api_calls", label: "API calls" }], results: [] } }],
+        "PUT /api/v1/admin/catalog/plans/new-plan/rules": [
+          { status: 200, body: { renewal_rule: "none", change_rule: "upgrade_only", included_usage: { api_calls: 1000 } } },
+        ],
+      }),
+    );
+    asStaff(CATALOG_MANAGER, <PlansScreen />);
+    await openPackageBuilder();
+    await fillPackage();
+    fireEvent.change(screen.getByLabelText("Renewal rule"), { target: { value: "none" } });
+    fireEvent.change(screen.getByLabelText("Upgrade / downgrade rule"), { target: { value: "upgrade_only" } });
+    fireEvent.change(await screen.findByLabelText("Included api calls each month"), { target: { value: "1000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create product package" }));
+    await screen.findByText("Product package “Alpha Team” created.");
+    expect(writes(calls).map((c) => c.key).slice(0, 2)).toEqual([
+      "POST /api/v1/admin/catalog/plans",
+      "PUT /api/v1/admin/catalog/plans/new-plan/rules",
+    ]);
+    expect(bodyOf(calls, "PUT /api/v1/admin/catalog/plans/new-plan/rules")).toEqual({
+      renewal_rule: "none",
+      change_rule: "upgrade_only",
+      included_usage: { api_calls: 1000 },
+    });
+  });
+
   it("a Draft publishes no version and no prices, and stays a draft", async () => {
     const calls = mockApi(catalogRoutes());
     asStaff(CATALOG_MANAGER, <PlansScreen />);

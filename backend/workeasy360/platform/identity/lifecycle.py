@@ -51,11 +51,17 @@ def create_account(
     status: UserStatus = UserStatus.ACTIVE,
     source: str = "",
     verified: bool = False,
+    password_change_required: bool = False,
 ) -> Any:
     """A new account. ``password=None`` creates one that cannot sign in until
     its owner sets a password through a proof of the mailbox. Raises
     ``IntegrityError`` if the address was taken a moment ago - the caller
-    decides what that means for its flow."""
+    decides what that means for its flow.
+
+    ``password_change_required`` is for a password someone other than the owner
+    typed (staff creating a partner's account): every call but the password
+    change is refused until the owner replaces it, as with
+    :func:`set_temporary_password`."""
     from workeasy360.platform.identity.models import User
 
     return User.objects.create_user(
@@ -65,6 +71,7 @@ def create_account(
         status=status.value,
         acquisition_source=source,
         email_verified_at=timezone.now() if verified else None,
+        password_change_required=bool(password_change_required and password),
     )
 
 

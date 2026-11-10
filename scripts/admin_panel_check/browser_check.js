@@ -441,6 +441,14 @@ const journeys = {
     check("E6 approving records the decision", await seesText(staff, "Approved", 15000));
     const status = await staff.evaluate(async (id) => (await (await fetch(`/api/v1/admin/kyc/applications/${id}`)).json()), href.split("/").pop());
     check("E7 the decision names reviewer and date", status.decisions?.[0]?.decided_by_name || status.decisions?.[0]?.reviewer || status.decisions?.[0]?.created_at, JSON.stringify(status.decisions?.[0] || {}));
+    // 2026-11-10 (ADR-061): approval does not activate; an Admin activates as a second step.
+    check("E7a approval alone leaves the partner a draft", status.partner_status === "draft", status.partner_status);
+    await open(staff, href);
+    await press(staff, "Activate partner", { selector: "button", contains: true });
+    await press(staff, "Activate partner", { selector: "[role=dialog] button, dialog button", contains: true }).catch(() => {});
+    await settle(staff);
+    const activated = await staff.evaluate(async (id) => (await (await fetch(`/api/v1/admin/kyc/applications/${id}`)).json()), href.split("/").pop());
+    check("E7b an Admin's activation makes it active", activated.partner_status === "active", activated.partner_status);
     await staff.browserContext().close();
 
     const partner = await freshPage(browser, { label: "E" });
@@ -584,6 +592,9 @@ const journeys = {
     await settle(page);
     for (const [kind, needle] of [["sales", "NEFT"], ["payments", ""], ["renewals", ""], ["wallet-movements", "Store Buyer"], ["usage", "Easy CRM"], ["partner-conversions", ""], ["commissions", ""], ["payouts", ""]]) {
       await open(page, `/admin/reports/${kind}`);
+      // 2026-11-10: the button itself, not only the address (it used to vanish on an empty period).
+      const button = await control(page, "Export CSV", { contains: true, timeout: 8000 }).catch(() => null);
+      check(`J0 ${kind} shows the Export CSV button`, Boolean(button));
       const csv = await page.evaluate(async (k) => {
         const r = await fetch(`/api/v1/admin/reports/${k}?format=csv`);
         return { status: r.status, type: r.headers.get("content-type"), text: (await r.text()).slice(0, 160) };
@@ -660,6 +671,96 @@ const journeys = {
     const m = await measure(page);
     check("L4 no page overflow on the phone", m.overflowX <= 0, m.overflowX);
     await page.browserContext().close();
+  },
+
+  // --- the follow-up of 2026-11-10 (ADR-061) ----------------------------------------------------
+  async M(browser) {
+    console.log("M: guest preview, accept invitation, New Partner form, customer's partner");
+    const guest = await freshPage(browser, { label: "M" });
+    await open(guest, "/login?mode=partner");
+    check("M1 the partner sign-in offers Continue as Guest", await seesText(guest, "Continue as Guest"));
+    const calls = [];
+    guest.on("request", (r) => {
+      if (r.url().includes("/api/")) calls.push(`${r.method()} ${r.url().replace(BASE, "")}`);
+    });
+    await press(guest, "Continue as Guest", { selector: "a" });
+    await guest.waitForFunction(() => location.pathname === "/partner/preview", { timeout: 20000 }).catch(() => {});
+    await settle(guest);
+    await guest.screenshot({ path: path.join(OUT, "partner-guest-preview.png"), fullPage: true });
+    check("M2 the guest preview opens, labelled as example data", guest.url().includes("/partner/preview") && (await seesText(guest, "example data only")), guest.url());
+    check("M3 the guest preview makes no API call", calls.length === 0, calls.join(", "));
+    for (const width of [1366, 390]) {
+      await guest.setViewport({ width, height: 900 });
+      await settle(guest);
+      const gm = await measure(guest);
+      check(`M3 guest preview at ${width}: one h1, no overflow`, gm.h1.length === 1 && gm.overflowX <= 0 && !gm.clipped.length, JSON.stringify(gm));
+      const v = await axe(guest);
+      if (v) check(`M3 axe on the guest preview at ${width}`, v.length === 0, v.join("; "));
+    }
+    await guest.setViewport({ width: 1366, height: 900 });
+    await open(guest, "/partner/accept-invitation");
+    check("M4 Accept Invitation without a token says the link is not valid", await seesText(guest, "This invitation link is not valid"));
+    await guest.browserContext().close();
+
+    const staff = await freshPage(browser, { label: "M" });
+    await signIn(staff, STAFF);
+    await staff.waitForFunction(() => !location.pathname.startsWith("/login"), { timeout: 60000 });
+    await settle(staff);
+    await open(staff, "/admin/partners/new");
+    const emailField = await field(staff, "Partner Email");
+    const placeholder = await emailField.evaluate((e) => e.getAttribute("placeholder"));
+    check("M5 the form asks for the Partner Email", placeholder === "Enter partner email address", placeholder);
+    check("M5 no field is called Admin email", !/admin email/i.test(await bodyText(staff)));
+    const stamp = Date.now().toString(36);
+    const name = `Browser Check Partner ${stamp}`;
+    await fill(staff, "Partner / Business name", name);
+    await fill(staff, "Partner Email", `m.partner.${stamp}@eco.test`);
+    await fill(staff, "Partner type", "affiliate");
+    await fill(staff, "Mobile number", "+91 98765 43210");
+    await staff.screenshot({ path: path.join(OUT, "new-partner-form.png"), fullPage: true });
+    await press(staff, "Create partner & send invitation", { selector: "button" });
+    await staff.waitForFunction(() => location.search.includes("created="), { timeout: 30000 }).catch(() => {});
+    await settle(staff);
+    const created = new URL(staff.url()).searchParams.get("created");
+    const text = await bodyText(staff);
+    check("M6 the partner is created and the invitation is never called delivered", Boolean(created) && text.includes("Partner created") && !/invitation (was )?sent|invitation delivered/i.test(text), text.slice(0, 240));
+    if (created) {
+      const summary = await staff.evaluate(async (id) => (await fetch(`/api/v1/admin/partners/${id}/summary`)).json(), created);
+      check("M7 a new partner is a draft until KYC approval and activation", summary.partner && summary.partner.status === "draft", summary.partner && summary.partner.status);
+    }
+    await open(staff, "/admin/partners/new");
+    await fill(staff, "Partner / Business name", name);
+    await fill(staff, "Partner Email", `m.other.${stamp}@eco.test`);
+    await fill(staff, "Partner type", "affiliate");
+    staff.__expectErrors = true;
+    await press(staff, "Create partner & send invitation", { selector: "button" });
+    check("M8 a second partner with the same name needs confirming", await seesText(staff, "A partner with this name already exists"));
+    staff.__expectErrors = false;
+
+    const customer = await firstLink(staff, "/admin/customers", /^\/admin\/customers\/[0-9a-f-]{36}$/);
+    check("M9 a customer record to open", Boolean(customer), customer);
+    if (customer) {
+      const orgId = customer.split("/").pop();
+      await open(staff, customer);
+      const before = await staff.evaluate(async (id) => (await fetch(`/api/v1/admin/customers/${id}/partner`)).json(), orgId);
+      const verb = before.current ? "Change partner" : "Assign partner";
+      await press(staff, verb, { selector: "button" });
+      const picker = await field(staff, "Partner");
+      await staff.waitForFunction((el) => [...el.options].some((o) => o.value), { timeout: 15000 }, picker).catch(() => {});
+      const choice = await picker.evaluate((el) => ([...el.options].find((o) => o.value) || {}).value || "");
+      check("M10 the picker lists a partner that can serve customers", Boolean(choice));
+      if (choice) {
+        await picker.select(choice);
+        await fill(staff, "Reason", "Browser check: the customer asked for this partner.");
+        await staff.screenshot({ path: path.join(OUT, "customer-assign-partner.png") });
+        await press(staff, verb, { selector: "[role=dialog] button, dialog button" });
+        await settle(staff);
+        const after = await staff.evaluate(async (id) => (await fetch(`/api/v1/admin/customers/${id}/partner`)).json(), orgId);
+        check("M11 the customer's partner is the one chosen, with history kept", after.current && after.current.partner_id === choice && after.history.length === before.history.length + 1, JSON.stringify(after.current));
+        check("M12 the page shows the assignment history", await seesText(staff, after.current ? after.current.partner_name : "", 8000));
+      }
+    }
+    await staff.browserContext().close();
   },
 };
 

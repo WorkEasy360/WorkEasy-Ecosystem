@@ -48,7 +48,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 from django.conf import settings
@@ -1880,15 +1880,23 @@ def on_invoice_voided(invoice: Any, *, at: datetime) -> None:
     _sync_summary(order)
 
 
+#: The purchase sources an order can have (ADR-053), as the staff list filters them:
+#: ``direct`` (the customer in the Store), ``partner`` (a reseller placing it for
+#: its customer) and ``storefront`` (a white-label partner's branded Store).
+ORDER_CHANNELS: Final = ("direct", "partner", "storefront")
+
+
 def staff_orders(
     ctx: TenantContext,
     *,
     status: str | None = None,
+    channel: str | None = None,
     limit: int = PAGE_SIZE,
     cursor: str | None = None,
 ) -> dict[str, Any]:
     """Every order across customers, newest first (``platform.staff_payment.view``).
-    One query for the page, one for the customers' names."""
+    One query for the page, one for the customers' names. ``channel`` filters by
+    purchase source (2026-11-10: Store orders and partner activations)."""
     from django.db.models import Q
 
     from workeasy360.commercial.payments.models import Order, OrderSummary
@@ -1901,6 +1909,10 @@ def staff_orders(
         if status not in Order.Status.values:
             raise CatalogValidationError("Unknown order status.", field="status")
         rows = rows.filter(status=status)
+    if channel:
+        if channel not in ORDER_CHANNELS:
+            raise CatalogValidationError("Unknown purchase source.", field="channel")
+        rows = rows.filter(channel=channel)
     after = decode_cursor(cursor)
     if after is not None:
         rows = rows.filter(
@@ -1925,6 +1937,9 @@ def staff_orders(
                 "amount_due_minor": row.amount_due_minor,
                 "created_at": row.created_at.isoformat(),
                 "paid_at": row.paid_at.isoformat() if row.paid_at else None,
+                # Purchase source and its reference (the partner that sold it).
+                "channel": row.channel or "direct",
+                "partner_id": str(row.partner_id) if row.partner_id else None,
             }
             for row in page
         ],

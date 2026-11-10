@@ -36,7 +36,7 @@ from uuid import UUID
 from django.utils import timezone
 
 from workeasy360.commercial.commissions import selectors as commission_selectors
-from workeasy360.commercial.partners import capabilities, upgrades
+from workeasy360.commercial.partners import capabilities, kyc, upgrades
 from workeasy360.commercial.partners import console_reads as partner_reads
 from workeasy360.contracts.enums import PartnerStatus
 from workeasy360.contracts.errors import PartnerRecordNotFound, PartnerValidationError
@@ -198,6 +198,7 @@ def resellers_page(
     profile: str | None = None,
     limit: Any = DEFAULT_PAGE,
     cursor: str | None = None,
+    kyc_filter: str | None = None,
 ) -> Page:
     """One page of partners with the aggregates the partner lists show.
 
@@ -226,6 +227,11 @@ def resellers_page(
     wanted_product = _clean_product(product)
     now = timezone.now()
     wanted_profile = profile_completion.profile_filter(profile, now)
+    wanted_kyc = kyc.list_filter(kyc_filter)
+    if wanted_kyc is not None:
+        wanted_profile = (
+            wanted_kyc if wanted_profile is None else wanted_profile & wanted_kyc
+        )
 
     rows, has_more = partner_reads.partner_rows(
         now,
@@ -252,6 +258,7 @@ def resellers_page(
     )
 
     upgrading = upgrades.open_for_partners([r.id for r in rows])
+    kyc_statuses = kyc.statuses_for([r.id for r in rows])
     items = []
     for row in rows:
         held = facts["capabilities"].get(row.id, set())
@@ -275,6 +282,9 @@ def resellers_page(
                 "created_at": row.created_at.isoformat(),
                 "experience": capabilities.experience_labels(held),
                 "profile_completion": profile_completion.summary_line(completion[row.id]),
+                # KYC beside the status, never instead of it (ADR-060): a legacy
+                # partner active before KYC was required is marked, not hidden.
+                "kyc": kyc.standing(row.status, kyc_statuses.get(row.id, "draft")),
                 # The workspace its portal opens first - derived from the grants
                 # and the stored preference, a landing and never an authority.
                 "primary_experience": capabilities.resolve_landing(

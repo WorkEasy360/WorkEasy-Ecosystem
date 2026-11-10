@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
@@ -260,24 +260,6 @@ def set_partner_status(
         target=target,
         why=clean_reason(reason),
         expected_version=expected_version,
-    )
-
-
-@in_scope
-def activate_after_kyc(ctx: TenantContext, partner_id: UUID, *, reason: Any) -> Any:
-    """Approving an application activates a draft partner, for whoever may review
-    applications. A partner already active or suspended keeps its status: approving
-    its paperwork says nothing about whether it may operate today."""
-    authz.require(ctx, "platform.staff_kyc.review")
-    current = selectors.partner_row(partner_id)
-    if current is None or current.status_enum is not PartnerStatus.DRAFT:
-        return current
-    return _set_partner_status(
-        ctx,
-        partner_id,
-        target=PartnerStatus.ACTIVE,
-        why=clean_reason(reason),
-        expected_version=None,
     )
 
 
@@ -1302,7 +1284,10 @@ def _send_setup_link(partner: Any, member: Any, user_id: UUID) -> bool:
         },
         sealed_context={
             "setup_url": (
-                f"{portal_links.account_url('partner')}/reset-password#token={token}"
+                # The partner portal's own Accept Invitation page (2026-11-10);
+                # the token is the same single-use reset token.
+                f"{portal_links.account_url('partner')}"
+                f"/partner/accept-invitation#token={token}"
             )
         },
         idempotency_key=(
@@ -1898,3 +1883,70 @@ def parse_currency(value: Any, *, field: str = "payout_currency") -> CurrencyCod
             f"{field} must be one of {sorted(c.value for c in CurrencyCode)}.",
             field=field,
         ) from exc
+
+
+# --- staff: assign or change a customer's partner (2026-11-10) ------------------------
+
+#: A partner may be assigned a customer only when it can serve customers: an active
+#: partner holding one of these (the reseller and white-label bundles do; an
+#: affiliate earns through referrals and is never a customer's partner).
+CUSTOMER_SERVING_CAPABILITIES: Final = frozenset(
+    {capabilities.CUSTOMER_MANAGE, capabilities.CUSTOMER_PROVISION}
+)
+
+
+@in_scope
+def assign_customer_partner(
+    ctx: TenantContext, organization_id: UUID, partner_id: UUID, *, reason: Any
+) -> Any:
+    """Make ``partner_id`` this customer's partner: assign one where there is none,
+    or change it, ending the current relationship and starting the new one in one
+    transaction. Audited on both sides.
+
+    Historical commissions are never rewritten: an accrual names the partner of
+    the relationship live at the moment of the sale (``selectors.link_at``), so a
+    sale before the change stays with the old partner and one after it goes to the
+    new one. Eligibility: the partner must be active and able to serve customers.
+    """
+    from workeasy360.commercial.partners.models import PartnerOrganizationLink
+
+    authz.require(ctx, MANAGE)
+    why = clean_reason(reason)
+    held = selectors.active_capabilities(partner_id)
+    if not held & CUSTOMER_SERVING_CAPABILITIES:
+        raise PartnerValidationError(
+            "That partner cannot serve customers: assign a reseller or white-label "
+            "partner. An affiliate earns through referrals instead.",
+            field="partner_id",
+        )
+    with transaction.atomic():
+        current = (
+            PartnerOrganizationLink.objects.select_for_update()
+            .filter(organization_id=organization_id)
+            .exclude(status=PartnerLinkStatus.ENDED.value)
+            .first()
+        )
+        if current is not None and current.partner_id == partner_id:
+            raise PartnerValidationError(
+                "That partner is already this customer's partner.", field="partner_id"
+            )
+        if current is not None:
+            _end_link_row(ctx, current, reason_code="partner_changed_by_staff")
+            audit.record(
+                ctx,
+                "partner.link_ended",
+                resource_type="partners.link",
+                resource_id=current.id,
+                changes={
+                    "partner_id": str(current.partner_id),
+                    "replaced_by": str(partner_id),
+                },
+                reason=why,
+            )
+        link = link_customer(ctx, partner_id, organization_id, reason=why)
+    metrics.increment(
+        PARTNER_OPERATIONS,
+        operation="customer_partner_changed" if current else "customer_partner_assigned",
+        outcome="ok",
+    )
+    return link

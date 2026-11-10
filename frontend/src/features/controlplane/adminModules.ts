@@ -230,6 +230,8 @@ export const ADMIN_MODULES: AdminModule[] = [
           { href: "/admin/security", label: "Staff access", needs: "platform.staff_security.view", exact: true },
           { href: "/admin/settings/login-clients", label: "Login clients", needs: ["platform.staff_settings.view", "platform.staff_integration.view"] },
           { href: "/admin/security/sign-ins", label: "Sign-in audit", needs: "platform.staff_audit.view" },
+          // 2026-11-10: restricted KYC storage - who opened which document, across all applications.
+          { href: "/admin/settings/kyc-access", label: "KYC document access", needs: "platform.staff_kyc.review" },
           { href: "/admin/audit", label: "Audit log", needs: "platform.staff_audit.view" },
         ],
       },

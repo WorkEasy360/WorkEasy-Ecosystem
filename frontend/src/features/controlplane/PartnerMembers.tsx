@@ -41,9 +41,30 @@ function MemberStatus({ member: m }: { member: PartnerMemberRow }) {
   if (m.invitation_deferred) {
     return <span className="w360-badge w360-badge-warning">Invitation not sent yet (sent when the partner is activated)</span>;
   }
-  if (m.invitation_sent_at) return <span className="w360-badge w360-badge-neutral">Invitation sent {when(m.invitation_sent_at)}</span>;
+  if (m.invitation_sent_at) return <InvitationState member={m} />;
   // Attached before invitations were tracked: no record of one being sent.
   return <span className="w360-badge w360-badge-neutral">Invitation pending</span>;
+}
+
+/** What happened to the setup email, from its delivery record, never assumed:
+ * "queued" until the mail worker has sent it, "sent" once the mail server took it
+ * (not proof it reached the inbox), "failed" when every attempt failed. A
+ * development server prints mail to its log instead of sending it, and says so. */
+function InvitationState({ member: m }: { member: PartnerMemberRow }) {
+  const d = m.invitation_delivery;
+  if (!d) return <span className="w360-badge w360-badge-neutral">Invitation queued {when(m.invitation_sent_at as string)}</span>;
+  const local = d.delivery_mode !== "smtp";
+  if (d.state === "sent") {
+    return local ? (
+      <span className="w360-badge w360-badge-warning">Invitation written to the server log (email is not configured here)</span>
+    ) : (
+      <span className="w360-badge w360-badge-neutral">Invitation emailed {when(d.sent_at ?? d.queued_at)}</span>
+    );
+  }
+  if (d.state === "failed") return <span className="w360-badge w360-badge-danger">Invitation email failed: resend it</span>;
+  if (d.state === "suppressed") return <span className="w360-badge w360-badge-danger">Invitation not sent: this address is blocked from email</span>;
+  if (d.state === "retrying") return <span className="w360-badge w360-badge-warning">Invitation email failed, retrying ({d.attempts} attempts)</span>;
+  return <span className="w360-badge w360-badge-neutral">Invitation queued {when(d.queued_at)}, not sent yet</span>;
 }
 
 export function MembersSection({
@@ -133,7 +154,9 @@ function MemberRow({
       if (!result.sent) {
         throw new ApiError(409, { detail: "No link was sent: this person has already chosen a password." });
       }
-    }, m.invitation_deferred ? "The setup link was sent now, instead of when the partner is activated." : "A new setup link was sent. The old one no longer works.");
+    }, m.invitation_deferred
+      ? "A setup link was queued for email now, instead of when the partner is activated."
+      : "A new setup link was queued for email. The old one no longer works.");
   }
 
   return (

@@ -623,6 +623,40 @@ describe("staff orders", () => {
     fireEvent.click(screen.getByRole("button", { name: "Failed" }));
     await waitFor(() => expect(calls.some((c) => c.url.includes("status=failed"))).toBe(true));
   });
+
+  it("shows the purchase source and its partner, filters by source on the server, and links an unpaid order to its verification", async () => {
+    const order = {
+      order_id: "o-2",
+      organization_id: ORG,
+      organization_name: "Acme Ltd",
+      number: "ORD-000008",
+      kind: "plan",
+      status: "pending_payment",
+      description: "CRM Pro x1 (monthly)",
+      product_codes: ["crm"],
+      currency: "JPY",
+      amount_due_minor: 4900,
+      created_at: T,
+      paid_at: null,
+      channel: "partner",
+      partner_id: "p-9",
+      partner_name: "North Resellers",
+    };
+    const calls = mockApi({
+      "GET /api/v1/admin/orders": [
+        { status: 200, body: { results: [order], next_cursor: null, has_more: false } },
+        { status: 200, body: { results: [order], next_cursor: null, has_more: false } },
+      ],
+    });
+    asStaff(["platform.staff_payment.view"], <StaffOrdersScreen />);
+    const table = await screen.findByRole("table", { name: "Orders" });
+    const row = within(table).getByRole("row", { name: /ORD-000008/ });
+    expect(row).toHaveTextContent("Partner activation");
+    expect(within(row).getByRole("link", { name: "North Resellers" })).toHaveAttribute("href", "/admin/partners/p-9");
+    expect(within(row).getByRole("link", { name: "Verify payment" })).toHaveAttribute("href", `/admin/customers/${ORG}#billing-h`);
+    choose("Purchase source", "Partner activation");
+    await waitFor(() => expect(calls.some((c) => c.url.includes("channel=partner"))).toBe(true));
+  });
 });
 
 describe("platform settings", () => {
@@ -773,14 +807,35 @@ describe("subscriptions and entitlements", () => {
       "GET /api/v1/admin/catalog/products": [
         { status: 200, body: { results: [{ id: "p1", code: "easy_crm", name: "Easy CRM (easy_crm)", status: "active", licensing_mode: "seat" }] } },
       ],
-      "GET /api/v1/admin/customers": [page([CUSTOMER_ROW, { ...CUSTOMER_ROW, organization_id: "o2", display_name: "Beta", subscription_status: "" }])],
+      "GET /api/v1/admin/customers": [
+        page([
+          { ...CUSTOMER_ROW, product_source: { kind: "subscription", status: "active", effective_to: null, effective_now: true } },
+          {
+            ...CUSTOMER_ROW,
+            organization_id: "o2",
+            display_name: "Beta",
+            subscription_status: "",
+            product_source: { kind: "trial", status: "trial", effective_to: "2026-11-09T00:00:00Z", effective_now: false },
+          },
+          {
+            ...CUSTOMER_ROW,
+            organization_id: "o3",
+            display_name: "Gamma",
+            subscription_status: "",
+            product_source: { kind: "grant", status: "active", effective_to: null, effective_now: true },
+          },
+        ]),
+      ],
     });
     asStaff(["platform.staff_customer.view"], <EntitlementsScreen />);
     const table = await screen.findByRole("table", { name: "Customers holding Easy CRM" });
     expect(screen.getByRole("combobox", { name: "Product" })).toHaveTextContent("Easy CRM");
     expect(screen.getByRole("combobox", { name: "Product" })).not.toHaveTextContent("easy_crm");
     expect(await within(table).findByRole("row", { name: /Acme Ltd/ })).toHaveTextContent("Subscription");
-    expect(within(table).getByRole("row", { name: /Beta/ })).toHaveTextContent("Override");
+    // 2026-11-10: a product trial is named as one, never as an override.
+    expect(within(table).getByRole("row", { name: /Beta/ })).toHaveTextContent("Product trial, ended");
+    expect(within(table).getByRole("row", { name: /Beta/ })).not.toHaveTextContent("Override");
+    expect(within(table).getByRole("row", { name: /Gamma/ })).toHaveTextContent("Staff override");
   });
 });
 
@@ -838,5 +893,91 @@ describe("audit log", () => {
     expect(within(table).queryByText("Invoice issued")).not.toBeInTheDocument();
     choose(/^Area/, "Partners");
     await waitFor(() => expect(calls.some((c) => c.url.includes("action=partner."))).toBe(true));
+  });
+});
+
+describe("a customer's partner and product trials (2026-11-10)", () => {
+  const PARTNERS = ["platform.staff_customer.view", "platform.staff_partner.view", "platform.staff_partner.manage"];
+  const partnerUrl = `/api/v1/admin/customers/${ORG}/partner`;
+  const LINK = {
+    link_id: "l1",
+    partner_id: "p1",
+    partner_code: "north",
+    partner_name: "North Resellers",
+    status: "active",
+    started_at: T,
+    ended_at: null,
+    end_reason: "",
+    started_by_name: "Asha Rao",
+    ended_by_name: "",
+  };
+
+  it("lists product trials apart from subscriptions and names each product's source", async () => {
+    mockApi({
+      [`GET /api/v1/admin/customers/${ORG}`]: [
+        {
+          status: 200,
+          body: {
+            ...CUSTOMER,
+            entitlements: { easy_crm: { status: "trial", seats: 3, source_kind: "trial" } },
+            product_trials: [
+              {
+                id: "t1",
+                product_code: "easy_crm",
+                plan_code: "crm_trial",
+                seats: 3,
+                status: "active",
+                in_effect: false,
+                started_at: "2026-11-02T00:00:00Z",
+                ends_at: "2026-11-09T00:00:00Z",
+                ended_at: null,
+              },
+            ],
+          },
+        },
+      ],
+    });
+    asStaff(["platform.staff_customer.view"], <CustomerDetailScreen organizationId={ORG} />);
+    const trials = await screen.findByRole("table", { name: "Product trials" });
+    // Past its end: ended, even while the record still says active.
+    expect(within(trials).getByRole("row", { name: /easy_crm/ })).toHaveTextContent("Ended");
+    const held = screen.getByRole("table", { name: "Products this customer holds" });
+    expect(within(held).getByRole("row", { name: /easy_crm/ })).toHaveTextContent("Product trial");
+  });
+
+  it("assigns a partner from the picker with a reason, and shows the history", async () => {
+    const calls = mockApi({
+      // The customer's page reloads after a change, and the card with it.
+      [`GET /api/v1/admin/customers/${ORG}`]: [{ status: 200, body: CUSTOMER }, { status: 200, body: CUSTOMER }],
+      [`GET ${partnerUrl}`]: [
+        { status: 200, body: { current: null, history: [], may_manage: true } },
+        { status: 200, body: { current: LINK, history: [LINK], may_manage: true } },
+        { status: 200, body: { current: LINK, history: [LINK], may_manage: true } },
+      ],
+      "GET /api/v1/admin/partners/assignable": [{ status: 200, body: { results: [{ id: "p1", code: "north", display_name: "North Resellers" }] } }],
+      [`POST ${partnerUrl}`]: [{ status: 200, body: { current: LINK, history: [LINK], may_manage: true } }],
+    });
+    asStaff(PARTNERS, <CustomerDetailScreen organizationId={ORG} />);
+    expect(await screen.findByText("No partner is assigned.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Assign partner" }));
+    const dialog = await screen.findByRole("dialog", { name: "Assign partner" });
+    await within(dialog).findByRole("option", { name: "North Resellers (north)" });
+    fireEvent.change(within(dialog).getByLabelText(/^Partner/), { target: { value: "p1" } });
+    fireEvent.change(within(dialog).getByLabelText(/^Reason/), { target: { value: "The customer asked for this reseller." } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Assign partner" }));
+    await waitFor(() => expect(calls.some((c) => c.key === `POST ${partnerUrl}`)).toBe(true));
+    expect(bodyOf(calls, `POST ${partnerUrl}`)).toEqual({ partner_id: "p1", reason: "The customer asked for this reseller." });
+    await waitFor(() => expect(screen.getByRole("table", { name: "Partner assignment history" })).toHaveTextContent("North Resellers"));
+    expect(screen.getByRole("table", { name: "Partner assignment history" })).toHaveTextContent("Asha Rao");
+  });
+
+  it("offers no assignment to staff who may only view partners", async () => {
+    mockApi({
+      [`GET /api/v1/admin/customers/${ORG}`]: [{ status: 200, body: CUSTOMER }],
+      [`GET ${partnerUrl}`]: [{ status: 200, body: { current: LINK, history: [LINK], may_manage: false } }],
+    });
+    asStaff(["platform.staff_customer.view", "platform.staff_partner.view"], <CustomerDetailScreen organizationId={ORG} />);
+    await screen.findByRole("table", { name: "Partner assignment history" });
+    expect(screen.queryByRole("button", { name: /Assign partner|Change partner/ })).not.toBeInTheDocument();
   });
 });

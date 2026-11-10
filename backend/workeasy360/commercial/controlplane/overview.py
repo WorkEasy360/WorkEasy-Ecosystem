@@ -324,6 +324,22 @@ def pending_actions(ctx: TenantContext) -> list[dict[str, Any]]:
                 "href": "/admin/partners/applications",
             }
         )
+        from workeasy360.commercial.partners.kyc import awaiting_activation_count
+
+        waiting = awaiting_activation_count()
+        # Approval does not activate a partner; this is the second step. Shown only
+        # when something waits, so the reference design's three rows stay three.
+        if waiting:
+            items.append(
+                {
+                    "key": "kyc_awaiting_activation",
+                    "label": "Approved Partners to Activate",
+                    "hint": "KYC approved, waiting for an Admin to activate",
+                    "count": waiting,
+                    "action": "Activate",
+                    "href": "/admin/partners/applications?status=approved",
+                }
+            )
     if authz.check(ctx, PAYMENT_VIEW).allowed:
         items.append(
             {

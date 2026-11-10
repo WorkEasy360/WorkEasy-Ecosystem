@@ -7,6 +7,8 @@ import { countryName, countryOptions } from "@/features/controlplane/countries";
 import { dialog, FormPopup } from "@/features/controlplane/Modal";
 import { SelectField, TextField } from "@/features/controlplane/widgets";
 import { partnerApi, type Brand } from "@/lib/api/controlPlane";
+import { accountApi } from "@/lib/api/console";
+import { ChangePasswordForm } from "@/features/console/ChangePasswordForm";
 import { panelApi, type OwnProfile } from "@/lib/api/partnerPanel";
 import { NotAvailable, PageHeader, SubNav, usePanel } from "./PanelKit";
 import { useFieldChecks } from "./workspaceKit";
@@ -23,16 +25,61 @@ function zones(): string[] {
 }
 
 export function Account() {
-  const { id, can } = usePanel();
+  const { id, can, partner } = usePanel();
   const [load, reload] = useLoad(() => panelApi.profile(id), [id]);
   return (
     <div className={styles.page}>
-      <PageHeader title="Account" lead="Your business details. These are how Workeasy360 reaches and invoices you; they are not customer records." />
+      <PageHeader title="Account" lead="Your business details, and how you sign in. Business details are how Workeasy360 reaches and invoices you." />
       <LoadGate load={load} what="your settings">
         {(p) => <ProfileForm profile={p} onSaved={reload} />}
       </LoadGate>
+      {/* Profile & Security (2026-11-10): the person's own password and sessions.
+          Never in a staff guest view - that session is the staff member's own. */}
+      {!partner?.guest && <SignInSecurity />}
       {can("activity.view") && <ActivityTrail />}
     </div>
+  );
+}
+
+/** The signed-in person's password and sessions: their own Workeasy360 account, the
+ * same in every portal, so nothing here depends on the partner's status. */
+function SignInSecurity() {
+  const [sessions, reloadSessions] = useLoad(() => accountApi.sessions(), []);
+  const { act, busy, feedback } = useAction(reloadSessions);
+  return (
+    <section className={styles.card} aria-labelledby="signin-security">
+      <h2 id="signin-security">Your sign-in</h2>
+      <p className={styles.muted}>Your own password and where you are signed in. Changing your password signs out every other session.</p>
+      <ChangePasswordForm popup onChanged={reloadSessions} />
+      {feedback}
+      <LoadGate load={sessions} what="your sessions">
+        {(d) => (
+          <Table caption="Where you are signed in" head={["Device", "Last active", ""]} isEmpty={d.sessions.length === 0} empty="No sessions.">
+            {d.sessions.map((s) => (
+              <tr key={s.session_id}>
+                <th scope="row">
+                  {s.device_label || "Unknown device"}
+                  {s.current ? " (this device)" : ""}
+                </th>
+                <td>{when(s.last_active_at)}</td>
+                <td>
+                  {!s.current && (
+                    <button
+                      type="button"
+                      className="w360-btn w360-btn-secondary"
+                      disabled={busy}
+                      onClick={() => void act(() => accountApi.revokeSession(s.session_id), `Signed out the session on ${s.device_label || "that device"}.`)}
+                    >
+                      Sign out
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </LoadGate>
+    </section>
   );
 }
 

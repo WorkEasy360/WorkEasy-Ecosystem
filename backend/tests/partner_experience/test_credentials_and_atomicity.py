@@ -538,7 +538,7 @@ def test_an_invited_administrator_has_no_password_and_is_emailed_when_the_partne
     sent = _mail_to(ADMIN_EMAIL)
     assert len(sent) == 1
     # The link opens the partner portal's own reset page.
-    assert "/reset-password#token=" in sent[0].body
+    assert "/partner/accept-invitation#token=" in sent[0].body
 
 
 def test_an_invitation_takes_no_password(catalog, admin):

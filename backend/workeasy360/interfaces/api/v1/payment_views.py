@@ -253,16 +253,29 @@ def events_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
 @staff_view(["GET"])
 def staff_orders_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     """Every order across customers (Phase 9)."""
+    from workeasy360.commercial.partners.selectors import partner_names
     from workeasy360.contracts.values.cursor import clamp_limit
 
-    return JsonResponse(
-        orders.staff_orders(
-            ctx,
-            status=request.GET.get("status") or None,
-            cursor=request.GET.get("cursor") or None,
-            limit=clamp_limit(request.GET.get("limit"), maximum=orders.MAX_PAGE),
-        )
+    result = orders.staff_orders(
+        ctx,
+        status=request.GET.get("status") or None,
+        channel=request.GET.get("channel") or None,
+        cursor=request.GET.get("cursor") or None,
+        limit=clamp_limit(request.GET.get("limit"), maximum=orders.MAX_PAGE),
     )
+    # The source reference by name: payments sits below partners, so the names
+    # are added here, one query for the page.
+    names = {
+        str(pid): name
+        for pid, name in partner_names(
+            {r["partner_id"] for r in result["results"] if r["partner_id"]}
+        ).items()
+    }
+    for row in result["results"]:
+        row["partner_name"] = (
+            names.get(row["partner_id"], "") if row["partner_id"] else ""
+        )
+    return JsonResponse(result)
 
 
 @staff_view(["POST"])

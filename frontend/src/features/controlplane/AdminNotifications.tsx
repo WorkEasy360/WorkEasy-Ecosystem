@@ -10,6 +10,11 @@ const WHAT: Record<AttentionItem["key"], { title: string; href: string; action: 
   draft_partners: { title: "Partners still in draft", href: "/admin/partners/all?status=draft", action: "Open drafts" },
   payouts: { title: "Payouts waiting for action", href: "/admin/partners/withdrawals", action: "Open withdrawals" },
   kyc_reviews: { title: "Partner applications waiting for KYC review", href: "/admin/partners/applications", action: "Review" },
+  kyc_awaiting_activation: {
+    title: "Partners with approved KYC waiting to be activated",
+    href: "/admin/partners/applications?status=approved",
+    action: "Activate",
+  },
   failed_payments: { title: "Failed payments and activations", href: "/admin/payments/failed", action: "Open" },
   low_balance: { title: "Wallets low on balance", href: "/admin/wallets?low=1", action: "Open wallets" },
   support_tickets: { title: "Support tickets still open", href: "/admin/tickets", action: "Open tickets" },

@@ -232,7 +232,7 @@ describe("domains and apps", () => {
     expect(within(partnerDomains).getByText("crm.bright.example")).toBeInTheDocument();
     expect(within(partnerDomains).getByRole("link", { name: "Bright Partner" })).toHaveAttribute("href", "/admin/partners/p1");
     expect(within(within(partnerDomains).getByRole("row", { name: /crm\.bright\.example/ })).getByText("Verified")).toBeInTheDocument();
-    const brands = screen.getByRole("table", { name: "Approved branding" });
+    const brands = screen.getByRole("table", { name: "Partner branding" });
     expect(within(brands).getByText("Bright")).toBeInTheDocument();
     expect(within(brands).getByText("Has logo")).toBeInTheDocument();
     await expectNoViolations(container);
@@ -281,7 +281,7 @@ describe("domains and apps", () => {
     expect(await screen.findByText("No portal addresses are configured")).toBeInTheDocument();
     expect(screen.getByText("No products yet")).toBeInTheDocument();
     expect(screen.getByText("No partner domains yet")).toBeInTheDocument();
-    expect(screen.getByText("No approved branding yet")).toBeInTheDocument();
+    expect(screen.getByText("No partner has set up a brand yet")).toBeInTheDocument();
     expect(screen.queryByText(/No Cloudflare account/)).toBeNull();
     view.unmount();
 

@@ -307,6 +307,17 @@ const PROFILE_OPTIONS = [
   { value: "incomplete", label: "Incomplete" },
 ];
 
+const KYC_OPTIONS = [
+  { value: "", label: "Any KYC" },
+  { value: "ready", label: "Approved, not yet active" },
+  { value: "approved", label: "KYC approved" },
+  { value: "not_approved", label: "KYC not approved" },
+  { value: "legacy", label: "Active before KYC" },
+];
+
+/** Can this draft be activated as far as KYC goes? The server checks again. */
+const kycAllowsActivation = (r: ResellerRow) => !r.kyc || !r.kyc.required || r.kyc.status === "approved";
+
 const pick = (raw: string | null, options: { value: string }[]) => (options.some((o) => o.value === raw) ? (raw as string) : "");
 
 /** The reason recorded when a partner's status is changed from its row. Nobody
@@ -335,6 +346,71 @@ function countryName(code: string): string {
   }
 }
 
+/** The KYC status in a few words, for a badge. */
+function kycWords(status: string): string {
+  return (
+    {
+      draft: "not sent",
+      submitted: "submitted",
+      under_review: "under review",
+      correction_required: "correction required",
+      approved: "approved",
+      rejected: "rejected",
+    }[status] ?? status
+  );
+}
+
+type CreatedInvite = { state: "queued" | "deferred" | "not_sent"; local: boolean } | null;
+
+/** What the create answer said about the invitation, carried on the address. */
+function inviteFromParam(raw: string | null, mail: string | null): CreatedInvite {
+  if (raw !== "queued" && raw !== "deferred" && raw !== "not_sent") return null;
+  return { state: raw, local: mail !== "smtp" };
+}
+
+/** After New partner: the partner is a draft, and the invitation is described as
+ * exactly what happened - queued for email, held until activation, not sent, or
+ * written to a development server's log - never as delivered. */
+function CreatedBanner({ partnerId, invite }: { partnerId: string; invite: CreatedInvite }) {
+  const setup = <Link href={`/admin/partners/${partnerId}/profile`}>Complete setup</Link>;
+  const people = <Link href={`/admin/partners/${partnerId}?tab=users`}>the partner&apos;s page</Link>;
+  if (invite?.state === "not_sent") {
+    return (
+      <Alert tone="warning" title="Partner created, but no invitation was sent.">
+        Open {people} and resend the invitation. The partner is a draft with no partner rights.
+      </Alert>
+    );
+  }
+  if (invite?.state === "queued" && invite.local) {
+    return (
+      <Alert tone="warning" title="Partner created. Email is not configured on this server.">
+        The invitation was queued, but this server prints email to its log instead of sending it, so it will not reach the partner&apos;s
+        inbox. The partner is a draft until its KYC is approved and an Admin activates it. {setup}.
+      </Alert>
+    );
+  }
+  if (invite?.state === "queued") {
+    return (
+      <Alert tone="success" title="Partner created. Invitation queued for email.">
+        It has not been confirmed as sent yet: {people} shows when the mail server accepts it, or if it fails. The partner can sign in to send
+        its KYC; it stays a draft until the KYC is approved and an Admin activates it. {setup}.
+      </Alert>
+    );
+  }
+  if (invite?.state === "deferred") {
+    return (
+      <Alert tone="success" title="Partner created.">
+        Its invitation is emailed when the partner is activated (KYC approval is switched off on this server). {setup}.
+      </Alert>
+    );
+  }
+  return (
+    <Alert tone="success" title="Partner created successfully.">
+      It is a draft with no partner rights. {setup}, then activate it from its row menu once its KYC is approved.
+    </Alert>
+  );
+}
+
 /** Partners → All partners: one table, filtered by the server (search, partner
  * type, status, profile). The filters are kept in the address so a filtered
  * view can be linked to and survives a reload. A partner's actions are in its
@@ -349,6 +425,7 @@ export function AllPartnersList() {
     type: pick(params.get("type"), TYPE_OPTIONS),
     status: pick(params.get("status"), STATUS_OPTIONS),
     profile: pick(params.get("profile"), PROFILE_OPTIONS),
+    kyc: pick(params.get("kyc"), KYC_OPTIONS),
   });
   const manage = can(permissions, "platform.staff_partner.manage");
   const portals = usePortals();
@@ -357,6 +434,8 @@ export function AllPartnersList() {
   // setup continues.
   const createdParam = params.get("created") ?? "";
   const [created] = useState(UUID_RE.test(createdParam) ? createdParam : "");
+  // How the invitation went, as the create answer said (never claimed when not sent).
+  const [createdInvite] = useState(() => inviteFromParam(params.get("invite"), params.get("mail")));
 
   const paged = usePaged(
     (cursor) =>
@@ -366,9 +445,10 @@ export function AllPartnersList() {
         type: filters.type || undefined,
         status: filters.status || undefined,
         profile: filters.profile || undefined,
+        kyc: filters.kyc || undefined,
         cursor,
       }),
-    [filters.q, filters.type, filters.status, filters.profile],
+    [filters.q, filters.type, filters.status, filters.profile, filters.kyc],
   );
   const { act, busy, feedback } = useAction(() => paged.reload());
 
@@ -427,12 +507,18 @@ export function AllPartnersList() {
       { label: "Suspend", icon: "pause", danger: true, separator: true, when: manage && r.status === "active", onSelect: () => changeStatus(r, "suspended") },
       { label: "Reactivate", icon: "play", separator: true, when: manage && r.status === "suspended", onSelect: () => changeStatus(r, "active") },
       {
-        label: r.administrator === null ? "Activate (add an administrator first)" : "Activate",
+        label:
+          r.administrator === null
+            ? "Activate (add an administrator first)"
+            : !kycAllowsActivation(r)
+              ? "Activate (KYC must be approved first)"
+              : "Activate",
         icon: "play",
         separator: true,
         when: manage && r.status === "draft",
-        // The server refuses to activate a partner nobody can act for.
-        disabled: r.administrator === null,
+        // The server refuses to activate a partner nobody can act for, or a
+        // draft whose KYC application is not approved.
+        disabled: r.administrator === null || !kycAllowsActivation(r),
         onSelect: () => changeStatus(r, "active"),
       },
     ];
@@ -466,6 +552,23 @@ export function AllPartnersList() {
       render: (r) => (
         <span className={local.badgeLine}>
           <SetupStatusBadge value={r.profile_completion.setup_status} />
+          {r.kyc?.legacy && (
+            <Tooltip content="Active before KYC was required. It keeps its status; no KYC approval is on file.">
+              <span tabIndex={0} className={`${kit.badge} ${kit["tone-neutral"]}`}>
+                Active before KYC
+              </span>
+            </Tooltip>
+          )}
+          {r.kyc?.ready_to_activate && <span className={`${kit.badge} ${kit["tone-info"]}`}>KYC approved</span>}
+          {r.status === "draft" && r.kyc?.required && !r.kyc.ready_to_activate && (
+            <Link
+              href={`/admin/partners/applications/${r.id}`}
+              className={`${kit.badge} ${kit["tone-warning"]}`}
+              aria-label={`KYC ${kycWords(r.kyc.status)} - ${r.display_name}`}
+            >
+              KYC {kycWords(r.kyc.status)}
+            </Link>
+          )}
           {r.upgrade && (
             <Link
               href={`/admin/partners/${r.id}?tab=users`}
@@ -502,25 +605,21 @@ export function AllPartnersList() {
     { key: "joined", header: "Joined", value: (r) => r.created_at, render: (r) => formatDate(r.created_at) },
   ];
 
-  const filtered = Boolean(filters.q || filters.type || filters.status || filters.profile);
-  const select = (key: "type" | "status" | "profile", label: string, options: { value: string; label: string }[]) => (
+  const filtered = Boolean(filters.q || filters.type || filters.status || filters.profile || filters.kyc);
+  const select = (key: "type" | "status" | "profile" | "kyc", label: string, options: { value: string; label: string }[]) => (
     <Select label={label} value={filters[key]} options={options} onChange={(value) => apply({ ...filters, [key]: value })} />
   );
 
   return (
     <Page>
       <PageHeader title="All partners" subtitle="Every partner account, with its type, status and balance." primary={<NewPartnerButton />} />
-      {created && (
-        <Alert tone="success" title="Partner created successfully.">
-          Its profile is incomplete: <Link href={`/admin/partners/${created}/profile`}>Complete setup</Link> to finish it, then activate it from
-          its row menu.
-        </Alert>
-      )}
-      <FilterBar label="Filter partners" onClear={filtered ? () => apply({ q: "", type: "", status: "", profile: "" }) : undefined}>
+      {created && <CreatedBanner partnerId={created} invite={createdInvite} />}
+      <FilterBar label="Filter partners" onClear={filtered ? () => apply({ q: "", type: "", status: "", profile: "", kyc: "" }) : undefined}>
         <SearchInput label="Search by partner name or email" value={filters.q} onSearch={(q) => apply({ ...filters, q: q.slice(0, 80) })} />
         {select("type", "Partner type", TYPE_OPTIONS)}
         {select("status", "Status", STATUS_OPTIONS)}
         {select("profile", "Profile", PROFILE_OPTIONS)}
+        {select("kyc", "KYC", KYC_OPTIONS)}
       </FilterBar>
       {feedback}
       <DataTable

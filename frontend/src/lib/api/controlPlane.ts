@@ -17,6 +17,7 @@
  */
 
 import { apiFetch, apiUpload } from "./client";
+import type { InvitationDelivery } from "./partnerConsole";
 
 export interface Page<T> {
   results: T[];
@@ -72,6 +73,9 @@ export interface PartnerMemberRow {
    * activated. Null `invitation_sent_at` with this false and no password is a
    * person attached before invitations were tracked: show "Invitation pending". */
   invitation_deferred: boolean;
+  /** Where the latest setup email stands (queued, sent, retrying, failed), for
+   * someone still without a password; null when none was queued. */
+  invitation_delivery?: InvitationDelivery | null;
 }
 
 export interface PartnerDetail extends PartnerSummary {
@@ -101,6 +105,33 @@ export interface CustomerRow {
   /** Phase 9: "customer", "trial" or "" (its people are Explorers). */
   access_class: string;
   partner: { partner_id: string; partner_code: string; partner_name: string; link_status: string } | null;
+  /** Only when the list is filtered by product: where that product's access comes from. */
+  product_source?: ProductSource | null;
+}
+
+/** The kind of source behind a product's access. `grant` is a staff override;
+ * `trial` is a product trial, which is not a subscription. */
+export type AccessSourceKind = "subscription" | "bundle" | "grant" | "trial";
+
+export interface ProductSource {
+  kind: AccessSourceKind | string;
+  status: string;
+  effective_to: string | null;
+  effective_now: boolean;
+}
+
+export interface ProductTrialView {
+  id: string;
+  product_code: string;
+  plan_code: string;
+  seats: number;
+  /** active, converted, expired or cancelled, as the record says. */
+  status: string;
+  /** Still granting access now: active and inside its window. */
+  in_effect: boolean;
+  started_at: string;
+  ends_at: string;
+  ended_at: string | null;
 }
 
 export interface AuditRow {
@@ -139,7 +170,9 @@ export interface CustomerDetail {
   organization: { organization_id: string; slug: string; display_name: string; status: string; created_at: string; suspension_reason: string };
   members: Record<string, number>;
   subscriptions: SubscriptionView[];
-  entitlements: Record<string, { status: string; seats: number | null }>;
+  entitlements: Record<string, { status: string; seats: number | null; source_kind?: string | null }>;
+  /** Product trials: their own record, not a subscription (Phase 11). */
+  product_trials?: ProductTrialView[];
   licenses: { product_code: string; seats_total: number; seats_assigned: number; over_limit: number }[];
   entitlement_overrides: { id: string; product_code: string; feature_key: string; reason: string; expires_at: string | null }[];
   billing: { currency: string; collection_mode: string; billing_region: string; provider: string; note: string } | null;
@@ -390,6 +423,8 @@ export interface ReadinessItem {
   key: string;
   label: string;
   ok: boolean;
+  /** What the requirement asks for, when the label alone does not say. */
+  detail?: string;
 }
 
 export interface ConsoleProduct {
@@ -832,7 +867,15 @@ export interface DashboardOverview {
 }
 
 export interface AttentionItem {
-  key: "partner_upgrades" | "draft_partners" | "payouts" | "kyc_reviews" | "failed_payments" | "low_balance" | "support_tickets";
+  key:
+    | "partner_upgrades"
+    | "draft_partners"
+    | "payouts"
+    | "kyc_reviews"
+    | "kyc_awaiting_activation"
+    | "failed_payments"
+    | "low_balance"
+    | "support_tickets";
   count: number;
 }
 
