@@ -23,6 +23,7 @@ import {
   Alert,
   Avatar,
   Badge,
+  Button,
   ButtonLink,
   DataTable,
   EmptyState,
@@ -336,13 +337,6 @@ const SWITCH_REASON = {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** The partner's balance: its commission ledger per currency, as the server
- * summed it (never added across currencies). */
-function wallet(r: ResellerRow) {
-  if (r.commission.length === 0) return money(0, r.payout_currency);
-  return r.commission.map((c) => money(c.balance_minor, c.currency)).join(" · ");
-}
-
 function countryName(code: string): string {
   try {
     return new Intl.DisplayNames(undefined, { type: "region" }).of(code) ?? code;
@@ -423,9 +417,9 @@ const CATEGORY_TITLE: Record<PartnerCategory, string> = {
 };
 
 const CATEGORY_SUBTITLE: Record<PartnerCategory, string> = {
-  affiliate: "Every partner whose type is Affiliate, with its status and balance.",
-  reseller: "Every partner whose type is Reseller, with its status and balance.",
-  white_label: "Every partner whose type is White-label, with its status and balance.",
+  affiliate: "Every partner whose type is Affiliate, with its status.",
+  reseller: "Every partner whose type is Reseller, with its status.",
+  white_label: "Every partner whose type is White-label, with its status.",
 };
 
 const CATEGORY_NOUN: Record<PartnerCategory, string> = {
@@ -459,6 +453,8 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
   const canGuest = can(permissions, GUEST_PERMISSION);
   const canKyc = can(permissions, "platform.staff_kyc.view");
   const [guestAccess, setGuestAccess] = useState<ResellerRow | null>(null);
+  // The row whose Login as Guest is being opened (its button shows a spinner).
+  const [guestOpening, setGuestOpening] = useState<string | null>(null);
   // Login as Guest came back with an outcome (a used or expired link, or refused).
   const [guestOutcome] = useState(() => guestOutcomeMessage(params.get("guest")));
   const portals = usePortals();
@@ -540,12 +536,17 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
   };
 
   // Login as Guest (ADR-062): the server opens a read-only, time-limited view of
-  // exactly this partner and the browser goes to its dashboard.
-  const guest = (r: ResellerRow) =>
-    act(
-      () => loginAsGuest(r.id, category ? CATEGORY_TITLE[category] : "All Partners", currentReturnPath(), portals),
-      `Opening ${r.display_name}'s dashboard in Guest Mode…`,
-    );
+  // exactly this partner and the browser goes to its dashboard. A refusal is
+  // said above the table (the server's own words), and the button is usable again.
+  const guest = async (r: ResellerRow) => {
+    setGuestOpening(r.id);
+    let opened = false;
+    await act(async () => {
+      await loginAsGuest(r.id, category ? CATEGORY_TITLE[category] : "All Partners", currentReturnPath(), portals);
+      opened = true;
+    }, `Opening ${r.display_name}'s dashboard in Guest Mode…`);
+    if (!opened) setGuestOpening(null);
+  };
 
   const rowMenu = (r: ResellerRow): MenuItem[] => {
     const url = panelUrl(r);
@@ -648,7 +649,41 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
       render: (r) => (r.country ? <abbr title={countryName(r.country)}>{r.country}</abbr> : "—"),
     },
     { key: "currency", header: "Currency", value: (r) => r.payout_currency, render: (r) => r.payout_currency },
-    { key: "wallet", header: "Earnings", align: "right", value: (r) => r.commission[0]?.balance_minor ?? 0, render: (r) => wallet(r) },
+    // 2026-11-10 (the owner): Guest Login where Earnings was. Earnings stay on each
+    // partner's own page and in every report; only this list stops showing them.
+    // Offered only to staff who may start a guest view - the server checks again.
+    ...(canGuest
+      ? [
+          {
+            key: "guest",
+            header: "Guest Login",
+            render: (r: ResellerRow) =>
+              guestAvailable(r.status) ? (
+                <Tooltip content="Login as Guest">
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    // "Login ↗": one icon, so the column is no wider than it must be
+                    // and the row's actions stay in view at 1366 px.
+                    iconEnd="external"
+                    aria-label={`Login as Guest to ${r.display_name}`}
+                    loading={guestOpening === r.id}
+                    disabled={guestOpening !== null && guestOpening !== r.id}
+                    onClick={() => void guest(r)}
+                  >
+                    Login
+                  </Button>
+                </Tooltip>
+              ) : (
+                <Tooltip content="Login as Guest opens once the partner is active.">
+                  <span tabIndex={0} className={styles.muted}>
+                    Once active
+                  </span>
+                </Tooltip>
+              ),
+          } satisfies Column<ResellerRow>,
+        ]
+      : []),
     {
       key: "login",
       header: "Last login",
@@ -674,7 +709,7 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
     <Page>
       <PageHeader
         title={category ? CATEGORY_TITLE[category] : "All partners"}
-        subtitle={category ? CATEGORY_SUBTITLE[category] : "Every partner account, with its type, status and balance."}
+        subtitle={category ? CATEGORY_SUBTITLE[category] : "Every partner account, with its type and status."}
         primary={<NewPartnerButton category={category} />}
       />
       {created && <CreatedBanner partnerId={created} invite={createdInvite} />}

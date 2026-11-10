@@ -321,9 +321,9 @@ describe("a staff guest view (Super Admin → Guest login)", () => {
     });
     expect(await screen.findByRole("heading", { level: 1, name: "Partner Dashboard" })).toBeInTheDocument();
     const banner = screen.getByRole("status", { name: "Guest Mode" });
-    expect(banner).toHaveTextContent("Guest Mode – Read Only.");
+    expect(banner).toHaveTextContent("Guest Mode – Acme Partners (Affiliate). Read only");
     // Which partner, of which type, and who is looking.
-    expect(banner).toHaveTextContent("Viewing Acme Partners (Affiliate) as Sam Staff");
+    expect(banner).toHaveTextContent("viewing as Sam Staff");
     fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Mode" }));
     // Back to the Admin page Login as Guest was chosen on.
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/admin/partners/affiliate"));

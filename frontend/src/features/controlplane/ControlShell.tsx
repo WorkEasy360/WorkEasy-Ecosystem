@@ -329,9 +329,9 @@ export function GuestViewBanner({ partner, guest }: { partner: PortalPartner; gu
   }
   return (
     <div role="status" aria-label="Guest Mode" className={`w360-badge w360-badge-info ${consoleStyles.banner} ${consoleStyles.notice}`}>
-      <strong>Guest Mode – Read Only.</strong> Viewing <strong>{partner.display_name}</strong>
-      {kind && ` (${kind})`}
-      {viewer && ` as ${viewer}`}
+      <strong>Guest Mode – {partner.display_name}</strong>
+      {kind && ` (${kind})`}. Read only
+      {viewer && `, viewing as ${viewer}`}
       {Number.isNaN(ends.getTime()) ? "" : `, until ${ends.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}. Nothing can be changed
       here.{" "}
       <button type="button" className="w360-btn w360-btn-primary" onClick={() => void exit()} disabled={busy}>

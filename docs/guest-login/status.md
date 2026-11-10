@@ -56,3 +56,14 @@ The real-browser check found two bugs that the unit tests did not, both fixed:
 - **Touch screens reorder with the keyboard only.** HTML drag and drop does not fire on touch.
 - **Write buttons are still drawn in Guest Mode** (for example the partner's "Upgrade plan"). Pressing one is refused by the backend with "Guest Mode is read-only."
 - **A manual screen-reader pass was not run.** axe checks are automated only.
+
+## 2026-11-10 (later): Guest Login column replaces Earnings
+
+The owner asked for a **Guest Login** column in the partner lists where **Earnings** was (All Partners, Affiliate, Reseller, White Label share the one table, so all four change together):
+
+- Column order: Partner | Type | Status | Country | Currency | **Guest Login** | Last login | Joined | actions. Earnings are gone from the list only; the partner's own page, the commission ledger, wallets, payouts and every report are untouched (no backend change).
+- Each active, suspended or terminated partner has its own green **Login ↗** button (tooltip "Login as Guest", spinner while it opens, the server's reason above the table if it refuses). A draft shows "Once active". The column is shown only to staff holding `platform.staff_partner.guest`; the server checks again.
+- The Guest Mode banner now begins "Guest Mode – <partner name>".
+- At 1366 px the row's ⋯ actions now need the table's sideways scroll (the button is wider than "₹0.00"); at 1920 px everything is in view.
+
+Results: vitest 1,570 / 1,570; the backend tests that read frontend source 593 / 593; real browser 72 / 72 (the guest journeys now start from the Login button; new checks T1-T4 and B1).

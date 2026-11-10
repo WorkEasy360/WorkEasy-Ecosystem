@@ -21,9 +21,13 @@ http
       },
     );
     upstream.on("error", (err) => {
+      // An upstream that stops mid-answer can only be cut off, not answered again.
+      if (res.headersSent) return res.destroy(err);
       res.writeHead(502, { "content-type": "text/plain" });
       res.end(String(err));
     });
+    req.on("error", () => upstream.destroy());
+    res.on("error", () => upstream.destroy());
     req.pipe(upstream);
   })
   .listen(listen, "127.0.0.1", () => console.log(`edge listening on 127.0.0.1:${listen}`));

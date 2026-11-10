@@ -73,6 +73,8 @@ async function headers(page) {
 
 async function rowMenu(page, name) {
   const button = await page.waitForSelector(`button[aria-label="Actions for ${name}"]`, { timeout: 20000 });
+  // As a person does on a narrow screen: scroll the table sideways to the row's actions.
+  await button.evaluate((b) => b.scrollIntoView({ block: "center", inline: "center" }));
   await button.click();
   await page.waitForSelector(`[role="menu"][aria-label="Actions for ${name}"]`);
   return page.$$eval(`[role="menu"][aria-label="Actions for ${name}"] [role="menuitem"]`, (items) =>
@@ -144,6 +146,47 @@ async function sidebarOrder(page) {
     const everyone = await rowNames(page);
     allHeaders = await headers(page);
     check("C0 All partners lists every seeded partner", Object.values(NAMES).every((n) => everyone.includes(n)), everyone.join(", "));
+    const iCurrency = allHeaders.indexOf("Currency");
+    check(
+      "T1 Guest Login sits where Earnings was: Currency | Guest Login | Last login, and no Earnings column",
+      // "Last login" is hidden by the table when it is empty in every row (nobody has signed in on fresh data).
+      !allHeaders.includes("Earnings") && allHeaders[iCurrency + 1] === "Guest Login" && (!allHeaders.includes("Last login") || allHeaders[iCurrency + 2] === "Last login"),
+      allHeaders.join("|"),
+    );
+    const buttons = await page.$$eval("table tbody tr", (rows) =>
+      rows.map((r) => ({
+        name: r.querySelector("a")?.textContent?.trim(),
+        login: Boolean(r.querySelector('button[aria-label^="Login as Guest to"]')),
+        money: /[₹£$€]\s?\d/.test(r.innerText),
+        text: r.innerText,
+      })),
+    );
+    check(
+      "T2 every active partner has its own Login button; the draft says Once active; no row shows money",
+      buttons.every((b) => (b.name === NAMES.draft ? !b.login && b.text.includes("Once active") : b.login)) && buttons.every((b) => !b.money),
+      JSON.stringify(buttons.map((b) => [b.name, b.login, b.money])),
+    );
+    const scroll = await page.evaluate(() => {
+      const box = document.querySelector("table")?.parentElement;
+      return box ? getComputedStyle(box).overflowX : "none";
+    });
+    check("T3 the table still scrolls sideways", ["auto", "scroll"].includes(scroll), scroll);
+    const actionsInView = () =>
+      page.evaluate(() => {
+        const b = document.querySelector('button[aria-label^="Actions for"]');
+        if (!b) return false;
+        const r = b.getBoundingClientRect();
+        return b.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+      });
+    await page.setViewport({ width: 1920, height: 1000 });
+    await page.reload({ waitUntil: "networkidle2" });
+    await page.waitForSelector("table tbody tr");
+    check("T4 at 1920 px every column, the Guest Login buttons and the row's actions are in view", await actionsInView());
+    await page.screenshot({ path: path.join(OUT, "all-partners-1920.png") });
+    await page.setViewport({ width: 1366, height: 900 });
+    await page.reload({ waitUntil: "networkidle2" });
+    await page.waitForSelector("table tbody tr");
+    await page.screenshot({ path: path.join(OUT, "all-partners-1366.png") });
     for (const kind of ["affiliate", "reseller", "white_label"]) {
       await page.goto(`${ADMIN}${PAGE[kind]}`, { waitUntil: "networkidle2" });
       const names = await rowNames(page);
@@ -193,13 +236,15 @@ async function sidebarOrder(page) {
     // --- Login as Guest, for each type ----------------------------------------------------
     for (const kind of ["reseller", "affiliate", "white_label"]) {
       await page.goto(`${ADMIN}${PAGE[kind]}`, { waitUntil: "networkidle2" });
-      await rowMenu(page, NAMES[kind]);
-      await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), chooseMenuItem(page, NAMES[kind], "Login as Guest")]);
+      const loginButton = await page.waitForSelector(`button[aria-label="Login as Guest to ${NAMES[kind]}"]`, { timeout: 20000 });
+      const look = await loginButton.evaluate((b) => ({ text: b.textContent.trim(), cursor: getComputedStyle(b).cursor, bg: getComputedStyle(b).backgroundColor, tip: document.getElementById(b.getAttribute("aria-describedby") || "")?.textContent?.trim() }));
+      check(`B1 ${kind}: a green Login button with a pointer and the Login as Guest tooltip`, look.text === "Login" && look.cursor === "pointer" && look.tip === "Login as Guest", JSON.stringify(look));
+      await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), loginButton.click()]);
       const url = new URL(page.url());
       check(`L1 ${kind}: lands on the partner host, on that partner's dashboard`, url.host === "partner.workeasy360.com" && url.pathname === HOME[kind], page.url());
       const banner = await page.waitForSelector('[role="status"][aria-label="Guest Mode"]', { timeout: 20000 }).catch(() => null);
       const text = banner ? await banner.evaluate((b) => b.innerText) : "";
-      check(`L2 ${kind}: Guest Mode - Read Only banner with the partner's name and type`, text.includes("Guest Mode – Read Only") && text.includes(NAMES[kind]) && text.includes(TYPE[kind]) && text.includes("Exit Guest Mode"), text);
+      check(`L2 ${kind}: "Guest Mode – <partner>" banner with its type, read only, and Exit Guest Mode`, text.includes(`Guest Mode – ${NAMES[kind]}`) && text.includes(TYPE[kind]) && text.includes("Read only") && text.includes("Exit Guest Mode"), text);
       check(`L3 ${kind}: no ticket in the address or the history`, !report.tickets.some((t) => page.url().includes(t)), page.url());
       const cookies = await page.cookies(PARTNER);
       const sessionCookie = cookies.find((c) => /session/i.test(c.name));
@@ -242,8 +287,8 @@ async function sidebarOrder(page) {
     const guestTab = await browser.newPage();
     watch(guestTab);
     await guestTab.goto(`${ADMIN}${PAGE.reseller}`, { waitUntil: "networkidle2" });
-    await rowMenu(guestTab, NAMES.reseller);
-    await Promise.all([guestTab.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), chooseMenuItem(guestTab, NAMES.reseller, "Login as Guest")]);
+    const tabButton = await guestTab.waitForSelector(`button[aria-label="Login as Guest to ${NAMES.reseller}"]`, { timeout: 20000 });
+    await Promise.all([guestTab.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), tabButton.click()]);
     check("V0 a second tab is in Guest Mode", new URL(guestTab.url()).host === "partner.workeasy360.com", guestTab.url());
     await page.bringToFront();
     await page.goto(`${ADMIN}${PAGE.reseller}`, { waitUntil: "networkidle2" });

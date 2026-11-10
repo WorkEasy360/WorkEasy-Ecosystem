@@ -372,7 +372,7 @@ describe("All partners", () => {
       "Status",
       "Country",
       "Currency",
-      "Earnings",
+      "Guest Login",
       "Last login",
       "Joined",
       "Actions",
@@ -382,7 +382,9 @@ describe("All partners", () => {
     expect(within(acme).getByRole("button", { name: "Copy partner ID of Acme Partners" })).toBeInTheDocument();
     expect(acme).toHaveTextContent("owner@acme.example");
     expect(acme).toHaveTextContent("GB");
-    expect(acme).toHaveTextContent("35.54");
+    // Earnings are no longer in this list (2026-11-10): they stay on the partner's page.
+    expect(acme).not.toHaveTextContent("35.54");
+    expect(within(acme).getByRole("button", { name: "Login as Guest to Acme Partners" })).toHaveTextContent("Login");
     expect(acme).toHaveTextContent("Active");
     // No inline switch: the status is a badge.
     expect(within(table).queryByRole("switch")).not.toBeInTheDocument();
@@ -609,6 +611,93 @@ describe("All partners", () => {
     await expectNoViolations(dialog);
   });
 
+  it("has a Guest Login column where Earnings was: one Login button per eligible partner", async () => {
+    mockApi(
+      listRoutes([
+        row(),
+        row({ id: "p2", display_name: "Second Co", primary_experience: "affiliate", experience: [{ key: "affiliate", label: "Affiliate" }] }),
+        row({ id: "p3", display_name: "Draft Co", status: "draft", profile_completion: { percent: 20, complete: false, setup_status: "setup_required" } }),
+      ]),
+    );
+    const { container } = renderList();
+    const table = await screen.findByRole("table", { name: "Partners" });
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).not.toContain("Earnings");
+    expect(headers.indexOf("Guest Login")).toBe(headers.indexOf("Currency") + 1);
+    expect(headers.indexOf("Last login")).toBe(headers.indexOf("Guest Login") + 1);
+    for (const name of ["Acme Partners", "Second Co"]) {
+      const button = within(within(table).getByRole("row", { name: new RegExp(name) })).getByRole("button", { name: `Login as Guest to ${name}` });
+      expect(button).toHaveTextContent(/^Login$/);
+      expect(button).toBeEnabled();
+    }
+    // A draft has no dashboard yet: no button, and it says when there will be one.
+    const draft = within(table).getByRole("row", { name: /Draft Co/ });
+    expect(within(draft).queryByRole("button", { name: /Login as Guest/ })).not.toBeInTheDocument();
+    expect(draft).toHaveTextContent("Once active");
+    // No money in the list at all.
+    expect(table).not.toHaveTextContent("₹");
+    expect(table).not.toHaveTextContent("£");
+    await expectNoViolations(container);
+  });
+
+  it("the Login button names itself in a tooltip", async () => {
+    mockApi(listRoutes([row()]));
+    renderList();
+    const button = await screen.findByRole("button", { name: "Login as Guest to Acme Partners" });
+    expect(button).toHaveAccessibleDescription("Login as Guest");
+  });
+
+  it("the Login button opens that partner's guest view through the real endpoint, with a spinner meanwhile", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign, pathname: "/admin/partners/all" });
+    const calls = mockApi(
+      listRoutes([row(), row({ id: "p2", display_name: "Second Co" })], {
+        "POST /api/v1/admin/partners/p2/guest-view": [
+          ok({ partner_id: "p2", reason: "x", expires_at: "2026-03-01T00:30:00Z", portal_path: "/partner/reseller/dashboard" }),
+        ],
+      }),
+    );
+    renderList();
+    const button = await screen.findByRole("button", { name: "Login as Guest to Second Co" });
+    fireEvent.click(button);
+    expect(button).toHaveAttribute("aria-busy", "true");
+    // The other rows' buttons wait while one opens.
+    expect(screen.getByRole("button", { name: "Login as Guest to Acme Partners" })).toBeDisabled();
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/partner/reseller/dashboard"));
+    expect(calls.filter((c) => c.key.endsWith("/guest-view")).map((c) => c.key)).toEqual(["POST /api/v1/admin/partners/p2/guest-view"]);
+    expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p2/guest-view")!.body).toEqual({
+      reason: "Login as Guest - All Partners",
+      return_path: "/admin/partners/all",
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it("says why when the server refuses, and the button can be used again", async () => {
+    mockApi(
+      listRoutes([row()], {
+        "POST /api/v1/admin/partners/p1/guest-view": [
+          { status: 403, body: { code: "permission_denied", detail: "Insufficient permission: platform.staff_partner.guest" } },
+        ],
+      }),
+    );
+    renderList();
+    const button = await screen.findByRole("button", { name: "Login as Guest to Acme Partners" });
+    fireEvent.click(button);
+    expect(await screen.findByText("Insufficient permission: platform.staff_partner.guest")).toBeInTheDocument();
+    await waitFor(() => expect(button).not.toHaveAttribute("aria-busy"));
+    expect(button).toBeEnabled();
+  });
+
+  it("shows no Guest Login column to staff who may not start a guest view", async () => {
+    mockApi(listRoutes([row()]));
+    renderList([VIEW, MANAGE]);
+    const table = await screen.findByRole("table", { name: "Partners" });
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).not.toContain("Guest Login");
+    expect(headers).not.toContain("Earnings");
+    expect(within(table).queryByRole("button", { name: /Login as Guest/ })).not.toBeInTheDocument();
+  });
+
   it("says the partner New partner just created was created and points to its setup", async () => {
     const id = "11111111-2222-4333-8444-555555555555";
     query = `created=${id}`;
@@ -665,7 +754,7 @@ describe("All partners", () => {
       "Status",
       "Country",
       "Currency",
-      "Earnings",
+      "Guest Login",
       "Last login",
       "Joined",
       "Actions",

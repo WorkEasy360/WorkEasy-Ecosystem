@@ -537,8 +537,8 @@ describe("the partner shell", () => {
     );
     await screen.findByRole("heading", { name: "Page" });
     const banner = screen.getByRole("status", { name: "Guest Mode" });
-    expect(banner).toHaveTextContent("Guest Mode – Read Only.");
-    expect(banner).toHaveTextContent("Viewing Acme Partners");
+    expect(banner).toHaveTextContent("Guest Mode – Acme Partners");
+    expect(banner).toHaveTextContent("Read only");
     expect(banner).toHaveTextContent("Nothing can be changed here.");
     await expectNoViolations(container);
     fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Mode" }));
