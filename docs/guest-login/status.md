@@ -1,6 +1,6 @@
 # Partner categories and Login as Guest: status (2026-11-10)
 
-The owner's brief of 2026-11-10 ("Update Existing Partner Management UI & Add Login as Guest"). Decisions: [ADR-062](../architecture/adrs/ADR-062-partner-categories-and-login-as-guest.md). Built on `feat/admin-panel` on top of `4cc247b`. **Not committed, not deployed; no database migrated.**
+The owner's brief of 2026-11-10 ("Update Existing Partner Management UI & Add Login as Guest"). Decisions: [ADR-062](../architecture/adrs/ADR-062-partner-categories-and-login-as-guest.md). Committed as `74d94b0` on `feat/admin-panel` (pushed). **Live since 2026-11-10 21:00 IST as release `2026.11.10-74d94b0`**: partners.0019, tenancy.0017 and authz.0011 applied in production after backup `20261110T152406Z`; rollback target `2026.11.10-4cc247b` (the schema moved forward, so a full rollback means restoring that backup). Checked live: the Admin host's CSP allows the form post to `partner.` only; the entry refuses a missing or foreign Origin and a bad ticket; it is not served on `admin.`; no error in the logs; the Super Admin holds the new permission. The dev database was migrated the same evening (backup `20261110-2050-pre-guestlogin.dump`).
 
 ## What the audit found first
 
@@ -45,11 +45,10 @@ The real-browser check found two bugs that the unit tests did not, both fixed:
 | 16 | Records are not deleted or reclassified | categories are computed, not stored: no partner row changes (`test_a_new_partner_is_listed_under_its_type_at_once`) |
 | 17 | Mobile and desktop | browser L9 (390 px) and the existing admin reflow checks; sidebar drawer unchanged |
 
-## Owner steps before production
+## Owner steps
 
-1. **Review**, then commit; the change is on `feat/admin-panel` with 4cc247b.
-2. **Migrations** (partners.0019, tenancy.0017, authz.0011) on the dev database and on production. authz.0011 gives Login as Guest to every security administrator; anyone else gets it from Staff access.
-3. Nothing to configure: the five portal origins already exist in production, and the CSP change is computed from them.
+- None for the release itself. Merging `feat/admin-panel` into `main` is still the owner's step, as for 4cc247b.
+- Login as Guest went to every security administrator (authz.0011); give it to anyone else from Staff access.
 
 ## Not done, and why
 
