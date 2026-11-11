@@ -91,6 +91,9 @@ const DASHBOARD = {
     },
   },
   tickets: { open: 2, breached: 1 },
+  onboarding: { kyc_status: "approved", account_status: "active", cleared: true, reason: null, legacy: false, kyc_required: true, permissions: ["reseller"] },
+  referrals: { clicks: 40, registrations: 12, conversions: 5, renewals: 3 },
+  platform_wallet: [{ wallet_id: "w1", currency: "INR", balance_minor: 250000, is_low: false }],
   customers: { total: 10, active: 8, suspended: 1, ended: 1, active_subscriptions: 7, new: 4 },
   sales: {
     transactions: 5,
@@ -133,7 +136,59 @@ const UPGRADE = {
 
 const NOTIFICATIONS = { view: "unread", items: [], counts: { all: 0, unread: 0, important: 0, important_unread: 0 }, window: 100, truncated: false, not_implemented: {} };
 
+const SUBSCRIPTIONS = {
+  items: [
+    {
+      subscription_id: "s1",
+      organization_id: "o1",
+      customer: "Beta Ltd",
+      status: "active",
+      currency: "INR",
+      billing_interval: "month",
+      current_period_start: "2026-10-20T00:00:00Z",
+      current_period_end: "2026-11-20T00:00:00Z",
+      renewal_date: "2026-11-20T00:00:00Z",
+      cancel_at: null,
+      version: 1,
+      paid_by: "partner_wallet",
+      renewal_prepaid: false,
+      state: { expired: false, expiring: true, pending_setup: false, active: true, renews: true, ends_at: null },
+      lines: [{ subscription_item_id: "i1", product_code: "crm", product_name: "CRM", plan_code: "basic", plan_name: "Basic", plan_version_id: null, quantity: 1, added_at: "2026-10-20T00:00:00Z", removed_at: null, order: null }],
+    },
+  ],
+  counts: { all: 1, active: 1, pending_setup: 0, expiring: 1, expired: 0 },
+  filter: "expiring",
+  truncated: false,
+};
+
+const PLATFORM_WALLET = {
+  currency: "INR",
+  wallets: [{ wallet_id: "w1", currency: "INR", balance_minor: 250000, low_balance_threshold: null, is_low: false }],
+  top_up: { allowed: true, online: { INR: true }, min_minor: 100, max_minor: 100000000, offline_note: "" },
+  pays_for_customers: true,
+  top_ups: [],
+  recent: [
+    {
+      id: "e1",
+      currency: "INR",
+      entry_type: "subscription",
+      entry_type_label: "Subscription deduction",
+      amount_minor: -79920,
+      balance_after_minor: 250000,
+      reason: "Plan activation ORD-000123",
+      source_type: "order",
+      source_id: "o9",
+      reverses_id: null,
+      created_at: "2026-11-02T10:00:00Z",
+      order: { id: "o9", number: "ORD-000123" },
+      customer: { organization_id: "o1", name: "Beta Ltd" },
+    },
+  ],
+};
+
 const dashboardRoutes = (): Record<string, Reply[]> => ({
+  [`GET ${API}/subscriptions`]: [ok(SUBSCRIPTIONS)],
+  [`GET ${API}/platform-wallet`]: [ok(PLATFORM_WALLET)],
   [`GET ${API}/dashboard`]: [ok(DASHBOARD)],
   [`GET ${API}/upgrade`]: [ok(UPGRADE)],
   [`GET ${API}/notifications`]: [ok(NOTIFICATIONS)],
@@ -158,19 +213,53 @@ beforeEach(() => {
 });
 
 describe("the unified dashboard", () => {
-  it("draws the ribbon with each figure's change against the previous period", async () => {
+  it("opens with the six overview cards, each the server's figure (2026-11-11 brief)", async () => {
     mount(<UnifiedDashboard level="reseller" />, dashboardRoutes());
-    const ribbon = await screen.findByRole("list", { name: "Key figures" });
-    const metric = (label: string) => within(ribbon).getByText(label).closest("li")!;
-    expect(metric("Total customers")).toHaveTextContent("10");
-    expect(metric("Total customers")).toHaveTextContent("↑ 100%");
-    expect(metric("Active products")).toHaveTextContent("3");
-    expect(metric("Total sales")).toHaveTextContent(money(100000, "INR"));
-    expect(metric("Total sales")).toHaveTextContent("↑ 100%");
-    expect(metric("My commission")).toHaveTextContent(money(10000, "INR"));
-    expect(metric("My commission")).toHaveTextContent("↓ 50%");
-    expect(metric("Open tickets")).toHaveTextContent("2");
-    expect(metric("Open tickets")).toHaveTextContent("1 past their deadline");
+    expect(await screen.findByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument();
+    const overview = await screen.findByRole("group", { name: "Overview" });
+    const card = (label: string) => within(overview).getByText(label).parentElement!;
+    expect(card("Account status")).toHaveTextContent("Active");
+    expect(card("Account status")).toHaveTextContent("KYC: Approved");
+    expect(card("Referral conversions")).toHaveTextContent("5");
+    expect(card("Referral conversions")).toHaveTextContent("40 clicks · 12 registrations in this period");
+    expect(card("Customer renewals")).toHaveTextContent("3");
+    expect(card("Platform Wallet balance")).toHaveTextContent(money(250000, "INR"));
+    expect(card("Pending earnings")).toHaveTextContent(money(10000, "INR"));
+    expect(card("Available commissions")).toHaveTextContent(money(15000, "INR"));
+    expect(within(overview).getByText("Platform Wallet balance").closest("a")).toHaveAttribute("href", `${BASE}/platform-wallet`);
+  });
+
+  it("draws no card a partner may not see, never a zero in its place", async () => {
+    const { referrals: _r, platform_wallet: _w, ...rest } = DASHBOARD;
+    void _r;
+    void _w;
+    mount(<UnifiedDashboard level="reseller" />, { ...dashboardRoutes(), [`GET ${API}/dashboard`]: [ok({ ...rest, referrals: null, platform_wallet: null })] });
+    const overview = await screen.findByRole("group", { name: "Overview" });
+    expect(within(overview).queryByText("Referral conversions")).toBeNull();
+    expect(within(overview).queryByText("Platform Wallet balance")).toBeNull();
+    expect(within(overview).getByText("Available commissions")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recent transactions" })).toBeNull();
+  });
+
+  it("lists the pending actions from the server's own facts", async () => {
+    mount(<UnifiedDashboard level="reseller" />, dashboardRoutes());
+    const section = (await screen.findByRole("heading", { name: "Pending actions" })).closest("section")!;
+    expect(section).toHaveTextContent("1 support ticket is past the deadline.");
+    expect(within(section).getByRole("link", { name: "Open tickets" })).toHaveAttribute("href", `${BASE}/support-manager`);
+    expect(section).toHaveTextContent(`${money(15000, "INR")} is available to withdraw.`);
+    expect(section).not.toHaveTextContent("KYC");
+  });
+
+  it("shows the upcoming renewals and the wallet's recent transactions", async () => {
+    mount(<UnifiedDashboard level="reseller" />, dashboardRoutes());
+    const renewals = await screen.findByRole("table", { name: "Customer plans that renew soon" });
+    expect(renewals).toHaveTextContent("Beta Ltd");
+    expect(renewals).toHaveTextContent("CRM Basic");
+    expect(renewals).toHaveTextContent("Your Platform Wallet");
+    const moves = await screen.findByRole("table", { name: "Your Platform Wallet's latest movements" });
+    expect(moves).toHaveTextContent("Subscription deduction");
+    expect(moves).toHaveTextContent("Beta Ltd · ORD-000123");
+    expect(moves).toHaveTextContent(money(-79920, "INR"));
   });
 
   it("splits the sales by product with each one's share", async () => {

@@ -570,6 +570,13 @@
   color: var(--w360-shell-text);
 }
 
+/* A tablet's or phone's top bar keeps the menu, the logo, the tools and the account. */
+@media (max-width: 900px) {
+  .frame[data-variant="admin"] .context {
+    display: none;
+  }
+}
+
 @media (max-width: 1100px) {
   .accountName,
   .accountChevron {

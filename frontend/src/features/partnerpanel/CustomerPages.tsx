@@ -19,7 +19,7 @@ function CustomerSelect({
   label = "Customer",
 }: {
   value: string;
-  onChange: (orgId: string) => void;
+  onChange: (orgId: string, name?: string) => void;
   label?: string;
 }) {
   const { id } = usePanel();
@@ -36,7 +36,12 @@ function CustomerSelect({
         <label htmlFor={selectId}>{label}</label>
         <LoadGate load={load} what="your customers">
           {(page) => (
-            <select id={selectId} className="w360-input" value={value} onChange={(e) => onChange(e.target.value)}>
+            <select
+              id={selectId}
+              className="w360-input"
+              value={value}
+              onChange={(e) => onChange(e.target.value, page.results.find((c) => c.organization_id === e.target.value)?.name)}
+            >
               <option value="">Choose a customer</option>
               {page.results
                 .filter((c) => c.link_status === "active")
@@ -183,6 +188,7 @@ export function PlanActivation() {
   const { id, base, active } = usePanel();
   const params = useSearchParams();
   const [org, setOrg] = useState(params?.get("customer") ?? "");
+  const [customerName, setCustomerName] = useState("");
   const [product, setProduct] = useState("");
   const [planId, setPlanId] = useState("");
   const [cycle, setCycle] = useState("monthly");
@@ -266,8 +272,9 @@ export function PlanActivation() {
         <h2 id="act-customer">1. Customer</h2>
         <CustomerSelect
           value={org}
-          onChange={(v) => {
+          onChange={(v, name) => {
             setOrg(v);
+            setCustomerName(name ?? "");
             reset("customer");
           }}
           label="Assigned customer"
@@ -385,9 +392,21 @@ export function PlanActivation() {
             <p role="alert">{quote.payer.message}</p>
           ) : quote.charge && quote.wallet ? (
             <>
-              <dl className={styles.earnings}>
+              <dl className={styles.earnings} aria-label="Confirmation summary">
                 <div>
-                  <dt>{quote.plan.name}</dt>
+                  <dt>Customer</dt>
+                  <dd>{customerName || "The customer you chose"}</dd>
+                </div>
+                <div>
+                  <dt>Product</dt>
+                  <dd>{products.find(([code]) => code === quote.plan.product_code)?.[1] ?? quote.plan.product_code}</dd>
+                </div>
+                <div>
+                  <dt>Plan</dt>
+                  <dd>{quote.plan.name}</dd>
+                </div>
+                <div>
+                  <dt>Partner purchase price</dt>
                   <dd>
                     {money(quote.charge.partner_cost_minor, quote.charge.currency)} per {quote.charge.billing_interval === "monthly" ? "month" : "period"}
                     {quote.charge.quantity > 1 ? ` for ${quote.charge.quantity} seats` : ""}
@@ -405,16 +424,16 @@ export function PlanActivation() {
                     <dd>{money(quote.charge.setup_fee_minor, quote.charge.currency)}</dd>
                   </div>
                 )}
+                <div>
+                  <dt>Available wallet balance</dt>
+                  <dd>{money(quote.wallet.balance_minor, quote.wallet.currency)}</dd>
+                </div>
                 <div data-strong>
-                  <dt>Platform Wallet deduction</dt>
+                  <dt>Amount to deduct</dt>
                   <dd>{money(quote.wallet.charge_minor, quote.wallet.currency)}</dd>
                 </div>
                 <div>
-                  <dt>Your balance now</dt>
-                  <dd>{money(quote.wallet.balance_minor, quote.wallet.currency)}</dd>
-                </div>
-                <div>
-                  <dt>Balance after</dt>
+                  <dt>Remaining balance after purchase</dt>
                   <dd>{quote.wallet.sufficient ? money(quote.wallet.balance_after_minor, quote.wallet.currency) : "Not enough"}</dd>
                 </div>
               </dl>

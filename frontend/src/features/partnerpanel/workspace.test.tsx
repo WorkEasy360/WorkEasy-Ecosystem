@@ -173,7 +173,7 @@ beforeEach(() => {
 describe("the affiliate workspace", () => {
   it("draws only the entries an affiliate may use, nothing locked (ADR-063)", async () => {
     mount("affiliate", ["dashboard"], { "GET /api/v1/partner/portal": [portal(partner())], ...dashboardRoutes() });
-    expect(await screen.findByRole("heading", { level: 1, name: "Partner Dashboard" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument();
     expect(entryLabels()).toEqual(["Dashboard", "Products & Referrals", "Billing & Subscriptions", "Earnings & Payouts", "Help", "Settings"]);
     expect(lockedLabels()).toEqual([]);
     const links = within(screen.getByRole("navigation", { name: /workspace$/ })).getAllByRole("link");
@@ -308,7 +308,7 @@ describe("a staff guest view (Super Admin → Guest login)", () => {
       ...dashboardRoutes(),
       "POST /api/v1/partner/guest-view/end": [ok({ ended: true, return_url: "/admin/partners/affiliate" })],
     });
-    expect(await screen.findByRole("heading", { level: 1, name: "Partner Dashboard" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument();
     const banner = screen.getByRole("status", { name: "Guest Session" });
     expect(banner).toHaveTextContent("Guest Session — Viewing Partner: Acme Partners (Affiliate). Read only");
     // Which partner, of which type, and who is looking.
@@ -553,7 +553,7 @@ describe("the reseller workspace", () => {
       "GET /api/v1/partner/portal": [portal(reseller())],
       ...dashboardRoutes({ [`GET /api/v1/partner/${ID}/upgrade`]: [ok({ ...UPGRADE, current: "reseller", eligible: ["white_label"] })] }),
     });
-    await screen.findByRole("heading", { level: 1, name: "Partner Dashboard" });
+    await screen.findByRole("heading", { level: 1, name: "Dashboard" });
     expect(lockedLabels()).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: /Upgrade Plan/ }));
     const dialog = await screen.findByRole("dialog", { name: "Upgrade your partnership" });
@@ -612,7 +612,8 @@ describe("holding more than one workspace", () => {
       "GET /api/v1/partner/portal": [portal({ ...both(), default_experience: "affiliate", landing: "affiliate" })],
       [`GET /api/v1/partner/${ID}/reports`]: [ok({ partner: OVERVIEW.partner, range: OVERVIEW.range, customers: null, products: null, sales: null, referrals: null, not_implemented: {} })],
     });
-    expect(await screen.findByRole("heading", { level: 1, name: "Reports & Analytics" })).toBeInTheDocument();
+    // 2026-11-11: a tab's own page is titled by its menu label (Dashboard → Reports).
+    expect(await screen.findByRole("heading", { level: 1, name: "Reports" })).toBeInTheDocument();
   });
 });
 
@@ -699,14 +700,14 @@ describe("accessibility", () => {
       "GET /api/v1/partner/portal": [portal(partner())],
       ...dashboardRoutes(),
     });
-    await screen.findByRole("heading", { level: 1, name: "Partner Dashboard" });
+    await screen.findByRole("heading", { level: 1, name: "Dashboard" });
     await screen.findByRole("heading", { name: "Partner levels" });
     await expectNoViolations(document.body);
   });
 
   it("the upgrade dialog has no detectable violations", async () => {
     mount("affiliate", ["dashboard"], { "GET /api/v1/partner/portal": [portal(partner())], ...dashboardRoutes() });
-    await screen.findByRole("heading", { level: 1, name: "Partner Dashboard" });
+    await screen.findByRole("heading", { level: 1, name: "Dashboard" });
     fireEvent.click(screen.getByRole("button", { name: /Upgrade Plan/ }));
     const dialog = await screen.findByRole("dialog", { name: "Upgrade your partnership" });
     await within(dialog).findByRole("link", { name: "Upgrade to Reseller" });

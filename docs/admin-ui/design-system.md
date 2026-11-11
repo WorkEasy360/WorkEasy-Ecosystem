@@ -1,12 +1,12 @@
-# Admin console design system (2026-11-07, shell updated 2026-11-09)
+# Console design system: Admin and Partner (2026-11-07; shell 2026-11-09; Partner panel 2026-11-11)
 
-The Admin console (`admin.workeasy360.com`) is built from one set of shared components, so buttons, tabs, tables, badges, filters, KPI cards and empty states look and behave the same on every page. This document is the reference for anyone adding or changing a console page.
+The Admin console (`admin.workeasy360.com`) and, since 11 November 2026, the Partner panel (`partner.workeasy360.com`) are built from one set of shared components, so buttons, tabs, tables, badges, filters, KPI cards and empty states look and behave the same on every page. This document is the reference for anyone adding or changing a console page.
 
 Code: `frontend/src/features/controlplane/kit/` (import from `./kit`). Tests: `kit/kit.test.tsx`.
 
 ## Where the rules apply
 
-`AdminShell` sets `<html data-console="admin">`. The admin-only base rules in `globals.css` (`:root[data-console="admin"] …`) hang off that attribute:
+`AdminShell` sets `<html data-console="admin">` and the Partner workspace shell (`partnerpanel/WorkspaceShell.tsx`) sets `<html data-console="partner">`. The console base rules in `globals.css` (`:root[data-console] …`) hang off that attribute:
 
 - body text at 14px;
 - headings on the type scale;
@@ -14,7 +14,19 @@ Code: `frontend/src/features/controlplane/kit/` (import from `./kit`). Tests: `k
 - card radius and shadow;
 - `scrollbar-gutter: stable`.
 
-Because the attribute is on `<html>`, the rules reach dialogs drawn on `<body>` too. They never apply to the partner portal, the customer portal or the public site. The kit components look the same wherever they are used.
+Because the attribute is on `<html>`, the rules reach dialogs drawn on `<body>` too. They never apply to the customer portal, the sign-in pages or the public site. The kit components look the same wherever they are used.
+
+**In the Partner panel** (2026-11-11 brief, "Professional Partner Panel UI/UX"):
+
+- `PanelKit.PageHeader` draws the kit `PageHeader` (title, one-line subtitle, actions, browser title "… · WorkEasy360 Partner").
+- A workspace entry's tabs (`EntryTabs`, "Sections") and a page's own tabs (`SubNav`, "Pages") use the Admin's `ModuleNav` styles: the pill row with the open section filled, then the underlined pages row.
+- `PartnerPanel.module.css` uses the type tokens only (12 / 14 / 16 / 20 / 24 / 28px), `--w360-radius-card` and `--w360-shadow-card` for cards, weight 700 at most.
+- The Dashboard opens with `StatGrid` / `StatCard` (six overview cards, each drawn only when the partner may see its figure); Commissions opens with the four earnings cards.
+- The top bar: the account's standing (Active / KYC pending / KYC required / Suspended / Ended), the level and Upgrade, Notifications, and the account button with the person's name and the partner.
+- Account notices (draft, suspended, KYC required) are kit `Alert`s.
+- Onboarding progress is `BusinessKyc.KycProgress`: six steps, each state in words.
+- The partner Store keeps the storefront layout with its header on the console scale (`StoreBrowser.module.css`, `:root[data-console="partner"]`).
+- The audit that measures all of this: `scripts/partner_ui_check/audit.js` (and `summarize.js` to compare two runs).
 
 ## Tokens (globals.css `:root`)
 

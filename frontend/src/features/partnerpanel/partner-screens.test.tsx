@@ -488,7 +488,7 @@ describe("plans & add-ons and payments", () => {
     });
     shell(<Payments />);
     const tabs = await screen.findByRole("navigation", { name: "Sections" });
-    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["Orders", "Commissions", "Balance"]);
+    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["Orders", "Commissions", "Earnings balance"]);
     expect(within(tabs).getByRole("link", { name: "Orders" })).toHaveAttribute("aria-current", "page");
   });
 });

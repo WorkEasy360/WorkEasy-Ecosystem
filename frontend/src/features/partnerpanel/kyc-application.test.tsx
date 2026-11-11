@@ -241,6 +241,8 @@ describe("a sent-back application", () => {
     const { container } = await open();
     expect(screen.getByText("Corrections are needed")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("The certificate is cut off.");
+    // 2026-11-11 brief, section 9: exactly what needs correction, by name.
+    expect(screen.getByRole("alert")).toHaveTextContent("To correct: Certificate.");
     const list = screen.getByRole("list", { name: "Documents to provide" });
     expect(within(list).getByText("Certificate").closest("li")).toHaveTextContent("Needs correction");
     expect(within(list).getByText("Tax card").closest("li")).not.toHaveTextContent("Needs correction");
@@ -273,6 +275,7 @@ describe("once sent", () => {
     await open();
     expect(screen.getByText("Your application was not approved")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("We could not verify the business.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Next step: raise a ticket under Help → Support Tickets");
   });
 
   it("says when it was approved", async () => {

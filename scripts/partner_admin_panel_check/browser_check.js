@@ -171,7 +171,8 @@ async function partnerApi(page, method, url, body, key) {
     check("R2 exactly eight sidebar menus, in the specification's order", JSON.stringify(navR) === JSON.stringify(EIGHT), navR.join(" | "));
     await waitText(r, "Account status");
     const dash = await text(r);
-    check("R3 the dashboard shows KYC and account status side by side", /KYC:\s*Approved/i.test(dash) && /Account:\s*Active/i.test(dash), dash.slice(0, 300));
+    // 2026-11-11: the six overview cards open the dashboard; the first is the account's standing.
+    check("R3 the dashboard shows KYC and account status side by side", /KYC:\s*Approved/i.test(dash) && /Account status\s*Active/i.test(dash), dash.slice(0, 300));
     check("R4 the dashboard shows the Platform Wallet apart from earnings", dash.includes("Platform Wallet") && dash.includes(inr("1,000.00")) && dash.includes("My earnings"), "");
     const quick = await r.$$eval('nav[aria-label="Quick actions"] a, nav[aria-label="Quick actions"] button', (els) => els.map((e) => e.textContent.trim()));
     check("R5 quick actions: Activate Customer Plan, Add Money, Contact Support", ["Activate Customer Plan", "Add Money", "Contact Support"].every((q) => quick.includes(q)), quick.join(" | "));
@@ -190,9 +191,16 @@ async function partnerApi(page, method, url, body, key) {
     });
     await selectByLabel(r, "Available plan", planValue);
     await clickButton(r, "Review price");
-    await waitText(r, "Platform Wallet deduction");
+    await waitText(r, "Amount to deduct");
     const priced = await text(r);
-    check("R8 the approved purchase price (999.00 less 20%) and the wallet after are shown before confirming", priced.includes(inr("799.20")) && priced.includes(inr("200.80")), "");
+    // The 11 November 2026 confirmation summary: customer, product, plan, the
+    // partner purchase price, the wallet now, the deduction and what remains.
+    const summary = ["Customer", "Product", "Plan", "Partner purchase price", "Available wallet balance", "Amount to deduct", "Remaining balance after purchase"];
+    check(
+      "R8 the approved purchase price (999.00 less 20%), the wallet now and after, and the full summary are shown before confirming",
+      priced.includes(inr("799.20")) && priced.includes(inr("200.80")) && summary.every((t) => priced.includes(t)),
+      summary.filter((t) => !priced.includes(t)).join(", "),
+    );
     check("R9 the price step is axe clean", (await axe(r)).length === 0, (await axe(r)).join(", "));
     await clickButton(r, `Confirm and pay ${inr("799.20")}`);
     await waitText(r, "is recorded and the plan is active");
@@ -350,7 +358,13 @@ async function partnerApi(page, method, url, body, key) {
     check("D4 a commercial page says it opens once approved", (await text(d)).includes("This opens once your partner account is approved."), "");
     await go(d, `${PARTNER}${base}/business-kyc`);
     await waitText(d, "KYC application");
-    check("D5 Business & KYC opens before approval", /KYC:\s*Draft/i.test(await text(d)), "");
+    // 2026-11-11: the six onboarding steps; a draft is at Business Profile.
+    const kycText = await text(d);
+    check(
+      "D5 Business & KYC opens before approval, with the onboarding progress",
+      /Onboarding progress/i.test(kycText) && /Business Profile\s*In progress/i.test(kycText) && /KYC status:\s*Draft/i.test(kycText),
+      kycText.slice(0, 300),
+    );
     await go(d, `${PARTNER}${base}/support-manager`);
     check("D6 support tickets open before approval", (await h1s(d)).length === 1, (await h1s(d)).join("|"));
     const drafted = await partnerApi(d, "POST", `/api/v1/partner/${IDS.draft}/customers`, { organization_name: "X Co", owner_email: "x@pap.dev" }, "pap-d7");

@@ -1287,6 +1287,7 @@ a.stat:hover {
 
 .alert {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: var(--w360-space-3);
   padding: var(--w360-space-3) var(--w360-space-4);
@@ -1301,7 +1302,9 @@ a.stat:hover {
 }
 
 .alertBody {
-  flex: 1;
+  /* Its actions drop below the words when the banner is narrow (a phone),
+     instead of pushing past the edge. */
+  flex: 1 1 200px;
   min-width: 0;
   display: grid;
   gap: 2px;

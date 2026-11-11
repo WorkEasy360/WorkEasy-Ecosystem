@@ -6,7 +6,9 @@ import { usePathname } from "next/navigation";
 import { NavIcon } from "@/components/sidebar/icons";
 import { usePartner } from "@/features/controlplane/ControlShell";
 import { money } from "@/features/controlplane/ui";
+import { PageHeader as KitPageHeader } from "@/features/controlplane/kit";
 import type { CurrencyAmount } from "@/lib/api/partnerPanel";
+import moduleNav from "@/features/controlplane/ModuleNav.module.css";
 import styles from "./PartnerPanel.module.css";
 
 /** The signed-in partner and what the server says this person may do. Every
@@ -25,25 +27,36 @@ export function usePanel() {
   };
 }
 
+/**
+ * Every partner page's header (2026-11-11): the consoles' one header (kit
+ * PageHeader) - the title where every page has it, a one-line subtitle, the
+ * page's actions on the right, tabs below - and the browser tab's name.
+ */
 export function PageHeader({
   title,
   lead,
   actions,
+  tabs,
 }: {
   title: string;
   lead?: string;
   actions?: React.ReactNode;
+  tabs?: React.ReactNode;
 }) {
-  return (
-    <header className={styles.header}>
-      <div>
-        <h1>{title}</h1>
-        {lead && <p className={styles.lead}>{lead}</p>}
-      </div>
-      {actions && <div className={styles.actions}>{actions}</div>}
-    </header>
-  );
+  // A workspace tab's own page is titled by its menu (see EntryTabs).
+  const menuTitle = useContext(PageTitleContext);
+  return <KitPageHeader title={menuTitle ?? title} subtitle={lead} actions={actions} tabs={tabs} />;
 }
+
+/**
+ * The title the workspace's menu gives the page now open (2026-11-11): a module's
+ * landing tab is titled by the module ("Customers", "Platform Wallet"), every
+ * other tab by its own label ("Plan Activation", "Transactions") - so a page's
+ * title, its tab, its sidebar entry and its browser tab always agree. `null`
+ * (a tab's sub-page, an older address, a page outside a tabbed entry): the
+ * page's own title.
+ */
+const PageTitleContext = createContext<string | null>(null);
 
 /** A section that explains why something is not there, in the server's words.
  * It is a statement, not an error: nothing is broken. */
@@ -156,7 +169,7 @@ export interface EntryTab {
  * link is drawn twice. Navigation only: each page is guarded and every request
  * authorized as before.
  */
-export function EntryTabs({ tabs, children }: { tabs: EntryTab[]; children: React.ReactNode }) {
+export function EntryTabs({ tabs, title = null, children }: { tabs: EntryTab[]; title?: string | null; children: React.ReactNode }) {
   const pathname = usePathname() ?? "";
   const [notes, setNotes] = useState<Record<string, string>>({});
   const publish = useCallback(
@@ -169,16 +182,29 @@ export function EntryTabs({ tabs, children }: { tabs: EntryTab[]; children: Reac
   return (
     <div className={styles.page}>
       {tabs.length > 1 && (
-        <nav aria-label="Sections" className={styles.tabs}>
-          {tabs.map((tab) => (
-            <Link key={tab.href} href={tab.href} aria-current={tab.current.includes(pathname) ? "page" : undefined}>
-              {tab.label}
-              {notes[tab.href] ? ` ${notes[tab.href]}` : ""}
-            </Link>
-          ))}
+        // The Admin console's module sections (ModuleNav): a pill row, the open
+        // section filled - the same look in both consoles.
+        <nav aria-label="Sections" className={moduleNav.sections}>
+          {tabs.map((tab) => {
+            const current = tab.current.includes(pathname);
+            return (
+              <Link
+                key={tab.href}
+                href={tab.href}
+                className={moduleNav.section}
+                data-current={current || undefined}
+                aria-current={current ? "page" : undefined}
+              >
+                {tab.label}
+                {notes[tab.href] ? ` ${notes[tab.href]}` : ""}
+              </Link>
+            );
+          })}
         </nav>
       )}
-      <EntryTabsContext.Provider value={value}>{children}</EntryTabsContext.Provider>
+      <PageTitleContext.Provider value={title}>
+        <EntryTabsContext.Provider value={value}>{children}</EntryTabsContext.Provider>
+      </PageTitleContext.Provider>
     </div>
   );
 }
@@ -197,10 +223,18 @@ export function SubNav({ items }: { items: { href: string; label: string; show?:
   }, [entry, notes]);
   const shown = items.filter((item) => item.show !== false && (!entry || entry.pages.includes(item.href)));
   if (shown.length < 2) return null;
+  // Under a section: the underlined pages row; on its own: the sections' pill row.
+  const [row, link] = entry ? [moduleNav.pages, moduleNav.page] : [moduleNav.sections, moduleNav.section];
   return (
-    <nav aria-label={entry ? "Pages" : "Sections"} className={styles.tabs}>
+    <nav aria-label={entry ? "Pages" : "Sections"} className={row}>
       {shown.map((item) => (
-        <Link key={item.href} href={item.href} aria-current={pathname === item.href ? "page" : undefined}>
+        <Link
+          key={item.href}
+          href={item.href}
+          className={link}
+          data-current={pathname === item.href || undefined}
+          aria-current={pathname === item.href ? "page" : undefined}
+        >
           {item.label}
           {item.note ? ` ${item.note}` : ""}
         </Link>

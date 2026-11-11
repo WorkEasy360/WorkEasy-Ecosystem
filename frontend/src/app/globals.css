@@ -620,12 +620,13 @@ fieldset:disabled .w360-input {
   padding-left: var(--w360-space-5);
 }
 
-/* --- The Super Admin console (2026-11-07 design system) ---------------------
-   AdminShell marks <html data-console="admin">, so these apply to the console
-   and to its dialogs (drawn on <body>), and never to the partner or customer
-   portals or the public site. */
+/* --- The consoles (2026-11-07 design system; the Partner panel since 2026-11-11)
+   AdminShell marks <html data-console="admin"> and the Partner workspace
+   <html data-console="partner">, so these apply to both consoles and to their
+   dialogs (drawn on <body>), and never to the customer portal, the sign-in
+   pages or the public site. */
 
-:root[data-console="admin"] {
+:root[data-console] {
   /* The page never jumps sideways between pages with and without a scrollbar. */
   scrollbar-gutter: stable;
   /* Green actions in this console are white on deep green, as in the owner's
@@ -635,29 +636,29 @@ fieldset:disabled .w360-input {
   --w360-cta-contrast: var(--w360-admin-action-text);
 }
 
-:root[data-console="admin"] body {
+:root[data-console] body {
   font-size: var(--w360-fs-body);
   background: var(--w360-shell-canvas);
 }
 
-:root[data-console="admin"] :where(h1) {
+:root[data-console] :where(h1) {
   font-size: var(--w360-fs-title);
   font-weight: 600;
   line-height: 1.25;
 }
 
-:root[data-console="admin"] :where(h2) {
+:root[data-console] :where(h2) {
   font-size: var(--w360-fs-section);
   font-weight: 600;
   line-height: 1.4;
 }
 
-:root[data-console="admin"] :where(h3, h4) {
+:root[data-console] :where(h3, h4) {
   font-size: var(--w360-fs-body);
   font-weight: 600;
 }
 
-:root[data-console="admin"] .w360-btn {
+:root[data-console] .w360-btn {
   min-height: var(--w360-control-h);
   padding: 0 14px;
   border-radius: var(--w360-radius-control);
@@ -665,49 +666,49 @@ fieldset:disabled .w360-input {
   font-size: var(--w360-fs-body);
 }
 
-:root[data-console="admin"] .w360-btn-primary {
+:root[data-console] .w360-btn-primary {
   font-weight: 600;
   box-shadow: none;
 }
 
-:root[data-console="admin"] .w360-btn-primary:hover:not(:disabled) {
+:root[data-console] .w360-btn-primary:hover:not(:disabled) {
   transform: none;
   box-shadow: none;
 }
 
-:root[data-console="admin"] .w360-btn-danger {
+:root[data-console] .w360-btn-danger {
   font-weight: 600;
 }
 
-:root[data-console="admin"] :is(input.w360-input, select.w360-input, select) {
+:root[data-console] :is(input.w360-input, select.w360-input, select) {
   min-height: var(--w360-control-h);
   padding-block: 0;
 }
 
-:root[data-console="admin"] .w360-input {
+:root[data-console] .w360-input {
   border-radius: var(--w360-radius-control);
   font-size: var(--w360-fs-body);
 }
 
-:root[data-console="admin"] textarea.w360-input {
+:root[data-console] textarea.w360-input {
   padding-block: 8px;
 }
 
-:root[data-console="admin"] .w360-label {
+:root[data-console] .w360-label {
   font-size: var(--w360-fs-meta);
 }
 
-:root[data-console="admin"] .w360-hint,
-:root[data-console="admin"] .w360-error-text {
+:root[data-console] .w360-hint,
+:root[data-console] .w360-error-text {
   font-size: var(--w360-fs-meta);
 }
 
-:root[data-console="admin"] .w360-card {
+:root[data-console] .w360-card {
   border-radius: var(--w360-radius-card);
   box-shadow: var(--w360-shadow-card);
 }
 
-:root[data-console="admin"] .w360-badge {
+:root[data-console] .w360-badge {
   padding: 2px 8px;
   font-size: var(--w360-fs-meta);
   line-height: 18px;

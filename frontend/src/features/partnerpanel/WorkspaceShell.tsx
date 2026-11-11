@@ -4,9 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { StatusScreen } from "@/components/StatusScreen";
-import { AccountMenu, SidebarShell, type AccountMenuEntry, type SidebarGroup } from "@/components/sidebar/SidebarShell";
+import { SidebarShell, type SidebarGroup } from "@/components/sidebar/SidebarShell";
 import { Icon } from "@/components/sidebar/icons";
 import { GuestViewBanner, PartnerContext, useSignOut } from "@/features/controlplane/ControlShell";
+import { AdminAccount } from "@/features/controlplane/AdminTopbar";
+import { Alert, type MenuItem } from "@/features/controlplane/kit";
+import topbar from "@/features/controlplane/AdminTopbar.module.css";
 import { ForcedPasswordChange } from "@/features/controlplane/ForcedPasswordChange";
 import { onboardingOnly, partnerApi, type PortalPartner } from "@/lib/api/controlPlane";
 import { useSession } from "@/lib/auth/useSession";
@@ -59,6 +62,33 @@ import styles from "./PartnerPanel.module.css";
  */
 
 const SWITCHER_ORDER: ExperienceKey[] = ["affiliate", "reseller", "white_label"];
+
+const STATUS_TITLE: Record<string, string> = {
+  draft: "Finish your onboarding",
+  suspended: "Account suspended",
+  terminated: "Account ended",
+};
+
+/**
+ * The account's standing in the top bar (2026-11-11 brief, section 4): active,
+ * waiting for KYC, suspended or ended - in words, colour only reinforcing it.
+ */
+export function accountStanding(partner: PortalPartner): { label: string; tone: "success" | "warning" | "danger" | "neutral" } {
+  if (partner.status === "active") return onboardingOnly(partner) ? { label: "KYC required", tone: "warning" } : { label: "Active", tone: "success" };
+  if (partner.status === "draft") return { label: "KYC pending", tone: "warning" };
+  if (partner.status === "suspended") return { label: "Suspended", tone: "danger" };
+  return { label: "Ended", tone: "neutral" };
+}
+
+function AccountStatusBadge({ partner }: { partner: PortalPartner }) {
+  const { label, tone } = accountStanding(partner);
+  return (
+    <span className={`w360-badge w360-badge-${tone} ${styles.standing}`}>
+      <span className="w360-visually-hidden">Account status: </span>
+      {label}
+    </span>
+  );
+}
 
 const STATUS_NOTICE: Record<string, string> = {
   draft:
@@ -136,6 +166,16 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
   const { signOut, banner } = useSignOut();
   const [state, setState] = useState<State>({ status: "loading" });
   const def = WORKSPACES[experience];
+
+  // The consoles' one design system (globals.css :root[data-console], 2026-11-11):
+  // the type scale, 36px controls, card radius and shadow - on <html>, so dialogs
+  // drawn on <body> have them too. The browser tab names the page and the console.
+  useEffect(() => {
+    document.documentElement.dataset.console = "partner";
+    return () => {
+      delete document.documentElement.dataset.console;
+    };
+  }, []);
 
   useEffect(() => {
     if (session.status !== "ready") return;
@@ -230,14 +270,14 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
     .filter((w): w is { key: ExperienceKey; label: string } => isExperienceKey(w.key))
     .filter((w) => !CONTAINS[experience].includes(w.key))
     .sort((a, b) => SWITCHER_ORDER.indexOf(a.key) - SWITCHER_ORDER.indexOf(b.key));
-  const entries: AccountMenuEntry[] = [
+  const entries: MenuItem[] = [
     ...(workspaces.length > 1
       ? workspaces.filter((w) => w.key !== experience).map((w) => ({ label: `Switch to ${w.label}`, href: workspaceHome(w.key) }))
       : []),
     { label: "Switch partner account", href: "/partner" },
     { label: "My organizations", href: portalHref(portals, "app", "/organizations/select") },
     ...(who?.consoles?.staff ? [{ label: "Admin console", href: portalHref(portals, "admin", "/admin") }] : []),
-    { label: "Sign out", onSelect: signOut },
+    { label: "Sign out", onSelect: signOut, separator: true },
   ];
   return (
     <PartnerContext.Provider value={{ partner, base: workspaceBase(experience) }}>
@@ -258,8 +298,28 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
           </>
         }
         groups={workspaceNav(def, partner, setLockedEntry)}
-        tools={<LevelTools level={experience} />}
-        account={<AccountMenu name={who?.name || who?.email || ""} entries={entries} showName />}
+        tools={
+          <span className={styles.topTools}>
+            <AccountStatusBadge partner={partner} />
+            <LevelTools level={experience} />
+            <Link
+              href={`${workspaceBase(experience)}/notifications`}
+              className={topbar.iconButton}
+              aria-label="Notifications"
+              title="Notifications"
+            >
+              <Icon name="bell" size={20} />
+            </Link>
+          </span>
+        }
+        account={
+          <AdminAccount
+            name={who?.name ?? ""}
+            email={who?.email ?? ""}
+            role={partner.role_label ? `${partner.display_name} · ${partner.role_label}` : partner.display_name}
+            entries={entries}
+          />
+        }
         banner={
           <>
             {banner}
@@ -275,24 +335,38 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
               </nav>
             )}
             {partner.status === "active" && onboardingOnly(partner) && (
-              <p role="status" className={`w360-badge w360-badge-warning ${consoleStyles.banner} ${consoleStyles.notice}`}>
-                Workeasy360 needs your KYC before you can trade again: referral links, customers, the Platform Wallet and payouts are paused
-                until it is approved.{" "}
-                <Link href={`${workspaceBase(experience)}/business-kyc`} className="w360-btn w360-btn-secondary">
-                  Complete your KYC
-                </Link>
-              </p>
+              <div className={styles.shellNotice}>
+                <Alert
+                  tone="warning"
+                  title="KYC required"
+                  actions={
+                    <Link href={`${workspaceBase(experience)}/business-kyc`} className="w360-btn w360-btn-secondary">
+                      Complete your KYC
+                    </Link>
+                  }
+                >
+                  Workeasy360 needs your KYC before you can trade again: referral links, customers, the Platform Wallet and payouts are paused
+                  until it is approved.
+                </Alert>
+              </div>
             )}
             {partner.status !== "active" && (
-              <p role="status" className={`w360-badge w360-badge-warning ${consoleStyles.banner} ${consoleStyles.notice}`}>
-                {STATUS_NOTICE[partner.status] ?? `This partner account is ${partner.status}.`}{" "}
-                {/* ADR-063: onboarding happens inside the workspace. */}
-                {partner.status === "draft" && (
-                  <Link href={`${workspaceBase(experience)}/business-kyc`} className="w360-btn w360-btn-secondary">
-                    Complete your business profile & KYC
-                  </Link>
-                )}
-              </p>
+              <div className={styles.shellNotice}>
+                <Alert
+                  tone={partner.status === "draft" ? "info" : "warning"}
+                  title={STATUS_TITLE[partner.status] ?? "Partner account"}
+                  actions={
+                    // ADR-063: onboarding happens inside the workspace.
+                    partner.status === "draft" ? (
+                      <Link href={`${workspaceBase(experience)}/business-kyc`} className="w360-btn w360-btn-primary">
+                        Complete your KYC
+                      </Link>
+                    ) : undefined
+                  }
+                >
+                  {STATUS_NOTICE[partner.status] ?? `This partner account is ${partner.status}.`}
+                </Alert>
+              </div>
             )}
           </>
         }
@@ -384,14 +458,21 @@ export function WorkspaceContent({ experience, path }: { experience: ExperienceK
   // A consolidated entry (2026-11-02): its pages are tabs of one page.
   const owner = tabbedEntryFor(def, clean);
   if (owner?.tabs) {
-    const tabs = owner.tabs
-      .filter((tab) => tabVisible(tab, can, cleared))
-      .map((tab) => ({
-        href: `${base}/${tab.path}`,
-        label: tab.label,
-        current: [tab.path, ...(tab.also ?? [])].map((p) => `${base}/${p}`),
-      }));
-    return <EntryTabs tabs={tabs}>{page}</EntryTabs>;
+    const shown = owner.tabs.filter((tab) => tabVisible(tab, can, cleared));
+    const tabs = shown.map((tab) => ({
+      href: `${base}/${tab.path}`,
+      label: tab.label,
+      current: [tab.path, ...(tab.also ?? [])].map((p) => `${base}/${p}`),
+    }));
+    // The title the menu gives this page: the module's name on its landing tab,
+    // the tab's label on the others; a tab's sub-page keeps its own.
+    const own = shown.findIndex((tab) => tab.path === clean);
+    const title = own === 0 ? owner.label : own > 0 ? shown[own].label : null;
+    return (
+      <EntryTabs tabs={tabs} title={title}>
+        {page}
+      </EntryTabs>
+    );
   }
   return page;
 }

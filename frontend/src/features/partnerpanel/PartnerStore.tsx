@@ -36,7 +36,7 @@ export function PartnerStore({ kind, mine }: { kind: RequestKind; mine: { path: 
 
   return (
     <StoreBrowser<PartnerStoreCard, PartnerStorePage>
-      title="Store"
+      title="Product Store"
       lead={LEADS[kind]}
       load={(query) => panelApi.marketplace(id, kind, { ...query })}
       loadKey={`${id}#${kind}#${round}`}

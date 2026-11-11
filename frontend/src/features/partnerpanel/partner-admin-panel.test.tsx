@@ -7,6 +7,7 @@ import { money } from "@/features/controlplane/ui";
 import type { PortalPartner } from "@/lib/api/controlPlane";
 import { BillingRecords, CustomerSubscriptions } from "./BillingPages";
 import { BusinessKyc } from "./BusinessKyc";
+import { PaymentCommissions } from "./Catalog";
 import { PlanActivation } from "./CustomerPages";
 import { PlatformWalletPage, WalletTransactions } from "./PlatformWallet";
 import { EligibleProducts, HelpContent, SalesResources } from "./ProductsReferrals";
@@ -328,6 +329,40 @@ describe("Customer Subscriptions", () => {
   });
 });
 
+describe("Earnings & Payouts → Commissions (2026-11-11 brief, section 12)", () => {
+  it("shows pending, available, reversed and paid-out earnings apart, then the ledger in words", async () => {
+    const { container } = mount(<PaymentCommissions />, {
+      [`GET ${API}/balance`]: [
+        ok({
+          balances: [{ currency: "INR", balance_minor: 30000, pending_minor: 10000, available_minor: 15000, in_payouts_minor: 0, paid_minor: 5000, entries: 3 }],
+          entries: [],
+          not_implemented: {},
+        }),
+      ],
+      [`GET ${API}/commissions`]: [
+        ok({
+          results: [{ id: "a1", kind: "reversal", amount_minor: -2000, currency: "INR", event_at: "2026-11-02T00:00:00Z", clears_at: "2026-11-02T00:00:00Z" }],
+          next_cursor: null,
+          has_more: false,
+          balances: [{ currency: "INR", earned_minor: 32000, adjustments_minor: -2000, balance_minor: 30000 }],
+        }),
+      ],
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "Commissions" })).toBeInTheDocument();
+    const cards = await screen.findByRole("group", { name: "Earnings" });
+    await waitFor(() => expect(within(cards).getByText("Reversals & adjustments")).toBeInTheDocument());
+    const card = (label: string) => within(cards).getByText(label).parentElement!;
+    expect(card("Pending earnings")).toHaveTextContent(money(10000, "INR"));
+    expect(card("Available earnings")).toHaveTextContent(money(15000, "INR"));
+    expect(card("Reversals & adjustments")).toHaveTextContent(money(-2000, "INR"));
+    expect(card("Total paid out")).toHaveTextContent(money(5000, "INR"));
+    const ledger = await screen.findByRole("table", { name: "Commission ledger entries" });
+    expect(ledger).toHaveTextContent("Reversed");
+    expect(ledger).not.toHaveTextContent("reversal");
+    await expectNoViolations(container);
+  });
+});
+
 describe("Billing Records", () => {
   it("lists the partner's own payments and its wallet's payments for customer plans", async () => {
     mount(<BillingRecords />, {
@@ -430,9 +465,20 @@ describe("before a partner may trade", () => {
       },
       draft,
     );
-    const strip = await screen.findByRole("list", { name: "Where your account stands" });
-    expect(strip).toHaveTextContent("KYC: Correction Required");
-    expect(strip).toHaveTextContent("Account: Not yet active");
+    // The six onboarding steps (2026-11-11 brief, section 9): KYC Documents is
+    // where the correction is asked for, marked as the current step.
+    const progress = (await screen.findByRole("heading", { name: "Onboarding progress" })).closest("section")!;
+    const steps = within(progress).getAllByRole("listitem");
+    expect(steps.map((li) => li.textContent)).toEqual([
+      "Account VerificationDone",
+      "Business ProfileDone",
+      "!KYC DocumentsCorrection required",
+      "4Application SubmissionNot started",
+      "5Admin ReviewNot started",
+      "6Approval / ActivationNot started",
+    ]);
+    expect(steps[2]).toHaveAttribute("aria-current", "step");
+    expect(progress).toHaveTextContent("Workeasy360 asked for corrections.");
     expect(screen.getByRole("heading", { level: 1, name: "Business & KYC" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { level: 2, name: "KYC application" })).toBeInTheDocument();
     expect(await screen.findByText(/KYC history \(1\)/)).toBeInTheDocument();

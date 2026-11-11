@@ -91,6 +91,12 @@ function KycHistory({ app }: { app: PartnerKycApplication }) {
   );
 }
 
+/** The documents the reviewer flagged for correction, by their own names. */
+function flaggedLabels(app: PartnerKycApplication): string[] {
+  const flagged = app.correction?.flagged_requirements ?? [];
+  return app.requirements.filter((r) => flagged.includes(r.key)).map((r) => r.label);
+}
+
 function StatusBanner({ app }: { app: PartnerKycApplication }) {
   const banner = BANNER[app.status];
   const reason = app.correction?.reason || app.decision_reason;
@@ -102,6 +108,12 @@ function StatusBanner({ app }: { app: PartnerKycApplication }) {
       {banner.text && <p>{banner.text}</p>}
       {app.status === "approved" && app.decided_at && <p>Approved on {formatDateTime(app.decided_at)}.</p>}
       {(app.status === "correction_required" || app.status === "rejected") && reason && <p>{reason}</p>}
+      {app.status === "correction_required" && flaggedLabels(app).length > 0 && (
+        <p>
+          <strong>To correct:</strong> {flaggedLabels(app).join(", ")}.
+        </p>
+      )}
+      {app.status === "rejected" && <p>Next step: raise a ticket under Help → Support Tickets to ask Workeasy360 what you can do.</p>}
     </Alert>
   );
 }
