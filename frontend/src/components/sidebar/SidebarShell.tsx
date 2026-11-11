@@ -91,6 +91,7 @@ export function SidebarShell({
   tools,
   accordion = false,
   railKey,
+  navFooter,
 }: {
   area: string;
   context?: React.ReactNode;
@@ -117,6 +118,9 @@ export function SidebarShell({
   /** Offer to fold the navigation to an icon rail, remembered on this browser
    * under this key (the Super Admin). */
   railKey?: string;
+  /** Below the menus, above the rail toggle (the User Admin's Store card);
+   * hidden while the menu is folded to its icon rail. */
+  navFooter?: React.ReactNode;
 }) {
   const pathname = usePathname();
   const navId = useId();
@@ -264,6 +268,7 @@ export function SidebarShell({
             </div>
           );
         })}
+        {navFooter && <div className={styles.navFooter}>{navFooter}</div>}
         {railKey && (
           <button
             type="button"

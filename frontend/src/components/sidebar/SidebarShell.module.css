@@ -752,3 +752,12 @@
 .subList > li[data-dragging] {
   opacity: 0.5;
 }
+
+/* Content below the menus (the User Admin's Store card). Not in the icon rail. */
+.navFooter {
+  margin: var(--w360-space-5) var(--w360-space-3) 0;
+}
+
+.frame[data-rail] .navFooter {
+  display: none;
+}

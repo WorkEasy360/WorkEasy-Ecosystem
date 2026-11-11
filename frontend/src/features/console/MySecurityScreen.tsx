@@ -1,11 +1,13 @@
 "use client";
 
 import { useId } from "react";
+import Link from "next/link";
 import { accountApi, type AccountEvent, type SessionRow } from "@/lib/api/console";
 import { LoadGate, Table, useAction, useLoad, when } from "@/features/controlplane/ui";
+import { Badge, Button, Page, useConfirm } from "@/features/controlplane/kit";
 import cp from "@/features/controlplane/ControlPlane.module.css";
-import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
+import { useOrgAccess } from "./OrgAccess";
 import { describePreferenceChange } from "@/features/signin/signInCopy";
 import { ChangePasswordForm } from "./ChangePasswordForm";
 import { PageHeader, Panel } from "./consoleUi";
@@ -47,12 +49,16 @@ export function describeAccountEvent(event: Pick<AccountEvent, "kind" | "reason"
 }
 
 /**
- * "My security": the person's own account, in every organization - the
- * password, where they are signed in and what has happened to the account
- * recently. Signing a session out ends it at once; changing the password ends
- * every other session, and the page says so.
+ * Account & Security (2026-11-11, the User Admin brief Part 2 section 07): the
+ * person's own account, in every organization - the password, where they are signed
+ * in (and signing the others out), and what has happened to the account recently.
+ * Signing a session out ends it at once; changing the password ends every other
+ * session, and the page says so. Organization-wide security (policies, the audit log)
+ * is on its own pages, shown only to those who may see it.
  */
 export function MySecurityScreen() {
+  const { slug, can } = useOrgAccess();
+  const confirm = useConfirm();
   const [sessions, reloadSessions] = useLoad(() => accountApi.sessions(), []);
   const [activity, reloadActivity] = useLoad(() => accountApi.activity(), []);
   const refresh = () => {
@@ -63,11 +69,19 @@ export function MySecurityScreen() {
   const noteId = useId();
 
   return (
-    <div className={styles.page}>
+    <Page>
       <PageHeader
-        title="My security"
-        lead="How you sign in and where you're signed in. These settings belong to your account, in every organization."
+        title="Account & Security"
+        lead="Your password, where you're signed in, and recent activity. These belong to your account, in every organization."
+        actions={
+          slug ? (
+            <Link className="w360-btn w360-btn-secondary" href={`/o/${slug}/settings/sign-in-preferences`}>
+              Sign-in preferences
+            </Link>
+          ) : undefined
+        }
       />
+      {confirm.dialog}
 
       <Panel title="Password">
         <ChangePasswordForm popup onChanged={refresh} />
@@ -88,7 +102,15 @@ export function MySecurityScreen() {
                 void act(() => accountApi.revokeSession(s.session_id), `Signed out the session on ${s.device_label}.`)
               }
               onRevokeOthers={() =>
-                void act(() => accountApi.revokeOtherSessions(), "Every other session has been signed out.")
+                confirm.ask({
+                  title: "Sign out every other session?",
+                  message: "Every browser and device except this one is signed out at once. You stay signed in here.",
+                  confirmLabel: "Sign out other sessions",
+                  danger: true,
+                  onConfirm: () => {
+                    void act(() => accountApi.revokeOtherSessions(), "Every other session has been signed out.");
+                  },
+                })
               }
             />
           )}
@@ -116,7 +138,25 @@ export function MySecurityScreen() {
           )}
         </LoadGate>
       </Panel>
-    </div>
+
+      {(can("platform.audit.view") || can("platform.security.view")) && slug && (
+        <Panel title="Organization security">
+          <p className={local.muted}>Visible to you as an administrator of this organization.</p>
+          <div className={local.actions}>
+            {can("platform.audit.view") && (
+              <Link className="w360-btn w360-btn-secondary" href={`/o/${slug}/settings/audit`}>
+                Admin activity history
+              </Link>
+            )}
+            {can("platform.security.view") && (
+              <Link className="w360-btn w360-btn-secondary" href={`/o/${slug}/settings/security/authentication`}>
+                Organization sign-in policy
+              </Link>
+            )}
+          </div>
+        </Panel>
+      )}
+    </Page>
   );
 }
 
@@ -146,7 +186,11 @@ function SessionsTable({
           <tr key={s.session_id}>
             <th scope="row">
               {s.device_label}
-              {s.current && <span className={`w360-badge w360-badge-success ${local.marker}`}>This device</span>}
+              {s.current && (
+                <span className={local.marker}>
+                  <Badge tone="success">This device</Badge>
+                </span>
+              )}
             </th>
             <td className={cp.mono}>{s.ip_prefix || "—"}</td>
             <td>{when(s.signed_in_at)}</td>
@@ -155,16 +199,15 @@ function SessionsTable({
               {s.current ? (
                 <span className={cp.muted}>Current session</span>
               ) : (
-                <button
-                  type="button"
-                  className="w360-btn w360-btn-secondary"
+                <Button
+                  size="sm"
                   aria-label={`Sign out ${s.device_label}, signed in ${when(s.signed_in_at)}`}
                   aria-describedby={describedBy}
                   disabled={busy}
                   onClick={() => onRevoke(s)}
                 >
                   Sign out
-                </button>
+                </Button>
               )}
             </td>
           </tr>
@@ -172,15 +215,9 @@ function SessionsTable({
       </Table>
       {others.length > 0 && (
         <div>
-          <button
-            type="button"
-            className="w360-btn w360-btn-secondary"
-            aria-describedby={describedBy}
-            disabled={busy}
-            onClick={onRevokeOthers}
-          >
+          <Button icon="logout" aria-describedby={describedBy} disabled={busy} onClick={onRevokeOthers}>
             Sign out all other sessions
-          </button>
+          </Button>
         </div>
       )}
     </>

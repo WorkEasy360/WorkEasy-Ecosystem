@@ -139,14 +139,26 @@ export function useGuestLogin(where: string) {
       onStart={(reason) => loginAsGuest(target.id, where, currentReturnPath(), portals, reason)}
     />
   ) : null;
-  return { ask: (id: string, name: string) => setTarget({ id, name }), dialog: node };
+  return {
+    ask: (id: string, name: string) => setTarget({ id, name }),
+    dialog: node,
+    /** The partner whose Login as Guest is being opened (its button shows it). */
+    pending: target?.id ?? null,
+  };
 }
 
-/** The Admin page the browser was on, when it is one "Exit Guest Mode" may return to. */
+/** The Admin page the browser was on, when it is one "Exit Guest Mode" may return to.
+ * The path only: the server accepts nothing else (`guest.clean_return_path`). The
+ * list's search and filters come back from this tab's memory instead
+ * (`lastPartnerList`, restored when the return is marked `?guest=ended`). */
 export function currentReturnPath(): string {
   if (typeof window === "undefined") return "/admin/partners/all";
   return window.location.pathname;
 }
+
+/** `?guest=` on an Admin partner list a guest session returned to: restore the
+ * list's own search and filters. */
+export const GUEST_RETURNED = "ended";
 
 /** What `?guest=` on an Admin page says happened to a Login as Guest that came back. */
 export function guestOutcomeMessage(raw: string | null): string | null {

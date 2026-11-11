@@ -216,6 +216,8 @@ def test_start_and_end_are_both_audited_against_the_partner(catalog, admin, rese
         assert event.actor_user_id == admin.staff_user.id
         assert event.changes["guest_view_id"] == started["id"]
     assert closed.changes["end_reason"] == "exited"
+    # 2026-11-11: the partner's category when the view opened is part of the record.
+    assert opened.changes["category"] == "reseller"
 
 
 def test_the_sweep_records_expired_views_once(catalog, admin, reseller, monkeypatch):

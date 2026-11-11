@@ -376,15 +376,14 @@ describe("All partners", () => {
     const table = await screen.findByRole("table", { name: "Partners" });
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
       "Partner Name",
-      "Partner Email",
       "Type / Permissions",
-      "KYC Status",
       "Account Status",
+      "View / Actions",
+      "Partner Email",
+      "KYC Status",
       "Country",
       "Assigned Customers",
       "Created",
-      "Guest Login",
-      "Actions",
     ]);
     const acme = within(table).getByRole("row", { name: /Acme Partners/ });
     expect(within(acme).getByRole("link", { name: "Acme Partners" })).toHaveAttribute("href", "/admin/partners/p1");
@@ -393,14 +392,16 @@ describe("All partners", () => {
     expect(acme).toHaveTextContent("GB");
     // Earnings are no longer in this list (2026-11-10): they stay on the partner's page.
     expect(acme).not.toHaveTextContent("35.54");
-    expect(within(acme).getByRole("button", { name: "Login as Guest to Acme Partners" })).toHaveTextContent("Login");
+    // 2026-11-11: View and Login as Guest side by side, right after the status.
+    expect(within(acme).getByRole("link", { name: "View Acme Partners" })).toHaveAttribute("href", "/admin/partners/p1");
+    expect(within(acme).getByRole("button", { name: "Login as Guest to Acme Partners" })).toHaveTextContent(/^Login as Guest$/);
     expect(acme).toHaveTextContent("Active");
     // No inline switch: the status is a badge.
     expect(within(table).queryByRole("switch")).not.toBeInTheDocument();
     const combo = within(table).getByRole("row", { name: /Combo Co/ });
     // One type, the partner's current workspace - never all it holds.
     // The type first, then the other permissions it holds (ADR-063: enabled permissions).
-    const typeCell = (r: HTMLElement) => within(r).getAllByRole("cell")[1];
+    const typeCell = (r: HTMLElement) => within(r).getAllByRole("cell")[0];
     expect(typeCell(combo)).toHaveTextContent(/^White-label\+ Reseller, Affiliate$/);
     expect(typeCell(acme)).toHaveTextContent(/^Reseller$/);
     expect(combo).toHaveTextContent("Setup required");
@@ -418,7 +419,6 @@ describe("All partners", () => {
       "View Commission & Payout Records",
       "Open partner panel",
       "Copy panel link",
-      "Login as Guest",
       "Manage Guest Access",
       "Suspend",
     ]);
@@ -437,8 +437,8 @@ describe("All partners", () => {
     expect(within(comboMenu).getByRole("menuitem", { name: "Complete setup" })).toHaveAttribute("href", "/admin/partners/p2/profile");
     expect(within(comboMenu).getByRole("menuitem", { name: "Activate (add an administrator first)" })).toBeDisabled();
     expect(within(comboMenu).queryByRole("menuitem", { name: "Suspend" })).not.toBeInTheDocument();
-    // A draft has no dashboard to look at yet (the server refuses it too).
-    expect(within(comboMenu).getByRole("menuitem", { name: "Login as Guest (once active)" })).toBeDisabled();
+    // Login as Guest is never in the menu: it is the button beside View.
+    expect(within(comboMenu).queryByRole("menuitem", { name: /Login as Guest/ })).not.toBeInTheDocument();
   });
 
   it("copies an ID with the copy button beside it", async () => {
@@ -464,7 +464,7 @@ describe("All partners", () => {
     );
     renderList();
     await screen.findByRole("table", { name: "Partners" });
-    fireEvent.click(within(openRowMenu("Acme Partners")).getByRole("menuitem", { name: "Login as Guest" }));
+    fireEvent.click(screen.getByRole("button", { name: "Login as Guest to Acme Partners" }));
     // ADR-063: the Admin says why; the reason is recorded with the session.
     await confirmGuest("Acme Partners", { details: "ticket 42" });
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/partner/reseller/dashboard"));
@@ -513,7 +513,7 @@ describe("All partners", () => {
       </PortalsProvider>,
     );
     await screen.findByRole("table", { name: "Partners" });
-    fireEvent.click(within(openRowMenu("Acme Partners")).getByRole("menuitem", { name: "Login as Guest" }));
+    fireEvent.click(screen.getByRole("button", { name: "Login as Guest to Acme Partners" }));
     await confirmGuest("Acme Partners");
     await waitFor(() => expect(submitted).toHaveLength(1));
     expect(submitted[0]).toEqual({
@@ -555,11 +555,46 @@ describe("All partners", () => {
       </PortalsProvider>,
     );
     await screen.findByRole("table", { name: "Partners" });
-    fireEvent.click(within(openRowMenu("Acme Partners")).getByRole("menuitem", { name: "Login as Guest" }));
+    fireEvent.click(screen.getByRole("button", { name: "Login as Guest to Acme Partners" }));
     await confirmGuest("Acme Partners");
     expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
     expect(submit).not.toHaveBeenCalled();
     submit.mockRestore();
+  });
+
+  it("remembers this list's address for Back to Partners, and restores its filters after a guest session", async () => {
+    pathname = "/admin/partners/reseller";
+    query = "q=acme&status=active";
+    mockApi(listRoutes([row()]));
+    const first = renderList([VIEW, MANAGE, GUEST], "reseller");
+    await screen.findByRole("table", { name: "Partners" });
+    expect(JSON.parse(window.sessionStorage.getItem("w360.admin.partners.list") ?? "null")).toEqual({
+      path: "/admin/partners/reseller",
+      search: "?q=acme&status=active",
+    });
+    first.unmount();
+    // Back from Return to Super Admin: the server keeps only the path, so the
+    // marked address brings the search and filters back from this tab.
+    query = "guest=ended";
+    const calls = mockApi(listRoutes([row()]));
+    renderList([VIEW, MANAGE, GUEST], "reseller");
+    await screen.findByRole("table", { name: "Partners" });
+    expect(replace).toHaveBeenCalledWith("/admin/partners/reseller?q=acme&status=active", { scroll: false });
+    const url = new URL(calls[0].url, "http://x");
+    expect(url.searchParams.get("q")).toBe("acme");
+    expect(url.searchParams.get("status")).toBe("active");
+    expect(screen.getByLabelText("Search by partner name or email")).toHaveValue("acme");
+    window.sessionStorage.clear();
+  });
+
+  it("a guest return to a list this tab never showed just drops the marker", async () => {
+    window.sessionStorage.clear();
+    pathname = "/admin/partners/affiliate";
+    query = "guest=ended";
+    mockApi(listRoutes([row()]));
+    renderList([VIEW, MANAGE, GUEST], "affiliate");
+    await screen.findByRole("table", { name: "Partners" });
+    expect(replace).toHaveBeenCalledWith("/admin/partners/affiliate", { scroll: false });
   });
 
   it("says when a guest login came back unused or refused", async () => {
@@ -573,6 +608,7 @@ describe("All partners", () => {
     mockApi(listRoutes([row()]));
     renderList([VIEW, MANAGE]);
     await screen.findByRole("table", { name: "Partners" });
+    expect(screen.queryByRole("button", { name: /Login as Guest/ })).not.toBeInTheDocument();
     const menu = openRowMenu("Acme Partners");
     expect(within(menu).queryByRole("menuitem", { name: /Login as Guest/ })).not.toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Manage Guest Access" })).toBeInTheDocument();
@@ -632,7 +668,7 @@ describe("All partners", () => {
     await expectNoViolations(dialog);
   });
 
-  it("has a Guest Login column where Earnings was: one Login button per eligible partner", async () => {
+  it("puts View and Login as Guest side by side in every row, right after the status", async () => {
     mockApi(
       listRoutes([
         row(),
@@ -644,27 +680,49 @@ describe("All partners", () => {
     const table = await screen.findByRole("table", { name: "Partners" });
     const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
     expect(headers).not.toContain("Earnings");
-    expect(headers.indexOf("Guest Login")).toBe(headers.indexOf("Created") + 1);
+    expect(headers).not.toContain("Guest Login");
+    // Fourth, after Name, Type and Status - never at the far end of the row.
+    expect(headers.indexOf("View / Actions")).toBe(3);
+    expect(headers.indexOf("View / Actions")).toBe(headers.indexOf("Account Status") + 1);
+    for (const name of ["Acme Partners", "Second Co", "Draft Co"]) {
+      const r = within(table).getByRole("row", { name: new RegExp(name) });
+      const cell = within(r).getAllByRole("cell")[2];
+      // View, then Login as Guest immediately after it, then the row's other actions.
+      const controls = [...cell.querySelectorAll("a, button")].map((el) => el.getAttribute("aria-label") ?? el.textContent);
+      expect(controls).toEqual([`View ${name}`, `Login as Guest to ${name}`, `Actions for ${name}`]);
+      expect(within(cell).getByRole("link", { name: `View ${name}` })).toHaveTextContent(/^View$/);
+    }
     for (const name of ["Acme Partners", "Second Co"]) {
       const button = within(within(table).getByRole("row", { name: new RegExp(name) })).getByRole("button", { name: `Login as Guest to ${name}` });
-      expect(button).toHaveTextContent(/^Login$/);
+      expect(button).toHaveTextContent(/^Login as Guest$/);
       expect(button).toBeEnabled();
+      expect(button).not.toHaveAttribute("aria-disabled");
     }
-    // A draft has no dashboard yet: no button, and it says when there will be one.
-    const draft = within(table).getByRole("row", { name: /Draft Co/ });
-    expect(within(draft).queryByRole("button", { name: /Login as Guest/ })).not.toBeInTheDocument();
-    expect(draft).toHaveTextContent("Once active");
+    // A draft has no dashboard yet: the button is there, says why, and does nothing.
+    const draft = within(within(table).getByRole("row", { name: /Draft Co/ })).getByRole("button", { name: "Login as Guest to Draft Co" });
+    expect(draft).toHaveAttribute("aria-disabled", "true");
+    expect(draft).toHaveAccessibleDescription("Opens once the partner is active");
+    fireEvent.click(draft);
+    expect(screen.queryByRole("dialog", { name: /^Login as Guest · / })).not.toBeInTheDocument();
     // No money in the list at all.
     expect(table).not.toHaveTextContent("₹");
     expect(table).not.toHaveTextContent("£");
     await expectNoViolations(container);
   });
 
-  it("the Login button names itself in a tooltip", async () => {
-    mockApi(listRoutes([row()]));
-    renderList();
-    const button = await screen.findByRole("button", { name: "Login as Guest to Acme Partners" });
-    expect(button).toHaveAccessibleDescription("Login as Guest");
+  it("shows the same View and Login as Guest pair on each partner type's own list", async () => {
+    for (const category of ["affiliate", "reseller", "white_label"] as const) {
+      pathname = `/admin/partners/${category === "white_label" ? "white-label" : category}`;
+      mockApi(listRoutes([row()]));
+      const view = renderList([VIEW, MANAGE, GUEST], category);
+      const table = await screen.findByRole("table", { name: "Partners" });
+      const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+      expect(headers.slice(0, 4)).toEqual(["Partner Name", "Type / Permissions", "Account Status", "View / Actions"]);
+      const cell = within(within(table).getByRole("row", { name: /Acme Partners/ })).getAllByRole("cell")[2];
+      expect(within(cell).getByRole("link", { name: "View Acme Partners" })).toBeInTheDocument();
+      expect(within(cell).getByRole("button", { name: "Login as Guest to Acme Partners" })).toBeEnabled();
+      view.unmount();
+    }
   });
 
   it("the Login button asks why, then opens that partner's guest view through the real endpoint", async () => {
@@ -709,13 +767,15 @@ describe("All partners", () => {
     await waitFor(() => expect(button).toBeEnabled());
   });
 
-  it("shows no Guest Login column to staff who may not start a guest view", async () => {
+  it("shows View but no Login as Guest to staff who may not start a guest view", async () => {
     mockApi(listRoutes([row()]));
     renderList([VIEW, MANAGE]);
     const table = await screen.findByRole("table", { name: "Partners" });
     const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
     expect(headers).not.toContain("Guest Login");
     expect(headers).not.toContain("Earnings");
+    expect(headers).toContain("View / Actions");
+    expect(within(table).getByRole("link", { name: "View Acme Partners" })).toBeInTheDocument();
     expect(within(table).queryByRole("button", { name: /Login as Guest/ })).not.toBeInTheDocument();
   });
 
@@ -771,15 +831,14 @@ describe("All partners", () => {
     const table = await screen.findByRole("table", { name: "Partners" });
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
       "Partner Name",
-      "Partner Email",
       "Type / Permissions",
-      "KYC Status",
       "Account Status",
+      "View / Actions",
+      "Partner Email",
+      "KYC Status",
       "Country",
       "Assigned Customers",
       "Created",
-      "Guest Login",
-      "Actions",
     ]);
     const url = new URL(calls[0].url, "http://x");
     expect(url.searchParams.get("category")).toBe("reseller");

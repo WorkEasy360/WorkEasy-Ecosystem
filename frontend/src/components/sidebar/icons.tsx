@@ -28,6 +28,8 @@ const PATHS: Record<string, string> = {
   handshake: "M3 12 7 8l4 2 3-3 7 5-5 5-3-2-2 2-4-3-4-2Zm8-2 3 3",
   gift: "M4 11h16v10H4V11Zm-1-4h18v4H3V7Zm9 0v14M12 7c-1.5-3-5-3-5-1s3 1 5 1Zm0 0c1.5-3 5-3 5-1s-3 1-5 1Z",
   store: "M4 9l1.5-5h13L20 9M4 9h16M4 9v11h16V9M9 20v-6h6v6",
+  gauge: "M4.9 17a8 8 0 1 1 14.2 0M12 13l3.5-3.5M12 14a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z",
+  rocket: "M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2M14 4c3-1.5 6-1 6-1s.5 3-1 6l-6 6-5-5 6-6Zm1 5h.01M9 10l-3-.5L4 12l4 1M14 15l.5 3L12 20l-1-4",
   lock: "M6 11h12v10H6V11Zm2 0V7a4 4 0 1 1 8 0v4",
   device: "M5 4h14v11H5V4Zm-2 15h18M9 19l1-4h4l1 4",
   history: "M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 7v5l3 3",

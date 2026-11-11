@@ -11,5 +11,7 @@ export default async function ResetPasswordPage({ searchParams }: { searchParams
   const mode = origins ? null : (await searchParams).mode;
   const admin = portal === "admin" || mode === "admin";
   const partner = portal === "partner" || mode === "partner";
-  return <ResetPasswordScreen admin={admin} partner={partner} />;
+  // The customer portal (2026-11-11): its own sign-in's frame.
+  const user = portal === "app" || mode === "user";
+  return <ResetPasswordScreen admin={admin} partner={partner} user={user} />;
 }

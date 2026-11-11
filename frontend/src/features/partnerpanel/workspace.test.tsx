@@ -294,9 +294,11 @@ describe("the affiliate workspace", () => {
 });
 
 describe("a staff guest view (Super Admin → Guest login)", () => {
-  it("opens in the partner's own workspace, says whose portal it is and leads back to the partner's admin page", async () => {
-    const assign = vi.fn();
-    vi.stubGlobal("location", { ...window.location, assign });
+  const guestPartner = (guest: Record<string, unknown>) => partner({ role: "viewer", is_admin: false, guest });
+
+  it("says whose portal it is and its type, and Return to Super Admin ends it first, then goes back where it started", async () => {
+    const leave = vi.fn();
+    vi.stubGlobal("location", { ...window.location, replace: leave });
     const guest = {
       partner_id: ID,
       reason: "Support ticket 42",
@@ -304,54 +306,101 @@ describe("a staff guest view (Super Admin → Guest login)", () => {
       viewer: { name: "Sam Staff", email: "sam@workeasy360.com" },
     };
     const calls = mount("affiliate", ["dashboard"], {
-      "GET /api/v1/partner/portal": [portal(partner({ role: "viewer", is_admin: false, guest }))],
+      "GET /api/v1/partner/portal": [portal(guestPartner(guest))],
       ...dashboardRoutes(),
       "POST /api/v1/partner/guest-view/end": [ok({ ended: true, return_url: "/admin/partners/affiliate" })],
     });
     expect(await screen.findByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument();
     const banner = screen.getByRole("status", { name: "Guest Session" });
-    expect(banner).toHaveTextContent("Guest Session — Viewing Partner: Acme Partners (Affiliate). Read only");
+    expect(banner).toHaveTextContent("Guest Session – Viewing Partner: Acme Partners Partner type: Affiliate Read only");
     // Which partner, of which type, and who is looking.
     expect(banner).toHaveTextContent("viewing as Sam Staff");
-    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Session" }));
-    // Back to the Admin page Login as Guest was chosen on.
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("/admin/partners/affiliate"));
-    expect(calls.some((c) => c.key === "POST /api/v1/partner/guest-view/end")).toBe(true);
+    expect(within(banner).getAllByRole("button").map((b) => b.textContent)).toEqual(["Return to Super Admin", "End Guest Session"]);
+    fireEvent.click(within(banner).getByRole("button", { name: "Return to Super Admin" }));
+    // Back to the Admin list Login as Guest was chosen on, marked so the list
+    // brings back its own search and filters; the guest page is replaced in history.
+    await waitFor(() => expect(leave).toHaveBeenCalledWith("/admin/partners/affiliate?guest=ended"));
+    expect(calls.filter((c) => c.key === "POST /api/v1/partner/guest-view/end")).toHaveLength(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("names the partner's type in the Admin's words: the list it is filed under (2026-11-11)", async () => {
+    pathname = "/partner/white-label/brand-settings/url-manager";
+    const guest = { partner_id: ID, reason: "Support ticket 42", expires_at: "2026-03-01T10:30:00Z" };
+    mount("white-label", ["brand-settings", "url-manager"], {
+      // The workspace is labelled "White-label"; the Admin lists the partner under "White Label".
+      "GET /api/v1/partner/portal": [
+        portal(
+          partner({
+            role: "viewer",
+            is_admin: false,
+            guest,
+            category: "white_label",
+            workspaces: [{ key: "white_label", label: "White-label" }],
+            default_experience: "white_label",
+            landing: "white_label",
+            permissions: WHITE_LABEL_PERMISSIONS,
+          }),
+        ),
+      ],
+    });
+    const banner = await screen.findByRole("status", { name: "Guest Session" });
+    expect(banner).toHaveTextContent("Partner type: White Label");
+    expect(banner).not.toHaveTextContent("White-label");
+  });
+
+  it("End Guest Session ends it first, then opens that partner's page in the Admin", async () => {
+    const leave = vi.fn();
+    vi.stubGlobal("location", { ...window.location, replace: leave });
+    const guest = { partner_id: ID, reason: "Support ticket 42", expires_at: "2026-03-01T10:30:00Z" };
+    const calls = mount("affiliate", ["dashboard"], {
+      "GET /api/v1/partner/portal": [portal(guestPartner(guest))],
+      ...dashboardRoutes(),
+      "POST /api/v1/partner/guest-view/end": [ok({ ended: true, return_url: "/admin/partners/affiliate" })],
+    });
+    const banner = await screen.findByRole("status", { name: "Guest Session" });
+    fireEvent.click(within(banner).getByRole("button", { name: "End Guest Session" }));
+    await waitFor(() => expect(leave).toHaveBeenCalledWith(`/admin/partners/${ID}`));
+    expect(calls.filter((c) => c.key === "POST /api/v1/partner/guest-view/end")).toHaveLength(1);
     vi.unstubAllGlobals();
   });
 
   it("never follows a way back that is not one of the Admin's partner pages", async () => {
-    const assign = vi.fn();
-    vi.stubGlobal("location", { ...window.location, assign });
+    const leave = vi.fn();
+    vi.stubGlobal("location", { ...window.location, replace: leave });
     const guest = { partner_id: ID, reason: "Support ticket 42", expires_at: "2026-03-01T10:30:00Z" };
     mount("affiliate", ["dashboard"], {
-      "GET /api/v1/partner/portal": [portal(partner({ role: "viewer", is_admin: false, guest }))],
+      "GET /api/v1/partner/portal": [portal(guestPartner(guest))],
       ...dashboardRoutes(),
       "POST /api/v1/partner/guest-view/end": [ok({ ended: true, return_url: "https://evil.example.com/admin/partners/all" })],
     });
     const banner = await screen.findByRole("status", { name: "Guest Session" });
-    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Session" }));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith(`/admin/partners/${ID}`));
+    fireEvent.click(within(banner).getByRole("button", { name: "Return to Super Admin" }));
+    await waitFor(() => expect(leave).toHaveBeenCalledWith(`/admin/partners/${ID}`));
     vi.unstubAllGlobals();
   });
 });
 
 describe("exiting a guest view that cannot be ended", () => {
-  it("stays on the page and says so instead of pretending it was left", async () => {
-    const assign = vi.fn();
-    vi.stubGlobal("location", { ...window.location, assign });
-    const guest = { partner_id: ID, reason: "Support ticket 42", expires_at: "2026-03-01T10:30:00Z" };
-    mount("affiliate", ["dashboard"], {
-      "GET /api/v1/partner/portal": [portal(partner({ role: "viewer", is_admin: false, guest }))],
-      ...dashboardRoutes(),
-      "POST /api/v1/partner/guest-view/end": [{ status: 503, body: { code: "unavailable" } }],
+  for (const label of ["Return to Super Admin", "End Guest Session"]) {
+    it(`${label}: stays on the page and says so instead of pretending it was left`, async () => {
+      const leave = vi.fn();
+      vi.stubGlobal("location", { ...window.location, replace: leave, assign: leave });
+      const guest = { partner_id: ID, reason: "Support ticket 42", expires_at: "2026-03-01T10:30:00Z" };
+      mount("affiliate", ["dashboard"], {
+        "GET /api/v1/partner/portal": [portal(partner({ role: "viewer", is_admin: false, guest }))],
+        ...dashboardRoutes(),
+        "POST /api/v1/partner/guest-view/end": [{ status: 503, body: { code: "unavailable" } }],
+      });
+      const banner = await screen.findByRole("status", { name: "Guest Session" });
+      fireEvent.click(within(banner).getByRole("button", { name: label }));
+      expect(await within(banner).findByRole("alert")).toHaveTextContent("The guest session could not be ended.");
+      expect(leave).not.toHaveBeenCalled();
+      // Both ways out can be tried again.
+      for (const button of within(banner).getAllByRole("button")) expect(button).toBeEnabled();
+      vi.unstubAllGlobals();
     });
-    const banner = await screen.findByRole("status", { name: "Guest Session" });
-    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Session" }));
-    expect(await within(banner).findByRole("alert")).toHaveTextContent("The guest session could not be ended.");
-    expect(assign).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
-  });
+  }
 });
 
 describe("a workspace the account does not hold", () => {

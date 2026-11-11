@@ -13,6 +13,7 @@ import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
 import { MarkdownLite } from "./MarkdownLite";
 import { PageHeader } from "./consoleUi";
+import { ButtonLink } from "@/features/controlplane/kit";
 import { useOrgAccess } from "./OrgAccess";
 import { MAX_CART_ITEMS, checkoutHref, useCart, type CartItem } from "./cart";
 import { trialDenialMessage } from "./trialCopy";
@@ -55,8 +56,13 @@ export function ExploreScreen() {
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Explore products"
-        lead="Every Workeasy360 product, and what your organization has of each. Prices are in your billing currency, before any tax."
+        title="Plans & Trials"
+        lead="Every Workeasy360 product's plans, bundles and free trials. Prices are in your billing currency, before any tax."
+        actions={
+          <ButtonLink href={`/o/${slug}/store`} icon="store">
+            Open the Store
+          </ButtonLink>
+        }
       />
       {canBuy && <CartBar slug={slug} />}
       <ExploreProducts slug={slug} canBuy={canBuy} />

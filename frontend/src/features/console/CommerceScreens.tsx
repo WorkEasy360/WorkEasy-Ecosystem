@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getAppDirectory } from "@/lib/api/launcher";
@@ -9,18 +9,39 @@ import { ApiError } from "@/lib/api/client";
 import { newKey } from "@/lib/api/controlPlane";
 import type { AppDirectoryEntry } from "@/lib/api/types";
 import { AppCard } from "@/features/launcher/AppCard";
-import { LoadGate, MoreButton, Status, Table, describeError, money, useAction, useLoad, usePaged, when } from "@/features/controlplane/ui";
+import { LoadGate, Status, Table, describeError, money, useAction, useLoad, usePaged, when } from "@/features/controlplane/ui";
+import { DialogHead, Modal, dialog } from "@/features/controlplane/Modal";
+import {
+  Alert,
+  Badge,
+  Button,
+  ButtonLink,
+  Card,
+  DataTable,
+  DescriptionList,
+  EmptyState,
+  FilterBar,
+  Page,
+  SearchInput,
+  Stack,
+  StatusBadge,
+  StatusChips,
+  productName,
+  useConfirm,
+  type Column,
+} from "@/features/controlplane/kit";
 import { cleanCoupon, useSiteSettings } from "@/features/site/SiteShell";
 import cp from "@/features/controlplane/ControlPlane.module.css";
 import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
-import { OpenAccountForm, usePayInvoice } from "./BillingScreen";
+import { InvoicesSection, OpenAccountForm, usePayInvoice } from "./BillingScreen";
 import { useCart } from "./cart";
 import { AdminInsights } from "./DashboardScreen";
-import { PageHeader, Panel, UUID_RE, intervalLabel } from "./consoleUi";
+import { ContactOrgAdmin, PageHeader, Panel, UUID_RE, day, intervalLabel } from "./consoleUi";
 import { useOrgAccess } from "./OrgAccess";
-import { ProviderSupport } from "./ProviderSupport";
-import { CustomerSetupPanel, HelpLibrary, PlatformSupport } from "./CustomerDesk";
+import { HelpLibrary, NewTicketDialog, SupportTickets, setupOpen, useSetupRecords, useSupportDesk } from "./CustomerDesk";
+
+export { MyProductsScreen } from "./MyProductsScreen";
 
 /**
  * The customer's side of the ecosystem (Phase 9): the dashboard every member
@@ -59,86 +80,6 @@ function ProductGrid({ slug, rows, manageHref }: { slug: string; rows: AppDirect
       {rows.map((app) => (
         <AppCard key={app.product_code} orgSlug={slug} app={app} manageHref={manageHref} seatsHref={seatsHref} />
       ))}
-    </div>
-  );
-}
-
-/**
- * The rest of the catalog, under My products (multi-portal brief, Part 4):
- * each product the organization does not hold, as **Expired** (its trial ran
- * out - Upgrade / Buy) or **Available** (start a trial, or buy). The action is
- * taken on Explore, where the trial and the purchase already live - nothing
- * is decided here, and the states are the server's (`GET .../explore`).
- */
-function OtherProducts({ slug, held }: { slug: string; held: Set<string> }) {
-  const [load] = useLoad(() => consoleApi.explore(slug), [slug]);
-  // A supplementary list: while loading, or if it cannot load, the page shows
-  // what the organization holds and nothing more - Explore is one link away.
-  if (load.status !== "ready") return null;
-  const rest = load.data.products.filter((p) => !held.has(p.code) && p.trial_state !== "owned" && p.trial_state !== "active");
-  if (rest.length === 0) return null;
-  return (
-    <section aria-labelledby="w360-other-products" className={local.section}>
-      <h2 id="w360-other-products" className={local.sectionTitle}>
-        Other products
-      </h2>
-      <ul className={local.otherProducts}>
-        {rest.map((p) => {
-          const expired = p.trial_state === "used" && p.trial_outcome === "expired";
-          const days = p.trial.available && p.trial_state === "available" ? p.trial.duration_days : null;
-          return (
-            <li key={p.code} className={`w360-card ${local.otherProduct}`}>
-              <span className={local.otherName}>{p.name}</span>
-              <span className={`w360-badge ${expired ? "w360-badge-warning" : "w360-badge-neutral"}`}>
-                {expired ? "Trial expired" : "Available"}
-              </span>
-              <Link href={`/o/${slug}/explore`} className="w360-btn w360-btn-secondary" aria-label={`${expired ? "Upgrade or buy" : days ? `Start ${days}-day free trial` : "Explore"}: ${p.name}`}>
-                {expired ? "Upgrade / Buy now" : days ? `Start ${days}-Day Free Trial` : "Explore"}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
-
-/** My products: what the organization holds, each with Open (when the
- * member may) and - for those who manage it - the subscription; then the
- * rest of the catalog, expired or available. */
-export function MyProductsScreen({ banner }: { banner?: React.ReactNode }) {
-  const { slug, can } = useOrgAccess();
-  const [load] = useProducts(slug);
-  const manage = can("commercial.subscription.view") ? `/o/${slug}/settings/billing` : undefined;
-  return (
-    <div className={styles.page}>
-      {banner}
-      <PageHeader
-        title="My products"
-        lead="The products your organization has. Open any you have access to."
-        actions={
-          <Link className="w360-btn w360-btn-secondary" href={`/o/${slug}/explore`}>
-            Explore products
-          </Link>
-        }
-      />
-      <LoadGate load={load} what="your products">
-        {({ held }) => (
-          <>
-            {held.length === 0 ? (
-              <div className={local.notice}>
-                <p>Your organization doesn&apos;t have any products yet.</p>
-                <p>
-                  <Link href={`/o/${slug}/explore`}>Explore products</Link> to buy one or start a free trial.
-                </p>
-              </div>
-            ) : (
-              <ProductGrid slug={slug} rows={held} manageHref={manage} />
-            )}
-            <OtherProducts slug={slug} held={new Set(held.map((a) => a.product_code))} />
-          </>
-        )}
-      </LoadGate>
     </div>
   );
 }
@@ -584,18 +525,45 @@ function Quote({
   );
 }
 
-// --- orders ----------------------------------------------------------------------------------
+// --- orders & payments ---------------------------------------------------------------------
 
-const ORDER_STATUS: Record<string, string> = {
-  pending_payment: "awaiting payment",
-  paid: "paid",
-  fulfilled: "complete",
-  cancelled: "cancelled",
-  expired: "expired",
-  failed: "refunded",
-};
+/** Payment status: was the order paid. */
+function paymentState(o: Order): { value: string; label: string } {
+  if (o.status === "pending_payment") return { value: "awaiting_payment", label: "Awaiting payment" };
+  if (o.status === "paid" || o.status === "fulfilled") return { value: "paid", label: o.amount_due_minor > 0 ? "Paid" : "No charge" };
+  if (o.status === "failed") return { value: "failed", label: "Failed - refunded" };
+  return { value: o.status, label: o.status === "expired" ? "Expired" : "Cancelled" };
+}
 
-/** Orders: every purchase, newest first - pay or cancel one awaiting payment. */
+/** Activation status: did the order's products switch on. */
+function activationState(o: Order): { value: string; label: string } {
+  if (o.status === "fulfilled") return { value: "active", label: "Activated" };
+  if (o.status === "paid") return { value: "in_progress", label: "Activating" };
+  if (o.status === "pending_payment") return { value: "pending", label: "After payment" };
+  return { value: "inactive", label: "Not activated" };
+}
+
+type OrderFilter = "" | "pending_payment" | "paid" | "fulfilled" | "cancelled";
+
+const ORDER_CHIPS: { value: OrderFilter; label: string; match: (o: Order) => boolean }[] = [
+  { value: "", label: "All", match: () => true },
+  { value: "pending_payment", label: "Awaiting payment", match: (o) => o.status === "pending_payment" },
+  { value: "paid", label: "Paid", match: (o) => o.status === "paid" },
+  { value: "fulfilled", label: "Complete", match: (o) => o.status === "fulfilled" },
+  { value: "cancelled", label: "Cancelled or expired", match: (o) => ["cancelled", "expired", "failed"].includes(o.status) },
+];
+
+/** A paid order a refund may be asked for: money changed hands and it was not a trial. */
+const refundable = (o: Order) => (o.status === "paid" || o.status === "fulfilled") && o.amount_due_minor > 0 && !o.is_trial;
+
+/**
+ * Orders & Payments (2026-11-11, the User Admin brief Part 2 section 03): every
+ * purchase with its payment and activation status, its payment details, the
+ * invoices, and a refund request. Paying and cancelling are as before; a refund is
+ * asked for through a support ticket to whoever sold the order (the purchase
+ * channel), since the platform has no customer refund endpoint - support decides
+ * against the product's refund policy.
+ */
 export function OrdersScreen() {
   const { slug, can } = useOrgAccess();
   const placed = useSearchParams().get("placed");
@@ -603,136 +571,391 @@ export function OrdersScreen() {
   const paged = usePaged((cursor) => consoleApi.orders(slug, cursor), [slug, refresh]);
   const pay = usePayInvoice(slug, () => setRefresh((n) => n + 1));
   const cancelling = useAction(() => setRefresh((n) => n + 1));
+  const confirm = useConfirm();
   const canBuy = can("commercial.subscription.manage");
   const canPay = can("platform.billing.manage");
+  const [filter, setFilter] = useState<OrderFilter>("");
+  const [q, setQ] = useState("");
+  const [details, setDetails] = useState<Order | null>(null);
+  const [refund, setRefund] = useState<Order | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const chip = ORDER_CHIPS.find((c) => c.value === filter) ?? ORDER_CHIPS[0];
+  const needle = q.toLowerCase();
+  const rows = paged.rows.filter(
+    (o) => chip.match(o) && (!needle || `${o.number} ${o.description} ${o.invoice_number ?? ""}`.toLowerCase().includes(needle)),
+  );
+
+  const columns: Column<Order>[] = [
+    { key: "order", header: "Order", value: (o) => o.number, render: (o) => <span className={cp.mono}>{o.number}</span> },
+    {
+      key: "item",
+      header: "Item",
+      value: (o) => o.description,
+      render: (o) => <Stack main={o.description} sub={o.is_trial ? "Free trial" : o.invoice_number ? `Invoice ${o.invoice_number}` : undefined} />,
+    },
+    {
+      key: "amount",
+      header: "Amount",
+      align: "right",
+      value: (o) => o.amount_due_minor,
+      render: (o) => (o.amount_due_minor ? money(o.amount_due_minor, o.currency) : "—"),
+    },
+    {
+      key: "payment",
+      header: "Payment",
+      value: (o) => paymentState(o).label,
+      render: (o) => <StatusBadge value={paymentState(o).value} label={paymentState(o).label} />,
+    },
+    {
+      key: "activation",
+      header: "Activation",
+      value: (o) => activationState(o).label,
+      render: (o) => <StatusBadge value={activationState(o).value} label={activationState(o).label} />,
+    },
+    { key: "placed", header: "Placed", value: (o) => o.created_at, render: (o) => when(o.created_at) },
+    {
+      key: "actions",
+      header: "Actions",
+      render: (o) => (
+        <div className={local.actions}>
+          {o.status === "pending_payment" && canPay && o.invoice_id && (
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={pay.busy}
+              onClick={() => pay.start({ invoice_id: o.invoice_id ?? "", number: o.invoice_number ?? o.number })}
+              aria-label={`Pay order ${o.number}`}
+            >
+              Pay
+            </Button>
+          )}
+          {o.status === "pending_payment" && canBuy && (
+            <Button
+              size="sm"
+              disabled={cancelling.busy}
+              aria-label={`Cancel order ${o.number}`}
+              onClick={() =>
+                confirm.ask({
+                  title: `Cancel order ${o.number}?`,
+                  message: "The order and its invoice are cancelled. Nothing has been charged, and you can order again at any time.",
+                  confirmLabel: "Cancel order",
+                  danger: true,
+                  onConfirm: () => {
+                    void cancelling.act(() => consoleApi.cancelOrder(slug, o.order_id), `Order ${o.number} cancelled.`);
+                  },
+                })
+              }
+            >
+              Cancel
+            </Button>
+          )}
+          <Button size="sm" aria-haspopup="dialog" aria-label={`Payment details of order ${o.number}`} onClick={() => setDetails(o)}>
+            Details
+          </Button>
+          {refundable(o) && canPay && (
+            <Button size="sm" variant="ghost" aria-haspopup="dialog" aria-label={`Request a refund for order ${o.number}`} onClick={() => setRefund(o)}>
+              Request refund
+            </Button>
+          )}
+        </div>
+      ),
+    },
+  ];
 
   return (
-    <div className={styles.page}>
-      <PageHeader title="Orders" lead="Everything your organization has bought, newest first." />
+    <Page>
+      <PageHeader
+        title="Orders & Payments"
+        lead="Everything your organization has bought, how it was paid, and its invoices."
+        primary={
+          <ButtonLink variant="primary" icon="store" href={`/o/${slug}/store`}>
+            Explore Products
+          </ButtonLink>
+        }
+      />
       {placed && UUID_RE.test(placed) && (
-        <p role="status">Your order was placed. Products appear under My products once any payment is confirmed.</p>
+        <Alert tone="success" title="Your order was placed.">
+          Products appear under My Products once any payment is confirmed.
+        </Alert>
       )}
+      {notice && <Alert tone="success" title={notice} />}
       {pay.feedback}
       {cancelling.feedback}
-      {paged.state === "loading" && <p aria-live="polite">Loading orders…</p>}
-      {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to orders.</p>}
-      {paged.state === "error" && <p role="alert">Orders could not be loaded. Try again shortly.</p>}
-      {paged.state === "ready" && (
-          <>
-            <Table
+      {confirm.dialog}
+      <Card title="Orders" description="Newest first. Search, filter or sort; open Details for the payment.">
+        <div className={local.section}>
+          {paged.state === "ready" && paged.rows.length > 0 && (
+            <>
+              <StatusChips
+                label="Order status"
+                value={filter}
+                onChange={setFilter}
+                chips={ORDER_CHIPS.map((c) => ({ value: c.value, label: c.label, count: paged.rows.filter(c.match).length }))}
+              />
+              <FilterBar
+                label="Find an order"
+                onClear={
+                  filter || q
+                    ? () => {
+                        setFilter("");
+                        setQ("");
+                      }
+                    : undefined
+                }
+              >
+                <SearchInput label="Search by order, invoice or item" value={q} onSearch={setQ} />
+              </FilterBar>
+            </>
+          )}
+          {paged.state === "forbidden" ? (
+            <ContactOrgAdmin what="orders and payments" />
+          ) : (
+            <DataTable
               caption="Orders"
-              head={["Order", "Item", "Amount", "Status", "Placed", "Actions"]}
-              isEmpty={paged.rows.length === 0}
-              empty="No orders yet."
-            >
-              {paged.rows.map((o: Order) => (
-                <tr key={o.order_id}>
-                  <th scope="row">{o.number}</th>
-                  <td>
-                    {o.description}
-                    {o.is_trial && <div className={cp.muted}>Free trial</div>}
-                  </td>
-                  <td className={cp.num}>{o.amount_due_minor ? money(o.amount_due_minor, o.currency) : "—"}</td>
-                  <td>
-                    <Status value={ORDER_STATUS[o.status] ?? o.status} />
-                  </td>
-                  <td>{when(o.created_at)}</td>
-                  <td>
-                    {o.status === "pending_payment" && (
-                      <div className={local.actions}>
-                        {canPay && o.invoice_id && (
-                          <button
-                            type="button"
-                            className="w360-btn w360-btn-primary"
-                            disabled={pay.busy}
-                            onClick={() => pay.start({ invoice_id: o.invoice_id ?? "", number: o.invoice_number ?? o.number })}
-                            aria-label={`Pay order ${o.number}`}
-                          >
-                            Pay
-                          </button>
-                        )}
-                        {canBuy && (
-                          <button
-                            type="button"
-                            className="w360-btn w360-btn-secondary"
-                            disabled={cancelling.busy}
-                            onClick={() =>
-                              void cancelling.act(() => consoleApi.cancelOrder(slug, o.order_id), `Order ${o.number} cancelled.`)
-                            }
-                            aria-label={`Cancel order ${o.number}`}
-                          >
-                            Cancel
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </Table>
-            <MoreButton hasMore={paged.hasMore} onMore={() => void paged.more()} />
-          </>
+              columns={columns}
+              rows={rows}
+              rowKey={(o) => o.order_id}
+              rowLabel={(o) => o.number}
+              loading={paged.state === "loading"}
+              error={paged.state === "error" ? "Orders could not be loaded. Try again shortly." : null}
+              onLoadMore={paged.hasMore ? () => void paged.more() : undefined}
+              hasMore={paged.hasMore}
+              maxHeight={false}
+              empty={
+                <EmptyState
+                  icon="cart"
+                  title={filter || q ? "No orders match." : "No orders yet."}
+                  hint={filter || q ? "Try another status or search." : "Orders you place in the Store appear here."}
+                />
+              }
+            />
+          )}
+          {!canPay && paged.rows.some((o) => o.status === "pending_payment") && <ContactOrgAdmin what="paying for orders" />}
+        </div>
+      </Card>
+      <InvoicesSection refresh={refresh} />
+      {details && <OrderDetails slug={slug} order={details} onClose={() => setDetails(null)} />}
+      {refund && (
+        <RefundRequest
+          slug={slug}
+          order={refund}
+          onClose={() => setRefund(null)}
+          onSent={() => setNotice(`Refund request for order ${refund.number} sent. Support replies in Help.`)}
+        />
       )}
-    </div>
+    </Page>
   );
 }
 
-// --- support ------------------------------------------------------------------------------------
-
-/** Support: where to write, and what to quote so support can find you. */
-/** An organization a partner looks after asks that partner (ProviderSupport); any other
- * asks Workeasy360. The server says which: it knows the live partner link. */
-function PlatformSupportIfDirect({ slug }: { slug: string }) {
-  const [load] = useLoad(() => consoleApi.supportTickets(slug), [slug]);
-  if (load.status !== "ready" || load.data.provider) return null;
-  return <PlatformSupport slug={slug} />;
+/** An order's payment details: its lines, amounts, the dates it moved, and why it failed. */
+function OrderDetails({ slug, order: o, onClose }: { slug: string; order: Order; onClose: () => void }) {
+  const titleId = useId();
+  const { can } = useOrgAccess();
+  const [invoice] = useLoad(
+    () => (o.invoice_id && can("platform.billing.view") ? consoleApi.invoice(slug, o.invoice_id) : Promise.resolve(null)),
+    [slug, o.invoice_id],
+  );
+  const attempts = invoice.status === "ready" ? (invoice.data?.attempts ?? []) : [];
+  return (
+    <Modal labelledBy={titleId} onClose={onClose} size="lg">
+      <DialogHead titleId={titleId} title={`Order ${o.number}`} onClose={onClose} />
+      <div className={dialog.body}>
+        <div className={local.section}>
+          <DescriptionList
+            columns={2}
+            items={[
+              { label: "Item", value: o.description },
+              { label: "Billing", value: `${intervalLabel(o.billing_interval)}${o.quantity > 1 ? ` · quantity ${o.quantity}` : ""}` },
+              { label: "Payment", value: <StatusBadge value={paymentState(o).value} label={paymentState(o).label} /> },
+              { label: "Activation", value: <StatusBadge value={activationState(o).value} label={activationState(o).label} /> },
+              { label: "Amount due", value: o.amount_due_minor ? money(o.amount_due_minor, o.currency) : "No charge" },
+              { label: "Coupon", value: o.coupon_code ?? null, when: Boolean(o.coupon_code) },
+              { label: "Discount", value: o.discount_minor ? money(o.discount_minor, o.currency) : null, when: Boolean(o.discount_minor) },
+              { label: "Tax", value: o.tax_minor ? money(o.tax_minor, o.currency) : null, when: Boolean(o.tax_minor) },
+              { label: "Invoice", value: o.invoice_number },
+              { label: "Placed", value: when(o.created_at) },
+              { label: "Paid", value: o.paid_at ? when(o.paid_at) : null },
+              { label: "Activated", value: o.fulfilled_at ? when(o.fulfilled_at) : null },
+              { label: "Cancelled", value: o.cancelled_at ? when(o.cancelled_at) : null, when: Boolean(o.cancelled_at) },
+              { label: "Pay by", value: o.expires_at && o.status === "pending_payment" ? when(o.expires_at) : null, when: o.status === "pending_payment" },
+              { label: "Problem", value: o.failure_reason ? o.failure_reason.replace(/_/g, " ") : null, when: Boolean(o.failure_reason) },
+            ]}
+          />
+          {(o.lines ?? []).length > 0 && (
+            <Table caption={`Products in order ${o.number}`} head={["Product", "Plan", "Quantity", "Amount"]} numeric={["Quantity", "Amount"]}>
+              {(o.lines ?? []).map((line, i) => (
+                <tr key={`${line.product_code}-${i}`}>
+                  <th scope="row">{productName(line.product_code)}</th>
+                  <td>{line.plan_name || "—"}</td>
+                  <td className={cp.num}>{line.quantity}</td>
+                  <td className={cp.num}>{money(line.amount_due_minor, o.currency)}</td>
+                </tr>
+              ))}
+            </Table>
+          )}
+          {attempts.length > 0 && (
+            <Table caption={`Payment attempts for order ${o.number}`} head={["Status", "Amount", "Provider", "Problem"]} numeric={["Amount"]}>
+              {attempts.map((a) => (
+                <tr key={a.attempt_id}>
+                  <th scope="row">
+                    <Status value={a.status} />
+                  </th>
+                  <td className={cp.num}>{money(a.amount_minor, a.currency)}</td>
+                  <td>{a.provider}</td>
+                  <td>{a.failure_code ? a.failure_code.replace(/_/g, " ") : "—"}</td>
+                </tr>
+              ))}
+            </Table>
+          )}
+        </div>
+      </div>
+      <div className={dialog.foot}>
+        <Button onClick={onClose}>Close</Button>
+      </div>
+    </Modal>
+  );
 }
 
+/** A refund request: a billing ticket to whoever sold the order, prefilled. */
+function RefundRequest({ slug, order: o, onClose, onSent }: { slug: string; order: Order; onClose: () => void; onSent: () => void }) {
+  const [desk] = useSupportDesk(slug);
+  if (desk.status === "loading") return null;
+  if (desk.status !== "ready") {
+    return (
+      <Modal labelledBy="w360-refund-unavailable" onClose={onClose}>
+        <DialogHead titleId="w360-refund-unavailable" title="Request a refund" onClose={onClose} />
+        <div className={dialog.body}>
+          <p role="alert">Support can&apos;t be reached right now, so the request was not sent. Try again in a moment.</p>
+        </div>
+        <div className={dialog.foot}>
+          <Button onClick={onClose}>Close</Button>
+        </div>
+      </Modal>
+    );
+  }
+  return (
+    <NewTicketDialog
+      slug={slug}
+      desk={desk.data}
+      title={`Request a refund · ${o.number}`}
+      initial={{
+        category: "billing",
+        priority: "normal",
+        subject: `Refund request: order ${o.number}`,
+        message: `Please refund order ${o.number} (${o.description}, ${money(o.amount_due_minor, o.currency)}, paid ${o.paid_at ? day(o.paid_at) : "recently"}).\n\nReason: `,
+      }}
+      onClose={onClose}
+      onCreated={onSent}
+    />
+  );
+}
+
+// --- help ----------------------------------------------------------------------------------------
+
+/**
+ * Help (2026-11-11, the User Admin brief Part 2 section 06): a support center - create
+ * a ticket, follow My Tickets and their conversation, who answers (Workeasy360, or the
+ * organization's partner), and the published Setup and Billing guides. Product setup
+ * is handled in My Products; this page points there when a product is waiting.
+ * `?new=1` opens Create Support Ticket on arrival (the dashboard's quick action), and
+ * `?ticket=<id>` opens that ticket's conversation (a reply announced by the bell).
+ */
 export function HelpScreen() {
   const { slug, access } = useOrgAccess();
   const site = useSiteSettings();
+  const params = useSearchParams();
+  const [desk, reloadDesk] = useSupportDesk(slug);
+  const [setup] = useSetupRecords(slug);
+  const waiting = setup.status === "ready" ? setup.data.filter(setupOpen).length : 0;
+  const [creating, setCreating] = useState(() => params.get("new") === "1");
+  const [linked, setLinked] = useState(params.get("new"));
+  if (linked !== params.get("new")) {
+    setLinked(params.get("new"));
+    if (params.get("new") === "1") setCreating(true);
+  }
+  const [opened, setOpened] = useState<string | null>(null);
+  // Only an id-shaped value is looked up; the server decides whether it is this member's.
+  const linkedTicket = UUID_RE.test(params.get("ticket") ?? "") ? params.get("ticket") : null;
+  const ready = desk.status === "ready" ? desk.data : null;
+
   return (
-    <div className={styles.page}>
-      <PageHeader title="Support" lead="Help with your organization, your products or your bill." />
-      <Panel title="Contact support">
-        {site?.support_email ? (
-          <p>
-            Email <a href={`mailto:${site.support_email}`}>{site.support_email}</a>. Include your organization&apos;s
-            reference below so we can find you quickly.
-          </p>
-        ) : (
-          <p className={cp.muted}>Support contact details will be published here soon.</p>
-        )}
-        <dl className={local.details}>
-          <div>
-            <dt>Organization</dt>
-            <dd>{access?.organization.display_name}</dd>
+    <Page>
+      <PageHeader
+        title="Help & Support"
+        lead="Ask for help, follow your tickets, and read the setup and billing guides."
+        primary={
+          ready ? (
+            <Button variant="primary" icon="plus" aria-haspopup="dialog" onClick={() => setCreating(true)}>
+              Create Support Ticket
+            </Button>
+          ) : undefined
+        }
+      />
+      {waiting > 0 && (
+        <Alert
+          tone="warning"
+          title={waiting === 1 ? "A product is waiting for your setup details." : `${waiting} products are waiting for your setup details.`}
+          actions={
+            <ButtonLink size="sm" href={`/o/${slug}/apps?filter=setup`}>
+              Open Pending Setup
+            </ButtonLink>
+          }
+        />
+      )}
+      {opened && <Alert tone="success" title="Your ticket was sent. Its conversation is open under My tickets." />}
+      <div className={local.cardRow}>
+        <Card title="Your support contact" description="Who answers your tickets.">
+          {ready ? (
+            <div className={local.section}>
+              <p className={local.contactLine}>
+                <strong>{ready.provider}</strong>
+                <Badge tone={ready.kind === "partner" ? "info" : "brand"}>{ready.kind === "partner" ? "Partner support" : "WorkEasy360 support"}</Badge>
+              </p>
+              <p className={local.muted}>
+                {ready.kind === "partner"
+                  ? `${ready.provider} looks after your WorkEasy360 subscription and answers your tickets.`
+                  : "The WorkEasy360 team answers your tickets here."}
+              </p>
+            </div>
+          ) : (
+            <p className={local.muted}>Loading who answers your tickets…</p>
+          )}
+        </Card>
+        <Card title="WorkEasy360 support" description="Write to us, quoting your reference.">
+          <div className={local.section}>
+            {site?.support_email ? (
+              <p className={local.contactLine}>
+                <span className={local.muted}>Email</span>
+                <a href={`mailto:${site.support_email}`}>{site.support_email}</a>
+              </p>
+            ) : (
+              <p className={local.muted}>Support contact details will be published here soon.</p>
+            )}
+            <DescriptionList
+              items={[
+                { label: "Organization", value: access?.organization.display_name },
+                { label: "Reference", value: <span className={local.nowrap}>{slug}</span> },
+              ]}
+            />
           </div>
-          <div>
-            <dt>Reference</dt>
-            <dd className={local.nowrap}>{slug}</dd>
-          </div>
-        </dl>
-      </Panel>
-      <ProviderSupport slug={slug} />
-      <CustomerSetupPanel slug={slug} />
-      <PlatformSupportIfDirect slug={slug} />
+        </Card>
+      </div>
+      <LoadGate load={desk} what="your support tickets">
+        {(d) => <SupportTickets key={opened ?? linkedTicket ?? "list"} slug={slug} desk={d} reload={reloadDesk} initialOpen={opened ?? linkedTicket} />}
+      </LoadGate>
       <HelpLibrary />
-      <Panel title="Common questions">
-        <ul className={local.includes}>
-          <li>
-            A product won&apos;t open? Check <Link href={`/o/${slug}/apps`}>My products</Link> for its status and seat.
-          </li>
-          <li>
-            A payment question? See <Link href={`/o/${slug}/orders`}>Orders</Link> and{" "}
-            <Link href={`/o/${slug}/settings/billing`}>Subscription & billing</Link>.
-          </li>
-          <li>
-            Signing in? Manage your password and sessions in{" "}
-            <Link href={`/o/${slug}/settings/security`}>My security</Link>.
-          </li>
-        </ul>
-      </Panel>
-    </div>
+      {creating && ready && (
+        <NewTicketDialog
+          slug={slug}
+          desk={ready}
+          onClose={() => setCreating(false)}
+          onCreated={(t) => {
+            reloadDesk();
+            setOpened(t.id);
+          }}
+        />
+      )}
+    </Page>
   );
 }

@@ -521,7 +521,7 @@ describe("the partner shell", () => {
   it("a staff guest view says it is read-only on every page and offers the way out", async () => {
     pathname = `/partner/${PARTNER}`;
     const assign = vi.fn();
-    vi.stubGlobal("location", { ...window.location, assign });
+    vi.stubGlobal("location", { ...window.location, replace: assign });
     const reply = portal(["customer.provision"], "active", "viewer");
     const body = reply.body as { partners: Record<string, unknown>[] };
     body.partners[0].guest = { partner_id: PARTNER, reason: "Support ticket 42", expires_at: "2026-03-01T10:30:00Z" };
@@ -537,11 +537,11 @@ describe("the partner shell", () => {
     );
     await screen.findByRole("heading", { name: "Page" });
     const banner = screen.getByRole("status", { name: "Guest Session" });
-    expect(banner).toHaveTextContent("Guest Session — Viewing Partner: Acme Partners");
+    expect(banner).toHaveTextContent("Guest Session – Viewing Partner: Acme Partners");
     expect(banner).toHaveTextContent("Read only");
     expect(banner).toHaveTextContent("Nothing can be changed here, and every page you open is recorded.");
     await expectNoViolations(container);
-    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Session" }));
+    fireEvent.click(within(banner).getByRole("button", { name: "Return to Super Admin" }));
     // No way back named: the partner's own page in the Admin.
     await waitFor(() => expect(assign).toHaveBeenCalledWith(`/admin/partners/${PARTNER}`));
     expect(calls.some((c) => c.key === "POST /api/v1/partner/guest-view/end")).toBe(true);

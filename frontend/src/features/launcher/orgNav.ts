@@ -1,6 +1,6 @@
-import type { SidebarGroup } from "@/components/sidebar/SidebarShell";
+import type { SidebarGroup, SidebarItem } from "@/components/sidebar/SidebarShell";
 
-/** One tab of a consolidated sidebar entry: a page that keeps its own address. */
+/** One page of a sidebar entry, kept at its own address. */
 export interface OrgTab {
   /** The page, below `/o/<slug>/`. */
   path: string;
@@ -14,74 +14,132 @@ export interface OrgTab {
   nested?: boolean;
 }
 
-/** One sidebar entry (2026-11-03): a single page, or a parent whose pages are tabs. */
-export interface OrgModule {
+/** One entry under a menu: a page, or pages drawn as tabs above whichever is open. */
+export interface OrgSection {
   label: string;
-  icon: string;
   tabs: OrgTab[];
 }
 
+/** One of the seven menus. */
+export interface OrgModule {
+  key: string;
+  label: string;
+  icon: string;
+  sections: OrgSection[];
+}
+
 /**
- * The organization console's sidebar: 13 entries in place of the 22 pages it
- * listed before 2026-11-03. Navigation only - every page keeps its address
- * (old links and bookmarks open the same page, now under its parent's tabs),
- * and each tab appears only when the member holds the permission its page
- * needs, exactly as its sidebar link did.
+ * The User Admin Panel's sidebar (2026-11-11, the owner's specification of 08
+ * November): exactly seven menus - Dashboard, My Products, Billing &
+ * Subscriptions, Wallets & Credits, Organization & Team, Help, Settings - with
+ * their pages as sub-menus, shown when the menu is opened.
+ *
+ * Navigation only: every page keeps its address (old links and bookmarks open the
+ * same page), and an entry appears only when the member holds the permission its
+ * page needs. The seven menus themselves always appear; a menu none of whose
+ * pages this member may open leads to its first page, which says who can help
+ * ("Contact Organization Admin") - the backend refuses the data either way.
  */
-export function organizationModules(can: (permission: string) => boolean): { title: string; modules: OrgModule[] }[] {
-  const billing = can("platform.billing.view") || can("commercial.subscription.view");
+export function organizationModules(can: (permission: string) => boolean): OrgModule[] {
+  const subscriptions = can("platform.billing.view") || can("commercial.subscription.view");
+  const billing = can("platform.billing.view");
   const security = can("platform.security.view");
   const audit = can("platform.audit.view");
   return [
     {
-      title: "Menu",
-      modules: [
-        { label: "Dashboard", icon: "dashboard", tabs: [{ path: "dashboard", label: "Dashboard" }] },
-        {
-          label: "Product Hub",
-          icon: "apps",
-          tabs: [
-            { path: "apps", label: "My Products" },
-            { path: "store", label: "Store", nested: true },
-            { path: "explore", label: "Explore Products" },
-          ],
-        },
-        {
-          label: "Billing & Orders",
-          icon: "card",
-          tabs: [
-            { path: "settings/billing", label: "Subscriptions & Billing", when: billing },
-            { path: "orders", label: "Orders", when: billing },
-          ],
-        },
+      key: "dashboard",
+      label: "Dashboard",
+      icon: "dashboard",
+      sections: [{ label: "Dashboard", tabs: [{ path: "dashboard", label: "Dashboard" }] }],
+    },
+    {
+      key: "products",
+      label: "My Products",
+      icon: "layers",
+      sections: [
+        { label: "All Products", tabs: [{ path: "apps", label: "My Products" }] },
+        { label: "WorkEasy360 Store", tabs: [{ path: "store", label: "Store", nested: true }] },
+        { label: "Plans & Trials", tabs: [{ path: "explore", label: "Plans & Trials" }] },
       ],
     },
     {
-      title: "Organization & team",
-      modules: [
+      key: "billing",
+      label: "Billing & Subscriptions",
+      icon: "card",
+      sections: [
+        { label: "Subscriptions", tabs: [{ path: "settings/billing", label: "Subscriptions", when: subscriptions }] },
+        { label: "Orders & Payments", tabs: [{ path: "orders", label: "Orders & Payments", when: subscriptions }] },
+        { label: "Billing Profile", tabs: [{ path: "settings/billing/profile", label: "Billing Profile", when: billing }] },
+      ],
+    },
+    {
+      key: "wallets",
+      label: "Wallets & Credits",
+      icon: "wallet",
+      sections: [
+        { label: "Overview", tabs: [{ path: "wallets", label: "Overview", when: billing }] },
+        { label: "Platform Wallet", tabs: [{ path: "wallets/platform", label: "Platform Wallet", when: billing }] },
+        { label: "AI Credits", tabs: [{ path: "wallets/ai-credits", label: "AI Credits", when: billing }] },
+        { label: "Consumption Wallet", tabs: [{ path: "wallets/consumption", label: "Consumption Wallet", when: billing }] },
+        { label: "Usage & Reports", tabs: [{ path: "wallets/usage", label: "Usage & Reports", when: billing }] },
+      ],
+    },
+    {
+      key: "organization",
+      label: "Organization & Team",
+      icon: "building",
+      sections: [
+        { label: "Organization", tabs: [{ path: "settings/organization", label: "Organization" }] },
         {
-          label: "Organization & Team",
-          icon: "building",
+          label: "Members",
           tabs: [
-            { path: "settings/organization", label: "Organization" },
             { path: "settings/members", label: "Members", when: can("platform.member.view") },
             { path: "settings/invitations", label: "Invitations", when: can("platform.member.invite") },
           ],
         },
-        { label: "Profile", icon: "users", tabs: [{ path: "settings/profile", label: "Profile" }] },
+        {
+          label: "Product Access",
+          tabs: [{ path: "settings/products", label: "Product Access & Seats", when: can("platform.seat.assign") }],
+        },
       ],
     },
     {
-      title: "App management",
-      modules: [
+      key: "help",
+      label: "Help",
+      icon: "headset",
+      sections: [{ label: "Help", tabs: [{ path: "help", label: "Help" }] }],
+    },
+    {
+      key: "settings",
+      label: "Settings",
+      icon: "settings",
+      sections: [
+        { label: "My Profile", tabs: [{ path: "settings/profile", label: "My Profile" }] },
         {
-          label: "Product Access",
-          icon: "puzzle",
-          tabs: [{ path: "settings/products", label: "Product Access", when: can("platform.seat.assign") }],
+          label: "Account & Security",
+          tabs: [
+            { path: "settings/security", label: "Password & Sessions" },
+            // ADR-044: the person's own product sign-in preferences - every member.
+            { path: "settings/sign-in-preferences", label: "Sign-in Preferences" },
+          ],
+        },
+        { label: "Notifications", tabs: [{ path: "settings/notifications", label: "Notification Preferences" }] },
+        {
+          label: "Activity History",
+          tabs: [
+            { path: "settings/audit", label: "Admin Activity", when: audit },
+            { path: "settings/sign-ins", label: "Sign-in Activity", when: audit },
+          ],
         },
         {
-          label: "Integrations & Automation",
-          icon: "bolt",
+          label: "Organization Security",
+          tabs: [
+            { path: "settings/security/authentication", label: "Authentication", when: security },
+            { path: "settings/security/network", label: "Network Access", when: security },
+          ],
+        },
+        {
+          label: "Integrations & AI",
           tabs: [
             {
               path: "settings/integrations",
@@ -91,87 +149,58 @@ export function organizationModules(can: (permission: string) => boolean): { tit
               also: ["settings/webhooks"],
             },
             { path: "settings/automations", label: "Automations", when: can("platform.automation.view") },
-          ],
-        },
-        { label: "AI", icon: "sparkles", tabs: [{ path: "settings/ai", label: "AI", when: can("platform.ai.view") }] },
-        {
-          label: "Analytics",
-          icon: "chart",
-          tabs: [{ path: "settings/analytics", label: "Analytics", when: can("platform.analytics.view") }],
-        },
-      ],
-    },
-    {
-      title: "Security",
-      modules: [
-        {
-          label: "Login & Authentication",
-          icon: "key",
-          tabs: [
-            { path: "settings/security/authentication", label: "Authentication", when: security },
-            // ADR-044: the person's own product sign-in preferences - every member.
-            { path: "settings/sign-in-preferences", label: "Sign-in Preferences" },
-          ],
-        },
-        {
-          label: "Security Center",
-          icon: "shield",
-          tabs: [
-            { path: "settings/security/network", label: "Network Access", when: security },
-            { path: "settings/security", label: "My Security" },
+            { path: "settings/ai", label: "AI", when: can("platform.ai.view") },
+            { path: "settings/analytics", label: "Analytics", when: can("platform.analytics.view") },
           ],
         },
       ],
-    },
-    {
-      title: "Audit",
-      modules: [
-        {
-          label: "Activity & Audit",
-          icon: "audit",
-          tabs: [
-            { path: "settings/audit", label: "Audit Log", when: audit },
-            { path: "settings/sign-ins", label: "Sign-in Activity", when: audit },
-          ],
-        },
-      ],
-    },
-    {
-      title: "Help",
-      modules: [{ label: "Support", icon: "diagnostics", tabs: [{ path: "help", label: "Support" }] }],
     },
   ];
 }
 
-const shown = (entry: OrgModule) => entry.tabs.filter((tab) => tab.when !== false);
+const shownTabs = (section: OrgSection) => section.tabs.filter((tab) => tab.when !== false);
+const shownSections = (menu: OrgModule) => menu.sections.filter((section) => shownTabs(section).length > 0);
 
 /** Whether `pathname` is one of the tab's pages. Exact, so `settings/security`
- * (My Security) is not current on `settings/security/network`. */
+ * (Password & Sessions) is not current on `settings/security/network`. */
 function tabOwns(base: string, tab: OrgTab, pathname: string): boolean {
   if ([tab.path, ...(tab.also ?? [])].some((p) => pathname === `${base}/${p}`)) return true;
   return Boolean(tab.nested) && pathname.startsWith(`${base}/${tab.path}/`);
 }
 
-/** The sidebar: each entry opens its first page the member may open, and is
- * current on any of its tabs' pages. An entry with no such page is not shown. */
+const sectionOwns = (base: string, section: OrgSection, pathname: string) =>
+  section.tabs.some((tab) => tabOwns(base, tab, pathname));
+
+/** The sidebar: seven menus. A menu with one page is a link; a menu with several
+ * is a disclosure whose sub-menu lists them. Each entry opens its first page the
+ * member may open and is current on any of its tabs' pages. */
 export function organizationNav(slug: string, can: (permission: string) => boolean, pathname: string): SidebarGroup[] {
   const base = `/o/${slug}`;
-  return organizationModules(can).map(({ title, modules }) => ({
-    title,
-    items: modules.map((entry) => {
-      const tabs = shown(entry);
-      return {
-        href: `${base}/${(tabs[0] ?? entry.tabs[0]).path}`,
-        label: entry.label,
-        icon: entry.icon,
-        when: tabs.length > 0,
-        current: tabs.some((tab) => tabOwns(base, tab, pathname)),
-      };
-    }),
-  }));
+  const items: SidebarItem[] = organizationModules(can).map((menu) => {
+    const sections = shownSections(menu);
+    const current = menu.sections.some((section) => sectionOwns(base, section, pathname));
+    if (sections.length <= 1) {
+      const section = sections[0] ?? menu.sections[0];
+      const tab = shownTabs(section)[0] ?? section.tabs[0];
+      return { href: `${base}/${tab.path}`, label: menu.label, icon: menu.icon, current };
+    }
+    return {
+      // The section's key: a disclosure has no address of its own.
+      href: `${base}#${menu.key}`,
+      label: menu.label,
+      icon: menu.icon,
+      current,
+      children: sections.map((section) => ({
+        href: `${base}/${shownTabs(section)[0].path}`,
+        label: section.label,
+        current: sectionOwns(base, section, pathname),
+      })),
+    };
+  });
+  return [{ items }];
 }
 
-/** The tabs drawn above the open page: its entry's tabs the member may open,
+/** The tabs drawn above the open page: its entry's pages the member may open,
  * when there are two or more. None for a single page, or a page no entry owns
  * (checkout). */
 export function organizationTabs(
@@ -180,13 +209,47 @@ export function organizationTabs(
   pathname: string,
 ): { href: string; label: string; current: boolean }[] {
   const base = `/o/${slug}`;
-  for (const { modules } of organizationModules(can)) {
-    for (const entry of modules) {
-      const tabs = shown(entry);
-      if (!tabs.some((tab) => tabOwns(base, tab, pathname))) continue;
+  for (const menu of organizationModules(can)) {
+    for (const section of menu.sections) {
+      if (!sectionOwns(base, section, pathname)) continue;
+      const tabs = shownTabs(section);
       if (tabs.length < 2) return [];
       return tabs.map((tab) => ({ href: `${base}/${tab.path}`, label: tab.label, current: tabOwns(base, tab, pathname) }));
     }
   }
   return [];
+}
+
+/** Where the open page sits: its menu and entry ("Billing & Subscriptions ›
+ * Orders & Payments"), for the top bar on small screens and the search. */
+export function organizationPlace(
+  slug: string,
+  can: (permission: string) => boolean,
+  pathname: string,
+): { module: string; section: string } | null {
+  const base = `/o/${slug}`;
+  for (const menu of organizationModules(can)) {
+    for (const section of menu.sections) {
+      if (sectionOwns(base, section, pathname)) return { module: menu.label, section: section.label };
+    }
+  }
+  return null;
+}
+
+/** Every page this member may open, for the top bar's search. */
+export function organizationPages(
+  slug: string,
+  can: (permission: string) => boolean,
+): { href: string; label: string; module: string; icon: string }[] {
+  const base = `/o/${slug}`;
+  return organizationModules(can).flatMap((menu) =>
+    shownSections(menu).flatMap((section) =>
+      shownTabs(section).map((tab) => ({
+        href: `${base}/${tab.path}`,
+        label: tab.label === section.label || shownTabs(section).length === 1 ? section.label : `${section.label} · ${tab.label}`,
+        module: menu.label,
+        icon: menu.icon,
+      })),
+    ),
+  );
 }

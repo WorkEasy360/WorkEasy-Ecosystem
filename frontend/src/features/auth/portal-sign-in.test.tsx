@@ -86,7 +86,7 @@ describe("each portal's own sign-in page (ADR-059)", () => {
   async function signIn() {
     fireEvent.change(await screen.findByLabelText(/^Email/), { target: { value: "a@example.com" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
-    fireEvent.click(screen.getByRole("button", { name: /^Sign in$|^Sign In to Admin$|^Login to Partner Portal$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Sign in$|^Sign In to Admin$|^Login to Partner Portal$|^Login to User Admin Panel$/ }));
   }
 
   it("the Admin portal signs in on its own host and opens the console page asked for", async () => {
@@ -116,8 +116,8 @@ describe("each portal's own sign-in page (ADR-059)", () => {
     query = `next=${encodeURIComponent("/o/acme")}`;
     const calls = mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT], "POST /api/v1/auth/login": [LOGIN_OK] });
     const { container } = renderPortal(<LoginScreen portal="app" />);
-    expect(await screen.findByRole("heading", { name: "Sign in as User" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Create an account" })).toHaveAttribute("href", "/signup");
+    expect(await screen.findByRole("heading", { name: "User Admin Login" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create Organization Account" })).toHaveAttribute("href", "/signup");
     await expectNoViolations(container);
     await signIn();
     await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/o/acme"));

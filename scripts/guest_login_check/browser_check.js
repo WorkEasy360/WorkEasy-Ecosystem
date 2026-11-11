@@ -1,5 +1,7 @@
 // Real-browser check: Partners → Affiliate / Reseller / White Label, and Login as Guest
-// across hosts (ADR-062). Chrome sees the real portal host names; edge.js keeps the
+// across hosts (ADR-062; 2026-11-11: View and Login as Guest side by side, the detail
+// page's header actions, Return to Super Admin / End Guest Session). Chrome sees the
+// real portal host names; edge.js keeps the
 // Host header, so the backend's per-host rules, the frontend's per-host CSP and the
 // host-only cookies are the production ones.
 //
@@ -90,6 +92,56 @@ async function chooseMenuItem(page, name, label) {
   throw new Error(`no menu item ${label}`);
 }
 
+/** Login as Guest from the button beside View: the reason dialog, then the partner host. */
+async function startGuest(page, name) {
+  const button = await page.waitForSelector(`button[aria-label="Login as Guest to ${name}"]`, { timeout: 20000 });
+  await button.click();
+  await page.waitForSelector('[role="dialog"]');
+  await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), clickIn(page, '[role="dialog"] button', "Start guest session")]);
+}
+
+async function clickIn(page, selector, label) {
+  for (const el of await page.$$(selector)) {
+    if ((await el.evaluate((e) => e.textContent.trim())) === label) return el.click();
+  }
+  throw new Error(`no ${selector} "${label}"`);
+}
+
+const BANNER = '[role="status"][aria-label="Guest Session"]';
+
+/** Every row's View and Login as Guest are on screen as the page opens: nothing to
+ * scroll sideways, neither the page nor the table, and each is the topmost element
+ * at its own centre (not under the sticky column or cut off by the table's edge). */
+async function viewAndGuestInView(page) {
+  return page.evaluate(() => {
+    const box = document.querySelector("table")?.parentElement;
+    const rows = [...document.querySelectorAll("table tbody tr")];
+    const seen = (el) => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      if (r.right > window.innerWidth || r.left < 0) return false;
+      const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return Boolean(hit && el.contains(hit));
+    };
+    const results = rows.map((row) => {
+      const view = row.querySelector('a[aria-label^="View "]');
+      const guest = row.querySelector('button[aria-label^="Login as Guest to"]');
+      return {
+        name: row.querySelector("a")?.textContent?.trim(),
+        view: seen(view),
+        guest: seen(guest),
+        adjacent: Boolean(view && guest && view.nextElementSibling && (view.nextElementSibling === guest || view.nextElementSibling.contains(guest))),
+      };
+    });
+    return {
+      pageScroll: document.documentElement.scrollWidth - window.innerWidth,
+      tableScrollLeft: box ? box.scrollLeft : 0,
+      ok: results.every((r) => r.view && r.guest && r.adjacent),
+      results,
+    };
+  });
+}
+
 async function axe(page, context = "document") {
   await page.addScriptTag({ content: AXE });
   return page.evaluate(async (ctx) => {
@@ -146,47 +198,59 @@ async function sidebarOrder(page) {
     const everyone = await rowNames(page);
     allHeaders = await headers(page);
     check("C0 All partners lists every seeded partner", Object.values(NAMES).every((n) => everyone.includes(n)), everyone.join(", "));
-    const iCurrency = allHeaders.indexOf("Currency");
     check(
-      "T1 Guest Login sits where Earnings was: Currency | Guest Login | Last login, and no Earnings column",
-      // "Last login" is hidden by the table when it is empty in every row (nobody has signed in on fresh data).
-      !allHeaders.includes("Earnings") && allHeaders[iCurrency + 1] === "Guest Login" && (!allHeaders.includes("Last login") || allHeaders[iCurrency + 2] === "Last login"),
+      "T1 the owner's layout: Partner Name | Partner Type | Status | View / Actions first; no Earnings, no trailing Guest Login",
+      JSON.stringify(allHeaders.slice(0, 4)) === JSON.stringify(["Partner Name", "Type / Permissions", "Account Status", "View / Actions"]) &&
+        !allHeaders.includes("Earnings") &&
+        !allHeaders.includes("Guest Login"),
       allHeaders.join("|"),
     );
     const buttons = await page.$$eval("table tbody tr", (rows) =>
-      rows.map((r) => ({
-        name: r.querySelector("a")?.textContent?.trim(),
-        login: Boolean(r.querySelector('button[aria-label^="Login as Guest to"]')),
-        money: /[₹£$€]\s?\d/.test(r.innerText),
-        text: r.innerText,
-      })),
+      rows.map((r) => {
+        const guest = r.querySelector('button[aria-label^="Login as Guest to"]');
+        return {
+          name: r.querySelector("a")?.textContent?.trim(),
+          view: Boolean(r.querySelector('a[aria-label^="View "]')),
+          login: Boolean(guest),
+          unavailable: guest?.getAttribute("aria-disabled") === "true",
+          money: /[₹£$€]\s?\d/.test(r.innerText),
+        };
+      }),
     );
     check(
-      "T2 every active partner has its own Login button; the draft says Once active; no row shows money",
-      buttons.every((b) => (b.name === NAMES.draft ? !b.login && b.text.includes("Once active") : b.login)) && buttons.every((b) => !b.money),
-      JSON.stringify(buttons.map((b) => [b.name, b.login, b.money])),
+      "T2 every row has View and Login as Guest; the draft's is shown but unavailable; no row shows money",
+      buttons.every((b) => b.view && b.login && (b.name === NAMES.draft ? b.unavailable : !b.unavailable)) && buttons.every((b) => !b.money),
+      JSON.stringify(buttons.map((b) => [b.name, b.view, b.login, b.unavailable, b.money])),
     );
     const scroll = await page.evaluate(() => {
       const box = document.querySelector("table")?.parentElement;
       return box ? getComputedStyle(box).overflowX : "none";
     });
-    check("T3 the table still scrolls sideways", ["auto", "scroll"].includes(scroll), scroll);
-    const actionsInView = () =>
-      page.evaluate(() => {
-        const b = document.querySelector('button[aria-label^="Actions for"]');
-        if (!b) return false;
-        const r = b.getBoundingClientRect();
-        return b.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
-      });
-    await page.setViewport({ width: 1920, height: 1000 });
+    check("T3 the table still scrolls sideways (inside its card) when it must", ["auto", "scroll"].includes(scroll), scroll);
+    for (const width of [1920, 1366, 1280]) {
+      await page.setViewport({ width, height: 900 });
+      await page.reload({ waitUntil: "networkidle2" });
+      await page.waitForSelector("table tbody tr");
+      const seen = await viewAndGuestInView(page);
+      check(
+        `T4 at ${width} px View and Login as Guest are side by side and in view in every row, with nothing to scroll`,
+        seen.ok && seen.pageScroll <= 0 && seen.tableScrollLeft === 0,
+        JSON.stringify(seen),
+      );
+      await page.screenshot({ path: path.join(OUT, `all-partners-${width}.png`) });
+    }
+    await page.setViewport({ width: 390, height: 844 });
     await page.reload({ waitUntil: "networkidle2" });
     await page.waitForSelector("table tbody tr");
-    check("T4 at 1920 px every column, the Guest Login buttons and the row's actions are in view", await actionsInView());
-    await page.screenshot({ path: path.join(OUT, "all-partners-1920.png") });
+    const phone = await page.evaluate(() => ({
+      pageScroll: document.documentElement.scrollWidth - window.innerWidth,
+      reachable: [...document.querySelectorAll('table tbody tr button[aria-label^="Login as Guest to"]')].every((b) => b.getBoundingClientRect().width > 0),
+    }));
+    check("T5 at 390 px the page does not scroll sideways and every Login as Guest is there", phone.pageScroll <= 0 && phone.reachable, JSON.stringify(phone));
+    await page.screenshot({ path: path.join(OUT, "all-partners-390.png") });
     await page.setViewport({ width: 1366, height: 900 });
     await page.reload({ waitUntil: "networkidle2" });
     await page.waitForSelector("table tbody tr");
-    await page.screenshot({ path: path.join(OUT, "all-partners-1366.png") });
     for (const kind of ["affiliate", "reseller", "white_label"]) {
       await page.goto(`${ADMIN}${PAGE[kind]}`, { waitUntil: "networkidle2" });
       const names = await rowNames(page);
@@ -225,26 +289,50 @@ async function sidebarOrder(page) {
     // --- the row menu -----------------------------------------------------------------
     await page.goto(`${ADMIN}${PAGE.reseller}`, { waitUntil: "networkidle2" });
     const items = (await rowMenu(page, NAMES.reseller)).map((i) => i.text);
-    check("G0 the row menu has Login as Guest and Manage Guest Access beside the existing actions", ["View partner", "Login as Guest", "Manage Guest Access", "Manage KYC", "Suspend"].every((t) => items.includes(t)), items.join(" | "));
+    check(
+      "G0 the row menu keeps Manage Guest Access and the other actions; Login as Guest is no longer in it",
+      ["View partner", "Manage Guest Access", "Suspend"].every((t) => items.includes(t)) && !items.some((t) => t.startsWith("Login as Guest")),
+      items.join(" | "),
+    );
     await page.keyboard.press("Escape");
     await page.goto(`${ADMIN}${PAGE.affiliate}`, { waitUntil: "networkidle2" });
-    const draftItems = await rowMenu(page, NAMES.draft);
-    const draftGuest = draftItems.find((i) => i.text.startsWith("Login as Guest"));
-    check("G1 a draft offers Login as Guest only once active", draftGuest && draftGuest.disabled, JSON.stringify(draftGuest));
-    await page.keyboard.press("Escape");
+    const draftButton = await page.waitForSelector(`button[aria-label="Login as Guest to ${NAMES.draft}"]`, { timeout: 20000 });
+    const draftLook = await draftButton.evaluate((b) => ({
+      unavailable: b.getAttribute("aria-disabled") === "true",
+      tip: document.getElementById(b.getAttribute("aria-describedby") || "")?.textContent?.trim(),
+    }));
+    await draftButton.click();
+    await sleep(400);
+    const draftDialog = await page.$('[role="dialog"]');
+    check("G1 a draft's Login as Guest says it opens once the partner is active, and opens nothing", draftLook.unavailable && draftLook.tip === "Opens once the partner is active" && !draftDialog, JSON.stringify(draftLook));
 
     // --- Login as Guest, for each type ----------------------------------------------------
     for (const kind of ["reseller", "affiliate", "white_label"]) {
-      await page.goto(`${ADMIN}${PAGE[kind]}`, { waitUntil: "networkidle2" });
+      // Started from a searched list: Return to Super Admin must bring the search back.
+      const listed = `${PAGE[kind]}?q=${encodeURIComponent(NAMES[kind])}`;
+      await page.goto(`${ADMIN}${listed}`, { waitUntil: "networkidle2" });
       const loginButton = await page.waitForSelector(`button[aria-label="Login as Guest to ${NAMES[kind]}"]`, { timeout: 20000 });
-      const look = await loginButton.evaluate((b) => ({ text: b.textContent.trim(), cursor: getComputedStyle(b).cursor, bg: getComputedStyle(b).backgroundColor, tip: document.getElementById(b.getAttribute("aria-describedby") || "")?.textContent?.trim() }));
-      check(`B1 ${kind}: a green Login button with a pointer and the Login as Guest tooltip`, look.text === "Login" && look.cursor === "pointer" && look.tip === "Login as Guest", JSON.stringify(look));
-      await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), loginButton.click()]);
+      const look = await loginButton.evaluate((b) => {
+        const view = b.closest("td")?.querySelector('a[aria-label^="View "]');
+        return {
+          text: b.textContent.trim(),
+          cursor: getComputedStyle(b).cursor,
+          afterView: Boolean(view && view.nextElementSibling && (view.nextElementSibling === b || view.nextElementSibling.contains(b))),
+        };
+      });
+      check(`B1 ${kind}: a "Login as Guest" button right after View, with a pointer`, look.text === "Login as Guest" && look.cursor === "pointer" && look.afterView, JSON.stringify(look));
+      await startGuest(page, NAMES[kind]);
       const url = new URL(page.url());
-      check(`L1 ${kind}: lands on the partner host, on that partner's dashboard`, url.host === "partner.workeasy360.com" && url.pathname === HOME[kind], page.url());
-      const banner = await page.waitForSelector('[role="status"][aria-label="Guest Mode"]', { timeout: 20000 }).catch(() => null);
+      check(`L1 ${kind}: after the reason, lands on the partner host, on that partner's dashboard`, url.host === "partner.workeasy360.com" && url.pathname === HOME[kind], page.url());
+      const banner = await page.waitForSelector(BANNER, { timeout: 20000 }).catch(() => null);
       const text = banner ? await banner.evaluate((b) => b.innerText) : "";
-      check(`L2 ${kind}: "Guest Mode – <partner>" banner with its type, read only, and Exit Guest Mode`, text.includes(`Guest Mode – ${NAMES[kind]}`) && text.includes(TYPE[kind]) && text.includes("Read only") && text.includes("Exit Guest Mode"), text);
+      const ways = banner ? await banner.$$eval("button", (bs) => bs.map((x) => x.textContent.trim())) : [];
+      check(
+        `L2 ${kind}: "Guest Session – Viewing Partner: <partner>" with its type, read only, Return to Super Admin and End Guest Session`,
+        text.includes(`Guest Session – Viewing Partner: ${NAMES[kind]}`) && text.includes(`Partner type: ${TYPE[kind]}`) && text.includes("Read only") &&
+          JSON.stringify(ways) === JSON.stringify(["Return to Super Admin", "End Guest Session"]),
+        `${text} | ${ways}`,
+      );
       check(`L3 ${kind}: no ticket in the address or the history`, !report.tickets.some((t) => page.url().includes(t)), page.url());
       const cookies = await page.cookies(PARTNER);
       const sessionCookie = cookies.find((c) => /session/i.test(c.name));
@@ -266,30 +354,88 @@ async function sidebarOrder(page) {
         await page.setViewport({ width: 390, height: 844 });
         await page.reload({ waitUntil: "networkidle2" });
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-        const bannerVisible = await page.$('[role="status"][aria-label="Guest Mode"]');
-        check("L9 the guest dashboard at 390 px: banner shown, no sideways scroll", bannerVisible && overflow <= 0, `overflow=${overflow}`);
+        const bannerVisible = await page.$(BANNER);
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await sleep(300);
+        const held = await page.evaluate((sel) => {
+          const b = document.querySelector(sel);
+          if (!b) return false;
+          const r = b.getBoundingClientRect();
+          return r.top >= 0 && r.bottom <= window.innerHeight;
+        }, BANNER);
+        check("L9 the guest dashboard at 390 px: banner shown, held in view while scrolling, no sideways scroll", bannerVisible && held && overflow <= 0, `overflow=${overflow} held=${held}`);
         await page.screenshot({ path: path.join(OUT, "guest-reseller-390.png"), fullPage: false });
         await page.setViewport({ width: 1366, height: 900 });
         await page.reload({ waitUntil: "networkidle2" });
         await page.screenshot({ path: path.join(OUT, "guest-reseller-1366.png"), fullPage: false });
       }
-      const exit = await page.waitForSelector('[aria-label="Guest Mode"] button');
-      await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), exit.click()]);
-      const back = new URL(page.url());
-      check(`X1 ${kind}: Exit Guest Mode returns to the Admin page it came from`, back.host === "admin.workeasy360.com" && back.pathname === PAGE[kind], page.url());
+      // Reseller and affiliate: Return to Super Admin (the list, its search kept).
+      // White label: End Guest Session (that partner's own page in the Admin).
+      const way = kind === "white_label" ? "End Guest Session" : "Return to Super Admin";
+      await page.waitForSelector(`${BANNER} button`);
+      await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), clickIn(page, `${BANNER} button`, way)]);
+      if (kind === "white_label") {
+        const back = new URL(page.url());
+        check(`X1 ${kind}: End Guest Session opens the partner's page in the Admin`, back.host === "admin.workeasy360.com" && back.pathname === `/admin/partners/${IDS[kind]}`, page.url());
+      } else {
+        await page.waitForFunction(() => new URLSearchParams(location.search).has("q"), { timeout: 15000 }).catch(() => {});
+        const back = new URL(page.url());
+        const search = await page.$eval('input[type="search"], [role="search"] input', (i) => i.value).catch(() => "");
+        check(
+          `X1 ${kind}: Return to Super Admin opens the list it started from, its search kept`,
+          back.host === "admin.workeasy360.com" && back.pathname === PAGE[kind] && back.searchParams.get("q") === NAMES[kind] && !back.searchParams.has("guest") && search === NAMES[kind],
+          `${page.url()} search=${search}`,
+        );
+      }
       const titles = await h1(page);
-      check(`X2 ${kind}: the Admin session is still signed in`, titles.some((t) => /partners$/.test(t)), titles.join("|"));
+      check(`X2 ${kind}: the Admin session is still signed in`, kind === "white_label" ? titles.includes(NAMES[kind]) : titles.some((t) => /partners$/.test(t)), titles.join("|"));
       const partnerSession = await session(browser, PARTNER);
       check(`X3 ${kind}: nothing of the guest view stays signed in on the partner host`, partnerSession.authenticated === false, JSON.stringify(partnerSession));
     }
+
+    // --- the partner's own page: its header actions ----------------------------------------
+    const searched = `${PAGE.reseller}?q=${encodeURIComponent(NAMES.reseller)}`;
+    await page.goto(`${ADMIN}${searched}`, { waitUntil: "networkidle2" });
+    const view = await page.waitForSelector(`a[aria-label="View ${NAMES.reseller}"]`, { timeout: 20000 });
+    await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }).catch(() => {}), view.click()]);
+    await page.waitForSelector('[role="tablist"]', { timeout: 20000 });
+    const head = await page.evaluate(() => {
+      const header = document.querySelector("main header");
+      const tabs = document.querySelector('[role="tablist"]');
+      const controls = header ? [...header.querySelectorAll("a, button")].map((el) => ({ text: el.textContent.trim(), href: el.getAttribute("href") })) : [];
+      const guest = header ? [...header.querySelectorAll("button")].find((b) => b.textContent.trim() === "Login as Guest") : null;
+      return {
+        controls: controls.filter((c) => ["Back to Partners", "Edit Partner", "Login as Guest"].includes(c.text)),
+        aboveTabs: Boolean(guest && tabs && guest.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING),
+      };
+    });
+    check(
+      "D1 the partner's page: Back to Partners, Edit Partner and Login as Guest at the top, above the tabs",
+      JSON.stringify(head.controls.map((c) => c.text)) === JSON.stringify(["Back to Partners", "Edit Partner", "Login as Guest"]) && head.aboveTabs,
+      JSON.stringify(head),
+    );
+    const backHref = head.controls[0]?.href ?? "";
+    check(
+      "D2 Back to Partners opens the list it came from, its search kept",
+      backHref.split("?")[0] === PAGE.reseller && new URLSearchParams(backHref.split("?")[1] ?? "").get("q") === NAMES.reseller,
+      backHref,
+    );
+    await clickIn(page, "main header button", "Login as Guest");
+    await page.waitForSelector('[role="dialog"]');
+    await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), clickIn(page, '[role="dialog"] button', "Start guest session")]);
+    check("D3 Login as Guest from the partner's page opens the guest session", new URL(page.url()).host === "partner.workeasy360.com", page.url());
+    await page.waitForSelector(`${BANNER} button`);
+    await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), clickIn(page, `${BANNER} button`, "Return to Super Admin")]);
+    check("D4 Return to Super Admin goes back to the partner's page", new URL(page.url()).pathname === `/admin/partners/${IDS.reseller}`, page.url());
+    const afterDetail = await session(browser, PARTNER);
+    check("D5 nothing of the guest view stays signed in on the partner host", afterDetail.authenticated === false, JSON.stringify(afterDetail));
 
     // --- Manage Guest Access, and revoking a live view from another tab --------------------
     const guestTab = await browser.newPage();
     watch(guestTab);
     await guestTab.goto(`${ADMIN}${PAGE.reseller}`, { waitUntil: "networkidle2" });
-    const tabButton = await guestTab.waitForSelector(`button[aria-label="Login as Guest to ${NAMES.reseller}"]`, { timeout: 20000 });
-    await Promise.all([guestTab.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), tabButton.click()]);
-    check("V0 a second tab is in Guest Mode", new URL(guestTab.url()).host === "partner.workeasy360.com", guestTab.url());
+    await startGuest(guestTab, NAMES.reseller);
+    check("V0 a second tab is in a guest session", new URL(guestTab.url()).host === "partner.workeasy360.com", guestTab.url());
     await page.bringToFront();
     await page.goto(`${ADMIN}${PAGE.reseller}`, { waitUntil: "networkidle2" });
     await rowMenu(page, NAMES.reseller);
@@ -308,7 +454,7 @@ async function sidebarOrder(page) {
     await guestTab.bringToFront();
     await guestTab.reload({ waitUntil: "networkidle2" });
     const afterRevoke = await session(browser, PARTNER);
-    check("V4 the revoked guest session is signed out on its next request", afterRevoke.authenticated === false && !(await guestTab.$('[aria-label="Guest Mode"]')), `${guestTab.url()} ${JSON.stringify(afterRevoke)}`);
+    check("V4 the revoked guest session is signed out on its next request", afterRevoke.authenticated === false && !(await guestTab.$(BANNER)), `${guestTab.url()} ${JSON.stringify(afterRevoke)}`);
     await guestTab.close();
 
     // --- New Partner asks for the Partner Email -----------------------------------------

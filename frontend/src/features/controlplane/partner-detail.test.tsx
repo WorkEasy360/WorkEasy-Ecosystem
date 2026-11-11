@@ -338,13 +338,58 @@ describe("the header", () => {
     expect(screen.queryByRole("button", { name: "Activate" })).not.toBeInTheDocument();
     const suspend = screen.getByRole("button", { name: "Suspend" });
     expect(suspend.compareDocumentPosition(screen.getByRole("tablist", { name: "Partner sections" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // 2026-11-11: Back to Partners and Edit Partner are buttons at the top, not menu entries.
+    expect(screen.getByRole("link", { name: "Back to Partners" })).toHaveAttribute("href", "/admin/partners/reseller");
+    expect(screen.getByRole("link", { name: /^Edit Partner/ })).toHaveAttribute("href", `/admin/partners/${ID}/profile`);
+    // No Login as Guest without its own permission.
+    expect(screen.queryByRole("button", { name: "Login as Guest" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
-      "Complete partner profile",
-      "Manage Guest Access",
-      "View Partner Wallet",
-      "Terminate partner",
-    ]);
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Manage Guest Access", "View Partner Wallet", "Terminate partner"]);
+  });
+
+  it("puts Back to Partners, Edit Partner and Login as Guest at the top, beside the lifecycle action", async () => {
+    mockApi(routes());
+    const { container } = mount([...ALL, "platform.staff_partner.guest"]);
+    const suspend = await screen.findByRole("button", { name: "Suspend" });
+    const header = suspend.closest("header") as HTMLElement;
+    const order = [...header.querySelectorAll("a, button")]
+      .map((el) => el.textContent?.trim())
+      .filter((t) => t && ["Back to Partners", "Edit Partner", "Login as Guest", "Suspend"].includes(t));
+    expect(order).toEqual(["Back to Partners", "Edit Partner", "Login as Guest", "Suspend"]);
+    // Above the tabs, never only at the bottom of the page.
+    const guest = within(header).getByRole("button", { name: "Login as Guest" });
+    expect(guest.compareDocumentPosition(screen.getByRole("tablist", { name: "Partner sections" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.queryByRole("menuitem", { name: /Login as Guest/ })).not.toBeInTheDocument();
+    await expectNoViolations(container);
+  });
+
+  it("Back to Partners opens the list this tab came from, with its search and filters", async () => {
+    window.sessionStorage.setItem("w360.admin.partners.list", JSON.stringify({ path: "/admin/partners/white-label", search: "?q=acme&status=active&evil=1" }));
+    mockApi(routes());
+    mount();
+    expect(await screen.findByRole("link", { name: "Back to Partners" })).toHaveAttribute("href", "/admin/partners/white-label?q=acme&status=active");
+    window.sessionStorage.clear();
+  });
+
+  it("Back to Partners never follows a remembered address that is not a partner list", async () => {
+    window.sessionStorage.setItem("w360.admin.partners.list", JSON.stringify({ path: "https://evil.example.com/admin/partners/all", search: "" }));
+    mockApi(routes({ [`GET /api/v1/admin/partners/${ID}`]: [ok({ ...DETAIL, experience: [AFFILIATE] })] }));
+    mount();
+    expect(await screen.findByRole("link", { name: "Back to Partners" })).toHaveAttribute("href", "/admin/partners/affiliate");
+    window.sessionStorage.clear();
+  });
+
+  it("a draft shows Login as Guest at the top, explained, and doing nothing yet", async () => {
+    const d = draft(COMPLETE);
+    const calls = mockApi(routes({ [`GET /api/v1/admin/partners/${ID}`]: [ok(d.detail)], [`GET /api/v1/admin/partners/${ID}/summary`]: [ok(d.summary)] }));
+    mount([...ALL, "platform.staff_partner.guest"]);
+    const guest = await screen.findByRole("button", { name: "Login as Guest" });
+    expect(guest).toHaveAttribute("aria-disabled", "true");
+    expect(guest).toHaveAccessibleDescription("Opens once the partner is active");
+    fireEvent.click(guest);
+    expect(screen.queryByRole("dialog", { name: /^Login as Guest · / })).not.toBeInTheDocument();
+    expect(calls.some((c) => c.key.endsWith("/guest-view"))).toBe(false);
   });
 
   it("offers Login as Guest from the partner's own page, returning there on exit", async () => {
@@ -359,15 +404,7 @@ describe("the header", () => {
     );
     mount([...ALL, "platform.staff_partner.guest"]);
     await screen.findByRole("button", { name: "Suspend" });
-    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
-      "Complete partner profile",
-      "Login as Guest",
-      "Manage Guest Access",
-      "View Partner Wallet",
-      "Terminate partner",
-    ]);
-    fireEvent.click(screen.getByRole("menuitem", { name: "Login as Guest" }));
+    fireEvent.click(screen.getByRole("button", { name: "Login as Guest" }));
     // ADR-063: the Admin says why first.
     const dialog = await screen.findByRole("dialog", { name: /^Login as Guest · / });
     fireEvent.click(within(dialog).getByRole("button", { name: "Start guest session" }));

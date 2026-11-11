@@ -274,6 +274,32 @@ def decide(
 # --- a customer's side ---------------------------------------------------------------------
 
 
+def needing_customer(organization_id: UUID) -> list[dict[str, Any]]:
+    """This organization's setup records waiting for it: never sent, or sent back for
+    corrections (User Admin Panel bell, 2026-11-11). Reads only."""
+    rows = CustomerSetup.objects.filter(
+        organization_id=organization_id,
+        status__in=(
+            CustomerSetup.Status.PENDING,
+            CustomerSetup.Status.CORRECTION_REQUIRED,
+        ),
+    ).order_by("product_code")
+    return [
+        {
+            "id": str(r.id),
+            "product_code": r.product_code,
+            "status": r.status,
+            "decision_reason": r.decision_reason
+            if r.status == CustomerSetup.Status.CORRECTION_REQUIRED
+            else "",
+            "at": (r.decided_at or r.updated_at)
+            if r.status == CustomerSetup.Status.CORRECTION_REQUIRED
+            else r.created_at,
+        }
+        for r in rows
+    ]
+
+
 def customer_view(ctx: TenantContext) -> dict[str, Any]:
     """What this organization still owes, per product it holds."""
     _sync_pending()

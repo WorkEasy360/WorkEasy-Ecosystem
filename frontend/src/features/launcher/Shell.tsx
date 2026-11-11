@@ -10,19 +10,25 @@ import { logout } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
 import {
   ACCESS_POLICY_DENIALS,
+  ASSIGNABLE_ROLES,
   consoleApi,
   type AccessPolicyDenial,
   type ConsoleAccess,
 } from "@/lib/api/console";
 import { StatusScreen } from "@/components/StatusScreen";
-import { AccountMenu, SidebarShell, type AccountMenuEntry } from "@/components/sidebar/SidebarShell";
+import { SidebarShell } from "@/components/sidebar/SidebarShell";
+import { Icon } from "@/components/sidebar/icons";
+import { AdminAccount } from "@/features/controlplane/AdminTopbar";
+import type { MenuItem } from "@/features/controlplane/kit";
 import { BrandFooter, DashboardWelcome } from "@/features/controlplane/brandDisplay";
 import { useOrganizationBranding } from "@/features/controlplane/useBranding";
 import { OrgAccessContext } from "@/features/console/OrgAccess";
 import { PolicyGate } from "@/features/console/PolicyGate";
 import consoleStyles from "@/features/console/Console.module.css";
+import topbar from "@/features/controlplane/AdminTopbar.module.css";
 import { usePortalRouter } from "@/lib/portalRouter";
-import { organizationNav, organizationTabs } from "./orgNav";
+import { organizationNav, organizationPlace, organizationTabs } from "./orgNav";
+import { OrgBell, OrgHelpLink, OrgSearch, OrgSwitcher } from "./OrgTopbar";
 
 type OrgState =
   | { status: "loading" }
@@ -31,12 +37,41 @@ type OrgState =
   | { status: "policy"; reason: AccessPolicyDenial }
   | { status: "ready"; access: ConsoleAccess };
 
+/** The member's role here, as people read it. */
+export function memberRoleLabel(access: ConsoleAccess): string {
+  if (access.membership.is_owner) return "Owner";
+  const key = access.membership.roles[0];
+  return ASSIGNABLE_ROLES.find((r) => r.key === key)?.label ?? "Member";
+}
+
+/** The sidebar's foot (the owner's reference image): the in-console Store, which
+ * already knows this organization and what it holds. */
+function StoreCard({ slug }: { slug: string }) {
+  return (
+    <div className={consoleStyles.storeCard}>
+      <span className={consoleStyles.storeCardIcon} aria-hidden="true">
+        <Icon name="store" size={22} />
+      </span>
+      <p className={consoleStyles.storeCardTitle}>Explore More Business Apps</p>
+      <p className={consoleStyles.storeCardText}>Add more WorkEasy360 products to your organization.</p>
+      <Link href={`/o/${slug}/store`} className={consoleStyles.storeCardLink}>
+        Visit WorkEasy360 Store <Icon name="chevronRight" size={16} />
+      </Link>
+    </div>
+  );
+}
+
 /**
- * The organization console shell: session and membership are confirmed (and
- * the organization's own access policy satisfied) before any page renders, so
- * no page below repeats those checks. Navigation is derived from the member's
- * permissions (`GET /orgs/<slug>/access`); the backend authorizes every call
- * regardless.
+ * The User Admin Panel's shell (the organization console): session and
+ * membership are confirmed (and the organization's own access policy satisfied)
+ * before any page renders, so no page below repeats those checks. Navigation is
+ * derived from the member's permissions (`GET /orgs/<slug>/access`); the backend
+ * authorizes every call regardless.
+ *
+ * 2026-11-11 (the owner's specification and reference image): the Admin and
+ * Partner consoles' look - the teal frame, the seven menus with their sub-menus,
+ * the icon rail, the drawer below 1024px - and a top bar with the organization
+ * switcher, search, notifications, help and the account menu.
  */
 export function Shell({ children }: { children: React.ReactNode }) {
   const router = usePortalRouter();
@@ -51,6 +86,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
   // A failed sign-out must not look like a successful one.
   const [signOutFailed, setSignOutFailed] = useState(false);
   const reload = useCallback(() => setTick((n) => n + 1), []);
+
+  // The consoles' one design system (globals.css :root[data-console]): the type
+  // scale, control heights, card radius and shadow - on <html>, so dialogs drawn
+  // on <body> have them too. The browser tab names the page and the console.
+  useEffect(() => {
+    document.documentElement.dataset.console = "user";
+    return () => {
+      delete document.documentElement.dataset.console;
+    };
+  }, []);
 
   // A signed-out visitor goes to sign-in, whatever the access call answered.
   const signedOut = session.status === "ready" && !session.session.authenticated;
@@ -91,12 +136,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return <StatusScreen>Loading Workeasy360…</StatusScreen>;
   }
   if (org.status === "policy") {
-    return (
-      <PolicyGate
-        reason={org.reason}
-        onResolved={reload}
-      />
-    );
+    return <PolicyGate reason={org.reason} onResolved={reload} />;
   }
   if (org.status === "not-a-member") {
     return (
@@ -125,19 +165,20 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   const { access } = org;
   const can = (permission: string) => access.permissions.includes(permission);
-  // A consolidated entry's pages are tabs above whichever of them is open.
+  // An entry's pages are tabs above whichever of them is open.
   const tabs = organizationTabs(orgSlug, can, pathname);
+  const place = organizationPlace(orgSlug, can, pathname);
   const who = session.status === "ready" ? session.session : null;
   const consoles = who?.consoles;
-  const entries: AccountMenuEntry[] = [
-    { label: "Profile", href: `/o/${orgSlug}/settings/profile` },
-    { label: "My Security", href: `/o/${orgSlug}/settings/security` },
-    { label: "Sign-in Preferences", href: `/o/${orgSlug}/settings/sign-in-preferences` },
-    ...(consoles?.staff ? [{ label: "Admin console", href: portalHref(portals, "admin", "/admin") }] : []),
-    ...(consoles?.partner ? [{ label: "Partner portal", href: portalHref(portals, "partner", "/partner") }] : []),
-    { label: "Switch organization", href: "/organizations/select" },
+  const entries: MenuItem[] = [
+    { label: "My Profile", icon: "user", href: `/o/${orgSlug}/settings/profile` },
+    { label: "Account & Security", icon: "shield", href: `/o/${orgSlug}/settings/security` },
+    ...(consoles?.staff ? [{ label: "Admin console", icon: "external", href: portalHref(portals, "admin", "/admin") }] : []),
+    ...(consoles?.partner ? [{ label: "Partner portal", icon: "external", href: portalHref(portals, "partner", "/partner") }] : []),
     {
-      label: "Sign out",
+      label: "Logout",
+      icon: "logout",
+      separator: true,
       onSelect: () => {
         setSignOutFailed(false);
         logout().then(
@@ -151,23 +192,45 @@ export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <OrgAccessContext.Provider value={{ slug: orgSlug, access, reload, memberName: who?.name || undefined }}>
       <SidebarShell
-        area="Organization"
+        area="User Admin"
+        variant="admin"
+        accordion
+        railKey="w360.org.rail"
         // The header says the short name where the partner set one (it is meant for tight places).
         brandName={brand ? brand.portal.short_name.trim() || brand.brand_name : undefined}
         brandLogoUrl={brand?.logo_url}
+        navTitle={
+          <>
+            <Icon name="users" size={16} /> User Admin
+          </>
+        }
         context={
-          <button
-            type="button"
-            className={consoleStyles.contextButton}
-            onClick={() => router.push("/organizations/select")}
-            aria-label={`Current organization: ${access.organization.display_name}. Switch organization.`}
-          >
-            {access.organization.display_name}
-            <span aria-hidden="true"> ▾</span>
-          </button>
+          <span className={consoleStyles.topContext}>
+            <OrgSwitcher slug={orgSlug} name={access.organization.display_name} />
+            {place && (
+              // Where the open page sits, while the menu is a drawer (below 1024px).
+              <span className={consoleStyles.pageLabel}>{place.section}</span>
+            )}
+          </span>
+        }
+        tools={
+          <>
+            <OrgSearch slug={orgSlug} can={can} />
+            <div className={topbar.spacer} />
+            <OrgBell slug={orgSlug} />
+            <OrgHelpLink slug={orgSlug} />
+          </>
+        }
+        account={
+          <AdminAccount
+            name={who?.name ?? ""}
+            email={who?.email ?? ""}
+            role={`${memberRoleLabel(access)} · ${access.organization.display_name}`}
+            entries={entries}
+          />
         }
         groups={organizationNav(orgSlug, can, pathname)}
-        account={<AccountMenu name={who?.name || who?.email || ""} entries={entries} />}
+        navFooter={<StoreCard slug={orgSlug} />}
         banner={
           <>
             {signOutFailed && (

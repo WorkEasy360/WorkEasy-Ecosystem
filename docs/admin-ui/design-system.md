@@ -6,7 +6,7 @@ Code: `frontend/src/features/controlplane/kit/` (import from `./kit`). Tests: `k
 
 ## Where the rules apply
 
-`AdminShell` sets `<html data-console="admin">` and the Partner workspace shell (`partnerpanel/WorkspaceShell.tsx`) sets `<html data-console="partner">`. The console base rules in `globals.css` (`:root[data-console] …`) hang off that attribute:
+`AdminShell` sets `<html data-console="admin">`, the Partner workspace shell (`partnerpanel/WorkspaceShell.tsx`) sets `<html data-console="partner">`, and since 2026-11-11 the User Admin Panel's shell (`launcher/Shell.tsx`, the organization console) sets `<html data-console="user">` (ADR-064). The console base rules in `globals.css` (`:root[data-console] …`) hang off that attribute:
 
 - body text at 14px;
 - headings on the type scale;
@@ -25,7 +25,7 @@ Because the attribute is on `<html>`, the rules reach dialogs drawn on `<body>` 
 - The top bar: the account's standing (Active / KYC pending / KYC required / Suspended / Ended), the level and Upgrade, Notifications, and the account button with the person's name and the partner.
 - Account notices (draft, suspended, KYC required) are kit `Alert`s.
 - Onboarding progress is `BusinessKyc.KycProgress`: six steps, each state in words.
-- The partner Store keeps the storefront layout with its header on the console scale (`StoreBrowser.module.css`, `:root[data-console="partner"]`).
+- The partner and User Admin Stores keep the storefront layout with its header on the console scale (`StoreBrowser.module.css`, `:root[data-console="partner"]`, `:root[data-console="user"]`).
 - The audit that measures all of this: `scripts/partner_ui_check/audit.js` (and `summarize.js` to compare two runs).
 
 ## Tokens (globals.css `:root`)

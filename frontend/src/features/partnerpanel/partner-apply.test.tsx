@@ -168,14 +168,14 @@ describe("the link from the sign-in page", () => {
     query = "mode=user";
     mockApi({ [`GET ${SESSION}`]: [SIGNED_OUT] });
     render(<LoginScreen />);
-    await screen.findByRole("heading", { name: "Sign in as User" });
+    await screen.findByRole("heading", { name: "User Admin Login" });
     expect(screen.queryByRole("link", LINK)).not.toBeInTheDocument();
   });
 
   it("is on no other portal's sign-in page, and not on a partner's branded one", async () => {
     mockApi({ [`GET ${SESSION}`]: [SIGNED_OUT] });
     const { unmount } = render(<LoginScreen portal="app" />);
-    await screen.findByRole("heading", { name: "Sign in as User" });
+    await screen.findByRole("heading", { name: "User Admin Login" });
     expect(screen.queryByRole("link", LINK)).not.toBeInTheDocument();
     unmount();
 

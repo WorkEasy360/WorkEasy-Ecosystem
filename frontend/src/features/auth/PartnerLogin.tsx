@@ -48,7 +48,9 @@ const BENEFITS = [
   { icon: "coins", label: "Earn Commission" },
 ];
 
-function Ecosystem() {
+/** The product family strip at the foot of the sign-in story (the Partner and
+ * customer sign-ins, from the owner's reference images). */
+export function ProductEcosystem() {
   return (
     <div className={styles.ecosystem}>
       <p className={styles.ecosystemTitle}>Our Product Ecosystem</p>
@@ -101,7 +103,7 @@ function PartnerHero() {
         </ul>
         <LaptopArt className={styles.laptop} />
       </div>
-      <Ecosystem />
+      <ProductEcosystem />
     </aside>
   );
 }

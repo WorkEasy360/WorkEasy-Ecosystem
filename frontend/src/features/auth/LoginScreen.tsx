@@ -10,6 +10,7 @@ import { PORTAL_TO_MODE, type Portal } from "@/lib/portals";
 import { AdminLoginScreen } from "@/features/auth/AdminLogin";
 import { LoginForm } from "@/features/auth/LoginForm";
 import { PartnerLoginScreen } from "@/features/auth/PartnerLogin";
+import { UserLoginScreen } from "@/features/auth/UserLogin";
 import { destinationAfterSignIn, parseMode, type SignInMode } from "@/features/auth/signInMode";
 import { SignInSupport } from "@/features/controlplane/brandDisplay";
 import { useBranding, type HostBrand } from "@/features/controlplane/useBranding";
@@ -158,10 +159,11 @@ function SignInCard({ portal }: { portal: HostPortal }) {
   );
 }
 
-/** The Admin and Partner portals' sign-ins have their own screens (AdminLogin.tsx,
- * PartnerLogin.tsx, the owner's reference images); a product's or a partner's
- * branded sign-in on those hosts (`?resume=`, `?brand=`) never does - it is the
- * User mode, on the standard page. */
+/** The Admin, Partner and customer portals' sign-ins have their own screens
+ * (AdminLogin.tsx, PartnerLogin.tsx, UserLogin.tsx - the owner's reference
+ * images). A product's or a partner's branded sign-in (`?resume=`, `?brand=`)
+ * never does - it is the User mode, on the standard page - and neither does the
+ * central sign-in host, which serves product sign-ins only. */
 function ScreenForMode({ portal }: { portal: HostPortal }) {
   const searchParams = useSearchParams();
   const mode = modeFor(portal, searchParams);
@@ -170,6 +172,15 @@ function ScreenForMode({ portal }: { portal: HostPortal }) {
       <>
         <AlreadySignedInRedirect portal={portal} />
         {mode === "admin" ? <AdminLoginScreen /> : <PartnerLoginScreen />}
+      </>
+    );
+  }
+  const plain = Boolean(searchParams.get("resume")) || Boolean(brandHostParam(searchParams.get("brand"))) || portal === "auth";
+  if (!plain) {
+    return (
+      <>
+        <AlreadySignedInRedirect portal={portal} />
+        <UserLoginScreen />
       </>
     );
   }

@@ -13,12 +13,12 @@ import {
   type SetupStatus,
 } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
-import { GUEST_PERMISSION, ManageGuestAccess, guestAvailable, guestOutcomeMessage, useGuestLogin } from "./GuestAccess";
+import { GUEST_PERMISSION, GUEST_RETURNED, ManageGuestAccess, guestAvailable, guestOutcomeMessage, useGuestLogin } from "./GuestAccess";
 import { ExperienceLabels, PrimaryType, TypeBadges } from "./labels";
 import { LoadGate, Status, autoReason, money, useAction, useLoad, usePaged } from "./ui";
 import { usePortals } from "@/lib/portalContext";
 import { portalHref } from "@/lib/portals";
-import { CATEGORY_PATH, categoryHref, isCategory, type PartnerCategory } from "./partnerCategories";
+import { CATEGORY_PATH, categoryHref, isCategory, lastPartnerList, rememberPartnerList, type PartnerCategory } from "./partnerCategories";
 import {
   Alert,
   Avatar,
@@ -31,6 +31,7 @@ import {
   IdCell,
   Page,
   PageHeader,
+  RowMenu,
   SearchInput,
   SectionHeader,
   Select,
@@ -463,13 +464,34 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
   const params = useSearchParams();
   const router = useRouter();
   const pathname = usePathname() ?? "/admin/partners/all";
-  const [filters, setFilters] = useState({
-    q: (params.get("q") ?? "").slice(0, 80),
-    type: category ?? "",
-    status: pick(params.get("status"), STATUS_OPTIONS),
-    profile: pick(params.get("profile"), PROFILE_OPTIONS),
-    kyc: pick(params.get("kyc"), KYC_OPTIONS),
+  // Back from a guest session (`?guest=ended`): this list's own search and
+  // filters, as this tab last showed them - the server keeps only the path.
+  const returned = params.get("guest") === GUEST_RETURNED;
+  const [restored] = useState(() => {
+    if (!returned) return null;
+    const last = lastPartnerList(pathname);
+    return last ? new URLSearchParams(last.split("?")[1] ?? "") : new URLSearchParams();
   });
+  const source = restored ?? params;
+  const [filters, setFilters] = useState({
+    q: (source.get("q") ?? "").slice(0, 80),
+    type: category ?? "",
+    status: pick(source.get("status"), STATUS_OPTIONS),
+    profile: pick(source.get("profile"), PROFILE_OPTIONS),
+    kyc: pick(source.get("kyc"), KYC_OPTIONS),
+  });
+  useEffect(() => {
+    if (!restored) return;
+    const text = restored.toString();
+    router.replace(text ? `${pathname}?${text}` : pathname, { scroll: false });
+    // Once, on arrival: the address then carries the filters itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // What "Back to Partners" on a partner's page opens.
+  const search = params.toString();
+  useEffect(() => {
+    if (!returned) rememberPartnerList(pathname, search ? `?${search}` : "");
+  }, [pathname, search, returned]);
   const manage = can(permissions, "platform.staff_partner.manage");
   const canGuest = can(permissions, GUEST_PERMISSION);
   const canKyc = can(permissions, "platform.staff_kyc.view");
@@ -585,14 +607,7 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
       { label: "View Commission & Payout Records", icon: "currency", href: `/admin/partners/${r.id}?tab=commission` },
       { label: "Open partner panel", icon: "external", href: url, external: true },
       { label: "Copy panel link", icon: "copy", onSelect: () => void navigator.clipboard?.writeText(url) },
-      {
-        // A draft has no dashboard yet; the server refuses it too.
-        label: guestAvailable(r.status) ? "Login as Guest" : "Login as Guest (once active)",
-        icon: "login",
-        onSelect: () => void guest(r),
-        when: canGuest,
-        disabled: busy || !guestAvailable(r.status),
-      },
+      // Login as Guest is beside View in the row itself (2026-11-11), not in here.
       { label: "Manage Guest Access", icon: "eye", onSelect: () => setGuestAccess(r) },
       { label: "Suspend", icon: "pause", danger: true, separator: true, when: manage && r.status === "active", onSelect: () => changeStatus(r, "suspended") },
       { label: "Reactivate", icon: "play", separator: true, when: manage && r.status === "suspended", onSelect: () => changeStatus(r, "active") },
@@ -614,15 +629,84 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
     ];
   };
 
-  // ADR-063 (the specification's 1.2): Partner Name, Partner Email, Type and
-  // enabled permissions, KYC Status, Account Status, Country, Assigned Customers,
-  // Created Date, then Login as Guest and the row's actions.
+  // 2026-11-11 (the owner's expected layout): Partner Name, Partner Type, Status,
+  // then View / Actions (View, Login as Guest, the row's menu), then the other
+  // ADR-063 columns - Partner Email, KYC Status, Country, Assigned Customers and
+  // Created Date. No Earnings: they stay on each partner's own page.
   const columns: Column<ResellerRow>[] = [
     {
       key: "partner",
       header: "Partner Name",
       value: (r) => r.display_name,
       render: (r) => <PartnerCell id={r.id} name={r.display_name} sub={<IdCell value={r.id} label={`Copy partner ID of ${r.display_name}`} />} />,
+    },
+    {
+      key: "type",
+      header: "Type / Permissions",
+      value: (r) => r.primary_experience,
+      render: (r) => (
+        <span className={local.badgeWrap}>
+          <PrimaryType value={r.primary_experience} />
+          {r.experience.length > 1 && <span className={styles.muted}>+ {r.experience.filter((e) => e.key !== r.primary_experience).map((e) => e.label).join(", ")}</span>}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Account Status",
+      value: (r) => r.status,
+      render: (r) => (
+        <span className={local.badgeWrap}>
+          <Status value={r.status} />
+          {r.status === "draft" && <SetupStatusBadge value={r.profile_completion.setup_status} />}
+          {r.kyc?.ready_to_activate && <span className={`${kit.badge} ${kit["tone-info"]}`}>Ready to activate</span>}
+          {r.upgrade && (
+            <Link
+              href={`/admin/partners/${r.id}?tab=users`}
+              className={`${kit.badge} ${r.upgrade.status === "pending_approval" ? kit["tone-warning"] : kit["tone-neutral"]}`}
+              aria-label={`Upgrade: ${upgradeText(r.upgrade.status)}, to ${upgradeTarget(r.upgrade.to)} - ${r.display_name}`}
+            >
+              Upgrade: {upgradeText(r.upgrade.status)}
+            </Link>
+          )}
+        </span>
+      ),
+    },
+    {
+      // 2026-11-11 (the owner): View and Login as Guest side by side, early in the
+      // row so both are on screen without scrolling sideways; the other actions
+      // are in the menu beside them. Login as Guest only for staff who may start
+      // a guest view - the server checks again.
+      key: "actions",
+      header: "View / Actions",
+      render: (r) => (
+        <span className={local.rowActions}>
+          <ButtonLink size="sm" variant="secondary" icon="eye" href={`/admin/partners/${r.id}`} aria-label={`View ${r.display_name}`}>
+            View
+          </ButtonLink>
+          {canGuest &&
+            (guestAvailable(r.status) ? (
+              <Button
+                size="sm"
+                variant="primary"
+                icon="login"
+                aria-label={`Login as Guest to ${r.display_name}`}
+                loading={guestLogin.pending === r.id}
+                disabled={busy || guestLogin.dialog !== null}
+                onClick={() => void guest(r)}
+              >
+                Login as Guest
+              </Button>
+            ) : (
+              <Tooltip content="Opens once the partner is active">
+                <Button size="sm" variant="primary" icon="login" aria-label={`Login as Guest to ${r.display_name}`} aria-disabled="true" className={local.unavailable}>
+                  Login as Guest
+                </Button>
+              </Tooltip>
+            ))}
+          <RowMenu label={`Actions for ${r.display_name}`} items={rowMenu(r)} />
+        </span>
+      ),
     },
     {
       key: "email",
@@ -636,17 +720,6 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
         ) : (
           <span className={styles.muted}>No administrator</span>
         ),
-    },
-    {
-      key: "type",
-      header: "Type / Permissions",
-      value: (r) => r.primary_experience,
-      render: (r) => (
-        <span className={local.badgeLine}>
-          <PrimaryType value={r.primary_experience} />
-          {r.experience.length > 1 && <span className={styles.muted}>+ {r.experience.filter((e) => e.key !== r.primary_experience).map((e) => e.label).join(", ")}</span>}
-        </span>
-      ),
     },
     {
       key: "kyc",
@@ -676,27 +749,6 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
       ),
     },
     {
-      key: "status",
-      header: "Account Status",
-      value: (r) => r.status,
-      render: (r) => (
-        <span className={local.badgeLine}>
-          <Status value={r.status} />
-          {r.status === "draft" && <SetupStatusBadge value={r.profile_completion.setup_status} />}
-          {r.kyc?.ready_to_activate && <span className={`${kit.badge} ${kit["tone-info"]}`}>Ready to activate</span>}
-          {r.upgrade && (
-            <Link
-              href={`/admin/partners/${r.id}?tab=users`}
-              className={`${kit.badge} ${r.upgrade.status === "pending_approval" ? kit["tone-warning"] : kit["tone-neutral"]}`}
-              aria-label={`Upgrade: ${upgradeText(r.upgrade.status)}, to ${upgradeTarget(r.upgrade.to)} - ${r.display_name}`}
-            >
-              Upgrade: {upgradeText(r.upgrade.status)}
-            </Link>
-          )}
-        </span>
-      ),
-    },
-    {
       key: "country",
       header: "Country",
       // ADR-063: always shown (the table hides a column blank in every row, and
@@ -715,40 +767,6 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
       ),
     },
     { key: "joined", header: "Created", value: (r) => r.created_at, render: (r) => formatDate(r.created_at) },
-    // 2026-11-10 (the owner): Guest Login where Earnings was. Earnings stay on each
-    // partner's own page and in every report; only this list stops showing them.
-    // Offered only to staff who may start a guest view - the server checks again.
-    ...(canGuest
-      ? [
-          {
-            key: "guest",
-            header: "Guest Login",
-            render: (r: ResellerRow) =>
-              guestAvailable(r.status) ? (
-                <Tooltip content="Login as Guest">
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    // "Login ↗": one icon, so the column is no wider than it must be
-                    // and the row's actions stay in view at 1366 px.
-                    iconEnd="external"
-                    aria-label={`Login as Guest to ${r.display_name}`}
-                    disabled={guestLogin.dialog !== null}
-                    onClick={() => void guest(r)}
-                  >
-                    Login
-                  </Button>
-                </Tooltip>
-              ) : (
-                <Tooltip content="Login as Guest opens once the partner is active.">
-                  <span tabIndex={0} className={styles.muted}>
-                    Once active
-                  </span>
-                </Tooltip>
-              ),
-          } satisfies Column<ResellerRow>,
-        ]
-      : []),
   ];
 
   const filtered = Boolean(filters.q || (!category && filters.type) || filters.status || filters.profile || filters.kyc);
@@ -783,7 +801,6 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
         rowKey={(r) => r.id}
         rowHref={(r) => `/admin/partners/${r.id}`}
         rowLabel={(r) => r.display_name}
-        rowMenu={rowMenu}
         loading={paged.state === "loading"}
         error={paged.state === "forbidden" ? "You don't have access to partners." : paged.state === "error" ? "Couldn't load partners." : null}
         onLoadMore={paged.more}

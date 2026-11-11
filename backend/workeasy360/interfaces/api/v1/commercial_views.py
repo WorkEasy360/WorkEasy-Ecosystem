@@ -399,26 +399,22 @@ def prices_view(request: HttpRequest, org_slug: str) -> HttpResponse:
 # --- customer-facing subscription surface ---------------------------------
 
 
-@require_http_methods(["GET", "POST"])
+@require_http_methods(["GET", "POST", "PATCH"])
 def billing_account_view(request: HttpRequest, org_slug: str) -> HttpResponse:
     ctx = request.tenant_context  # type: ignore[attr-defined]
     if request.method == "GET":
-        # Phase 8 extension: the console's billing page reads it.
+        # Phase 8 extension: the console's billing page reads it; 2026-11-11 the
+        # Billing Profile adds the business name, address and tax ID.
         authz.require(ctx, "platform.billing.view")
         existing = billing.billing_account_or_none(ctx.organization_id)
         if existing is None:
             return JsonResponse({"billing_account": None})
-        return JsonResponse(
-            {
-                "billing_account": {
-                    "id": str(existing.id),
-                    "currency": existing.currency,
-                    "collection_mode": existing.collection_mode,
-                    "billing_email": existing.billing_email,
-                    "billing_region": existing.billing_region,
-                }
-            }
-        )
+        return JsonResponse({"billing_account": billing.billing_profile_json(existing)})
+    if request.method == "PATCH":
+        # The billing profile only, field by field (``update_billing_profile``
+        # refuses any other key): never the currency, collection mode or region.
+        account = billing.update_billing_profile(ctx, _body(request))
+        return JsonResponse({"billing_account": billing.billing_profile_json(account)})
     body = _body(request)
     # Phase 9: collection mode and region are never read from the customer -
     # they decide whether and at what price the organization is invoiced.
@@ -502,6 +498,10 @@ def _subscription_payload(
         "trial_ends_at": dto.trial_ends_at.isoformat() if dto.trial_ends_at else None,
         "cancel_at": dto.cancel_at.isoformat() if dto.cancel_at else None,
         "version": dto.version,
+        # 2026-11-11: who collects it - the User Admin's "purchase source" (a
+        # partner-paid subscription is managed through the partner, never
+        # cancelled from the customer's console).
+        "collection_mode": dto.collection_mode,
         "items": [
             {
                 "id": str(item.id),

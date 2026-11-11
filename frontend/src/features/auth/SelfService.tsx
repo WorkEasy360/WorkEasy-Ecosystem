@@ -12,6 +12,7 @@ import { rememberIntent, useSiteSettings } from "@/features/site/SiteShell";
 import styles from "@/features/site/Site.module.css";
 import { AdminAuthFrame } from "./AdminLogin";
 import { PARTNER_SIGN_IN, PartnerAuthFrame } from "./PartnerLogin";
+import { UserAuthFrame } from "./UserLogin";
 import { usePortalRouter } from "@/lib/portalRouter";
 
 /**
@@ -140,9 +141,14 @@ export function SignupScreen() {
   }, [params]);
 
   return (
-    <AuthFrame title={sent ? "Check your email" : "Create your account"}>
+    // 2026-11-11: the customer portal's own frame, as its sign-in ("Create
+    // Organization Account" there leads here).
+    <UserAuthFrame
+      title={sent ? "Check your email" : "Create Organization Account"}
+      description={sent ? undefined : "Create your WorkEasy360 account. Your organization is set up when you confirm your email."}
+    >
       <SignupForm onSent={() => setSent(true)} signInHref="/login" />
-    </AuthFrame>
+    </UserAuthFrame>
   );
 }
 
@@ -339,9 +345,13 @@ export function VerifyEmailScreen() {
 
 // --- forgot / reset ---------------------------------------------------------------------------
 
-/** `admin` / `partner`: the frame of that portal's sign-in, on that portal. */
-export function ForgotPasswordScreen({ admin = false, partner = false }: { admin?: boolean; partner?: boolean } = {}) {
-  const Frame = admin ? AdminAuthFrame : partner ? PartnerAuthFrame : AuthFrame;
+/** `admin` / `partner` / `user`: the frame of that portal's sign-in, on that portal. */
+export function ForgotPasswordScreen({
+  admin = false,
+  partner = false,
+  user = false,
+}: { admin?: boolean; partner?: boolean; user?: boolean } = {}) {
+  const Frame = admin ? AdminAuthFrame : partner ? PartnerAuthFrame : user ? UserAuthFrame : AuthFrame;
   const signIn = partner ? PARTNER_SIGN_IN : "/login";
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "busy" | "sent">("idle");
@@ -399,8 +409,9 @@ export function ResetPasswordScreen({
   admin = false,
   partner = false,
   invitation = false,
-}: { admin?: boolean; partner?: boolean; invitation?: boolean } = {}) {
-  const Frame = admin ? AdminAuthFrame : partner || invitation ? PartnerAuthFrame : AuthFrame;
+  user = false,
+}: { admin?: boolean; partner?: boolean; invitation?: boolean; user?: boolean } = {}) {
+  const Frame = admin ? AdminAuthFrame : partner || invitation ? PartnerAuthFrame : user ? UserAuthFrame : AuthFrame;
   const signIn = partner || invitation ? PARTNER_SIGN_IN : "/login";
   const forgot = partner || invitation ? "/forgot-password?mode=partner" : "/forgot-password";
   // A partner's invitation (2026-11-10) uses the same one-time link, worded for a

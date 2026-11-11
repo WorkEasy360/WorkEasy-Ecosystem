@@ -8,6 +8,7 @@ import { can, useAdmin } from "./ControlShell";
 import { ExperiencePanel } from "./ExperiencePanel";
 import { GUEST_PERMISSION, ManageGuestAccess, guestAvailable, useGuestLogin } from "./GuestAccess";
 import { TypeBadges } from "./labels";
+import { categoryHref, isCategory, lastPartnerList } from "./partnerCategories";
 import { CompletionMeter, SetupStatusBadge } from "./PartnerConsole";
 import { BusinessDetailsTab, ContactsTab } from "./PartnerProfileTabs";
 import {
@@ -27,7 +28,7 @@ import {
 import { TAB_LABELS, TAB_ORDER, tabFromParam, type TabKey, type TabProps } from "./partnerTabs";
 import { LoadGate, ReasonAction, Status, useAction, useLoad, type Load } from "./ui";
 import { UpgradeNotice, UpgradePanel } from "./UpgradePanel";
-import { Alert, Avatar, Button, ButtonLink, KeyText, Page, PageHeader, Tabs, useConfirm, type MenuItem } from "./kit";
+import { Alert, Avatar, Button, ButtonLink, KeyText, Page, PageHeader, Tabs, Tooltip, useConfirm, type MenuItem } from "./kit";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
 import ps from "./PartnerProfileTabs.module.css";
@@ -67,6 +68,13 @@ export function visibleTabs(permissions: string[], labels: string[], held: strin
     if (key === "referrals") return labels.includes("affiliate");
     return true;
   }).map((key) => ({ key, label: TAB_LABELS[key] }));
+}
+
+/** Where "Back to Partners" goes: the list this tab came from, with its search and
+ * filters (`lastPartnerList`), else the list of the partner's type (the workspace
+ * its portal opens, as the list's Type column shows), else All partners. */
+export function backTo(category: string | null | undefined): string {
+  return lastPartnerList() ?? categoryHref(isCategory(category) ? category : null);
 }
 
 export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
@@ -112,20 +120,9 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
           const tabProps: TabProps = { partnerId: p.id, partner: p, summary, rev, bump };
           const upgradeOpen = upgrades.status === "ready" && Boolean(upgrades.data.open);
           const complete = summary.status === "ready" && summary.data.profile_completion.complete;
+          // 2026-11-11 (the owner): Back to Partners, Edit Partner and Login as Guest
+          // are buttons at the top of the page, not entries in this menu.
           const secondary: MenuItem[] = [
-            {
-              label: complete ? "Edit profile" : "Complete partner profile",
-              icon: "edit",
-              href: `/admin/partners/${p.id}/profile`,
-              when: manage,
-            },
-            {
-              label: guestAvailable(p.status) ? "Login as Guest" : "Login as Guest (once active)",
-              icon: "login",
-              when: canGuest,
-              disabled: busy || !guestAvailable(p.status),
-              onSelect: () => guestLogin.ask(p.id, p.display_name),
-            },
             { label: "Manage Guest Access", icon: "eye", onSelect: () => setGuestAccess(true) },
             // ADR-063: the partner's Platform Wallet, under Admin -> Wallets.
             {
@@ -179,29 +176,53 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
                 meta={facts}
                 secondary={secondary}
                 actions={
-                  manage ? (
-                    <>
-                      {p.status === "draft" && (
-                        <ActivateAction
-                          summary={summary}
-                          busy={busy}
-                          onConfirm={(r) => act(() => adminApi.setPartnerStatus(p.id, "active", r, p.version), "Partner activated.")}
-                        />
-                      )}
-                      {p.status === "active" && (
-                        <ReasonAction
-                          label="Suspend"
-                          danger
-                          busy={busy}
-                          message="The partner and its people lose access to the partner portal until it is reactivated. Its customers are not touched."
-                          onConfirm={(r) => act(() => adminApi.setPartnerStatus(p.id, "suspended", r, p.version), "Partner suspended.")}
-                        />
-                      )}
-                      {p.status === "suspended" && (
-                        <ReasonAction label="Reactivate" busy={busy} onConfirm={(r) => act(() => adminApi.setPartnerStatus(p.id, "active", r, p.version), "Partner reactivated.")} />
-                      )}
-                    </>
-                  ) : undefined
+                  <>
+                    <ButtonLink icon="chevronLeft" href={backTo(p.landing ?? p.experience?.[0]?.key)}>
+                      Back to Partners
+                    </ButtonLink>
+                    {manage && (
+                      <ButtonLink icon="edit" href={`/admin/partners/${p.id}/profile`} aria-label={complete ? "Edit Partner" : "Edit Partner - complete the profile"}>
+                        Edit Partner
+                      </ButtonLink>
+                    )}
+                    {canGuest &&
+                      (guestAvailable(p.status) ? (
+                        <Button
+                          variant="primary"
+                          icon="login"
+                          loading={guestLogin.pending === p.id}
+                          disabled={busy || guestLogin.dialog !== null}
+                          onClick={() => guestLogin.ask(p.id, p.display_name)}
+                        >
+                          Login as Guest
+                        </Button>
+                      ) : (
+                        <Tooltip content="Opens once the partner is active">
+                          <Button variant="primary" icon="login" aria-disabled="true" className={local.unavailable}>
+                            Login as Guest
+                          </Button>
+                        </Tooltip>
+                      ))}
+                    {manage && p.status === "draft" && (
+                      <ActivateAction
+                        summary={summary}
+                        busy={busy}
+                        onConfirm={(r) => act(() => adminApi.setPartnerStatus(p.id, "active", r, p.version), "Partner activated.")}
+                      />
+                    )}
+                    {manage && p.status === "active" && (
+                      <ReasonAction
+                        label="Suspend"
+                        danger
+                        busy={busy}
+                        message="The partner and its people lose access to the partner portal until it is reactivated. Its customers are not touched."
+                        onConfirm={(r) => act(() => adminApi.setPartnerStatus(p.id, "suspended", r, p.version), "Partner suspended.")}
+                      />
+                    )}
+                    {manage && p.status === "suspended" && (
+                      <ReasonAction label="Reactivate" busy={busy} onConfirm={(r) => act(() => adminApi.setPartnerStatus(p.id, "active", r, p.version), "Partner reactivated.")} />
+                    )}
+                  </>
                 }
                 primary={
                   upgradeOpen ? (

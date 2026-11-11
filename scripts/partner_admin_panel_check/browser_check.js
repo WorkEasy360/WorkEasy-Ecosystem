@@ -379,8 +379,9 @@ async function partnerApi(page, method, url, body, key) {
     await go(s, `${ADMIN}/admin/partners/all`);
     await s.waitForSelector("table thead th");
     const heads = await s.$$eval("table thead th", (ths) => ths.map((t) => t.textContent.trim()));
-    const wanted = ["Partner Name", "Partner Email", "Type / Permissions", "KYC Status", "Account Status", "Country", "Assigned Customers", "Created", "Guest Login"];
-    check("S1 the partner list has the specification's columns", wanted.every((h) => heads.includes(h)), heads.join(" | "));
+    // 2026-11-11: Name, Type, Status, then View / Actions (View · Login as Guest), then the rest.
+    const wanted = ["Partner Name", "Type / Permissions", "Account Status", "View / Actions", "Partner Email", "KYC Status", "Country", "Assigned Customers", "Created"];
+    check("S1 the partner list has the specification's columns, View / Actions fourth", JSON.stringify(heads.slice(0, 4)) === JSON.stringify(wanted.slice(0, 4)) && wanted.every((h) => heads.includes(h)) && !heads.includes("Guest Login"), heads.join(" | "));
     check("S2 the list is axe clean", (await axe(s)).length === 0, (await axe(s)).join(", "));
     // Login as Guest: the reason first.
     const login = await s.waitForSelector('button[aria-label="Login as Guest to PAP Reseller Co"]', { timeout: 30000 });
@@ -390,13 +391,13 @@ async function partnerApi(page, method, url, body, key) {
     check("S3 Login as Guest asks for the reason", (await text(s)).includes("Start guest session"), "");
     await Promise.all([s.waitForNavigation({ timeout: 60000 }).catch(() => {}), clickButton(s, "Start guest session")]);
     await s.waitForFunction(() => location.host === "partner.workeasy360.com", { timeout: 60000 });
-    await waitText(s, "Guest Session — Viewing Partner:");
-    check("S4 the partner portal shows the Guest Session banner", (await text(s)).includes("Guest Session — Viewing Partner:"), s.url());
+    await waitText(s, "Guest Session – Viewing Partner:");
+    check("S4 the partner portal shows the Guest Session banner", (await text(s)).includes("Guest Session – Viewing Partner:"), s.url());
     const refused = await partnerApi(s, "POST", `/api/v1/partner/${IDS.reseller}/platform-wallet/top-up`, { amount: "100.00" });
     check("S5 a write in a guest session is refused (guest_read_only)", refused.status === 403 && refused.json?.reason === "guest_read_only", JSON.stringify(refused));
-    await Promise.all([s.waitForNavigation({ timeout: 60000 }).catch(() => {}), clickButton(s, "Exit Guest Session")]);
+    await Promise.all([s.waitForNavigation({ timeout: 60000 }).catch(() => {}), clickButton(s, "Return to Super Admin")]);
     await s.waitForFunction(() => location.host === "admin.workeasy360.com", { timeout: 60000 });
-    check("S6 Exit Guest Session returns to the Admin, still signed in", new URL(s.url()).pathname.startsWith("/admin/partners"), s.url());
+    check("S6 Return to Super Admin returns to the Admin, still signed in", new URL(s.url()).pathname.startsWith("/admin/partners"), s.url());
     // New partner: Partner Email, and base permissions beside White Label.
     await go(s, `${ADMIN}/admin/partners/new`);
     await waitText(s, "Partner Email");

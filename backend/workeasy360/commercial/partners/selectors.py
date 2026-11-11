@@ -91,6 +91,18 @@ def landing_workspace(partner_id: UUID) -> str | None:
     )
 
 
+def category_of(partner_id: UUID) -> str | None:
+    """The category the Admin lists ``partner_id`` under (Affiliate, Reseller,
+    White Label; ``capabilities.partner_category``), or ``None`` - for no such
+    partner, or one in none of them. A listing, no decision."""
+    partner = partner_row(partner_id)
+    if partner is None:
+        return None
+    return capabilities.partner_category(
+        partner.default_experience, active_capabilities(partner_id)
+    )
+
+
 def code_taken(code: str) -> bool:
     """Whether a partner already uses this code (a dry-run check: the command
     that creates the partner is what decides a race for it)."""

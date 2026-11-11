@@ -775,3 +775,37 @@
 .createdBanner p {
   margin: 0;
 }
+
+/* 2026-11-11: the partner lists' "View / Actions" cell - View, Login as Guest and
+   the row's menu side by side, early in the row so they are on screen without
+   scrolling sideways at desktop widths. */
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-1);
+  flex-wrap: nowrap;
+}
+
+/* Login as Guest for a draft: shown, explained in a tooltip, does nothing. */
+.unavailable {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Type and status may take two lines, so the actions after them stay in view. */
+.badgeWrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-1);
+  white-space: normal;
+  max-width: 14rem;
+}
+
+@media (max-width: 720px) {
+  /* A phone: the buttons stack in their cell instead of widening the row. */
+  .rowActions {
+    flex-wrap: wrap;
+    max-width: 10rem;
+  }
+}

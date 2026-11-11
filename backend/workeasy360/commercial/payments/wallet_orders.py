@@ -71,18 +71,41 @@ def _place(
     currency: str,
     idempotency_key: str,
 ) -> dict[str, Any]:
-    """One order and its open invoice, in the customer's own scope."""
+    """One order and its open invoice, in the customer's own scope (staff)."""
+    if not idempotency_key or len(idempotency_key) > 128:
+        raise CatalogValidationError("A command id is required.", field="idempotency_key")
+    return _place_in(
+        context_for_organization(actor, organization_id),
+        record=record,
+        description=description,
+        amount_minor=amount_minor,
+        currency=currency,
+        idempotency_key=idempotency_key,
+        why="Staff places a wallet order",
+    )
+
+
+def _place_in(
+    rebound: TenantContext,
+    *,
+    record: dict[str, Any],
+    description: str,
+    amount_minor: int,
+    currency: str,
+    idempotency_key: str,
+    why: str,
+    pending: str = "This customer has another order awaiting payment. Settle or cancel it first.",
+) -> dict[str, Any]:
+    """The order and its invoice for the organization ``rebound`` names."""
     from workeasy360.commercial.payments import orders
     from workeasy360.commercial.payments.models import Invoice, InvoiceLine, Order
     from workeasy360.platform.tenancy.context import tenant_context
 
-    if not idempotency_key or len(idempotency_key) > 128:
-        raise CatalogValidationError("A command id is required.", field="idempotency_key")
-    rebound = context_for_organization(actor, organization_id)
+    organization_id = rebound.organization_id
     now = timezone.now()
     expires = now + timedelta(hours=max(1, int(settings.ORDER_TTL_HOURS)))
     with (
-        _scope(organization_id, reason="Staff places a wallet order"),
+        _scope(organization_id, reason=why),
         tenant_context(rebound),
         transaction.atomic(),
     ):
@@ -101,7 +124,7 @@ def _place(
             product_codes=[],
             amount_due_minor=amount_minor,
             lines=[record],
-            placed_by_user_id=actor.user_id,
+            placed_by_user_id=rebound.user_id,
             idempotency_key=idempotency_key,
             expires_at=expires,
         )
@@ -109,10 +132,7 @@ def _place(
             with transaction.atomic():
                 order.save()
         except IntegrityError as exc:
-            raise PaymentNotAllowed(
-                "This customer has another order awaiting payment. Settle or cancel it first.",
-                reason="order_pending",
-            ) from exc
+            raise PaymentNotAllowed(pending, reason="order_pending") from exc
         invoice = Invoice.objects.create(
             order=order,
             number=orders._invoice_number(),
@@ -205,6 +225,104 @@ def place_credit_pack(
         amount_minor=pack["price_minor"],
         currency=pack["currency"],
         idempotency_key=idempotency_key,
+    )
+
+
+# --- the customer's own top-ups (User Admin Panel, 2026-11-11) -------------------------
+#
+# The same order, invoice and fulfilment as the staff path above; the organization is
+# the member's verified tenant context, never an argument. ``platform.billing.manage``
+# (owners, administrators and billing managers), the permission that pays invoices.
+# The money reaches the wallet only when the invoice is paid (``credit_for_order``),
+# so an abandoned or failed payment moves no balance.
+
+MEMBER_SPEND = "platform.billing.manage"
+MEMBER_PENDING = (
+    "Another order is waiting for payment. Pay or cancel it in Orders & Payments first."
+)
+
+
+def _member_currency(ctx: TenantContext, currency: Any) -> str:
+    """A customer tops up in its billing currency only: the wallet its products charge."""
+    from workeasy360.commercial.billing import services as billing
+
+    account = billing.billing_account_or_none(ctx.organization_id)
+    if account is None:
+        raise CatalogValidationError(
+            "Set up your billing profile before adding money to a wallet.",
+            field="billing_account",
+        )
+    code = str(currency or "").strip().upper()
+    if code and code != account.currency:
+        raise CatalogValidationError(
+            f"Wallets are topped up in your billing currency ({account.currency}).",
+            field="currency",
+        )
+    return str(account.currency)
+
+
+def _member_key(idempotency_key: str) -> str:
+    if not idempotency_key or len(idempotency_key) > 128:
+        raise CatalogValidationError("A command id is required.", field="idempotency_key")
+    return idempotency_key
+
+
+def member_top_up(
+    ctx: TenantContext,
+    *,
+    wallet_kind: Any,
+    amount_minor: Any,
+    currency: Any,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    """A member's order for money into its own Platform or Consumption wallet."""
+    authz.require(ctx, MEMBER_SPEND)
+    key = _member_key(idempotency_key)
+    if wallet_kind not in TOP_UP_KINDS:
+        raise CatalogValidationError("Choose a wallet to top up.", field="wallet_kind")
+    if (
+        isinstance(amount_minor, bool)
+        or not isinstance(amount_minor, int)
+        or not 0 < amount_minor <= MAX_TOP_UP_MINOR
+    ):
+        raise CatalogValidationError("Enter the amount to add.", field="amount_minor")
+    code = _member_currency(ctx, currency)
+    label = wallets.kind_label(wallet_kind)
+    return _place_in(
+        ctx,
+        record={"wallet_kind": wallet_kind},
+        description=f"{label} top-up",
+        amount_minor=amount_minor,
+        currency=code,
+        idempotency_key=key,
+        why="A member places a wallet order",
+        pending=MEMBER_PENDING,
+    )
+
+
+def member_credit_pack(
+    ctx: TenantContext, *, pack_code: Any, idempotency_key: str
+) -> dict[str, Any]:
+    """A member's order for an AI credit pack on sale, at the pack's price."""
+    authz.require(ctx, MEMBER_SPEND)
+    key = _member_key(idempotency_key)
+    pack = wallets.active_pack(pack_code)
+    if pack is None:
+        raise CatalogValidationError("Choose a credit pack on sale.", field="pack_code")
+    _member_currency(ctx, pack["currency"])
+    return _place_in(
+        ctx,
+        record={
+            "wallet_kind": wallets.AI_CREDITS,
+            "credits": pack["credits"],
+            "pack_code": pack["code"],
+        },
+        description=f"{pack['name']}: {pack['credits']} AI credits",
+        amount_minor=pack["price_minor"],
+        currency=pack["currency"],
+        idempotency_key=key,
+        why="A member places a wallet order",
+        pending=MEMBER_PENDING,
     )
 
 

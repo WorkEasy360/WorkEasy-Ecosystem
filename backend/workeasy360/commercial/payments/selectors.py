@@ -88,6 +88,40 @@ def invoice(ctx: TenantContext, invoice_id: UUID) -> dict[str, Any]:
     }
 
 
+def awaiting_payment(
+    ctx: TenantContext, *, limit: int = 5
+) -> dict[str, list[dict[str, Any]]]:
+    """What the organization in ``ctx`` still has to pay (User Admin Panel bell,
+    2026-11-11): its orders awaiting payment and its other open invoices, in its own
+    tenant scope. ``platform.billing.view``."""
+    from workeasy360.commercial.payments.models import Invoice, Order
+
+    authz.require(ctx, VIEW)
+    orders = []
+    order_invoices = set()
+    for order in Order.objects.filter(status=Order.Status.PENDING_PAYMENT).order_by(
+        "-created_at"
+    )[:limit]:
+        invoice = getattr(order, "invoice", None)
+        if invoice is not None:
+            order_invoices.add(invoice.id)
+        orders.append(
+            {
+                "id": str(order.id),
+                "number": order.number,
+                "description": order.description,
+                "created_at": order.created_at,
+            }
+        )
+    invoices = [
+        {"id": str(i.id), "number": i.number, "due_at": i.due_at}
+        for i in Invoice.objects.filter(status=Invoice.Status.OPEN)
+        .exclude(id__in=order_invoices)
+        .order_by("due_at")[:limit]
+    ]
+    return {"orders": orders, "invoices": invoices}
+
+
 def order_summaries() -> Any:
     """Every order's control-plane summary row, as a queryset a caller may narrow
     (the partner panel narrows it to one partner's customers). Identifiers, codes

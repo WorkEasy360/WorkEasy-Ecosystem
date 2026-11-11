@@ -3,13 +3,13 @@
 import { useId, useState } from "react";
 import { consoleApi } from "@/lib/api/console";
 import { MoreButton, Status, Table, usePaged, when } from "@/features/controlplane/ui";
+import { Card, Page, eventLabel } from "@/features/controlplane/kit";
 import cp from "@/features/controlplane/ControlPlane.module.css";
-import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
 import { PageHeader, PagedState } from "./consoleUi";
 import { useOrgAccess } from "./OrgAccess";
 
-/** The organization's own audit log (`platform.audit.view`), newest first. */
+/** Admin Activity: the organization's own audit log (`platform.audit.view`), newest first. */
 export function AuditLogScreen() {
   const { slug } = useOrgAccess();
   const filterId = useId();
@@ -22,11 +22,13 @@ export function AuditLogScreen() {
   );
 
   return (
-    <div className={styles.page}>
+    <Page>
       <PageHeader
-        title="Audit log"
+        title="Admin Activity"
         lead="Every change made in this organization: who or what made it, to what, and whether it was allowed."
       />
+      <Card title="Audit log">
+      <div className={local.section}>
       <form
         className={local.toolbar}
         role="search"
@@ -80,8 +82,9 @@ export function AuditLogScreen() {
             {paged.rows.map((a) => (
               <tr key={a.id}>
                 <td className={local.nowrap}>{when(a.occurred_at)}</td>
-                <th scope="row" className={cp.mono}>
-                  {a.action}
+                <th scope="row">
+                  {eventLabel(a.action)}
+                  <div className={`${cp.muted} ${cp.mono}`}>{a.action}</div>
                 </th>
                 <td>{a.actor_kind.replace(/_/g, " ")}</td>
                 <td>
@@ -98,7 +101,9 @@ export function AuditLogScreen() {
           <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
         </>
       )}
-    </div>
+      </div>
+      </Card>
+    </Page>
   );
 }
 
@@ -107,9 +112,9 @@ export function SignInsScreen() {
   const { slug } = useOrgAccess();
   const paged = usePaged((cursor) => consoleApi.signIns(slug, cursor), [slug]);
   return (
-    <div className={styles.page}>
+    <Page>
       <PageHeader
-        title="Sign-in activity"
+        title="Sign-in Activity"
         lead="Each time a member opened this organization. Only entry into this organization is shown - never what members do elsewhere."
       />
       <PagedState state={paged.state} what="sign-in activity" />
@@ -136,6 +141,6 @@ export function SignInsScreen() {
           <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
         </>
       )}
-    </div>
+    </Page>
   );
 }

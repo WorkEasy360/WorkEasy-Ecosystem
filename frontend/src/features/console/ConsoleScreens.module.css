@@ -357,3 +357,137 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* --- the User Admin pages (2026-11-11) --------------------------------------- */
+
+/* "Contact Organization Admin": in place of a financial action a member may not take. */
+.contactAdmin {
+  margin: 0;
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border: 1px dashed var(--w360-border-strong);
+  border-radius: var(--w360-radius-sm);
+  color: var(--w360-text-muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+/* My Products: the filter row above the cards, and the cards' grid. */
+.productGrid {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+}
+
+.productGrid > * {
+  min-width: 0;
+}
+
+/* Two or three small cards side by side (contacts, guides), stacked on a phone. */
+.cardRow {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+}
+
+.cardRow > * {
+  min-width: 0;
+}
+
+.contactLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  align-items: center;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--w360-text-muted);
+}
+
+.small {
+  font-size: 13px;
+}
+
+/* A ticket's conversation: one bubble per message, the customer's own on the right. */
+.thread {
+  display: grid;
+  gap: var(--w360-space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.message {
+  display: grid;
+  gap: var(--w360-space-1);
+  max-width: min(680px, 100%);
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-surface);
+}
+
+.message[data-mine] {
+  justify-self: end;
+  background: var(--w360-brand-soft);
+}
+
+.messageMeta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--w360-text-muted);
+}
+
+/* A printable invoice: on paper only the invoice shows. */
+.invoiceSheet {
+  display: grid;
+  gap: var(--w360-space-4);
+}
+
+.invoiceHead {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--w360-space-3);
+}
+
+.invoiceHead h3 {
+  margin: 0;
+}
+
+@media print {
+  :global(body *) {
+    visibility: hidden;
+  }
+
+  .invoiceSheet,
+  .invoiceSheet * {
+    visibility: visible;
+  }
+
+  .invoiceSheet {
+    position: absolute;
+    inset: 0;
+    padding: 24px;
+  }
+
+  .noPrint {
+    display: none !important;
+  }
+}
+
+/* A product's details: the facts on the left, the setup beside them on wide screens. */
+.detailGrid {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.featureList {
+  margin: 0;
+  padding-left: var(--w360-space-5);
+  display: grid;
+  gap: var(--w360-space-1);
+}

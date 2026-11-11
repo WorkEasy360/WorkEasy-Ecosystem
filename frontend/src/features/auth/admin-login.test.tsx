@@ -176,11 +176,14 @@ describe("the Admin sign-in page", () => {
     expect(screen.queryByText("Admin Login")).toBeNull();
   });
 
-  it("keeps the standard page on the customer portal", async () => {
+  it("gives the customer portal its own User Admin Login, never the Admin's", async () => {
     mockApi({ "GET /api/v1/auth/session": SIGNED_OUT });
     render(<LoginScreen portal="app" />);
-    expect(await screen.findByRole("heading", { name: "Sign in as User" })).toBeTruthy();
-    expect(screen.queryByText("Remember Me")).toBeNull();
+    expect(await screen.findByRole("heading", { name: "User Admin Login" })).toBeTruthy();
+    expect(screen.queryByText(/Platform Control Center/)).toBeNull();
+    expect(screen.getByText("For customers and authorized team members")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Create Organization Account" }).getAttribute("href")).toBe("/signup");
+    expect(screen.getByRole("button", { name: "Login to User Admin Panel" })).toBeTruthy();
   });
 });
 

@@ -15,6 +15,8 @@ const cx = (...names: (string | false | null | undefined)[]) => names.filter(Boo
 
 export const ADMIN_TITLE_SUFFIX = "WorkEasy360 Admin";
 export const PARTNER_TITLE_SUFFIX = "WorkEasy360 Partner";
+/** The User Admin panel (`<html data-console="user">`, the organization console). */
+export const USER_TITLE_SUFFIX = "WorkEasy360";
 
 /** "Users · WorkEasy360 Admin" while the page is open; "Customers · WorkEasy360
  * Partner" in the Partner panel (`<html data-console="partner">`). */
@@ -22,7 +24,8 @@ export function usePageTitle(title: string | null | undefined) {
   useEffect(() => {
     if (!title) return;
     const before = document.title;
-    const suffix = document.documentElement.dataset.console === "partner" ? PARTNER_TITLE_SUFFIX : ADMIN_TITLE_SUFFIX;
+    const consoleName = document.documentElement.dataset.console;
+    const suffix = consoleName === "partner" ? PARTNER_TITLE_SUFFIX : consoleName === "user" ? USER_TITLE_SUFFIX : ADMIN_TITLE_SUFFIX;
     document.title = `${title} · ${suffix}`;
     return () => {
       document.title = before;

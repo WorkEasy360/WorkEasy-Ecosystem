@@ -8,7 +8,15 @@ import { AdminInsights } from "./DashboardScreen";
 import { MembersScreen } from "./MembersScreen";
 import { InvitationsScreen } from "./InvitationsScreen";
 import { OrganizationScreen } from "./OrganizationScreen";
-import { BillingScreen, PAYMENT_POLL, checkoutNavigation, safeCheckoutUrl } from "./BillingScreen";
+import {
+  BillingAccountPanel,
+  BillingScreen,
+  InvoicesSection,
+  PAYMENT_POLL,
+  checkoutNavigation,
+  purchaseSource,
+  safeCheckoutUrl,
+} from "./BillingScreen";
 import { ExploreScreen } from "./ExploreScreen";
 import { MarkdownLite } from "./MarkdownLite";
 import { MySecurityScreen, describeAccountEvent } from "./MySecurityScreen";
@@ -290,7 +298,11 @@ describe("members", () => {
     mockApi({ [`GET ${ORG}/members`]: [page(MEMBERS)] });
     renderOrg(<MembersScreen />, ["platform.member.view"]);
     await screen.findByRole("table", { name: "Organization members" });
-    expect(screen.queryAllByRole("button", { name: /Suspend|Reactivate|Remove|Sign out|Change role|Save role/ })).toEqual([]);
+    expect(screen.queryAllByRole("button", { name: /^(Suspend|Reactivate|Remove|Sign out|Change role|Save role) / })).toEqual([]);
+    // Invite Member is for those who may invite; anyone may read what each role does.
+    expect(screen.queryByRole("button", { name: "Invite Member" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View permissions" }));
+    expect(within(screen.getByRole("dialog", { name: "Roles and permissions" })).getByText(/finance-authorized/)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Invitations" })).not.toBeInTheDocument();
   });
 
@@ -351,12 +363,11 @@ describe("members", () => {
     const calls = mockApi({ [`GET ${ORG}/members`]: [page([])] });
     renderOrg(<MembersScreen />, ADMIN);
     await screen.findByText("No members yet.");
-    fireEvent.change(screen.getByLabelText("Search by name or email"), { target: { value: "bob" } });
-    const before = calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await waitFor(() => expect(calls.length).toBe(before + 1));
-    expect(calls.at(-1)!.url).toContain("q=bob");
-    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "suspended" } });
+    const search = screen.getByLabelText("Search by name or email");
+    fireEvent.change(search, { target: { value: "bob" } });
+    fireEvent.keyDown(search, { key: "Enter" });
+    await waitFor(() => expect(calls.at(-1)!.url).toContain("q=bob"));
+    fireEvent.click(within(screen.getByRole("group", { name: "Status" })).getByRole("button", { name: /^Suspended/ }));
     await waitFor(() => expect(calls.at(-1)!.url).toContain("status=suspended"));
   });
 });
@@ -447,6 +458,8 @@ describe("invitations", () => {
     fireEvent.click(screen.getByRole("button", { name: "Resend invitation to new@acme.test" }));
     expect(await screen.findByText(/previous link no longer works/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Revoke invitation to new@acme.test" }));
+    expect(posted(calls, `POST ${ORG}/invitations/i1/revoke`)).toHaveLength(0); // nothing before the confirm
+    fireEvent.click(within(screen.getByRole("dialog", { name: /Revoke the invitation/ })).getByRole("button", { name: "Revoke invitation" }));
     expect(await screen.findByText(/was revoked/)).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Show"), { target: { value: "all" } });
@@ -537,6 +550,20 @@ function attempt(status: string, checkout_url: string | null = null) {
   };
 }
 
+const SUB = {
+  id: "s1",
+  status: "active",
+  currency: "GBP",
+  billing_interval: "monthly",
+  renewal_policy: "auto_renew",
+  current_period_start: "2026-09-01T00:00:00Z",
+  current_period_end: "2026-10-01T00:00:00Z",
+  trial_ends_at: null,
+  cancel_at: null,
+  version: 3,
+  items: [],
+};
+
 function billingRoutes(extra: Record<string, Reply[]> = {}): Record<string, Reply[]> {
   return {
     [`GET ${ORG}/subscriptions`]: [
@@ -571,6 +598,8 @@ function billingRoutes(extra: Record<string, Reply[]> = {}): Record<string, Repl
       },
     ],
     [`GET ${ORG}/billing/invoices`]: [{ status: 200, body: { results: [INVOICE, PAID_INVOICE] } }],
+    [`GET ${ORG}/apps`]: [{ status: 200, body: { apps: [{ product_code: "books", display_name: "EasyBook", state: "active" }] } }],
+    [`GET ${ORG}/trials`]: [{ status: 200, body: { results: [] } }],
     ...extra,
   };
 }
@@ -589,18 +618,69 @@ describe("subscription & billing", () => {
     checkoutNavigation.assign = originalAssign;
   });
 
-  it("shows the subscription, the account and the invoices, with Pay only on an open invoice", async () => {
+  it("shows each product of the subscription with its plan, purchase source and renewal (2026-11-11)", async () => {
     mockApi(billingRoutes());
     const { container } = renderOrg(<BillingScreen />, OWNER_BILLING);
-    await screen.findByRole("table", { name: "Your invoices, newest first" });
-    await screen.findByRole("table", { name: "Products in this subscription" });
-    expect(screen.getByRole("heading", { level: 1, name: "Subscription & billing" })).toBeInTheDocument();
-    expect(screen.getByText("books-pro")).toBeInTheDocument();
+    const table = await screen.findByRole("table", { name: "Products in this subscription" });
+    expect(screen.getByRole("heading", { level: 1, name: "Subscriptions" })).toBeInTheDocument();
+    expect(within(table).getByText("books-pro")).toBeInTheDocument();
     expect(screen.queryByText("old-plan")).not.toBeInTheDocument();
-    expect(screen.getByText("ap@acme.test")).toBeInTheDocument();
+    // The product's name from the directory, and where it was bought.
+    expect(await within(table).findByText("EasyBook")).toBeInTheDocument();
+    expect(within(table).getAllByText("Online (WorkEasy360)").length).toBeGreaterThan(0);
+    expect(within(table).getByText(/^Renews /)).toBeInTheDocument();
+    expect(within(table).getByRole("link", { name: "Change plan: EasyBook" })).toHaveAttribute("href", "/o/acme/store/books");
+    // The billing account and the invoices have their own pages now.
+    expect(screen.queryByText("ap@acme.test")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Your invoices, newest first" })).not.toBeInTheDocument();
+    await expectNoViolations(container);
+  });
+
+  it("lists invoices on Orders & Payments, with Pay only on an open one", async () => {
+    mockApi(billingRoutes());
+    const { container } = renderOrg(<InvoicesSection />, OWNER_BILLING);
+    await screen.findByRole("table", { name: "Your invoices, newest first" });
     expect(screen.getByRole("button", { name: "Pay invoice INV-0001" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pay invoice INV-0000" })).not.toBeInTheDocument();
+    // Status chips filter what is listed.
+    fireEvent.click(within(screen.getByRole("group", { name: "Invoice status" })).getByRole("button", { name: /^Paid/ }));
+    expect(screen.queryByText("INV-0001")).not.toBeInTheDocument();
+    expect(screen.getByText("INV-0000")).toBeInTheDocument();
     await expectNoViolations(container);
+  });
+
+  it("follows the purchase channel: a store-billed subscription is managed in the store, a partner's by the partner", async () => {
+    const base = { status: "active", trial_ends_at: null, cancel_at: null } as const;
+    expect(purchaseSource({ ...SUB, ...base, source: "app_store" }).key).toBe("app_store");
+    expect(purchaseSource({ ...SUB, ...base, source: "play_store" }).label).toBe("Google Play");
+    expect(purchaseSource({ ...SUB, ...base, collection_mode: "partner_wallet" }).key).toBe("partner");
+    expect(purchaseSource({ ...SUB, ...base }, "partner_billed").key).toBe("partner");
+    expect(purchaseSource({ ...SUB, ...base, status: "trialing" }).label).toBe("Free trial");
+    expect(purchaseSource({ ...SUB, ...base }, "automatic").label).toBe("Online (WorkEasy360)");
+
+    const routes = billingRoutes();
+    const store = structuredClone(routes[`GET ${ORG}/subscriptions`][0]) as Reply;
+    (store.body as { results: Record<string, unknown>[] }).results[0].source = "app_store";
+    routes[`GET ${ORG}/subscriptions`] = [store];
+    mockApi(routes);
+    const { unmount } = renderOrg(<BillingScreen />, OWNER_BILLING);
+    expect(await screen.findByRole("link", { name: "Manage in the App Store" })).toHaveAttribute(
+      "href",
+      "https://apps.apple.com/account/subscriptions",
+    );
+    expect(screen.queryByRole("button", { name: "Cancel subscription" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^Change plan/ })).not.toBeInTheDocument();
+    unmount();
+
+    const partnerRoutes = billingRoutes({
+      [`GET ${ORG}/billing-account`]: [
+        { status: 200, body: { billing_account: { id: "b1", currency: "GBP", collection_mode: "partner_wallet", billing_email: "", billing_region: "" } } },
+      ],
+    });
+    mockApi(partnerRoutes);
+    renderOrg(<BillingScreen />, OWNER_BILLING);
+    expect(await screen.findByRole("link", { name: "Ask your partner in Help" })).toHaveAttribute("href", "/o/acme/help");
+    expect(screen.queryByRole("button", { name: "Cancel subscription" })).not.toBeInTheDocument();
   });
 
   it("cancels at the end of the period after a confirm: one key, the shown version, never immediate (Phase 12)", async () => {
@@ -639,10 +719,17 @@ describe("subscription & billing", () => {
 
   it("hides Pay from someone who may view but not pay, and each section from those who may not see it", async () => {
     mockApi(billingRoutes());
-    renderOrg(<BillingScreen />, ["platform.billing.view"]);
+    const { unmount } = renderOrg(<InvoicesSection />, ["platform.billing.view"]);
     await screen.findByRole("table", { name: "Your invoices, newest first" });
     expect(screen.queryByRole("button", { name: /^Pay invoice/ })).not.toBeInTheDocument();
+    // In place of the payment they may not make.
+    expect(screen.getByText("Contact Organization Admin")).toBeInTheDocument();
+    unmount();
+
+    mockApi(billingRoutes());
+    renderOrg(<BillingScreen />, ["platform.billing.view"]);
     expect(screen.queryByRole("heading", { name: "Subscription" })).not.toBeInTheDocument();
+    expect(screen.getByText("Contact Organization Admin")).toBeInTheDocument();
   });
 
   it("pays: one idempotency key, waits for the hosted page, and goes there only when it is HTTPS", async () => {
@@ -655,7 +742,7 @@ describe("subscription & billing", () => {
         ],
       }),
     );
-    renderOrg(<BillingScreen />, OWNER_BILLING);
+    renderOrg(<InvoicesSection />, OWNER_BILLING);
     fireEvent.click(await screen.findByRole("button", { name: "Pay invoice INV-0001" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://pay.example.com/c/abc"));
     const pay = posted(calls, `POST ${ORG}/billing/invoices/inv1/pay`);
@@ -671,7 +758,7 @@ describe("subscription & billing", () => {
         [`POST ${ORG}/billing/invoices/inv1/pay`]: [{ status: 202, body: attempt("awaiting_payment", "http://evil.example/steal") }],
       }),
     );
-    const { container } = renderOrg(<BillingScreen />, OWNER_BILLING);
+    const { container } = renderOrg(<InvoicesSection />, OWNER_BILLING);
     fireEvent.click(await screen.findByRole("button", { name: "Pay invoice INV-0001" }));
     expect(await screen.findByText(/could not be verified/)).toBeInTheDocument();
     expect(assign).not.toHaveBeenCalled();
@@ -684,7 +771,7 @@ describe("subscription & billing", () => {
         [`POST ${ORG}/billing/invoices/inv1/pay`]: [UNAVAILABLE, { status: 202, body: attempt("awaiting_payment", "https://pay.example.com/c/1") }],
       }),
     );
-    renderOrg(<BillingScreen />, OWNER_BILLING);
+    renderOrg(<InvoicesSection />, OWNER_BILLING);
     fireEvent.click(await screen.findByRole("button", { name: "Pay invoice INV-0001" }));
     await screen.findByText("Try again shortly.");
     fireEvent.click(screen.getByRole("button", { name: "Pay invoice INV-0001" }));
@@ -704,7 +791,7 @@ describe("subscription & billing", () => {
         ],
       }),
     );
-    renderOrg(<BillingScreen />, OWNER_BILLING);
+    renderOrg(<InvoicesSection />, OWNER_BILLING);
     fireEvent.click(await screen.findByRole("button", { name: "Pay invoice INV-0001" }));
     expect(await screen.findByText(/couldn't be completed \(checkout unavailable\)/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Pay invoice INV-0001" }));
@@ -734,7 +821,7 @@ describe("subscription & billing", () => {
     const calls = mockApi(billingRoutes());
     renderOrg(<BillingScreen />, OWNER_BILLING);
     expect(await screen.findByText(/Payment cancelled/)).toBeInTheDocument();
-    await screen.findByRole("table", { name: "Your invoices, newest first" });
+    await screen.findByRole("table", { name: "Products in this subscription" });
     expect(calls.some((c) => c.key.includes("/billing/payments/"))).toBe(false);
   });
 
@@ -742,7 +829,7 @@ describe("subscription & billing", () => {
     nav.search = new URLSearchParams("payment=../../admin&outcome=success");
     const calls = mockApi(billingRoutes());
     renderOrg(<BillingScreen />, OWNER_BILLING);
-    await screen.findByRole("table", { name: "Your invoices, newest first" });
+    await screen.findByRole("table", { name: "Products in this subscription" });
     expect(screen.queryByText(/Checking your payment/)).not.toBeInTheDocument();
     expect(calls.some((c) => c.key.includes("/billing/payments/"))).toBe(false);
   });
@@ -755,8 +842,8 @@ describe("subscription & billing", () => {
         [`GET ${ORG}/billing/invoices`]: [{ status: 200, body: { results: [] } }],
       }),
     );
-    const { container } = renderOrg(<BillingScreen />, OWNER_BILLING);
-    // The account is opened in a popup from the Billing account panel.
+    const { container } = renderOrg(<BillingAccountPanel slug="acme" canView canOpen />, OWNER_BILLING);
+    // The account is opened in a popup from the Billing account panel (Billing Profile).
     fireEvent.click(await screen.findByRole("button", { name: "Open billing account" }));
     const popup = screen.getByRole("dialog", { name: "Open a billing account" });
     const currency = within(popup).getByLabelText("Currency");
@@ -803,13 +890,17 @@ describe("subscription & billing", () => {
         ],
       }),
     );
-    const { container } = renderOrg(<BillingScreen />, ["platform.billing.view"]);
+    const { container } = renderOrg(<InvoicesSection />, ["platform.billing.view"]);
     const toggle = await screen.findByRole("button", { name: "Details of invoice INV-0001" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
     expect(await screen.findByRole("table", { name: "Lines on invoice INV-0001" })).toBeInTheDocument();
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Books Pro × 5")).toBeInTheDocument();
+    // Printable: the browser's own print / save as PDF.
+    const print = vi.spyOn(window, "print").mockImplementation(() => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Print invoice INV-0001" }));
+    expect(print).toHaveBeenCalledTimes(1);
     await expectNoViolations(container);
   });
 });
@@ -1391,6 +1482,8 @@ describe("my security", () => {
     );
     renderOrg(<MySecurityScreen />, []);
     fireEvent.click(await screen.findByRole("button", { name: "Sign out all other sessions" }));
+    expect(posted(calls, "POST /api/v1/auth/sessions/revoke-others")).toHaveLength(0); // nothing before the confirm
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Sign out other sessions" }));
     expect(await screen.findByText("Every other session has been signed out.")).toBeInTheDocument();
     expect(posted(calls, "POST /api/v1/auth/sessions/revoke-others")).toHaveLength(1);
   });
@@ -1826,43 +1919,139 @@ describe("my apps and product access", () => {
     mockApi({ [`GET ${ORG}/apps`]: [{ status: 200, body: { apps: [app("books", "Books", "active"), app("desk", "Desk", "no_seat")] } }] });
     const { container } = renderOrg(<MyAppsScreen />, []);
     expect(await screen.findByRole("button", { name: "Open Books" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "My products" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "My Products" })).toBeInTheDocument();
+    // Explore Products opens the organization's own Store.
+    expect(screen.getByRole("link", { name: "Explore Products" })).toHaveAttribute("href", "/o/acme/store");
     expect(screen.getByRole("alert")).toHaveTextContent("You don't have a seat for that product yet.");
     await expectNoViolations(container);
   });
 
-  it("lists the rest of the catalog as expired or available, from the server's states (multi-portal brief)", async () => {
-    mockApi({
-      [`GET ${ORG}/apps`]: [{ status: 200, body: { apps: [app("books", "EasyBook", "active")] } }],
-      [`GET ${ORG}/explore`]: [
-        {
-          status: 200,
-          body: explore({
-            products: [
-              exploreProduct("books", "EasyBook", { trial_state: "owned" }),
-              exploreProduct("crm", "Easy CRM", { trial_state: "used", trial_outcome: "expired" }),
-              exploreProduct("desk", "Easy Help Desk", {
-                trial_state: "available",
-                trial: { available: true, duration_days: 7, seat_limit: null, payment_method_required: false, plan_codes: ["desk_starter"] },
-              }),
-              exploreProduct("ops", "Easy Project", { trial_state: "unavailable" }),
-            ],
-          }),
+  const SETUP_RECORD = {
+    id: "su1",
+    product_code: "desk",
+    status: "correction_required",
+    answers: { gst: "OLD" },
+    decision_reason: "That number has a typing mistake.",
+    requirements: [{ key: "gst", label: "GST number", help_text: "", is_required: true }],
+    editable: true,
+  };
+  const productRoutes = (extra: Record<string, Reply[]> = {}) => ({
+    [`GET ${ORG}/apps`]: [
+      {
+        status: 200,
+        body: {
+          apps: [
+            { ...app("books", "EasyBook", "active"), plan: { code: "books_starter", name: "EasyBook Starter" }, renews_at: "2026-12-01T00:00:00Z" },
+            { ...app("desk", "Easy Help Desk", "active"), entitlement_status: "trial", trial: { id: "t1", ends_at: "2026-11-20T00:00:00Z", days_left: 9 } },
+            { ...app("free", "Easy Notes", "active"), plan: { code: "free_basic", name: "Notes Free" } },
+            app("crm", "Easy CRM", "no_entitlement"),
+            app("ops", "Easy Project", "no_entitlement"),
+          ],
         },
-      ],
-    });
-    const { container } = renderOrg(<MyAppsScreen />, []);
-    const section = await screen.findByRole("region", { name: "Other products" });
-    const rows = within(section).getAllByRole("listitem").map((li) => li.textContent);
-    expect(rows).toEqual([
-      "Easy CRMTrial expiredUpgrade / Buy now",
-      "Easy Help DeskAvailableStart 7-Day Free Trial",
-      "Easy ProjectAvailableExplore",
-    ]);
-    // The held product stays in the grid above, not in this list.
-    expect(within(section).queryByText("EasyBook")).not.toBeInTheDocument();
-    for (const link of within(section).getAllByRole("link")) expect(link).toHaveAttribute("href", "/o/acme/explore");
+      },
+    ],
+    [`GET ${ORG}/explore`]: [
+      {
+        status: 200,
+        body: explore({
+          products: [
+            exploreProduct("books", "EasyBook", {
+              trial_state: "owned",
+              features: [{ name: "Invoices", description: "Send GST invoices" }],
+            }),
+            exploreProduct("crm", "Easy CRM", { trial_state: "used", trial_outcome: "expired" }),
+            exploreProduct("ops", "Easy Project", { trial_state: "available" }),
+            exploreProduct("free", "Easy Notes", {
+              trial_state: "owned",
+              plans: [
+                {
+                  ...exploreProduct("free", "Easy Notes").plans[0],
+                  plan_code: "free_basic",
+                  name: "Notes Free",
+                  prices: [{ interval: "monthly", currency: "GBP", model: "flat", amount_minor: 0, from_tiers: false }],
+                },
+              ],
+            }),
+          ],
+        }),
+      },
+    ],
+    [`GET ${ORG}/setup`]: [{ status: 200, body: { results: [SETUP_RECORD] } }],
+    ...extra,
+  });
+  const chipCount = (label: string) =>
+    within(screen.getByRole("group", { name: "Show products" })).getByRole("button", { name: new RegExp(`^${label}`) }).textContent;
+
+  it("lists held, trial, free, expired and pending-setup products with filters from the server's states (2026-11-11)", async () => {
+    mockApi(productRoutes());
+    const { container } = renderOrg(<MyAppsScreen />, ["commercial.subscription.manage", "commercial.subscription.view"]);
+    expect(await screen.findByRole("heading", { name: "EasyBook" })).toBeInTheDocument();
+    // The expired trial is listed (a way to buy it); a product never tried is not.
+    expect(await screen.findByRole("heading", { name: "Easy CRM" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Easy Project" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Upgrade or buy: Easy CRM" })).toHaveAttribute("href", "/o/acme/store/crm");
+    await waitFor(() => expect(chipCount("Pending Setup")).toContain("1"));
+    expect(chipCount("All")).toContain("4");
+    expect(chipCount("Active")).toContain("2");
+    expect(chipCount("Free")).toContain("1");
+    expect(chipCount("Trial")).toContain("1");
+    expect(chipCount("Expired")).toContain("1");
+    expect(screen.getByText("Setup: Please correct this")).toBeInTheDocument();
     await expectNoViolations(container);
+
+    fireEvent.click(within(screen.getByRole("group", { name: "Show products" })).getByRole("button", { name: /^Trial/ }));
+    expect(screen.getByRole("heading", { name: "Easy Help Desk" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "EasyBook" })).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("group", { name: "Show products" })).getByRole("button", { name: /^Free/ }));
+    expect(screen.getByRole("heading", { name: "Easy Notes" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Easy Help Desk" })).not.toBeInTheDocument();
+  });
+
+  it("View Details shows the plan, its features, validity and setup, and offers only supported changes", async () => {
+    mockApi(productRoutes());
+    const { container } = renderOrg(<MyAppsScreen />, ["commercial.subscription.manage", "commercial.subscription.view"]);
+    fireEvent.click(await screen.findByRole("button", { name: "View details: EasyBook" }));
+    const details = screen.getByRole("dialog", { name: "EasyBook" });
+    expect(within(details).getByText("EasyBook Starter")).toBeInTheDocument();
+    expect(await within(details).findByText("Invoices")).toBeInTheDocument();
+    expect(within(details).getByText(/^Renews /)).toBeInTheDocument();
+    expect(within(details).getByText(/needs no details/)).toBeInTheDocument();
+    expect(within(details).getByRole("link", { name: "Change plan" })).toHaveAttribute("href", "/o/acme/store/books");
+    expect(within(details).getByRole("button", { name: "Open EasyBook" })).toBeInTheDocument();
+    await expectNoViolations(document.body);
+    fireEvent.click(within(details).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await expectNoViolations(container);
+  });
+
+  it("pending setup is handled in My Products: ?filter=setup, the reviewer's words, Submit corrections", async () => {
+    nav.search = new URLSearchParams("filter=setup");
+    const calls = mockApi(productRoutes({ [`POST ${ORG}/setup/su1/submit`]: [{ status: 200, body: { results: [] } }] }));
+    renderOrg(<MyAppsScreen />, []);
+    expect(await screen.findByRole("heading", { name: "Easy Help Desk" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "EasyBook" })).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "View details: Easy Help Desk" }));
+    const details = screen.getByRole("dialog", { name: "Easy Help Desk" });
+    expect(within(details).getByText("That number has a typing mistake.")).toBeInTheDocument();
+    fireEvent.click(within(details).getByRole("button", { name: "Correct and send: Easy Help Desk" }));
+    fireEvent.change(screen.getByLabelText("GST number (required)"), { target: { value: "NEW" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(posted(calls, `POST ${ORG}/setup/su1/submit`)[0]?.body).toEqual({ answers: { gst: "NEW" } }));
+  });
+
+  it("?product=<code> opens that product's details on arrival; an unknown code opens nothing", async () => {
+    nav.search = new URLSearchParams("product=desk");
+    mockApi(productRoutes());
+    const { unmount } = renderOrg(<MyAppsScreen />, []);
+    expect(await screen.findByRole("dialog", { name: "Easy Help Desk" })).toBeInTheDocument();
+    expect(screen.getByText(/^Trial ends /)).toBeInTheDocument();
+    unmount();
+
+    nav.search = new URLSearchParams("product=<script>");
+    mockApi(productRoutes());
+    renderOrg(<MyAppsScreen />, []);
+    await screen.findByRole("heading", { name: "EasyBook" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("an unknown launch error code is never echoed", async () => {

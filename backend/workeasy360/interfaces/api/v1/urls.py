@@ -35,6 +35,7 @@ from workeasy360.interfaces.api.v1 import (
     intelligence_product_views,
     intelligence_views,
     launcher_views,
+    org_account_views,
     partner_api_views,
     partner_desk_views,
     partner_panel_views,
@@ -372,6 +373,43 @@ urlpatterns = [
         "orgs/<slug:org_slug>/billing-account",
         commercial_views.billing_account_view,
         name="billing-account",
+    ),
+    # --- User Admin Panel (2026-11-11): the organization's three wallets, the bell
+    # and the member's own alert choices (org_account_views docstring).
+    path(
+        "orgs/<slug:org_slug>/wallets",
+        org_account_views.wallets_view,
+        name="org-wallets",
+    ),
+    path(
+        "orgs/<slug:org_slug>/wallets/transactions",
+        org_account_views.wallet_transactions_view,
+        name="org-wallets-transactions",
+    ),
+    path(
+        "orgs/<slug:org_slug>/wallets/usage",
+        org_account_views.wallet_usage_view,
+        name="org-wallets-usage",
+    ),
+    path(
+        "orgs/<slug:org_slug>/wallets/top-up",
+        org_account_views.wallet_top_up_view,
+        name="org-wallets-top-up",
+    ),
+    path(
+        "orgs/<slug:org_slug>/wallets/credit-packs",
+        org_account_views.wallet_credit_pack_view,
+        name="org-wallets-credit-packs",
+    ),
+    path(
+        "orgs/<slug:org_slug>/notifications",
+        org_account_views.notifications_view,
+        name="org-notifications",
+    ),
+    path(
+        "orgs/<slug:org_slug>/notification-preferences",
+        org_account_views.notification_preferences_view,
+        name="org-notification-preferences",
     ),
     # Phase 9: pay-first orders replace the direct purchase and activation
     # routes. The order's invoice is paid through billing/invoices/<id>/pay.

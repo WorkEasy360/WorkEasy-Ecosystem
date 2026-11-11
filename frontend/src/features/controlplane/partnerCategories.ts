@@ -36,6 +36,43 @@ const VALUES: Partial<Record<(typeof KEEP)[number], Set<string>>> = {
   kyc: new Set(["ready", "approved", "not_approved", "legacy"]),
 };
 
+// --- the list this tab last showed ---------------------------------------------------
+//
+// So "Back to Partners" on a partner's page, and a guest session's return, open the
+// list the Admin came from with its search and filters. Per tab (sessionStorage),
+// an address only - never a partner's data - and read back only when it is one of
+// the four list pages.
+
+const LIST_KEY = "w360.admin.partners.list";
+const LIST_RE = /^\/admin\/partners\/(all|affiliate|reseller|white-label)$/;
+
+/** Remember the list on screen (`pathname` + `search`). */
+export function rememberPartnerList(pathname: string, search: string): void {
+  if (!LIST_RE.test(pathname)) return;
+  try {
+    window.sessionStorage.setItem(LIST_KEY, JSON.stringify({ path: pathname, search: search.startsWith("?") || !search ? search : `?${search}` }));
+  } catch {
+    /* private mode: Back to Partners opens the partner's category list */
+  }
+}
+
+/** The list this tab last showed, as an address (`/admin/partners/reseller?q=acme`),
+ * or null. With `path`, only when it was that list. */
+export function lastPartnerList(path?: string): string | null {
+  try {
+    const raw = JSON.parse(window.sessionStorage.getItem(LIST_KEY) ?? "null") as { path?: unknown; search?: unknown } | null;
+    if (!raw || typeof raw.path !== "string" || !LIST_RE.test(raw.path)) return null;
+    if (path && raw.path !== path) return null;
+    const search = typeof raw.search === "string" && /^(\?[^#\s]{0,400})?$/.test(raw.search) ? raw.search : "";
+    // Only the filters a list understands, so nothing else rides along.
+    const params = Object.fromEntries(new URLSearchParams(search).entries());
+    const base = categoryHref(null, params).replace(/^\/admin\/partners\/all/, raw.path);
+    return base;
+  } catch {
+    return null;
+  }
+}
+
 /** A category's page (or All partners for `null`), keeping the filters of
  * `params` it understands. Always a fixed path. */
 export function categoryHref(category: PartnerCategory | null, params: Params = {}): string {

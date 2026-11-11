@@ -17,12 +17,14 @@ import { useSession } from "@/lib/auth/useSession";
 import { usePortals } from "@/lib/portalContext";
 import { portalHref } from "@/lib/portals";
 import consoleStyles from "@/features/console/Console.module.css";
+import guestStyles from "./GuestBanner.module.css";
 import { adminSignInUrl } from "@/features/auth/signInMode";
 import loginStyles from "@/features/auth/LoginScreen.module.css";
 import { PARTNER_MENU, type Can } from "@/features/partnerpanel/menu";
 import { ForcedPasswordChange } from "./ForcedPasswordChange";
 import { AdminAccount, AdminTools, roleLabel } from "./AdminTopbar";
 import { ADMIN_PAGE_TITLES, adminNav } from "./adminNav";
+import { CATEGORY_MENU_LABEL, isCategory } from "./partnerCategories";
 import { ModuleNav } from "./ModuleNav";
 import { Icon } from "@/components/sidebar/icons";
 import { ToastProvider } from "./kit/Confirm";
@@ -280,10 +282,16 @@ const STATUS_NOTICE: Record<string, string> = {
     "This partner account has ended. Its commission and payout history stays visible; nothing else is available.",
 };
 
-/** Where "Exit Guest Mode" goes: the Admin page the server named, only if it is
- * one of the Admin's partner pages on the Admin's own origin; else the partner's
- * own page in the Admin. */
-export function guestReturnUrl(returnUrl: string | undefined, portals: ReturnType<typeof usePortals>, partnerId: string): string {
+/** Where a guest session's return goes: the Admin page the server named, only if it
+ * is one of the Admin's partner pages on the Admin's own origin; else the partner's
+ * own page in the Admin. `returned` marks a partner list (`?guest=ended`) so it
+ * brings back the search and filters it had in this tab (`lastPartnerList`). */
+export function guestReturnUrl(
+  returnUrl: string | undefined,
+  portals: ReturnType<typeof usePortals>,
+  partnerId: string,
+  { returned = false }: { returned?: boolean } = {},
+): string {
   const fallback = portalHref(portals, "admin", `/admin/partners/${encodeURIComponent(partnerId)}`);
   if (!returnUrl) return fallback;
   try {
@@ -291,6 +299,9 @@ export function guestReturnUrl(returnUrl: string | undefined, portals: ReturnTyp
     const target = new URL(returnUrl, base);
     const home = new URL(base);
     if (target.origin !== home.origin || !/^\/admin\/partners(\/|$)/.test(target.pathname)) return fallback;
+    if (returned && /^\/admin\/partners\/(all|affiliate|reseller|white-label)$/.test(target.pathname)) {
+      target.search = "?guest=ended";
+    }
     // Single host: a path on this origin, like every other link here.
     return portals ? target.toString() : `${target.pathname}${target.search}`;
   } catch {
@@ -298,22 +309,32 @@ export function guestReturnUrl(returnUrl: string | undefined, portals: ReturnTyp
   }
 }
 
-/** Guest Mode (Login as Guest, ADR-062): a Super Admin viewing a partner's own
- * dashboard. Said on every page - which partner, of which type, who is looking,
- * until when - with a prominent way out. The server makes it read-only and ends
- * it by itself; this only explains it. Exiting ends the guest view (and this
- * portal's session) on the server, then returns to the Admin page it came from,
- * where the Admin's own session is untouched. */
+/** Guest Session (Login as Guest, ADR-062): a Super Admin viewing a partner's own
+ * dashboard. Said on every page, held at the top while the page scrolls - which
+ * partner, of which type, who is looking, until when - with two ways out, each of
+ * which ends the session on the server first:
+ *
+ * - **Return to Super Admin**: back to the Admin page it was started from (a
+ *   partner list keeps its search and filters);
+ * - **End Guest Session**: to that partner's own page in the Admin.
+ *
+ * The server makes the view read-only and ends it by itself; this only explains
+ * it. The Admin's own session is untouched, so no new sign-in is needed. The
+ * guest page is replaced in this tab's history rather than kept behind the Admin
+ * page. */
 export function GuestViewBanner({ partner, guest }: { partner: PortalPartner; guest: NonNullable<PortalPartner["guest"]> }) {
   const portals = usePortals();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"return" | "end" | null>(null);
   const [failed, setFailed] = useState(false);
   const ends = new Date(guest.expires_at);
-  // The partner's type as the server words it: the workspace it lands in.
-  const kind = partner.workspaces?.find((w) => w.key === (partner.level ?? partner.landing))?.label ?? "";
+  // The partner's type in the Admin's words: the list (Affiliate, Reseller, White
+  // Label) the server files it under, else the workspace it lands in.
+  const kind = isCategory(partner.category)
+    ? CATEGORY_MENU_LABEL[partner.category]
+    : (partner.workspaces?.find((w) => w.key === (partner.level ?? partner.landing))?.label ?? "");
   const viewer = guest.viewer ? guest.viewer.name || guest.viewer.email : "";
-  async function exit() {
-    setBusy(true);
+  async function leave(to: "return" | "end") {
+    setBusy(to);
     setFailed(false);
     let answer: { return_url?: string };
     try {
@@ -321,24 +342,47 @@ export function GuestViewBanner({ partner, guest }: { partner: PortalPartner; gu
     } catch {
       // Not ended: stay here and say so, rather than leave the view running
       // behind a page that looks like it was left.
-      setBusy(false);
+      setBusy(null);
       setFailed(true);
       return;
     }
-    window.location.assign(guestReturnUrl(answer.return_url, portals, partner.partner_id));
+    window.location.replace(
+      to === "return"
+        ? guestReturnUrl(answer.return_url, portals, partner.partner_id, { returned: true })
+        : guestReturnUrl(undefined, portals, partner.partner_id),
+    );
   }
   return (
-    <div role="status" aria-label="Guest Session" className={`w360-badge w360-badge-info ${consoleStyles.banner} ${consoleStyles.notice}`}>
-      {/* ADR-063: the specification's wording, then what it means. */}
-      <strong>Guest Session — Viewing Partner: {partner.display_name}</strong>
-      {kind && ` (${kind})`}. Read only
-      {viewer && `, viewing as ${viewer}`}
-      {Number.isNaN(ends.getTime()) ? "" : `, until ${ends.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}. Nothing can be changed
-      here, and every page you open is recorded.{" "}
-      <button type="button" className="w360-btn w360-btn-primary" onClick={() => void exit()} disabled={busy}>
-        Exit Guest Session
-      </button>
-      {failed && <span role="alert"> The guest session could not be ended. Try again.</span>}
+    <div role="status" aria-label="Guest Session" className={`w360-badge w360-badge-info ${consoleStyles.banner} ${consoleStyles.notice} ${guestStyles.banner}`}>
+      <span className={guestStyles.text}>
+        {/* The specification's wording, then what it means. */}
+        <strong>Guest Session – Viewing Partner: {partner.display_name}</strong>
+        {kind && (
+          <>
+            {" "}
+            <span className={guestStyles.type}>Partner type: {kind}</span>
+          </>
+        )}{" "}
+        <span className={guestStyles.detail}>
+          Read only
+          {viewer && `, viewing as ${viewer}`}
+          {Number.isNaN(ends.getTime()) ? "" : `, until ${ends.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}. Nothing can be
+          changed here, and every page you open is recorded.
+        </span>
+      </span>{" "}
+      <span className={guestStyles.actions}>
+        <button type="button" className="w360-btn w360-btn-primary" onClick={() => void leave("return")} disabled={busy !== null} aria-busy={busy === "return" || undefined}>
+          {busy === "return" ? "Returning…" : "Return to Super Admin"}
+        </button>
+        <button type="button" className="w360-btn w360-btn-secondary" onClick={() => void leave("end")} disabled={busy !== null} aria-busy={busy === "end" || undefined}>
+          {busy === "end" ? "Ending…" : "End Guest Session"}
+        </button>
+      </span>
+      {failed && (
+        <span role="alert" className={guestStyles.problem}>
+          The guest session could not be ended. Try again.
+        </span>
+      )}
     </div>
   );
 }

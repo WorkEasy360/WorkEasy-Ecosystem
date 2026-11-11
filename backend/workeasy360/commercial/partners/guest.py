@@ -257,7 +257,15 @@ def start(
                 "partner.guest_view_started",
                 resource_type="partners.partner",
                 resource_id=partner_id,
-                changes={"guest_view_id": str(row.id), "minutes": GUEST_MINUTES},
+                changes={
+                    "guest_view_id": str(row.id),
+                    "minutes": GUEST_MINUTES,
+                    # The category the Admin lists the partner under (Affiliate,
+                    # Reseller, White Label) when the view opened (2026-11-11:
+                    # the activity log names it; it can change later, so it is
+                    # recorded, not derived).
+                    "category": selectors.category_of(partner_id),
+                },
                 reason=text,
             )
     except IntegrityError as exc:
