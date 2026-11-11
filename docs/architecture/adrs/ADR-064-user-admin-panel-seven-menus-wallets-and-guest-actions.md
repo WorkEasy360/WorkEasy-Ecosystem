@@ -1,6 +1,6 @@
 # ADR-064: The User Admin Panel: seven menus, the customer's three wallets, and Login as Guest beside View
 
-Date: 2026-11-11. Status: accepted (built on `feat/partner-admin-panel`, not committed, not deployed). Amends ADR-059 (each portal's own sign-in page), ADR-060 (wallets readable and fundable by staff only), ADR-062 and ADR-063 (where Login as Guest sits and what its record holds), and the 2026-11-03 consolidation of the organization console's sidebar into 13 entries.
+Date: 2026-11-11. Status: accepted; committed as `1989f60` on `feat/partner-admin-panel` and live as release `2026.11.12-1989f60` (12 November 2026). Amends ADR-059 (each portal's own sign-in page), ADR-060 (wallets readable and fundable by staff only), ADR-062 and ADR-063 (where Login as Guest sits and what its record holds), and the 2026-11-03 consolidation of the organization console's sidebar into 13 entries.
 
 ## Context
 

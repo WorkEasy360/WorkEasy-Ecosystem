@@ -1,6 +1,6 @@
 # User Admin Panel (specification of 08 November 2026): status
 
-Branch `feat/partner-admin-panel`, on top of `279ff84`. **Not committed, not pushed, not deployed.** The local development database is **not migrated**: this work adds one migration, `billing.0003_billing_profile` (business name and address fields on `BillingAccount`, empty defaults, safe while old and new code overlap), which waits for the owner's approval. Decisions: [ADR-064](../architecture/adrs/ADR-064-user-admin-panel-seven-menus-wallets-and-guest-actions.md). Browser check: [scripts/user_admin_check](../../scripts/user_admin_check/README.md).
+Branch `feat/partner-admin-panel`. **Committed as `1989f60`, pushed (PR #3), and live as release `2026.11.12-1989f60` since 12 November 2026** (patch build from the `3a1289b` images; pre-deploy backup `20261111T235220Z`; `billing.0003_billing_profile` applied by the release's migrate task, 0 unapplied; API healthy, 0 error lines; `app.workeasy360.com/login` serves the User Admin Login). The migration adds seven text columns with database defaults, so **rollback is the release switch alone**: `W360_RELEASE=2026.11.11-3a1289b`, `current` to that release, `w360 up -d api worker-critical web`. The local development database was migrated on 12 November 2026 at the owner's request, after a backup. Decisions: [ADR-064](../architecture/adrs/ADR-064-user-admin-panel-seven-menus-wallets-and-guest-actions.md). Browser check: [scripts/user_admin_check](../../scripts/user_admin_check/README.md).
 
 ## Results
 
@@ -62,6 +62,5 @@ The browser check signs in as the seeded owner, a Billing Manager, an Administra
 
 ## Owner steps
 
-1. Review the UI (the screenshots from the browser check are in the session's scratch folder, or run the check again from its README).
-2. Approve migrating the local development database (`billing.0003_billing_profile`).
-3. Commit, push and deploy. Each needs an explicit go-ahead; production applies the migration through the release's migrate task.
+1. Merge PR #3 (`feat/partner-admin-panel` -> `main`) when ready, so `main` matches production.
+2. Live customers see the new User Admin Login and console on their next visit; nothing needs configuring.
