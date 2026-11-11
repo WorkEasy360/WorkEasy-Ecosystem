@@ -1,6 +1,6 @@
 # Partner Admin Panel (specification of 08 November 2026): status
 
-Branch `feat/partner-admin-panel`, cut from `feat/admin-panel` at `dccf643` (the live release). **Not committed, not pushed, not deployed.** Nothing was run against production, and the local development database was not migrated. Decisions: [ADR-063](../architecture/adrs/ADR-063-partner-admin-panel-eight-menus-wallet-and-onboarding.md). Audit before the work: [00-gap-analysis.md](00-gap-analysis.md). Browser check: [scripts/partner_admin_panel_check](../../scripts/partner_admin_panel_check/README.md).
+Branch `feat/partner-admin-panel`, cut from `feat/admin-panel` at `dccf643` (the live release). **Committed as `0e58322` (not pushed) and live as release `2026.11.11-0e58322` since 11 November 2026**: the three migrations applied in production by the release's migrate task (0 unapplied), pre-deploy backup `20261111T062334Z`, API healthy, no restarts. Rollback: restore that backup, then release `2026.11.10-dccf643`. The local development database was migrated the same day, at the owner's request, after a backup. Decisions: [ADR-063](../architecture/adrs/ADR-063-partner-admin-panel-eight-menus-wallet-and-onboarding.md). Audit before the work: [00-gap-analysis.md](00-gap-analysis.md). Browser check: [scripts/partner_admin_panel_check](../../scripts/partner_admin_panel_check/README.md).
 
 ## Results
 
@@ -120,11 +120,11 @@ See Results above.
 
 ## I. Deployment readiness
 
-**Not deployed; ready for review, not for production without the owner's decisions above.** The code is complete and tested end to end on a production build. Before a deployment: approve the three migrations (all additive or choices-only, `overlap_safety` declared), confirm the two partner policies (their defaults keep production's behaviour), and decide renewal grace and GST. A live payment provider is needed for online top-ups; offline top-ups by staff keep working.
+**Deployed on 11 November 2026 as `2026.11.11-0e58322`** (patch build on the live `dccf643` images; dependencies and Dockerfiles unchanged), at the owner's word "commit and deploy". Before it: the backend tests that scan the frontend and the sign-in tests, 623 / 623 (the full suite, 5,428 / 5,428, ran earlier the same day on the same backend apart from Remember me). After it: `partner.` `/login` and `/partner/apply` serve the new pages, `admin.` and `app.` unchanged (200 / 302), API healthy, worker online. The owner's decisions in H remain open; their defaults keep production's behaviour. KYC approval in production still needs a malware scanner on the server (ADR-061). The branch is not pushed.
 
 ## Addendum, 11 November 2026: Partner sign-in and sign-up to the owner's reference image
 
-Same branch, also **not committed, not pushed, not deployed**. No migration.
+Same commit and release as above.
 
 - **Partner Login** (`partner.` `/login`, single-host `/login?mode=partner`): the Admin sign-in's two-sided frame (`AuthSplitFrame`, shared) with the partner's story - Partner Portal pill, "Grow Your Business with WorkEasy360", the four features beside an abstract laptop (no figures), Our Product Ecosystem (OneClickAPI, SailoAI, VyniAI, RCS / SMS, Website Builder, and More Products - the names from the image) - and the card: Partner Portal badge, Email Address, Password with show / hide, Remember me, Forgot Password?, Login to Partner Portal, New to WorkEasy360?, Create Partner Account, Partner Benefits. Continue as Guest (2026-11-10) is kept under the sign-up button. `features/auth/PartnerLogin.tsx`.
 - **Create Partner Account** (`/partner/apply`): the same frame and field style; the same fields, checks and server call as before; the partner type as three tiles.
@@ -143,4 +143,4 @@ Open for the owner: confirm the product names in Our Product Ecosystem (taken fr
 
 ## Addendum, 11 November 2026: the Partner panel in the Admin console's colours
 
-At the owner's request (his Admin Dashboard screenshot): the partner workspace shell uses the console look the Super Admin has - `SidebarShell variant="admin"` (deep teal top bar and sidebar, the current page a green pill, the light sheet with its rounded corner), a "Partner Portal" badge, "Collapse menu", the account button with the name; the workspace label, the Partner Level badge and "Upgrade Plan" restyled for the dark bar. Billing Records no longer shows the wallet section to a partner without a Platform Wallet. Not committed. Checked: partner panel, sidebar, control plane and token suites 476 / 476; on the dev server the reseller and White Label dashboards are axe clean with no console error (1536 px and 390 px).
+At the owner's request (his Admin Dashboard screenshot): the partner workspace shell uses the console look the Super Admin has - `SidebarShell variant="admin"` (deep teal top bar and sidebar, the current page a green pill, the light sheet with its rounded corner), a "Partner Portal" badge, "Collapse menu", the account button with the name; the workspace label, the Partner Level badge and "Upgrade Plan" restyled for the dark bar. Billing Records no longer shows the wallet section to a partner without a Platform Wallet. Same commit and release. Checked: partner panel, sidebar, control plane and token suites 476 / 476; on the dev server the reseller and White Label dashboards are axe clean with no console error (1536 px and 390 px).
