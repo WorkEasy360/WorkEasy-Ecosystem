@@ -80,5 +80,22 @@ class GuestSessionMiddleware:
                 permission="partner.guest",
                 reason="guest_read_only",
             )
-            return JsonResponse(denied.as_dict(), status=denied.http_status)
-        return self.get_response(request)
+            refused = JsonResponse(denied.as_dict(), status=denied.http_status)
+            guest.record_request(
+                view,
+                method=request.method or "",
+                path=request.path,
+                status=refused.status_code,
+            )
+            return refused
+        response = self.get_response(request)
+        # ADR-063: each API request of a guest view is audited (pages and
+        # static files are not: they carry no partner data).
+        if request.path.startswith("/api/"):
+            guest.record_request(
+                view,
+                method=request.method or "",
+                path=request.path,
+                status=response.status_code,
+            )
+        return response

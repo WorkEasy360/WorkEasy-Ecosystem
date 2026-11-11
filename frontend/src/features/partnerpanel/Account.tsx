@@ -24,20 +24,37 @@ function zones(): string[] {
   }
 }
 
+/** Settings → My Account & Security (ADR-063): the signed-in person's own
+ * password and sessions, and the partner's activity trail. The business profile
+ * is under Settings → Business & KYC. */
 export function Account() {
-  const { id, can, partner } = usePanel();
-  const [load, reload] = useLoad(() => panelApi.profile(id), [id]);
+  const { can, partner } = usePanel();
   return (
     <div className={styles.page}>
-      <PageHeader title="Account" lead="Your business details, and how you sign in. Business details are how Workeasy360 reaches and invoices you." />
-      <LoadGate load={load} what="your settings">
-        {(p) => <ProfileForm profile={p} onSaved={reload} />}
-      </LoadGate>
+      <PageHeader
+        title="My Account & Security"
+        lead="How you sign in: your password and where you are signed in. Your business details are under Business & KYC."
+      />
       {/* Profile & Security (2026-11-10): the person's own password and sessions.
           Never in a staff guest view - that session is the staff member's own. */}
-      {!partner?.guest && <SignInSecurity />}
+      {partner?.guest ? (
+        <p className={styles.muted}>Your own sign-in is not shown in a guest session.</p>
+      ) : (
+        <SignInSecurity />
+      )}
       {can("activity.view") && <ActivityTrail />}
     </div>
+  );
+}
+
+/** The business profile, for Settings → Business & KYC (ADR-063). */
+export function BusinessProfile() {
+  const { id } = usePanel();
+  const [load, reload] = useLoad(() => panelApi.profile(id), [id]);
+  return (
+    <LoadGate load={load} what="your business profile">
+      {(p) => <ProfileForm profile={p} onSaved={reload} />}
+    </LoadGate>
   );
 }
 
@@ -50,7 +67,21 @@ function SignInSecurity() {
     <section className={styles.card} aria-labelledby="signin-security">
       <h2 id="signin-security">Your sign-in</h2>
       <p className={styles.muted}>Your own password and where you are signed in. Changing your password signs out every other session.</p>
-      <ChangePasswordForm popup onChanged={reloadSessions} />
+      <p className={styles.actionsRow}>
+        <ChangePasswordForm popup onChanged={reloadSessions} />
+        <button
+          type="button"
+          className="w360-btn w360-btn-secondary"
+          disabled={busy}
+          onClick={() =>
+            void act(async () => {
+              await accountApi.revokeOtherSessions();
+            }, "Signed out every other session.")
+          }
+        >
+          Sign out all other sessions
+        </button>
+      </p>
       {feedback}
       <LoadGate load={sessions} what="your sessions">
         {(d) => (

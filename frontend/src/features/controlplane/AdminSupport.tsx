@@ -388,13 +388,16 @@ function ResolvePopup({ t, onDone }: { t: TicketDetail; onDone: () => void }) {
 
 // --- help content ------------------------------------------------------------------------
 
-const KIND_LABEL: Record<HelpArticleRow["kind"], string> = { faq: "FAQ", setup_guide: "Setup guide" };
+const KIND_LABEL: Record<HelpArticleRow["kind"], string> = { faq: "FAQ", setup_guide: "Setup guide", sales_guide: "Sales guide (partners)" };
 const AUDIENCE_LABEL: Record<HelpArticleRow["audience"], string> = { all: "All", customer: "Customers", partner: "Partners" };
 
 const KIND_FILTER = [
   { value: "", label: "All kinds" },
   { value: "faq", label: "FAQ" },
   { value: "setup_guide", label: "Setup guide" },
+  // ADR-063: a sales guide or product document, shown to partners under
+  // Products & Referrals -> Sales Resources.
+  { value: "sales_guide", label: "Sales guide (partners)" },
 ];
 
 const STATUS_FILTER = [

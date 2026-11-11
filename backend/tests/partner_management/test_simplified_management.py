@@ -232,16 +232,11 @@ def test_a_new_reseller_profile_is_incomplete_with_what_it_needs(catalog, admin)
             "reseller",
             {"business", "capabilities", "products", "commission", "administrator"},
         ),
+        # ADR-063: White Label alone sells and earns nothing, so it needs no
+        # products and no commission - only its brand.
         (
             "white_label",
-            {
-                "business",
-                "capabilities",
-                "products",
-                "commission",
-                "brand",
-                "administrator",
-            },
+            {"business", "capabilities", "brand", "administrator"},
         ),
         (
             "affiliate",
@@ -271,7 +266,11 @@ def test_the_custom_domain_and_prices_never_count(catalog, admin):
     complete_profile(admin, created["id"])
     states = section_states(summary(admin, created["id"]))
     assert states["domain"] == ("optional", False)
-    assert states["pricing"] == ("optional", False)
+    # ADR-063: pricing is a seller's section; White Label alone sells nothing.
+    assert "pricing" not in states
+    seller = create(admin, "reseller", name="Seller Co", email="owner@seller-co.example.com")
+    complete_profile(admin, seller["id"])
+    assert section_states(summary(admin, seller["id"]))["pricing"] == ("optional", False)
 
 
 def test_a_combined_partner_needs_the_union_of_its_capabilities(catalog, admin):

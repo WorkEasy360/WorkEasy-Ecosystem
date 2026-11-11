@@ -452,8 +452,10 @@ type SettingsDraft = Pick<
   | "company_address"
   | "company_tax_id"
   | "notifications_email"
+  | "partner_legacy_kyc_policy"
+  | "partner_suspended_commission_policy"
 > & { tax_rate: string };
-type SectionKey = "company" | "signup" | "applications" | "contact" | "billing" | "notifications";
+type SectionKey = "company" | "signup" | "applications" | "partners" | "contact" | "billing" | "notifications";
 
 export function PlatformSettingsScreen() {
   const { permissions } = useAdmin();
@@ -483,6 +485,8 @@ const draftOf = (s: PlatformSettings): SettingsDraft => ({
   company_address: s.company_address,
   company_tax_id: s.company_tax_id,
   notifications_email: s.notifications_email,
+  partner_legacy_kyc_policy: s.partner_legacy_kyc_policy ?? "allow",
+  partner_suspended_commission_policy: s.partner_suspended_commission_policy ?? "accrue",
   tax_rate: taxRateText(s.tax_rate_bp),
 });
 
@@ -518,6 +522,8 @@ function SettingsSections({ settings, manage, onSaved }: { settings: PlatformSet
       await adminConsoleApi.saveSettings({
         signup_enabled: draft.signup_enabled,
         partner_applications_enabled: draft.partner_applications_enabled,
+        partner_legacy_kyc_policy: draft.partner_legacy_kyc_policy,
+        partner_suspended_commission_policy: draft.partner_suspended_commission_policy,
         support_email: draft.support_email.trim(),
         sales_email: draft.sales_email.trim(),
         public_catalog_currency: draft.public_catalog_currency,
@@ -639,6 +645,77 @@ function SettingsSections({ settings, manage, onSaved }: { settings: PlatformSet
           </>
         ) : (
           <DescriptionList items={[{ label: "Partner applications", value: settings.partner_applications_enabled ? "Open" : "Closed" }]} />
+        )}
+      </Card>
+
+      <Card
+        title="Partner policies"
+        description="Two partner rules only an Admin decides (ADR-063). Both apply from the next request."
+        actions={editButton("partners", "Edit partner policies")}
+      >
+        {editing === "partners" ? (
+          <>
+            <fieldset className={local.formGrid}>
+              <legend>Partners active before KYC was required</legend>
+              <label className={local.check}>
+                <input
+                  type="radio"
+                  name="legacy-kyc"
+                  checked={draft.partner_legacy_kyc_policy === "allow"}
+                  onChange={() => setDraft({ ...draft, partner_legacy_kyc_policy: "allow" })}
+                />
+                Keep trading, labelled &quot;Active before KYC&quot;
+              </label>
+              <label className={local.check}>
+                <input
+                  type="radio"
+                  name="legacy-kyc"
+                  checked={draft.partner_legacy_kyc_policy === "restrict"}
+                  onChange={() => setDraft({ ...draft, partner_legacy_kyc_policy: "restrict" })}
+                />
+                Restrict to onboarding until their KYC is approved
+              </label>
+            </fieldset>
+            <p className={local.note}>
+              Restricting pauses their referral links and attribution, customers, plan activation, the Platform Wallet and payout requests until
+              their KYC is approved. No KYC approval is ever recorded for them automatically. Approving KYC needs a malware scanner in production.
+            </p>
+            <fieldset className={local.formGrid}>
+              <legend>Commission while a partner is suspended</legend>
+              <label className={local.check}>
+                <input
+                  type="radio"
+                  name="suspended-commission"
+                  checked={draft.partner_suspended_commission_policy === "accrue"}
+                  onChange={() => setDraft({ ...draft, partner_suspended_commission_policy: "accrue" })}
+                />
+                Keep accruing; payouts stay on hold
+              </label>
+              <label className={local.check}>
+                <input
+                  type="radio"
+                  name="suspended-commission"
+                  checked={draft.partner_suspended_commission_policy === "stop"}
+                  onChange={() => setDraft({ ...draft, partner_suspended_commission_policy: "stop" })}
+                />
+                Stop accruing new commission
+              </label>
+            </fieldset>
+            {footer}
+          </>
+        ) : (
+          <DescriptionList
+            items={[
+              {
+                label: "Active before KYC",
+                value: settings.partner_legacy_kyc_policy === "restrict" ? "Restricted until KYC is approved" : "Keep trading",
+              },
+              {
+                label: "Suspended partners",
+                value: settings.partner_suspended_commission_policy === "stop" ? "No new commission" : "Commission accrues; payouts on hold",
+              },
+            ]}
+          />
         )}
       </Card>
 

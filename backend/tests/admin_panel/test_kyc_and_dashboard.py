@@ -1231,10 +1231,13 @@ class TestNewPartnerForm:
         assert client.get(f"/api/v1/partner/{partner.id}/kyc").status_code == 200
         partner.refresh_from_db()
         assert partner.status == "draft"
-        # The type's grants are recorded, but a draft's grants confer nothing: the
-        # partner's own operations are refused until it is activated.
+        # The type's grants are recorded, but a draft's grants confer nothing: its
+        # commercial operations are refused until it is activated. ADR-063: it may
+        # read its onboarding dashboard and reach support meanwhile.
         assert selectors.active_capabilities(partner.id)
-        assert client.get(f"/api/v1/partner/{partner.id}/dashboard").status_code == 403
+        assert client.get(f"/api/v1/partner/{partner.id}/dashboard").status_code == 200
+        assert client.get(f"/api/v1/partner/{partner.id}/customers").status_code == 403
+        assert client.get(f"/api/v1/partner/{partner.id}/tickets").status_code == 200
 
     def test_a_password_typed_by_staff_must_be_replaced_when_asked(self, staff_login):
         """2026-11-10: with "Set a password now", the form asks by default that the

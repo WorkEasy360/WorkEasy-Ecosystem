@@ -28,7 +28,6 @@ import {
   PricingRules,
   ProductBilling,
   ProductManager,
-  Subscriptions,
 } from "./Catalog";
 import { Notifications } from "./Help";
 import { CustomerDesk, Disputes, MyTickets, SavedReplies } from "./Helpdesk";
@@ -41,6 +40,11 @@ import { UnifiedDashboard } from "./UnifiedDashboard";
 import { UpgradePage } from "./UpgradeWizard";
 import { ApiKeys, ChannelManager, Translations } from "./Tools";
 import { Wallet } from "./Wallet";
+import { BillingRecords, CustomerSubscriptions } from "./BillingPages";
+import { BusinessKyc } from "./BusinessKyc";
+import { PlanActivation, ProductsSetup } from "./CustomerPages";
+import { PlatformWalletPage, WalletTransactions } from "./PlatformWallet";
+import { EligibleProducts, HelpContent, SalesResources } from "./ProductsReferrals";
 import type { ExperienceKey } from "./experiences";
 
 /**
@@ -54,7 +58,18 @@ import type { ExperienceKey } from "./experiences";
  */
 const PAGES: Record<string, ReactElement> = {
   users: <Users />,
-  "users/subscriptions": <Subscriptions />,
+  // ADR-063: Billing & Subscriptions -> Customer Subscriptions (filters, renew,
+  // change plan); the earlier plain list is replaced at the same address.
+  "users/subscriptions": <CustomerSubscriptions />,
+  "customers/setup": <ProductsSetup />,
+  "customers/activate": <PlanActivation />,
+  "billing-records": <BillingRecords />,
+  "platform-wallet": <PlatformWalletPage />,
+  "platform-wallet/transactions": <WalletTransactions />,
+  "eligible-products": <EligibleProducts />,
+  "sales-resources": <SalesResources />,
+  help: <HelpContent />,
+  "business-kyc": <BusinessKyc />,
   "partner-products": <PartnerProducts />,
   "product-manager": <ProductManager />,
   "product-billing": <ProductBilling />,

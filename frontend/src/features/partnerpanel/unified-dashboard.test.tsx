@@ -191,7 +191,7 @@ describe("the unified dashboard", () => {
       ["Total commission", 30000],
       ["Approved commission", 20000],
       ["Pending commission", 10000],
-      ["Available balance", 15000],
+      ["Available earnings", 15000],
     ] as const) {
       expect(within(section).getByText(label).closest("div")).toHaveTextContent(money(minor, "INR"));
     }
@@ -205,7 +205,8 @@ describe("the unified dashboard", () => {
     expect(levels).toHaveTextContent("Free");
     const actions = screen.getByRole("navigation", { name: "Quick actions" });
     const labels = within(actions).getAllByRole("link").map((a) => a.textContent);
-    expect(labels).toEqual(["Create Customer", "Add Order", "My Commission", "Raise Support Ticket"]);
+    // ADR-063 (the specification's 4.2): plan activation for a seller, support for everyone.
+    expect(labels).toEqual(["Activate Customer Plan", "Create Customer", "Contact Support"]);
   });
 
   it("has no detectable violations", async () => {

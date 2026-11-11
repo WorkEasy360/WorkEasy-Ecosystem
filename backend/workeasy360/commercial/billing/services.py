@@ -116,6 +116,55 @@ def billing_account_or_none(organization_id: UUID) -> Any:
     return BillingAccount.objects.filter(organization_id=organization_id).first()
 
 
+def adopt_partner_wallet(ctx: TenantContext) -> Any:
+    """ADR-063: the customer in ``ctx`` (a partner acting on it) is from now on
+    paid for by that partner from its Platform Wallet, and never invoiced.
+
+    Only from automatic collection, the default a reseller's new customer gets;
+    an account staff set to be invoiced or billed through its partner offline
+    keeps those terms (changing them is ``set_billing_terms``). The caller has
+    checked the customer holds no subscription it pays for itself. Idempotent."""
+    from workeasy360.commercial.billing.models import BillingAccount
+
+    authz.require(ctx, MANAGE)
+    if ctx.principal is not PrincipalKind.PARTNER:
+        raise CatalogValidationError(
+            "Only the customer's partner pays from its wallet.", field="collection_mode"
+        )
+    with transaction.atomic():
+        account = (
+            BillingAccount.objects.select_for_update()
+            .filter(organization_id=ctx.organization_id)
+            .first()
+        )
+        if account is None:
+            raise CatalogValidationError(
+                "This customer has no billing account yet.", field="billing_account"
+            )
+        if account.collection_mode == CollectionMode.PARTNER_WALLET.value:
+            return account
+        if account.collection_mode != CollectionMode.AUTOMATIC.value:
+            raise CatalogValidationError(
+                "Workeasy360 bills this customer on agreed terms. Ask support to "
+                "move it to your Platform Wallet.",
+                field="collection_mode",
+            )
+        account.collection_mode = CollectionMode.PARTNER_WALLET.value
+        account.save(update_fields=["collection_mode", "updated_at"])
+        audit.record(
+            ctx,
+            "commercial.billing_account.terms_changed",
+            resource_type="billing.account",
+            resource_id=account.id,
+            changes={
+                "before": {"collection_mode": CollectionMode.AUTOMATIC.value},
+                "after": {"collection_mode": account.collection_mode},
+            },
+            reason="The partner pays for this customer from its Platform Wallet.",
+        )
+    return account
+
+
 STAFF_TERMS = "platform.staff_payment.manage"
 
 

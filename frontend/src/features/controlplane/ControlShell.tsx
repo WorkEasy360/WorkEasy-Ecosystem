@@ -328,16 +328,17 @@ export function GuestViewBanner({ partner, guest }: { partner: PortalPartner; gu
     window.location.assign(guestReturnUrl(answer.return_url, portals, partner.partner_id));
   }
   return (
-    <div role="status" aria-label="Guest Mode" className={`w360-badge w360-badge-info ${consoleStyles.banner} ${consoleStyles.notice}`}>
-      <strong>Guest Mode – {partner.display_name}</strong>
+    <div role="status" aria-label="Guest Session" className={`w360-badge w360-badge-info ${consoleStyles.banner} ${consoleStyles.notice}`}>
+      {/* ADR-063: the specification's wording, then what it means. */}
+      <strong>Guest Session — Viewing Partner: {partner.display_name}</strong>
       {kind && ` (${kind})`}. Read only
       {viewer && `, viewing as ${viewer}`}
       {Number.isNaN(ends.getTime()) ? "" : `, until ${ends.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}. Nothing can be changed
-      here.{" "}
+      here, and every page you open is recorded.{" "}
       <button type="button" className="w360-btn w360-btn-primary" onClick={() => void exit()} disabled={busy}>
-        Exit Guest Mode
+        Exit Guest Session
       </button>
-      {failed && <span role="alert"> Guest Mode could not be ended. Try again.</span>}
+      {failed && <span role="alert"> The guest session could not be ended. Try again.</span>}
     </div>
   );
 }

@@ -15,6 +15,10 @@ export default function Page() {
 }
 
 function WalletsFromAddress() {
-  const low = useSearchParams().get("low") === "1";
-  return <PlatformWalletScreen key={low ? "low" : "all"} initialLow={low} />;
+  const params = useSearchParams();
+  const low = params.get("low") === "1";
+  // ADR-063: the partner list's "View Partner Wallet" names its partner.
+  const ownerType = params.get("owner_type") === "partner" ? "partner" : "";
+  const q = (params.get("q") ?? "").slice(0, 120);
+  return <PlatformWalletScreen key={`${low}-${ownerType}-${q}`} initialLow={low} initialOwnerType={ownerType} initialQuery={q} />;
 }

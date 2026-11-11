@@ -397,7 +397,7 @@ CLAMD_PORT = env.int("W360_CLAMD_PORT", 3310)
 CLAMD_TIMEOUT_SECONDS = env.float("W360_CLAMD_TIMEOUT_SECONDS", 30.0)
 KYC_MALWARE_SCAN_REQUIRED = env.bool("W360_KYC_MALWARE_SCAN_REQUIRED", True)
 FILES_STRICT_SCAN_MODULES = ("partner_kyc",)
-# The Admin sign-in's "Remember me" idle window. Never past the hard cap above.
+# The Admin and Partner sign-ins' "Remember me" idle window. Never past the hard cap above.
 SESSION_REMEMBER_ME_AGE = env.int("W360_SESSION_REMEMBER_ME_S", 60 * 60 * 24 * 7)
 
 # --- CSRF / security -----------------------------------------------------
@@ -973,6 +973,10 @@ CONTROL_PLANE_RATE_LIMITS = {
     # one-shot support form) and payout-detail / withdrawal changes.
     "partner_ticket_user": (env.int("W360_RL_PARTNER_TICKET_USER", 30), 300),
     "partner_ticket_ip": (env.int("W360_RL_PARTNER_TICKET_IP", 100), 300),
+    # ADR-063: opening a Platform Wallet top-up checkout, and paying a customer's
+    # plan from the wallet (each is a payment).
+    "partner_wallet_user": (env.int("W360_RL_PARTNER_WALLET_USER", 30), 300),
+    "partner_wallet_ip": (env.int("W360_RL_PARTNER_WALLET_IP", 100), 300),
     "partner_payout_user": (env.int("W360_RL_PARTNER_PAYOUT_USER", 10), 300),
     "partner_payout_ip": (env.int("W360_RL_PARTNER_PAYOUT_IP", 30), 300),
     # ADR-046: partner API keys. Managing them (create / rotate / revoke) is a

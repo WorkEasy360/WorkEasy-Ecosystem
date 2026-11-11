@@ -1,7 +1,6 @@
 "use client";
 
 import { Suspense, useEffect } from "react";
-import Link from "next/link";
 import { Logo } from "@/components/brand/Logo";
 import { useSearchParams } from "next/navigation";
 import { StatusScreen } from "@/components/StatusScreen";
@@ -10,6 +9,7 @@ import { usePortalRouter } from "@/lib/portalRouter";
 import { PORTAL_TO_MODE, type Portal } from "@/lib/portals";
 import { AdminLoginScreen } from "@/features/auth/AdminLogin";
 import { LoginForm } from "@/features/auth/LoginForm";
+import { PartnerLoginScreen } from "@/features/auth/PartnerLogin";
 import { destinationAfterSignIn, parseMode, type SignInMode } from "@/features/auth/signInMode";
 import { SignInSupport } from "@/features/controlplane/brandDisplay";
 import { useBranding, type HostBrand } from "@/features/controlplane/useBranding";
@@ -154,34 +154,22 @@ function SignInCard({ portal }: { portal: HostPortal }) {
         </p>
       )}
       <LoginForm mode={mode} />
-      {mode === "partner" && (
-        <>
-          <p className="w360-hint">
-            <Link href="/partner/apply">Apply to become a partner</Link>
-          </p>
-          {/* 2026-11-10: a read-only preview with example data. A guest is never a
-              partner: no account, no session, no partner rights. */}
-          <p className="w360-hint">
-            <Link href="/partner/preview" className="w360-btn w360-btn-secondary">
-              Continue as Guest
-            </Link>{" "}
-            A read-only preview with example data. Not a partner account.
-          </p>
-        </>
-      )}
     </>
   );
 }
 
-/** The Admin portal's sign-in has its own screen (AdminLogin.tsx); a product's
- * or a partner's sign-in on that host (`?resume=`, `?brand=`) never does. */
+/** The Admin and Partner portals' sign-ins have their own screens (AdminLogin.tsx,
+ * PartnerLogin.tsx, the owner's reference images); a product's or a partner's
+ * branded sign-in on those hosts (`?resume=`, `?brand=`) never does - it is the
+ * User mode, on the standard page. */
 function ScreenForMode({ portal }: { portal: HostPortal }) {
   const searchParams = useSearchParams();
-  if (modeFor(portal, searchParams) === "admin") {
+  const mode = modeFor(portal, searchParams);
+  if (mode === "admin" || mode === "partner") {
     return (
       <>
         <AlreadySignedInRedirect portal={portal} />
-        <AdminLoginScreen />
+        {mode === "admin" ? <AdminLoginScreen /> : <PartnerLoginScreen />}
       </>
     );
   }

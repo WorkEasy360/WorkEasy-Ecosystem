@@ -928,6 +928,29 @@ export interface PortalPartner {
   permissions?: string[];
   /** Present when a staff member is viewing this partner as a guest (read-only). */
   guest?: GuestView;
+  /** ADR-063: the category the partner is listed under (a draft's: the type it was created as). */
+  category?: string | null;
+  /** ADR-063: KYC and account states, side by side, and whether the partner may trade. */
+  onboarding?: PartnerOnboarding;
+}
+
+/** Where a partner stands before it may trade (ADR-063). KYC and account states
+ * are separate facts; `cleared` is whether the server lets it trade now. */
+export interface PartnerOnboarding {
+  kyc_status: "draft" | "submitted" | "under_review" | "correction_required" | "approved" | "rejected" | string;
+  account_status: string;
+  cleared: boolean;
+  reason: "kyc_pending" | "activation_pending" | "legacy_kyc_required" | string | null;
+  legacy: boolean;
+  kyc_required: boolean;
+}
+
+/** Whether the menu is confined to onboarding (ADR-063): a draft, or a partner
+ * made active before KYC existed that the Admin's policy restricts. A suspended or
+ * ended partner is not - its permissions already show only its history. */
+export function onboardingOnly(partner: Pick<PortalPartner, "status" | "onboarding">): boolean {
+  if (partner.status === "draft") return true;
+  return partner.onboarding?.reason === "legacy_kyc_required";
 }
 
 /** A staff guest view of one partner's portal: read-only, time-boxed, audited. */

@@ -13,14 +13,19 @@ pytestmark = pytest.mark.django_db
 # --- workspaces: additive, presentation only ----------------------------------------------
 
 
-def test_a_white_label_partner_also_opens_the_reseller_workspace():
-    held = set(capabilities.EXPERIENCE_BUNDLES[capabilities.WHITE_LABEL])
-    assert capabilities.workspaces(held) == ["reseller", "white_label"]
+def test_a_white_label_partner_opens_the_reseller_workspace_only_when_it_sells():
+    """ADR-063: White Label alone is branding and a domain; granted Reseller
+    beside it, the Reseller workspace is offered too (additive)."""
+    wl = set(capabilities.EXPERIENCE_BUNDLES[capabilities.WHITE_LABEL])
+    assert capabilities.workspaces(wl) == ["white_label"]
+    both = wl | set(capabilities.EXPERIENCE_BUNDLES[capabilities.RESELLER])
+    assert capabilities.workspaces(both) == ["reseller", "white_label"]
 
 
 def test_an_upgraded_affiliate_switches_between_all_three():
     held = {
         *capabilities.EXPERIENCE_BUNDLES[capabilities.AFFILIATE],
+        *capabilities.EXPERIENCE_BUNDLES[capabilities.RESELLER],
         *capabilities.EXPERIENCE_BUNDLES[capabilities.WHITE_LABEL],
     }
     assert capabilities.workspaces(held) == ["reseller", "white_label", "affiliate"]

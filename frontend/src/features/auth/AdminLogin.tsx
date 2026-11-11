@@ -27,11 +27,12 @@ const ECOSYSTEM = [
 ];
 
 /** An abstract console on a laptop. Decoration only: it carries no figures, so
- * nothing on the sign-in page can be read as a real number. */
-function LaptopArt() {
+ * nothing on the sign-in page can be read as a real number. The partner sign-in
+ * draws it too (PartnerLogin.tsx), with its own size. */
+export function LaptopArt({ className = styles.laptop }: { className?: string } = {}) {
   const bars = [46, 62, 54, 78, 70, 92, 84];
   return (
-    <svg className={styles.laptop} viewBox="0 0 520 330" aria-hidden="true" focusable="false">
+    <svg className={className} viewBox="0 0 520 330" aria-hidden="true" focusable="false">
       <rect className={styles.artFrame} x="58" y="8" width="404" height="262" rx="14" />
       <rect className={styles.artScreen} x="70" y="20" width="380" height="238" rx="6" />
       <rect className={styles.artSide} x="70" y="20" width="84" height="238" rx="6" />
@@ -112,22 +113,27 @@ function Hero() {
  * on the left, a card on the right. The forgotten-password and reset pages use
  * it too, so the Admin host never drops back to the public site's look.
  */
-export function AdminAuthFrame({
-  title,
-  description,
-  children,
-  footer,
-}: {
+export function AdminAuthFrame(props: FrameProps) {
+  return <AuthSplitFrame hero={<Hero />} {...props} />;
+}
+
+type FrameProps = {
   title: string;
   description?: React.ReactNode;
   children: React.ReactNode;
   footer?: React.ReactNode;
-}) {
+};
+
+/**
+ * The two-sided sign-in frame: a portal's story on the left (`hero`), the card on
+ * the right. The Admin and Partner portals each pass their own story.
+ */
+export function AuthSplitFrame({ hero, title, description, children, footer }: FrameProps & { hero: React.ReactNode }) {
   // Issues the CSRF cookie every form here needs (auth_views docstring).
   useSession();
   return (
     <main id="w360-main" className={styles.page}>
-      <Hero />
+      {hero}
       <section className={styles.side}>
         <div className={styles.card}>
           <div className={styles.cardHead}>
@@ -175,7 +181,7 @@ function Ecosystem() {
 
 /** Validation the browser can do before asking the server. The server's answer
  * still decides everything; it just never hears an obviously empty form. */
-function fieldProblem(email: string, password: string): string | null {
+export function fieldProblem(email: string, password: string): string | null {
   if (!email.trim()) return "Enter your email address.";
   if (!/^[^\s@]+@[^\s@]+$/.test(email.trim())) return "Enter a valid email address.";
   if (!password) return "Enter your password.";

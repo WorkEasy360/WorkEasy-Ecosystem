@@ -356,6 +356,9 @@ function Decision({
   const asked = open.proposal.products ?? [];
   const [chosen, setChosen] = useState<string[]>(asked);
   const [missing, setMissing] = useState<string[]>([]);
+  // ADR-063: an upgrade to White Label adds branding and a domain only;
+  // selling is granted beside it explicitly.
+  const [withReseller, setWithReseller] = useState(false);
 
   const offered = [...data.products, ...asked.filter((c) => !data.products.some((p) => p.code === c)).map((c) => ({ code: c, name: c }))];
   const needsNote = action !== "approve";
@@ -369,7 +372,13 @@ function Decision({
       await partnerConsoleApi.decideUpgrade(partnerId, open.id, {
         action,
         note: note.trim(),
-        ...(action === "approve" ? { products: chosen, commercial_reference: reference.trim() } : {}),
+        ...(action === "approve"
+          ? {
+              products: chosen,
+              commercial_reference: reference.trim(),
+              ...(open.to_experience === "white_label" && withReseller ? { also: ["reseller"] } : {}),
+            }
+          : {}),
       });
     } catch (err) {
       // The refusal text itself is shown by the popup; the list of what is
@@ -438,6 +447,18 @@ function Decision({
 
           {action === "approve" && (
             <>
+              {open.to_experience === "white_label" && (
+                <div className={dialog.span}>
+                  <label>
+                    <input type="checkbox" checked={withReseller} onChange={(e) => setWithReseller(e.target.checked)} /> Also allow Reseller: sell to
+                    customers and use the Platform Wallet
+                  </label>
+                  <p className={styles.muted}>
+                    White Label on its own gives branding and a custom domain. A partner that is not a reseller yet needs this ticked to sell the
+                    products below.
+                  </p>
+                </div>
+              )}
               <fieldset className={`${styles.field} ${dialog.span}`}>
                 <legend className="w360-label">Products the partner may sell</legend>
                 {offered.length === 0 ? (

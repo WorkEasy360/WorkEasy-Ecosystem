@@ -1307,6 +1307,20 @@ def product_counts(*, start: Any, end: Any) -> dict[str, int]:
     return {key: int(value or 0) for key, value in counts.items()}
 
 
+def products_by_codes(codes: Any) -> dict[str, dict[str, Any]]:
+    """These products as the catalog screens show them, by code - one query
+    (ADR-063: a partner's customer page links each product it holds)."""
+    from workeasy360.commercial.catalog.models import Product
+
+    wanted = sorted({str(c) for c in codes if c})
+    if not wanted:
+        return {}
+    return {
+        p.code: product_row(p)
+        for p in Product.objects.filter(code__in=wanted).select_related("trial_config")
+    }
+
+
 def product_names(codes: list[str]) -> dict[str, str]:
     """Display names by product code (one query)."""
     from workeasy360.commercial.catalog.models import Product

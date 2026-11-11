@@ -97,7 +97,7 @@ def login_view(request: HttpRequest) -> JsonResponse:
         from workeasy360.platform.administration.staff_users import record_staff_session
 
         record_staff_session(user, signed_in=True, where=connection_facts(request))
-        _apply_remember_me(request, body.get("remember"))
+    _apply_remember_me(request, body.get("remember"))
 
     metrics.increment("identity_login_success_total")
     return JsonResponse(
@@ -106,13 +106,15 @@ def login_view(request: HttpRequest) -> JsonResponse:
 
 
 def _apply_remember_me(request: HttpRequest, remember: Any) -> None:
-    """The Admin sign-in's "Remember me": how long this browser keeps the session.
+    """The Admin and Partner sign-ins' "Remember me": how long this browser keeps
+    the session (the Partner sign-in's since 2026-11-11, for anyone who signs in).
 
     Ticked: a persistent cookie and a longer idle window. Unticked: the cookie
     ends with the browser, and the normal idle window still applies on the
-    server. Not sent at all (any other sign-in form, any older client): nothing
-    changes. ``SESSION_ABSOLUTE_TIMEOUT`` caps every one of these, because it
-    is enforced from the row's ``created_at`` whatever the cookie says.
+    server. Not sent at all (the customer and product sign-in forms, any older
+    client): nothing changes. ``SESSION_ABSOLUTE_TIMEOUT`` caps every one of
+    these, because it is enforced from the row's ``created_at`` whatever the
+    cookie says.
     """
     if remember is True:
         request.session.set_expiry(settings.SESSION_REMEMBER_ME_AGE)

@@ -349,6 +349,12 @@ def guest_portal_entry(ctx: Any) -> dict[str, Any] | None:
     )
 
 
+def _onboarding(partner: Any) -> dict[str, Any]:
+    from workeasy360.commercial.partners import kyc
+
+    return kyc.onboarding_state(partner.id, status=partner.status)
+
+
 def _portal_entry(partner: Any, role: str, permissions: frozenset[str]) -> dict[str, Any]:
     held = active_capabilities(partner.id)
     return {
@@ -375,6 +381,11 @@ def _portal_entry(partner: Any, role: str, permissions: frozenset[str]) -> dict[
         # 2026-11-03: the level the unified dashboard shows (Level 1
         # Affiliate, 2 Reseller, 3 White-label) - the largest workspace.
         "level": capabilities.partner_level(held),
+        # ADR-063: the category the partner is listed under (a draft's comes
+        # from the type it was created as), and whether it may trade yet -
+        # KYC and account states side by side, never merged.
+        "category": capabilities.partner_category(partner.default_experience, held),
+        "onboarding": _onboarding(partner),
         # What the server will let this person do right now. The
         # portal's navigation is drawn from it; every request is
         # still authorized again by the service it reaches.
@@ -410,6 +421,19 @@ def link_for(partner_id: UUID, organization_id: UUID) -> Any | None:
         .exclude(status=PartnerLinkStatus.ENDED.value)
         .first()
     )
+
+
+def customer_names_for_partner(partner_id: UUID) -> list[dict[str, Any]]:
+    """This partner's live customers' names (ADR-063: a wallet movement names
+    its customer). An ended relationship shows no name, as on the customer list."""
+    from workeasy360.commercial.partners.models import PartnerOrganizationLink
+
+    return [
+        {"organization_id": org, "name": name}
+        for org, name in PartnerOrganizationLink.objects.filter(partner_id=partner_id)
+        .exclude(status=PartnerLinkStatus.ENDED.value)
+        .values_list("organization_id", "organization__display_name")
+    ]
 
 
 def live_link_for_organization(organization_id: UUID) -> Any | None:

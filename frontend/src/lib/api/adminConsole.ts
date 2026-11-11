@@ -288,6 +288,10 @@ export interface PlatformSettings {
   tax_rate_bp: number | null;
   default_tax_rate_bp: number;
   notifications_email: string;
+  /** ADR-063: what a partner active before KYC existed may do. */
+  partner_legacy_kyc_policy: "allow" | "restrict";
+  /** ADR-063: whether a suspended partner keeps accruing commission. */
+  partner_suspended_commission_policy: "accrue" | "stop";
   version: number;
 }
 
@@ -521,6 +525,8 @@ export const adminConsoleApi = {
   saveSettings: (body: {
     signup_enabled: boolean;
     partner_applications_enabled: boolean;
+    partner_legacy_kyc_policy?: "allow" | "restrict";
+    partner_suspended_commission_policy?: "accrue" | "stop";
     support_email: string;
     sales_email: string;
     public_catalog_currency: string;

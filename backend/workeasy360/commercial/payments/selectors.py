@@ -97,6 +97,22 @@ def order_summaries() -> Any:
     return OrderSummary.objects.all()
 
 
+def order_summaries_by_id(order_ids: list[Any]) -> dict[str, dict[str, Any]]:
+    """Some orders' summaries, keyed by order id (ADR-063: the wallet's movements
+    name the order they paid). Identifiers, codes and amounts only."""
+    from workeasy360.commercial.payments.models import OrderSummary
+
+    ids = [str(i) for i in order_ids if i]
+    if not ids:
+        return {}
+    return {
+        str(row["order_id"]): row
+        for row in OrderSummary.objects.filter(order_id__in=ids).values(
+            "order_id", "organization_id", "number", "description", "status", "partner_id"
+        )
+    }
+
+
 def paid_item_lines(organization_id: UUID) -> dict[str, list[dict[str, Any]]]:
     """Every paid invoice line naming a subscription line, grouped by that
     subscription line and ordered by billing period - what recurring

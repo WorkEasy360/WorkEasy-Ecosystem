@@ -19,7 +19,10 @@ export const EXPERIENCE_KEYS: ExperienceKey[] = ["reseller", "white_label", "aff
 /** The three type cards. Words only: what each grants is the server's bundle. */
 export const TYPE_CARDS: Record<ExperienceKey, { title: string; text: string }> = {
   reseller: { title: "Reseller", text: "Sell WorkEasy360 products and manage customers." },
-  white_label: { title: "White-label", text: "Sell WorkEasy360 products using your own brand and domain." },
+  white_label: {
+    title: "White-label",
+    text: "Their own branding and domain. White Label alone sells and refers nothing: tick Reseller or Affiliate below to allow that too.",
+  },
   affiliate: { title: "Affiliate", text: "Promote WorkEasy360 products and earn commissions." },
 };
 
@@ -101,6 +104,8 @@ export interface AddPartnerDraft {
   password: string;
   confirm: string;
   experience: ExperienceKey | null;
+  /** ADR-063: base permissions granted explicitly beside the type. */
+  also: ExperienceKey[];
 }
 
 export const emptyAddPartner = (experience: ExperienceKey | null = null): AddPartnerDraft => ({
@@ -117,6 +122,7 @@ export const emptyAddPartner = (experience: ExperienceKey | null = null): AddPar
   password: "",
   confirm: "",
   experience,
+  also: [],
 });
 
 /** What is plainly wrong, keyed by the server's own field names so a local
@@ -164,8 +170,10 @@ export function toOnboardingBody(d: AddPartnerDraft): OnboardingBody {
   const typed = d.mode === "create" && d.access === "password";
   const phone = d.phone.trim();
   const contact = d.separateContact ? d.contactEmail.trim() : "";
+  const also = d.also.filter((k) => k !== d.experience);
   return {
     experience: d.experience as ExperienceKey,
+    ...(also.length ? { also } : {}),
     partner: {
       display_name: d.name.trim(),
       ...(d.country ? { country: d.country } : {}),

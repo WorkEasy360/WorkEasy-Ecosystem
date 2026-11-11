@@ -6,7 +6,7 @@ import { expectNoViolations, mockApi, ok, SIGNED_IN, type Reply } from "@/featur
 import { PartnerDashboard } from "./Dashboard";
 import { Affiliates, Agency, Team } from "./Network";
 import { Balance, PartnerProducts, Payments, ProductBilling } from "./Catalog";
-import { Account, Integrations } from "./Account";
+import { Account, BusinessProfile, Integrations } from "./Account";
 import { APPROVED_LABELS } from "./menu";
 
 let pathname = "/partner/p1";
@@ -632,7 +632,8 @@ describe("account", () => {
       [`PUT ${API}/profile`]: [ok({ ...PROFILE, version: 8 })],
       [`GET ${API}/activity`]: [ok({ results: [{ id: "a1", occurred_at: "2026-10-01T00:00:00Z", label: "Business details or contacts changed", target: "business", actor: "owner@acme.example.com", outcome: "success" }], next_cursor: null, has_more: false })],
     });
-    const { container } = shell(<Account />);
+    // ADR-063: the business profile is under Settings -> Business & KYC.
+    const { container } = shell(<BusinessProfile />);
     // The saved values are text on the page; the fields are in the section's Edit popup.
     expect(await screen.findByText("Acme Ltd")).toBeInTheDocument();
     expect(screen.getByText("INR")).toBeInTheDocument();
@@ -661,7 +662,7 @@ describe("account", () => {
       [`GET ${API}/profile`]: [ok(PROFILE)],
     });
     shell(<Account />);
-    await screen.findByText("Acme Ltd");
+    await screen.findByRole("heading", { level: 1, name: "My Account & Security" });
     expect(screen.queryByRole("heading", { name: "Activity" })).not.toBeInTheDocument();
   });
 });

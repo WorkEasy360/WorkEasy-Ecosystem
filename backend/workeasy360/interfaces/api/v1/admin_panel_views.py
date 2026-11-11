@@ -151,6 +151,7 @@ def kyc_decision_view(
             flagged_requirements=body.get("flagged_requirements"),
             experience=body.get("experience"),
             expected_version=body.get("expected_version"),
+            also=body.get("also"),
         )
     )
 

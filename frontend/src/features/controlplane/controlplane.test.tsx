@@ -536,12 +536,12 @@ describe("the partner shell", () => {
       </PartnerShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    const banner = screen.getByRole("status", { name: "Guest Mode" });
-    expect(banner).toHaveTextContent("Guest Mode – Acme Partners");
+    const banner = screen.getByRole("status", { name: "Guest Session" });
+    expect(banner).toHaveTextContent("Guest Session — Viewing Partner: Acme Partners");
     expect(banner).toHaveTextContent("Read only");
-    expect(banner).toHaveTextContent("Nothing can be changed here.");
+    expect(banner).toHaveTextContent("Nothing can be changed here, and every page you open is recorded.");
     await expectNoViolations(container);
-    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Mode" }));
+    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Session" }));
     // No way back named: the partner's own page in the Admin.
     await waitFor(() => expect(assign).toHaveBeenCalledWith(`/admin/partners/${PARTNER}`));
     expect(calls.some((c) => c.key === "POST /api/v1/partner/guest-view/end")).toBe(true);

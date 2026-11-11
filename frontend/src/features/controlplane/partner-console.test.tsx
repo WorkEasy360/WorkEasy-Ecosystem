@@ -329,6 +329,14 @@ function renderList(permissions = [VIEW, MANAGE, GUEST, KYC], category?: "affili
 }
 
 /** Open a row's "⋯" menu and return it. */
+/** ADR-063: Login as Guest asks for the reason first; choose one and start. */
+async function confirmGuest(name: string, opts: { reason?: string; details?: string } = {}) {
+  const dialog = await screen.findByRole("dialog", { name: `Login as Guest · ${name}` });
+  if (opts.reason) fireEvent.change(within(dialog).getByLabelText("Reason"), { target: { value: opts.reason } });
+  if (opts.details) fireEvent.change(within(dialog).getByLabelText("Details (optional)"), { target: { value: opts.details } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Start guest session" }));
+}
+
 function openRowMenu(name: string) {
   fireEvent.click(screen.getByRole("button", { name: `Actions for ${name}` }));
   return screen.getByRole("menu", { name: `Actions for ${name}` });
@@ -341,7 +349,7 @@ function choose(label: string, option: string) {
 }
 
 describe("All partners", () => {
-  it("shows the partner, type, status, country, currency, wallet, last login and joined columns, with actions in a row menu", async () => {
+  it("shows the specification's columns (ADR-063), with actions in a row menu", async () => {
     mockApi(
       listRoutes([
         row(),
@@ -367,14 +375,15 @@ describe("All partners", () => {
     expect(screen.getByRole("heading", { level: 1, name: "All partners" })).toBeInTheDocument();
     const table = await screen.findByRole("table", { name: "Partners" });
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
-      "Partner",
-      "Type",
-      "Status",
+      "Partner Name",
+      "Partner Email",
+      "Type / Permissions",
+      "KYC Status",
+      "Account Status",
       "Country",
-      "Currency",
+      "Assigned Customers",
+      "Created",
       "Guest Login",
-      "Last login",
-      "Joined",
       "Actions",
     ]);
     const acme = within(table).getByRole("row", { name: /Acme Partners/ });
@@ -390,10 +399,10 @@ describe("All partners", () => {
     expect(within(table).queryByRole("switch")).not.toBeInTheDocument();
     const combo = within(table).getByRole("row", { name: /Combo Co/ });
     // One type, the partner's current workspace - never all it holds.
-    const typeCell = (r: HTMLElement) => within(r).getAllByRole("cell")[0];
-    expect(typeCell(combo)).toHaveTextContent(/^White-label$/);
+    // The type first, then the other permissions it holds (ADR-063: enabled permissions).
+    const typeCell = (r: HTMLElement) => within(r).getAllByRole("cell")[1];
+    expect(typeCell(combo)).toHaveTextContent(/^White-label\+ Reseller, Affiliate$/);
     expect(typeCell(acme)).toHaveTextContent(/^Reseller$/);
-    expect(combo).not.toHaveTextContent("Affiliate");
     expect(combo).toHaveTextContent("Setup required");
     expect(combo).toHaveTextContent("No administrator");
     await expectNoViolations(container);
@@ -401,16 +410,25 @@ describe("All partners", () => {
     const menu = openRowMenu("Acme Partners");
     expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
       "View partner",
-      "Edit setup",
-      "Manage KYC",
+      "Edit partner",
+      "Review KYC",
+      "Manage Permissions",
+      "View Assigned Customers",
+      "View Partner Wallet",
+      "View Commission & Payout Records",
       "Open partner panel",
       "Copy panel link",
       "Login as Guest",
       "Manage Guest Access",
       "Suspend",
     ]);
-    expect(within(menu).getByRole("menuitem", { name: "Manage KYC" })).toHaveAttribute("href", "/admin/partners/applications/p1");
-    expect(within(menu).getByRole("menuitem", { name: "Edit setup" })).toHaveAttribute("href", "/admin/partners/p1/profile");
+    expect(within(menu).getByRole("menuitem", { name: "Review KYC" })).toHaveAttribute("href", "/admin/partners/applications/p1");
+    expect(within(menu).getByRole("menuitem", { name: "Edit partner" })).toHaveAttribute("href", "/admin/partners/p1/profile");
+    expect(within(menu).getByRole("menuitem", { name: "View Partner Wallet" })).toHaveAttribute(
+      "href",
+      "/admin/wallets?owner_type=partner&q=Acme%20Partners",
+    );
+    expect(within(menu).getByRole("menuitem", { name: "View Assigned Customers" })).toHaveAttribute("href", "/admin/partners/p1?tab=customers");
     expect(within(menu).getByRole("menuitem", { name: /Open partner panel/ })).toHaveAttribute("href", `${window.location.origin}/partner/p1`);
     fireEvent.keyDown(menu, { key: "Escape" });
 
@@ -447,10 +465,11 @@ describe("All partners", () => {
     renderList();
     await screen.findByRole("table", { name: "Partners" });
     fireEvent.click(within(openRowMenu("Acme Partners")).getByRole("menuitem", { name: "Login as Guest" }));
-    expect(screen.queryByLabelText(/Why are you opening/)).not.toBeInTheDocument();
+    // ADR-063: the Admin says why; the reason is recorded with the session.
+    await confirmGuest("Acme Partners", { details: "ticket 42" });
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/partner/reseller/dashboard"));
     expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p1/guest-view")!.body).toEqual({
-      reason: "Login as Guest - All Partners",
+      reason: "Partner support request: ticket 42",
       return_path: "/admin/partners/all",
     });
     vi.unstubAllGlobals();
@@ -495,6 +514,7 @@ describe("All partners", () => {
     );
     await screen.findByRole("table", { name: "Partners" });
     fireEvent.click(within(openRowMenu("Acme Partners")).getByRole("menuitem", { name: "Login as Guest" }));
+    await confirmGuest("Acme Partners");
     await waitFor(() => expect(submitted).toHaveLength(1));
     expect(submitted[0]).toEqual({
       action: "https://partner.workeasy360.com/api/v1/partner/guest-view/enter",
@@ -536,6 +556,7 @@ describe("All partners", () => {
     );
     await screen.findByRole("table", { name: "Partners" });
     fireEvent.click(within(openRowMenu("Acme Partners")).getByRole("menuitem", { name: "Login as Guest" }));
+    await confirmGuest("Acme Partners");
     expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
     expect(submit).not.toHaveBeenCalled();
     submit.mockRestore();
@@ -623,8 +644,7 @@ describe("All partners", () => {
     const table = await screen.findByRole("table", { name: "Partners" });
     const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
     expect(headers).not.toContain("Earnings");
-    expect(headers.indexOf("Guest Login")).toBe(headers.indexOf("Currency") + 1);
-    expect(headers.indexOf("Last login")).toBe(headers.indexOf("Guest Login") + 1);
+    expect(headers.indexOf("Guest Login")).toBe(headers.indexOf("Created") + 1);
     for (const name of ["Acme Partners", "Second Co"]) {
       const button = within(within(table).getByRole("row", { name: new RegExp(name) })).getByRole("button", { name: `Login as Guest to ${name}` });
       expect(button).toHaveTextContent(/^Login$/);
@@ -647,7 +667,7 @@ describe("All partners", () => {
     expect(button).toHaveAccessibleDescription("Login as Guest");
   });
 
-  it("the Login button opens that partner's guest view through the real endpoint, with a spinner meanwhile", async () => {
+  it("the Login button asks why, then opens that partner's guest view through the real endpoint", async () => {
     const assign = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign, pathname: "/admin/partners/all" });
     const calls = mockApi(
@@ -660,13 +680,13 @@ describe("All partners", () => {
     renderList();
     const button = await screen.findByRole("button", { name: "Login as Guest to Second Co" });
     fireEvent.click(button);
-    expect(button).toHaveAttribute("aria-busy", "true");
-    // The other rows' buttons wait while one opens.
+    // The other rows' buttons wait while the dialog is open.
     expect(screen.getByRole("button", { name: "Login as Guest to Acme Partners" })).toBeDisabled();
+    await confirmGuest("Second Co", { reason: "Investigating a reported problem" });
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/partner/reseller/dashboard"));
     expect(calls.filter((c) => c.key.endsWith("/guest-view")).map((c) => c.key)).toEqual(["POST /api/v1/admin/partners/p2/guest-view"]);
     expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p2/guest-view")!.body).toEqual({
-      reason: "Login as Guest - All Partners",
+      reason: "Investigating a reported problem",
       return_path: "/admin/partners/all",
     });
     vi.unstubAllGlobals();
@@ -683,9 +703,10 @@ describe("All partners", () => {
     renderList();
     const button = await screen.findByRole("button", { name: "Login as Guest to Acme Partners" });
     fireEvent.click(button);
+    await confirmGuest("Acme Partners");
     expect(await screen.findByText("Insufficient permission: platform.staff_partner.guest")).toBeInTheDocument();
-    await waitFor(() => expect(button).not.toHaveAttribute("aria-busy"));
-    expect(button).toBeEnabled();
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Login as Guest · Acme Partners" })).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(button).toBeEnabled());
   });
 
   it("shows no Guest Login column to staff who may not start a guest view", async () => {
@@ -749,14 +770,15 @@ describe("All partners", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Reseller partners" })).toBeInTheDocument();
     const table = await screen.findByRole("table", { name: "Partners" });
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
-      "Partner",
-      "Type",
-      "Status",
+      "Partner Name",
+      "Partner Email",
+      "Type / Permissions",
+      "KYC Status",
+      "Account Status",
       "Country",
-      "Currency",
+      "Assigned Customers",
+      "Created",
       "Guest Login",
-      "Last login",
-      "Joined",
       "Actions",
     ]);
     const url = new URL(calls[0].url, "http://x");
@@ -885,7 +907,11 @@ describe("All partners", () => {
     const menu = openRowMenu("Acme Partners");
     expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
       "View partner",
-      "Edit setup",
+      "Edit partner",
+      "Manage Permissions",
+      "View Assigned Customers",
+      "View Partner Wallet",
+      "View Commission & Payout Records",
       "Open partner panel",
       "Copy panel link",
       // Reading the guest-view history is a view; starting or revoking one is not.

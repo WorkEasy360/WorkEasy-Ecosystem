@@ -123,7 +123,11 @@ def ensure_invoices(organization_id: UUID, *, at: datetime | None = None) -> lis
     if not subscriptions:
         return []
     account = billing_account(organization_id)
-    if account is None or account.collection_mode == CollectionMode.PARTNER_BILLED.value:
+    if account is None or account.collection_mode in (
+        CollectionMode.PARTNER_BILLED.value,
+        # ADR-063: the partner pays from its Platform Wallet; never the customer.
+        CollectionMode.PARTNER_WALLET.value,
+    ):
         return []
     facts = sale_facts(organization_id)
     issued: list[UUID] = []

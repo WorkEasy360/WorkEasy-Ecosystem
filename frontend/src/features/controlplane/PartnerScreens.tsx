@@ -30,10 +30,12 @@ function usePartnerId(): { id: string; has: (c: string) => boolean; active: bool
 
 interface Opening {
   partner_id: string;
-  /** A draft opens on its KYC application: there is nothing else it may do yet. */
+  /** ADR-063: a draft opens on its workspace's onboarding dashboard. */
   status?: string;
   landing?: string | null;
   workspaces?: { key: string }[];
+  /** The type it is listed under; a draft's is the type it was created as. */
+  category?: string | null;
 }
 
 /** Where a partner account opens: the workspace the **server** resolved for it
@@ -45,7 +47,10 @@ interface Opening {
  * address would silently open the wrong one, so each opens its own panel, which
  * carries the partner in the address. */
 export function openingPath(p: Opening, all: Opening[] = [p]): string {
-  if (p.status === "draft") return `/partner/${p.partner_id}/kyc`;
+  if (p.status === "draft") {
+    const own = isExperienceKey(p.landing) ? p.landing : isExperienceKey(p.category) ? p.category : "affiliate";
+    return workspaceHome(own);
+  }
   if (!isExperienceKey(p.landing)) return `/partner/${p.partner_id}`;
   const landing = p.landing;
   const holders = all.filter((q) => (q.workspaces ? q.workspaces.some((w) => w.key === landing) : q.partner_id === p.partner_id));

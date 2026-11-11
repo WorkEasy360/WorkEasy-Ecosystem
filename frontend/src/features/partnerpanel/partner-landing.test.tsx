@@ -24,13 +24,13 @@ beforeEach(() => {
 });
 
 describe("the partner portal's landing page", () => {
-  it("takes an account waiting for approval to its application, with no locked dashboard on the way", async () => {
+  it("takes an account waiting for approval to its workspace's onboarding dashboard (ADR-063)", async () => {
     render(
       <PartnerContext.Provider value={{ partner: partner("draft") }}>
         <Page />
       </PartnerContext.Provider>,
     );
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/partner/p1/kyc"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/partner/affiliate/dashboard"));
     expect(screen.queryByRole("heading", { name: "The dashboard" })).toBeNull();
   });
 

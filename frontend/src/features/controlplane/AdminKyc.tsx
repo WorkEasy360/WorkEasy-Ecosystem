@@ -544,6 +544,9 @@ function AccessLog({ app }: { app: KycApplicationDetail }) {
 function ApproveDialog({ app, onDone, onClose }: { app: KycApplicationDetail; onDone: (message: string | undefined) => void; onClose: () => void }) {
   const requested = app.requested_experience;
   const [experience, setExperience] = useState<string>(requested);
+  // ADR-063: White Label grants branding and a domain only; selling or
+  // referring is granted here explicitly, never by default.
+  const [also, setAlso] = useState<string[]>([]);
   // Sent empty, the server falls back on what was requested: "no new capabilities" is a
   // true choice only when nothing was requested.
   const options = requested ? [...EXPERIENCES] : [{ value: "", label: "No new capabilities" }, ...EXPERIENCES];
@@ -554,13 +557,38 @@ function ApproveDialog({ app, onDone, onClose }: { app: KycApplicationDetail; on
       size="sm"
       submitLabel="Approve"
       onSubmit={async () => {
-        await kycApi.decide(app.partner_id, { decision: "approve", experience: experience || undefined, expected_version: app.version });
+        await kycApi.decide(app.partner_id, {
+          decision: "approve",
+          experience: experience || undefined,
+          expected_version: app.version,
+          ...(experience && also.length ? { also: also.filter((x) => x !== experience) } : {}),
+        });
         return "Application approved.";
       }}
       onDone={onDone}
       onClose={onClose}
     >
       <Select label="Experience to grant" showLabel fullWidth value={experience} onChange={setExperience} options={options} />
+      {experience && (
+        <fieldset>
+          <legend>Also allow</legend>
+          <p>
+            {experience === "white_label"
+              ? "White Label alone is branding and a custom domain. Tick what else this partner is approved for."
+              : "Other permissions this partner is approved for, if any."}
+          </p>
+          {EXPERIENCES.filter((e) => e.value && e.value !== experience).map((e) => (
+            <label key={e.value}>
+              <input
+                type="checkbox"
+                checked={also.includes(e.value)}
+                onChange={(ev) => setAlso(ev.target.checked ? [...also, e.value] : also.filter((x) => x !== e.value))}
+              />{" "}
+              {e.label}
+            </label>
+          ))}
+        </fieldset>
+      )}
     </FormDialog>
   );
 }

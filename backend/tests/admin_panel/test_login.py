@@ -1,4 +1,4 @@
-"""The Admin sign-in: "Remember me", brute-force limits and route protection."""
+"""The Admin sign-in: "Remember me" (the Partner sign-in's too), brute-force limits and route protection."""
 
 from __future__ import annotations
 
@@ -84,10 +84,28 @@ def test_a_remembered_session_still_ends_at_the_absolute_lifetime(staff_user):
 
 
 def test_other_sign_ins_are_unchanged(user_factory, staff_user):
+    """A form that sends no "Remember me" (the customer and product sign-ins) keeps
+    the normal session, whoever signs in."""
     customer = user_factory(password=PASSWORD)
-    for user, extra in ((customer, {"remember": True}), (customer, {}), (staff_user, {})):
-        _, response = _sign_in(user, **extra)
+    for user in (customer, staff_user):
+        _, response = _sign_in(user)
         assert int(_session_cookie(response)["max-age"]) == settings.SESSION_COOKIE_AGE
+
+
+def test_the_partner_sign_ins_remember_me_works_for_a_non_staff_user(user_factory):
+    """2026-11-11: the Partner sign-in has "Remember me" too, and a partner is never
+    staff. Ticked it persists for the remember window; unticked it ends with the
+    browser - the same rules as the Admin's."""
+    partner_user = user_factory(password=PASSWORD)
+    client, response = _sign_in(partner_user, remember=True)
+    assert int(_session_cookie(response)["max-age"]) == settings.SESSION_REMEMBER_ME_AGE
+    row = _row(client)
+    remaining = (row.expire_date - row.last_activity_at).total_seconds()
+    assert abs(remaining - settings.SESSION_REMEMBER_ME_AGE) < 60
+
+    _, response = _sign_in(partner_user, remember=False)
+    cookie = _session_cookie(response)
+    assert not cookie["max-age"] and not cookie["expires"]
 
 
 def test_a_non_boolean_remember_changes_nothing(staff_user):
@@ -103,8 +121,8 @@ def test_wrong_passwords_lock_the_account_and_say_nothing_more(staff_user):
             LOGIN,
             {
                 "email": staff_user.email,
-                "password": "wrong password here",
-            },  # pragma: allowlist secret
+                "password": "wrong password here",  # pragma: allowlist secret
+            },
             content_type="application/json",
         ).json()["code"]
         for _ in range(11)
@@ -113,7 +131,10 @@ def test_wrong_passwords_lock_the_account_and_say_nothing_more(staff_user):
     assert codes[-1] == "account_locked"
     unknown = client.post(
         LOGIN,
-        {"email": "nobody-here@example.com", "password": "wrong password here"},
+        {
+            "email": "nobody-here@example.com",
+            "password": "wrong password here",  # pragma: allowlist secret
+        },
         content_type="application/json",
     )
     assert unknown.status_code == 401 and unknown.json()["code"] == "invalid_credentials"

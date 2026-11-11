@@ -39,6 +39,7 @@ from workeasy360.interfaces.api.v1 import (
     partner_desk_views,
     partner_panel_views,
     partner_views,
+    partner_wallet_views,
     payment_views,
     public_site_views,
     public_views,
@@ -2420,6 +2421,73 @@ _partner = [
         "partner/<uuid:partner_id>/withdrawals/<uuid:withdrawal_id>/cancel",
         partner_desk_views.withdrawal_cancel_view,
         name="partner-withdrawal-cancel",
+    ),
+    # ADR-063: the reseller's Platform Wallet and the plans it pays for, the
+    # partner's subscriptions and billing records, help and sales material.
+    path(
+        "partner/<uuid:partner_id>/platform-wallet",
+        partner_wallet_views.wallet_view,
+        name="partner-platform-wallet",
+    ),
+    path(
+        "partner/<uuid:partner_id>/platform-wallet/transactions",
+        partner_wallet_views.wallet_transactions_view,
+        name="partner-platform-wallet-transactions",
+    ),
+    path(
+        "partner/<uuid:partner_id>/platform-wallet/top-up",
+        partner_wallet_views.wallet_top_up_view,
+        name="partner-platform-wallet-top-up",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/activation/quote",
+        partner_wallet_views.activation_quote_view,
+        name="partner-customer-activation-quote",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/activation",
+        partner_wallet_views.activation_view,
+        name="partner-customer-activation",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/products-setup",
+        partner_wallet_views.customer_products_view,
+        name="partner-customer-products-setup",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/subscriptions/<uuid:subscription_id>/renewal",
+        partner_wallet_views.renewal_view,
+        name="partner-customer-renewal",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/plan-change/quote",
+        partner_wallet_views.plan_change_quote_view,
+        name="partner-customer-plan-change-quote",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/plan-change",
+        partner_wallet_views.plan_change_view,
+        name="partner-customer-plan-change",
+    ),
+    path(
+        "partner/<uuid:partner_id>/subscriptions",
+        partner_wallet_views.subscriptions_view,
+        name="partner-subscriptions",
+    ),
+    path(
+        "partner/<uuid:partner_id>/billing-records",
+        partner_wallet_views.billing_records_view,
+        name="partner-billing-records",
+    ),
+    path(
+        "partner/<uuid:partner_id>/help-articles",
+        partner_wallet_views.help_articles_view,
+        name="partner-help-articles",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sales-resources",
+        partner_wallet_views.sales_resources_view,
+        name="partner-sales-resources",
     ),
 ]
 

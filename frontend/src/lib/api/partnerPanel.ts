@@ -62,6 +62,20 @@ export interface MoneyBalance {
 
 export interface Dashboard {
   partner: { id: string; name: string; currency: string; status: string };
+  /** ADR-063: KYC and account states (separate), and the permissions held. */
+  onboarding?: {
+    kyc_status: string;
+    account_status: string;
+    cleared: boolean;
+    reason: string | null;
+    legacy: boolean;
+    kyc_required: boolean;
+    permissions: string[];
+  };
+  /** ADR-063: referral performance in the period, with paid renewals. */
+  referrals?: { clicks: number; registrations: number; conversions: number; renewals: number } | null;
+  /** ADR-063: the Platform Wallet balances - never added to earnings. */
+  platform_wallet?: { wallet_id: string; currency: string; balance_minor: number; is_low: boolean }[] | null;
   range: { key: RangeKey; from: string; to: string };
   /** The period of the same length just before (2026-11-03). */
   previous?: { from: string; to: string; new_customers: number | null; sales: SalesTotals | null };

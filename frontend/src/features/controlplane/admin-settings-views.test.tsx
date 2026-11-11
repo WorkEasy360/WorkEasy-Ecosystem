@@ -68,6 +68,9 @@ const UNCHANGED = {
   company_tax_id: "GST123",
   tax_rate_bp: null,
   notifications_email: "",
+  // ADR-063: the partner policies travel with every save (their defaults here).
+  partner_legacy_kyc_policy: "allow",
+  partner_suspended_commission_policy: "accrue",
   version: 7,
 };
 

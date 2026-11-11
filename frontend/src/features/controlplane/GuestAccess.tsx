@@ -5,7 +5,7 @@ import { adminApi, type GuestSessionRow, type GuestSessionStatus, type GuestStar
 import { usePortals } from "@/lib/portalContext";
 import { portalHref, type PortalOrigins } from "@/lib/portals";
 import { Alert, Badge, Button, exactTime, formatDateTime, formatRelative, type Tone } from "./kit";
-import { DialogHead, Modal, dialog } from "./Modal";
+import { DialogHead, FormDialog, Modal, dialog } from "./Modal";
 import { LoadGate, autoReason, describeError, useLoad } from "./ui";
 import styles from "./ControlPlane.module.css";
 
@@ -51,10 +51,95 @@ export function openGuestView(view: GuestStart, portals: PortalOrigins | null): 
 }
 
 /** Start a guest view of `partnerId` and go there. `returnPath` is the Admin
- * page "Exit Guest Mode" comes back to (the server accepts partner pages only). */
-export async function loginAsGuest(partnerId: string, where: string, returnPath: string, portals: PortalOrigins | null): Promise<void> {
-  const view = await adminApi.startGuestView(partnerId, autoReason("Login as Guest", where), returnPath);
+ * page "Exit Guest Session" comes back to (the server accepts partner pages only).
+ * `reason` is what the Admin chose (ADR-063: recorded with the session and on
+ * every request it makes). */
+export async function loginAsGuest(
+  partnerId: string,
+  where: string,
+  returnPath: string,
+  portals: PortalOrigins | null,
+  reason?: string,
+): Promise<void> {
+  const view = await adminApi.startGuestView(partnerId, reason ?? autoReason("Login as Guest", where), returnPath);
   openGuestView(view, portals);
+}
+
+/** The reasons a Super Admin opens a partner's portal as a guest. */
+export const GUEST_REASONS = [
+  "Partner support request",
+  "Helping with onboarding or KYC",
+  "Checking a billing, wallet or commission question",
+  "Investigating a reported problem",
+] as const;
+
+/** Why this guest session (ADR-063, the specification's 1.3): one of the usual
+ * reasons, with optional details. The server records it with the session and its
+ * every request; it never asks for or shows the partner's password. */
+export function GuestReasonDialog({
+  partnerName,
+  onClose,
+  onStart,
+}: {
+  partnerName: string;
+  onClose: () => void;
+  onStart: (reason: string) => Promise<void>;
+}) {
+  const reasonId = useId();
+  const detailsId = useId();
+  const [choice, setChoice] = useState<string>(GUEST_REASONS[0]);
+  const [details, setDetails] = useState("");
+  const reason = (details.trim() ? `${choice}: ${details.trim()}` : choice).slice(0, 200);
+  return (
+    <FormDialog
+      title={`Login as Guest · ${partnerName}`}
+      intro="Opens this partner's portal read-only, as you, for 30 minutes. The reason and every page you open are recorded in the audit log."
+      submitLabel="Start guest session"
+      columns={1}
+      canSubmit={reason.length >= 3}
+      onClose={onClose}
+      onSubmit={async () => {
+        await onStart(reason);
+        return "Opening the guest session…";
+      }}
+    >
+      <div className="w360-field">
+        <label htmlFor={reasonId}>Reason</label>
+        <select id={reasonId} className="w360-input" value={choice} onChange={(e) => setChoice(e.target.value)}>
+          {GUEST_REASONS.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="w360-field">
+        <label htmlFor={detailsId}>Details (optional)</label>
+        <input
+          id={detailsId}
+          className="w360-input"
+          maxLength={150}
+          value={details}
+          onChange={(e) => setDetails(e.target.value)}
+          placeholder="Ticket number or what you are checking"
+        />
+      </div>
+    </FormDialog>
+  );
+}
+
+/** Login as Guest from any Admin page: asks for the reason, then opens the session. */
+export function useGuestLogin(where: string) {
+  const portals = usePortals();
+  const [target, setTarget] = useState<{ id: string; name: string } | null>(null);
+  const node = target ? (
+    <GuestReasonDialog
+      partnerName={target.name}
+      onClose={() => setTarget(null)}
+      onStart={(reason) => loginAsGuest(target.id, where, currentReturnPath(), portals, reason)}
+    />
+  ) : null;
+  return { ask: (id: string, name: string) => setTarget({ id, name }), dialog: node };
 }
 
 /** The Admin page the browser was on, when it is one "Exit Guest Mode" may return to. */
@@ -115,6 +200,7 @@ export function ManageGuestAccess({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
 
   async function revoke(row: GuestSessionRow) {
     setBusy(row.id);
@@ -131,15 +217,9 @@ export function ManageGuestAccess({
     }
   }
 
-  async function open() {
-    setBusy("open");
+  function open() {
     setError(null);
-    try {
-      await loginAsGuest(partnerId, "Manage Guest Access", currentReturnPath(), portals);
-    } catch (err) {
-      setError(describeError(err));
-      setBusy(null);
-    }
+    setAsking(true);
   }
 
   return (
@@ -220,6 +300,13 @@ export function ManageGuestAccess({
           </Button>
         )}
       </div>
+      {asking && (
+        <GuestReasonDialog
+          partnerName={partnerName}
+          onClose={() => setAsking(false)}
+          onStart={(reason) => loginAsGuest(partnerId, "Manage Guest Access", currentReturnPath(), portals, reason)}
+        />
+      )}
     </Modal>
   );
 }

@@ -121,6 +121,15 @@
   --w360-hero-line: #dfe7e6;
   --w360-hero-bar: #0a7f3f;
   --w360-hero-bar-soft: #7fd9a8;
+  /* The Partner sign-in's product tiles on that panel (2026-11-11): a deep card,
+     its edge (decoration), and the icons on it (3:1 or more). */
+  --w360-hero-card: #0a3f40;
+  --w360-hero-edge: #1f6b62;
+  --w360-hero-icon-green: #34d77f;
+  --w360-hero-icon-purple: #c3a6ff;
+  --w360-hero-icon-blue: #8cc4ff;
+  --w360-hero-icon-pink: #ff9fd0;
+  --w360-hero-icon-light: #e8f3f0;
   /* The dashboard's figure tiles: a soft circle behind a coloured icon. */
   --w360-tile-blue: #2459c4;
   --w360-tile-blue-bg: #e5eefc;

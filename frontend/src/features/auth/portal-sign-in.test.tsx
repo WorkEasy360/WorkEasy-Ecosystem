@@ -86,7 +86,7 @@ describe("each portal's own sign-in page (ADR-059)", () => {
   async function signIn() {
     fireEvent.change(await screen.findByLabelText(/^Email/), { target: { value: "a@example.com" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
-    fireEvent.click(screen.getByRole("button", { name: /^Sign in$|^Sign In to Admin$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Sign in$|^Sign In to Admin$|^Login to Partner Portal$/ }));
   }
 
   it("the Admin portal signs in on its own host and opens the console page asked for", async () => {
@@ -105,7 +105,7 @@ describe("each portal's own sign-in page (ADR-059)", () => {
   it("the Partner portal signs in on its own host and opens the partner portal", async () => {
     const calls = mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT], "POST /api/v1/auth/login": [LOGIN_OK] });
     renderPortal(<LoginScreen portal="partner" />);
-    expect(await screen.findByRole("heading", { name: "Sign in as Partner" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Partner Login" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Create an account" })).not.toBeInTheDocument();
     await signIn();
     await waitFor(() => expect(nav.router.replace).toHaveBeenCalledWith("/partner"));
@@ -128,7 +128,7 @@ describe("each portal's own sign-in page (ADR-059)", () => {
     query = "mode=admin";
     mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT] });
     renderPortal(<LoginScreen portal="partner" />);
-    expect(await screen.findByRole("heading", { name: "Sign in as Partner" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Partner Login" })).toBeInTheDocument();
   });
 
   it("already signed in on this portal goes straight on", async () => {

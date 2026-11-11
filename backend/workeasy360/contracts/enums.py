@@ -501,6 +501,10 @@ class CollectionMode(_StrEnum):
     AUTOMATIC = "automatic"
     INVOICE = "invoice"
     PARTNER_BILLED = "partner_billed"
+    #: ADR-063: a reseller's customer whose plans the reseller pays from its
+    #: Platform Wallet, at its approved purchase price. The customer is never
+    #: invoiced; activation, renewal and upgrades debit the partner's wallet.
+    PARTNER_WALLET = "partner_wallet"
 
 
 class ChangeTiming(_StrEnum):

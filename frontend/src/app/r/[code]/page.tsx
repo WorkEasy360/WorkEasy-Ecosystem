@@ -35,7 +35,11 @@ export default function ReferralLinkPage() {
     // then the capture (a POST) carries it like every other request.
     getSession()
       .catch(() => null)
-      .then(() => publicApi.captureReferral(code))
+      .then(() => {
+        // "Copy Store referral link" (ADR-063): `?to=store` asks for the Store.
+        const to = new URLSearchParams(window.location.search).get("to");
+        return publicApi.captureReferral(code, to === "store" ? "store" : undefined);
+      })
       .then(
       ({ token, destination }) => {
         try {

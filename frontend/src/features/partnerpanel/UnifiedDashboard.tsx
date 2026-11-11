@@ -16,6 +16,9 @@ import { ConversionTable, LinkBlock } from "./AffiliateScreens";
 import { NotificationsPreview, ProductActivity } from "./Dashboard";
 import { WORKSPACES, type ExperienceKey } from "./experiences";
 import { LEVEL_LEAD, LevelList, LevelMatrix, UpgradeDialog, levelFee } from "./levels";
+import { onboardingOnly } from "@/lib/api/controlPlane";
+import { ACCOUNT_WORDS, KYC_WORDS } from "./BusinessKyc";
+import { CopyButton } from "./workspaceKit";
 import { EmptyState, PageHeader, usePanel } from "./PanelKit";
 import { UpgradeGrow } from "./UpgradeGrow";
 import { WhiteLabelStatusSection } from "./WhiteLabelDashboard";
@@ -179,6 +182,10 @@ export function UnifiedDashboard({ level }: { level: ExperienceKey }) {
   );
   const aff = overview.status === "ready" ? overview.data : null;
 
+  // ADR-063: before KYC approval and activation, the dashboard is the
+  // onboarding status - nothing commercial is offered.
+  if (partner && onboardingOnly(partner)) return <OnboardingDashboard />;
+
   return (
     <div className={styles.page}>
       <PageHeader
@@ -202,12 +209,17 @@ export function UnifiedDashboard({ level }: { level: ExperienceKey }) {
           {ready && <LoadGate load={load} what="the dashboard">
             {(d) => (
               <>
+                <AccountStatus d={d} />
                 <Ribbon d={d} level={level} aff={aff} />
                 <div className={styles.dashRow}>
                   <TrendChart d={d} />
                   <ProductSplit d={d} />
                 </div>
-                <QuickActions />
+                <QuickActions referralUrl={aff?.primary_link?.url ?? null} />
+                <div className={styles.dashRow}>
+                  {d.referrals && <ReferralPerformance d={d} />}
+                  {d.platform_wallet && <PlatformWalletCard d={d} />}
+                </div>
                 <div className={styles.dashRow}>
                   {d.customers ? <RecentCustomers d={d} /> : aff ? <RecentConversions aff={aff} /> : null}
                   <Earnings d={d} />
@@ -487,19 +499,39 @@ function ProductSplit({ d }: { d: DashboardData }) {
   );
 }
 
-function QuickActions() {
+/** The specification's quick actions (4.2), each only for the permission it
+ * needs: referral links for a promoter, plan activation and Add Money for a
+ * reseller, support for everyone. */
+function QuickActions({ referralUrl }: { referralUrl: string | null }) {
   const { base, can } = usePanel();
   const items = [
+    {
+      href: `${base}/customers/activate`,
+      label: "Activate Customer Plan",
+      icon: "receipt",
+      show: can("subscription.sell") && can("customer.view"),
+    },
+    { href: `${base}/platform-wallet`, label: "Add Money", icon: "card", show: can("wallet.manage") },
     { href: `${base}/users#add-customer`, label: "Create Customer", icon: "users", show: can("customer.provision") },
-    { href: `${base}/referral-links`, label: "Generate Referral Link", icon: "key", show: can("referral.create") },
-    { href: `${base}/users`, label: "Add Order", icon: "receipt", show: can("subscription.sell") },
-    { href: `${base}/payments/commissions`, label: "My Commission", icon: "currency", show: can("commission.view") },
-    { href: `${base}/support-manager?new=1`, label: "Raise Support Ticket", icon: "help", show: can("dashboard.view") },
-    { href: `${base}/marketing-materials`, label: "Marketing Assets", icon: "sparkles", show: can("referral.view") },
+    {
+      href: `${base}/referral-links`,
+      label: "Generate Referral Link",
+      icon: "key",
+      show: can("referral.create") && !referralUrl,
+    },
+    { href: `${base}/support-manager?new=1`, label: "Contact Support", icon: "help", show: can("dashboard.view") },
   ].filter((i) => i.show);
-  if (items.length === 0) return null;
+  if (items.length === 0 && !referralUrl) return null;
   return (
     <nav aria-label="Quick actions" className={styles.quickActions}>
+      {referralUrl && can("referral.view") && (
+        <span className={styles.quickAction}>
+          <span className={styles.quickIcon} aria-hidden="true">
+            <NavIcon name="key" />
+          </span>
+          <CopyButton text={referralUrl} label="Referral Link" />
+        </span>
+      )}
       {items.map((i) => (
         <Link key={i.label} href={i.href} className={styles.quickAction}>
           <span className={styles.quickIcon} aria-hidden="true">
@@ -509,6 +541,167 @@ function QuickActions() {
         </Link>
       ))}
     </nav>
+  );
+}
+
+/** KYC and account status (4.1.1): separate facts, and the permissions held. */
+function AccountStatus({ d }: { d: DashboardData }) {
+  const { base } = usePanel();
+  const titleId = useId();
+  const o = d.onboarding;
+  if (!o) return null;
+  const words: Record<string, string> = { affiliate: "Affiliate", reseller: "Reseller", white_label: "White Label" };
+  return (
+    <section className={styles.panel} aria-labelledby={titleId}>
+      <div className={styles.panelHead}>
+        <h2 id={titleId}>Account status</h2>
+        <Link href={`${base}/business-kyc`}>Business & KYC</Link>
+      </div>
+      <ul className={styles.statusStrip}>
+        <li>
+          KYC: <Status value={o.kyc_status} label={KYC_WORDS[o.kyc_status] ?? o.kyc_status} />
+          {o.legacy && <span className={styles.muted}> (account active before KYC was required)</span>}
+        </li>
+        <li>
+          Account: <Status value={o.account_status} label={ACCOUNT_WORDS[o.account_status] ?? o.account_status} />
+        </li>
+        <li>
+          Approved as: <strong>{o.permissions.length ? o.permissions.map((k) => words[k] ?? k).join(", ") : "Nothing yet"}</strong>
+        </li>
+      </ul>
+    </section>
+  );
+}
+
+/** Referral performance (4.1.2), from the tracked platform events. */
+function ReferralPerformance({ d }: { d: DashboardData }) {
+  const { base } = usePanel();
+  const titleId = useId();
+  const r = d.referrals;
+  if (!r) return null;
+  return (
+    <section className={styles.panel} aria-labelledby={titleId}>
+      <div className={styles.panelHead}>
+        <h2 id={titleId}>Referral performance</h2>
+        <Link href={`${base}/leads`}>Referral results</Link>
+      </div>
+      <dl className={styles.earnings}>
+        <div>
+          <dt>Referral clicks</dt>
+          <dd>{r.clicks}</dd>
+        </div>
+        <div>
+          <dt>Registrations</dt>
+          <dd>{r.registrations}</dd>
+        </div>
+        <div>
+          <dt>Eligible conversions</dt>
+          <dd>{r.conversions}</dd>
+        </div>
+        <div>
+          <dt>Customer renewals</dt>
+          <dd>{r.renewals}</dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
+/** The Platform Wallet beside the earnings (4.1.3) - never added to them. */
+function PlatformWalletCard({ d }: { d: DashboardData }) {
+  const { base, can } = usePanel();
+  const titleId = useId();
+  const wallets = d.platform_wallet ?? [];
+  return (
+    <section className={styles.panel} aria-labelledby={titleId}>
+      <div className={styles.panelHead}>
+        <h2 id={titleId}>Platform Wallet</h2>
+        <Link href={`${base}/platform-wallet/transactions`}>Transactions</Link>
+      </div>
+      {wallets.length === 0 ? (
+        <p className={styles.muted}>No money added yet. Your wallet pays for your customers&apos; plans.</p>
+      ) : (
+        <dl className={styles.earnings}>
+          {wallets.map((w) => (
+            <div key={w.currency} data-strong>
+              <dt>Available balance ({w.currency})</dt>
+              <dd>
+                {money(w.balance_minor, w.currency)}
+                {w.is_low ? " - low" : ""}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {can("wallet.manage") && (
+        <p>
+          <Link className={`w360-btn w360-btn-primary ${styles.wide}`} href={`${base}/platform-wallet`}>
+            Add Money
+          </Link>
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** What a partner sees before it may trade (ADR-063, the specification's 2.2):
+ * where it stands and the next step - business profile, KYC, support. */
+function OnboardingDashboard() {
+  const { partner, base } = usePanel();
+  const o = partner?.onboarding;
+  const kyc = o?.kyc_status ?? "draft";
+  const next =
+    kyc === "draft"
+      ? "Complete your business profile, upload the KYC documents and submit your application."
+      : kyc === "correction_required"
+        ? "Workeasy360 asked for corrections. Update your application and submit it again."
+        : kyc === "submitted" || kyc === "under_review"
+          ? "Your application is with Workeasy360. You will be emailed when there is a decision."
+          : kyc === "approved"
+            ? "Your KYC is approved. Workeasy360 activates your account next; you will be emailed."
+            : kyc === "rejected"
+              ? "Your application was not approved. Contact support to find out more."
+              : "";
+  return (
+    <div className={styles.page}>
+      <PageHeader
+        title="Partner Dashboard"
+        lead={`Welcome, ${partner?.display_name ?? "partner"}. Your account opens fully once your KYC is approved and your account is active.`}
+      />
+      <section className={styles.panel} aria-labelledby="onboarding-status">
+        <h2 id="onboarding-status">Onboarding status</h2>
+        <ul className={styles.statusStrip}>
+          <li>
+            KYC: <Status value={kyc} label={KYC_WORDS[kyc] ?? kyc} />
+          </li>
+          <li>
+            Account: <Status value={o?.account_status ?? partner?.status ?? "draft"} label={ACCOUNT_WORDS[o?.account_status ?? partner?.status ?? "draft"]} />
+          </li>
+        </ul>
+        <ol className={styles.steps} aria-label="Onboarding steps">
+          {["Account verified", "Business profile", "KYC documents", "Submit application", "Admin review", "Approval", "Activation"].map((step) => (
+            <li key={step} className={styles.step}>
+              {step}
+            </li>
+          ))}
+        </ol>
+        {next && <p>{next}</p>}
+        <p className={styles.actionsRow}>
+          <Link className="w360-btn w360-btn-primary" href={`${base}/business-kyc`}>
+            Business & KYC
+          </Link>
+          <Link className="w360-btn w360-btn-secondary" href={`${base}/support-manager?new=1`}>
+            Contact Support
+          </Link>
+          <Link className="w360-btn w360-btn-secondary" href={`${base}/account`}>
+            My Account & Security
+          </Link>
+        </p>
+        <p className={styles.muted}>
+          Until then, referral links, customers, plan activation, the Platform Wallet and payouts are not available.
+        </p>
+      </section>
+    </div>
   );
 }
 
@@ -557,6 +750,9 @@ function RecentConversions({ aff }: { aff: AffiliateOverview }) {
 
 /** The specification's earnings card: total, approved (cleared the holding
  * period), pending, available - and the way to withdraw it. */
+const paid = (d: DashboardData, currency: string): number | null =>
+  d.money?.balances.find((b) => b.currency === currency)?.paid_minor ?? null;
+
 function Earnings({ d }: { d: DashboardData }) {
   const { base, can } = usePanel();
   const titleId = useId();
@@ -587,9 +783,15 @@ function Earnings({ d }: { d: DashboardData }) {
               <dd>{money(m.pending_minor, m.currency)}</dd>
             </div>
             <div data-strong>
-              <dt>Available balance</dt>
+              <dt>Available earnings</dt>
               <dd>{money(m.available_minor, m.currency)}</dd>
             </div>
+            {paid(d, m.currency) !== null && (
+              <div>
+                <dt>Paid commissions</dt>
+                <dd>{money(paid(d, m.currency) ?? 0, m.currency)}</dd>
+              </div>
+            )}
           </dl>
         ))
       )}

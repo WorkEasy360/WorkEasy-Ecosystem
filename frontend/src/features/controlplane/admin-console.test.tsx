@@ -713,6 +713,8 @@ describe("platform settings", () => {
       company_tax_id: "",
       tax_rate_bp: null,
       notifications_email: "",
+      partner_legacy_kyc_policy: "allow",
+      partner_suspended_commission_policy: "accrue",
       version: 3,
     });
     unmount();

@@ -109,6 +109,14 @@ const PAIRS: [string, string, number][] = [
   ["--w360-hero-muted", "--w360-hero-mid", 4.5],
   ["--w360-hero-muted", "--w360-hero-end", 4.5],
   ["--w360-hero-text", "--w360-hero-tile", 4.5],
+  // The Partner sign-in's product tiles.
+  ["--w360-hero-text", "--w360-hero-card", 4.5],
+  ["--w360-hero-muted", "--w360-hero-card", 4.5],
+  ["--w360-hero-icon-green", "--w360-hero-card", 3],
+  ["--w360-hero-icon-purple", "--w360-hero-card", 3],
+  ["--w360-hero-icon-blue", "--w360-hero-card", 3],
+  ["--w360-hero-icon-pink", "--w360-hero-card", 3],
+  ["--w360-hero-icon-light", "--w360-hero-card", 3],
   // The dashboard's tiles (icons) and charts.
   ["--w360-tile-blue", "--w360-tile-blue-bg", 3],
   ["--w360-tile-green", "--w360-tile-green-bg", 3],

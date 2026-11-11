@@ -13,7 +13,7 @@ import {
   type SetupStatus,
 } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
-import { GUEST_PERMISSION, ManageGuestAccess, currentReturnPath, guestAvailable, guestOutcomeMessage, loginAsGuest } from "./GuestAccess";
+import { GUEST_PERMISSION, ManageGuestAccess, guestAvailable, guestOutcomeMessage, useGuestLogin } from "./GuestAccess";
 import { ExperienceLabels, PrimaryType, TypeBadges } from "./labels";
 import { LoadGate, Status, autoReason, money, useAction, useLoad, usePaged } from "./ui";
 import { usePortals } from "@/lib/portalContext";
@@ -36,9 +36,7 @@ import {
   Select,
   StatCard,
   Tooltip,
-  exactTime,
   formatDate,
-  formatRelative,
   kit,
   useConfirm,
   type Column,
@@ -345,6 +343,29 @@ function countryName(code: string): string {
   }
 }
 
+/** The KYC states as the specification names them (ADR-063). */
+function kycTitle(status: string): string {
+  return (
+    {
+      draft: "Draft",
+      submitted: "Submitted",
+      under_review: "Under Review",
+      correction_required: "Correction Required",
+      approved: "Approved",
+      rejected: "Rejected",
+    }[status] ?? status
+  );
+}
+
+const KYC_TONE: Record<string, string> = {
+  draft: "tone-neutral",
+  submitted: "tone-warning",
+  under_review: "tone-info",
+  correction_required: "tone-warning",
+  approved: "tone-success",
+  rejected: "tone-danger",
+};
+
 /** The KYC status in a few words, for a badge. */
 function kycWords(status: string): string {
   return (
@@ -454,7 +475,6 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
   const canKyc = can(permissions, "platform.staff_kyc.view");
   const [guestAccess, setGuestAccess] = useState<ResellerRow | null>(null);
   // The row whose Login as Guest is being opened (its button shows a spinner).
-  const [guestOpening, setGuestOpening] = useState<string | null>(null);
   // Login as Guest came back with an outcome (a used or expired link, or refused).
   const [guestOutcome] = useState(() => guestOutcomeMessage(params.get("guest")));
   const portals = usePortals();
@@ -538,22 +558,31 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
   // Login as Guest (ADR-062): the server opens a read-only, time-limited view of
   // exactly this partner and the browser goes to its dashboard. A refusal is
   // said above the table (the server's own words), and the button is usable again.
-  const guest = async (r: ResellerRow) => {
-    setGuestOpening(r.id);
-    let opened = false;
-    await act(async () => {
-      await loginAsGuest(r.id, category ? CATEGORY_TITLE[category] : "All Partners", currentReturnPath(), portals);
-      opened = true;
-    }, `Opening ${r.display_name}'s dashboard in Guest Mode…`);
-    if (!opened) setGuestOpening(null);
-  };
+  // ADR-063: Login as Guest asks why first; the dialog opens the session.
+  const guestLogin = useGuestLogin(category ? CATEGORY_TITLE[category] : "All Partners");
+  const guest = (r: ResellerRow) => guestLogin.ask(r.id, r.display_name);
 
   const rowMenu = (r: ResellerRow): MenuItem[] => {
     const url = panelUrl(r);
     return [
       { label: "View partner", icon: "user", href: `/admin/partners/${r.id}` },
-      { label: r.profile_completion.complete ? "Edit setup" : "Complete setup", icon: "settings", href: `/admin/partners/${r.id}/profile` },
-      { label: "Manage KYC", icon: "shield", href: `/admin/partners/applications/${r.id}`, when: canKyc },
+      { label: r.profile_completion.complete ? "Edit partner" : "Complete setup", icon: "settings", href: `/admin/partners/${r.id}/profile` },
+      // ADR-063: the specification's row actions.
+      { label: "Review KYC", icon: "shield", href: `/admin/partners/applications/${r.id}`, when: canKyc },
+      {
+        label: "Approve / Reject KYC",
+        icon: "check",
+        href: `/admin/partners/applications/${r.id}#decision`,
+        when: canKyc && (r.kyc?.status === "submitted" || r.kyc?.status === "under_review"),
+      },
+      { label: "Manage Permissions", icon: "key", href: `/admin/partners/${r.id}?tab=users` },
+      { label: "View Assigned Customers", icon: "users", href: `/admin/partners/${r.id}?tab=customers` },
+      {
+        label: "View Partner Wallet",
+        icon: "card",
+        href: `/admin/wallets?owner_type=partner&q=${encodeURIComponent(r.display_name)}`,
+      },
+      { label: "View Commission & Payout Records", icon: "currency", href: `/admin/partners/${r.id}?tab=commission` },
       { label: "Open partner panel", icon: "external", href: url, external: true },
       { label: "Copy panel link", icon: "copy", onSelect: () => void navigator.clipboard?.writeText(url) },
       {
@@ -585,51 +614,76 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
     ];
   };
 
+  // ADR-063 (the specification's 1.2): Partner Name, Partner Email, Type and
+  // enabled permissions, KYC Status, Account Status, Country, Assigned Customers,
+  // Created Date, then Login as Guest and the row's actions.
   const columns: Column<ResellerRow>[] = [
     {
       key: "partner",
-      header: "Partner",
+      header: "Partner Name",
       value: (r) => r.display_name,
-      render: (r) => (
-        <PartnerCell
-          id={r.id}
-          name={r.display_name}
-          sub={
-            <span className={local.badgeLine}>
-              <span className={kit.trunc} title={r.administrator?.email ?? undefined}>
-                {r.administrator?.email ?? "No administrator"}
-              </span>
-              <IdCell value={r.id} label={`Copy partner ID of ${r.display_name}`} />
-            </span>
-          }
-        />
-      ),
+      render: (r) => <PartnerCell id={r.id} name={r.display_name} sub={<IdCell value={r.id} label={`Copy partner ID of ${r.display_name}`} />} />,
     },
-    { key: "type", header: "Type", value: (r) => r.primary_experience, render: (r) => <PrimaryType value={r.primary_experience} /> },
     {
-      key: "status",
-      header: "Status",
-      value: (r) => r.profile_completion.setup_status,
+      key: "email",
+      header: "Partner Email",
+      value: (r) => r.administrator?.email ?? "",
+      render: (r) =>
+        r.administrator?.email ? (
+          <span className={kit.trunc} title={r.administrator.email}>
+            {r.administrator.email}
+          </span>
+        ) : (
+          <span className={styles.muted}>No administrator</span>
+        ),
+    },
+    {
+      key: "type",
+      header: "Type / Permissions",
+      value: (r) => r.primary_experience,
       render: (r) => (
         <span className={local.badgeLine}>
-          <SetupStatusBadge value={r.profile_completion.setup_status} />
+          <PrimaryType value={r.primary_experience} />
+          {r.experience.length > 1 && <span className={styles.muted}>+ {r.experience.filter((e) => e.key !== r.primary_experience).map((e) => e.label).join(", ")}</span>}
+        </span>
+      ),
+    },
+    {
+      key: "kyc",
+      header: "KYC Status",
+      // Never blank, so the column always shows (the table hides an all-empty one).
+      value: (r) => r.kyc?.status ?? "unknown",
+      render: (r) => (
+        <span className={local.badgeLine}>
+          {!r.kyc && <span className={styles.muted}>—</span>}
+          {r.kyc && (
+            <Link
+              href={`/admin/partners/applications/${r.id}`}
+              className={`${kit.badge} ${kit[KYC_TONE[r.kyc.status] ?? "tone-neutral"]}`}
+              aria-label={`KYC ${kycWords(r.kyc.status)} - ${r.display_name}`}
+            >
+              {kycTitle(r.kyc.status)}
+            </Link>
+          )}
           {r.kyc?.legacy && (
-            <Tooltip content="Active before KYC was required. It keeps its status; no KYC approval is on file.">
+            <Tooltip content="Active before KYC was required. No KYC approval is on file; the partner policy in Settings decides what it may do.">
               <span tabIndex={0} className={`${kit.badge} ${kit["tone-neutral"]}`}>
                 Active before KYC
               </span>
             </Tooltip>
           )}
-          {r.kyc?.ready_to_activate && <span className={`${kit.badge} ${kit["tone-info"]}`}>KYC approved</span>}
-          {r.status === "draft" && r.kyc?.required && !r.kyc.ready_to_activate && (
-            <Link
-              href={`/admin/partners/applications/${r.id}`}
-              className={`${kit.badge} ${kit["tone-warning"]}`}
-              aria-label={`KYC ${kycWords(r.kyc.status)} - ${r.display_name}`}
-            >
-              KYC {kycWords(r.kyc.status)}
-            </Link>
-          )}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Account Status",
+      value: (r) => r.status,
+      render: (r) => (
+        <span className={local.badgeLine}>
+          <Status value={r.status} />
+          {r.status === "draft" && <SetupStatusBadge value={r.profile_completion.setup_status} />}
+          {r.kyc?.ready_to_activate && <span className={`${kit.badge} ${kit["tone-info"]}`}>Ready to activate</span>}
           {r.upgrade && (
             <Link
               href={`/admin/partners/${r.id}?tab=users`}
@@ -645,10 +699,22 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
     {
       key: "country",
       header: "Country",
-      value: (r) => r.country,
+      // ADR-063: always shown (the table hides a column blank in every row, and
+      // "—" counts as blank); a partner with no country sorts last.
+      value: (r) => r.country || "ZZ",
       render: (r) => (r.country ? <abbr title={countryName(r.country)}>{r.country}</abbr> : "—"),
     },
-    { key: "currency", header: "Currency", value: (r) => r.payout_currency, render: (r) => r.payout_currency },
+    {
+      key: "customers",
+      header: "Assigned Customers",
+      value: (r) => r.customers,
+      render: (r) => (
+        <Link href={`/admin/partners/${r.id}?tab=customers`} aria-label={`${r.customers} assigned customers of ${r.display_name}`}>
+          {r.customers}
+        </Link>
+      ),
+    },
+    { key: "joined", header: "Created", value: (r) => r.created_at, render: (r) => formatDate(r.created_at) },
     // 2026-11-10 (the owner): Guest Login where Earnings was. Earnings stay on each
     // partner's own page and in every report; only this list stops showing them.
     // Offered only to staff who may start a guest view - the server checks again.
@@ -667,8 +733,7 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
                     // and the row's actions stay in view at 1366 px.
                     iconEnd="external"
                     aria-label={`Login as Guest to ${r.display_name}`}
-                    loading={guestOpening === r.id}
-                    disabled={guestOpening !== null && guestOpening !== r.id}
+                    disabled={guestLogin.dialog !== null}
                     onClick={() => void guest(r)}
                   >
                     Login
@@ -684,20 +749,6 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
           } satisfies Column<ResellerRow>,
         ]
       : []),
-    {
-      key: "login",
-      header: "Last login",
-      value: (r) => r.administrator?.last_login_at ?? null,
-      render: (r) =>
-        r.administrator?.last_login_at ? (
-          <Tooltip content={exactTime(r.administrator.last_login_at)}>
-            <span tabIndex={0}>{formatRelative(r.administrator.last_login_at)}</span>
-          </Tooltip>
-        ) : (
-          <span className={styles.muted}>Never</span>
-        ),
-    },
-    { key: "joined", header: "Joined", value: (r) => r.created_at, render: (r) => formatDate(r.created_at) },
   ];
 
   const filtered = Boolean(filters.q || (!category && filters.type) || filters.status || filters.profile || filters.kyc);
@@ -751,6 +802,7 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
         }
       />
       {confirm.dialog}
+      {guestLogin.dialog}
       {guestAccess && (
         <ManageGuestAccess
           partnerId={guestAccess.id}

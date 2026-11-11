@@ -268,7 +268,7 @@ describe("the header", () => {
     expect(screen.queryByRole("button", { name: "Suspend" })).not.toBeInTheDocument();
     // Reading who opened the portal as a guest is a view (ADR-062); nothing else is offered.
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Manage Guest Access"]);
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Manage Guest Access", "View Partner Wallet"]);
   });
 
   it("says a draft with an incomplete profile needs setup, and keeps Activate disabled with the reason on the page", async () => {
@@ -339,7 +339,12 @@ describe("the header", () => {
     const suspend = screen.getByRole("button", { name: "Suspend" });
     expect(suspend.compareDocumentPosition(screen.getByRole("tablist", { name: "Partner sections" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Complete partner profile", "Manage Guest Access", "Terminate partner"]);
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+      "Complete partner profile",
+      "Manage Guest Access",
+      "View Partner Wallet",
+      "Terminate partner",
+    ]);
   });
 
   it("offers Login as Guest from the partner's own page, returning there on exit", async () => {
@@ -359,12 +364,16 @@ describe("the header", () => {
       "Complete partner profile",
       "Login as Guest",
       "Manage Guest Access",
+      "View Partner Wallet",
       "Terminate partner",
     ]);
     fireEvent.click(screen.getByRole("menuitem", { name: "Login as Guest" }));
+    // ADR-063: the Admin says why first.
+    const dialog = await screen.findByRole("dialog", { name: /^Login as Guest · / });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Start guest session" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/partner/reseller/dashboard"));
     expect(calls.find((c) => c.key === `POST /api/v1/admin/partners/${ID}/guest-view`)!.body).toEqual({
-      reason: "Login as Guest - Partner page",
+      reason: "Partner support request",
       return_path: `/admin/partners/${ID}`,
     });
     vi.unstubAllGlobals();

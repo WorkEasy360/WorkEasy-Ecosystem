@@ -6,8 +6,7 @@ import { adminApi } from "@/lib/api/controlPlane";
 import { partnerConsoleApi, type PartnerSummaryView } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
 import { ExperiencePanel } from "./ExperiencePanel";
-import { GUEST_PERMISSION, ManageGuestAccess, currentReturnPath, guestAvailable, loginAsGuest } from "./GuestAccess";
-import { usePortals } from "@/lib/portalContext";
+import { GUEST_PERMISSION, ManageGuestAccess, guestAvailable, useGuestLogin } from "./GuestAccess";
 import { TypeBadges } from "./labels";
 import { CompletionMeter, SetupStatusBadge } from "./PartnerConsole";
 import { BusinessDetailsTab, ContactsTab } from "./PartnerProfileTabs";
@@ -94,8 +93,9 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
   const manage = can(permissions, "platform.staff_partner.manage");
   // Login as Guest (ADR-062), from the partner's own page as from its row.
   const canGuest = can(permissions, GUEST_PERMISSION);
-  const portals = usePortals();
   const [guestAccess, setGuestAccess] = useState(false);
+  // ADR-063: Login as Guest asks why first.
+  const guestLogin = useGuestLogin("Partner page");
 
   const confirm = useConfirm();
 
@@ -124,13 +124,15 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
               icon: "login",
               when: canGuest,
               disabled: busy || !guestAvailable(p.status),
-              onSelect: () =>
-                void act(
-                  () => loginAsGuest(p.id, "Partner page", currentReturnPath(), portals),
-                  `Opening ${p.display_name}'s dashboard in Guest Mode…`,
-                ),
+              onSelect: () => guestLogin.ask(p.id, p.display_name),
             },
             { label: "Manage Guest Access", icon: "eye", onSelect: () => setGuestAccess(true) },
+            // ADR-063: the partner's Platform Wallet, under Admin -> Wallets.
+            {
+              label: "View Partner Wallet",
+              icon: "card",
+              href: `/admin/wallets?owner_type=partner&q=${encodeURIComponent(p.display_name)}`,
+            },
             {
               label: "Terminate partner",
               icon: "ban",
@@ -211,6 +213,7 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
               />
               {feedback}
               {confirm.dialog}
+              {guestLogin.dialog}
               {guestAccess && (
                 <ManageGuestAccess
                   partnerId={p.id}

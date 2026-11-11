@@ -329,3 +329,30 @@
   font-size: var(--w360-fs-body);
   color: var(--w360-text);
 }
+
+/* ADR-063: base permissions granted explicitly beside the partner type. */
+.alsoGroup {
+  border: 1px solid var(--w360-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.alsoGroup legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.alsoHint {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: 0.875rem;
+}
+
+.alsoOption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

@@ -11,6 +11,7 @@ import { takeFragmentToken } from "@/lib/auth/fragmentToken";
 import { rememberIntent, useSiteSettings } from "@/features/site/SiteShell";
 import styles from "@/features/site/Site.module.css";
 import { AdminAuthFrame } from "./AdminLogin";
+import { PARTNER_SIGN_IN, PartnerAuthFrame } from "./PartnerLogin";
 import { usePortalRouter } from "@/lib/portalRouter";
 
 /**
@@ -338,9 +339,10 @@ export function VerifyEmailScreen() {
 
 // --- forgot / reset ---------------------------------------------------------------------------
 
-/** `admin`: the frame of the Admin sign-in, on the Admin portal. */
-export function ForgotPasswordScreen({ admin = false }: { admin?: boolean } = {}) {
-  const Frame = admin ? AdminAuthFrame : AuthFrame;
+/** `admin` / `partner`: the frame of that portal's sign-in, on that portal. */
+export function ForgotPasswordScreen({ admin = false, partner = false }: { admin?: boolean; partner?: boolean } = {}) {
+  const Frame = admin ? AdminAuthFrame : partner ? PartnerAuthFrame : AuthFrame;
+  const signIn = partner ? PARTNER_SIGN_IN : "/login";
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "busy" | "sent">("idle");
   const [problems, setProblems] = useState<string[]>([]);
@@ -354,7 +356,7 @@ export function ForgotPasswordScreen({ admin = false }: { admin?: boolean } = {}
           minutes.
         </p>
         <p className={styles.below}>
-          <Link href="/login">Back to sign in</Link>
+          <Link href={signIn}>Back to sign in</Link>
         </p>
       </Frame>
     );
@@ -385,15 +387,22 @@ export function ForgotPasswordScreen({ admin = false }: { admin?: boolean } = {}
         </button>
       </form>
       <p className={styles.below}>
-        <Link href="/login">Back to sign in</Link>
+        <Link href={signIn}>Back to sign in</Link>
       </p>
     </Frame>
   );
 }
 
-/** `admin`: the frame of the Admin sign-in, on the Admin portal. */
-export function ResetPasswordScreen({ admin = false, invitation = false }: { admin?: boolean; invitation?: boolean } = {}) {
-  const Frame = admin ? AdminAuthFrame : AuthFrame;
+/** `admin` / `partner`: the frame of that portal's sign-in, on that portal. A
+ * partner's invitation is always the Partner portal's. */
+export function ResetPasswordScreen({
+  admin = false,
+  partner = false,
+  invitation = false,
+}: { admin?: boolean; partner?: boolean; invitation?: boolean } = {}) {
+  const Frame = admin ? AdminAuthFrame : partner || invitation ? PartnerAuthFrame : AuthFrame;
+  const signIn = partner || invitation ? PARTNER_SIGN_IN : "/login";
+  const forgot = partner || invitation ? "/forgot-password?mode=partner" : "/forgot-password";
   // A partner's invitation (2026-11-10) uses the same one-time link, worded for a
   // person choosing their first password rather than replacing one.
   const title = invitation ? "Accept your invitation" : "Choose a new password";
@@ -418,14 +427,14 @@ export function ResetPasswordScreen({ admin = false, invitation = false }: { adm
           Sign in to the partner portal to complete your KYC application. Your partner account becomes active once the application is approved
           and an Admin activates it.
         </p>
-        <Link href="/login" className={`w360-btn w360-btn-primary ${styles.fullWidth}`}>
+        <Link href={signIn} className={`w360-btn w360-btn-primary ${styles.fullWidth}`}>
           Sign in
         </Link>
       </Frame>
     ) : (
       <Frame title="Password changed">
         <p role="status">Your password was changed and every session was signed out.</p>
-        <Link href="/login" className={`w360-btn w360-btn-primary ${styles.fullWidth}`}>
+        <Link href={signIn} className={`w360-btn w360-btn-primary ${styles.fullWidth}`}>
           Sign in
         </Link>
       </Frame>
@@ -436,7 +445,7 @@ export function ResetPasswordScreen({ admin = false, invitation = false }: { adm
       <Frame title={title}>
         <p role="alert">{invitation ? "This invitation link is not valid. Ask the Workeasy360 team to send a new one." : "This link is not valid. Ask for a new one."}</p>
         <p className={styles.below}>
-          <Link href="/forgot-password">Reset your password</Link>
+          <Link href={forgot}>Reset your password</Link>
         </p>
       </Frame>
     );

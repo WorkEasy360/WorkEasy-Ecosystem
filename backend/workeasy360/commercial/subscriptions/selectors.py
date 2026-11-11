@@ -83,6 +83,8 @@ class SubscriptionDTO:
     ended_at: datetime | None
     version: int
     items: tuple[SubscriptionItemDTO, ...]
+    #: ADR-063: who is invoiced (``partner_wallet``: the partner pays from its wallet).
+    collection_mode: str = ""
 
     def access_ends_at(self) -> datetime | None:
         candidates = [value for value in (self.cancel_at, self.ended_at) if value]
@@ -197,6 +199,7 @@ def _subscription_dto(row) -> SubscriptionDTO:
         ended_at=row.ended_at,
         version=row.version,
         items=tuple(_item_dto(item) for item in row.items.all()),
+        collection_mode=row.collection_mode,
     )
 
 
@@ -364,10 +367,34 @@ class SaleFactDTO:
     #: ADR-053: the catalog versions sold, so a margin can find the list price.
     plan_version_id: UUID | None = None
     bundle_version_id: UUID | None = None
+    #: ADR-063: who pays. ``partner_wallet`` lines were bought by the reseller at
+    #: its purchase price, so they earn it no margin or commission.
+    subscription_collection_mode: str = ""
 
     @property
     def source_ref(self) -> str:
         return f"subscriptions.item:{self.item_id}"
+
+
+def organization_of_subscription(subscription_id: object) -> UUID | None:
+    """The organization a subscription belongs to - for a control-plane screen
+    naming the customer a wallet renewal paid for (ADR-063). Nothing else."""
+    from workeasy360.commercial.subscriptions.models import Subscription
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    try:
+        wanted = UUID(str(subscription_id))
+    except ValueError:
+        return None
+    with unscoped_access(
+        reason="A partner's wallet movement names the customer it renewed",
+        module="commercial.subscriptions.selectors",
+    ):
+        return (
+            Subscription.unscoped.filter(id=wanted)
+            .values_list("organization_id", flat=True)
+            .first()
+        )
 
 
 def sale_facts(organization_id: UUID) -> tuple[SaleFactDTO, ...]:
@@ -440,6 +467,7 @@ def sale_facts(organization_id: UUID) -> tuple[SaleFactDTO, ...]:
                     subscription_activated_at=sub.activated_at,
                     plan_version_id=row.plan_version_id,
                     bundle_version_id=row.bundle_version_id,
+                    subscription_collection_mode=sub.collection_mode,
                 )
             )
         return tuple(facts)

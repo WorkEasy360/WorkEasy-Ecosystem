@@ -99,10 +99,10 @@ def test_the_real_three_types_are_each_in_exactly_one_list(
         "white_label": white_label[1],
         "affiliate": affiliate[1],
     }
-    # A white-label partner holds the reseller's selling grants, and the
-    # combined label filter lists it under both; the categories do not.
+    # ADR-063: a White Label partner holds the reseller's grants only when they
+    # were granted beside it; this one was not, so the label filter agrees.
     by_label = listed(admin, type="reseller")
-    assert ids["white_label"] in by_label and ids["reseller"] in by_label
+    assert ids["reseller"] in by_label and ids["white_label"] not in by_label
     for category, partner_id in ids.items():
         rows = listed(admin, category=category)
         assert partner_id in rows, category

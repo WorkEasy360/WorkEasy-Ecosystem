@@ -50,6 +50,18 @@ class PlatformSettings(models.Model):
     notifications_email = models.CharField(
         max_length=254, blank=True, default="", db_default=""
     )
+    #: ADR-063: what a partner made active before KYC existed (no approved
+    #: application) may do. ``allow`` keeps it trading, labelled "Active before
+    #: KYC"; ``restrict`` confines it to onboarding until its KYC is approved.
+    #: Never a forged approval either way.
+    partner_legacy_kyc_policy = models.CharField(
+        max_length=16, default="allow", db_default="allow"
+    )
+    #: ADR-063: whether a suspended partner keeps accruing commission on its
+    #: referred customers' payments (``accrue``, payouts stay held) or not (``stop``).
+    partner_suspended_commission_policy = models.CharField(
+        max_length=16, default="accrue", db_default="accrue"
+    )
     version = models.PositiveIntegerField(default=1)
     updated_by_id = models.UUIDField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -59,7 +71,17 @@ class PlatformSettings(models.Model):
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(id=1), name="ck_platform_settings_singleton"
-            )
+            ),
+            models.CheckConstraint(
+                condition=models.Q(partner_legacy_kyc_policy__in=["allow", "restrict"]),
+                name="ck_platform_settings_legacy_kyc",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    partner_suspended_commission_policy__in=["accrue", "stop"]
+                ),
+                name="ck_platform_settings_suspended_commission",
+            ),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - display only

@@ -78,6 +78,17 @@ const PATHS: Record<string, string> = {
   box: "M12 3 3 7.5v9L12 21l9-4.5v-9L12 3Zm0 0v18M3 7.5l9 4.5 9-4.5",
   clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 4v5l3 2",
   cart: "M3 4h2l2.4 11h11L21 7H6.2M9 20h.01M18 20h.01",
+  // The partner sign-in's story (2026-11-11).
+  megaphone: "M3 10v4h3l8 4V6l-8 4H3Zm14-2a5 5 0 0 1 0 8M7 14l1.5 6h3l-1.4-5.2",
+  layers: "M12 3 2 8l10 5 10-5-10-5Zm-10 9 10 5 10-5M2 16l10 5 10-5",
+  coins: "M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Zm0 0v5c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12v5c0 1.7 3.6 3 8 3s8-1.3 8-3v-5",
+  headset: "M4 15v-3a8 8 0 0 1 16 0v3M4 13h3v6H6a2 2 0 0 1-2-2v-4Zm16 0h-3v6h1a2 2 0 0 0 2-2v-4Zm-3 6a3 3 0 0 1-3 2h-2",
+  chat: "M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Zm-12 0h.01M12 12h.01M15 12h.01",
+  message: "M4 5h16v11H9l-5 4V5Zm4 5h8M8 13h5",
+  browser: "M3 5h18v14H3V5Zm0 4h18M6 7h.01M9 7h.01M7 12h5v4H7v-4Zm8 0h2m-2 3h2",
+  monitor: "M3 4h18v12H3V4Zm6 16h6m-3-4v4",
+  phone: "M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z",
+  userPlus: "M15 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm10-3v6m-3-3h6",
 };
 
 /** Any icon above at a chosen size (16 inside buttons and inputs, 18 in the

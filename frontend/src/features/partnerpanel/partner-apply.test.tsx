@@ -43,19 +43,19 @@ function fill(overrides: Partial<Record<"business" | "password", string>> = {}) 
   fireEvent.change(screen.getByLabelText("Business name"), { target: { value: overrides.business ?? " Acme Partners " } });
   fireEvent.change(screen.getByLabelText("First name"), { target: { value: "Asha" } });
   fireEvent.change(screen.getByLabelText("Last name"), { target: { value: "Rao" } });
-  fireEvent.change(screen.getByLabelText("Email"), { target: { value: " asha@acme.example " } });
+  fireEvent.change(screen.getByLabelText("Email Address"), { target: { value: " asha@acme.example " } });
   fireEvent.change(screen.getByLabelText("Password"), { target: { value: overrides.password ?? "correct horse battery" } });
   fireEvent.change(screen.getByLabelText("Country"), { target: { value: "IN" } });
   fireEvent.click(screen.getByRole("radio", { name: "White-label" }));
 }
 
-const send = () => fireEvent.click(screen.getByRole("button", { name: "Send application" }));
+const send = () => fireEvent.click(screen.getByRole("button", { name: "Create Partner Account" }));
 
 describe("the partner application", () => {
   it("says applying grants nothing, offers the three ways to partner, and passes axe", async () => {
     mockApi({ [`GET ${SESSION}`]: [SIGNED_OUT] });
     const { container } = render(<PartnerApplyScreen />);
-    expect(screen.getByRole("heading", { level: 1, name: "Apply to become a partner" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Create Partner Account" })).toBeInTheDocument();
     // The real logo, not a letter and a word in plain text.
     expect(container.querySelector("[data-w360-logo]")).not.toBeNull();
     expect(screen.queryByText("W")).toBeNull();
@@ -123,7 +123,7 @@ describe("the partner application", () => {
     send();
     expect(await screen.findByRole("alert")).toHaveTextContent("Partner applications are closed at the moment.");
     expect(screen.getByLabelText("First name")).toHaveValue("Asha");
-    expect(screen.getByRole("button", { name: "Send application" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Create Partner Account" })).toBeEnabled();
   });
 
   it("lists every password problem the server names", async () => {
@@ -149,7 +149,7 @@ describe("the partner application", () => {
 });
 
 describe("the link from the sign-in page", () => {
-  const LINK = { name: "Apply to become a partner" };
+  const LINK = { name: "Create Partner Account" };
 
   it("is on the partner sign-in page", async () => {
     mockApi({ [`GET ${SESSION}`]: [SIGNED_OUT] });

@@ -276,8 +276,9 @@ export const publicApi = {
     post<{ status: string }>("/api/v1/public/password/reset", { token, password }),
   /** A partner's referral link: an opaque token for the signup to convert, and
    * (ADR-053) where the link leads - a platform path the server derived. */
-  captureReferral: (code: string) =>
-    post<{ token: string; destination?: string }>("/api/v1/public/referrals", { code }),
+  /** ADR-063: `to` may name a fixed landing ("store"); the server decides the path. */
+  captureReferral: (code: string, to?: string) =>
+    post<{ token: string; destination?: string }>("/api/v1/public/referrals", to ? { code, to } : { code }),
   convertReferral: (token: string, organizationId: string) =>
     post<{ converted: boolean }>("/api/v1/referrals/convert", { token, organization_id: organizationId }),
   /** ADR-054: a published feature or release of a Store product - the page an

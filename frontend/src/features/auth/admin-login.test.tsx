@@ -176,10 +176,10 @@ describe("the Admin sign-in page", () => {
     expect(screen.queryByText("Admin Login")).toBeNull();
   });
 
-  it("keeps the standard page on the other portals", async () => {
+  it("keeps the standard page on the customer portal", async () => {
     mockApi({ "GET /api/v1/auth/session": SIGNED_OUT });
-    render(<LoginScreen portal="partner" />);
-    expect(await screen.findByRole("heading", { name: "Sign in as Partner" })).toBeTruthy();
+    render(<LoginScreen portal="app" />);
+    expect(await screen.findByRole("heading", { name: "Sign in as User" })).toBeTruthy();
     expect(screen.queryByText("Remember Me")).toBeNull();
   });
 });

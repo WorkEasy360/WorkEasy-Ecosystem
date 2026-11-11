@@ -114,7 +114,8 @@ describe("the short form", () => {
     // The chosen type is described under the list.
     for (const [key, text] of [
       ["reseller", "Sell WorkEasy360 products and manage customers."],
-      ["white_label", "Sell WorkEasy360 products using your own brand and domain."],
+      // ADR-063: White Label is an add-on - selling or referring is ticked beside it.
+      ["white_label", "Their own branding and domain. White Label alone sells and refers nothing: tick Reseller or Affiliate below to allow that too."],
       ["affiliate", "Promote WorkEasy360 products and earn commissions."],
     ]) {
       fireEvent.change(type, { target: { value: key } });

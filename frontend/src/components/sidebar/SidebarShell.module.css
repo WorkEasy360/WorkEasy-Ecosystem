@@ -562,6 +562,14 @@
   color: var(--w360-text);
 }
 
+/* A context label in the dark top bar (the Partner panel's workspace and partner,
+   2026-11-11). */
+.frame[data-variant="admin"] .context > * {
+  background: var(--w360-shell-raised);
+  border-color: var(--w360-shell-border);
+  color: var(--w360-shell-text);
+}
+
 @media (max-width: 1100px) {
   .accountName,
   .accountChevron {

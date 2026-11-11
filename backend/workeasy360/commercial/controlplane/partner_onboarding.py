@@ -117,7 +117,7 @@ ADMIN_ROLE: Final = "owner"
 
 #: The keys the Add Partner request may carry. Anything else is refused, so the
 #: browser cannot slip in capabilities, products, prices or a status.
-_BODY_KEYS: Final = frozenset({"experience", "partner", "administrator"})
+_BODY_KEYS: Final = frozenset({"experience", "also", "partner", "administrator"})
 #: ``contact_email`` and ``phone`` are optional (2026-11-10): the Partner Email is
 #: the login and, unless a separate contact email is given, the contact address too.
 _PARTNER_KEYS: Final = frozenset(
@@ -447,6 +447,8 @@ class _Plan:
     contact_email: str = ""
     phone: str = ""
     allow_same_name: bool = False
+    #: ADR-063: base permissions granted explicitly beside the type.
+    also: tuple[str, ...] = ()
 
 
 def _plan(raw: Any, *, with_password: bool) -> _Plan:
@@ -462,6 +464,11 @@ def _plan(raw: Any, *, with_password: bool) -> _Plan:
         )
     key = problems.run(
         "experience", capabilities.require_experience, body.get("experience")
+    )
+    also = (
+        problems.run("also", capabilities.require_also, key, body.get("also"))
+        if key
+        else ()
     )
     partner = body.get("partner") if isinstance(body.get("partner"), dict) else {}
     if set(partner) - _PARTNER_KEYS:
@@ -500,6 +507,7 @@ def _plan(raw: Any, *, with_password: bool) -> _Plan:
     return _Plan(
         allow_same_name=allow_same_name,
         experience=key or "",
+        also=tuple(also or ()),
         display_name=name or "",
         country=country,
         contact_email=contact or "",
@@ -697,7 +705,12 @@ def create(ctx: TenantContext, raw: Any) -> Created:
 
         # The type: its capability bundle and the landing preference, in one call.
         transition = experience.grant_experience(
-            ctx, partner.id, experience=key, reason=REASON, make_default=True
+            ctx,
+            partner.id,
+            experience=key,
+            reason=REASON,
+            make_default=True,
+            also=plan.also,
         )
         member = services.attach_user_as_member(
             ctx,

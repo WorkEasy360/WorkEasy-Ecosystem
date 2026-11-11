@@ -99,27 +99,3 @@
   margin: var(--w360-space-1) 0 0;
   padding-left: var(--w360-space-5);
 }
-
-.applyLead {
-  margin: 0 0 var(--w360-space-4);
-}
-
-.choice {
-  display: grid;
-  gap: var(--w360-space-2);
-  min-width: 0;
-  margin: 0 0 var(--w360-space-4);
-  padding: 0;
-  border: 0;
-}
-
-.choice legend {
-  padding: 0;
-  margin-bottom: var(--w360-space-1);
-}
-
-.check {
-  display: flex;
-  align-items: center;
-  gap: var(--w360-space-2);
-}

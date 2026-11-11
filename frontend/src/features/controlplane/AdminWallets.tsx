@@ -591,6 +591,8 @@ export function WalletsList({
   info,
   ownerFilter = false,
   initialLow = false,
+  initialOwnerType = "",
+  initialQuery = "",
   links,
 }: {
   kind: WalletKind;
@@ -600,12 +602,15 @@ export function WalletsList({
   /** Only the Platform Wallet is held by partners too. */
   ownerFilter?: boolean;
   initialLow?: boolean;
+  /** ADR-063: "View Partner Wallet" from the partner list opens one partner's wallet. */
+  initialOwnerType?: string;
+  initialQuery?: string;
   links?: React.ReactNode;
 }) {
   const { permissions } = useAdmin();
   const manage = can(permissions, MANAGE);
-  const [ownerType, setOwnerType] = useState("");
-  const [query, setQuery] = useState("");
+  const [ownerType, setOwnerType] = useState(initialOwnerType);
+  const [query, setQuery] = useState(initialQuery);
   const [low, setLow] = useState(initialLow);
   const [chosen, setChosen] = useState<WalletRow | null>(null);
   const [form, setForm] = useState<"open" | "order" | null>(null);
@@ -881,15 +886,21 @@ function PackOrderDialog({ onClose, onPlaced }: { onClose: () => void; onPlaced:
 
 // --- the three balances --------------------------------------------------------------
 
-export function PlatformWalletScreen({ initialLow = false }: { initialLow?: boolean } = {}) {
+export function PlatformWalletScreen({
+  initialLow = false,
+  initialOwnerType = "",
+  initialQuery = "",
+}: { initialLow?: boolean; initialOwnerType?: string; initialQuery?: string } = {}) {
   return (
     <WalletsList
       kind="platform"
       title="Platform Wallet"
       subtitle="Money customers and partners hold on the platform."
-      info="A customer's top-up arrives by paid order or offline payment. A partner's arrives by offline payment. What a partner earns is recorded separately and never adds to this balance."
+      info="A customer's top-up arrives by paid order or offline payment. A partner's arrives online from its partner panel (Add Money) or by an offline payment recorded here, and pays for its customers' plans at its purchase price. What a partner earns is recorded separately and never adds to this balance."
       ownerFilter
       initialLow={initialLow}
+      initialOwnerType={initialOwnerType}
+      initialQuery={initialQuery}
     />
   );
 }

@@ -907,6 +907,30 @@
   white-space: nowrap;
 }
 
+/* In the console's dark top bar (2026-11-11, the Admin's colours): the level on the
+   raised teal, "Upgrade Plan" in the green the Admin's Create button wears. */
+:global([data-variant="admin"]) .levelBadge {
+  background: var(--w360-shell-raised);
+  border-color: var(--w360-shell-border);
+  color: var(--w360-shell-muted);
+}
+
+:global([data-variant="admin"]) .levelBadge strong {
+  color: var(--w360-shell-text);
+}
+
+:global([data-variant="admin"]) .upgradeButton {
+  background: var(--w360-shell-active);
+  border-color: var(--w360-shell-active);
+  color: var(--w360-shell-text);
+}
+
+:global([data-variant="admin"]) .upgradeButton:hover {
+  background: var(--w360-admin-action-hover);
+  border-color: var(--w360-admin-action-hover);
+  color: var(--w360-shell-text);
+}
+
 .upgradeWord {
   display: inline;
 }

@@ -4,11 +4,12 @@ import { useId, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { partnerApplicationApi } from "@/lib/api/adminPanel";
 import { ApiError } from "@/lib/api/client";
-import { AuthFrame } from "@/features/auth/SelfService";
+import { Icon } from "@/components/sidebar/icons";
+import { PARTNER_SIGN_IN, PartnerAuthFrame, PartnerPortalBadge } from "@/features/auth/PartnerLogin";
 import { countryOptions } from "@/features/controlplane/countries";
 import { EXPERIENCES, type ExperienceChoice } from "@/features/controlplane/kycParts";
-import siteStyles from "@/features/site/Site.module.css";
-import styles from "./KycApplication.module.css";
+import frame from "@/features/auth/AdminLogin.module.css";
+import styles from "@/features/auth/PartnerLogin.module.css";
 
 /**
  * The public partner application (2026-11-09). Applying creates an inactive partner
@@ -18,7 +19,7 @@ import styles from "./KycApplication.module.css";
  */
 
 const MIN_PASSWORD = 12;
-const SIGN_IN = "/login?mode=partner";
+const SIGN_IN = PARTNER_SIGN_IN;
 
 function problemsOf(err: unknown): string[] {
   if (err instanceof ApiError) {
@@ -30,17 +31,57 @@ function problemsOf(err: unknown): string[] {
   return ["Something went wrong. Please try again."];
 }
 
+const FIELD_ICONS: Record<string, string> = {
+  organization: "building",
+  "given-name": "user",
+  "family-name": "user",
+  email: "mail",
+  "new-password": "lock", // pragma: allowlist secret - an autocomplete token, not a password
+  tel: "phone",
+};
+
+const INTEREST_ICONS: Record<ExperienceChoice, string> = {
+  affiliate: "megaphone",
+  reseller: "layers",
+  white_label: "palette",
+};
+
+/** A labelled input in the partner sign-in's style: its icon, and for a password
+ * a show / hide button. */
 function Field({ label, hint, ...input }: React.InputHTMLAttributes<HTMLInputElement> & { label: string; hint?: string }) {
   const id = useId();
   const hintId = useId();
+  const [show, setShow] = useState(false);
+  const password = input.type === "password";
+  const icon = FIELD_ICONS[input.autoComplete ?? ""];
   return (
-    <div className={siteStyles.field}>
-      <label className="w360-label" htmlFor={id}>
+    <div>
+      <label className={frame.label} htmlFor={id}>
         {label}
       </label>
-      <input id={id} className="w360-input" aria-describedby={hint ? hintId : undefined} {...input} />
+      <span className={frame.inputWrap}>
+        {icon && <Icon name={icon} size={18} />}
+        <input
+          id={id}
+          className={frame.input}
+          aria-describedby={hint ? hintId : undefined}
+          {...input}
+          type={password && show ? "text" : input.type}
+        />
+        {password && (
+          <button
+            type="button"
+            className={frame.reveal}
+            aria-pressed={show}
+            aria-label={show ? "Hide password" : "Show password"}
+            onClick={() => setShow((v) => !v)}
+          >
+            <Icon name={show ? "eye" : "eyeOff"} size={18} />
+          </button>
+        )}
+      </span>
       {hint && (
-        <p id={hintId} className="w360-hint">
+        <p id={hintId} className={styles.hint}>
           {hint}
         </p>
       )}
@@ -58,13 +99,18 @@ const browserCountries = () => (cachedCountries ??= countryOptions());
 
 const EMPTY_FORM = { business_name: "", first_name: "", last_name: "", email: "", password: "", country: "", phone: "" };
 
+/** The Partner portal's sign-up (2026-11-11): the partner sign-in's frame, the
+ * "Create Partner Account" its button leads to. */
 export function PartnerApplyScreen() {
+  // The frame reads the session, which issues the CSRF cookie this form's POST needs.
   const [sentTo, setSentTo] = useState<string | null>(null);
   return (
-    // AuthFrame reads the session, which issues the CSRF cookie this form's POST needs.
-    <AuthFrame title={sentTo ? "Check your email" : "Apply to become a partner"}>
+    <PartnerAuthFrame
+      title={sentTo ? "Check your email" : "Create Partner Account"}
+      description={sentTo ? undefined : "Apply as an affiliate, reseller or white-label partner of WorkEasy360."}
+    >
       {sentTo ? <Sent email={sentTo} /> : <ApplyForm onSent={setSentTo} />}
-    </AuthFrame>
+    </PartnerAuthFrame>
   );
 }
 
@@ -77,7 +123,7 @@ function Sent({ email }: { email: string }) {
       <p className="w360-hint">
         After that, sign in on the partner portal and complete your KYC application. Applying does not grant any partner rights: those start only once your KYC is approved.
       </p>
-      <p className={siteStyles.below}>
+      <p className={styles.below}>
         <Link href={SIGN_IN}>Go to partner sign-in</Link>
       </p>
     </>
@@ -136,39 +182,48 @@ function ApplyForm({ onSent }: { onSent: (email: string) => void }) {
 
   return (
     <>
-      <p className={styles.applyLead}>Applying does not grant any partner rights. You can start selling or promoting only once your KYC is approved.</p>
-      <form method="post" onSubmit={(e) => void submit(e)} noValidate aria-describedby={problems.length ? errorId : undefined}>
-        <Field label="Business name" autoComplete="organization" required maxLength={120} value={form.business_name} onChange={set("business_name")} />
-        <div className={siteStyles.formRow}>
+      <PartnerPortalBadge />
+      <p className={styles.lead}>Creating an account does not grant any partner rights: you can promote, resell or earn only once your KYC is approved.</p>
+      <form method="post" onSubmit={(e) => void submit(e)} noValidate className={frame.form} aria-describedby={problems.length ? errorId : undefined}>
+        <Field label="Business name" autoComplete="organization" placeholder="Your business name" required maxLength={120} value={form.business_name} onChange={set("business_name")} />
+        <div className={styles.formRow}>
           <Field label="First name" autoComplete="given-name" required maxLength={100} value={form.first_name} onChange={set("first_name")} />
           <Field label="Last name" autoComplete="family-name" required maxLength={100} value={form.last_name} onChange={set("last_name")} />
         </div>
-        <Field label="Email" type="email" autoComplete="email" required maxLength={254} value={form.email} onChange={set("email")} />
-        <Field label="Password" type="password" autoComplete="new-password" required value={form.password} onChange={set("password")} hint="At least 12 characters. A few unrelated words make a strong one." />
-        <div className={siteStyles.field}>
-          <label className="w360-label" htmlFor={countryId}>
-            Country
-          </label>
-          <select id={countryId} className="w360-input" required value={form.country} onChange={set("country")}>
-            {countries.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <Field label="Phone (optional)" type="tel" autoComplete="tel" maxLength={32} value={form.phone} onChange={set("phone")} />
-        <fieldset className={styles.choice}>
-          <legend className="w360-label">How do you want to partner?</legend>
-          {EXPERIENCES.map((option) => (
-            <label key={option.value} className={styles.check}>
-              <input type="radio" name="interest" value={option.value} checked={interest === option.value} onChange={() => setInterest(option.value)} />
-              {option.label}
+        <Field label="Email Address" type="email" autoComplete="email" placeholder="Enter your email" required maxLength={254} value={form.email} onChange={set("email")} />
+        <Field label="Password" type="password" autoComplete="new-password" placeholder="Choose a password" required value={form.password} onChange={set("password")} hint="At least 12 characters. A few unrelated words make a strong one." />
+        <div className={styles.formRow}>
+          <div>
+            <label className={frame.label} htmlFor={countryId}>
+              Country
             </label>
-          ))}
+            <span className={frame.inputWrap}>
+              <Icon name="globe" size={18} />
+              <select id={countryId} className={`${frame.input} ${styles.select}`} required value={form.country} onChange={set("country")}>
+                {countries.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </span>
+          </div>
+          <Field label="Phone (optional)" type="tel" autoComplete="tel" maxLength={32} value={form.phone} onChange={set("phone")} />
+        </div>
+        <fieldset className={styles.choice}>
+          <legend className={frame.label}>How do you want to partner?</legend>
+          <div className={styles.choiceList}>
+            {EXPERIENCES.map((option) => (
+              <label key={option.value} className={styles.choiceTile}>
+                <Icon name={INTEREST_ICONS[option.value]} size={26} />
+                <span>{option.label}</span>
+                <input type="radio" name="interest" value={option.value} checked={interest === option.value} onChange={() => setInterest(option.value)} />
+              </label>
+            ))}
+          </div>
         </fieldset>
         {problems.length > 0 && (
-          <div id={errorId} role="alert" className="w360-error-text">
+          <div id={errorId} role="alert" className={styles.problems}>
             {problems.length === 1 ? (
               <p>{problems[0]}</p>
             ) : (
@@ -180,12 +235,13 @@ function ApplyForm({ onSent }: { onSent: (email: string) => void }) {
             )}
           </div>
         )}
-        <button type="submit" className={`w360-btn w360-btn-primary ${siteStyles.fullWidth}`} disabled={busy}>
-          {busy ? "Sending your application…" : "Send application"}
+        <button type="submit" className={frame.submit} disabled={busy}>
+          <Icon name="userPlus" size={20} />
+          {busy ? "Creating your account…" : "Create Partner Account"}
         </button>
       </form>
-      <p className={siteStyles.below}>
-        Already a partner? <Link href={SIGN_IN}>Sign in</Link>
+      <p className={styles.below}>
+        Already have a partner account? <Link href={SIGN_IN}>Login</Link>
       </p>
     </>
   );

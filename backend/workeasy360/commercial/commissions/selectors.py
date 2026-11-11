@@ -691,6 +691,21 @@ def referral_activity(partner_id: UUID, start: datetime, end: datetime) -> dict[
     }
 
 
+def renewal_count(partner_id: UUID, start: datetime, end: datetime) -> int:
+    """How many paid renewals of this partner's customers earned it something
+    inside ``[start, end)`` (ADR-063, the dashboard's "customer renewals"): the
+    accruals whose source is a renewal invoice line, not the first sale."""
+    from workeasy360.commercial.commissions.models import CommissionAccrual
+
+    return CommissionAccrual.objects.filter(
+        partner_id=partner_id,
+        kind=AccrualKind.ACCRUAL.value,
+        source_ref__startswith="payments.invoice_line:",
+        event_at__gte=start,
+        event_at__lt=end,
+    ).count()
+
+
 def referral_earnings(
     partner_id: UUID, start: datetime | None = None, end: datetime | None = None
 ) -> dict[str, Any]:

@@ -1,27 +1,28 @@
 /**
- * The unified partner dashboard (2026-11-03, the owner's "Workeasy360 Unified
- * Partner Dashboard" specification, DOC WE360-PRD-2026-V4.2).
+ * The partner panel's menu (ADR-063, the Partner Admin Panel specification of
+ * 08 November 2026): **exactly eight entries** - Dashboard, Products & Referrals,
+ * Customers, Billing & Subscriptions, Platform Wallet, Earnings & Payouts, Help
+ * and Settings - the same for every partner. Every other page is a tab of one of
+ * them; statuses are filters inside the pages and actions are buttons.
  *
- * **One panel, one menu.** Every partner - Level 1 Affiliate, Level 2 Reseller,
- * Level 3 White-label - sees the same fourteen entries in the same order. What
- * differs is computed at runtime:
+ * What a partner sees is computed at runtime from two server facts:
  *
- * - **Level** (the workspace: `affiliate`, `reseller`, `white_label`). An entry
- *   the level does not include is drawn **locked** - a lock icon that opens the
- *   upgrade dialog - and its pages show an upgrade prompt, never the page.
- * - **Permissions.** Inside the level, an entry (and each of its tabs) is drawn
- *   only when the signed-in member's server-resolved permissions make it useful
- *   (`needs(can)`); a role that cannot use it does not see it at all - upgrading
- *   would not help, so it is not offered as a lock.
+ * - **Permissions.** An entry (and each of its tabs) is drawn only when the
+ *   signed-in member's server-resolved permissions make it useful (`needs(can)`).
+ *   Nothing is drawn locked: a module the partner may not use is not shown.
+ * - **Onboarding.** Until a partner may trade (its KYC approved and its account
+ *   active - `partner.onboarding.cleared`), only the entries and tabs marked
+ *   `onboarding` are drawn: its onboarding status, support, business and KYC,
+ *   and its own security.
  *
  * Every request behind a link is authorized again by the backend; this file
- * decides only what to draw. It names permissions and levels, never a
- * capability or the landing preference, and stays **plain data, no imports**:
- * `next.config.ts` reads it for the short addresses
- * (`/reseller/dashboard` -> `/partner/reseller/dashboard`).
+ * decides only what to draw. It names permissions, never a capability or the
+ * landing preference, and stays **plain data, no imports**: `next.config.ts`
+ * reads it for the short addresses (`/reseller/dashboard` ->
+ * `/partner/reseller/dashboard`).
  *
- * Every page keeps its address: the older menus' addresses are aliases or
- * pages of an entry here, so a bookmark opens the same page.
+ * Every page keeps its address: the older menus' addresses are pages or aliases
+ * here, so a bookmark opens the same page.
  */
 
 export type ExperienceKey = "reseller" | "white_label" | "affiliate";
@@ -50,6 +51,8 @@ export interface WorkspaceEntry {
   levels?: readonly ExperienceKey[];
   /** One line on the upgrade dialog: what the locked entry would open. */
   pitch?: string;
+  /** Drawn while the partner may not trade yet (ADR-063). */
+  onboarding?: boolean;
 }
 
 export interface WorkspaceTab {
@@ -59,6 +62,8 @@ export interface WorkspaceTab {
   /** The tab's other pages - an older address of its page, or its sub-pages. */
   also?: string[];
   needs?: (can: Can) => boolean;
+  /** Drawn while the partner may not trade yet (ADR-063). */
+  onboarding?: boolean;
 }
 
 export interface WorkspaceGroup {
@@ -83,13 +88,17 @@ export interface WorkspaceDef {
 // --- levels ---------------------------------------------------------------------------------------------
 
 export const ALL_LEVELS: readonly ExperienceKey[] = ["affiliate", "reseller", "white_label"];
-const SELLING: readonly ExperienceKey[] = ["reseller", "white_label"];
-const WHITE_LABEL_ONLY: readonly ExperienceKey[] = ["white_label"];
 
 /** Level 1, 2 and 3, in the order a partner grows. */
 export const LEVEL_ORDER: readonly ExperienceKey[] = ["affiliate", "reseller", "white_label"];
 
 // --- the entries ------------------------------------------------------------------------------------------
+//
+// The Partner Admin Panel specification of 08 November 2026 (ADR-063): exactly
+// eight entries. Every other page is a tab of one of them (or a page an entry's
+// tab links to), statuses are filters inside the pages, and actions are buttons.
+// An entry is drawn only when the person's permissions make it useful; nothing is
+// drawn locked. Every page the earlier menus served keeps its address here.
 
 /** An entry whose pages are tabs: it opens the first tab, and owns every tab's
  * pages so the sidebar stays current on each of them. */
@@ -100,259 +109,176 @@ const tabbed = (entry: Omit<WorkspaceEntry, "path" | "also" | "tabs">, tabs: Wor
   tabs,
 });
 
-/** Promoting needs the referral view - held by an affiliate, and by a reseller or
- * white-label partner that also promotes (ADR-049 keeps an upgraded partner's grants). */
+/** Promoting needs the referral view - held by an affiliate, and by a reseller
+ * or white-label partner granted the affiliate permission as well. */
 const promotes = (can: Can) => can("referral.view");
+/** Selling needs the pricing view - held by a partner granted reseller rights. */
+const sells = (can: Can) => can("pricing.view");
 
-const dashboard = (): WorkspaceEntry => ({
-  key: "dashboard",
-  label: "Dashboard",
-  icon: "dashboard",
-  path: "dashboard",
-  // The upgrade pages open from the header's Upgrade Plan action and the
-  // dashboard's level card (ADR-049); they are not a menu entry.
-  also: ["upgrade", "upgrade/reseller", "upgrade/white-label"],
-  needs: (can) => can("dashboard.view"),
-});
+/** 1. Dashboard: KYC and account status, referral performance, wallet and
+ * earnings, quick actions; the reports and notifications beside it. */
+const dashboard = (): WorkspaceEntry =>
+  tabbed({ key: "dashboard", label: "Dashboard", icon: "dashboard", onboarding: true, needs: (can) => can("dashboard.view") }, [
+    {
+      label: "Overview",
+      path: "dashboard",
+      // The upgrade pages open from the dashboard's level card (ADR-049).
+      also: ["upgrade", "upgrade/reseller", "upgrade/white-label"],
+      onboarding: true,
+    },
+    { label: "Reports", path: "reports" },
+    { label: "Notifications", path: "notifications", onboarding: true },
+  ]);
 
-/** 2. Affiliate: link generator, UTM builder, click logs, commission attribution. */
-const affiliate = (key: ExperienceKey): WorkspaceEntry =>
+/** 2. Products & Referrals: what the partner may promote or sell, its links and
+ * their results, and the material Workeasy360 approved for selling. */
+const productsAndReferrals = (key: ExperienceKey): WorkspaceEntry =>
   tabbed(
     {
-      key: "affiliate",
-      label: "Affiliate",
+      key: "products",
+      label: "Products & Referrals",
       icon: "gift",
-      needs: promotes,
-      pitch: "Referral links, campaigns and conversion tracking.",
+      needs: (can) => promotes(can) || sells(can),
+      landing: () => "eligible-products",
     },
     [
-      { label: "Referral Links", path: "referral-links" },
-      { label: "Referral Codes", path: "referral-codes" },
-      { label: "Campaigns", path: "campaigns" },
-      { label: "Leads", path: "leads" },
-      { label: "Conversions", path: "conversions", also: ["affiliates/conversions"] },
-      { label: "Link Overview", path: "affiliates" },
-      { label: "Marketing Assets", path: "marketing-materials" },
-      { label: "Programme Settings", path: "affiliates/settings" },
-      // A higher level promotes from its own copy of the affiliate Store,
-      // because its `store` sells (2026-11-03).
-      ...(key === "affiliate"
-        ? []
-        : [
-            {
-              label: "Promote Products",
-              path: "promote/store",
-              also: ["promote/store-console", "promote/store-console/explore", "promote/store-console/requests"],
-            },
-          ]),
-    ],
-  );
-
-/** 3. Reseller: wholesale catalogue, customer assignment, margin calculators. */
-const reseller = (): WorkspaceEntry =>
-  tabbed(
-    {
-      key: "reseller",
-      label: "Reseller",
-      icon: "handshake",
-      levels: SELLING,
-      needs: (can) => can("product.view", "pricing.view", "subpartner.view"),
-      landing: (can) => (can("product.view") ? "store-console" : can("pricing.view") ? "plans" : "agency"),
-      pitch: "Sell to your own customers at wholesale prices and keep the margin.",
-    },
-    [
+      { label: "Eligible Products", path: "eligible-products", needs: (can) => promotes(can) || sells(can) },
+      { label: "Referral Links", path: "referral-links", also: ["referral-codes", "campaigns"], needs: promotes },
       {
-        label: "My Products",
-        path: "store-console",
-        also: ["partner-products"],
-        needs: (can) => can("product.view"),
+        label: "Referral Results",
+        path: "leads",
+        also: ["conversions", "affiliates", "affiliates/conversions", "affiliates/settings"],
+        needs: promotes,
       },
-      { label: "Wholesale Catalogue", path: "store-console/explore", needs: (can) => can("product.view") },
-      { label: "My Requests", path: "store-console/requests", needs: (can) => can("product.view") },
-      // Which granted products are for sale and shown to customers - for a
-      // white-label partner, the platform visibility governance too.
-      { label: "Product Settings", path: "product-manager", needs: (can) => can("product.view") },
+      {
+        label: "Sales Resources",
+        path: "sales-resources",
+        also: ["marketing-materials"],
+        needs: (can) => promotes(can) || sells(can),
+      },
+      {
+        label: "Product Store",
+        path: "store",
+        also: [
+          "store-console",
+          "store-console/explore",
+          "store-console/requests",
+          "partner-products",
+          // A seller that also promotes asks to promote from its own copy of
+          // the affiliate Store, because its `store` sells (2026-11-03).
+          ...(key === "affiliate"
+            ? []
+            : ["promote/store", "promote/store-console", "promote/store-console/explore", "promote/store-console/requests"]),
+        ],
+        needs: (can) => promotes(can) || sells(can),
+      },
       {
         label: "Pricing & Margins",
         path: "plans",
-        also: ["plans/add-ons", "pricing/currency", "pricing/packages", "pricing/rules"],
-        needs: (can) => can("pricing.view"),
+        also: ["plans/add-ons", "pricing/currency", "pricing/packages", "pricing/rules", "margin-calculator", "product-manager", "product-billing"],
+        needs: sells,
       },
-      { label: "Margin Calculator", path: "margin-calculator", needs: (can) => can("pricing.view") },
-      { label: "Downline Partners", path: "agency", needs: (can) => can("subpartner.view") },
     ],
   );
 
-/** 4. White Label: domain, logo and theme. */
-const whiteLabel = (): WorkspaceEntry =>
-  tabbed(
-    {
-      key: "white-label",
-      label: "White Label",
-      icon: "palette",
-      levels: WHITE_LABEL_ONLY,
-      needs: (can) => can("branding.view", "domain.view"),
-      landing: (can) => (can("branding.view") ? "brand-settings" : "brand-settings/url-manager"),
-      pitch: "Your own logo, colours, domain and branded customer portal.",
-    },
-    [
-      { label: "Brand Settings", path: "brand-settings", also: ["appearance"], needs: (can) => can("branding.view") },
-      { label: "Website Branding", path: "brand-settings/white-label-setup", needs: (can) => can("branding.view") },
-      { label: "Custom Domain", path: "brand-settings/url-manager", needs: (can) => can("domain.view") },
-      { label: "Translations", path: "translations", needs: (can) => can("profile.view") },
-    ],
-  );
-
-/** 5. Product Store: an affiliate browses (and asks to promote); a seller transacts. */
-const productStore = (key: ExperienceKey): WorkspaceEntry =>
-  key === "affiliate"
-    ? tabbed({ key: "product-store", label: "Product Store", icon: "store", needs: promotes }, [
-        { label: "Explore Products", path: "store" },
-        { label: "Approved / Promoting", path: "store-console" },
-        { label: "Request Access", path: "store-console/explore" },
-        { label: "My Requests", path: "store-console/requests" },
-      ])
-    : {
-        key: "product-store",
-        label: "Product Store",
-        icon: "store",
-        path: "store",
-        needs: (can) => can("product.view"),
-      };
-
+/** 3. Customers: a reseller's assigned organizations, their products and set-up,
+ * and Plan Activation from the Platform Wallet. */
 const customers = (): WorkspaceEntry =>
-  tabbed(
-    {
-      key: "customers",
-      label: "Customers",
-      icon: "users",
-      levels: SELLING,
-      needs: (can) => can("customer.view"),
-      pitch: "Create customer workspaces and manage their plans.",
-    },
-    [
-      { label: "Customers", path: "users" },
-      { label: "Subscriptions", path: "users/subscriptions" },
-    ],
-  );
+  tabbed({ key: "customers", label: "Customers", icon: "users", needs: (can) => can("customer.view") }, [
+    { label: "Assigned Organizations", path: "users" },
+    { label: "Products & Setup", path: "customers/setup" },
+    { label: "Plan Activation", path: "customers/activate", needs: (can) => can("pricing.view") },
+    { label: "Downline Partners", path: "agency", needs: (can) => can("subpartner.view") },
+  ]);
 
-const salesOrders = (): WorkspaceEntry =>
+/** 4. Billing & Subscriptions: customers' subscriptions with their filters, the
+ * partner's own billing records, and the customer orders behind them. */
+const billing = (): WorkspaceEntry =>
   tabbed(
     {
-      key: "sales-orders",
-      label: "Sales & Orders",
+      key: "billing",
+      label: "Billing & Subscriptions",
       icon: "receipt",
-      levels: SELLING,
-      needs: (can) => can("customer.view", "product.view"),
-      landing: (can) => (can("customer.view") ? "payments" : "product-billing"),
-      pitch: "Orders, renewals and billing for your customers.",
+      // Billing Records (the partner's own payments) is every trading partner's;
+      // an ended partner, which keeps only its money views, opens its earnings.
+      needs: (can) => can("customer.view") || can("dashboard.view"),
+      landing: (can) => (can("customer.view") ? "users/subscriptions" : "billing-records"),
     },
     [
-      { label: "Orders", path: "payments", needs: (can) => can("customer.view") },
-      { label: "Product Billing", path: "product-billing", needs: (can) => can("product.view") },
+      { label: "Customer Subscriptions", path: "users/subscriptions", needs: (can) => can("customer.view") },
+      { label: "Billing Records", path: "billing-records" },
+      { label: "Customer Orders", path: "payments", needs: (can) => can("customer.view") },
     ],
   );
 
-const commission = (): WorkspaceEntry =>
-  tabbed(
-    { key: "commission", label: "Commission & Earnings", icon: "currency", needs: (can) => can("commission.view") },
-    [
-      { label: "Commissions", path: "payments/commissions" },
-      { label: "Balance", path: "payments/balance" },
-      { label: "Disputes", path: "disputes" },
-    ],
-  );
-
-const wallet = (): WorkspaceEntry =>
-  tabbed({ key: "wallet", label: "Earnings & Payouts", icon: "card", needs: (can) => can("payout.view") }, [
-    { label: "Earnings", path: "wallet" },
-    { label: "Payout History", path: "payouts", also: ["affiliates/payouts"] },
+/** 5. Platform Wallet: the reseller's prepaid balance, Add Money, and every
+ * movement - never its earnings. */
+const platformWallet = (): WorkspaceEntry =>
+  tabbed({ key: "platform-wallet", label: "Platform Wallet", icon: "card", needs: (can) => can("wallet.view") }, [
+    { label: "Balance & Recharge", path: "platform-wallet" },
+    { label: "Transactions", path: "platform-wallet/transactions" },
   ]);
 
-const communication = (): WorkspaceEntry =>
+/** 6. Earnings & Payouts: commissions (pending, available, reversed) and payouts. */
+const earnings = (): WorkspaceEntry =>
   tabbed(
     {
-      key: "communication",
-      label: "Communication",
-      icon: "mail",
-      levels: SELLING,
-      needs: (can) => can("profile.view"),
-      pitch: "Email your customers under your own sender name.",
+      key: "earnings",
+      label: "Earnings & Payouts",
+      icon: "currency",
+      needs: (can) => can("commission.view", "payout.view"),
+      landing: (can) => (can("commission.view") ? "payments/commissions" : "wallet"),
     },
     [
-      // Alerts and logs are not built (partner_portal.NOT_IMPLEMENTED); their
-      // old addresses stay pages of the Channels tab.
-      { label: "Channels", path: "communication/channel", also: ["communication/alerts", "communication/logs"] },
-      { label: "Templates", path: "communication/templates" },
-      { label: "Channel Manager", path: "channel-manager" },
+      { label: "Commissions", path: "payments/commissions", also: ["payments/balance"], needs: (can) => can("commission.view") },
+      { label: "Payouts", path: "wallet", also: ["payouts", "affiliates/payouts"], needs: (can) => can("payout.view") },
+      { label: "Disputes", path: "disputes", needs: (can) => can("commission.view") },
     ],
   );
 
-const staff = (): WorkspaceEntry =>
-  tabbed(
-    {
-      key: "staff",
-      label: "Staff",
-      icon: "lock",
-      levels: SELLING,
-      needs: (can) => can("member.view"),
-      pitch: "Add sales, support and finance staff with their own roles.",
-    },
-    [
-      { label: "Team", path: "team" },
-      { label: "Roles", path: "roles" },
-    ],
-  );
-
-/** 12. Helpdesk: every level raises tickets to Workeasy360; a seller also runs
- * a desk for its own customers. */
-const helpdesk = (key: ExperienceKey): WorkspaceEntry =>
-  tabbed({ key: "helpdesk", label: "Helpdesk", icon: "help", needs: (can) => can("dashboard.view") }, [
-    { label: "My Tickets", path: "support-manager" },
-    ...(key === "affiliate"
-      ? []
-      : [
-          { label: "Customer Desk", path: "desk", needs: (can: Can) => can("desk.view") },
-          { label: "Saved Replies", path: "desk/replies", needs: (can: Can) => can("desk.view") },
-        ]),
-    { label: "Notifications", path: "notifications" },
+/** 7. Help: tickets to Workeasy360 (commission disputes and product access too),
+ * help content, and a seller's desk for its own customers. */
+const help = (): WorkspaceEntry =>
+  tabbed({ key: "help", label: "Help", icon: "help", onboarding: true, needs: (can) => can("dashboard.view") }, [
+    { label: "Support Tickets", path: "support-manager", onboarding: true },
+    { label: "Help Content", path: "help", onboarding: true },
+    { label: "Customer Desk", path: "desk", also: ["desk/replies"], needs: (can) => can("desk.view") },
   ]);
 
-const reports = (): WorkspaceEntry => ({
-  key: "reports",
-  label: "Reports & Analytics",
-  icon: "chart",
-  path: "reports",
-  needs: (can) => can("dashboard.view"),
-});
-
+/** 8. Settings: business and KYC, staff and security, and - only with an
+ * approved White Label permission - the white-label settings. */
 const settings = (): WorkspaceEntry =>
-  tabbed({ key: "settings", label: "Settings", icon: "settings", needs: (can) => can("profile.view") }, [
-    { label: "Profile", path: "account" },
-    { label: "Integrations", path: "integrations" },
-    { label: "API Keys", path: "api-keys" },
-    { label: "Sign-in", path: "auth-configuration" },
-    { label: "Shared Resources", path: "shared-resources" },
+  tabbed({ key: "settings", label: "Settings", icon: "settings", onboarding: true, needs: (can) => can("profile.view") }, [
+    { label: "Business & KYC", path: "business-kyc", onboarding: true },
+    { label: "My Account & Security", path: "account", onboarding: true },
+    { label: "Staff", path: "team", also: ["roles"], needs: (can) => can("member.view") },
+    {
+      label: "White Label",
+      path: "brand-settings",
+      also: ["appearance", "brand-settings/url-manager", "brand-settings/white-label-setup", "translations"],
+      needs: (can) => can("branding.view", "domain.view"),
+    },
+    {
+      label: "Communication",
+      path: "communication/channel",
+      also: ["communication/templates", "communication/alerts", "communication/logs", "channel-manager"],
+      needs: (can) => can("customer.view"),
+    },
+    { label: "Sign-in & API", path: "auth-configuration", also: ["api-keys", "integrations", "shared-resources"] },
   ]);
 
-/** The fourteen entries, in the specification's order, for one level. */
+/** The eight entries, in the specification's order. */
 function unifiedGroups(key: ExperienceKey): WorkspaceGroup[] {
   return [
     {
       entries: [
         dashboard(),
-        affiliate(key),
-        reseller(),
-        whiteLabel(),
-        productStore(key),
+        productsAndReferrals(key),
         customers(),
-        salesOrders(),
-        commission(),
-        wallet(),
-        communication(),
-        staff(),
-        helpdesk(key),
-        reports(),
+        billing(),
+        platformWallet(),
+        earnings(),
+        help(),
         settings(),
       ],
     },
@@ -363,6 +289,23 @@ function unifiedGroups(key: ExperienceKey): WorkspaceGroup[] {
 
 /** Addresses of the earlier menus (and the entries' own names) that open a page. */
 const SHARED_ALIASES: Record<string, string> = {
+  // ADR-063: the eight entries' names and their tabs' names.
+  "products-referrals": "eligible-products",
+  "eligible-products-list": "eligible-products",
+  "referral-results": "leads",
+  "billing-subscriptions": "users/subscriptions",
+  "billing-records-list": "billing-records",
+  "earnings-and-payouts": "payments/commissions",
+  "help-content": "help",
+  faq: "help",
+  "support-tickets": "support-manager",
+  "business-profile": "business-kyc",
+  "staff-security": "account",
+  security: "account",
+  "customers-setup": "customers/setup",
+  "plan-activation": "customers/activate",
+  "add-money": "platform-wallet",
+  recharge: "platform-wallet",
   // The specification's entry names.
   affiliate: "referral-links",
   "white-label": "brand-settings",
@@ -516,13 +459,22 @@ export function lockedEntryFor(def: WorkspaceDef, path: string): WorkspaceEntry 
   return owners.length > 0 && owners.every((entry) => isLocked(def, entry)) ? owners[0] : undefined;
 }
 
+/** Whether an entry is drawn for this person (ADR-063): its permissions, and -
+ * while the partner may not trade yet - only what onboarding allows. */
+export const entryVisible = (entry: WorkspaceEntry, can: Can, cleared = true): boolean =>
+  (cleared || entry.onboarding === true) && entry.needs(can);
+
+/** Whether one of an entry's tabs is drawn for this person. */
+export const tabVisible = (tab: WorkspaceTab, can: Can, cleared = true): boolean =>
+  (cleared || tab.onboarding === true) && (!tab.needs || tab.needs(can));
+
 /** Whether the person's permissions make this page of the workspace useful: some
  * unlocked entry that owns it is drawn for them. Convenience only - the API refuses the rest. */
-export function pageAllowed(def: WorkspaceDef, path: string, can: Can): boolean {
+export function pageAllowed(def: WorkspaceDef, path: string, can: Can, cleared = true): boolean {
   return entriesFor(def, path).some((entry) => {
-    if (isLocked(def, entry) || !entry.needs(can)) return false;
+    if (isLocked(def, entry) || !entryVisible(entry, can, cleared)) return false;
     const tab = tabOf(entry, path);
-    return !tab?.needs || tab.needs(can);
+    return !tab || tabVisible(tab, can, cleared);
   });
 }
 
@@ -541,13 +493,21 @@ export function tabbedEntryFor(def: WorkspaceDef, path: string): WorkspaceEntry 
 
 /** The first page this person can open - where a landing goes when the dashboard
  * is not one they can read (an ended partner reads its commission and nothing else). */
-export function firstAllowedPath(def: WorkspaceDef, can: Can): string | null {
+export function firstAllowedPath(def: WorkspaceDef, can: Can, cleared = true): string | null {
   for (const group of def.groups) {
     for (const entry of group.entries) {
-      if (!isLocked(def, entry) && entry.needs(can)) return entry.landing?.(can) ?? entry.path;
+      if (!isLocked(def, entry) && entryVisible(entry, can, cleared)) return entryHref(entry, can, cleared);
     }
   }
   return null;
+}
+
+/** Where an entry's link opens: its landing, else its first tab this person may open. */
+export function entryHref(entry: WorkspaceEntry, can: Can, cleared = true): string {
+  const landing = entry.landing?.(can);
+  if (landing && (!entry.tabs || entry.tabs.some((t) => t.path === landing && tabVisible(t, can, cleared)))) return landing;
+  const tab = entry.tabs?.find((t) => tabVisible(t, can, cleared));
+  return tab?.path ?? entry.path;
 }
 
 /** The short addresses: `/reseller/...` -> `/partner/reseller/...`, so the URL a

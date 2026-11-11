@@ -46,16 +46,21 @@ const BANNER: Record<KycStatus, { tone: Tone; title: string; text?: string }> = 
 
 type Notice = { tone: "success" | "danger"; text: string } | null;
 
-export function PartnerKycScreen({ partnerId }: { partnerId: string }) {
+export function PartnerKycScreen({ partnerId, embedded = false }: { partnerId: string; embedded?: boolean }) {
   const [load, reload] = useLoad(() => partnerKycApi.get(partnerId), [partnerId]);
   const [notice, setNotice] = useState<Notice>(null);
   return (
     <div className={styles.stack}>
-      <PageHeader title="Your partner application" lead="What we need to know about your business before your partner account can start." />
+      {embedded ? (
+        <h2>KYC application</h2>
+      ) : (
+        <PageHeader title="Your partner application" lead="What we need to know about your business before your partner account can start." />
+      )}
       <LoadGate load={load} what="your application">
         {(app) => (
           <>
             <StatusBanner app={app} />
+            <KycHistory app={app} />
             {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
             {/* A new version is a new starting point for the form. Uploading a document
                 keeps the version, so an upload never loses what was being typed. */}
@@ -64,6 +69,25 @@ export function PartnerKycScreen({ partnerId }: { partnerId: string }) {
         )}
       </LoadGate>
     </div>
+  );
+}
+
+/** The decisions so far, with their reasons and dates (ADR-063: KYC history). */
+function KycHistory({ app }: { app: PartnerKycApplication }) {
+  const history = app.history ?? [];
+  if (history.length === 0) return null;
+  return (
+    <details>
+      <summary>KYC history ({history.length})</summary>
+      <ul>
+        {history.map((h) => (
+          <li key={`${h.decided_at}-${h.to_status}`}>
+            {formatDateTime(h.decided_at)}: <KycBadge status={h.to_status as PartnerKycApplication["status"]} />
+            {h.reason ? ` - ${h.reason}` : ""}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 

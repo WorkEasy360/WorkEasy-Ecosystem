@@ -940,6 +940,19 @@ def _base_quote(
     )
 
 
+def build_quote(
+    ctx: TenantContext,
+    *,
+    seller: Seller = DIRECT,
+    at: datetime | None = None,
+    **request: Any,
+) -> Quote:
+    """The priced quote itself, for a caller that works out what a partner pays
+    from it (ADR-063). The same path ``quote`` and ``place`` price with."""
+    authz.require(ctx, MANAGE)
+    return _quote(ctx, at=at or timezone.now(), seller=seller, **request)
+
+
 def quote(
     ctx: TenantContext, *, seller: Seller = DIRECT, **request: Any
 ) -> dict[str, Any]:
@@ -1005,6 +1018,7 @@ def place(
 
     now = timezone.now()
     q = _quote(ctx, at=now, seller=seller, **request)
+    _refuse_partner_wallet_account(q)
     if q.requires_payment:
         order = _place_payable(ctx, q, idempotency_key=idempotency_key, request=request)
     else:
@@ -1013,6 +1027,163 @@ def place(
         "commercial_orders_placed_total",
         kind=q.target.kind,
         requires_payment=str(q.requires_payment).lower(),
+    )
+    return order_view(order)
+
+
+def _refuse_partner_wallet_account(q: Quote) -> None:
+    """ADR-063: a customer whose plans its partner pays from the partner's Platform
+    Wallet is never invoiced, so an ordinary order would grant a plan nobody paid
+    for. Only ``place_paid_by_partner_wallet`` sells to such an account."""
+    if q.collection_mode == CollectionMode.PARTNER_WALLET.value:
+        raise OrderNotAllowed(
+            "This customer's plans are paid by their partner from the partner's "
+            "Platform Wallet. The partner activates or changes them.",
+            reason="partner_wallet_account",
+        )
+
+
+@dataclass(frozen=True)
+class WalletCharge:
+    """What a partner pays from its Platform Wallet for one order (ADR-063):
+    worked out above payments (the partner's purchase price is a commissions
+    rule), handed in, and recorded with the order. ``detail`` is shown to the
+    partner only, never to the customer."""
+
+    amount_minor: int
+    detail: dict[str, Any] = field(default_factory=dict)
+
+
+class WalletChargeChanged(CommercialError):
+    """The amount the partner confirmed is not what the order costs now."""
+
+    code = "price_changed"
+    http_status = 409
+
+
+def place_paid_by_partner_wallet(
+    ctx: TenantContext,
+    *,
+    seller: Seller,
+    idempotency_key: str,
+    wallet_id: UUID,
+    price: Callable[[Quote], WalletCharge],
+    expected_charge_minor: Any,
+    **request: Any,
+) -> dict[str, Any]:
+    """A reseller activates a plan for its customer and pays from its Platform
+    Wallet at its approved purchase price (ADR-063, the specification's 6.3).
+
+    **One transaction**: the quote, the exact-amount check, the subscription
+    line, the order and the wallet debit commit together or not at all - an
+    overdraft (``InsufficientBalance``) leaves no line and no order. **Once**:
+    the order's key is claimed and the debit's key is the order, so a retry
+    returns the same order and moves no money twice. The customer is never
+    invoiced (``partner_wallet`` collection) and is shown no partner price."""
+    from workeasy360.commercial.payments.models import Order
+    from workeasy360.commercial.subscriptions import services as subscriptions
+    from workeasy360.commercial.wallets import api as wallets
+    from workeasy360.commercial.wallets import ledger
+
+    authz.require(ctx, MANAGE)
+    if not idempotency_key or len(idempotency_key) > 128:
+        raise CatalogValidationError(
+            "An Idempotency-Key of at most 128 characters is required.",
+            field="idempotency_key",
+        )
+    if not seller.is_partner:
+        raise OrderNotAllowed(
+            "Only a partner pays from its wallet.", reason="not_partner"
+        )
+    replay = Order.objects.filter(idempotency_key=idempotency_key).first()
+    if replay is not None:
+        _assert_same_request(ctx, replay, idempotency_key, request)
+        return order_view(replay)
+    if isinstance(expected_charge_minor, bool) or not isinstance(
+        expected_charge_minor, int
+    ):
+        raise CatalogValidationError(
+            "Confirm the amount shown before activating.", field="expected_charge_minor"
+        )
+
+    now = timezone.now()
+    with transaction.atomic():
+        q = _quote(ctx, at=now, seller=seller, **request)
+        if q.collection_mode != CollectionMode.PARTNER_WALLET.value:
+            raise OrderNotAllowed(
+                "This customer pays Workeasy360 directly.", reason="not_partner_wallet"
+            )
+        if q.target.kind != "plan" or q.is_trial:
+            raise OrderNotAllowed(
+                "A plan without a trial is activated from the Platform Wallet.",
+                reason="not_a_plan",
+            )
+        charge = price(q)
+        if charge.amount_minor != expected_charge_minor:
+            raise WalletChargeChanged(
+                "The amount has changed since it was shown. Review it and confirm again.",
+                charge_minor=charge.amount_minor,
+            )
+        line = subscriptions.purchase_plan(
+            ctx,
+            plan_version_id=q.target.plan.id,
+            idempotency_key=f"order:{idempotency_key}"[:128],
+            quantity=q.quantity,
+            with_trial=False,
+            billing_interval=q.billing_interval,
+            collection_mode=CollectionMode.PARTNER_WALLET,
+        )
+        claim = idempotency.claim(
+            organization_id=ctx.organization_id,
+            scope="commercial.order.place",
+            key=idempotency_key,
+            arguments=_fingerprint(request),
+        )
+        if claim.is_replay:  # pragma: no cover - the order lookup above returns first
+            return order_view(Order.objects.get(idempotency_key=idempotency_key))
+        order = _new_order(ctx, q, key=idempotency_key, status=Order.Status.FULFILLED)
+        order.subscription_id = line.subscription_id
+        order.subscription_item_id = line.id
+        order.fulfilled_at = now
+        order.price_snapshot = {
+            **(order.price_snapshot or {}),
+            "partner_wallet": {**charge.detail, "charged_minor": charge.amount_minor},
+        }
+        order.save()
+        entry_id = None
+        if charge.amount_minor > 0:
+            entry = ledger.post(
+                wallet_id,
+                amount=-charge.amount_minor,
+                entry_type=wallets.SUBSCRIPTION,
+                reason=f"Plan activation {order.number}",
+                idempotency_key=f"order:{order.id}",
+                actor_user_id=ctx.user_id,
+                source_type="order",
+                source_id=order.id,
+            )
+            entry_id = str(entry.id)
+            order.price_snapshot["partner_wallet"]["wallet_entry_id"] = entry_id
+            order.save(update_fields=["price_snapshot", "updated_at"])
+        _sync_summary(order)
+        audit.record(
+            ctx,
+            "commercial.order.fulfilled",
+            resource_type="payments.order",
+            resource_id=order.id,
+            changes={
+                "number": order.number,
+                "kind": order.kind,
+                "products": order.product_codes,
+                "trial": False,
+                "paid": True,
+                "paid_by": "partner_wallet",
+                "wallet_entry_id": entry_id,
+            },
+        )
+        idempotency.complete(claim, result_ref=f"payments.order:{order.id}")
+    metrics.increment(
+        "commercial_orders_placed_total", kind="plan", requires_payment="partner_wallet"
     )
     return order_view(order)
 
@@ -1430,6 +1601,10 @@ def order_view(order: Any) -> dict[str, Any]:
         "tax_minor": order.tax_minor,
         "is_trial": order.is_trial,
         "channel": order.channel or "direct",
+        # ADR-063: who paid, never what a partner paid (the customer reads this).
+        "paid_by": "partner_wallet"
+        if "partner_wallet" in (order.price_snapshot or {})
+        else None,
         "requires_payment": order.status == order.Status.PENDING_PAYMENT,
         "invoice_id": str(invoice.id) if invoice is not None else None,
         "invoice_number": invoice.number if invoice is not None else None,

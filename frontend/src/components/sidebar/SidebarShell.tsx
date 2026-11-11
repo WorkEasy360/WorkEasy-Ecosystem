@@ -103,7 +103,9 @@ export function SidebarShell({
    * show Workeasy360 itself. */
   brandName?: string | null;
   brandLogoUrl?: string | null;
-  /** `admin`: the Super Admin's deep-navy top bar and sidebar (2026-10-26). */
+  /** `admin`: the console look - the deep teal top bar and sidebar, the green
+   * current page, the light sheet (the Super Admin since 2026-10-26, the Partner
+   * panel since 2026-11-11). */
   variant?: "admin";
   /** A small heading above the navigation (the Admin's portal badge). */
   navTitle?: React.ReactNode;

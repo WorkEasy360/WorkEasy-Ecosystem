@@ -352,6 +352,49 @@ def live(session_id: Any, user_id: UUID) -> GuestView | None:
     return _view(row) if row is not None else None
 
 
+_ID_SEGMENT = re.compile(
+    r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def record_request(view: GuestView, *, method: str, path: str, status: int) -> None:
+    """ADR-063 (the specification's 1.3, item 8): every request a guest view makes
+    is in the audit log beside its start and end - who (the staff member), which
+    partner, the view, what was asked and what the server answered. A refused
+    write is recorded the same way. Identifiers in the path are kept as a count,
+    never a customer's name. Best effort: an audit outage never breaks the view
+    (the start and end entries are already durable)."""
+    from workeasy360.contracts.values.control_plane import PLATFORM_ORGANIZATION_ID
+    from workeasy360.platform.audit import services as audit
+    from workeasy360.platform.tenancy.db import organization_db_scope
+
+    try:
+        with organization_db_scope(PLATFORM_ORGANIZATION_ID):
+            _record_request(view, audit, PLATFORM_ORGANIZATION_ID, method, path, status)
+    except Exception:  # pragma: no cover - best effort, see above
+        return
+
+
+def _record_request(
+    view: GuestView, audit: Any, org: UUID, method: str, path: str, status: int
+) -> None:
+    audit.record_system(
+        org,
+        "partner.guest_view_request",
+        resource_type="partners.partner",
+        resource_id=view.partner_id,
+        changes={
+            "guest_view_id": str(view.id),
+            "staff_user_id": str(view.user_id),
+            "method": method[:8],
+            "path": _ID_SEGMENT.sub("/{id}", path)[:200],
+            "status": int(status),
+            "refused": status in (401, 403, 405),
+        },
+        reason=view.reason,
+    )
+
+
 def _close(
     ctx: TenantContext | None,
     row: Any,

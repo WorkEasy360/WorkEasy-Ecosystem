@@ -24,7 +24,9 @@ from workeasy360.platform.authz.control_plane import in_scope
 VIEW = "platform.staff_support.view"
 MANAGE = "platform.staff_support.manage"
 
-KINDS = {"faq", "setup_guide"}
+#: ADR-063: ``sales_guide`` - a partner sales guide or product document, shown
+#: under Products & Referrals -> Sales Resources.
+KINDS = {"faq", "setup_guide", "sales_guide"}
 AUDIENCES = {"all", "customer", "partner"}
 STATUSES = {"draft", "published", "archived"}
 

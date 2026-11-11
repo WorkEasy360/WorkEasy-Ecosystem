@@ -1265,6 +1265,7 @@ def partner_upgrade_decision_view(
             products=body.get("products"),
             commercial_reference=body.get("commercial_reference", ""),
             note=body.get("note", ""),
+            also=body.get("also"),
         )
     elif action == "reject":
         result = partner_upgrade_requests.reject(

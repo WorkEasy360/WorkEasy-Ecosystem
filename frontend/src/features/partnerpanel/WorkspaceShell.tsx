@@ -5,9 +5,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { StatusScreen } from "@/components/StatusScreen";
 import { AccountMenu, SidebarShell, type AccountMenuEntry, type SidebarGroup } from "@/components/sidebar/SidebarShell";
+import { Icon } from "@/components/sidebar/icons";
 import { GuestViewBanner, PartnerContext, useSignOut } from "@/features/controlplane/ControlShell";
 import { ForcedPasswordChange } from "@/features/controlplane/ForcedPasswordChange";
-import { partnerApi, type PortalPartner } from "@/lib/api/controlPlane";
+import { onboardingOnly, partnerApi, type PortalPartner } from "@/lib/api/controlPlane";
 import { useSession } from "@/lib/auth/useSession";
 import { usePortals } from "@/lib/portalContext";
 import { portalHref } from "@/lib/portals";
@@ -16,6 +17,8 @@ import {
   CONTAINS,
   WORKSPACES,
   entriesFor,
+  entryHref,
+  entryVisible,
   experienceFromSlug,
   firstAllowedPath,
   isExperienceKey,
@@ -23,6 +26,7 @@ import {
   lockedEntryFor,
   pageAllowed,
   servedPaths,
+  tabVisible,
   tabbedEntryFor,
   unlockLevel,
   workspaceBase,
@@ -57,7 +61,8 @@ import styles from "./PartnerPanel.module.css";
 const SWITCHER_ORDER: ExperienceKey[] = ["affiliate", "reseller", "white_label"];
 
 const STATUS_NOTICE: Record<string, string> = {
-  draft: "This partner account isn't active yet: it becomes active once its KYC application is approved and an Admin activates it.",
+  draft:
+    "Your partner account isn't active yet. Complete your business profile and KYC: once Workeasy360 approves it and activates your account, the rest of the panel opens.",
   suspended: "This partner account is suspended. History stays visible; new actions are unavailable.",
   terminated: "This partner account has ended. Its commission and payout history stays visible; nothing else is available.",
 };
@@ -67,33 +72,43 @@ const permissionCheck = (partner: PortalPartner): Can => {
   return (...keys) => keys.some((k) => held.has(`platform.partner_${k}`));
 };
 
-/** The sidebar for one workspace and one person (2026-11-03: the unified
- * dashboard's fourteen entries). An entry the level does not include is drawn
- * locked and opens `onLocked`; one the person's role cannot use is not drawn. */
+/** The sidebar for one workspace and one person (ADR-063: the eight entries).
+ * An entry the person's permissions cannot use is not drawn; while the partner
+ * may not trade yet, only its onboarding entries are. */
 export function workspaceNav(
   def: WorkspaceDef,
   partner: PortalPartner,
   onLocked?: (entry: WorkspaceEntry) => void,
 ): SidebarGroup[] {
   const can = permissionCheck(partner);
+  const cleared = !onboardingOnly(partner);
   const base = workspaceBase(def.key);
   return def.groups.map((group) => ({
     title: group.title,
     items: group.entries.map((entry) => {
       const locked = isLocked(def, entry);
       return {
-        href: `${base}/${entry.landing?.(can) ?? entry.path}`,
+        href: `${base}/${entryHref(entry, can, cleared)}`,
         label: entry.label,
         icon: entry.icon,
         // A workspace serves only the pages its entries list, so each entry is
         // current on exactly its own - never on another entry's deeper address.
         exactPaths: [entry.path, ...(entry.also ?? [])].map((p) => `${base}/${p}`),
-        when: locked ? true : entry.needs(can),
+        when: locked ? cleared : entryVisible(entry, can, cleared),
         locked,
         onSelect: locked && onLocked ? () => onLocked(entry) : undefined,
       };
     }),
   }));
+}
+
+/** The workspaces a partner's portal entry opens. A partner that may not trade
+ * yet and earns none (a public applicant before approval) opens the one it
+ * applied as, or the Affiliate one: its onboarding pages are there. */
+function workspacesOf(partner: PortalPartner): string[] {
+  const keys = (partner.workspaces ?? []).map((w) => w.key);
+  if (keys.length > 0 || !onboardingOnly(partner)) return keys;
+  return [isExperienceKey(partner.category) ? partner.category : "affiliate"];
 }
 
 function Refusal({ title, children }: { title: string; children: React.ReactNode }) {
@@ -136,7 +151,7 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
 
   // The partner accounts whose grants open this workspace, as the server says.
   const candidates = useMemo(
-    () => (state.status === "ready" ? state.partners.filter((p) => (p.workspaces ?? []).some((w) => w.key === experience)) : []),
+    () => (state.status === "ready" ? state.partners.filter((p) => workspacesOf(p).includes(experience)) : []),
     [state, experience],
   );
 
@@ -226,17 +241,25 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
   ];
   return (
     <PartnerContext.Provider value={{ partner, base: workspaceBase(experience) }}>
+      {/* 2026-11-11: the Admin console's colours (the owner's reference image): the
+          deep teal frame, the green current page, the light sheet. */}
       <SidebarShell
         area={`${def.label} workspace`}
+        variant="admin"
+        railKey="w360.partner.rail"
         context={
           <span className={consoleStyles.contextPill}>
             {def.label} · {partner.display_name}
           </span>
         }
-        navTitle="Partner panel"
+        navTitle={
+          <>
+            <Icon name="handshake" size={16} /> Partner Portal
+          </>
+        }
         groups={workspaceNav(def, partner, setLockedEntry)}
         tools={<LevelTools level={experience} />}
-        account={<AccountMenu name={who?.name || who?.email || ""} entries={entries} />}
+        account={<AccountMenu name={who?.name || who?.email || ""} entries={entries} showName />}
         banner={
           <>
             {banner}
@@ -251,13 +274,22 @@ export function WorkspaceShell({ experience, children }: { experience: Experienc
                 ))}
               </nav>
             )}
+            {partner.status === "active" && onboardingOnly(partner) && (
+              <p role="status" className={`w360-badge w360-badge-warning ${consoleStyles.banner} ${consoleStyles.notice}`}>
+                Workeasy360 needs your KYC before you can trade again: referral links, customers, the Platform Wallet and payouts are paused
+                until it is approved.{" "}
+                <Link href={`${workspaceBase(experience)}/business-kyc`} className="w360-btn w360-btn-secondary">
+                  Complete your KYC
+                </Link>
+              </p>
+            )}
             {partner.status !== "active" && (
               <p role="status" className={`w360-badge w360-badge-warning ${consoleStyles.banner} ${consoleStyles.notice}`}>
                 {STATUS_NOTICE[partner.status] ?? `This partner account is ${partner.status}.`}{" "}
-                {/* 2026-11-10: a draft's workspace menu is empty, so this is its way to the application. */}
+                {/* ADR-063: onboarding happens inside the workspace. */}
                 {partner.status === "draft" && (
-                  <Link href={`/partner/${partner.partner_id}/kyc`} className="w360-btn w360-btn-secondary">
-                    Complete your KYC application
+                  <Link href={`${workspaceBase(experience)}/business-kyc`} className="w360-btn w360-btn-secondary">
+                    Complete your business profile & KYC
                   </Link>
                 )}
               </p>
@@ -284,18 +316,18 @@ export function WorkspaceContent({ experience, path }: { experience: ExperienceK
   const { partner, can, base } = usePanel();
   const def = WORKSPACES[experience];
   const clean = path.replace(/^\/+|\/+$/g, "");
+  const cleared = partner ? !onboardingOnly(partner) : true;
 
   // Where this address really is: the home of the workspace, a friendly alias of a
   // page, or - when the person cannot read the dashboard (an ended partner reads
   // its money and nothing else) - the first page they can.
   let redirect: string | null = null;
-  // A draft partner can do nothing in a workspace yet (2026-11-10: staff-created
-  // drafts landed on "You don't have access"): its one task is the KYC application.
-  if (partner?.status === "draft") redirect = `/partner/${partner.partner_id}/kyc`;
-  else if (clean === "") redirect = `${base}/dashboard`;
+  // ADR-063: a partner that may not trade yet works in its workspace too - its
+  // onboarding status, business and KYC, support and security are pages here.
+  if (clean === "") redirect = `${base}/dashboard`;
   else if (def.aliases[clean] !== undefined) redirect = `${base}/${def.aliases[clean]}`;
-  else if (clean === "dashboard" && !pageAllowed(def, "dashboard", can)) {
-    const first = firstAllowedPath(def, can);
+  else if (clean === "dashboard" && !pageAllowed(def, "dashboard", can, cleared)) {
+    const first = firstAllowedPath(def, can, cleared);
     redirect = first ? `${base}/${first}` : null;
   }
   useEffect(() => {
@@ -316,7 +348,18 @@ export function WorkspaceContent({ experience, path }: { experience: ExperienceK
       </div>
     );
   }
-  if (!pageAllowed(def, clean, can)) {
+  if (!pageAllowed(def, clean, can, cleared)) {
+    if (!cleared) {
+      return (
+        <div className={styles.denied} role="alert">
+          <h1>This opens once your partner account is approved.</h1>
+          <p>Finish your business profile and KYC. Workeasy360 reviews it, then activates your account.</p>
+          <p>
+            <Link href={`${base}/business-kyc`}>Go to Business & KYC</Link>
+          </p>
+        </div>
+      );
+    }
     return (
       <div className={styles.denied} role="alert">
         <h1>You don&apos;t have access to this page.</h1>
@@ -342,7 +385,7 @@ export function WorkspaceContent({ experience, path }: { experience: ExperienceK
   const owner = tabbedEntryFor(def, clean);
   if (owner?.tabs) {
     const tabs = owner.tabs
-      .filter((tab) => !tab.needs || tab.needs(can))
+      .filter((tab) => tabVisible(tab, can, cleared))
       .map((tab) => ({
         href: `${base}/${tab.path}`,
         label: tab.label,

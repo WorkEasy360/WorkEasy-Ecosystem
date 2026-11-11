@@ -216,7 +216,15 @@ export const kycApi = {
     apiFetch<KycApplicationDetail>(`/api/v1/admin/kyc/applications/${partnerId}/review`, post({})),
   decide: (
     partnerId: string,
-    body: { decision: "approve" | "request_correction" | "reject"; reason?: string; flagged_requirements?: string[]; experience?: string; expected_version?: number },
+    body: {
+      decision: "approve" | "request_correction" | "reject";
+      reason?: string;
+      flagged_requirements?: string[];
+      experience?: string;
+      expected_version?: number;
+      /** ADR-063: base permissions granted explicitly beside the experience. */
+      also?: string[];
+    },
   ) => apiFetch<KycApplicationDetail>(`/api/v1/admin/kyc/applications/${partnerId}/decision`, post(body)),
   /** Opened in a new tab. Every open is written to the access log by the server. */
   documentUrl: (partnerId: string, documentId: string) =>
@@ -241,6 +249,8 @@ export interface PartnerKycApplication {
   documents: KycDocument[];
   editable: boolean;
   may_edit: boolean;
+  /** ADR-063: the decisions so far, newest first - never who made them. */
+  history?: { decision: string; from_status: string; to_status: string; reason: string; decided_at: string }[];
 }
 
 export const partnerKycApi = {
@@ -632,7 +642,7 @@ export interface TicketDetail extends TicketRow {
 export interface HelpArticleRow {
   id: string;
   slug: string;
-  kind: "faq" | "setup_guide";
+  kind: "faq" | "setup_guide" | "sales_guide";
   audience: "all" | "customer" | "partner";
   status: "draft" | "published" | "archived";
   title: string;

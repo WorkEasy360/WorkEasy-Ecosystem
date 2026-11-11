@@ -606,6 +606,8 @@ export interface OnboardingAdministratorInput {
  * is set afterwards in the partner's Complete Your Profile. */
 export interface OnboardingBody {
   experience: ExperienceKey;
+  /** ADR-063: base permissions granted explicitly beside the type (White Label sells nothing alone). */
+  also?: ExperienceKey[];
   partner: {
     display_name: string;
     country?: string;
@@ -1110,6 +1112,8 @@ export interface UpgradeDecisionBody {
   note?: string;
   products?: string[];
   commercial_reference?: string;
+  /** ADR-063: base permissions granted explicitly beside the new type. */
+  also?: string[];
 }
 
 export interface UpgradeQueueItem extends UpgradeRequestRow {

@@ -271,6 +271,33 @@ export function AddPartnerForm({ titleId, onClose }: { titleId: string; onClose:
             error={errors.experience}
           />
 
+          {draft.experience && (
+            <fieldset className={mine.alsoGroup}>
+              <legend>Also allow (optional)</legend>
+              <p className={mine.alsoHint}>
+                {draft.experience === "white_label"
+                  ? "White Label approval gives branding and a custom domain only. Tick what else this partner may do."
+                  : "Any other permission this partner is explicitly authorised for."}
+              </p>
+              {EXPERIENCE_KEYS.filter((k) => k !== draft.experience).map((k) => (
+                <label key={k} className={mine.alsoOption}>
+                  <input
+                    type="checkbox"
+                    checked={draft.also.includes(k)}
+                    onChange={(e) => set("also", e.target.checked ? [...draft.also, k] : draft.also.filter((x) => x !== k))}
+                  />{" "}
+                  {TYPE_CARDS[k].title}
+                  {k === "reseller" ? " - sell to customers, Platform Wallet" : k === "affiliate" ? " - referral links and commission" : " - branding and domain"}
+                </label>
+              ))}
+              {errors.also && (
+                <p className="w360-error-text" role="alert">
+                  {errors.also}
+                </p>
+              )}
+            </fieldset>
+          )}
+
           <SelectField
             label="Country"
             value={draft.country}

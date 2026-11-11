@@ -164,6 +164,55 @@ def standing(partner_status: str, kyc_status: str) -> dict[str, Any]:
     }
 
 
+def legacy_restricted() -> bool:
+    """Whether the Admin chose to confine partners made active before KYC existed
+    to onboarding until their application is approved (ADR-063). Off by default,
+    which keeps them trading as before; never an approval written on their behalf."""
+    if not required():
+        return False
+    from workeasy360.platform.administration.site import partner_policies
+
+    return partner_policies().get("legacy_kyc") == "restrict"
+
+
+def cleared(partner_id: UUID, *, status: str) -> bool:
+    """May this partner trade now: referral links and attribution, customers,
+    plan activations, the Platform Wallet, payout requests (ADR-063)?
+
+    Only an **active** partner. With KYC required, activation already needs an
+    approved application, so an active partner without one is legacy: cleared
+    unless the Admin's policy restricts legacy partners, in which case only an
+    approved application clears it."""
+    if status != "active":
+        return False
+    if not legacy_restricted():
+        return True
+    return status_of(partner_id) == "approved"
+
+
+def onboarding_state(partner_id: UUID, *, status: str) -> dict[str, Any]:
+    """What the partner portal shows while a partner cannot trade yet: its KYC and
+    account states and the reason it is confined to onboarding, if it is."""
+    kyc_status = status_of(partner_id)
+    is_cleared = cleared(partner_id, status=status)
+    if is_cleared:
+        reason = None
+    elif status == "draft":
+        reason = "kyc_pending" if kyc_status != "approved" else "activation_pending"
+    elif status == "active":
+        reason = "legacy_kyc_required"
+    else:
+        reason = f"account_{status}"
+    return {
+        "kyc_status": kyc_status,
+        "account_status": status,
+        "cleared": is_cleared,
+        "reason": reason,
+        "legacy": standing(status, kyc_status)["legacy"],
+        "kyc_required": required(),
+    }
+
+
 ACTIVATION_NEEDS_KYC = "KYC approval"
 
 
@@ -479,6 +528,20 @@ def application(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
         "documents": [_document_json(d, scans) for d in documents],
         "editable": row.status in ("draft", "correction_required"),
         "may_edit": _may_edit(ctx, partner_id),
+        # ADR-063 (the specification's 11.1): the decisions made so far, with
+        # their reasons and dates - never who made them.
+        "history": [
+            {
+                "decision": d.decision,
+                "from_status": d.from_status,
+                "to_status": d.to_status,
+                "reason": d.reason,
+                "decided_at": d.decided_at.isoformat(),
+            }
+            for d in m.PartnerKycDecision.objects.filter(partner_id=partner_id).order_by(
+                "-decided_at"
+            )[:50]
+        ],
     }
 
 
@@ -969,8 +1032,12 @@ def decide(
     flagged_requirements: Any = None,
     experience: Any = None,
     expected_version: Any = None,
+    also: Any = None,
 ) -> dict[str, Any]:
     """Approve, ask for corrections or reject. Each records who, when and why.
+
+    ``also`` (ADR-063): the base permissions the reviewer grants explicitly beside
+    the type - White Label alone sells, refers and earns nothing.
 
     **Approval does not activate (2026-11-10, the owner's brief).** An active
     partner is *KYC approved + an authorized Admin's activation*: two decisions by
@@ -1050,7 +1117,11 @@ def decide(
             if key:
                 # Recorded now, effective only once an Admin activates the partner.
                 experiences.grant_for_approved_application(
-                    ctx, partner_id, experience=key, reason="KYC application approved."
+                    ctx,
+                    partner_id,
+                    experience=key,
+                    reason="KYC application approved.",
+                    also=also or (),
                 )
     metrics.increment(OPERATIONS, operation=target, outcome="ok")
     _notify_decision(partner_id, target, why)
