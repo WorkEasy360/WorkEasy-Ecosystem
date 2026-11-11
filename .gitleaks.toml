@@ -24,6 +24,16 @@ regexes = [
   # positive, never the value itself. Only the digest field is exempt; the
   # rest of the file is still scanned.
   '''hashed_secret": "[0-9a-f]{40}"''',
+  # Triaged 2026-11-11 (PR #3). A Django migration FILE NAME as a dict value,
+  # e.g. "platform/authz": "0011_partner_guest_permission.py" in the migration
+  # pins of backend/tests/partner_center/test_architecture.py. Only the
+  # NNNN_name.py shape is exempt, not the file.
+  '''"\d{4}_[a-z0-9_]+\.py"''',
+  # Triaged 2026-11-11 (PR #3). The synthetic sample GSTIN 29ABCDE1234F1Z<n>
+  # (an Indian tax number, public by design, not a credential) that the setup
+  # form tests in backend/tests/admin_panel/test_workflows.py submit. Only
+  # this made-up value is exempt.
+  '''29ABCDE1234F1Z[0-9]''',
 ]
 paths = [
   # Vendored and generated trees (never shipped; excluded from images).

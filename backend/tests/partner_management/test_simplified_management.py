@@ -268,7 +268,9 @@ def test_the_custom_domain_and_prices_never_count(catalog, admin):
     assert states["domain"] == ("optional", False)
     # ADR-063: pricing is a seller's section; White Label alone sells nothing.
     assert "pricing" not in states
-    seller = create(admin, "reseller", name="Seller Co", email="owner@seller-co.example.com")
+    seller = create(
+        admin, "reseller", name="Seller Co", email="owner@seller-co.example.com"
+    )
     complete_profile(admin, seller["id"])
     assert section_states(summary(admin, seller["id"]))["pricing"] == ("optional", False)
 
