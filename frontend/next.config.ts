@@ -36,9 +36,10 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       { source: "/api/:path*", destination: `${BACKEND_ORIGIN}/api/:path*` },
-      // ADR-065: the Store's sitemap is the server's, built from the public
-      // catalog and the configured Store origin (the edge does the same in production).
-      { source: "/sitemap.xml", destination: `${BACKEND_ORIGIN}/api/v1/public/store/sitemap.xml` },
+      // ADR-065: the Store host's /sitemap.xml is the API's, routed by the edge
+      // (deploy/edge/Caddyfile, Store site) with the public Host kept. Not here:
+      // this rewrite would reach the API as BACKEND_ORIGIN's host, which
+      // ALLOWED_HOSTS refuses (400 on 2026.11.12-b3b78b4).
     ];
   },
 };
