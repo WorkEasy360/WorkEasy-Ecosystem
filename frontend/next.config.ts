@@ -36,6 +36,9 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       { source: "/api/:path*", destination: `${BACKEND_ORIGIN}/api/:path*` },
+      // ADR-065: the Store's sitemap is the server's, built from the public
+      // catalog and the configured Store origin (the edge does the same in production).
+      { source: "/sitemap.xml", destination: `${BACKEND_ORIGIN}/api/v1/public/store/sitemap.xml` },
     ];
   },
 };

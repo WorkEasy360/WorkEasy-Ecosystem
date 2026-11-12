@@ -165,3 +165,55 @@ def entries_for_sources(
     for row in rows.order_by("created_at"):
         found.setdefault(row.source_id, []).append(_entry_dict(row))
     return found
+
+
+# --- what the Store's Recharge page shows (ADR-065) --------------------------------
+#
+# Public commercial terms, exactly as an Admin entered them: the live usage rates and
+# the credit packs on sale. Nothing is assumed - a meter with no rate is simply not
+# listed, and is not charged (``usage.record``).
+
+
+def public_rates(currency: str) -> list[dict[str, Any]]:
+    """The live rate of every meter, in ``currency`` for the money meters and in
+    credits for AI tokens, with what each month includes free."""
+    from workeasy360.commercial.wallets.models import UsageRate
+
+    rows = UsageRate.objects.filter(effective_to__isnull=True).order_by("meter")
+    order = [m.value for m in UsageRate.Meter]
+    found = []
+    for row in rows:
+        if row.meter != UsageRate.Meter.AI_TOKENS.value and row.currency != currency:
+            continue
+        found.append(
+            {
+                "meter": row.meter,
+                "label": str(UsageRate.Meter(row.meter).label),
+                "wallet": AI_CREDITS
+                if row.meter == UsageRate.Meter.AI_TOKENS.value
+                else CONSUMPTION,
+                "currency": row.currency,
+                "unit_amount": row.unit_amount,
+                "per_units": row.per_units,
+                "included_units": row.included_units,
+                "effective_from": row.effective_from.isoformat(),
+            }
+        )
+    return sorted(found, key=lambda r: order.index(r["meter"]))
+
+
+def packs_on_sale(currency: str | None = None) -> list[dict[str, Any]]:
+    """The AI credit packs on sale, cheapest first; in one currency when given."""
+    rows = CreditPack.objects.filter(status="active")
+    if currency:
+        rows = rows.filter(currency=currency)
+    return [
+        {
+            "code": p.code,
+            "name": p.name,
+            "credits": p.credits,
+            "price_minor": p.price_minor,
+            "currency": p.currency,
+        }
+        for p in rows.order_by("currency", "price_minor", "code")
+    ]

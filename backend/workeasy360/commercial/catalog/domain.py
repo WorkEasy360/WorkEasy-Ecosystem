@@ -341,7 +341,13 @@ MAX_TAG: Final = 32
 MAX_LIST_ITEMS: Final = 12
 MAX_LIST_ITEM: Final = 200
 #: The listing's bullet lists, in the order a product page shows them.
-MERCHANDISING_LISTS: Final = ("highlights", "benefits", "use_cases")
+MERCHANDISING_LISTS: Final = (
+    "highlights",
+    "benefits",
+    "use_cases",
+    # ADR-065: the Store page's "Setup requirements".
+    "setup_requirements",
+)
 #: The store's hand-set badges (``New`` is also shown for 30 days after launch;
 #: ``best_seller`` is the marketplace's "Best Seller", 2026-11-04).
 MERCHANDISING_FLAGS: Final = ("featured", "popular", "badge_new", "best_seller")

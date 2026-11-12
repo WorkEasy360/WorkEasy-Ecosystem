@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { partnerApplicationApi } from "@/lib/api/adminPanel";
 import { ApiError } from "@/lib/api/client";
@@ -135,6 +135,13 @@ function ApplyForm({ onSent }: { onSent: (email: string) => void }) {
   const countryId = useId();
   const [form, setForm] = useState(EMPTY_FORM);
   const [interest, setInterest] = useState<ExperienceChoice | "">("");
+  // ADR-065: the Store's Partners page names the programme (`?type=affiliate`),
+  // read after hydration so the server's render and the browser's first agree.
+  useEffect(() => {
+    const asked = new URLSearchParams(window.location.search).get("type");
+    const found = EXPERIENCES.find((e) => e.value === asked)?.value;
+    if (found) void Promise.resolve().then(() => setInterest((current) => current || found));
+  }, []);
   const [problems, setProblems] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const countries = useSyncExternalStore(neverChanges, browserCountries, noCountries);

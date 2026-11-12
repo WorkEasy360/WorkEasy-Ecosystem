@@ -461,19 +461,29 @@ W360_FRONTEND_URL = env.str("W360_FRONTEND_URL", "http://localhost:3000").rstrip
 # host refuses (interfaces/api/portal_surface.py - a narrowing, only ever a
 # denial). It never decides what anyone may do: StaffGrant, PartnerMember and
 # Membership are checked on every request, whatever the Host.
+_REQUIRED_PORTALS = ("admin", "partner", "app", "auth", "api")
+# ADR-065: the Digital Store's own host (store.workeasy360.com) is optional.
+# Unset, the Store's pages stay on the customer portal exactly as before.
+_OPTIONAL_PORTALS = ("store",)
 W360_PORTAL_ORIGINS: dict[str, str] = {
     name: env.str(f"W360_{name.upper()}_ORIGIN", "").strip().rstrip("/")
-    for name in ("admin", "partner", "app", "auth", "api")
+    for name in (*_REQUIRED_PORTALS, *_OPTIONAL_PORTALS)
 }
-_configured_portals = [name for name, origin in W360_PORTAL_ORIGINS.items() if origin]
+_configured_portals = [name for name in _REQUIRED_PORTALS if W360_PORTAL_ORIGINS[name]]
 # Reported with every other problem by the settings module's require_all().
 env.check(
-    not _configured_portals or len(_configured_portals) == len(W360_PORTAL_ORIGINS),
+    not _configured_portals or len(_configured_portals) == len(_REQUIRED_PORTALS),
     "Set every portal origin (W360_ADMIN_ORIGIN, W360_PARTNER_ORIGIN, "
     "W360_APP_ORIGIN, W360_AUTH_ORIGIN, W360_API_ORIGIN) or none of them; only "
     f"{', '.join(_configured_portals) or 'none'} are set.",
 )
-PORTALS_ENABLED = len(_configured_portals) == len(W360_PORTAL_ORIGINS)
+env.check(
+    not W360_PORTAL_ORIGINS["store"]
+    or len(_configured_portals) == len(_REQUIRED_PORTALS),
+    "W360_STORE_ORIGIN needs the five other portal origins: the Store's own host "
+    "exists only in multi-portal mode.",
+)
+PORTALS_ENABLED = len(_configured_portals) == len(_REQUIRED_PORTALS)
 # Links name their portal through platform/identity/portals.py (auth_url,
 # app_url), read at call time; in single-host mode both are W360_FRONTEND_URL.
 # A hand-off code (auth host -> portal host) lives this long, and is single use.

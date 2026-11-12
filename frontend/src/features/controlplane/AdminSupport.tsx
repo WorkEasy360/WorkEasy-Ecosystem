@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import Link from "next/link";
+import { POLICIES } from "@/features/store/links";
 import { supportApi, type HelpArticleRow, type TicketDetail, type TicketRow } from "@/lib/api/adminPanel";
 import { can, useAdmin } from "./ControlShell";
 import { DateText } from "./AdminUsers";
@@ -388,7 +389,12 @@ function ResolvePopup({ t, onDone }: { t: TicketDetail; onDone: () => void }) {
 
 // --- help content ------------------------------------------------------------------------
 
-const KIND_LABEL: Record<HelpArticleRow["kind"], string> = { faq: "FAQ", setup_guide: "Setup guide", sales_guide: "Sales guide (partners)" };
+const KIND_LABEL: Record<HelpArticleRow["kind"], string> = {
+  faq: "FAQ",
+  setup_guide: "Setup guide",
+  sales_guide: "Sales guide (partners)",
+  policy: "Store policy",
+};
 const AUDIENCE_LABEL: Record<HelpArticleRow["audience"], string> = { all: "All", customer: "Customers", partner: "Partners" };
 
 const KIND_FILTER = [
@@ -398,6 +404,8 @@ const KIND_FILTER = [
   // ADR-063: a sales guide or product document, shown to partners under
   // Products & Referrals -> Sales Resources.
   { value: "sales_guide", label: "Sales guide (partners)" },
+  // ADR-065: the Digital Store's footer policies - the Store shows only what is published here.
+  { value: "policy", label: "Store policy" },
 ];
 
 const STATUS_FILTER = [
@@ -556,7 +564,9 @@ function ArticleEditor({ article, onClose, onSaved }: { article: HelpArticleRow 
   const [audience, setAudience] = useState<HelpArticleRow["audience"]>(article?.audience ?? "all");
   const [product, setProduct] = useState(article?.product_code ?? "");
   const [order, setOrder] = useState(String(article?.display_order ?? 0));
+  const [policyKey, setPolicyKey] = useState<string>(article?.kind === "policy" ? article.slug : POLICIES[0].key);
   const orderOk = /^\d{1,4}$/.test(order.trim());
+  const policy = kind === "policy";
   return (
     <FormDialog
       title={article ? "Edit article" : "New article"}
@@ -569,9 +579,10 @@ function ArticleEditor({ article, onClose, onSaved }: { article: HelpArticleRow 
           title: title.trim(),
           body: body.trim(),
           kind,
-          audience,
-          product_code: product.trim(),
+          audience: policy ? ("all" as const) : audience,
+          product_code: policy ? "" : product.trim(),
           display_order: Number(order.trim()),
+          ...(policy ? { policy_key: policyKey } : {}),
         };
         if (article) await supportApi.updateArticle(article.id, fields);
         else await supportApi.createArticle(fields);
@@ -589,10 +600,25 @@ function ArticleEditor({ article, onClose, onSaved }: { article: HelpArticleRow 
       <div className={local.field}>
         <Select label="Kind" showLabel fullWidth value={kind} onChange={setKind} options={KIND_OPTIONS} />
       </div>
-      <div className={local.field}>
-        <Select label="Audience" showLabel fullWidth value={audience} onChange={setAudience} options={AUDIENCE_OPTIONS} />
-      </div>
-      <TextField label="Product code (optional)" hint="Empty means every product." value={product} onChange={setProduct} maxLength={64} autoComplete="off" />
+      {policy ? (
+        <div className={local.field}>
+          <Select
+            label="Policy"
+            showLabel
+            fullWidth
+            value={policyKey}
+            onChange={setPolicyKey}
+            options={POLICIES.map((p) => ({ value: p.key, label: p.label }))}
+          />
+        </div>
+      ) : (
+        <>
+          <div className={local.field}>
+            <Select label="Audience" showLabel fullWidth value={audience} onChange={setAudience} options={AUDIENCE_OPTIONS} />
+          </div>
+          <TextField label="Product code (optional)" hint="Empty means every product." value={product} onChange={setProduct} maxLength={64} autoComplete="off" />
+        </>
+      )}
       <TextField
         label="Order"
         hint="Lower numbers come first."

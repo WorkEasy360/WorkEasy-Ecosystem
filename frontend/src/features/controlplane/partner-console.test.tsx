@@ -481,6 +481,7 @@ describe("All partners", () => {
       partner: "https://partner.workeasy360.com",
       app: "https://app.workeasy360.com",
       auth: "https://auth.workeasy360.com",
+      store: "",
     };
     const submitted: { action: string; method: string; fields: Record<string, string> }[] = [];
     const submit = vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(function (this: HTMLFormElement) {
@@ -532,6 +533,7 @@ describe("All partners", () => {
       partner: "https://partner.workeasy360.com",
       app: "https://app.workeasy360.com",
       auth: "https://auth.workeasy360.com",
+      store: "",
     };
     const submit = vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => {});
     mockApi(

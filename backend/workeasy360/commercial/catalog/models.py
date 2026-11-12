@@ -129,6 +129,10 @@ class Product(models.Model):
     highlights = models.JSONField(default=list, blank=True, db_default=[])
     benefits = models.JSONField(default=list, blank=True, db_default=[])
     use_cases = models.JSONField(default=list, blank=True, db_default=[])
+    #: ADR-065: what a customer needs before the product works for them (an
+    #: account elsewhere, a domain, a WhatsApp number...), as the Super Admin
+    #: wrote it. Shown on the Store's product page; empty shows nothing.
+    setup_requirements = models.JSONField(default=list, blank=True, db_default=[])
     #: The product page's video: a YouTube or Vimeo link in its canonical watch
     #: form (``domain.validate_video_url``); empty = no video.
     video_url = models.CharField(max_length=200, blank=True, default="", db_default="")

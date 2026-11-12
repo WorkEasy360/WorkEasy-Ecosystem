@@ -36,6 +36,8 @@ def _portals() -> list[dict[str, str]]:
         "app": "Customer Portal",
         "auth": "Central sign-in",
         "api": "API",
+        # ADR-065: the Digital Store's own host, when it has one.
+        "store": "Digital Store",
     }
     origins = getattr(settings, "W360_PORTAL_ORIGINS", {}) or {}
     return [

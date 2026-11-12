@@ -34,6 +34,25 @@ STAFF_UNDER_ORGS: Final = re.compile(
     r"^/api/v1/orgs/[^/]+/(commercial|integrations)(/|$)"
 )
 
+#: ADR-065: the organization endpoints the Digital Store's own host serves - its
+#: checkout (access, quote, order, billing details, paying an invoice and
+#: following the payment), Recharge (wallet balances, top-ups, credit packs),
+#: trials and the bell. Everything else of an organization (members, security,
+#: integrations, settings...) stays the customer portal's alone, so an XSS on the
+#: Store could not reach it.
+STORE_UNDER_ORGS: Final = re.compile(
+    r"^/api/v1/orgs/[^/]+/("
+    r"access"
+    r"|orders(/quote|/[0-9a-f-]{36}(/cancel)?)?"
+    r"|billing-account"
+    r"|billing/invoices/[0-9a-f-]{36}(/pay)?"
+    r"|billing/payments/[0-9a-f-]{36}"
+    r"|wallets(/top-up|/credit-packs)?"
+    r"|trials(/[0-9a-f-]{36}/cancel)?"
+    r"|notifications"
+    r")/?$"
+)
+
 #: ``(path, exact, hosts)``: a request whose path equals ``path`` (``exact``)
 #: or starts with it is served only on those portals' hosts. The first
 #: matching rule wins, so the more specific rule comes first.
@@ -45,6 +64,9 @@ SURFACE_RULES: Final[tuple[tuple[str, bool, frozenset[str]], ...]] = (
     # endpoint answers on each of them (the session cookie is that host's).
     ("/api/v1/auth/login", True, frozenset(portals.WEB_PORTALS)),
     ("/api/v1/auth/handoff/redeem", True, frozenset(portals.DESTINATIONS)),
+    # ADR-065: the Store's "My Account" - issued on the Store, spent on User Admin.
+    ("/api/v1/auth/account-pass/enter", True, frozenset({portals.APP})),
+    ("/api/v1/auth/account-pass", True, frozenset({portals.STORE})),
     ("/api/v1/auth/handoff", True, frozenset({portals.AUTH})),
     # The OIDC authorization endpoint needs the central sign-in session.
     ("/api/v1/integrations/oauth/authorize", True, frozenset({portals.AUTH})),
@@ -60,6 +82,8 @@ def allowed_portals(path: str) -> frozenset[str] | None:
     """The portals that serve ``path``, or ``None`` when every host does."""
     if STAFF_UNDER_ORGS.match(path):
         return frozenset({portals.ADMIN})
+    if STORE_UNDER_ORGS.match(path):
+        return frozenset({portals.APP, portals.STORE})
     for prefix, exact, hosts in SURFACE_RULES:
         if path == prefix or (not exact and path.startswith(prefix)):
             return hosts
@@ -84,6 +108,24 @@ def _guest_entry_from_admin(
         path == GUEST_ENTER_PATH
         and portal == portals.PARTNER
         and portals.parse_origin(origin) == portals.parse_origin(origins[portals.ADMIN])
+    )
+
+
+#: ADR-065: the second such write - the Store page's form post of a "My Account"
+#: pass to the customer portal. Exactly this path, exactly that pair of origins;
+#: the view checks the Origin again and spends the pass (``account_pass_enter_view``).
+STORE_ACCOUNT_ENTER_PATH: Final = "/api/v1/auth/account-pass/enter"
+
+
+def _account_pass_from_store(
+    path: str, portal: str | None, origin: str, origins: dict[str, str]
+) -> bool:
+    store = origins.get(portals.STORE, "")
+    return (
+        bool(store)
+        and path == STORE_ACCOUNT_ENTER_PATH
+        and portal == portals.APP
+        and portals.parse_origin(origin) == portals.parse_origin(store)
     )
 
 
@@ -118,6 +160,7 @@ class PortalSurfaceMiddleware:
                 and request.method not in _SAFE_METHODS
                 and portals.parse_origin(origin) != portals.parse_origin(origins[portal])
                 and not _guest_entry_from_admin(request.path, portal, origin, origins)
+                and not _account_pass_from_store(request.path, portal, origin, origins)
             ):
                 return JsonResponse(
                     {"code": "csrf_failed", "detail": "Refused: another origin."},

@@ -77,6 +77,7 @@ describe("contentSecurityPolicy", () => {
       partner: "https://partner.workeasy360.com",
       app: "https://app.workeasy360.com",
       auth: "https://auth.workeasy360.com",
+      store: "",
     };
     expect(formTargetsFor("admin.workeasy360.com", origins)).toEqual(["https://partner.workeasy360.com"]);
     for (const host of ["partner.workeasy360.com", "app.workeasy360.com", "auth.workeasy360.com", "brand.example.org", ""]) {

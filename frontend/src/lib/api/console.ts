@@ -350,7 +350,8 @@ export type OrderStatus = "pending_payment" | "paid" | "fulfilled" | "cancelled"
 export interface Order {
   order_id: string;
   number: string;
-  kind: "plan" | "bundle" | "activation" | "cart";
+  /** `wallet`: a top-up or an AI credit pack (2026-11-09). */
+  kind: "plan" | "bundle" | "activation" | "cart" | "wallet";
   status: OrderStatus;
   description: string;
   product_codes: string[];

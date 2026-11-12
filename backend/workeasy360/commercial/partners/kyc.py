@@ -1267,3 +1267,13 @@ __all__ = [
 # ``selectors`` is imported for the module's public read of a partner row by callers
 # that already use this module; keep the name referenced for static analysis.
 _ = selectors
+
+
+def public_requirements() -> list[dict[str, Any]]:
+    """ADR-065: the documents an application asks for, as the Store's Partners page
+    lists them - the label, the Admin's help text and whether it is required. No
+    identifiers and nothing about any applicant."""
+    return [
+        {"label": row.label, "help_text": row.help_text, "is_required": row.is_required}
+        for row in _active_requirements()
+    ]

@@ -2,6 +2,14 @@
 
     sudo python3 make_env.py render --out /opt/workeasy360/env --release <tag>
     sudo python3 make_env.py set W360_EMAIL_HOST_PASSWORD --env /opt/workeasy360/env/production.env
+    sudo python3 make_env.py enable-store --env /opt/workeasy360/env/production.env
+    sudo python3 make_env.py disable-store --env /opt/workeasy360/env/production.env
+
+``enable-store`` (ADR-065) gives the Digital Store its own host,
+``store.<domain>``: its origin, the edge's site for it, and the host and CSRF
+lists the API checks - all together, since one without the others is refused at
+start-up. Run it only once the DNS record exists (the edge then obtains the
+certificate). ``disable-store`` puts the Store back on the customer portal.
 
 ``render`` writes ``production.env`` and ``seaweedfs-s3.json`` (mode 0600), every
 secret freshly random and never printed (deploy/env/production.env.example
@@ -146,21 +154,83 @@ def set_value(env_file: Path, name: str) -> None:
     # literally (no $-interpolation, no inline comment).
     if not set(value) <= SAFE_UNQUOTED:
         if "'" in value:
-            raise SystemExit("A single quote cannot be stored in the env file - nothing changed.")
+            raise SystemExit(
+                "A single quote cannot be stored in the env file - nothing changed."
+            )
         value = f"'{value}'"
+    _write_values(env_file, {name: value}, quiet=False)
+
+
+def _write_values(
+    env_file: Path, changes: dict[str, str | None], *, quiet: bool = True
+) -> None:
+    """Replace, add or (``None``) remove variables; the file is rewritten in place,
+    mode 0600, atomically."""
     lines = env_file.read_text(encoding="utf-8").splitlines()
-    line, done = f"{name}={value}", False
-    for i, existing in enumerate(lines):
-        if existing.split("=", 1)[0] == name:
-            lines[i], done = line, True
-    if not done:
-        lines.append(line)
+    kept: list[str] = []
+    seen: set[str] = set()
+    for existing in lines:
+        key = existing.split("=", 1)[0]
+        if key in changes:
+            seen.add(key)
+            if changes[key] is not None:
+                kept.append(f"{key}={changes[key]}")
+            continue
+        kept.append(existing)
+    for key, value in changes.items():
+        if key not in seen and value is not None:
+            kept.append(f"{key}={value}")
     tmp = env_file.with_name(env_file.name + ".tmp")
     if tmp.exists():
         tmp.unlink()
-    write_private(tmp, "\n".join(lines) + "\n")
+    write_private(tmp, "\n".join(kept) + "\n")
     os.replace(tmp, env_file)
-    print(f"{name} {'replaced' if done else 'added'} in {env_file} (value not shown)")
+    if not quiet:
+        for key in changes:
+            print(
+                f"{key} {'replaced' if key in seen else 'added'} in {env_file} (value not shown)"
+            )
+
+
+def _read(env_file: Path) -> dict[str, str]:
+    return {
+        line.split("=", 1)[0]: line.split("=", 1)[1]
+        for line in env_file.read_text(encoding="utf-8").splitlines()
+        if "=" in line and not line.startswith("#")
+    }
+
+
+def store(env_file: Path, *, on: bool) -> None:
+    """ADR-065: switch the Store's own host on or off, every value it needs at once."""
+    values = _read(env_file)
+    app = values.get("W360_APP_ORIGIN", "")
+    if not app.startswith("https://app."):
+        raise SystemExit("W360_APP_ORIGIN is not https://app.<domain> - nothing changed.")
+    origin = "https://store." + app.removeprefix("https://app.")
+    host = origin.removeprefix("https://")
+    hosts = [
+        h for h in values.get("W360_ALLOWED_HOSTS", "").split(",") if h and h != host
+    ]
+    csrf = [
+        o
+        for o in values.get("W360_CSRF_TRUSTED_ORIGINS", "").split(",")
+        if o and o != origin
+    ]
+    if on:
+        hosts.append(host)
+        csrf.append(origin)
+    _write_values(
+        env_file,
+        {
+            "W360_STORE_ORIGIN": origin if on else None,
+            "W360_STORE_EDGE": "on" if on else None,
+            "W360_ALLOWED_HOSTS": ",".join(hosts),
+            "W360_CSRF_TRUSTED_ORIGINS": ",".join(csrf),
+        },
+    )
+    print(
+        f"The Store's own host is {'on: ' + origin if on else 'off'} in {env_file}. Restart api, worker-critical, web and edge."
+    )
 
 
 def main() -> None:
@@ -174,9 +244,13 @@ def main() -> None:
     s = sub.add_parser("set")
     s.add_argument("name")
     s.add_argument("--env", type=Path, required=True)
+    for cmd in ("enable-store", "disable-store"):
+        sub.add_parser(cmd).add_argument("--env", type=Path, required=True)
     a = p.parse_args()
     if a.cmd == "render":
         render(a.out.resolve(), a.release, a.domain, a.smtp_user)
+    elif a.cmd in ("enable-store", "disable-store"):
+        store(a.env.resolve(), on=a.cmd == "enable-store")
     else:
         set_value(a.env.resolve(), a.name)
 

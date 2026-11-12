@@ -29,7 +29,14 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from workeasy360.commercial.payments import checkout, orders, refunds, staff, webhooks
+from workeasy360.commercial.payments import (
+    checkout,
+    orders,
+    refunds,
+    staff,
+    wallet_orders,
+    webhooks,
+)
 from workeasy360.commercial.payments import selectors as payment_selectors
 from workeasy360.contracts.errors import AuthenticationRequired, PaymentValidationError
 from workeasy360.contracts.values import json_input
@@ -170,11 +177,27 @@ def invoice_pay_view(
     blocked = limited(request, "payment_start", user=request.user)
     if blocked is not None:
         return blocked
-    key = request.headers.get("Idempotency-Key") or _body(request).get("idempotency_key")
-    result = checkout.start_payment(
-        ctx, invoice_id=invoice_id, idempotency_key=str(key or "")[:129]
+    # A JSON body is optional (the console posts none); only JSON is read.
+    body = _body(request) if request.content_type == "application/json" else {}
+    key = request.headers.get("Idempotency-Key") or body.get("idempotency_key")
+    # ADR-065: the payer may pay part or all of it from the Platform Wallet; the
+    # server checks that amount against the invoice and the wallet. The host the
+    # payment started on decides only where the provider returns the payer.
+    result = wallet_orders.member_pay_invoice(
+        ctx,
+        invoice_id=invoice_id,
+        idempotency_key=str(key or "")[:129],
+        wallet_amount_minor=body.get("wallet_amount_minor", 0),
+        return_portal=_return_portal(request),
     )
     return JsonResponse(result, status=202)
+
+
+def _return_portal(request: HttpRequest) -> str:
+    from workeasy360.contracts.values import portals
+    from workeasy360.platform.identity import portals as portal_links
+
+    return portals.STORE if portal_links.request_portal(request) == portals.STORE else ""
 
 
 @require_http_methods(["GET"])

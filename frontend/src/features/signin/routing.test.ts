@@ -7,6 +7,7 @@ const ORIGINS: PortalOrigins = {
   partner: "https://partner.workeasy360.com",
   app: "https://app.workeasy360.com",
   auth: "https://auth.workeasy360.com",
+  store: "",
 };
 
 const route = (host: string, pathname: string, search = "", hasSession = true) =>

@@ -30,8 +30,8 @@ export function usePortalRouter(): ReturnType<typeof useRouter> {
       if (here && href.startsWith("/") && !href.startsWith("//")) {
         // A full load on purpose: the proxy answers it, not the client router.
         if (here !== "auth" && path === "/login") return void window.location.assign(href);
-        const owner = pageOwner(path);
-        if (owner && !servesPage(here, path)) {
+        const owner = pageOwner(path, origins);
+        if (owner && origins[owner] && !servesPage(here, path, origins)) {
           const target = `${origins[owner]}${href}`; // another origin: absolute
           // eslint-disable-next-line @next/next/no-location-assign-relative-destination
           return void (method === "replace" ? window.location.replace(target) : window.location.assign(target));

@@ -98,7 +98,12 @@ export function DomainsScreen() {
               <Alert tone="info">No Cloudflare account is connected, so this is a live check of the address itself, not Cloudflare&apos;s own status.</Alert>
             )}
             <Portals portals={d.portals} />
-            <Apps apps={d.apps} customerOrigin={d.portals.find((p) => p.key === "app")?.origin ?? ""} productHref={productHref} />
+            <Apps
+              apps={d.apps}
+              // ADR-065: a product's Store page is on the Store's own host once it has one.
+              customerOrigin={(d.portals.find((p) => p.key === "store") ?? d.portals.find((p) => p.key === "app"))?.origin ?? ""}
+              productHref={productHref}
+            />
             <PartnerDomains rows={d.partner_domains} />
             <Brands rows={d.brands} />
           </div>

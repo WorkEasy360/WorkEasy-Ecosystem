@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession } from "@/lib/auth/useSession";
+import { usePortals } from "@/lib/portalContext";
 import { publicApi, type PublicProduct, type SiteSettings } from "@/lib/api/public";
 import { money } from "@/features/controlplane/ui";
 import { Logo } from "@/components/brand/Logo";
@@ -293,6 +294,7 @@ const NAV = [
  */
 export function SiteShell({ children, header }: { children: React.ReactNode; header?: React.ReactNode }) {
   const pathname = usePathname();
+  const origins = usePortals();
   const session = useSession();
   const products = useMenuProducts(!header);
   const [navOpen, setNavOpen] = useState(false);
@@ -319,7 +321,8 @@ export function SiteShell({ children, header }: { children: React.ReactNode; hea
             {NAV.map((item) => (
               <Link
                 key={item.href}
-                href={item.href}
+                // ADR-065: the Store is its own site once it has a host.
+                href={item.href === "/store" && origins?.store ? `${origins.store}/` : item.href}
                 className={styles.navLink}
                 aria-current={pathname === item.href || pathname.startsWith(`${item.href}/`) ? "page" : undefined}
               >

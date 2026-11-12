@@ -60,6 +60,14 @@ urlpatterns = [
     # Portal hand-off (ADR-043): issued on the central sign-in host, redeemed
     # once on the portal host it names.
     path("auth/handoff", auth_views.handoff_view, name="auth-handoff"),
+    # ADR-065: the Store's "My Account" links - a pass from the Store's host,
+    # spent on the customer portal's.
+    path("auth/account-pass", auth_views.account_pass_view, name="auth-account-pass"),
+    path(
+        "auth/account-pass/enter",
+        auth_views.account_pass_enter_view,
+        name="auth-account-pass-enter",
+    ),
     path(
         "auth/handoff/redeem",
         auth_views.handoff_redeem_view,
@@ -128,6 +136,33 @@ urlpatterns = [
         "public/store/products/<slug:slug>/coupon",
         public_site_views.store_coupon_view,
         name="public-store-coupon",
+    ),
+    # ADR-065: the Digital Store's own host - Recharge terms, the checkout's
+    # "Pay via", and the return address a product's purchase may come back to.
+    path(
+        "public/store/recharge",
+        public_site_views.store_recharge_view,
+        name="public-store-recharge",
+    ),
+    path(
+        "public/store/sitemap.xml",
+        public_site_views.store_sitemap_view,
+        name="public-store-sitemap",
+    ),
+    path(
+        "public/store/partner-programme",
+        public_site_views.store_partner_programme_view,
+        name="public-store-partner-programme",
+    ),
+    path(
+        "public/store/payment-option",
+        public_site_views.store_payment_option_view,
+        name="public-store-payment-option",
+    ),
+    path(
+        "public/store/return-check",
+        public_site_views.store_return_check_view,
+        name="public-store-return-check",
     ),
     path(
         "public/catalog/products/<slug:slug>",

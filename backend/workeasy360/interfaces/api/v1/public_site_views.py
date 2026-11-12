@@ -67,8 +67,16 @@ def signup_view(request: HttpRequest) -> JsonResponse:
         email=email,
         password=body.get("password"),
         company_name=body.get("company_name"),
+        portal=_portal_of(request),
     )
     return JsonResponse(_ACCEPTED, status=202)
+
+
+def _portal_of(request: HttpRequest) -> str:
+    """The portal whose own pages an emailed link opens: where it was asked for."""
+    from workeasy360.platform.identity import portals as portal_links
+
+    return portal_links.request_portal(request)
 
 
 @require_http_methods(["POST"])
@@ -104,7 +112,7 @@ def resend_verification_view(request: HttpRequest) -> JsonResponse:
     blocked = limited(request, "verify_resend", account_email=email or None)
     if blocked is not None:
         return blocked
-    self_service.resend_verification(email)
+    self_service.resend_verification(email, portal=_portal_of(request))
     return JsonResponse(_ACCEPTED, status=202)
 
 
@@ -213,6 +221,81 @@ def store_coupon_view(request: HttpRequest, slug: str) -> JsonResponse:
             currency=request.GET.get("currency"),
             amount_minor=request.GET.get("amount_minor"),
         )
+    )
+
+
+@require_http_methods(["GET"])
+def store_recharge_view(request: HttpRequest) -> JsonResponse:
+    """ADR-065: the Store's Recharge page - the live usage rates, the AI credit
+    packs on sale and whether online payment is open, for ``?currency=``."""
+    from workeasy360.commercial.controlplane import portal_store
+
+    blocked = limited(request, "public_catalog")
+    if blocked is not None:
+        return blocked
+    return JsonResponse(portal_store.public_recharge(request.GET.get("currency")))
+
+
+@require_http_methods(["GET"])
+def store_sitemap_view(request: HttpRequest) -> HttpResponse:
+    """ADR-065: the Store's ``sitemap.xml`` (the edge serves it at the Store host's
+    ``/sitemap.xml``). Public pages only, on the configured Store origin."""
+    from xml.sax.saxutils import escape
+
+    from workeasy360.commercial.controlplane import portal_store
+
+    blocked = limited(request, "public_catalog")
+    if blocked is not None:
+        return blocked
+    entries = "".join(
+        f"<url><loc>{escape(url)}</loc></url>" for url in portal_store.sitemap_urls()
+    )
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        f"{entries}</urlset>"
+    )
+    response = HttpResponse(body, content_type="application/xml; charset=utf-8")
+    response["Cache-Control"] = "public, max-age=3600"
+    return response
+
+
+@require_http_methods(["GET"])
+def store_partner_programme_view(request: HttpRequest) -> JsonResponse:
+    """ADR-065: the Store's Partners page - whether applications are open, the
+    Affiliate and Reseller programmes, the KYC documents asked for, the stages."""
+    from workeasy360.commercial.controlplane import partner_applications
+
+    blocked = limited(request, "public_catalog")
+    if blocked is not None:
+        return blocked
+    return JsonResponse(partner_applications.public_programme())
+
+
+@require_http_methods(["GET"])
+def store_payment_option_view(request: HttpRequest) -> JsonResponse:
+    """ADR-065: the checkout's "Pay via" - is online payment open in ``?currency=``,
+    and through which kind of provider (its name only)."""
+    from workeasy360.commercial.controlplane import portal_store
+
+    blocked = limited(request, "public_catalog")
+    if blocked is not None:
+        return blocked
+    return JsonResponse(portal_store.public_payment_option(request.GET.get("currency")))
+
+
+@require_http_methods(["GET"])
+@never_cache
+def store_return_check_view(request: HttpRequest) -> JsonResponse:
+    """ADR-065: ``?product=&url=`` - may the Store send a buyer back to that
+    product address after the purchase? Yes or no; the address is never echoed."""
+    from workeasy360.commercial.controlplane import portal_store
+
+    blocked = limited(request, "coupon_check")
+    if blocked is not None:
+        return blocked
+    return JsonResponse(
+        portal_store.check_return(request.GET.get("product"), request.GET.get("url"))
     )
 
 

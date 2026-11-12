@@ -147,9 +147,18 @@ def record_success(
     invoice.amount_paid_minor += attempt.amount_minor
     fields = ["amount_paid_minor", "version", "updated_at"]
     invoice.version += 1
+    from workeasy360.commercial.payments import wallet_orders
+
     if not was_open:
         after.refund_attempt = attempt.id
         metrics.increment("payments_unexpected_payments_total")
+        wallet_orders.release_for_attempt(attempt, why="invoice_not_open")
+    elif attempt.provider_key != wallet_orders.WALLET_PROVIDER:
+        # ADR-065: the Platform Wallet's part of this payment, held while the
+        # payer was at the provider, is taken now - in this same transaction.
+        invoice.amount_paid_minor += wallet_orders.capture_for_attempt(
+            attempt, invoice, now=now
+        )
     if (
         invoice.status == Invoice.Status.OPEN
         and invoice.amount_paid_minor >= invoice.total_minor
@@ -216,6 +225,10 @@ def record_failure(
             "updated_at",
         ]
     )
+    # ADR-065: what this payment held in the Platform Wallet is spendable again.
+    from workeasy360.commercial.payments import wallet_orders
+
+    wallet_orders.release_for_attempt(attempt, why=status)
     audit.record_system(
         attempt.organization_id,
         f"billing.payment_{status}",

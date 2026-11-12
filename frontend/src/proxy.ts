@@ -122,6 +122,9 @@ export function routePortalRequest(args: {
       return portal === "auth" ? { kind: "serve" } : { kind: "redirect", location: `${origins.auth}/login${search}` };
     }
     const mode = parseMode(params.get("mode"));
+    // ADR-065: the Store's own host signs its customers in itself - with or
+    // without `?mode=user`, which names the same people.
+    if (portal === "store" && (mode === null || mode === "user")) return { kind: "serve" };
     const target: Portal = mode ? MODE_TO_PORTAL[mode] : portal === "auth" ? "app" : portal;
     if (target === portal) return { kind: "serve" };
     // Another portal's sign-in page: the same address on its own host, less
@@ -132,14 +135,19 @@ export function routePortalRequest(args: {
     return { kind: "redirect", location: `${origins[target]}/login${rest ? `?${rest}` : ""}` };
   }
   if (pathname === "/") {
+    // ADR-065: https://store.workeasy360.com/ is the marketplace itself
+    // (app/page.tsx renders it on that host).
+    if (portal === "store") return { kind: "serve" };
     if (portal === "admin") return { kind: "redirect", location: `${origins.admin}/admin` };
     if (portal === "partner") return { kind: "redirect", location: `${origins.partner}/partner` };
     if (portal === "auth") return { kind: "redirect", location: `${origins.app}/login` };
     return { kind: "serve" }; // the public site's home, on the customer portal
   }
-  if (!servesPage(portal, pathname)) {
-    const owner = pageOwner(pathname);
-    if (owner) return { kind: "redirect", location: `${origins[owner]}${pathname}${search}` };
+  if (!servesPage(portal, pathname, origins)) {
+    // Including the Store's old addresses on the customer portal (ADR-065):
+    // `app.../store/...` opens the same page on the Store's own host.
+    const owner = pageOwner(pathname, origins);
+    if (owner && origins[owner]) return { kind: "redirect", location: `${origins[owner]}${pathname}${search}` };
   }
   const isPublic = isPublicPath(pathname) || (portal !== "auth" && pathname === HANDOFF_LANDING);
   if (!hasSession && !isPublic) {
@@ -324,9 +332,13 @@ export function proxy(request: NextRequest): NextResponse {
 }
 
 /** The other origins a page on `host` may submit a form to: the partner
- * portal, from the Super Admin host only (Login as Guest, ADR-062). */
+ * portal, from the Super Admin host only (Login as Guest, ADR-062); the
+ * customer portal, from the Store's own host only ("My Account", ADR-065). */
 export function formTargetsFor(host: string, origins: PortalOrigins): string[] {
-  return portalForHost(host, origins) === "admin" ? [origins.partner] : [];
+  const portal = portalForHost(host, origins);
+  if (portal === "admin") return [origins.partner];
+  if (portal === "store") return [origins.app];
+  return [];
 }
 
 /** Serve the page, with the CSP and the security headers every page gets. */
@@ -363,7 +375,7 @@ export const config = {
   // the file exists to tell them not to fetch.
   matcher: [
     {
-      source: "/((?!api|_next/static|_next/image|favicon.ico|robots.txt).*)",
+      source: "/((?!api|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },

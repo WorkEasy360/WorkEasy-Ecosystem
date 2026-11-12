@@ -14,6 +14,7 @@ import { AdminAuthFrame } from "./AdminLogin";
 import { PARTNER_SIGN_IN, PartnerAuthFrame } from "./PartnerLogin";
 import { UserAuthFrame } from "./UserLogin";
 import { usePortalRouter } from "@/lib/portalRouter";
+import { takeStoreReturn } from "@/features/store/storeReturn";
 
 /**
  * Self-service accounts (Phase 9): sign up, confirm the address, recover a
@@ -278,7 +279,9 @@ async function finishSignIn(router: ReturnType<typeof usePortalRouter>, organiza
   if (organizationId) {
     await publicApi.convertReferral(referral ?? "", organizationId).catch(() => undefined);
   }
-  router.replace("/dashboard");
+  // ADR-065: a sign-up started in the Store goes back to the Store page it left
+  // (its checkout, with what was chosen) - a Store path only (storeReturn.ts).
+  router.replace(takeStoreReturn() ?? "/dashboard");
 }
 
 export function VerifyEmailScreen() {

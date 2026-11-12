@@ -1566,6 +1566,8 @@ def cancel(ctx: TenantContext, order_id: UUID) -> dict[str, Any]:
 
 
 def _void(invoice: Any, *, reason: str, now: datetime) -> None:
+    from workeasy360.commercial.payments import wallet_orders
+
     invoice.status = invoice.Status.VOID
     invoice.voided_at = now
     invoice.void_reason = reason[:255]
@@ -1573,6 +1575,8 @@ def _void(invoice: Any, *, reason: str, now: datetime) -> None:
     invoice.save(
         update_fields=["status", "voided_at", "void_reason", "version", "updated_at"]
     )
+    # ADR-065: a withdrawn order's wallet reservation is spendable again.
+    wallet_orders.release_for_invoice(invoice, why="invoice_void")
 
 
 def _can_view(ctx: TenantContext) -> None:

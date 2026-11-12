@@ -10,6 +10,8 @@ import { apiFetch } from "./client";
 
 export interface SiteSettings {
   signup_enabled: boolean;
+  /** 2026-11-09: whether the public partner application is open. Absent from an older server. */
+  partner_applications_enabled?: boolean;
   support_email: string;
   sales_email: string;
   catalog_currency: string;
@@ -172,6 +174,10 @@ export type PublicStorePlan = Omit<PublicPlan, "billing_type" | "kind" | "prices
   billing_type: "paid" | "free_trial";
   kind: "standard" | "add_on";
   recommended?: boolean;
+  /** ADR-065: how the plan renews, and what it includes each month (meter -> units). Absent from an older server. */
+  renewal_rule?: "auto_renew" | "manual" | "none";
+  included_usage?: Record<string, number>;
+  sort_order?: number;
   /** ADR-056: a promotional discount's list price and a one-time set-up fee
    * ride on each price row. */
   prices: (PublicPlan["prices"][number] & { list_amount_minor?: number | null; discount_bp?: number; setup_fee_minor?: number | null })[];
@@ -198,6 +204,10 @@ export interface PublicStoreProductPage {
     highlights: string[];
     benefits: string[];
     use_cases: string[];
+    /** ADR-065: what a customer needs before the product works, as the Super Admin wrote it. */
+    setup_requirements?: string[];
+    /** ADR-065: the web application, and the official app-store links the Super Admin entered. */
+    access?: { web: boolean; apps: Partial<Record<"android" | "ios" | "windows" | "macos", string>> };
     tags: string[];
     badges: string[];
     documentation_url: string;

@@ -114,3 +114,44 @@ def apply(
                 outcome = "created"
     metrics.increment(OPERATIONS, outcome=outcome)
     return outcome
+
+
+#: ADR-065: the programmes the Store invites applications for. White-label
+#: accounts exist in the Partner Admin, but are not a public application.
+PUBLIC_PROGRAMMES = (capabilities.AFFILIATE, capabilities.RESELLER)
+
+
+def public_programme() -> dict[str, Any]:
+    """The Store's Partners page (ADR-065): whether applications are open, the two
+    public programmes in the platform's own words, the KYC documents an Admin asks
+    for, and the application's stages. Anonymous; nothing about any partner."""
+    from workeasy360.commercial.partners import kyc
+    from workeasy360.platform.administration.site import partner_applications_enabled
+
+    return {
+        "applications_open": partner_applications_enabled(),
+        "programmes": [
+            {
+                "key": key,
+                "label": key.replace("_", " ").title(),
+                "description": capabilities.EXPERIENCE_DESCRIPTIONS[key],
+            }
+            for key in PUBLIC_PROGRAMMES
+        ],
+        "kyc_requirements": kyc.public_requirements(),
+        "kyc_required": _kyc_required(),
+        "stages": [
+            {"key": "draft", "label": "Draft"},
+            {"key": "submitted", "label": "Submitted"},
+            {"key": "under_review", "label": "Under Review"},
+            {"key": "correction_required", "label": "Correction Required"},
+            {"key": "approved", "label": "Approved"},
+            {"key": "rejected", "label": "Rejected"},
+        ],
+    }
+
+
+def _kyc_required() -> bool:
+    from django.conf import settings
+
+    return bool(getattr(settings, "PARTNER_KYC_REQUIRED", True))

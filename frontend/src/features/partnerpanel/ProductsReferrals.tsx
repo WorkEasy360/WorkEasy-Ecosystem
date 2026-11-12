@@ -19,11 +19,26 @@ import styles from "./PartnerPanel.module.css";
  * approved for selling. Only products in the partner's own grants are listed.
  */
 
-/** The partner's general referral link, opening the Store instead of sign-up. */
-const storeLink = (url: string) => `${url}${url.includes("?") ? "&" : "?"}to=store`;
+/** The partner's general referral link, opening the Store instead of sign-up -
+ * on the Store's own host when it has one (ADR-065), so the visit is recorded
+ * where the visitor will sign up and buy. Only the origin changes: the path is
+ * the server's `/r/<code>`. */
+export function storeLink(url: string, storeOrigin?: string): string {
+  let link = url;
+  if (storeOrigin) {
+    try {
+      const parsed = new URL(url);
+      link = `${storeOrigin}${parsed.pathname}${parsed.search}`;
+    } catch {
+      link = url;
+    }
+  }
+  return `${link}${link.includes("?") ? "&" : "?"}to=store`;
+}
 
 export function StoreReferralLink() {
   const { id, can } = usePanel();
+  const origins = usePortals();
   const [load, reload] = useLoad(() => panelApi.affiliateOverview(id, "30d"), [id]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -38,7 +53,7 @@ export function StoreReferralLink() {
         {(overview) => {
           const general = overview.links.find((l) => !l.product_code && l.url && l.status === "active");
           if (general?.url) {
-            const url = storeLink(general.url);
+            const url = storeLink(general.url, origins?.store || undefined);
             return (
               <div className={styles.linkRow}>
                 <input className="w360-input" readOnly value={url} aria-label="Store referral link" onFocus={(e) => e.currentTarget.select()} />
@@ -140,7 +155,7 @@ function PromotedProducts() {
                   </p>
                   {earningText(p) && <p>{earningText(p)}</p>}
                   <p className={styles.actionsRow}>
-                    <a className="w360-btn w360-btn-secondary" href={portalHref(portals, "app", `/store/product/${encodeURIComponent(p.slug)}`)}>
+                    <a className="w360-btn w360-btn-secondary" href={portalHref(portals, portals?.store ? "store" : "app", `/store/product/${encodeURIComponent(p.slug)}`)}>
                       View product
                     </a>
                     {can("referral.create") && (

@@ -139,6 +139,73 @@ class WalletEntry(models.Model):
         return f"{self.entry_type} {self.amount}"
 
 
+class WalletHold(models.Model):
+    """Money in a Platform Wallet reserved for one payment in progress (ADR-065).
+
+    A customer paying part of an invoice from the wallet and the rest through a
+    payment provider: the wallet's part is held - not taken - while the payer is on
+    the provider's page. The provider's confirmed payment captures it (one ledger
+    entry, in the settlement's own transaction); a failed, expired or cancelled
+    payment releases it. Nothing moves the balance until the capture, and while a
+    hold is ``held`` no other debit may spend that money (``ledger.post``).
+
+    ``expires_at`` is only a backstop: every way a payment ends releases its hold
+    explicitly, and a hold past its time no longer reserves anything.
+    """
+
+    class Status(models.TextChoices):
+        HELD = "held", "Reserved"
+        CAPTURED = "captured", "Captured"
+        RELEASED = "released", "Released"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    wallet = models.ForeignKey(Wallet, on_delete=models.PROTECT, related_name="holds")
+    #: The invoice and the provider payment it waits on (soft references: those
+    #: live in ``payments``). Whose money it is, is the wallet's owner.
+    invoice_id = models.UUIDField()
+    attempt_id = models.UUIDField()
+    amount = models.BigIntegerField()
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.HELD)
+    reason = models.CharField(max_length=255, blank=True, default="")
+    #: The ledger entry the capture wrote.
+    entry = models.ForeignKey(
+        WalletEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    actor_user_id = models.UUIDField(null=True, blank=True)
+    #: The same key is the same hold, however often the request is retried.
+    idempotency_key = models.CharField(max_length=128, unique=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    settled_at = models.DateTimeField(null=True, blank=True)
+    #: Why a hold was released: the payment failed, expired, was cancelled...
+    release_reason = models.CharField(max_length=64, blank=True, default="")
+
+    class Meta:
+        db_table = "wallets_hold"
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(amount__gt=0), name="ck_wallet_hold_positive"
+            ),
+            # One reservation at a time for an invoice.
+            models.UniqueConstraint(
+                fields=["invoice_id"],
+                condition=Q(status="held"),
+                name="uq_wallet_hold_one_per_invoice",
+            ),
+            models.CheckConstraint(
+                condition=~Q(status="captured") | Q(entry__isnull=False),
+                name="ck_wallet_hold_capture_names_entry",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["wallet", "status"], name="ix_wallet_hold_wallet"),
+            models.Index(fields=["attempt_id"], name="ix_wallet_hold_attempt"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"hold {self.amount} [{self.status}]"
+
+
 class UsageRate(models.Model):
     """What one meter costs, as an Admin entered it. Versioned: a change closes the
     live row and opens another, so a past charge always names the rate it used. With

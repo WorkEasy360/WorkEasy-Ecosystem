@@ -450,3 +450,46 @@ def login_clients() -> list[dict[str, Any]]:
         }
         for row in ProductIntegration.objects.order_by("product_code")
     ]
+
+
+def permits_return(product_code: str, url: str) -> bool:
+    """ADR-065: whether the Store may send a buyer back to ``url`` after a purchase
+    that started in this product - an https address on the origin of the product's
+    registered launch page, one of its approved return destinations or its sign-out
+    returns. A yes or no only, as ungated as :func:`launch_target`; never an address."""
+    from urllib.parse import urlsplit
+
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    def origin(value: object) -> str:
+        try:
+            parts = urlsplit(str(value or ""))
+        except ValueError:
+            return ""
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or parts.username
+            or parts.password
+        ):
+            return ""
+        return f"https://{parts.netloc.lower()}"
+
+    wanted = origin(url)
+    if not wanted:
+        return False
+    row = (
+        ProductIntegration.objects.filter(product_code=str(product_code))
+        .values("manifest")
+        .first()
+    )
+    if row is None:
+        return False
+    manifest = row["manifest"] or {}
+    allowed = {
+        origin(manifest.get("launch_url")),
+        *(origin(u) for u in manifest.get("redirect_uris") or []),
+        *(origin(u) for u in manifest.get("post_logout_redirect_uris") or []),
+    }
+    allowed.discard("")
+    return wanted in allowed

@@ -640,9 +640,146 @@ def guest_enter_view(request: HttpRequest) -> HttpResponse:
     return response
 
 
+# --- the Store's "My Account" (ADR-065) ------------------------------------------
+
+#: The customer portal's own path that spends an account pass.
+STORE_ACCOUNT_ENTER_PATH = "/api/v1/auth/account-pass/enter"
+
+
+@require_http_methods(["POST"])
+def account_pass_view(request: HttpRequest) -> JsonResponse:
+    """On the Store's host: hand this sign-in to the customer portal (User Admin)
+    for one "My Account" link - ``{next}`` -> ``{action, code}``.
+
+    The Store page posts ``code`` to ``action`` in a form body (a top-level
+    navigation, never a URL). The code is a hand-off (``identity.handoff``): 256
+    random bits stored as a digest, single use, ``PORTAL_HANDOFF_TTL_S`` long,
+    void once the Store sign-in ends or the account signs out everywhere. ``next``
+    is only a path the customer portal serves. It grants nothing: User Admin
+    authorizes every request from live memberships."""
+    from workeasy360.contracts.values import portals
+    from workeasy360.platform.identity import handoff
+    from workeasy360.platform.identity.sessions import (
+        SESSION_SIGN_IN_ID_KEY,
+        session_public_id,
+    )
+
+    if not settings.PORTALS_ENABLED or not settings.W360_PORTAL_ORIGINS.get(
+        portals.STORE
+    ):
+        return _refused("not_found", 404)
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return _refused("login_required", 401)
+    limited = _throttle(request, "handoff_issue", str(user.id))
+    if limited is not None:
+        return limited
+    source = session_public_id(request.session)
+    if source is None:
+        return _refused("login_required", 401)
+    if not request.session.get(SESSION_SIGN_IN_ID_KEY):
+        import uuid
+
+        request.session[SESSION_SIGN_IN_ID_KEY] = uuid.uuid4().hex
+    body = _body(request)
+    origin = settings.W360_PORTAL_ORIGINS[portals.APP]
+    auth_state = {
+        k: request.session[k] for k in _handed_off_keys() if k in request.session
+    }
+    auth_state["via"] = handoff.STORE_HANDOFF_VIA
+    code = handoff.issue(
+        user=user,
+        portal=portals.APP,
+        target_origin=origin,
+        next_path=portals.safe_next(portals.APP, body.get("next")),
+        state=handoff.new_state(),
+        source_session=source,
+        auth_state=auth_state,
+    )
+    metrics.increment(
+        "identity_portal_handoffs_total", portal="app", result="pass_issued"
+    )
+    response = JsonResponse(
+        {"action": f"{origin}{STORE_ACCOUNT_ENTER_PATH}", "code": code}
+    )
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def account_pass_enter_view(request: HttpRequest) -> HttpResponse:
+    """On the customer portal's host: spend an account pass from the Store and open
+    this host's own session for the same sign-in (ADR-065).
+
+    CSRF is replaced by what makes this request unforgeable: the ``Origin`` must be
+    the configured Store origin (so another site cannot sign a visitor into
+    someone else's account here - login CSRF), and the pass is random, single use,
+    short-lived and stored only as a digest. Refused - one answer for every reason
+    - with a 303 to this portal's own sign-in page."""
+    from django.http import HttpResponseRedirect
+
+    from workeasy360.contracts.values import portals
+    from workeasy360.platform.identity import handoff
+    from workeasy360.platform.identity.sessions import (
+        SESSION_DEVICE_KEY,
+        SESSION_IP_PREFIX_KEY,
+        date_from_sign_in,
+    )
+
+    origins = settings.W360_PORTAL_ORIGINS
+    if not settings.PORTALS_ENABLED or not origins.get(portals.STORE):
+        return _refused("not_found", 404)
+
+    def go(path: str) -> HttpResponse:
+        # A path on this host from the allowlist, never the request's.
+        response = HttpResponseRedirect(f"{origins[portals.APP]}{path}")
+        response.status_code = 303
+        response["Cache-Control"] = "no-store"
+        return response
+
+    origin = request.META.get("HTTP_ORIGIN")
+    if origin is None or portals.parse_origin(origin) != portals.parse_origin(
+        origins[portals.STORE]
+    ):
+        return _refused("csrf_failed", 403)
+    limited = _throttle(
+        request, "handoff_redeem_ip", rate_limit_identity(client_ip(request))
+    )
+    if limited is not None:
+        return limited
+    redemption = handoff.redeem_pass(
+        code=request.POST.get("code"), host=request.get_host().lower()
+    )
+    if redemption is None:
+        metrics.increment(
+            "identity_portal_handoffs_total", portal="app", result="pass_refused"
+        )
+        return go("/login")
+    user = redemption.user
+    # A clean session for this person alone (fixation): whoever was signed in
+    # on this host before is signed out here.
+    request.session.flush()
+    django_login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+    request.session[SESSION_EPOCH_KEY] = user.session_epoch
+    allowed = set(_handed_off_keys())
+    for key, value in redemption.auth_state.items():
+        if key in allowed:
+            request.session[key] = value
+    where = connection_facts(request)
+    request.session[SESSION_IP_PREFIX_KEY] = where["ip_prefix"]
+    request.session[SESSION_DEVICE_KEY] = where["device_label"]
+    # This session ends when the Store sign-in it came from does.
+    date_from_sign_in(request.session)
+    metrics.increment(
+        "identity_portal_handoffs_total", portal="app", result="pass_entered"
+    )
+    return go(portals.safe_next(portals.APP, redemption.next_path))
+
+
 #: CSRF-exempt because a credential authenticates them, not the session cookie
 #: (tests/architecture: every exempt view must say so).
-TICKET_VIEWS = (guest_enter_view,)
+TICKET_VIEWS = (guest_enter_view, account_pass_enter_view)
 
 
 def _clear_state_cookie(response: JsonResponse) -> None:

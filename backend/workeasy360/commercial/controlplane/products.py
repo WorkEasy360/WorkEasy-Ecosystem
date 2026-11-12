@@ -103,6 +103,7 @@ PRODUCT_FIELDS = (
     "highlights",
     "benefits",
     "use_cases",
+    "setup_requirements",
     "video_url",
     "featured",
     "popular",

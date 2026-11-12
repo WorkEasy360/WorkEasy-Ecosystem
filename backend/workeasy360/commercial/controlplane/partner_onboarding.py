@@ -563,9 +563,12 @@ def _free_code(display_name: str) -> str:
     name or as a suffix) and checked again once the lock is held, so two
     concurrent creations never pick the same code: "Acme" settling on
     ``acme-2`` and "Acme 2" starting from ``acme-2`` serialise on one key."""
+    from workeasy360.commercial.partners.domain import RESERVED_CODES
+
     base = _code_base(display_name)
     _lock(f"partner-onboard:code:{base}")
-    taken = selectors.codes_starting_with(base)
+    # A Store page's address is never a partner's (ADR-065): "Help" becomes help-2.
+    taken = selectors.codes_starting_with(base) | (set(RESERVED_CODES) & {base})
     n = 1
     while True:
         candidate = base if n == 1 else f"{base}-{n}"

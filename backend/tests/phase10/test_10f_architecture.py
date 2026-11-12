@@ -484,4 +484,8 @@ def test_phase_10_leaves_the_legacy_catalog_alone():
         # ADR-058: one nullable presentation column (Product.refund_days).
         "0011_product_refund_days.py",
         "0012_app_links_and_plan_rules.py",
+        # ADR-065: one presentation column with a database default
+        # (Product.setup_requirements) - no catalog row is rewritten
+        # (tests/store_domain).
+        "0013_product_setup_requirements.py",
     ]

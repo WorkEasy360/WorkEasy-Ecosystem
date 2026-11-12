@@ -26,7 +26,21 @@ MANAGE = "platform.staff_support.manage"
 
 #: ADR-063: ``sales_guide`` - a partner sales guide or product document, shown
 #: under Products & Referrals -> Sales Resources.
-KINDS = {"faq", "setup_guide", "sales_guide"}
+KINDS = {"faq", "setup_guide", "sales_guide", "policy"}
+
+#: ADR-065: the Digital Store's footer policies. Each is one article of kind
+#: ``policy`` whose address is its fixed key, written and published by the Super
+#: Admin - the Store shows only what was published, never a text of its own.
+POLICY_KEYS = {
+    "terms": "Terms & Conditions",
+    "privacy": "Privacy Policy",
+    "refund-cancellation": "Refund & Cancellation Policy",
+    "subscription-terms": "Subscription Terms",
+    "platform-wallet-terms": "Platform Wallet Terms",
+    "ai-credits-terms": "AI Credits Terms",
+    "consumption-wallet-terms": "Consumption Wallet Terms",
+    "partner-terms": "Partner Terms",
+}
 AUDIENCES = {"all", "customer", "partner"}
 STATUSES = {"draft", "published", "archived"}
 
@@ -77,7 +91,7 @@ def _clean(body: dict[str, Any]) -> dict[str, Any]:
         raise SecurityPolicyValidationError(
             "Order must be 0 to 9999.", field="display_order"
         )
-    return {
+    fields = {
         "title": title,
         "body": text,
         "kind": kind,
@@ -85,6 +99,26 @@ def _clean(body: dict[str, Any]) -> dict[str, Any]:
         "display_order": order,
         "product_code": str(body.get("product_code") or "").strip()[:64],
     }
+    if kind == "policy":
+        key = body.get("policy_key")
+        if key not in POLICY_KEYS:
+            raise SecurityPolicyValidationError(
+                "Choose which policy this is.", field="policy_key"
+            )
+        # A policy is for every reader, and its address is its key.
+        fields.update(slug=key, audience="all", product_code="")
+    return fields
+
+
+def _claim_policy_slug(slug: str, *, current: Any = None) -> None:
+    """One article per policy: a second would be ambiguous on the Store."""
+    taken = _model().objects.filter(slug=slug)
+    if current is not None:
+        taken = taken.exclude(id=current)
+    if taken.exists():
+        raise SecurityPolicyValidationError(
+            "That policy already exists. Edit it instead.", field="policy_key"
+        )
 
 
 def articles(
@@ -119,8 +153,11 @@ def create(ctx: TenantContext, body: dict[str, Any]) -> dict[str, Any]:
     authz.require(ctx, MANAGE)
     fields = _clean(body)
     with transaction.atomic():
+        slug = fields.pop("slug", None)
+        if slug is not None:
+            _claim_policy_slug(slug)
         row = _model().objects.create(
-            slug=_slug(fields["title"]), status="draft", **fields
+            slug=slug or _slug(fields["title"]), status="draft", **fields
         )
         audit.record(
             ctx,
@@ -140,6 +177,13 @@ def update(ctx: TenantContext, article_id: UUID, body: dict[str, Any]) -> dict[s
         row = _model().objects.select_for_update().filter(id=article_id).first()
         if row is None:
             raise SecurityPolicyValidationError("No such article.", field="article")
+        slug = fields.pop("slug", None)
+        if slug is not None:
+            _claim_policy_slug(slug, current=row.id)
+            row.slug = slug
+        elif row.kind == "policy":
+            # No longer a policy: it gets an ordinary address of its own.
+            row.slug = _slug(fields["title"])
         for name, value in fields.items():
             setattr(row, name, value)
         row.save()
@@ -187,6 +231,9 @@ def published(*, audience: Any = None, kind: Any = None) -> list[dict[str, Any]]
         rows = rows.filter(audience="all")
     if kind in KINDS:
         rows = rows.filter(kind=kind)
+    else:
+        # Policies are pages of their own (ADR-065), never mixed into the FAQs.
+        rows = rows.exclude(kind="policy")
     return [
         {
             "slug": row.slug,

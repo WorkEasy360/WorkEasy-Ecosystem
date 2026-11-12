@@ -642,7 +642,8 @@ export interface TicketDetail extends TicketRow {
 export interface HelpArticleRow {
   id: string;
   slug: string;
-  kind: "faq" | "setup_guide" | "sales_guide";
+  /** ADR-065: `policy` - one of the Store's footer policies, at its fixed address. */
+  kind: "faq" | "setup_guide" | "sales_guide" | "policy";
   audience: "all" | "customer" | "partner";
   status: "draft" | "published" | "archived";
   title: string;
@@ -664,8 +665,8 @@ export const supportApi = {
   people: () => apiFetch<{ results: { id: string; name: string }[] }>("/api/v1/admin/ticket-people"),
   articles: (query: { kind?: string; status?: string; q?: string }) =>
     apiFetch<{ results: HelpArticleRow[] }>("/api/v1/admin/help-content", { query }),
-  createArticle: (body: Partial<HelpArticleRow>) => apiFetch<HelpArticleRow>("/api/v1/admin/help-content", post(body)),
-  updateArticle: (id: string, body: Partial<HelpArticleRow>) => apiFetch<HelpArticleRow>(`/api/v1/admin/help-content/${id}`, put(body)),
+  createArticle: (body: Partial<HelpArticleRow> & { policy_key?: string }) => apiFetch<HelpArticleRow>("/api/v1/admin/help-content", post(body)),
+  updateArticle: (id: string, body: Partial<HelpArticleRow> & { policy_key?: string }) => apiFetch<HelpArticleRow>(`/api/v1/admin/help-content/${id}`, put(body)),
   setArticleStatus: (id: string, status: string) =>
     apiFetch<HelpArticleRow>(`/api/v1/admin/help-content/${id}/status`, post({ status })),
 };

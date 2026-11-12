@@ -12,6 +12,6 @@ export default async function ForgotPasswordPage({ searchParams }: { searchParam
   const admin = portal === "admin" || mode === "admin";
   const partner = portal === "partner" || mode === "partner";
   // The customer portal (2026-11-11): its own sign-in's frame.
-  const user = portal === "app" || mode === "user";
+  const user = (portal === "app" || portal === "store") || mode === "user";
   return <ForgotPasswordScreen admin={admin} partner={partner} user={user} />;
 }

@@ -14,19 +14,23 @@
  * is in single-host mode and behaves exactly as before.
  */
 
-export type Portal = "admin" | "partner" | "app" | "auth";
+/** ADR-065: `store` is the Digital Store's own host (store.workeasy360.com).
+ * Optional: its origin is `""` when `W360_STORE_ORIGIN` is not set, and then its
+ * pages are the customer portal's, exactly as before. */
+export type Portal = "admin" | "partner" | "app" | "auth" | "store";
 export type PortalOrigins = Record<Portal, string>;
-/** Where a sign-in is headed - the sign-in page's `?mode=`. */
+/** Where a sign-in is headed - the sign-in page's `?mode=` (and the Store's own host). */
 export type Destination = Exclude<Portal, "auth">;
 
-export const PORTALS: readonly Portal[] = ["admin", "partner", "app", "auth"];
+export const PORTALS: readonly Portal[] = ["admin", "partner", "app", "auth", "store"];
 
-/** `?mode=` on the sign-in page -> the portal it aims at (intent only). */
+/** `?mode=` on the sign-in page -> the portal it aims at (intent only). The
+ * Store has no mode: its own address is its sign-in. */
 export const MODE_TO_PORTAL = { admin: "admin", partner: "partner", user: "app" } as const;
-export const PORTAL_TO_MODE = { admin: "admin", partner: "partner", app: "user" } as const;
+export const PORTAL_TO_MODE = { admin: "admin", partner: "partner", app: "user", store: "user" } as const;
 
 /** Where each destination opens when no (valid) page was asked for. */
-export const PORTAL_ROOT: Record<Destination, string> = { admin: "/admin", partner: "/partner", app: "/dashboard" };
+export const PORTAL_ROOT: Record<Destination, string> = { admin: "/admin", partner: "/partner", app: "/dashboard", store: "/store" };
 
 /** The return-URL allowlist, per destination - the same table as the
  * server's (`contracts/values/portals.py`), which validates it again. */
@@ -34,6 +38,7 @@ const NEXT_PREFIXES: Record<Destination, readonly string[]> = {
   admin: ["/admin"],
   partner: ["/partner"],
   app: ["/dashboard", "/o", "/organizations", "/onboarding", "/billing", "/settings", "/store"],
+  store: ["/store"],
 };
 
 /** Which portal serves each page. A page not listed here (`/auth/continue`,
@@ -63,8 +68,9 @@ const PAGE_OWNERS: readonly (readonly [string, Portal])[] = [
   ["/product-access", "auth"],
   ["/sign-out", "auth"],
   ["/dashboard", "app"],
-  // The Store (ADR-052): the public Store, on the customer portal.
-  ["/store", "app"],
+  // The Store (ADR-052) - on its own host since ADR-065 (store.workeasy360.com);
+  // without one, on the customer portal (see ownerFor).
+  ["/store", "store"],
   ["/o", "app"],
   ["/organizations", "app"],
   ["/onboarding", "app"],
@@ -82,9 +88,16 @@ const PAGE_OWNERS: readonly (readonly [string, Portal])[] = [
  * sign-in host keeps `/login` for a product sign-in (`?resume=`). */
 const ALSO_ON: Record<string, readonly Portal[]> = {
   "/organizations/select": ["auth"],
-  "/login": ["admin", "partner", "auth"],
-  "/forgot-password": ["admin", "partner"],
-  "/reset-password": ["admin", "partner"],
+  "/login": ["admin", "partner", "auth", "store"],
+  "/forgot-password": ["admin", "partner", "store"],
+  "/reset-password": ["admin", "partner", "store"],
+  // ADR-065: the Store signs its own customers up and in, so the referral
+  // cookie, the saved purchase and the session all stay on one host; and the
+  // development test provider's page returns a Store payment there.
+  "/signup": ["store"],
+  "/verify-email": ["store"],
+  "/r": ["store"],
+  "/billing/test-checkout": ["store"],
 };
 
 const matches = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
@@ -105,7 +118,7 @@ export function parseOrigin(raw: string | undefined | null): string | null {
 }
 
 /** All four web origins, or `null` (single-host mode) unless every one is a
- * valid origin. */
+ * valid origin. The Store's own origin is optional (ADR-065): `""` when unset. */
 export function readPortalOrigins(env: Record<string, string | undefined>): PortalOrigins | null {
   const origins = {
     admin: parseOrigin(env.W360_ADMIN_ORIGIN),
@@ -113,27 +126,31 @@ export function readPortalOrigins(env: Record<string, string | undefined>): Port
     app: parseOrigin(env.W360_APP_ORIGIN),
     auth: parseOrigin(env.W360_AUTH_ORIGIN),
   };
-  return Object.values(origins).every(Boolean) ? (origins as PortalOrigins) : null;
+  if (!Object.values(origins).every(Boolean)) return null;
+  return { ...(origins as Omit<PortalOrigins, "store">), store: parseOrigin(env.W360_STORE_ORIGIN) ?? "" };
 }
 
-const hostOf = (origin: string) => new URL(origin).host.toLowerCase();
+const hostOf = (origin: string) => (origin ? new URL(origin).host.toLowerCase() : "");
 
 /** Which portal a request's `Host` header names, or `null` for any other
  * host (a partner's white-label domain). */
 export function portalForHost(host: string | null | undefined, origins: PortalOrigins): Portal | null {
   const wanted = (host ?? "").trim().toLowerCase().replace(/\.$/, "");
   if (!wanted) return null;
-  return PORTALS.find((p) => hostOf(origins[p]) === wanted) ?? null;
+  return PORTALS.find((p) => origins[p] && hostOf(origins[p]) === wanted) ?? null;
 }
 
-/** The portal that serves `pathname`, or `null` when every host does. */
-export function pageOwner(pathname: string): Portal | null {
-  return PAGE_OWNERS.find(([prefix]) => matches(pathname, prefix))?.[1] ?? null;
+/** The portal that serves `pathname`, or `null` when every host does. With
+ * `origins`, the Store's pages belong to the customer portal while the Store
+ * has no host of its own (ADR-065). */
+export function pageOwner(pathname: string, origins?: PortalOrigins | null): Portal | null {
+  const owner = PAGE_OWNERS.find(([prefix]) => matches(pathname, prefix))?.[1] ?? null;
+  return owner === "store" && origins && !origins.store ? "app" : owner;
 }
 
 /** Whether `portal` serves `pathname`. */
-export function servesPage(portal: Portal, pathname: string): boolean {
-  const owner = pageOwner(pathname);
+export function servesPage(portal: Portal, pathname: string, origins?: PortalOrigins | null): boolean {
+  const owner = pageOwner(pathname, origins);
   if (owner === null || owner === portal) return true;
   return Object.entries(ALSO_ON).some(([prefix, also]) => matches(pathname, prefix) && also.includes(portal));
 }
@@ -168,7 +185,7 @@ export function safeNext(portal: Destination, raw: string | null | undefined): s
  * ADR-059: no longer where a portal sends a signed-out visitor (that is the
  * portal's own {@link portalSignInPath}); kept for the hand-off a sign-in
  * already in flight may still complete. */
-export function signInUrl(origins: PortalOrigins, portal: Destination, next: string | null, state: string): string {
+export function signInUrl(origins: PortalOrigins, portal: Exclude<Destination, "store">, next: string | null, state: string): string {
   const params = new URLSearchParams({ mode: PORTAL_TO_MODE[portal] });
   const page = safeNext(portal, next);
   if (page !== PORTAL_ROOT[portal]) params.set("next", page);

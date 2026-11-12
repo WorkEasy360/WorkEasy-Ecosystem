@@ -38,8 +38,12 @@ def account_url(portal: str | None = None) -> str:
     """Where a portal's own account pages live (ADR-059): sign-in, sign-up,
     email verification, password reset and invitations. Each of the Admin,
     Partner and customer portals serves them on its own host, so a link
-    names the portal it belongs to; anything else is the customer portal."""
-    return origin(portal if portal in portals.DESTINATIONS else portals.APP)
+    names the portal it belongs to; anything else is the customer portal.
+    ADR-065: the Store's host serves them too, for its own customers - when it
+    is configured; otherwise its pages are the customer portal's."""
+    if portal == portals.STORE and not store_enabled():
+        return origin(portals.APP)
+    return origin(portal if portal in portals.ACCOUNT_PORTALS else portals.APP)
 
 
 def request_portal(request: Any) -> str:
@@ -54,12 +58,26 @@ def request_portal(request: Any) -> str:
     except Exception:
         return portals.APP
     found = portals.portal_for_host(host, getattr(settings, "W360_PORTAL_ORIGINS", {}))
-    return found if found in portals.DESTINATIONS else portals.APP
+    return found if found in portals.ACCOUNT_PORTALS else portals.APP
 
 
 def app_url() -> str:
     """Where the customer portal lives: billing and launcher returns."""
     return origin(portals.APP)
+
+
+def store_enabled() -> bool:
+    """Whether the Store has its own host (ADR-065): ``W360_STORE_ORIGIN`` is
+    set in multi-portal mode."""
+    return enabled() and bool(
+        getattr(settings, "W360_PORTAL_ORIGINS", {}).get(portals.STORE, "")
+    )
+
+
+def store_url() -> str:
+    """Where the Store's pages (``/store/...``) are served: its own host when
+    configured, otherwise the customer portal (single-host mode included)."""
+    return origin(portals.STORE) if store_enabled() else app_url()
 
 
 def platform_hosts() -> set[str]:

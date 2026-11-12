@@ -488,6 +488,10 @@ class PaymentAttempt(TenantScopedModel):
     reference_note = models.CharField(max_length=255, blank=True, default="")
     expires_at = models.DateTimeField()
     completed_at = models.DateTimeField(null=True, blank=True)
+    #: ADR-065: the portal whose page the provider returns the payer to -
+    #: ``store`` for a payment started in the Digital Store, empty for the
+    #: customer portal (the console). A link target only; it grants nothing.
+    return_portal = models.CharField(max_length=16, blank=True, default="", db_default="")
 
     class Meta:
         db_table = "payments_attempt"

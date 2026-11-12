@@ -659,7 +659,8 @@ def white_label_status(ctx: TenantContext) -> dict[str, Any]:
 
         row = partner_selectors.partner_row(partner_id)
         out["storefront"] = {
-            "url": f"{portal_links.app_url()}/store/{row.code}",
+            # ADR-065: on the Store's own host when it has one.
+            "url": f"{portal_links.store_url()}/store/{row.code}",
             "live": storefront.storefront_partner(row.code) is not None,
         }
         brand = partner_selectors.brand_for(partner_id)

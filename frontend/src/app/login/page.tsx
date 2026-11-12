@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { BrandedLanding } from "@/features/auth/BrandedLanding";
 import { signInHandoffUrl } from "@/features/auth/handoff";
 import { LoginScreen } from "@/features/auth/LoginScreen";
+import { StoreSignInScreen } from "@/features/store/StoreAuth";
 import { portalForHost, readPortalOrigins } from "@/lib/portals";
 
 /**
@@ -35,6 +36,9 @@ export default async function LoginPage() {
     if (portal === null) {
       return <BrandedLanding handoffUrl={signInHandoffUrl(origins.app, host)} />;
     }
+    // ADR-065: the Store signs its customers in in its own frame (a product sign-in
+    // never comes here - it is the central sign-in host's).
+    if (portal === "store") return <StoreSignInScreen />;
     return <LoginScreen portal={portal} />;
   }
   const canonical = (process.env.W360_CANONICAL_HOST ?? "").trim().toLowerCase();

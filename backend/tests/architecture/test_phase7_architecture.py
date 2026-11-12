@@ -328,6 +328,10 @@ def test_the_frontend_contains_no_product_screens():
         "product-access",
         "sign-out",
         "settings",
+        # ADR-065: /robots.txt, per host - the Digital Store's own host invites
+        # crawlers to its public pages, every other host disallows all. A route
+        # handler returning text, not a screen.
+        "robots.txt",
     }, top
     assert {p.name for p in (app / "auth").iterdir()} == {"continue"}
     site = {p.name for p in (app / "(site)").iterdir() if p.is_dir()}

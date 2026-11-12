@@ -402,6 +402,7 @@ def merchandising(product: Any) -> dict[str, Any]:
         "highlights": list(product.highlights or []),
         "benefits": list(product.benefits or []),
         "use_cases": list(product.use_cases or []),
+        "setup_requirements": list(product.setup_requirements or []),
         "video_url": product.video_url,
         "featured": product.featured,
         "popular": product.popular,
@@ -1163,6 +1164,10 @@ def marketplace_offers(*, at: Any) -> dict[str, list[dict[str, Any]]]:
                 "trial_days": v.trial_days,
                 "recommended": v.plan.product.recommended_plan_id == v.plan_id,
                 "sort_order": v.plan.sort_order,
+                # ADR-065: what the Store's plan cards state - how the plan
+                # renews and the usage it includes each month.
+                "renewal_rule": v.plan.renewal_rule,
+                "included_usage": dict(v.plan.included_usage or {}),
             }
         )
     bundle_rows = (
