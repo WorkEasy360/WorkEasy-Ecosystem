@@ -1,6 +1,6 @@
 # Digital Store at store.workeasy360.com (brief of 12 November 2026): status
 
-Branch `feat/partner-admin-panel`. **Built and verified locally on the uncommitted working tree. Not committed, not deployed, and `store.workeasy360.com` is not live**: on 12 November 2026 the name does not resolve (NXDOMAIN at 1.1.1.1), so the DNS record is the owner's first step. Decisions: [ADR-065](../architecture/adrs/ADR-065-digital-store-own-host-checkout-wallet-split.md). Browser check: [scripts/store_domain_check](../../scripts/store_domain_check/README.md).
+Branch `feat/partner-admin-panel` (PR #3): commits `084c684`, `b3b78b4` (the frontend image with an empty `public/`) and `249d8d8` (`/sitemap.xml` only through the edge), pushed. **Deployed on 12 November 2026 as release `2026.11.12-249d8d8`**, by way of `2026.11.12-b3b78b4`, which applied the four migrations (backups `20261112T055646Z` and `20261112T060645Z`). The Store serves at **https://app.workeasy360.com/store** with the new design. **`store.workeasy360.com` is not live**: on 12 November 2026 the name does not resolve (NXDOMAIN at 1.1.1.1 and 8.8.8.8), so the Store host stays off until the owner adds the DNS record. Decisions: [ADR-065](../architecture/adrs/ADR-065-digital-store-own-host-checkout-wallet-split.md). Browser check: [scripts/store_domain_check](../../scripts/store_domain_check/README.md).
 
 The two documents the brief names as authoritative, `08_Credits_Wallets_System.txt` and `07_Product_Web_Mobile_Flow.txt`, are not on this machine or in git (as on 9 November, ADR-060). This work follows the brief, and what those documents would decide is listed as open below.
 
@@ -16,6 +16,7 @@ Only what actually ran, 12 November 2026.
 | Frontend: vitest, whole suite | **1,689 / 1,689** (94 files). An earlier run had 2 load-timeouts in files this work does not touch; both passed alone |
 | Real browser: production build, six hosts behind the edge stand-in, real backend, KYC required | **72 / 72**: 0 console errors, 0 CSP violations (besides the check's own deliberate cross-origin probe, which CSP blocks), 0 API 5xx, axe WCAG 2.1 A/AA clean on every page checked, one `h1` each, no sideways scroll at 390 and 320 px |
 | Edge | `caddy validate` passes with the Store host off, on and unset; the Store site and its sitemap route exist only when on |
+| Production, 12 November (`2026.11.12-249d8d8`) | Migrations `catalog.0013`, `payments.0009`, `wallets.0002`, `tenancy.0018` applied, 0 unapplied; api healthy; 0 error lines in api, web and worker logs. A read-only headless Chrome pass over `/store`, products, a product page, Recharge, Partners, Help and a policy: all 200, one `h1` each, 0 console errors, 0 CSP violations, 0 failed API calls, no sideways scroll at 390 px. `workeasy360.com/store` still 302s to `app.workeasy360.com/store`. The first release (`b3b78b4`) answered **400** on `app.../sitemap.xml` (a Next rewrite reached the API as `api:8000`); fixed in `249d8d8` (404 off the Store host; the Store host's sitemap is the edge's). No purchase was made in production |
 | Static | `tsc` and `eslint` clean; `ruff check` and `ruff format --check` clean; import contracts 18 / 18; `mypy` (CI scope) clean; `bandit -ll` no issues; `makemigrations --check` no changes; production `next build` succeeds |
 
 The browser run found and fixed, before passing: the Store host's root redirected away (a proxy rewrite Next treats as external - replaced by `app/page.tsx` serving the marketplace on that host); cards and the plan box led with a free plan's "₹0"; white-on-dark headings that a global heading colour turned dark; the account button's accessible name not containing its visible initials; and a plan that cannot join an organization's existing billing period being reported as a "catalog defect" (now explained in the buyer's words).
@@ -47,8 +48,8 @@ The browser run found and fixed, before passing: the Store host's root redirecte
 
 ## Owner steps (not mine to do)
 
-1. **DNS**: add `store.workeasy360.com` in Cloudflare like the other portal hosts, to the same server.
-2. **Deploy** this release (four additive migrations: `catalog.0013`, `payments.0009`, `wallets.0002`, `tenancy.0018`). Until step 3 the Store keeps serving at `app.workeasy360.com/store`, with the new design.
+1. **DNS**: in Cloudflare, add an `A` record `store` → `18.143.87.44` (the same server as the other portal hosts), **DNS only (grey cloud) at first**, so the edge can obtain the certificate directly; it can be switched to Proxied afterwards like the others.
+2. ~~Deploy~~ - done 12 November 2026 (`2026.11.12-249d8d8`). Until step 3 the Store serves at `app.workeasy360.com/store`, with the new design.
 3. **Switch the Store host on** once the name resolves: `sudo python3 make_env.py enable-store --env /opt/workeasy360/env/production.env`, then restart `api`, `worker-critical`, `web` and `edge`; the edge obtains the certificate. Check `https://store.workeasy360.com/` and that `app.workeasy360.com/store` redirects there.
 4. **Cloudflare redirect**: point `workeasy360.com/store` at `store.workeasy360.com/store` (today it goes to `app.`, which will redirect once more).
 5. **Live payments**: the Razorpay credentials (unchanged blocker); until then the checkout says online payment is not available and only a full Platform Wallet payment completes.
