@@ -253,9 +253,92 @@ describe("the seven-menu sidebar and top bar (2026-11-11)", () => {
     const header = screen.getByRole("banner");
     // One organization (the list could not be read here): named, with nothing to choose.
     expect(within(header).getByText("Acme")).toBeInTheDocument();
-    expect(within(header).getByRole("button", { name: /Search products, subscriptions, invoices and tickets/ })).toBeInTheDocument();
+    expect(within(header).getByRole("button", { name: /^Search products, subscriptions, invoices, tickets…\s*\(Ctrl\+K\)$/ })).toBeInTheDocument();
     expect(within(header).getByRole("button", { name: /^Notifications/ })).toBeInTheDocument();
     expect(within(header).getByRole("link", { name: "Help" })).toHaveAttribute("href", "/o/acme/help");
     expect(within(header).getByRole("button", { name: /^Account menu for Ada Lovelace Member · Acme/ })).toBeInTheDocument();
+  });
+});
+
+describe("the account menu (unified login, ADR-066)", () => {
+  const SESSION = { authenticated: true, user_id: "u1", email: "rahul@abccompany.com", name: "Rahul Sharma" };
+  const replaceLocation = vi.fn();
+  let calls: string[] = [];
+
+  function serve(switchReply: { status: number; body: unknown }) {
+    calls = [];
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = (typeof input === "string" ? input : input.toString()).split("?")[0];
+      calls.push(`${(init?.method ?? "GET").toUpperCase()} ${path}`);
+      if (path === "/api/v1/auth/session") return json(200, SESSION);
+      if (path === "/api/v1/orgs/acme/access") return json(200, ACCESS);
+      if (path === "/api/v1/orgs/acme/brand") return json(200, { brand: null });
+      if (path === "/api/v1/auth/switch-account") return json(switchReply.status, switchReply.body);
+      if (path === "/api/v1/auth/logout") return json(200, { ok: true });
+      return json(404, {});
+    }) as typeof fetch;
+  }
+
+  beforeEach(() => {
+    pathname = "/o/acme/dashboard";
+    replace.mockReset();
+    replaceLocation.mockReset();
+    vi.stubGlobal("location", { ...window.location, replace: replaceLocation, assign: vi.fn() });
+  });
+
+  async function openMenu() {
+    render(
+      <Shell>
+        <h1>Page</h1>
+      </Shell>,
+    );
+    await screen.findByRole("heading", { name: "Page" });
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.click(screen.getByRole("button", { name: /^Account menu for Rahul Sharma/ }));
+    return fireEvent;
+  }
+
+  it("offers profile, switch organization, switch account, security and logout", async () => {
+    serve({ status: 200, body: { redirect_url: "/login?switched=1" } });
+    await openMenu();
+    const items = screen.getAllByRole("menuitem").map((m) => m.textContent?.trim());
+    expect(items).toEqual(["My Profile", "Switch Organization", "Switch Account", "Account & Security", "Logout"]);
+    expect(screen.getByRole("menuitem", { name: "Switch Organization" })).toHaveAttribute("href", "/organizations/select");
+    // The header names the current organization.
+    expect(screen.getByRole("button", { name: /^Account menu for Rahul Sharma Member · Acme/ })).toBeInTheDocument();
+  });
+
+  it("switches account through the server, forgets this person's browser state and loads the next page afresh", async () => {
+    serve({ status: 200, body: { redirect_url: "https://auth.example.com/switch-account#handle=h" } });
+    localStorage.setItem("w360.admin.recent", "[1]");
+    localStorage.setItem("w360.columns.members", "[\"name\"]");
+    sessionStorage.setItem("w360.store-org", "acme");
+    const fireEvent = await openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Switch Account" }));
+    await waitFor(() => expect(replaceLocation).toHaveBeenCalledWith("https://auth.example.com/switch-account#handle=h"));
+    expect(calls).toContain("POST /api/v1/auth/switch-account");
+    expect(localStorage.getItem("w360.admin.recent")).toBeNull();
+    expect(sessionStorage.getItem("w360.store-org")).toBeNull();
+    // A layout choice names nobody, so it stays.
+    expect(localStorage.getItem("w360.columns.members")).toBe("[\"name\"]");
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("keeps everything and says so when the switch did not complete", async () => {
+    serve({ status: 500, body: { code: "error" } });
+    sessionStorage.setItem("w360.store-org", "acme");
+    const fireEvent = await openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Switch Account" }));
+    expect(await screen.findByText(/You are still signed in/)).toBeInTheDocument();
+    expect(replaceLocation).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("w360.store-org")).toBe("acme");
+  });
+
+  it("logs out with a full page load to the sign-in page", async () => {
+    serve({ status: 200, body: { redirect_url: "/login?switched=1" } });
+    const fireEvent = await openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Logout" }));
+    await waitFor(() => expect(replaceLocation).toHaveBeenCalledWith("/login"));
+    expect(calls).toContain("POST /api/v1/auth/logout");
   });
 });

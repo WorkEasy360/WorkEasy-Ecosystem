@@ -169,6 +169,12 @@ export function UserLoginScreen() {
       footer={<Platform />}
     >
       <UserPortalBadge />
+      {searchParams.get("switched") === "1" && (
+        // ADR-066: arrived from Switch Account - the previous account is signed out here and for products.
+        <p role="status" className={adminStyles.label}>
+          You&apos;re signed out. Sign in with the account you want to use.
+        </p>
+      )}
       <form method="post" onSubmit={submit} noValidate className={adminStyles.form}>
         <div>
           <label className={adminStyles.label} htmlFor={emailId}>

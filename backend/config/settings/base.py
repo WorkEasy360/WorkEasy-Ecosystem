@@ -1470,6 +1470,18 @@ CONTROL_PLANE_RATE_LIMITS.update(
             env.int("W360_RL_PASSWORD_RESET_CONFIRM_IP", 20),
             60,
         ),
+        # ADR-066: changing the sign-in email. Each request mails the new
+        # address, so per person it is an hour's budget (a signed-in account
+        # must not become a mail cannon); the confirmation link is a public
+        # endpoint, limited on address like the reset link.
+        "email_change_user": (env.int("W360_RL_EMAIL_CHANGE_USER", 5), 3600),
+        "email_change_ip": (env.int("W360_RL_EMAIL_CHANGE_IP", 20), 60),
+        "email_change_account": (env.int("W360_RL_EMAIL_CHANGE_ACCOUNT", 3), 3600),
+        "email_change_confirm_ip": (env.int("W360_RL_EMAIL_CHANGE_CONFIRM_IP", 20), 60),
+        # ADR-066: Switch Account - a sign-out plus a hand-over to the central
+        # sign-in host, so the same budget as other session writes.
+        "switch_account_user": (env.int("W360_RL_SWITCH_ACCOUNT_USER", 20), 60),
+        "switch_account_ip": (env.int("W360_RL_SWITCH_ACCOUNT_IP", 60), 60),
         # The public site: catalog and site configuration.
         "public_catalog_ip": (env.int("W360_RL_PUBLIC_CATALOG_IP", 120), 60),
         # ADR-058: the Store's coupon "Apply" - tight, so codes cannot be

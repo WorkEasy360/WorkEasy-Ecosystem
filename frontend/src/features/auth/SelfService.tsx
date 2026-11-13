@@ -521,3 +521,73 @@ export function ResetPasswordScreen({
     </Frame>
   );
 }
+
+/**
+ * The emailed change-of-sign-in-email link (ADR-066), `/confirm-email#token=`.
+ * A button, not an automatic call: a mail scanner that opens the link changes
+ * nothing. The link alone is enough (the password was asked for when the
+ * change was requested), so it works in whichever browser the mail is read in.
+ */
+export function ConfirmEmailScreen({ admin = false, partner = false, user = false }: { admin?: boolean; partner?: boolean; user?: boolean } = {}) {
+  const Frame = admin ? AdminAuthFrame : partner ? PartnerAuthFrame : user ? UserAuthFrame : AuthFrame;
+  const signIn = partner ? PARTNER_SIGN_IN : "/login";
+  const token = useFragmentToken();
+  const errorId = useId();
+  const [problems, setProblems] = useState<string[]>([]);
+  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+  const title = "Confirm your new sign-in email";
+
+  if (token === null) {
+    return (
+      <Frame title={title}>
+        <p aria-live="polite">Loading…</p>
+      </Frame>
+    );
+  }
+  if (state === "done") {
+    return (
+      <Frame title="Sign-in email changed">
+        <p role="status">From now on, sign in to WorkEasy360 with your new address. Your account, organizations and products are unchanged.</p>
+        <Link href={signIn} className={`w360-btn w360-btn-primary ${styles.fullWidth}`}>
+          Continue
+        </Link>
+      </Frame>
+    );
+  }
+  if (token === "") {
+    return (
+      <Frame title={title}>
+        <p role="alert">This link is not valid. Ask for a new one from Account &amp; Security.</p>
+      </Frame>
+    );
+  }
+  return (
+    <Frame title={title}>
+      <p className={styles.below}>Use this address to sign in to WorkEasy360 from now on. Your password and everything in your account stay the same.</p>
+      <Problems id={errorId} problems={problems} />
+      <button
+        type="button"
+        className={`w360-btn w360-btn-primary ${styles.fullWidth}`}
+        aria-describedby={problems.length ? errorId : undefined}
+        disabled={state === "busy"}
+        onClick={() => {
+          setState("busy");
+          setProblems([]);
+          publicApi.confirmEmailChange(token).then(
+            () => setState("done"),
+            (err) => {
+              setProblems(
+                err instanceof ApiError && err.code === "link_invalid"
+                  ? ["This link is not valid, has expired, or the address is now used by another account. Ask for a new one."]
+                  : problemsOf(err),
+              );
+              setState("idle");
+            },
+          );
+        }}
+      >
+        {state === "busy" ? "Confirming…" : "Confirm new email"}
+      </button>
+    </Frame>
+  );
+}

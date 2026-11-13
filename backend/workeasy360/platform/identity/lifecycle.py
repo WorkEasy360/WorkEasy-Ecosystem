@@ -93,6 +93,21 @@ def lock_by_email(address: str, *, statuses: tuple[str, ...] | None = None) -> A
     return rows.first()
 
 
+def change_email(user: Any, typed: str, *, at: datetime | None = None) -> None:
+    """A proved new sign-in address (ADR-066): normalised for sign-in, kept as
+    typed for display, and verified - the link that brought it here proved the
+    mailbox. The caller holds the row lock and has checked the address is
+    free; the unique index is the last word on a race."""
+    from workeasy360.platform.identity.email import normalize_email
+
+    user.email = normalize_email(typed)
+    user.email_original = typed
+    user.email_verified_at = at or timezone.now()
+    user.save(
+        update_fields=["email", "email_original", "email_verified_at", "updated_at"]
+    )
+
+
 def activate_verified(user: Any, *, at: datetime | None = None) -> None:
     """The mailbox was proved and the password presented: active, verified,
     and the sign-in lockout counter cleared."""

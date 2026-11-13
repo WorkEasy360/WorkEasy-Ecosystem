@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { ApiError } from "@/lib/api/client";
 import { login, logout } from "@/lib/api/auth";
+import { forgetAccountState } from "@/lib/accountState";
 import { ownerInvitationApi, type OwnerInvitationPreview } from "@/lib/api/partnerConsole";
 import { useSession } from "@/lib/auth/useSession";
 import { takeFragmentToken } from "@/lib/auth/fragmentToken";
@@ -248,7 +249,13 @@ function Activation({
             onClick={() => {
               setBusy(true);
               logout()
-                .then(onSignedOut, () => setProblems(["Signing out didn't complete. Try again."]))
+                .then(
+                  () => {
+                    forgetAccountState();
+                    onSignedOut();
+                  },
+                  () => setProblems(["Signing out didn't complete. Try again."]),
+                )
                 .finally(() => setBusy(false));
             }}
           >

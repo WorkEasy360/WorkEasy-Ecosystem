@@ -491,3 +491,11 @@
   display: grid;
   gap: var(--w360-space-1);
 }
+
+/* Account & Security: the ways this account signs in (ADR-066). */
+.methods {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding-left: var(--w360-space-5);
+}

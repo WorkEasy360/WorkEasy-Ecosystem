@@ -1216,6 +1216,27 @@ def marketplace_offers(*, at: Any) -> dict[str, list[dict[str, Any]]]:
     return {"plans": plans, "bundles": bundles}
 
 
+def store_page_slug(product_code: str) -> str | None:
+    """The slug of ``product_code``'s Store page (``/store/product/<slug>``),
+    or ``None`` when the Store does not sell it: listed, available and allowed
+    on the customer Store - the same rule as :func:`public_products`, so a link
+    built from it never lands on a missing page. One query."""
+    from workeasy360.commercial.catalog.models import Product
+    from workeasy360.contracts.enums import ProductListing, ProductStatus
+
+    slug = (
+        Product.objects.filter(
+            code=product_code,
+            listing=ProductListing.LISTED.value,
+            status=ProductStatus.AVAILABLE.value,
+            customer_store_enabled=True,
+        )
+        .values_list("slug", flat=True)
+        .first()
+    )
+    return str(slug) if slug else None
+
+
 def public_products() -> list[dict[str, Any]]:
     """The products a visitor may see (Phase 9): listed ones on sale and
     announced ones marked coming soon, in display order, each with its public

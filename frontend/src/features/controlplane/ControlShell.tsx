@@ -11,6 +11,7 @@ import {
   type SidebarGroup,
 } from "@/components/sidebar/SidebarShell";
 import { logout } from "@/lib/api/auth";
+import { forgetAccountState, leaveTo } from "@/lib/accountState";
 import { ApiError } from "@/lib/api/client";
 import { adminApi, partnerApi, type PortalPartner } from "@/lib/api/controlPlane";
 import { useSession } from "@/lib/auth/useSession";
@@ -40,7 +41,13 @@ export function useSignOut() {
   const signOutTo = (then: string) => {
     setFailed(false);
     logout().then(
-      () => router.replace(then),
+      () => {
+        // ADR-066: forget this person's browser state and load the next page
+        // afresh (lib/accountState.ts).
+        forgetAccountState();
+        if (then.startsWith("/")) leaveTo(then);
+        else router.replace(then);
+      },
       () => setFailed(true),
     );
   };

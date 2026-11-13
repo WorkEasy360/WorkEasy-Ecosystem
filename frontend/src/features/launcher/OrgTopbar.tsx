@@ -148,7 +148,8 @@ export function OrgSearch({ slug, can }: { slug: string; can: (permission: strin
         type="button"
         className={topbar.searchOpener}
         aria-haspopup="dialog"
-        aria-label="Search products, subscriptions, invoices and tickets (Ctrl+K)"
+        // Named by its visible words plus the hidden shortcut (WCAG 2.5.3, label in name):
+        // a different aria-label left voice-control users unable to say what they see.
         onClick={() => setOpen(true)}
       >
         <Icon name="search" size={16} />

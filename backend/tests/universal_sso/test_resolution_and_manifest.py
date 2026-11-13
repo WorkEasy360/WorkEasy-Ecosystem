@@ -31,14 +31,34 @@ M = ProductSignInMode
 # --- the resolution rule -----------------------------------------------------------------------------
 
 
-def test_a_person_who_never_chose_is_signed_in_automatically():
-    # docs/universal-sso/one-login.md section 1: the recommended experience.
-    assert DEFAULT_PREFERENCE is P.AUTO_SSO
-    assert stored_preference(None, None) is P.AUTO_SSO
-    assert stored_preference(None, P.INHERIT) is P.AUTO_SSO
+def test_a_person_who_never_chose_is_asked_once_per_sign_in():
+    # The unified-login brief section 5 (ADR-066): "Continue with the same
+    # account" or "Use a different account", on first entry only.
+    assert DEFAULT_PREFERENCE is P.ASK_ONCE
+    assert stored_preference(None, None) is P.ASK_ONCE
+    assert stored_preference(None, P.INHERIT) is P.ASK_ONCE
+    ready = ProductDoors(mode=M.SSO_ONLY, sso_ready=True, has_product_login=False)
+    decision = resolve(ready, default=None, override=None)
+    assert decision.effective is P.ASK_ONCE and decision.uses_sso
+    assert decision.asks(entered_this_sign_in=False)
+    assert not decision.asks(entered_this_sign_in=True)
+    assert not decision.silent  # never silent on a first entry
     # ...which never overrides a product that cannot take it.
     not_ready = ProductDoors(mode=M.SSO_ONLY, sso_ready=False, has_product_login=False)
     assert resolve(not_ready, default=None, override=None).effective is P.PRODUCT_LOGIN
+
+
+def test_only_ask_once_reads_what_this_sign_in_has_entered():
+    ready = ProductDoors(mode=M.SSO_OPTIONAL, sso_ready=True, has_product_login=True)
+    for wished, first, later in (
+        (P.AUTO_SSO, False, False),
+        (P.ASK_ONCE, True, False),
+        (P.ASK, True, True),
+        (P.PRODUCT_LOGIN, True, True),
+    ):
+        decision = resolve(ready, default=wished, override=None)
+        assert decision.asks(entered_this_sign_in=False) is first, wished
+        assert decision.asks(entered_this_sign_in=True) is later, wished
 
 
 def test_an_override_beats_the_default_and_inherit_follows_it():
@@ -103,6 +123,7 @@ def test_doors_say_honestly_what_a_product_offers():
     assert ready_optional.sso_state == "enabled"
     assert ready_optional.override_choices() == (
         P.INHERIT,
+        P.ASK_ONCE,
         P.AUTO_SSO,
         P.ASK,
         P.PRODUCT_LOGIN,
@@ -110,7 +131,7 @@ def test_doors_say_honestly_what_a_product_offers():
 
     only_sso = ProductDoors(mode=M.SSO_ONLY, sso_ready=True, has_product_login=True)
     assert not only_sso.product_login_available  # sso_only never has its own door
-    assert only_sso.override_choices() == (P.INHERIT, P.AUTO_SSO, P.ASK)
+    assert only_sso.override_choices() == (P.INHERIT, P.ASK_ONCE, P.AUTO_SSO, P.ASK)
 
     not_connected = ProductDoors(
         mode=M.SSO_ONLY, sso_ready=False, has_product_login=False

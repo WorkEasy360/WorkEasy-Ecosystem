@@ -332,6 +332,11 @@ def test_the_frontend_contains_no_product_screens():
         # crawlers to its public pages, every other host disallows all. A route
         # handler returning text, not a screen.
         "robots.txt",
+        # ADR-066: /switch-account (the central sign-in host ends its own
+        # session for a person switching accounts) and /confirm-email (the
+        # emailed change-of-sign-in-email link). Account pages, not screens.
+        "switch-account",
+        "confirm-email",
     }, top
     assert {p.name for p in (app / "auth").iterdir()} == {"continue"}
     site = {p.name for p in (app / "(site)").iterdir() if p.is_dir()}

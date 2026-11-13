@@ -67,6 +67,10 @@ const PAGE_OWNERS: readonly (readonly [string, Portal])[] = [
   // act on the central sign-in's own session.
   ["/product-access", "auth"],
   ["/sign-out", "auth"],
+  // ADR-066: Switch Account ends the central sign-in's session there.
+  ["/switch-account", "auth"],
+  // ADR-066: the change-of-sign-in-email link (each portal's, like a reset link).
+  ["/confirm-email", "app"],
   ["/dashboard", "app"],
   // The Store (ADR-052) - on its own host since ADR-065 (store.workeasy360.com);
   // without one, on the customer portal (see ownerFor).
@@ -91,6 +95,7 @@ const ALSO_ON: Record<string, readonly Portal[]> = {
   "/login": ["admin", "partner", "auth", "store"],
   "/forgot-password": ["admin", "partner", "store"],
   "/reset-password": ["admin", "partner", "store"],
+  "/confirm-email": ["admin", "partner", "store"],
   // ADR-065: the Store signs its own customers up and in, so the referral
   // cookie, the saved purchase and the session all stay on one host; and the
   // development test provider's page returns a Store payment there.

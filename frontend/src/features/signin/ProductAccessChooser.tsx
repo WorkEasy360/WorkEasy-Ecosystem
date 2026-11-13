@@ -14,9 +14,12 @@ import styles from "./ProductAccess.module.css";
 type Load = { status: "loading" } | { status: "invalid" } | { status: "error" } | { status: "ready"; access: PendingAccess };
 
 /**
- * The access chooser (ADR-044, docs/universal-sso/design.md section 3.3):
- * how a signed-in person enters a product when their sign-in preference says
- * to ask, or when the product asked Workeasy360 to confirm the account.
+ * The access chooser (ADR-044, docs/universal-sso/design.md section 3.3; the
+ * unified-login brief section 5, ADR-066): "Welcome to WorkEasy360 - how would
+ * you like to continue?" with the account that is signed in, and Continue with
+ * Same Account / Use Different Account / Create New Account. Shown the first
+ * time a product is opened in a sign-in (the Ask once default), every time
+ * for "Ask me each time", or when the product asks to confirm the account.
  *
  * It only *answers*. The request it answers was verified and parked by the
  * authorization endpoint after every check - membership, entitlement, seat,
@@ -34,7 +37,9 @@ export function ProductAccessChooser() {
   const [failed, setFailed] = useState(false);
   const headingId = useId();
   const rememberId = useId();
-  const ssoHintId = useId();
+  const sameHintId = useId();
+  const otherHintId = useId();
+  const newHintId = useId();
   const productHintId = useId();
 
   useEffect(() => {
@@ -108,6 +113,8 @@ export function ProductAccessChooser() {
   const { access } = load;
   const product = access.product.name;
   const offersProductSignIn = access.choices.product;
+  const offersNewAccount = access.choices.create_account === true;
+  const shownName = access.account.name || access.account.email;
 
   return (
     <main id="w360-main" className={styles.main}>
@@ -118,42 +125,67 @@ export function ProductAccessChooser() {
               {productIconKnown(access.product.icon) ? <ProductIcon icon={access.product.icon} size={24} /> : product.slice(0, 1)}
             </span>
             <div>
-              <p className={styles.productName}>{product}</p>
+              <p className={styles.productName}>Opening {product}</p>
               <h1 id={headingId} className={styles.title}>
-                {offersProductSignIn ? `How would you like to access ${product}?` : `Continue to ${product}`}
+                Welcome to WorkEasy360
               </h1>
             </div>
           </div>
-          {!offersProductSignIn && <p className={styles.lead}>Use your Workeasy360 account to access {product}.</p>}
+          <p className={styles.lead}>How would you like to continue?</p>
 
-          <dl className={styles.identity}>
-            <div>
-              <dt>Signed in to Workeasy360 as</dt>
-              <dd>{access.account.email}</dd>
-            </div>
-            {access.organization.name && (
-              <div>
-                <dt>Organization</dt>
-                <dd>{access.organization.name}</dd>
+          <div className={styles.account} aria-label="Currently signed in as">
+            <p className={styles.accountCaption}>Currently signed in as</p>
+            <div className={styles.accountRow}>
+              <span className={styles.avatar} aria-hidden="true">
+                {initials(shownName)}
+              </span>
+              <div className={styles.accountText}>
+                <p className={styles.accountName}>{shownName}</p>
+                {access.account.name && <p className={styles.accountDetail}>{access.account.email}</p>}
+                {access.organization.name && <p className={styles.accountDetail}>{access.organization.name}</p>}
               </div>
-            )}
-          </dl>
+            </div>
+          </div>
 
-          <div className={styles.choices}>
+          <div className={styles.choices} role="group" aria-label="How would you like to continue?">
             <button
               type="button"
               className={`${styles.choice} ${styles.primary}`}
-              aria-describedby={ssoHintId}
+              aria-describedby={sameHintId}
               disabled={busy !== null}
               onClick={() => void choose("workeasy360")}
             >
-              <span className={styles.choiceLabel}>
-                {busy === "workeasy360" ? "Continuing…" : offersProductSignIn ? "Continue with Workeasy360" : `Continue to ${product}`}
-              </span>
-              <span id={ssoHintId} className={styles.choiceHint}>
-                Use your existing Workeasy360 account.
+              <span className={styles.choiceLabel}>{busy === "workeasy360" ? "Continuing…" : "Continue with Same Account"}</span>
+              <span id={sameHintId} className={styles.choiceHint}>
+                Continue using your existing WorkEasy360 login.
               </span>
             </button>
+            <button
+              type="button"
+              className={styles.choice}
+              aria-describedby={otherHintId}
+              disabled={busy !== null}
+              onClick={() => void choose("switch_account")}
+            >
+              <span className={styles.choiceLabel}>{busy === "switch_account" ? "Signing out…" : "Use Different Account"}</span>
+              <span id={otherHintId} className={styles.choiceHint}>
+                Sign in using another WorkEasy360 email/account.
+              </span>
+            </button>
+            {offersNewAccount && (
+              <button
+                type="button"
+                className={styles.choice}
+                aria-describedby={newHintId}
+                disabled={busy !== null}
+                onClick={() => void choose("create_account")}
+              >
+                <span className={styles.choiceLabel}>{busy === "create_account" ? "Opening…" : "Create New Account"}</span>
+                <span id={newHintId} className={styles.choiceHint}>
+                  Register a new WorkEasy360 account. You&apos;ll be signed out of this one first.
+                </span>
+              </button>
+            )}
             {offersProductSignIn && (
               <button
                 type="button"
@@ -179,20 +211,19 @@ export function ProductAccessChooser() {
               disabled={busy !== null}
             />
             <label htmlFor={rememberId}>
-              {offersProductSignIn ? `Remember my choice for ${product}` : "Automatically use Workeasy360 next time"}
+              {offersProductSignIn ? `Remember my choice for ${product}` : `Don't ask me again for ${product}`}
             </label>
           </div>
 
           <div className={styles.secondary}>
-            <button type="button" className={styles.linkButton} disabled={busy !== null} onClick={() => void choose("switch_account")}>
-              Use another Workeasy360 account
-            </button>
             <button type="button" className={styles.linkButton} disabled={busy !== null} onClick={() => void choose("cancel")}>
               Cancel
             </button>
             <a href={portalHref(portals, "app", "/settings/sign-in")}>Sign-in preferences</a>
           </div>
-          <p className={styles.note}>You can change how Workeasy360 signs you in to products at any time.</p>
+          <p className={styles.note}>
+            You&apos;re asked once per product each time you sign in. You can change this in sign-in preferences.
+          </p>
           {failed && (
             <p role="alert" className={styles.error}>
               That didn&apos;t work. The link may have expired - go back to {product} and try again.
@@ -202,4 +233,11 @@ export function ProductAccessChooser() {
       </div>
     </main>
   );
+}
+
+/** Up to two initials for the account badge ("Rahul Sharma" -> "RS"). */
+function initials(name: string): string {
+  const words = name.replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean);
+  const letters = words.length > 1 ? words[0][0] + words[words.length - 1][0] : (words[0] ?? "?").slice(0, 2);
+  return letters.toUpperCase();
 }

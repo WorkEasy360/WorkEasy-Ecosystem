@@ -189,7 +189,9 @@ def test_no_new_tables_for_partners_staff_or_identity():
         # tests/admin_panel/test_upgrade_grants.py pins what it does. 0011 does the
         # same for Login as Guest's permission (ADR-062); tests/guest_login.
         "platform/authz": "0011_partner_guest_permission.py",
-        "platform/identity": "0008_password_change_required.py",
+        # 0009 adds the change-of-sign-in-email link (ADR-066) - tests/unified_login
+        # pins what it does.
+        "platform/identity": "0009_email_change.py",
     }
     for app, newest in expected.items():
         found = sorted(p.name for p in (PACKAGE / app / "migrations").glob("0*.py"))[-1]

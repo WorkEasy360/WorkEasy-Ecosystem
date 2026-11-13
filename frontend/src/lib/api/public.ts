@@ -282,6 +282,8 @@ export const publicApi = {
     }),
   resendVerification: (email: string) => post<{ status: string }>("/api/v1/public/signup/resend", { email }),
   forgotPassword: (email: string) => post<{ status: string }>("/api/v1/public/password/forgot", { email }),
+  /** ADR-066: the emailed change-of-sign-in-email link. */
+  confirmEmailChange: (token: string) => post<{ status: string }>("/api/v1/public/email/confirm", { token }),
   resetPassword: (token: string, password: string) =>
     post<{ status: string }>("/api/v1/public/password/reset", { token, password }),
   /** A partner's referral link: an opaque token for the signup to convert, and

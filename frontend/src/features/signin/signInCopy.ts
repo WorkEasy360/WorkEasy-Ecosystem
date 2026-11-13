@@ -8,6 +8,10 @@ import type { EffectiveSignIn, ProductSignInMode, ProductSignInRow, SignInPrefer
 
 /** The default for every product - the brief's three global choices. */
 export const DEFAULT_LABELS: Record<EffectiveSignIn, { label: string; hint: string }> = {
+  ask_once: {
+    label: "Ask the first time I open each product after signing in",
+    hint: "Choose to continue with this account or use a different one the first time, then the product opens straight away until you sign out.",
+  },
   auto_sso: {
     label: "Automatically sign me in to eligible Workeasy360 products",
     hint: "Products open straight away with your Workeasy360 account. No second password.",
@@ -27,6 +31,8 @@ export function overrideLabel(value: SignInPreferenceValue, productName: string,
   switch (value) {
     case "inherit":
       return `Use my default (${shortLabel(defaultValue)})`;
+    case "ask_once":
+      return "Ask the first time after each sign-in";
     case "auto_sso":
       return "Automatically use Workeasy360";
     case "ask":
@@ -40,6 +46,8 @@ export function overrideLabel(value: SignInPreferenceValue, productName: string,
 
 export function shortLabel(value: EffectiveSignIn): string {
   switch (value) {
+    case "ask_once":
+      return "ask once per sign-in";
     case "auto_sso":
       return "automatic";
     case "ask":
@@ -67,6 +75,7 @@ export const SSO_STATE_LABELS: Record<SsoState, string> = {
 export function whatHappens(row: Pick<ProductSignInRow, "sso" | "effective" | "constraint">, productName: string): string {
   if (row.sso !== "enabled") return "Separate product sign-in required";
   if (row.effective === "auto_sso") return "Opens with your Workeasy360 account";
+  if (row.effective === "ask_once") return "Asks which account the first time after you sign in, then opens straight away";
   if (row.effective === "product_login") return `Opens ${productName}'s own sign-in page`;
   if (row.constraint === "product_requires_sso") {
     return `${productName} only uses Workeasy360 sign-in, so Workeasy360 will ask you each time`;
@@ -80,7 +89,9 @@ export function describePreferenceChange(reason: string): string {
   if (reason === "reset") return "Product sign-in preferences reset to default";
   const [scope, value] = reason.split("=", 2);
   const what =
-    value === "auto_sso" || value === "ask" || value === "product_login" ? shortLabel(value) : (value ?? "").replace(/_/g, " ");
+    value === "ask_once" || value === "auto_sso" || value === "ask" || value === "product_login"
+      ? shortLabel(value)
+      : (value ?? "").replace(/_/g, " ");
   if (!scope || !value) return "Product sign-in preference changed";
   return scope === "default"
     ? `Default product sign-in changed to ${what}`

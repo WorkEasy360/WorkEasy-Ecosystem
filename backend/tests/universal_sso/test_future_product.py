@@ -128,6 +128,7 @@ def test_a_product_added_later_joins_universal_sign_in_with_no_code_change(
     )
     assert row["override"] == "inherit" and row["choices"] == [
         "inherit",
+        "ask_once",
         "auto_sso",
         "ask",
         "product_login",

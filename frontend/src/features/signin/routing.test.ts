@@ -46,3 +46,24 @@ describe("universal sign-in pages and their hosts (ADR-044)", () => {
     });
   });
 });
+
+describe("unified login pages and their hosts (ADR-066)", () => {
+  it("serves Switch Account's second step on the central sign-in host, signed in or not", () => {
+    expect(pageOwner("/switch-account")).toBe("auth");
+    expect(isPublicPath("/switch-account")).toBe(true);
+    expect(route("auth.workeasy360.com", "/switch-account", "", false)).toEqual({ kind: "serve" });
+    expect(route("auth.workeasy360.com", "/switch-account", "", true)).toEqual({ kind: "serve" });
+    expect(route("app.workeasy360.com", "/switch-account")).toEqual({
+      kind: "redirect",
+      location: "https://auth.workeasy360.com/switch-account",
+    });
+  });
+
+  it("serves the change-of-email link on each account portal, signed in or not", () => {
+    expect(isPublicPath("/confirm-email")).toBe(true);
+    for (const host of ["app.workeasy360.com", "admin.workeasy360.com", "partner.workeasy360.com"]) {
+      expect(route(host, "/confirm-email", "", false)).toEqual({ kind: "serve" });
+    }
+    expect(servesPage("auth", "/confirm-email")).toBe(false);
+  });
+});

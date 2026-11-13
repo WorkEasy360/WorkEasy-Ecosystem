@@ -32,7 +32,7 @@ type Load = { status: "loading" } | { status: "error"; signedOut: boolean } | { 
  */
 export function SignInPreferencesScreen() {
   const [load, setLoad] = useState<Load>({ status: "loading" });
-  const [draftDefault, setDraftDefault] = useState<EffectiveSignIn>("auto_sso");
+  const [draftDefault, setDraftDefault] = useState<EffectiveSignIn>("ask_once");
   const [draftOverrides, setDraftOverrides] = useState<Record<string, SignInPreferenceValue>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
@@ -243,7 +243,7 @@ function DefaultOption({
       <label htmlFor={id} className={styles.optionText}>
         <span className={styles.optionLabel}>
           {copy.label}
-          {value === "auto_sso" && <span className={styles.recommended}> (recommended)</span>}
+          {value === "ask_once" && <span className={styles.recommended}> (recommended)</span>}
         </span>
         <span id={hintId} className={styles.optionHint}>
           {copy.hint}

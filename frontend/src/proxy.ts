@@ -58,6 +58,12 @@ const PUBLIC_PATHS = [
   // whose session has already gone still gets a page that returns them to
   // the product, rather than a sign-in form they did not ask for.
   "/sign-out",
+  // ADR-066: Switch Account's second step ends the central sign-in's session
+  // when there is one, and moves on to a sign-in page either way.
+  "/switch-account",
+  // ADR-066: the change-of-sign-in-email link, opened in whichever browser the
+  // mail is read in - the link is the credential.
+  "/confirm-email",
   // 2026-11-02: the public Store - browsing is open; buying signs in first.
   "/store",
   // 2026-11-09: the partner application, filled in before any account exists.

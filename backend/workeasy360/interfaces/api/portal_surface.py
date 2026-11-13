@@ -63,6 +63,10 @@ SURFACE_RULES: Final[tuple[tuple[str, bool, frozenset[str]], ...]] = (
     # ADR-059: every web portal has its own sign-in page, so the one sign-in
     # endpoint answers on each of them (the session cookie is that host's).
     ("/api/v1/auth/login", True, frozenset(portals.WEB_PORTALS)),
+    # ADR-066: Switch Account starts on a portal and is finished on the
+    # central sign-in host, whose session it may end.
+    ("/api/v1/auth/switch-account/finish", True, frozenset({portals.AUTH})),
+    ("/api/v1/auth/switch-account", True, frozenset(portals.ACCOUNT_PORTALS)),
     ("/api/v1/auth/handoff/redeem", True, frozenset(portals.DESTINATIONS)),
     # ADR-065: the Store's "My Account" - issued on the Store, spent on User Admin.
     ("/api/v1/auth/account-pass/enter", True, frozenset({portals.APP})),

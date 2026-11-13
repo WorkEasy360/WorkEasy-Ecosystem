@@ -9,6 +9,8 @@ import cp from "@/features/controlplane/ControlPlane.module.css";
 import local from "./ConsoleScreens.module.css";
 import { useOrgAccess } from "./OrgAccess";
 import { describePreferenceChange } from "@/features/signin/signInCopy";
+import { useSession } from "@/lib/auth/useSession";
+import { ChangeEmailForm } from "./ChangeEmailForm";
 import { ChangePasswordForm } from "./ChangePasswordForm";
 import { PageHeader, Panel } from "./consoleUi";
 
@@ -43,6 +45,14 @@ export function describeAccountEvent(event: Pick<AccountEvent, "kind" | "reason"
       return "Account unlocked";
     case "sign_in_preference_changed":
       return describePreferenceChange(event.reason);
+    case "email_change_requested":
+      return "Change of sign-in email requested (link sent to the new address)";
+    case "email_changed":
+      return "Sign-in email changed";
+    case "email_verified":
+      return "Email address verified";
+    case "password_reset":
+      return "Password reset by email";
     default:
       return event.kind.replace(/_/g, " ");
   }
@@ -67,12 +77,14 @@ export function MySecurityScreen() {
   };
   const { act, busy, feedback } = useAction(refresh);
   const noteId = useId();
+  const session = useSession();
+  const email = session.status === "ready" ? session.session.email : "";
 
   return (
     <Page>
       <PageHeader
         title="Account & Security"
-        lead="Your password, where you're signed in, and recent activity. These belong to your account, in every organization."
+        lead="Your sign-in email and password, where you're signed in, and recent activity. These belong to your account, in every organization."
         actions={
           slug ? (
             <Link className="w360-btn w360-btn-secondary" href={`/o/${slug}/settings/sign-in-preferences`}>
@@ -83,8 +95,25 @@ export function MySecurityScreen() {
       />
       {confirm.dialog}
 
+      <Panel title="Sign-in email">
+        {email ? <ChangeEmailForm currentEmail={email} onRequested={refresh} /> : <p className={cp.muted}>Loading…</p>}
+      </Panel>
+
       <Panel title="Password">
         <ChangePasswordForm popup onChanged={refresh} />
+      </Panel>
+
+      <Panel title="Sign-in methods">
+        <ul className={local.methods}>
+          <li>
+            <strong>WorkEasy360 password</strong> - signs you in to User Admin, the Store and every product you can use.
+          </li>
+          <li>
+            <strong>Products</strong> - open with this account through WorkEasy360 single sign-on. The first time you open each product
+            after signing in, you choose to continue with this account or use a different one.{" "}
+            {slug && <Link href={`/o/${slug}/settings/sign-in-preferences`}>Change how products sign you in</Link>}
+          </li>
+        </ul>
       </Panel>
 
       <Panel title="Where you're signed in">

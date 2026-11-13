@@ -56,6 +56,18 @@ urlpatterns = [
     # selected, which is the whole point of existing (Tasks 4, 5).
     path("auth/login", auth_views.login_view, name="auth-login"),
     path("auth/logout", auth_views.logout_view, name="auth-logout"),
+    # ADR-066: Switch Account - started on a portal, finished on the central
+    # sign-in host (the session products are signed in with).
+    path(
+        "auth/switch-account",
+        auth_views.switch_account_view,
+        name="auth-switch-account",
+    ),
+    path(
+        "auth/switch-account/finish",
+        auth_views.switch_account_finish_view,
+        name="auth-switch-account-finish",
+    ),
     path("auth/session", auth_views.session_view, name="auth-session"),
     # Portal hand-off (ADR-043): issued on the central sign-in host, redeemed
     # once on the portal host it names.
@@ -76,6 +88,8 @@ urlpatterns = [
     path("organizations", auth_views.organizations_view, name="organizations"),
     # --- Phase 8 extension: the account itself ---
     path("auth/password", account_views.password_view, name="auth-password"),
+    # ADR-066: change the sign-in email (a link to the new address confirms).
+    path("auth/email", account_views.email_change_view, name="auth-email"),
     path("auth/sessions", account_views.sessions_view, name="auth-sessions"),
     path(
         "auth/sessions/revoke-others",
@@ -220,6 +234,11 @@ urlpatterns = [
         "public/password/reset",
         public_site_views.reset_password_view,
         name="public-password-reset",
+    ),
+    path(
+        "public/email/confirm",
+        public_site_views.confirm_email_change_view,
+        name="public-email-confirm",
     ),
     # Payment providers' signed callbacks: no session, the signature is the
     # credential (payment_views.SIGNED_WEBHOOK_VIEWS).

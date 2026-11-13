@@ -101,9 +101,9 @@ export interface AppSignIn {
   sso: "enabled" | "integration_required" | "disabled";
   mode: "sso_only" | "sso_optional" | "local_only";
   product_login_available: boolean;
-  override: "inherit" | "auto_sso" | "ask" | "product_login";
-  preference: "auto_sso" | "ask" | "product_login";
-  effective: "auto_sso" | "ask" | "product_login";
+  override: "inherit" | "ask_once" | "auto_sso" | "ask" | "product_login";
+  preference: "ask_once" | "auto_sso" | "ask" | "product_login";
+  effective: "ask_once" | "auto_sso" | "ask" | "product_login";
   constraint: "" | "sso_unavailable" | "product_requires_sso";
 }
 

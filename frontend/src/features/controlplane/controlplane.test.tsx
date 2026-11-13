@@ -171,7 +171,11 @@ describe("the Admin shell", () => {
       "GET /api/v1/admin/session": [{ status: 403, body: { code: "permission_denied" } }],
       "POST /api/v1/auth/logout": [{ status: 200, body: { ok: true } }],
     });
-    const replace = vi.spyOn(nav.router, "replace");
+    // ADR-066: leaving an account is a full page load (nothing of it stays in
+    // memory or in Back) after its browser state is forgotten.
+    const replace = vi.fn();
+    vi.stubGlobal("location", { ...window.location, replace });
+    sessionStorage.setItem("w360.admin.partners.list", "[]");
     render(
       <AdminShell>
         <h1>Secret</h1>
@@ -182,7 +186,8 @@ describe("the Admin shell", () => {
     await waitFor(() =>
       expect(replace).toHaveBeenCalledWith(`/login?mode=admin&next=${encodeURIComponent("/admin/partners/new")}`),
     );
-    replace.mockRestore();
+    expect(sessionStorage.getItem("w360.admin.partners.list")).toBeNull();
+    vi.unstubAllGlobals();
     pathname = "/admin";
   });
 

@@ -437,6 +437,155 @@ def reset_password(token: Any, new_password: Any) -> Any:
     return user
 
 
+# --- changing the sign-in email (ADR-066) -----------------------------------------
+
+CHANGE_EMAIL_TEMPLATE = "platform.account.change_email"
+CHANGE_EMAIL_IN_USE_TEMPLATE = "platform.account.change_email_in_use"
+EMAIL_CHANGED_TEMPLATE = "platform.account.email_changed"
+
+
+def _email_hint(address: str) -> str:
+    """``a***@example.com``: enough for the previous owner to recognise the
+    change, not enough to hand a stranger the new address."""
+    local, _, domain = address.partition("@")
+    return f"{local[:1]}***@{domain}" if local and domain else "***"
+
+
+def request_email_change(
+    user_id: Any,
+    *,
+    password: Any,
+    new_email: Any,
+    portal: str | None = None,
+    ip_prefix: str = "",
+    device_label: str = "",
+) -> str:
+    """Ask to sign in with another address from now on. Nothing changes until
+    the link mailed to that address is used (:func:`confirm_email_change`): the
+    link proves the new mailbox, the password proves the person asking.
+
+    One answer whatever the address: when another account already holds it,
+    that address is told instead (as signup does), so this is no registration
+    oracle for a signed-in account either. A wrong password counts toward the
+    sign-in lockout, like the password change. Returns the outcome for metrics
+    and tests only.
+    """
+    from workeasy360.contracts.errors import CurrentPasswordIncorrect, EmailChangeInvalid
+    from workeasy360.platform.identity import lifecycle, tokens
+    from workeasy360.platform.identity.account import record_account_event
+    from workeasy360.platform.identity.models import AccountEvent, AccountToken, User
+    from workeasy360.platform.identity.services import _record_failure
+    from workeasy360.platform.notifications.services import notify_account
+
+    user = User.objects.get(pk=user_id)
+    if user.status != UserStatus.ACTIVE.value:
+        raise EmailChangeInvalid(
+            "This account cannot change its email.", field="new_email"
+        )
+    if not user.check_password(password if isinstance(password, str) else ""):
+        _record_failure(user)
+        raise CurrentPasswordIncorrect("The current password is not correct.")
+    try:
+        typed, address = _clean_email(new_email)
+    except SignupValidationError as exc:
+        raise EmailChangeInvalid(exc.message, field="new_email") from exc
+    if address == user.email:
+        raise EmailChangeInvalid("That is already your sign-in email.", field="new_email")
+
+    with transaction.atomic():
+        holder = lifecycle.lock_by_email(address)
+        if holder is not None:
+            hour = timezone.now().strftime("%Y%m%d%H")
+            notify_account(
+                template_key=CHANGE_EMAIL_IN_USE_TEMPLATE,
+                recipient_email=holder.email_original or holder.email,
+                context={
+                    "sign_in_url": _url("/login", portal=portal),
+                    "reset_url": _url("/forgot-password", portal=portal),
+                },
+                idempotency_key=f"account:{holder.pk}:change-email-in-use:{hour}",
+            )
+            outcome = "in_use"
+        else:
+            token = tokens.issue(
+                user.pk,
+                AccountToken.Purpose.CHANGE_EMAIL,
+                ttl=_verify_ttl(),
+                new_email=typed,
+            )
+            first_name = (user.full_name or "").split(" ", 1)[0] or "there"
+            notify_account(
+                template_key=CHANGE_EMAIL_TEMPLATE,
+                recipient_email=typed,
+                context={"name": first_name, "expires_in": _describe(_verify_ttl())},
+                sealed_context={
+                    "confirm_url": _url("/confirm-email", token, portal=portal)
+                },
+                idempotency_key=f"account:{user.pk}:change-email:{_hash_prefix(token)}",
+            )
+            outcome = "sent"
+        record_account_event(
+            user.pk,
+            AccountEvent.Kind.EMAIL_CHANGE_REQUESTED,
+            ip_prefix=ip_prefix,
+            device_label=device_label,
+        )
+    metrics.increment("identity_email_change_requests_total", outcome=outcome)
+    logger.info("identity.email_change.requested", outcome=outcome)
+    return outcome
+
+
+def confirm_email_change(token: Any) -> Any:
+    """Use a change-of-email link: the address it carries becomes the sign-in
+    email, verified. Every other outstanding link of the account is spent (a
+    reset link mailed to the old address must not outlive the change), the
+    previous address is told, and nothing else changes - same identity, same
+    password, same sessions, same organizations and products (the products
+    know the person by ``sub``, never by email).
+
+    Refused with the one ``link_invalid`` answer if the address was taken by
+    another account in the meantime."""
+    from workeasy360.platform.administration.site import support_email
+    from workeasy360.platform.identity import lifecycle, tokens
+    from workeasy360.platform.identity.account import record_account_event
+    from workeasy360.platform.identity.email import normalize_email
+    from workeasy360.platform.identity.models import AccountEvent, AccountToken, User
+    from workeasy360.platform.notifications.services import notify_account
+
+    try:
+        with transaction.atomic():
+            row = tokens.open_token(token, AccountToken.Purpose.CHANGE_EMAIL)
+            user = lifecycle.lock(row.user_id)
+            typed = row.new_email
+            address = normalize_email(typed)
+            if (
+                user.status != UserStatus.ACTIVE.value
+                or not address
+                or User.objects.filter(email=address).exclude(pk=user.pk).exists()
+            ):
+                raise AccountLinkInvalid("This link is not valid.")
+            previous = user.email_original or user.email
+            lifecycle.change_email(user, typed)
+            tokens.consume(row)
+            tokens.spend_all(user.pk)
+            record_account_event(user.pk, AccountEvent.Kind.EMAIL_CHANGED)
+            notify_account(
+                template_key=EMAIL_CHANGED_TEMPLATE,
+                recipient_email=previous,
+                context={
+                    "new_email_hint": _email_hint(address),
+                    "support_email": support_email(),
+                },
+                idempotency_key=f"account:{user.pk}:email-changed:{row.pk}",
+            )
+    except IntegrityError:
+        # Another account took the address between the check and the write.
+        raise AccountLinkInvalid("This link is not valid.") from None
+    metrics.increment("identity_email_changes_total")
+    logger.info("identity.email_change.confirmed", user_id=str(user.pk))
+    return user
+
+
 def prune_pending_accounts(
     *, older_than_days: int | None = None, batch: int = 500
 ) -> int:

@@ -5,7 +5,14 @@ from __future__ import annotations
 
 import pytest
 
-from tests.universal_sso.conftest import AUTHORIZE, authorize_query, path_of, query_of
+from tests.universal_sso.conftest import (
+    AUTHORIZE,
+    CHOOSE,
+    authorize_query,
+    path_of,
+    query_of,
+    resume_token_of,
+)
 from workeasy360.platform.ecosystem import protocol
 
 pytestmark = pytest.mark.django_db
@@ -24,22 +31,39 @@ def _codes(registration):
     ).count()
 
 
-def test_a_person_who_never_chose_is_signed_in_with_no_question(
+def test_a_person_who_never_chose_is_asked_on_first_entry_only(
     client, signing_key, sso_product, entitled_org, signed_in
 ):
-    """One login for all products: the default is Automatic, so a product
-    opened (or typed) by a person who never chose completes silently with the
-    Workeasy360 session - every access check still ran first."""
+    """The unified-login brief (ADR-066): the default is Ask once. The first
+    time a product is opened in a sign-in, the chooser names the signed-in
+    account; once answered, the same sign-in opens it with no question - every
+    access check still runs first each time."""
     from workeasy360.platform.ecosystem.models import UserSignInPreference
 
     crm = sso_product("crm")
     org = entitled_org("crm")
     signed_in(org["user"], sign_in_preference=None)
     assert not UserSignInPreference.objects.filter(user=org["user"]).exists()
-    response = _authorize(client, crm, org["organization_id"])
-    assert response["Location"].startswith(crm["redirect_uri"] + "?")
-    assert query_of(response)["code"][0]
+    first = _authorize(client, crm, org["organization_id"])
+    assert path_of(first) == "/product-access"
+    assert _codes(crm) == 0
+
+    chosen = client.post(
+        CHOOSE,
+        data={"resume": resume_token_of(first), "choice": "workeasy360"},
+        content_type="application/json",
+    )
+    assert chosen.status_code == 200
+    resumed = client.get(chosen.json()["redirect_url"])
+    assert resumed["Location"].startswith(crm["redirect_uri"] + "?")
     assert _codes(crm) == 1
+
+    again = _authorize(client, crm, org["organization_id"])
+    assert again["Location"].startswith(crm["redirect_uri"] + "?")
+    assert query_of(again)["code"][0]
+    assert _codes(crm) == 2
+    # Nothing was stored: "once" is this sign-in's, not a preference.
+    assert not UserSignInPreference.objects.filter(user=org["user"]).exists()
 
 
 def test_a_person_who_chose_ask_is_asked_before_anything_is_minted(

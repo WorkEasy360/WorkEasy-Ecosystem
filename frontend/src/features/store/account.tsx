@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { getOrganizations, getSession, logout } from "@/lib/api/auth";
+import { forgetAccountState } from "@/lib/accountState";
 import type { OrganizationSummary, SessionState } from "@/lib/api/types";
 import { usePortals } from "@/lib/portalContext";
 import { usePortalRouter } from "@/lib/portalRouter";
@@ -100,6 +101,7 @@ export function StoreAccountProvider({ children }: { children: React.ReactNode }
       signOut: async () => {
         try {
           await logout();
+          forgetAccountState();
         } finally {
           setChosen(null);
           refresh();

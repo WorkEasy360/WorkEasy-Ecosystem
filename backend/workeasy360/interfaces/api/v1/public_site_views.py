@@ -145,6 +145,20 @@ def reset_password_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"status": "password_reset"})
 
 
+@require_http_methods(["POST"])
+@never_cache
+def confirm_email_change_view(request: HttpRequest) -> JsonResponse:
+    """Use the emailed change-of-email link (ADR-066). The link alone - it
+    proves the new mailbox, and the password was proved when it was asked
+    for - so it works in whichever browser the mail is opened in."""
+    blocked = limited(request, "email_change_confirm")
+    if blocked is not None:
+        return blocked
+    body = _body(request)
+    self_service.confirm_email_change(_text(body, "token"))
+    return JsonResponse({"status": "email_changed"})
+
+
 # --- the public catalog -------------------------------------------------------------
 
 

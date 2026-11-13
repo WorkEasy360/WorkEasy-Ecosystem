@@ -258,6 +258,108 @@ def logout_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True})
 
 
+# --- Switch Account (ADR-066) -------------------------------------------------
+
+#: How long the hand-over to the central sign-in host lives: one redirect.
+SWITCH_HANDLE_MAX_AGE_S = 120
+_SWITCH_SALT = "workeasy360.identity.switch_account"
+
+
+def _switched_login(portal: str) -> str:
+    from workeasy360.contracts.values import portals
+    from workeasy360.platform.identity import portals as portal_links
+
+    if portal not in portals.ACCOUNT_PORTALS:
+        portal = portals.APP
+    return f"{portal_links.account_url(portal)}/login?switched=1"
+
+
+@require_http_methods(["POST"])
+def switch_account_view(request: HttpRequest) -> JsonResponse:
+    """Switch Account: sign out of this portal and of the central product
+    sign-in, then sign in as someone else (the unified-login brief 5.3, 16C).
+
+    Each portal signs in on its own host (ADR-059), so signing out here leaves
+    the ``auth.`` session - the one products are signed in with - untouched:
+    the next product would still open as the previous person. So in
+    multi-portal mode the answer is the central sign-in host's
+    ``/switch-account`` page, carrying a signed hand-over in the URL fragment
+    (never sent to a server by the browser) that names only who is switching.
+    That page ends the ``auth.`` session only if it belongs to the same person
+    (:func:`switch_account_finish_view`) - so no other site can sign anyone out
+    with it - then opens this portal's sign-in page. Session + CSRF, like
+    every session write; idempotent."""
+    from workeasy360.interfaces.api.v1.control_plane_http import limited
+    from workeasy360.platform.identity import portals as portal_links
+
+    portal = portal_links.request_portal(request)
+    target = _switched_login(portal)
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return JsonResponse({"redirect_url": target})
+    blocked = limited(request, "switch_account", user=user)
+    if blocked is not None:
+        return blocked
+    if portal_links.enabled():
+        from urllib.parse import urlencode
+
+        from django.core import signing
+
+        handle = signing.dumps({"u": str(user.pk), "p": portal}, salt=_SWITCH_SALT)
+        target = (
+            f"{portal_links.auth_url()}/switch-account#{urlencode({'handle': handle})}"
+        )
+    sign_out(request)
+    logger.info("identity.switch_account.started", portal=portal)
+    metrics.increment("identity_switch_account_total", step="started")
+    return JsonResponse({"redirect_url": target})
+
+
+@require_http_methods(["POST"])
+def switch_account_finish_view(request: HttpRequest) -> JsonResponse:
+    """The central sign-in host's half of Switch Account: end this host's
+    session when - and only when - it belongs to the person the hand-over
+    names, then send the browser to the sign-in page of the portal the switch
+    started on. Every other case (no session, someone else's session, an
+    expired or forged hand-over) changes nothing and answers the same, so the
+    endpoint is neither an oracle nor a way to sign a stranger out."""
+    from django.core import signing
+
+    from workeasy360.interfaces.api.v1.control_plane_http import limited
+
+    blocked = limited(request, "switch_account")
+    if blocked is not None:
+        return blocked
+    try:
+        body = json_input.loads(request.body or b"{}")
+    except (ValueError, UnicodeDecodeError):
+        body = {}
+    raw = body.get("handle") if isinstance(body, dict) else None
+    named: dict[str, Any] = {}
+    if isinstance(raw, str) and 0 < len(raw) <= 512:
+        try:
+            loaded = signing.loads(
+                raw, salt=_SWITCH_SALT, max_age=SWITCH_HANDLE_MAX_AGE_S
+            )
+        except signing.BadSignature:
+            loaded = None
+        if isinstance(loaded, dict):
+            named = loaded
+    user = getattr(request, "user", None)
+    ended = bool(
+        named
+        and user is not None
+        and user.is_authenticated
+        and str(user.pk) == str(named.get("u") or "")
+    )
+    if ended:
+        sign_out(request)
+    metrics.increment(
+        "identity_switch_account_total", step="central_ended" if ended else "central_kept"
+    )
+    return JsonResponse({"redirect_url": _switched_login(str(named.get("p") or ""))})
+
+
 def sign_out(request: HttpRequest) -> None:
     """The one sign-out: this session and every other session of the same
     sign-in (ADR-043). Also what the access chooser's "use another account"

@@ -6,7 +6,8 @@ import { useParams, usePathname } from "next/navigation";
 import { useSession } from "@/lib/auth/useSession";
 import { usePortals } from "@/lib/portalContext";
 import { portalHref } from "@/lib/portals";
-import { logout } from "@/lib/api/auth";
+import { logout, switchAccount } from "@/lib/api/auth";
+import { forgetAccountState, leaveTo } from "@/lib/accountState";
 import { ApiError } from "@/lib/api/client";
 import {
   ACCESS_POLICY_DENIALS,
@@ -170,8 +171,29 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const place = organizationPlace(orgSlug, can, pathname);
   const who = session.status === "ready" ? session.session : null;
   const consoles = who?.consoles;
+  // The unified-login brief 19: My Profile, the current organization (the
+  // menu's header names it), Switch Organization, Switch Account, Account
+  // Security, Logout. Leaving an account forgets what it left in this browser
+  // and loads the next page afresh, so nothing of it survives in memory or in
+  // Back (lib/accountState.ts).
+  const leaveAccount = (step: () => Promise<string>) => {
+    setSignOutFailed(false);
+    step().then(
+      (next) => {
+        forgetAccountState();
+        leaveTo(next);
+      },
+      () => setSignOutFailed(true),
+    );
+  };
   const entries: MenuItem[] = [
     { label: "My Profile", icon: "user", href: `/o/${orgSlug}/settings/profile` },
+    { label: "Switch Organization", icon: "building", href: "/organizations/select" },
+    {
+      label: "Switch Account",
+      icon: "users",
+      onSelect: () => leaveAccount(() => switchAccount().then(({ redirect_url }) => redirect_url)),
+    },
     { label: "Account & Security", icon: "shield", href: `/o/${orgSlug}/settings/security` },
     ...(consoles?.staff ? [{ label: "Admin console", icon: "external", href: portalHref(portals, "admin", "/admin") }] : []),
     ...(consoles?.partner ? [{ label: "Partner portal", icon: "external", href: portalHref(portals, "partner", "/partner") }] : []),
@@ -179,13 +201,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       label: "Logout",
       icon: "logout",
       separator: true,
-      onSelect: () => {
-        setSignOutFailed(false);
-        logout().then(
-          () => router.replace("/login"),
-          () => setSignOutFailed(true),
-        );
-      },
+      onSelect: () => leaveAccount(() => logout().then(() => "/login")),
     },
   ];
 
