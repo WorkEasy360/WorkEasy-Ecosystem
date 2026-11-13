@@ -1,6 +1,6 @@
 # ADR-066: Same account or a different one - Ask once by default, Create New Account, Switch Account that reaches the central sign-in, and changing the sign-in email
 
-Date: 2026-11-13. Status: accepted; built on `feat/partner-admin-panel`, not committed or deployed yet. Amends ADR-044 (item 14: the default preference; item 4: the access chooser's answers) and ADR-059 (a portal's sign-out is that portal's - Switch Account is the one exception, below).
+Date: 2026-11-13. Status: accepted; commit `b57ad44` on `feat/partner-admin-panel` (pushed, PR #3); live since 13 November 2026 as release `2026.11.13-b57ad44`. Amends ADR-044 (item 14: the default preference; item 4: the access chooser's answers) and ADR-059 (a portal's sign-out is that portal's - Switch Account is the one exception, below).
 
 ## Context
 

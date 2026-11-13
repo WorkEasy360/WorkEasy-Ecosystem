@@ -2,7 +2,7 @@
 
 **Written for: the owner and the engineers of Workeasy360 and of each product.**
 
-Brief: "WorkEasy360 - Unified Platform, Shared Login & Product Access System (master development prompt, updated requirements)". Branch `feat/partner-admin-panel`, **not committed, not deployed**. Decisions: [ADR-066](../architecture/adrs/ADR-066-same-or-different-account-switch-account-and-email-change.md). Browser check: [scripts/unified_login_check](../../scripts/unified_login_check/README.md).
+Brief: "WorkEasy360 - Unified Platform, Shared Login & Product Access System (master development prompt, updated requirements)". Branch `feat/partner-admin-panel`: commit `b57ad44`, pushed (PR #3). **Deployed on 13 November 2026 as release `2026.11.13-b57ad44`** (backup `20261113T070750Z` first; `ecosystem.0006` and `identity.0009` applied, 0 unapplied; api healthy; 0 error lines in api, web and worker logs; a read-only headless Chrome pass over `auth.../switch-account`, `app.../login?switched=1`, `app.../confirm-email` and the Store home: the expected page each time, one `h1`, 0 console errors, 0 CSP violations, 0 API 5xx). Rollback: `migrate ecosystem 0005`, then release `2026.11.12-249d8d8` (section 7). Decisions: [ADR-066](../architecture/adrs/ADR-066-same-or-different-account-switch-account-and-email-change.md). Browser check: [scripts/unified_login_check](../../scripts/unified_login_check/README.md).
 
 The two documents the brief names as authoritative, `07_Product_Web_Mobile_Flow.txt` and `08_Credits_Wallets_System.txt`, are still not on this machine or in git (as on 9 and 12 November, ADR-060/065). Nothing here invents a rule they would decide; the gaps are listed in section 5.
 
@@ -159,7 +159,7 @@ The brief's 30 test cases:
   - If a portal session ends without Switch Account (expiry, another tab's sign-out), the `auth.` session can outlive it until its own idle limit. The next product entry then still names the account on the chooser, unless that product was already entered in that sign-in.
   - Browser storage clearing covers this application's keys only. The server never trusted them.
 
-## 7. Deployment readiness (not deployed)
+## 7. Deployment (live since 13 November 2026)
 
 - **Migrations:**
   - `ecosystem.0006_sign_in_ask_once` widens a check constraint.
@@ -167,6 +167,6 @@ The brief's 30 test cases:
   - Both declare why the previous release keeps working during a rolling deploy.
   - Neither changes anyone's stored data.
 - **Configuration:** none required. New optional rate-limit settings: `W360_RL_EMAIL_CHANGE_USER/IP/ACCOUNT`, `W360_RL_EMAIL_CHANGE_CONFIRM_IP`, `W360_RL_SWITCH_ACCOUNT_USER/IP`. Three new email templates are registered in code. No Caddy or DNS change: `/switch-account` is served by the existing web container on `auth.`, and `/confirm-email` on each account portal.
-- **Rollout:** the usual release with a backup first. The dev database also needs the two migrations (owner approval, as before).
+- **Rollout (done):** patch build from the live `249d8d8` images (dependencies unchanged), backup `20261113T070750Z`, the migrate task applied both migrations, `api`, `worker-critical` and `web` restarted. The local dev database has not been migrated.
 - **Rollback:** switch back to the previous release and run `migrate ecosystem 0005` first. The previous release cannot read an `ask_once` row, and that migration deletes such rows (they exist only for people who picked Ask once explicitly). `identity.0009` can stay.
 - **What people will notice:** on the first product opened after each sign-in, one extra screen naming the account. Automatic is one setting away.
