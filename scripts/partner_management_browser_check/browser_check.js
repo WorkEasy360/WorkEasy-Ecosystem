@@ -526,8 +526,8 @@ async function addPartner(page, spec, { audit: auditIt = false } = {}) {
   for (const absent of [/business email/i, /legal/i, /partner code/i, /products?\b/i, /commission/i, /price/i]) {
     expectThat(!labels.some((l) => absent.test(l)), `Add Partner asks for more than the account: ${labels.join(" | ")}`);
   }
-  await type(page, "Partner name", spec.name);
-  await type(page, "Admin email", spec.adminEmail);
+  await type(page, "Partner / Business name", spec.name);
+  await type(page, "Partner Email", spec.adminEmail);
   await type(page, "Password", spec.password);
   await type(page, "Confirm password", spec.password);
   await tick(page, spec.type, true, { legend: "Partner type" });
@@ -840,8 +840,8 @@ const needs = (key, journey) => {
 
   await flow("E an existing email: never overwritten; Link Existing User or Cancel", async () => {
     await page_goto_new(staff);
-    await type(staff, "Partner name", "Linked Co");
-    await type(staff, "Admin email", "existing.customer@browser.test");
+    await type(staff, "Partner / Business name", "Linked Co");
+    await type(staff, "Partner Email", "existing.customer@browser.test");
     const typed = PARTNER_PASSWORD("taken");
     track(typed, "the taken address");
     await type(staff, "Password", typed);
@@ -853,7 +853,7 @@ const needs = (key, journey) => {
     await clickText(staff, "Cancel", { exact: true, within: "main form" });
     const cleared = await staff.evaluate(() => [...document.querySelectorAll("input[type=email]")].every((i) => i.value === ""));
     expectThat(cleared, "Cancel did not clear the email");
-    await type(staff, "Admin email", "existing.customer@browser.test");
+    await type(staff, "Partner Email", "existing.customer@browser.test");
     await type(staff, "Password", typed);
     await type(staff, "Confirm password", typed);
     await clickText(staff, "Create Partner", { exact: true });

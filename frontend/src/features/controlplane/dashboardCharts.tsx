@@ -90,25 +90,27 @@ function Frame({
 
 function DataTable({ caption, days, format }: { caption: string; days: DayValue[]; format: (n: number) => string }) {
   return (
-    <table className="w360-visually-hidden">
-      <caption>{caption}</caption>
-      <thead>
-        <tr>
-          <th scope="col">Day</th>
-          <th scope="col">Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        {days
-          .filter((d) => d.value !== null)
-          .map((d) => (
-            <tr key={d.day}>
-              <th scope="row">{dayLabel(d.day)}</th>
-              <td>{format(d.value ?? 0)}</td>
-            </tr>
-          ))}
-      </tbody>
-    </table>
+    <div className="w360-visually-hidden">
+      <table>
+        <caption>{caption}</caption>
+        <thead>
+          <tr>
+            <th scope="col">Day</th>
+            <th scope="col">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {days
+            .filter((d) => d.value !== null)
+            .map((d) => (
+              <tr key={d.day}>
+                <th scope="row">{dayLabel(d.day)}</th>
+                <td>{format(d.value ?? 0)}</td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

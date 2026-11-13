@@ -57,7 +57,16 @@ def test_the_chooser_shows_display_facts_and_nothing_of_the_request(client, aske
     assert body["product"] == {"code": "crm", "name": "CRM", "icon": ""}
     assert body["organization"]["name"]
     assert body["account"]["email"] == flow["org"]["user"].email
-    assert body["choices"] == {"workeasy360": True, "product": True}
+    assert body["choices"] == {
+        "workeasy360": True,
+        "product": True,
+        "create_account": True,
+    }
+    # The brief's "Currently signed in as": name and email, never more.
+    assert body["account"] == {
+        "email": flow["org"]["user"].email,
+        "name": flow["org"]["user"].full_name,
+    }
     assert body["remembered"] == "inherit"
     flat = repr(body)
     for secret in (
@@ -74,6 +83,7 @@ def test_an_sso_only_product_offers_no_sign_in_of_its_own(client, asked):
     assert client.get(PENDING, {"resume": flow["token"]}).json()["choices"] == {
         "workeasy360": True,
         "product": False,
+        "create_account": True,
     }
     refused = _choose(client, flow["token"], "product")
     assert refused.status_code == 400 and refused.json()["code"] == "pending_invalid"

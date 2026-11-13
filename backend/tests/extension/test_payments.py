@@ -514,7 +514,7 @@ def test_razorpay_payment_links_end_to_end(
             price_book_id=book.id,
             plan_version_id=catalog["versions"]["crm_professional"].id,
             interval=BillingInterval.MONTHLY,
-            amount_minor=499900,
+            amount_minor=499900,  # + 18% GST (ADR-058) = 589900 on the invoice
             valid_from=timezone.now() - timedelta(days=1),
         )
     org = console_org()
@@ -526,7 +526,7 @@ def test_razorpay_payment_links_end_to_end(
     assert _checkout(fx, attempt) == "awaiting_payment"
     sent = providers["server"].requests[-1]
     assert sent.path == "/v1/payment_links"
-    assert sent.json()["amount"] == 499900 and sent.json()["currency"] == "INR"
+    assert sent.json()["amount"] == 589900 and sent.json()["currency"] == "INR"
     assert sent.json()["notes"]["w360_attempt"] == attempt["attempt_id"]
     assert sent.headers["authorization"].startswith("Basic ")
 
@@ -539,7 +539,7 @@ def test_razorpay_payment_links_end_to_end(
                 "payment_link": {
                     "entity": {
                         "id": reference,
-                        "amount": 499900,
+                        "amount": 589900,
                         "currency": "INR",
                         "notes": {
                             "w360_attempt": attempt["attempt_id"],
@@ -550,7 +550,7 @@ def test_razorpay_payment_links_end_to_end(
                 "payment": {
                     "entity": {
                         "id": "pay_1",
-                        "amount": 499900,
+                        "amount": 589900,
                         "currency": "INR",
                         "status": "captured",
                     }

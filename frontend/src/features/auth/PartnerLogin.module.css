@@ -1,0 +1,355 @@
+/* The Partner sign-in (2026-11-11, the owner's reference image): the Admin
+   sign-in's frame (AdminLogin.module.css) with the partner's story - the four
+   features beside the laptop, the product family low on the panel, and the
+   card's sign-up and benefits. Tokens only. */
+
+/* --- the left panel -------------------------------------------------------- */
+
+.showcase {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  align-items: center;
+  gap: clamp(12px, 2vw, 32px);
+  margin: clamp(16px, 2.4vw, 32px) 0 16px;
+}
+
+.features {
+  margin-top: 0;
+}
+
+.laptop {
+  justify-self: end;
+  width: 100%;
+  max-width: 520px;
+  height: auto;
+  margin-right: -8px;
+}
+
+.ecosystem {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: clamp(12px, 1.6vw, 24px);
+}
+
+.ecosystemTitle {
+  flex: none;
+  max-width: 7.5rem;
+  margin: 0;
+  padding-right: clamp(12px, 1.6vw, 24px);
+  border-right: 2px solid var(--w360-hero-muted);
+  font-size: clamp(15px, 1.25vw, 19px);
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.ecosystemList {
+  flex: 1;
+  min-width: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: clamp(6px, 0.8vw, 12px);
+}
+
+.product {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 2px;
+  min-width: 0;
+  padding: 12px 6px;
+  border: 1px solid var(--w360-hero-edge);
+  border-radius: 14px;
+  background: var(--w360-hero-card);
+  text-align: center;
+}
+
+.product strong {
+  color: var(--w360-hero-text);
+  font-size: clamp(11px, 0.95vw, 14px);
+  font-weight: 700;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.product > span:last-child {
+  color: var(--w360-hero-muted);
+  font-size: clamp(11px, 0.85vw, 13px);
+}
+
+.productIcon {
+  display: inline-grid;
+  place-items: center;
+  margin-bottom: 6px;
+  color: var(--w360-hero-icon-green);
+}
+
+.productIcon[data-tone="purple"] {
+  color: var(--w360-hero-icon-purple);
+}
+
+.productIcon[data-tone="blue"] {
+  color: var(--w360-hero-icon-blue);
+}
+
+.productIcon[data-tone="pink"] {
+  color: var(--w360-hero-icon-pink);
+}
+
+.productIcon[data-tone="light"] {
+  color: var(--w360-hero-icon-light);
+}
+
+/* --- the card ---------------------------------------------------------------- */
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 12px;
+  color: var(--w360-text);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--w360-gray-200);
+}
+
+.divider span {
+  flex: none;
+}
+
+.outline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 50px;
+  border: 1.5px solid var(--w360-admin-action);
+  border-radius: 10px;
+  background: var(--w360-surface);
+  color: var(--w360-text);
+  font-size: 16px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.outline svg {
+  color: var(--w360-brand);
+}
+
+.outline:hover {
+  background: var(--w360-admin-accent-soft);
+  color: var(--w360-text);
+  text-decoration: none;
+}
+
+.outline:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+.guest {
+  margin: 10px 0 0;
+  text-align: center;
+  color: var(--w360-text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.guest a {
+  color: var(--w360-brand);
+  font-weight: 600;
+}
+
+.resend {
+  margin: 0;
+}
+
+.benefits {
+  margin-top: 16px;
+}
+
+.benefits .divider {
+  margin-top: 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.benefitList {
+  list-style: none;
+  margin: 0;
+  padding: 14px 8px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  border-radius: 14px;
+  background: var(--w360-admin-accent-soft);
+}
+
+.benefitList li {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  color: var(--w360-brand);
+  text-align: center;
+}
+
+.benefitList span {
+  color: var(--w360-text);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* --- the sign-up form (PartnerApply.tsx) --------------------------------------- */
+
+.lead {
+  margin: -6px 0 16px;
+  color: var(--w360-text-muted);
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.formRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.select {
+  appearance: auto;
+  cursor: pointer;
+}
+
+.hint {
+  margin: 6px 0 0;
+  color: var(--w360-text-muted);
+  font-size: 13px;
+}
+
+.choice {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.choice legend {
+  padding: 0;
+}
+
+.choiceList {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.choiceTile {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 12px 6px;
+  border: 1px solid var(--w360-input-border);
+  border-radius: 12px;
+  color: var(--w360-brand);
+  text-align: center;
+  cursor: pointer;
+}
+
+.choiceTile:has(input:checked) {
+  border-color: var(--w360-admin-action);
+  background: var(--w360-admin-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--w360-admin-action);
+}
+
+.choiceTile:has(input:focus-visible) {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+.choiceTile span {
+  color: var(--w360-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.choiceTile input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--w360-admin-action);
+}
+
+.problems {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--w360-danger-bg);
+  color: var(--w360-danger);
+  font-size: 14px;
+}
+
+.problems p,
+.problems ul {
+  margin: 0;
+}
+
+.problems ul {
+  padding-left: 18px;
+}
+
+.below {
+  margin: 16px 0 0;
+  text-align: center;
+  color: var(--w360-text);
+  font-size: 14px;
+}
+
+.below a {
+  color: var(--w360-brand);
+  font-weight: 600;
+}
+
+/* --- screen sizes ------------------------------------------------------------ */
+
+@media (min-width: 1025px) {
+  /* The features follow the words, as in the reference image; the product family
+     sits at the foot of the panel. */
+  aside.hero {
+    justify-content: flex-start;
+    padding-bottom: clamp(20px, 3vw, 36px);
+  }
+
+  .ecosystem {
+    margin-top: auto;
+  }
+}
+
+@media (max-width: 1024px) {
+  .showcase,
+  .ecosystem {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .formRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .benefitList span {
+    font-size: 13px;
+  }
+}

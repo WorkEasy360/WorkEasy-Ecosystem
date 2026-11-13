@@ -189,7 +189,7 @@ def _conversation(row: Any, *, show_internal: bool, viewer: Any) -> list[dict[st
         rows = [m for m in rows if not m.internal]
     labels = {
         "platform": "Workeasy360 Support",
-        "partner": row.partner.display_name,
+        "partner": row.partner.display_name if row.partner_id else "",
         "customer": _customer_names(row.partner_id, [row.organization_id]).get(
             row.organization_id, ""
         )
@@ -737,6 +737,56 @@ def _org(ctx: TenantContext) -> UUID:
     if ctx.organization_id is None:
         raise PartnerRecordNotFound("No such organization.")
     return ctx.organization_id
+
+
+#: A customer's ticket to Workeasy360 itself (``support_desk.DIRECT``).
+_DIRECT: Final = "direct"
+
+
+def awaiting_customer(
+    organization_id: UUID, user_id: UUID, *, limit: int = 10
+) -> list[dict[str, Any]]:
+    """Open tickets this person opened for this organization - to its partner or to
+    Workeasy360 - whose latest visible message is the answering side's: support
+    replied and is waiting for them (User Admin Panel bell, 2026-11-11). Internal
+    notes are never counted."""
+    from django.db.models import OuterRef, Subquery
+
+    latest_side = (
+        _messages()
+        .objects.filter(ticket_id=OuterRef("pk"), internal=False)
+        .order_by("-created_at", "-id")
+        .values("side")[:1]
+    )
+    latest_at = (
+        _messages()
+        .objects.filter(ticket_id=OuterRef("pk"), internal=False)
+        .order_by("-created_at", "-id")
+        .values("created_at")[:1]
+    )
+    rows = (
+        _model()
+        .objects.filter(
+            organization_id=organization_id,
+            opened_by_id=user_id,
+            direction__in=(CUSTOMER, _DIRECT),
+            status__in=OPEN_STATUSES,
+        )
+        .annotate(last_side=Subquery(latest_side), last_at=Subquery(latest_at))
+        .exclude(last_side="customer")
+        .exclude(last_side__isnull=True)
+        .order_by("-updated_at")[:limit]
+    )
+    return [
+        {
+            "id": str(row.id),
+            "number": row.number,
+            "subject": row.subject,
+            "status": row.status,
+            "replied_at": row.last_at.isoformat() if row.last_at else None,
+        }
+        for row in rows
+    ]
 
 
 def customer_overview(ctx: TenantContext, *, status: Any = "all") -> dict[str, Any]:

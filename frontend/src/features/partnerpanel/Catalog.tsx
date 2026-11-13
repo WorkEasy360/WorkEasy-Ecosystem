@@ -1,16 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useId, useState } from "react";
+import { useState } from "react";
 import { LoadGate, MoreButton, Status, Table, money, useAction, useLoad, usePaged, when } from "@/features/controlplane/ui";
 import { partnerApi } from "@/lib/api/controlPlane";
 import { panelApi, type ManagedProduct, type PlanRow } from "@/lib/api/partnerPanel";
 import { partnerPriceApi } from "@/lib/api/store";
-import { Modal } from "@/features/controlplane/Modal";
+import { FormDialog } from "@/features/controlplane/Modal";
 import { TextField } from "@/features/controlplane/widgets";
-import { describeError } from "@/features/controlplane/ui";
+import { refuse } from "./workspaceKit";
 import { toMajor, toMinor } from "@/features/controlplane/amounts";
-import { PartnerCommissions } from "@/features/controlplane/PartnerScreens";
+import { StatCard, StatGrid } from "@/features/controlplane/kit";
 import { ProductIcon, productIconKnown } from "@/components/ProductIcon";
 import { NotAvailable, PageHeader, SubNav, UsersNav, monogram, usePanel } from "./PanelKit";
 import styles from "./PartnerPanel.module.css";
@@ -277,53 +277,30 @@ type PlanPrice = PlanRow["prices"][number];
  * range. The server re-checks the range, the grant and the permission. */
 function OwnPriceDialog({ plan, price, onDone, onCancel }: { plan: PlanRow; price: PlanPrice; onDone: (m: string) => void; onCancel: () => void }) {
   const { id } = usePanel();
-  const titleId = useId();
   const range = price.price_range!;
   const [value, setValue] = useState(price.customer_price_minor != null ? toMajor(price.customer_price_minor, plan.currency) : "");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
   const top = range.max_minor != null ? money(range.max_minor, plan.currency) : "no upper limit";
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
+  async function save(): Promise<string> {
     const amount = toMinor(value, plan.currency);
-    if (amount === null) return setError("Enter the price as an amount, like 699 or 699.00.");
+    if (amount === null) refuse("Enter the price as an amount, like 699 or 699.00.");
     if (amount < range.min_minor || (range.max_minor != null && amount > range.max_minor)) {
-      return setError(`The price must be between ${money(range.min_minor, plan.currency)} and ${top}.`);
+      refuse(`The price must be between ${money(range.min_minor, plan.currency)} and ${top}.`);
     }
-    setSaving(true);
-    setError(null);
-    try {
-      await partnerPriceApi.setOwnPrice(id, { plan_version_id: plan.plan_version_id, interval: price.interval, amount_minor: amount });
-      onDone(`Your price for ${plan.plan_name} is now ${money(amount, plan.currency)}. Existing customers keep the price they bought at.`);
-    } catch (err) {
-      setError(describeError(err));
-    } finally {
-      setSaving(false);
-    }
+    await partnerPriceApi.setOwnPrice(id, { plan_version_id: plan.plan_version_id, interval: price.interval, amount_minor: amount });
+    return `Your price for ${plan.plan_name} is now ${money(amount, plan.currency)}. Existing customers keep the price they bought at.`;
   }
   return (
-    <Modal labelledBy={titleId} onClose={onCancel}>
-      <form onSubmit={(e) => void save(e)} noValidate>
-        <h2 id={titleId}>Your price: {plan.plan_name}</h2>
-        <p className={styles.muted}>
-          Allowed by Workeasy360: {money(range.min_minor, plan.currency)} to {top} ({INTERVALS[price.interval] ?? price.interval}). Applies to new sales.
-        </p>
-        {error && (
-          <p className="w360-error-text" role="alert">
-            {error}
-          </p>
-        )}
-        <TextField label={`Customer price (${plan.currency})`} inputMode="decimal" value={value} onChange={setValue} />
-        <div>
-          <button type="submit" className="w360-btn w360-btn-primary" disabled={saving}>
-            Save price
-          </button>{" "}
-          <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
-      </form>
-    </Modal>
+    <FormDialog
+      size="sm"
+      title={`Your price: ${plan.plan_name}`}
+      intro={`Allowed by Workeasy360: ${money(range.min_minor, plan.currency)} to ${top} (${INTERVALS[price.interval] ?? price.interval}). Applies to new sales.`}
+      submitLabel="Save price"
+      onSubmit={save}
+      onDone={(m) => onDone(m ?? "")}
+      onClose={onCancel}
+    >
+      <TextField label={`Customer price (${plan.currency})`} inputMode="decimal" value={value} onChange={setValue} />
+    </FormDialog>
   );
 }
 
@@ -652,7 +629,7 @@ function PaymentsNav() {
       items={[
         { href: `${base}/payments`, label: "Orders", show: can("customer.view") },
         { href: `${base}/payments/commissions`, label: "Commissions", show: can("commission.view") },
-        { href: `${base}/payments/balance`, label: "Balance", show: can("commission.view") },
+        { href: `${base}/payments/balance`, label: "Earnings balance", show: can("commission.view") },
       ]}
     />
   );
@@ -722,11 +699,72 @@ export function Payments() {
   );
 }
 
+/** The commission ledger's three kinds of row (contracts AccrualKind), in words. */
+export const LEDGER_KIND: Record<string, string> = {
+  accrual: "Commission earned",
+  reversal: "Reversed",
+  adjustment: "Adjustment",
+};
+
+/**
+ * Earnings & Payouts → Commissions (2026-11-11 brief, section 12): earnings apart
+ * from any spendable balance - pending, available, reversals and adjustments, and
+ * what was paid out - each the ledger's own figure, then the ledger itself.
+ */
 export function PaymentCommissions() {
+  const { id } = usePanel();
+  const [balance] = useLoad(() => panelApi.balance(id), [id]);
+  const [totals, setTotals] = useState<{ currency: string; earned_minor: number; adjustments_minor: number; balance_minor: number }[]>([]);
+  const paged = usePaged(async (cursor) => {
+    const page = await partnerApi.commissions(id, cursor);
+    if (!cursor) setTotals(page.balances);
+    return page;
+  }, [id]);
+  const b = balance.status === "ready" ? balance.data.balances : [];
   return (
     <div className={styles.page}>
       <PaymentsNav />
-      <PartnerCommissions />
+      <PageHeader
+        title="Commissions"
+        lead="What you earned, what is still held, what you can withdraw and what was paid out. Reversals and adjustments are their own entries."
+      />
+      {balance.status === "ready" && b.length === 0 && (
+        <p className={styles.muted}>Your pending, available, reversed and paid-out earnings appear here once you earn commission.</p>
+      )}
+      {b.map((row) => {
+        const t = totals.find((x) => x.currency === row.currency);
+        return (
+          <StatGrid key={row.currency} label={b.length > 1 ? `Earnings in ${row.currency}` : "Earnings"}>
+            <StatCard icon="clock" tone="orange" label="Pending earnings" value={money(row.pending_minor, row.currency)} note="Still in the holding period" />
+            <StatCard icon="currency" tone="green" label="Available earnings" value={money(row.available_minor, row.currency)} note="Ready to withdraw" />
+            {t && (
+              <StatCard icon="refresh" tone="red" label="Reversals & adjustments" value={money(t.adjustments_minor, row.currency)} note="Already taken off your earnings" />
+            )}
+            <StatCard icon="check" tone="blue" label="Total paid out" value={money(row.paid_minor, row.currency)} note="Transfers Workeasy360 recorded" />
+          </StatGrid>
+        );
+      })}
+      <section className={styles.panel} aria-labelledby="ledger-entries">
+        <h2 id="ledger-entries">Ledger entries</h2>
+        {paged.state === "loading" && <p aria-live="polite">Loading…</p>}
+        {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to commission.</p>}
+        {paged.state === "error" && <p role="alert">Couldn&apos;t load commission.</p>}
+        {paged.state === "ready" && (
+          <>
+            <Table caption="Commission ledger entries" head={["Date", "Entry", "Amount", "Clears"]} numeric={["Amount"]} isEmpty={paged.rows.length === 0} empty="No commission yet.">
+              {paged.rows.map((a) => (
+                <tr key={a.id}>
+                  <th scope="row">{when(a.event_at)}</th>
+                  <td>{LEDGER_KIND[a.kind] ?? a.kind}</td>
+                  <td className={styles.num}>{money(a.amount_minor, a.currency)}</td>
+                  <td>{when(a.clears_at)}</td>
+                </tr>
+              ))}
+            </Table>
+            <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+          </>
+        )}
+      </section>
     </div>
   );
 }
@@ -736,12 +774,21 @@ export function Balance() {
   const [load] = useLoad(() => panelApi.balance(id), [id]);
   return (
     <div className={styles.page}>
-      <PageHeader title="Payments" lead="Your balance is your commission ledger: entries are only ever added, never edited, and the balance is their sum." />
       <PaymentsNav />
+      <PageHeader
+        title="Earnings balance"
+        lead="Your commission ledger by currency: entries are only ever added, never edited, and the balance is their sum. Not your Platform Wallet."
+      />
       <LoadGate load={load} what="your balance">
         {(d) => (
           <>
-            <Table caption="Balance by currency" head={["Currency", "Balance", "Pending (holding)", "Available", "In a payout", "Paid", "Entries"]} isEmpty={d.balances.length === 0} empty="No commission has been recorded yet.">
+            <Table
+              caption="Earnings by currency"
+              head={["Currency", "Commission balance", "Pending earnings", "Available earnings", "In a payout", "Paid out", "Entries"]}
+              numeric={["Commission balance", "Pending earnings", "Available earnings", "In a payout", "Paid out", "Entries"]}
+              isEmpty={d.balances.length === 0}
+              empty="No commission has been recorded yet."
+            >
               {d.balances.map((b) => (
                 <tr key={b.currency}>
                   <th scope="row">{b.currency}</th>
@@ -754,11 +801,11 @@ export function Balance() {
                 </tr>
               ))}
             </Table>
-            <Table caption="Latest ledger entries" head={["When", "Kind", "Amount", "Clears"]} isEmpty={d.entries.length === 0} empty="No entries yet.">
+            <Table caption="Latest ledger entries" head={["Date", "Entry", "Amount", "Clears"]} numeric={["Amount"]} isEmpty={d.entries.length === 0} empty="No entries yet.">
               {d.entries.map((e) => (
                 <tr key={e.id}>
-                  <td>{when(e.event_at)}</td>
-                  <td>{e.kind}</td>
+                  <th scope="row">{when(e.event_at)}</th>
+                  <td>{LEDGER_KIND[e.kind] ?? e.kind}</td>
                   <td className={styles.num}>{money(e.amount_minor, e.currency)}</td>
                   <td>{when(e.clears_at)}</td>
                 </tr>

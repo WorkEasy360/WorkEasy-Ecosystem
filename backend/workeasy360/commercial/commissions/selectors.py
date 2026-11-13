@@ -60,6 +60,7 @@ def accrual_dict(row: Any, *, for_partner: bool) -> dict[str, Any]:
                 if row.organization_id
                 else None,
                 "source_ref": row.source_ref,
+                "earning": row.earning,
                 "rule_code": row.rule.code if row.rule_id else None,
                 "rule_version": row.rule_version,
                 "rate_bp": row.rate_bp,
@@ -185,10 +186,12 @@ def _link_staff_context(rows: list[Any], items: list[dict[str, Any]]) -> None:
     the programme's bookkeeping, and the customer is not the partner's to
     read from its ledger)."""
     from workeasy360.commercial.commissions.models import PayoutLine
+    from workeasy360.commercial.partners.selectors import partner_names
     from workeasy360.platform.organizations.selectors import organization_names
 
     if not rows:
         return
+    partners = partner_names({r.partner_id for r in rows})
     paid_by = {
         line.accrual_id: {"id": str(line.payout_id), "status": line.payout.status}
         for line in PayoutLine.objects.filter(
@@ -198,6 +201,7 @@ def _link_staff_context(rows: list[Any], items: list[dict[str, Any]]) -> None:
     names = organization_names({r.organization_id for r in rows if r.organization_id})
     for row, item in zip(rows, items, strict=True):
         item["payout"] = paid_by.get(row.id)
+        item["partner_name"] = partners.get(row.partner_id, "")
         item["organization_name"] = (
             names.get(row.organization_id, "") if row.organization_id else ""
         )
@@ -260,6 +264,7 @@ def rules_list(*, live_only: bool = True) -> list[dict[str, Any]]:
             "code": r.code,
             "version": r.version,
             "partner_id": str(r.partner_id) if r.partner_id else None,
+            "partner_name": r.partner.display_name if r.partner_id else "",
             "product_code": r.product_code,
             "rate_bp": r.rate_bp,
             "recurring": r.recurring,
@@ -272,6 +277,23 @@ def rules_list(*, live_only: bool = True) -> list[dict[str, Any]]:
         }
         for r in queryset[:200]
     ]
+
+
+def terms() -> dict[str, Any]:
+    """The platform's fixed commission terms, so no screen restates them from memory."""
+    from django.conf import settings
+
+    from workeasy360.commercial.commissions import accrual, domain
+
+    return {
+        "clearance_days": accrual.holdback_days(),
+        "referral_earning_days": accrual.REFERRAL_EARNING_DAYS,
+        "reversal_reasons": sorted(domain.REVERSAL_REASONS),
+        "min_withdrawal_minor": int(settings.W360_PARTNER_MIN_WITHDRAWAL_MINOR),
+        "withdrawal_currency": str(settings.PUBLIC_CATALOG_DEFAULT_CURRENCY),
+        "tds_rate_bp": int(settings.W360_PARTNER_TDS_RATE_BP),
+        "tds_currency": "INR",
+    }
 
 
 def _rule_state(rule: Any, now: datetime) -> str:
@@ -549,8 +571,15 @@ def payouts_page(
     rows = list(queryset[: limit + 1])
     has_more = len(rows) > limit
     rows = rows[:limit]
+    items = [payout_dict(r, for_partner=for_partner) for r in rows]
+    if not for_partner and rows:
+        from workeasy360.commercial.partners.selectors import partner_names
+
+        partners = partner_names({r.partner_id for r in rows})
+        for row, item in zip(rows, items, strict=True):
+            item["partner_name"] = partners.get(row.partner_id, "")
     return Page(
-        items=[payout_dict(r, for_partner=for_partner) for r in rows],
+        items=items,
         next_cursor=encode_cursor(rows[-1].created_at, rows[-1].id) if has_more else None,
         has_more=has_more,
     )
@@ -660,6 +689,21 @@ def referral_activity(partner_id: UUID, start: datetime, end: datetime) -> dict[
             "conversions": totals["converted"] or 0,
         },
     }
+
+
+def renewal_count(partner_id: UUID, start: datetime, end: datetime) -> int:
+    """How many paid renewals of this partner's customers earned it something
+    inside ``[start, end)`` (ADR-063, the dashboard's "customer renewals"): the
+    accruals whose source is a renewal invoice line, not the first sale."""
+    from workeasy360.commercial.commissions.models import CommissionAccrual
+
+    return CommissionAccrual.objects.filter(
+        partner_id=partner_id,
+        kind=AccrualKind.ACCRUAL.value,
+        source_ref__startswith="payments.invoice_line:",
+        event_at__gte=start,
+        event_at__lt=end,
+    ).count()
 
 
 def referral_earnings(

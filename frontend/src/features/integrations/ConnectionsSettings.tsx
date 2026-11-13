@@ -14,6 +14,7 @@ import {
   setSubscriptions,
 } from "@/lib/api/integrations";
 import type { CatalogEvent, Connection, ConnectionStatus } from "@/lib/api/types";
+import { FormPopup } from "@/features/controlplane/Modal";
 import { SecretReveal } from "./SecretReveal";
 import styles from "./Integrations.module.css";
 
@@ -41,7 +42,8 @@ export function describeError(err: unknown): string {
 
 /**
  * Settings → Integrations (Task 79): webhook connections, their event
- * subscriptions, test events and secret rotation. Plain forms, no canvas.
+ * subscriptions, test events and secret rotation. Plain forms, no canvas;
+ * adding a webhook and choosing its events happen in popups (2026-11-05).
  */
 export function ConnectionsSettings({ orgSlug }: { orgSlug: string }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
@@ -95,14 +97,15 @@ export function ConnectionsSettings({ orgSlug }: { orgSlug: string }) {
         </p>
       )}
 
-      <CreateConnectionForm
-        onCreate={(name, url) =>
-          act(async () => {
-            const created = await createWebhookConnection(orgSlug, name, url);
+      <div className={styles.row}>
+        <CreateConnectionPopup
+          onCreate={(name, url) => createWebhookConnection(orgSlug, name, url)}
+          onCreated={(created) => {
             setRevealed({ label: created.connection.display_name, secret: created.secret });
-          }, "Connection created as a draft. Send a test event, then activate it.")
-        }
-      />
+            refresh();
+          }}
+        />
+      </div>
 
       <p>
         <Link href={`/o/${orgSlug}/settings/webhooks`}>View the delivery log</Link>
@@ -128,21 +131,53 @@ export function ConnectionsSettings({ orgSlug }: { orgSlug: string }) {
   );
 }
 
-function CreateConnectionForm({ onCreate }: { onCreate: (name: string, url: string) => void }) {
+type WebhookCreated = Awaited<ReturnType<typeof createWebhookConnection>>;
+
+/** This area's own wording of a failure, for a popup (whose error line reads
+ * an ApiError's `detail`), so the words stay the same as on the page. */
+export function popupError(err: unknown): ApiError {
+  return new ApiError(400, { detail: describeError(err) });
+}
+
+/** "+ Add a webhook" in a popup (2026-11-05, every form in a popup). The new
+ * secret is shown on the page once the popup has closed, so focus lands on it. */
+function CreateConnectionPopup({
+  onCreate,
+  onCreated,
+}: {
+  onCreate: (name: string, url: string) => Promise<WebhookCreated>;
+  onCreated: (created: WebhookCreated) => void;
+}) {
   const nameId = useId();
   const urlId = useId();
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const created = useRef<WebhookCreated | null>(null);
 
   return (
-    <form
-      className={`w360-card ${styles.card} ${styles.form}`}
-      onSubmit={(e) => {
-        e.preventDefault();
-        onCreate(name.trim(), url.trim());
+    <FormPopup
+      label="+ Add a webhook"
+      title="Add a webhook"
+      submitLabel="Create connection"
+      canSubmit={!!name.trim() && !!url.trim()}
+      onOpen={() => {
+        setName("");
+        setUrl("");
+        created.current = null;
+      }}
+      onSubmit={async () => {
+        try {
+          created.current = await onCreate(name.trim(), url.trim());
+        } catch (err) {
+          throw popupError(err);
+        }
+        return "Connection created as a draft. Send a test event, then activate it.";
+      }}
+      onDone={() => {
+        if (created.current) onCreated(created.current);
+        created.current = null;
       }}
     >
-      <h2 className={styles.cardTitle}>Add a webhook</h2>
       <div className={styles.field}>
         <label className="w360-label" htmlFor={nameId}>
           Name
@@ -164,12 +199,7 @@ function CreateConnectionForm({ onCreate }: { onCreate: (name: string, url: stri
           onChange={(e) => setUrl(e.target.value)}
         />
       </div>
-      <div>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={!name.trim() || !url.trim()}>
-          Create connection
-        </button>
-      </div>
-    </form>
+    </FormPopup>
   );
 }
 
@@ -186,7 +216,6 @@ function ConnectionCard({
   onAct: (action: () => Promise<void>, success: string) => void;
   onRotated: (secret: string) => void;
 }) {
-  const [editing, setEditing] = useState(false);
   // A second rotation ends the first one's overlap at once (the backend keeps
   // one previous secret), so a double click would revoke the secret the
   // receiver still uses. The ref guards the click that lands before React
@@ -238,9 +267,13 @@ function ConnectionCard({
           >
             Send test event
           </button>
-          <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setEditing((v) => !v)} aria-expanded={editing}>
-            Events
-          </button>
+          <SubscriptionPopup
+            orgSlug={orgSlug}
+            connectionId={id}
+            connectionName={connection.display_name}
+            catalog={catalog}
+            onSave={(filters) => setSubscriptions(orgSlug, id, filters).then()}
+          />
           <button
             type="button"
             className="w360-btn w360-btn-secondary"
@@ -272,81 +305,85 @@ function ConnectionCard({
           </button>
         </div>
       )}
-      {editing && !disabled && (
-        <SubscriptionEditor
-          orgSlug={orgSlug}
-          connectionId={id}
-          catalog={catalog}
-          onSave={(filters) =>
-            onAct(() => setSubscriptions(orgSlug, id, filters).then(), "Subscriptions saved.")
-          }
-        />
-      )}
     </section>
   );
 }
 
-function SubscriptionEditor({
+/** Which events go to a connection, chosen in a popup (2026-11-05). The saved
+ * choice is read again each time it opens. */
+function SubscriptionPopup({
   orgSlug,
   connectionId,
+  connectionName,
   catalog,
   onSave,
 }: {
   orgSlug: string;
   connectionId: string;
+  connectionName: string;
   catalog: CatalogEvent[];
-  onSave: (filters: string[]) => void;
+  onSave: (filters: string[]) => Promise<void>;
 }) {
   const [selected, setSelected] = useState<Set<string> | null>(null);
+  const opening = useRef(0);
 
-  useEffect(() => {
+  function load() {
+    const turn = ++opening.current;
+    setSelected(null);
     getSubscriptions(orgSlug, connectionId)
-      .then(({ event_filters }) => setSelected(new Set(event_filters)))
-      .catch(() => setSelected(new Set()));
-  }, [orgSlug, connectionId]);
-
-  if (selected === null) return <p aria-live="polite">Loading subscriptions…</p>;
-  if (catalog.length === 0) {
-    return (
-      <p className={styles.muted}>
-        None of your organization&apos;s products publish events yet.
-      </p>
-    );
+      .then(({ event_filters }) => {
+        if (turn === opening.current) setSelected(new Set(event_filters));
+      })
+      .catch(() => {
+        if (turn === opening.current) setSelected(new Set());
+      });
   }
 
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSave([...selected]);
+    <FormPopup
+      label="Events"
+      buttonClassName="w360-btn w360-btn-secondary"
+      title={`Events for ${connectionName}`}
+      columns={1}
+      submitLabel="Save events"
+      canSubmit={selected !== null && catalog.length > 0}
+      onOpen={load}
+      onSubmit={async () => {
+        try {
+          await onSave([...(selected ?? [])]);
+        } catch (err) {
+          throw popupError(err);
+        }
+        return "Subscriptions saved.";
       }}
     >
-      <fieldset className={styles.fieldset}>
-        <legend>Send these events to this connection</legend>
-        {catalog.map((event) => (
-          <label key={event.ref} className={styles.checkbox}>
-            <input
-              type="checkbox"
-              checked={selected.has(event.ref)}
-              onChange={(e) => {
-                const next = new Set(selected);
-                if (e.target.checked) next.add(event.ref);
-                else next.delete(event.ref);
-                setSelected(next);
-              }}
-            />
-            <span>
-              <code>{event.ref}</code>
-              {event.description && <span className={styles.muted}> — {event.description}</span>}
-            </span>
-          </label>
-        ))}
-      </fieldset>
-      <div className={styles.row}>
-        <button type="submit" className="w360-btn w360-btn-primary">
-          Save events
-        </button>
-      </div>
-    </form>
+      {selected === null ? (
+        <p aria-live="polite">Loading subscriptions…</p>
+      ) : catalog.length === 0 ? (
+        <p className={styles.muted}>None of your organization&apos;s products publish events yet.</p>
+      ) : (
+        <fieldset className={styles.fieldset}>
+          <legend>Send these events to this connection</legend>
+          {catalog.map((event) => (
+            <label key={event.ref} className={styles.checkbox}>
+              <input
+                type="checkbox"
+                checked={selected.has(event.ref)}
+                onChange={(e) => {
+                  const next = new Set(selected);
+                  if (e.target.checked) next.add(event.ref);
+                  else next.delete(event.ref);
+                  setSelected(next);
+                }}
+              />
+              <span>
+                <code>{event.ref}</code>
+                {event.description && <span className={styles.muted}> — {event.description}</span>}
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+    </FormPopup>
   );
 }

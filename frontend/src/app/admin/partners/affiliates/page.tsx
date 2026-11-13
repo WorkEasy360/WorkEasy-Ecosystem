@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
-import { allPartnersHref } from "@/features/controlplane/oldPartnerRoutes";
+import { categoryHref } from "@/features/controlplane/partnerCategories";
 
-/** Old address: Affiliates is now All Partners filtered on the Affiliate type (ADR-048). */
+/** Old address: Affiliates is now Partners → Affiliate (ADR-062), keeping the filters it understands. */
 export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  redirect(allPartnersHref(await searchParams, "affiliate"));
+  redirect(categoryHref("affiliate", await searchParams));
 }

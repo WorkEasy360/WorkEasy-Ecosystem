@@ -10,6 +10,7 @@ import {
   type FeatureRow,
   type PlanRow,
 } from "@/lib/api/adminConsole";
+import { usagePricingApi } from "@/lib/api/adminPanel";
 import { can, useAdmin } from "./ControlShell";
 import { LoadGate, money, useAction, useLoad, type Load } from "./ui";
 import { toMajor, toMinor } from "./amounts";
@@ -35,6 +36,7 @@ import {
   useStepRunner,
   type StepDef,
 } from "./widgets";
+import { DialogHead, Modal, dialog } from "./Modal";
 import cp from "./ControlPlane.module.css";
 import styles from "./AdminConsole.module.css";
 
@@ -80,6 +82,11 @@ interface Form {
   bookId: string;
   features: Record<string, FeatureValue>;
   inclusions: Record<string, Inclusion>;
+  /** 2026-11-10: a package's renewal and change rules and included usage, in the
+   * New Plan form itself (they were only in the Rules dialog after creation). */
+  renewalRule: string;
+  changeRule: string;
+  includedUsage: Record<string, string>;
 }
 
 export interface BuilderOutcome {
@@ -113,6 +120,9 @@ function initialForm(overview: CatalogOverview, existing?: PlanRow | BundleRow):
     bookId: book?.id ?? "",
     features: {},
     inclusions: {},
+    renewalRule: "auto_renew",
+    changeRule: "any",
+    includedUsage: {},
   };
   if (!existing) return form;
 
@@ -222,6 +232,9 @@ function validate(form: Form, x: Checks): Record<string, string> {
       const max = wholeNumber(form.maxSeats);
       if (max === null || max < seats) e.maxSeats = "Maximum seats must be a whole number no lower than the included seats.";
     }
+    for (const [meter, text] of Object.entries(form.includedUsage)) {
+      if (text.trim() !== "" && wholeNumber(text) === null) e[`usage:${meter}`] = "Included usage must be a whole number.";
+    }
     for (const feature of x.features) {
       if (feature.kind !== "quota") continue;
       const value = String(featureValue(form, feature)).trim();
@@ -290,12 +303,8 @@ export function PlanBuilder({
   const runner = useStepRunner();
   const { act, busy, feedback } = useAction();
   const headingId = useId();
-  const heading = useRef<HTMLHeadingElement | null>(null);
   const summary = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    heading.current?.focus();
-  }, []);
   useEffect(() => {
     if (Object.keys(errors).length > 0) summary.current?.focus();
   }, [errors]);
@@ -344,6 +353,30 @@ export function PlanBuilder({
                   addon_for_product_id: kind === "addon" ? f.addonForId : undefined,
                 });
           created.current.id = row.id;
+        },
+      });
+    }
+
+    const rulesChanged =
+      f.renewalRule !== "auto_renew" || f.changeRule !== "any" || Object.values(f.includedUsage).some((text) => (wholeNumber(text) ?? 0) > 0);
+    if (mode === "create" && kind !== "bundle" && rulesChanged) {
+      // Renewal and change rules and included usage (2026-11-10): applied right
+      // after the plan exists, with the same command as the Rules dialog. Only
+      // when something differs from the defaults the plan already starts with.
+      defs.push({
+        key: "rules",
+        label: "Save its renewal rule, change rule and included usage",
+        run: async () => {
+          const included_usage: Record<string, number> = {};
+          for (const [meter, text] of Object.entries(f.includedUsage)) {
+            const units = wholeNumber(text);
+            if (units) included_usage[meter] = units;
+          }
+          await usagePricingApi.setPlanRules(created.current.id as string, {
+            renewal_rule: f.renewalRule,
+            change_rule: f.changeRule,
+            included_usage,
+          });
         },
       });
     }
@@ -460,214 +493,238 @@ export function PlanBuilder({
     { value: "paid" as const, label: "Paid" },
   ];
 
+  const close = () => onClose({ saved: false, changed: runner.started });
+  const productField = (
+    <SelectField
+      label="Product"
+      value={form.productId}
+      onChange={(v) => setForm((f) => ({ ...f, productId: v, features: {} }))}
+      options={[{ value: "", label: "Choose a product" }, ...overview.products.map((p) => ({ value: p.id, label: p.name }))]}
+      error={errors.productId}
+    />
+  );
+
+  // A popup over the list (2026-11-05): the fields in two aligned columns, the
+  // progress of a save under them, Cancel and the main button at the bottom.
   return (
-    <section className={`w360-card ${cp.card}`} aria-labelledby={headingId}>
-      <form className={styles.builder} onSubmit={submit} noValidate>
-        <h3 id={headingId} ref={heading} tabIndex={-1} className={styles.panelTitle}>
-          {mode === "create" ? `New ${noun}` : `Publish a new version of “${title}”`}
-        </h3>
-        {mode === "version" && (
-          <p className={cp.muted}>
-            The new version applies to new sales. Existing subscriptions keep the version they bought.{" "}
-            {freeTrial ? "This is a free trial, so its prices are published at zero." : ""}
-          </p>
-        )}
-        <ErrorSummary errors={Object.values(errors)} focusRef={summary} />
+    <Modal labelledBy={headingId} onClose={close} size="lg">
+      <form className={dialog.form} onSubmit={submit} noValidate>
+        <DialogHead titleId={headingId} title={mode === "create" ? `New ${noun}` : `Publish a new version of “${title}”`} onClose={close} />
+        <div className={dialog.body}>
+          {mode === "version" && (
+            <p className={dialog.intro}>
+              The new version applies to new sales. Existing subscriptions keep the version they bought.{" "}
+              {freeTrial ? "This is a free trial, so its prices are published at zero." : ""}
+            </p>
+          )}
+          <ErrorSummary errors={Object.values(errors)} focusRef={summary} />
 
-        {mode === "create" && (
-          <>
-            <TextField label="Title" value={form.name} onChange={(v) => set("name", v)} maxLength={128} error={errors.name} />
-            <TextField
-              label="Caption (one line)"
-              value={form.caption}
-              onChange={(v) => set("caption", v.replace(/[\r\n]+/g, " "))}
-              maxLength={160}
-              hint="A short line shown under the title."
-            />
-            <DescriptionField value={form.description} onChange={(v) => set("description", v)} />
-            <Segmented
-              legend="Type"
-              options={typeOptions}
-              value={form.billingType}
-              onChange={(v) => set("billingType", v)}
-              hint={kind === "addon" ? "An add-on extends a subscription that already exists, so it can't be a free trial." : undefined}
-            />
-            <Segmented
-              legend="Status"
-              options={[
-                { value: "draft", label: "Draft" },
-                { value: "private", label: "Private" },
-                { value: "public", label: "Public" },
-                { value: "deactivated", label: "Deactivated" },
-              ]}
-              value={form.status}
-              onChange={(v) => set("status", v)}
-              hint={STATUS_HINT[form.status]}
-            />
-            <TextField
-              label="Code"
-              value={form.code}
-              onChange={(v) => set("code", v.toLowerCase())}
-              maxLength={63}
-              autoComplete="off"
-              spellCheck={false}
-              hint="A permanent identifier: lowercase letters, digits, “-” or “_”. It can't be changed later."
-              error={errors.code}
-            />
-          </>
-        )}
+          <div className={dialog.grid}>
+            {mode === "create" && (
+              <>
+                <TextField label="Title" value={form.name} onChange={(v) => set("name", v)} maxLength={128} error={errors.name} />
+                <TextField
+                  label="Code"
+                  value={form.code}
+                  onChange={(v) => set("code", v.toLowerCase())}
+                  maxLength={63}
+                  autoComplete="off"
+                  spellCheck={false}
+                  hint="A permanent identifier: lowercase letters, digits, “-” or “_”. It can't be changed later."
+                  error={errors.code}
+                />
+                <div className={dialog.span}>
+                  <TextField
+                    label="Caption (one line)"
+                    value={form.caption}
+                    onChange={(v) => set("caption", v.replace(/[\r\n]+/g, " "))}
+                    maxLength={160}
+                    hint="A short line shown under the title."
+                  />
+                </div>
+                <div className={dialog.span}>
+                  <DescriptionField value={form.description} onChange={(v) => set("description", v)} />
+                </div>
+                <Segmented
+                  legend="Type"
+                  options={typeOptions}
+                  value={form.billingType}
+                  onChange={(v) => set("billingType", v)}
+                  hint={kind === "addon" ? "An add-on extends a subscription that already exists, so it can't be a free trial." : undefined}
+                />
+                <Segmented
+                  legend="Status"
+                  options={[
+                    { value: "draft", label: "Draft" },
+                    { value: "private", label: "Private" },
+                    { value: "public", label: "Public" },
+                    { value: "deactivated", label: "Deactivated" },
+                  ]}
+                  value={form.status}
+                  onChange={(v) => set("status", v)}
+                  hint={STATUS_HINT[form.status]}
+                />
+              </>
+            )}
 
-        {kind !== "bundle" && mode === "create" && (
-          <div className={styles.twoCol}>
-            <SelectField
-              label="Product"
-              value={form.productId}
-              onChange={(v) => setForm((f) => ({ ...f, productId: v, features: {} }))}
-              options={[{ value: "", label: "Choose a product" }, ...overview.products.map((p) => ({ value: p.id, label: p.name }))]}
-              error={errors.productId}
-            />
-            {kind === "addon" && (
+            {kind !== "bundle" &&
+              mode === "create" &&
+              (kind === "addon" ? (
+                <>
+                  {productField}
+                  <SelectField
+                    label="Add-on for"
+                    value={form.addonForId}
+                    onChange={(v) => set("addonForId", v)}
+                    options={[
+                      { value: "", label: "Choose the product it extends" },
+                      ...overview.products.filter((p) => p.id !== form.productId).map((p) => ({ value: p.id, label: p.name })),
+                    ]}
+                    error={errors.addonForId}
+                  />
+                </>
+              ) : (
+                <div className={dialog.span}>{productField}</div>
+              ))}
+
+            {mode === "version" && <p className={dialog.span}>Type: {freeTrial ? "Free Trial" : "Paid"}</p>}
+
+            {kind !== "bundle" ? (
+              <>
+                <TextField
+                  label="Included seats"
+                  value={form.includedSeats}
+                  onChange={(v) => set("includedSeats", v)}
+                  inputMode="numeric"
+                  error={errors.includedSeats}
+                />
+                <TextField
+                  label={freeTrial ? "Trial days (required for a free trial)" : "Trial days (optional)"}
+                  value={form.trialDays}
+                  onChange={(v) => set("trialDays", v)}
+                  inputMode="numeric"
+                  error={errors.trialDays}
+                />
+                <label className={`${styles.check} ${dialog.span}`}>
+                  <input type="checkbox" checked={form.hardLimit} onChange={(e) => set("hardLimit", e.target.checked)} />
+                  <span>Hard limit on inclusions (customers can&apos;t go beyond the included seats)</span>
+                </label>
+                {!form.hardLimit && (
+                  <TextField
+                    label="Maximum seats (leave empty for unlimited)"
+                    value={form.maxSeats}
+                    onChange={(v) => set("maxSeats", v)}
+                    inputMode="numeric"
+                    error={errors.maxSeats}
+                  />
+                )}
+                <div className={dialog.span}>
+                  <FeaturesEditor
+                    productChosen={Boolean(productId)}
+                    load={featuresLoad}
+                    form={form}
+                    errors={errors}
+                    onChange={(key, value) => setForm((f) => ({ ...f, features: { ...f.features, [key]: value } }))}
+                  />
+                </div>
+                {mode === "create" && (
+                  <div className={dialog.span}>
+                    <RulesEditor
+                      form={form}
+                      errors={errors}
+                      onRenewal={(v) => set("renewalRule", v)}
+                      onChange={(v) => set("changeRule", v)}
+                      onUsage={(meter, v) => setForm((f) => ({ ...f, includedUsage: { ...f.includedUsage, [meter]: v } }))}
+                    />
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                {freeTrial && (
+                  <TextField
+                    label="Trial days (required for a free trial)"
+                    value={form.trialDays}
+                    onChange={(v) => set("trialDays", v)}
+                    inputMode="numeric"
+                    error={errors.trialDays}
+                  />
+                )}
+                <div className={dialog.span}>
+                  <Inclusions
+                    overview={overview}
+                    cycles={checkedCycles(form, intervals)}
+                    value={form.inclusions}
+                    onChange={(v) => set("inclusions", v)}
+                    error={errors.inclusions}
+                  />
+                </div>
+              </>
+            )}
+
+            <fieldset className={`${styles.fieldset} ${dialog.span}`}>
+              <legend className="w360-label">Billing cycles</legend>
+              <div className={styles.cycles}>
+                {intervals.map((interval) => (
+                  <CycleRow
+                    key={interval}
+                    interval={interval}
+                    checked={Boolean(form.cycles[interval])}
+                    onCheck={(on) => setForm((f) => ({ ...f, cycles: { ...f.cycles, [interval]: on } }))}
+                    price={form.prices[interval] ?? ""}
+                    onPrice={(v) => setForm((f) => ({ ...f, prices: { ...f.prices, [interval]: v } }))}
+                    currency={currency}
+                    freeTrial={freeTrial}
+                    error={errors[`price:${interval}`]}
+                  />
+                ))}
+              </div>
+              {!publishes && <p className="w360-hint">A draft publishes no prices; add them when you publish a version.</p>}
+              {errors.cycles && <p className="w360-error-text">{errors.cycles}</p>}
+            </fieldset>
+
+            {books.length === 0 ? (
+              <p className={dialog.span}>
+                There is no direct price book yet, so no price can be published.{" "}
+                <Link href="/admin/pricing">Create one in Currency &amp; pricing</Link>.
+              </p>
+            ) : (
               <SelectField
-                label="Add-on for"
-                value={form.addonForId}
-                onChange={(v) => set("addonForId", v)}
+                label="Price book"
+                value={form.bookId}
+                onChange={(v) => set("bookId", v)}
                 options={[
-                  { value: "", label: "Choose the product it extends" },
-                  ...overview.products.filter((p) => p.id !== form.productId).map((p) => ({ value: p.id, label: p.name })),
+                  ...(book ? [] : [{ value: "", label: "Choose a price book" }]),
+                  ...books.map((b) => ({
+                    value: b.id,
+                    label: `${b.name} (${b.currency}${b.region ? `, ${b.region}` : ""})${b.is_active ? "" : " - inactive"}`,
+                  })),
                 ]}
-                error={errors.addonForId}
+                hint="Prices are published in this book's currency."
+                error={errors.bookId}
               />
             )}
+            {errors.canPrice && <p className={`w360-error-text ${dialog.span}`}>{errors.canPrice}</p>}
           </div>
-        )}
 
-        {mode === "version" && <p>Type: {freeTrial ? "Free Trial" : "Paid"}</p>}
-
-        {kind !== "bundle" ? (
-          <>
-            <div className={styles.twoCol}>
-              <TextField
-                label="Included seats"
-                value={form.includedSeats}
-                onChange={(v) => set("includedSeats", v)}
-                inputMode="numeric"
-                error={errors.includedSeats}
-              />
-              <TextField
-                label={freeTrial ? "Trial days (required for a free trial)" : "Trial days (optional)"}
-                value={form.trialDays}
-                onChange={(v) => set("trialDays", v)}
-                inputMode="numeric"
-                error={errors.trialDays}
-              />
-            </div>
-            <label className={styles.check}>
-              <input type="checkbox" checked={form.hardLimit} onChange={(e) => set("hardLimit", e.target.checked)} />
-              <span>Hard limit on inclusions (customers can&apos;t go beyond the included seats)</span>
-            </label>
-            {!form.hardLimit && (
-              <TextField
-                label="Maximum seats (leave empty for unlimited)"
-                value={form.maxSeats}
-                onChange={(v) => set("maxSeats", v)}
-                inputMode="numeric"
-                error={errors.maxSeats}
-              />
-            )}
-            <FeaturesEditor
-              productChosen={Boolean(productId)}
-              load={featuresLoad}
-              form={form}
-              errors={errors}
-              onChange={(key, value) => setForm((f) => ({ ...f, features: { ...f.features, [key]: value } }))}
-            />
-          </>
-        ) : (
-          <>
-            {freeTrial && (
-              <TextField
-                label="Trial days (required for a free trial)"
-                value={form.trialDays}
-                onChange={(v) => set("trialDays", v)}
-                inputMode="numeric"
-                error={errors.trialDays}
-              />
-            )}
-            <Inclusions
-              overview={overview}
-              cycles={checkedCycles(form, intervals)}
-              value={form.inclusions}
-              onChange={(v) => set("inclusions", v)}
-              error={errors.inclusions}
-            />
-          </>
-        )}
-
-        <fieldset className={styles.fieldset}>
-          <legend className="w360-label">Billing cycles</legend>
-          <div className={styles.cycles}>
-            {intervals.map((interval) => (
-              <CycleRow
-                key={interval}
-                interval={interval}
-                checked={Boolean(form.cycles[interval])}
-                onCheck={(on) => setForm((f) => ({ ...f, cycles: { ...f.cycles, [interval]: on } }))}
-                price={form.prices[interval] ?? ""}
-                onPrice={(v) => setForm((f) => ({ ...f, prices: { ...f.prices, [interval]: v } }))}
-                currency={currency}
-                freeTrial={freeTrial}
-                error={errors[`price:${interval}`]}
-              />
-            ))}
-          </div>
-          {!publishes && <p className="w360-hint">A draft publishes no prices; add them when you publish a version.</p>}
-          {errors.cycles && <p className="w360-error-text">{errors.cycles}</p>}
-        </fieldset>
-
-        {books.length === 0 ? (
-          <p>
-            There is no direct price book yet, so no price can be published.{" "}
-            <Link href="/admin/pricing">Create one in Currency &amp; pricing</Link>.
-          </p>
-        ) : (
-          <SelectField
-            label="Price book"
-            value={form.bookId}
-            onChange={(v) => set("bookId", v)}
-            options={[
-              ...(book ? [] : [{ value: "", label: "Choose a price book" }]),
-              ...books.map((b) => ({
-                value: b.id,
-                label: `${b.name} (${b.currency}${b.region ? `, ${b.region}` : ""})${b.is_active ? "" : " - inactive"}`,
-              })),
-            ]}
-            hint="Prices are published in this book's currency."
-            error={errors.bookId}
-          />
-        )}
-        {errors.canPrice && <p className="w360-error-text">{errors.canPrice}</p>}
-
-        <div className={styles.actions}>
+          {runner.started && (
+            <p className="w360-hint">
+              Steps already done are not repeated. Cancel keeps what was already created; you can finish it from the list.
+            </p>
+          )}
+          <ProgressList steps={runner.steps} title="Saving" />
+          {feedback}
+        </div>
+        <div className={dialog.foot}>
+          <button type="button" className="w360-btn w360-btn-secondary" onClick={close}>
+            Cancel
+          </button>
           <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || runner.running}>
             {runner.started ? "Resume saving" : mode === "create" ? SUBMIT_LABEL[kind] : "Publish version"}
           </button>
-          <button
-            type="button"
-            className="w360-btn w360-btn-secondary"
-            onClick={() => onClose({ saved: false, changed: runner.started })}
-          >
-            Cancel
-          </button>
         </div>
-        {runner.started && (
-          <p className="w360-hint">
-            Steps already done are not repeated. Cancel keeps what was already created; you can finish it from the list.
-          </p>
-        )}
       </form>
-      <ProgressList steps={runner.steps} title="Saving" />
-      {feedback}
-    </section>
+    </Modal>
   );
 }
 
@@ -875,3 +932,69 @@ function Inclusions({
     </fieldset>
   );
 }
+
+const RENEWAL_CHOICES = [
+  { value: "auto_renew", label: "Renews automatically" },
+  { value: "manual", label: "Renewed by hand" },
+  { value: "none", label: "Does not renew" },
+];
+
+const CHANGE_CHOICES = [
+  { value: "any", label: "Upgrade or downgrade" },
+  { value: "upgrade_only", label: "Upgrade only" },
+  { value: "none", label: "No plan changes" },
+];
+
+/** Renewal, plan changes and the usage included each month, for a new package. The
+ * meters are the usage-pricing meters; a blank means none is included. Partner
+ * purchase rates are not per plan: they are set per product and partner type in
+ * Commercial rules, so this says where. */
+function RulesEditor({
+  form,
+  errors,
+  onRenewal,
+  onChange,
+  onUsage,
+}: {
+  form: Form;
+  errors: Record<string, string>;
+  onRenewal: (value: string) => void;
+  onChange: (value: string) => void;
+  onUsage: (meter: string, value: string) => void;
+}) {
+  const [meters] = useLoad(() => usagePricingApi.rates(), []);
+  return (
+    <fieldset className={styles.fieldset}>
+      <legend className="w360-label">Renewal, plan changes and included usage</legend>
+      <div className={dialog.grid}>
+        <SelectField label="Renewal rule" value={form.renewalRule} onChange={onRenewal} options={RENEWAL_CHOICES} />
+        <SelectField label="Upgrade / downgrade rule" value={form.changeRule} onChange={onChange} options={CHANGE_CHOICES} />
+      </div>
+      {meters.status === "ready" ? (
+        <div className={dialog.grid}>
+          {meters.data.meters.map((m) => (
+            <TextField
+              key={m.meter}
+              label={`Included ${m.label.toLowerCase()} each month`}
+              value={form.includedUsage[m.meter] ?? ""}
+              onChange={(v) => onUsage(m.meter, v)}
+              inputMode="numeric"
+              hint="Leave blank for none."
+              error={errors[`usage:${m.meter}`]}
+            />
+          ))}
+        </div>
+      ) : (
+        // Not an error for this form: usage can be set later with the plan's Rules.
+        <p className={cp.muted}>
+          {meters.status === "loading" ? "Loading the usage meters…" : "Included usage can be set after creating the plan, from its Rules."}
+        </p>
+      )}
+      <p className={cp.muted}>
+        Partner purchase rates are set per product and partner type, not per plan: see{" "}
+        <Link href="/admin/store/commercial-rules">Commercial rules</Link>.
+      </p>
+    </fieldset>
+  );
+}
+

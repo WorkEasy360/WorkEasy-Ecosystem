@@ -301,6 +301,81 @@ ACCOUNT_PASSWORD_CHANGED: Final = register(
     )
 )
 
+# --- ADR-066: changing the sign-in email ----------------------------------
+#
+# The confirmation link is a one-time credential, so it is sealed like the
+# verification and reset links. The other two carry no link worth stealing.
+
+ACCOUNT_CHANGE_EMAIL: Final = register(
+    Template(
+        key="platform.account.change_email",
+        subject="Confirm your new Workeasy360 sign-in email",
+        body_text=(
+            "Hello {name},\n\n"
+            "You asked to sign in to Workeasy360 with this address from now on.\n\n"
+            "Confirm it: {confirm_url}\n\n"
+            "The link expires in {expires_in} and can be used once. Until it is "
+            "used, you keep signing in with your current address. If you did not "
+            "ask for this, ignore this email - nothing changes."
+        ),
+        required=("name", "confirm_url", "expires_in"),
+        description=(
+            "Sent to the new address when a signed-in person asks to change "
+            "their sign-in email: the one-time link that confirms it."
+        ),
+        samples=(
+            ("name", "Asha"),
+            ("confirm_url", "https://app.example.com/confirm-email#token=example"),
+            ("expires_in", "24 hours"),
+        ),
+    )
+)
+
+ACCOUNT_CHANGE_EMAIL_IN_USE: Final = register(
+    Template(
+        key="platform.account.change_email_in_use",
+        subject="This address already has a Workeasy360 account",
+        body_text=(
+            "Someone asked to use this address as the sign-in email of another "
+            "Workeasy360 account. It already has an account, so nothing was "
+            "changed.\n\n"
+            "Sign in: {sign_in_url}\n"
+            "Forgotten your password? Reset it: {reset_url}"
+        ),
+        required=("sign_in_url", "reset_url"),
+        description=(
+            "Sent to an address that already has an account when another "
+            "account asks to change its sign-in email to it. The person who "
+            "asked is told nothing different, so the request reveals nothing."
+        ),
+        samples=(
+            ("sign_in_url", "https://app.example.com/login"),
+            ("reset_url", "https://app.example.com/forgot-password"),
+        ),
+    )
+)
+
+ACCOUNT_EMAIL_CHANGED: Final = register(
+    Template(
+        key="platform.account.email_changed",
+        subject="Your Workeasy360 sign-in email was changed",
+        body_text=(
+            "The sign-in email of your Workeasy360 account was changed to "
+            "{new_email_hint}. From now on, sign in with the new address.\n\n"
+            "If this was not you, contact {support_email} now."
+        ),
+        required=("new_email_hint", "support_email"),
+        description=(
+            "Sent to the previous address once a change of sign-in email is "
+            "confirmed. Names the new address only partly."
+        ),
+        samples=(
+            ("new_email_hint", "a***@example.com"),
+            ("support_email", "support@example.com"),
+        ),
+    )
+)
+
 PARTNER_SUPPORT_REQUEST: Final = register(
     Template(
         key="platform.partner.support_request",

@@ -48,7 +48,7 @@ export function LivePreview({
   return (
     <div ref={ref} className={styles.stack} role="group" aria-labelledby={titleId}>
       <p id={titleId} className={styles.muted}>
-        Preview - the layout and every security prompt stay Workeasy360&apos;s.
+        Preview - the layout and every security prompt stay WorkEasy360&apos;s.
         {safeColor(accent) ? ` Accent ${accent}.` : " Default accent."}
       </p>
       <div className={local.split}>
@@ -190,7 +190,7 @@ function PreviewPane({ mode, data }: { mode: PreviewMode; data: PreviewData }) {
           <strong>{short}</strong>
         </div>
         {welcome ? <p>{welcome}</p> : <p className={css.previewMute}>No welcome message is set.</p>}
-        <p className={css.previewMute}>The dashboard, its navigation and every security prompt stay Workeasy360&apos;s.</p>
+        <p className={css.previewMute}>The dashboard, its navigation and every security prompt stay WorkEasy360&apos;s.</p>
         <PreviewFooter data={data} />
       </section>
     );
@@ -253,7 +253,7 @@ export function PortalPreview({ data, only }: { data: PreviewData; only?: Previe
   return (
     <div ref={ref} className={styles.stack} role="group" aria-labelledby={titleId}>
       <p id={titleId} className={styles.muted}>
-        Preview - nothing here is saved or served. The layout and every security prompt stay Workeasy360&apos;s.
+        Preview - nothing here is saved or served. The layout and every security prompt stay WorkEasy360&apos;s.
         {safeColor(data.accent.trim()) ? ` Primary colour ${data.accent.trim()}.` : " Default colour."}
       </p>
       {only ? (

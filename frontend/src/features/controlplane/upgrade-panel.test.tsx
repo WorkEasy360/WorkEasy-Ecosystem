@@ -85,6 +85,11 @@ function mount(data: PartnerUpgrades, manage = true, available = ["profile", "pr
 
 const writes = (calls: Call[]) => calls.filter((c) => !c.key.startsWith("GET "));
 const status = () => screen.getByText("Upgrade status").nextElementSibling as HTMLElement;
+/** The decision is made in a popup opened from the panel. */
+const openDecision = () => {
+  fireEvent.click(screen.getByRole("button", { name: "Decide the request" }));
+  return screen.getByRole("dialog", { name: /decision$/ });
+};
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -97,7 +102,7 @@ describe("what the panel shows", () => {
     const { container } = mount(upgrades({ status: "none", requested: null, open: null, checklist: [], eligible: ["reseller", "white_label"] }));
     expect(screen.getByRole("heading", { level: 2, name: "Upgrade" })).toBeInTheDocument();
     expect(screen.getByText("Current partner level").nextElementSibling).toHaveTextContent("Affiliate");
-    expect(status()).toHaveTextContent("none");
+    expect(status()).toHaveTextContent("None");
     expect(screen.getByText("Requested upgrade").nextElementSibling).toHaveTextContent("—");
     expect(screen.getByText(/The partner can ask for Reseller or White-label from its own dashboard\./)).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
@@ -112,7 +117,7 @@ describe("what the panel shows", () => {
   it("shows a pending request: level, status, target, checklist and exactly what the partner asked for", async () => {
     const { container } = mount(upgrades());
     expect(screen.getByText("Current partner level").nextElementSibling).toHaveTextContent("Affiliate");
-    expect(status()).toHaveTextContent("pending approval");
+    expect(status()).toHaveTextContent("Pending approval");
     expect(screen.getByText("Requested upgrade").nextElementSibling).toHaveTextContent("Reseller");
 
     const list = screen.getByRole("region", { name: "What the request still needs" });
@@ -150,7 +155,7 @@ describe("what the panel shows", () => {
 
   it("shows a request the partner has started as not yet decidable", () => {
     mount(upgrades({ status: "requested", open: request({ status: "requested", submitted_at: null, proposal: {} }) }));
-    expect(status()).toHaveTextContent("requested");
+    expect(status()).toHaveTextContent("Requested");
     expect(screen.getByText(/has not submitted it\. There is nothing to decide yet\./)).toBeInTheDocument();
     expect(screen.getByText("The partner has not filled anything in yet.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Approve|Reject|Send back/ })).not.toBeInTheDocument();
@@ -158,7 +163,8 @@ describe("what the panel shows", () => {
 
   it("shows a request sent back with the note, where only rejecting is left", () => {
     mount(upgrades({ status: "profile_required", open: request({ status: "profile_required", info_request_note: "Please confirm VAT" }) }));
-    expect(status()).toHaveTextContent("profile required");
+    openDecision();
+    expect(status()).toHaveTextContent("Profile required");
     expect(screen.getByText(/Sent back to the partner: Please confirm VAT/)).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Approve" })).toBeDisabled();
     expect(screen.getByRole("radio", { name: "Ask for more information" })).toBeDisabled();
@@ -187,7 +193,7 @@ describe("what the panel shows", () => {
         ],
       }),
     );
-    expect(status()).toHaveTextContent("approved");
+    expect(status()).toHaveTextContent("Approved");
     expect(screen.getByText("Requested upgrade").nextElementSibling).toHaveTextContent("Reseller");
     const history = screen.getByRole("region", { name: "Upgrade history" });
     expect(within(history).getByText("Affiliate → Reseller")).toBeInTheDocument();
@@ -206,13 +212,13 @@ describe("what the panel shows", () => {
         history: [request({ status: "rejected", decided_at: "2026-10-03T10:00:00Z", decision_note: "Not yet, sorry" })],
       }),
     );
-    expect(status()).toHaveTextContent("rejected");
+    expect(status()).toHaveTextContent("Rejected");
     expect(screen.getByText("Note: Not yet, sorry")).toBeInTheDocument();
   });
 
   it("does not let a withdrawn request stand for the partner's state", () => {
     mount(upgrades({ status: "none", requested: null, open: null, checklist: [], eligible: ["reseller"], history: [request({ status: "cancelled" })] }));
-    expect(status()).toHaveTextContent("none");
+    expect(status()).toHaveTextContent("None");
   });
 
   it("shows what the partner typed as text and never as markup", () => {
@@ -236,7 +242,7 @@ describe("the header line", () => {
     const { rerender } = render(<UpgradeNotice load={ready(upgrades())} onOpen={open} />);
     const notice = screen.getByRole("region", { name: "Upgrade request" });
     expect(notice).toHaveTextContent("Upgrade to Reseller requested");
-    expect(notice).toHaveTextContent("pending approval");
+    expect(notice).toHaveTextContent("Pending approval");
     fireEvent.click(within(notice).getByRole("button", { name: "Review the upgrade request" }));
     expect(open).toHaveBeenCalledTimes(1);
 
@@ -251,6 +257,7 @@ describe("deciding", () => {
   it("approves with the ticked products, a reference and a note - and sends no capability or amount", async () => {
     const calls = mockApi({ [DECISION]: [ok(request({ status: "approved" }))] });
     mount(upgrades());
+    openDecision();
     // What the partner asked for is ticked; the other offered product is not.
     expect(screen.getByRole("checkbox", { name: /CRM/ })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Books/ })).not.toBeChecked();
@@ -260,6 +267,7 @@ describe("deciding", () => {
     fireEvent.click(screen.getByRole("button", { name: "Approve upgrade" }));
 
     await screen.findByText(/Upgrade approved\. The partner keeps its login and everything it earned/);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(writes(calls)).toHaveLength(1);
     expect(writes(calls)[0].body).toEqual({
       action: "approve",
@@ -274,6 +282,7 @@ describe("deciding", () => {
     const fee = { amount_minor: 2_500_000, currency: "INR", settled: false, payment_method: "offline" as const, payment_reference: "UTR 4029", paid_online: false, paid_at: null, online_payment: null };
     const calls = mockApi({ [DECISION]: [ok(request({ status: "approved" }))] });
     mount(upgrades({ open: request({ setup_fee: fee }) }));
+    openDecision();
     expect(screen.getByText(/the partner says it paid offline, reference UTR 4029\. Verify the transfer/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Set-up fee payment reference \(required\)/)).toHaveValue("UTR 4029");
     fireEvent.click(screen.getByRole("button", { name: "Approve upgrade" }));
@@ -283,6 +292,7 @@ describe("deciding", () => {
   it("shows a fee paid online as confirmed, with the reference optional (2026-11-03)", () => {
     const fee = { amount_minor: 2_500_000, currency: "INR", settled: false, payment_method: "online" as const, payment_reference: "", paid_online: true, paid_at: "2026-11-03T10:00:00Z", online_payment: null };
     mount(upgrades({ open: request({ setup_fee: fee }) }));
+    openDecision();
     expect(screen.getByText(/paid online, confirmed by the payment provider/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Commercial reference \(optional\)/)).toHaveValue("");
   });
@@ -290,6 +300,7 @@ describe("deciding", () => {
   it("can approve with a product the partner did not ask for left unticked, and with none", async () => {
     const calls = mockApi({ [DECISION]: [ok(request({ status: "approved" }))] });
     mount(upgrades());
+    openDecision();
     fireEvent.click(screen.getByRole("checkbox", { name: /CRM/ }));
     fireEvent.click(screen.getByRole("button", { name: "Approve upgrade" }));
     await screen.findByText(/Upgrade approved/);
@@ -298,12 +309,14 @@ describe("deciding", () => {
 
   it("lists a product the partner asked for even when it is no longer on the offered list", () => {
     mount(upgrades({ products: [{ code: "books", name: "Books" }], open: request({ proposal: { products: ["retired-thing"] } }) }));
+    openDecision();
     expect(screen.getByRole("checkbox", { name: /retired-thing/ })).toBeChecked();
   });
 
   it("asks for more information with a required note", async () => {
     const calls = mockApi({ [DECISION]: [ok(request({ status: "profile_required" }))] });
     mount(upgrades());
+    openDecision();
     fireEvent.click(screen.getByRole("radio", { name: "Ask for more information" }));
     const send = screen.getByRole("button", { name: "Send back to the partner" });
     expect(send).toBeDisabled();
@@ -318,6 +331,7 @@ describe("deciding", () => {
   it("rejects with a required note and sends no products", async () => {
     const calls = mockApi({ [DECISION]: [ok(request({ status: "rejected" }))] });
     mount(upgrades());
+    openDecision();
     fireEvent.click(screen.getByRole("radio", { name: "Reject" }));
     const reject = screen.getByRole("button", { name: "Reject upgrade" });
     expect(reject).toBeDisabled();
@@ -344,6 +358,7 @@ describe("deciding", () => {
       ],
     });
     const { container } = mount(upgrades());
+    openDecision();
     fireEvent.change(screen.getByLabelText(/Note \(optional\)/), { target: { value: "Looks fine to me" } });
     fireEvent.click(screen.getByRole("button", { name: "Approve upgrade" }));
 
@@ -354,12 +369,14 @@ describe("deciding", () => {
     expect(items).toEqual(["Business details", "Products", "something-new"]);
     expect(onChanged).not.toHaveBeenCalled();
     expect(screen.getByLabelText(/Note \(optional\)/)).toHaveValue("Looks fine to me");
+    expect(screen.getByRole("dialog", { name: /decision$/ })).toBeInTheDocument();
     await expectNoViolations(container);
   });
 
   it("shows a conflict (already decided) in the server's words", async () => {
     mockApi({ [DECISION]: [{ status: 409, body: { code: "partner_upgrade_conflict", detail: "This request is not waiting for that decision." } }] });
     mount(upgrades());
+    openDecision();
     fireEvent.click(screen.getByRole("button", { name: "Approve upgrade" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("This request is not waiting for that decision.");
     expect(onChanged).not.toHaveBeenCalled();
@@ -382,7 +399,8 @@ describe("who may decide", () => {
 describe("checking what a decision depends on", () => {
   it("points to the partner's own tabs that exist, and opens them", () => {
     mount(upgrades(), true, ["profile", "products"]);
-    const form = screen.getByRole("heading", { name: "Decision" }).closest("form")!;
+    // What to check first sits beside the button that opens the decision.
+    const form = screen.getByRole("region", { name: "Decision" });
     expect(within(form).getByRole("button", { name: "Profile" })).toBeInTheDocument();
     expect(within(form).queryByRole("button", { name: "Commission" })).not.toBeInTheDocument();
     fireEvent.click(within(form).getByRole("button", { name: "Products" }));

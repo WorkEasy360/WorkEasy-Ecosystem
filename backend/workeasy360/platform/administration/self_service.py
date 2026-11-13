@@ -84,8 +84,8 @@ def _describe(ttl: timedelta) -> str:
     return f"{minutes} minutes"
 
 
-def _url(path: str, token: str | None = None) -> str:
-    base = f"{portal_links.auth_url()}{path}"
+def _url(path: str, token: str | None = None, *, portal: str | None = None) -> str:
+    base = f"{portal_links.account_url(portal)}{path}"
     return f"{base}#token={token}" if token else base
 
 
@@ -133,8 +133,10 @@ def sign_up(
     email: Any,
     password: Any,
     company_name: Any = None,
+    portal: str | None = None,
 ) -> str:
-    """Start a signup. Returns the outcome for metrics and tests only - the
+    """Start a signup. ``portal`` is the portal whose own pages the emailed
+    links open (ADR-059; the Store's host since ADR-065) - a link target only. Returns the outcome for metrics and tests only - the
     HTTP answer is the same for every one of them.
 
     Validation runs first and identically for every address (a weak password
@@ -174,18 +176,18 @@ def sign_up(
                 make_password(secret)
                 outcome = "race"
             else:
-                _send_verification(user, organization_name=company)
+                _send_verification(user, organization_name=company, portal=portal)
                 outcome = "created"
         elif existing.status == UserStatus.PENDING.value:
             # Not verified yet: send the link again. The password stays the one
             # chosen first - replacing it here would let anyone who knows the
             # address change what the real signer must type.
             make_password(secret)
-            _send_verification(existing, organization_name=company)
+            _send_verification(existing, organization_name=company, portal=portal)
             outcome = "resent"
         elif existing.status == UserStatus.ACTIVE.value:
             make_password(secret)
-            _send_existing_notice(existing)
+            _send_existing_notice(existing, portal=portal)
             outcome = "existing"
         else:
             make_password(secret)
@@ -195,7 +197,9 @@ def sign_up(
     return outcome
 
 
-def _send_verification(user: Any, *, organization_name: str) -> None:
+def _send_verification(
+    user: Any, *, organization_name: str, portal: str | None = None
+) -> None:
     from workeasy360.platform.identity import tokens
     from workeasy360.platform.identity.models import AccountToken
     from workeasy360.platform.notifications.services import notify_account
@@ -211,12 +215,12 @@ def _send_verification(user: Any, *, organization_name: str) -> None:
         template_key=VERIFY_TEMPLATE,
         recipient_email=user.email_original or user.email,
         context={"name": first_name, "expires_in": _describe(_verify_ttl())},
-        sealed_context={"verify_url": _url("/verify-email", token)},
+        sealed_context={"verify_url": _url("/verify-email", token, portal=portal)},
         idempotency_key=f"account:{user.pk}:verify:{_hash_prefix(token)}",
     )
 
 
-def _send_existing_notice(user: Any) -> None:
+def _send_existing_notice(user: Any, *, portal: str | None = None) -> None:
     """At most one "you already have an account" email per account per hour,
     whatever the signup form is fed: the idempotency key is the hour."""
     from workeasy360.platform.notifications.services import notify_account
@@ -226,8 +230,8 @@ def _send_existing_notice(user: Any) -> None:
         template_key=EXISTING_TEMPLATE,
         recipient_email=user.email_original or user.email,
         context={
-            "sign_in_url": _url("/login"),
-            "reset_url": _url("/forgot-password"),
+            "sign_in_url": _url("/login", portal=portal),
+            "reset_url": _url("/forgot-password", portal=portal),
         },
         idempotency_key=f"account:{user.pk}:signup-existing:{hour}",
     )
@@ -239,7 +243,7 @@ def _hash_prefix(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
 
 
-def resend_verification(email: Any) -> None:
+def resend_verification(email: Any, *, portal: str | None = None) -> None:
     """Send a pending account its verification link again. Silent for every
     other address, so it is not a registration oracle."""
     from workeasy360.platform.identity import lifecycle, tokens
@@ -253,7 +257,11 @@ def resend_verification(email: Any) -> None:
         if user is None:
             return
         # The company the person asked for survives a resend.
-        _send_verification(user, organization_name=tokens.requested_organization(user.pk))
+        _send_verification(
+            user,
+            organization_name=tokens.requested_organization(user.pk),
+            portal=portal,
+        )
     metrics.increment("identity_verification_resent_total")
 
 
@@ -341,9 +349,13 @@ def _create_requested_organization(
 # --- password reset -------------------------------------------------------------
 
 
-def request_password_reset(email: Any) -> None:
+def request_password_reset(email: Any, *, portal: str | None = None) -> None:
     """Email a reset link if the address has an account that may use one.
-    Silent otherwise - the HTTP answer is always the same."""
+    Silent otherwise - the HTTP answer is always the same.
+
+    ``portal`` is the portal whose own reset page the link opens (ADR-059):
+    the one the request was made on, so a partner resets on the Partner
+    portal and signs in there. A link target only, never a grant."""
     from workeasy360.contracts.values.control_plane import PLATFORM_SYSTEM_USER_EMAIL
     from workeasy360.platform.identity import lifecycle, tokens
     from workeasy360.platform.identity.email import normalize_email
@@ -367,7 +379,7 @@ def request_password_reset(email: Any) -> None:
             template_key=RESET_TEMPLATE,
             recipient_email=user.email_original or user.email,
             context={"expires_in": _describe(_reset_ttl())},
-            sealed_context={"reset_url": _url("/reset-password", token)},
+            sealed_context={"reset_url": _url("/reset-password", token, portal=portal)},
             idempotency_key=f"account:{user.pk}:reset:{_hash_prefix(token)}",
         )
     metrics.increment("identity_password_reset_requests_total", outcome="sent")
@@ -422,6 +434,155 @@ def reset_password(token: Any, new_password: Any) -> Any:
         )
     metrics.increment("identity_password_resets_total")
     logger.info("identity.password_reset", user_id=str(user.pk))
+    return user
+
+
+# --- changing the sign-in email (ADR-066) -----------------------------------------
+
+CHANGE_EMAIL_TEMPLATE = "platform.account.change_email"
+CHANGE_EMAIL_IN_USE_TEMPLATE = "platform.account.change_email_in_use"
+EMAIL_CHANGED_TEMPLATE = "platform.account.email_changed"
+
+
+def _email_hint(address: str) -> str:
+    """``a***@example.com``: enough for the previous owner to recognise the
+    change, not enough to hand a stranger the new address."""
+    local, _, domain = address.partition("@")
+    return f"{local[:1]}***@{domain}" if local and domain else "***"
+
+
+def request_email_change(
+    user_id: Any,
+    *,
+    password: Any,
+    new_email: Any,
+    portal: str | None = None,
+    ip_prefix: str = "",
+    device_label: str = "",
+) -> str:
+    """Ask to sign in with another address from now on. Nothing changes until
+    the link mailed to that address is used (:func:`confirm_email_change`): the
+    link proves the new mailbox, the password proves the person asking.
+
+    One answer whatever the address: when another account already holds it,
+    that address is told instead (as signup does), so this is no registration
+    oracle for a signed-in account either. A wrong password counts toward the
+    sign-in lockout, like the password change. Returns the outcome for metrics
+    and tests only.
+    """
+    from workeasy360.contracts.errors import CurrentPasswordIncorrect, EmailChangeInvalid
+    from workeasy360.platform.identity import lifecycle, tokens
+    from workeasy360.platform.identity.account import record_account_event
+    from workeasy360.platform.identity.models import AccountEvent, AccountToken, User
+    from workeasy360.platform.identity.services import _record_failure
+    from workeasy360.platform.notifications.services import notify_account
+
+    user = User.objects.get(pk=user_id)
+    if user.status != UserStatus.ACTIVE.value:
+        raise EmailChangeInvalid(
+            "This account cannot change its email.", field="new_email"
+        )
+    if not user.check_password(password if isinstance(password, str) else ""):
+        _record_failure(user)
+        raise CurrentPasswordIncorrect("The current password is not correct.")
+    try:
+        typed, address = _clean_email(new_email)
+    except SignupValidationError as exc:
+        raise EmailChangeInvalid(exc.message, field="new_email") from exc
+    if address == user.email:
+        raise EmailChangeInvalid("That is already your sign-in email.", field="new_email")
+
+    with transaction.atomic():
+        holder = lifecycle.lock_by_email(address)
+        if holder is not None:
+            hour = timezone.now().strftime("%Y%m%d%H")
+            notify_account(
+                template_key=CHANGE_EMAIL_IN_USE_TEMPLATE,
+                recipient_email=holder.email_original or holder.email,
+                context={
+                    "sign_in_url": _url("/login", portal=portal),
+                    "reset_url": _url("/forgot-password", portal=portal),
+                },
+                idempotency_key=f"account:{holder.pk}:change-email-in-use:{hour}",
+            )
+            outcome = "in_use"
+        else:
+            token = tokens.issue(
+                user.pk,
+                AccountToken.Purpose.CHANGE_EMAIL,
+                ttl=_verify_ttl(),
+                new_email=typed,
+            )
+            first_name = (user.full_name or "").split(" ", 1)[0] or "there"
+            notify_account(
+                template_key=CHANGE_EMAIL_TEMPLATE,
+                recipient_email=typed,
+                context={"name": first_name, "expires_in": _describe(_verify_ttl())},
+                sealed_context={
+                    "confirm_url": _url("/confirm-email", token, portal=portal)
+                },
+                idempotency_key=f"account:{user.pk}:change-email:{_hash_prefix(token)}",
+            )
+            outcome = "sent"
+        record_account_event(
+            user.pk,
+            AccountEvent.Kind.EMAIL_CHANGE_REQUESTED,
+            ip_prefix=ip_prefix,
+            device_label=device_label,
+        )
+    metrics.increment("identity_email_change_requests_total", outcome=outcome)
+    logger.info("identity.email_change.requested", outcome=outcome)
+    return outcome
+
+
+def confirm_email_change(token: Any) -> Any:
+    """Use a change-of-email link: the address it carries becomes the sign-in
+    email, verified. Every other outstanding link of the account is spent (a
+    reset link mailed to the old address must not outlive the change), the
+    previous address is told, and nothing else changes - same identity, same
+    password, same sessions, same organizations and products (the products
+    know the person by ``sub``, never by email).
+
+    Refused with the one ``link_invalid`` answer if the address was taken by
+    another account in the meantime."""
+    from workeasy360.platform.administration.site import support_email
+    from workeasy360.platform.identity import lifecycle, tokens
+    from workeasy360.platform.identity.account import record_account_event
+    from workeasy360.platform.identity.email import normalize_email
+    from workeasy360.platform.identity.models import AccountEvent, AccountToken, User
+    from workeasy360.platform.notifications.services import notify_account
+
+    try:
+        with transaction.atomic():
+            row = tokens.open_token(token, AccountToken.Purpose.CHANGE_EMAIL)
+            user = lifecycle.lock(row.user_id)
+            typed = row.new_email
+            address = normalize_email(typed)
+            if (
+                user.status != UserStatus.ACTIVE.value
+                or not address
+                or User.objects.filter(email=address).exclude(pk=user.pk).exists()
+            ):
+                raise AccountLinkInvalid("This link is not valid.")
+            previous = user.email_original or user.email
+            lifecycle.change_email(user, typed)
+            tokens.consume(row)
+            tokens.spend_all(user.pk)
+            record_account_event(user.pk, AccountEvent.Kind.EMAIL_CHANGED)
+            notify_account(
+                template_key=EMAIL_CHANGED_TEMPLATE,
+                recipient_email=previous,
+                context={
+                    "new_email_hint": _email_hint(address),
+                    "support_email": support_email(),
+                },
+                idempotency_key=f"account:{user.pk}:email-changed:{row.pk}",
+            )
+    except IntegrityError:
+        # Another account took the address between the check and the write.
+        raise AccountLinkInvalid("This link is not valid.") from None
+    metrics.increment("identity_email_changes_total")
+    logger.info("identity.email_change.confirmed", user_id=str(user.pk))
     return user
 
 

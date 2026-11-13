@@ -56,7 +56,7 @@ _MONEY: frozenset[str] = frozenset(
 
 #: Experiences that sell, and so may be given products to sell. The affiliate
 #: bundle holds none of the keys that make a partner a seller.
-_SELLING: frozenset[str] = frozenset({capabilities.RESELLER, capabilities.WHITE_LABEL})
+_SELLING: frozenset[str] = frozenset({capabilities.RESELLER})
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,21 +140,52 @@ def grant_experience(
     reason: Any = "",
     make_default: bool = False,
     products: Any = (),
+    also: Any = (),
 ) -> Transition:
     """Give a partner the capabilities of an experience (and, for a selling one,
     products to sell). Additive and idempotent: whatever it already holds is left
-    alone, so a retry after a lost response changes nothing."""
+    alone, so a retry after a lost response changes nothing. ``also`` names the
+    base permissions granted explicitly beside it (ADR-063)."""
     authz.require(ctx, MANAGE)
     key = capabilities.require_experience(experience)
+    extra = capabilities.require_also(key, also)
     why = _reason(reason)
-    codes = _product_codes(key, products)
     with transaction.atomic():
         partner = _editable_partner(partner_id)
-        result = _grant(ctx, partner, key, why, codes, make_default)
+        codes = _product_codes(key, products, (*extra, *_labels(partner.id)))
+        result = _grant(ctx, partner, key, why, codes, make_default, extra)
     return result
 
 
-def _product_codes(key: str, products: Any) -> list[str]:
+def grant_for_approved_application(
+    ctx: TenantContext,
+    partner_id: UUID,
+    *,
+    experience: Any,
+    reason: Any,
+    also: Any = (),
+) -> Transition:
+    """What approval grants: the capabilities of what the partner asked to become,
+    for whoever may review applications, plus the base permissions the reviewer
+    ticked (``also``, ADR-063). Additive and idempotent, like
+    ``grant_experience``. No products: an Admin assigns those."""
+    authz.require(ctx, "platform.staff_kyc.review")
+    key = capabilities.require_experience(experience)
+    extra = capabilities.require_also(key, also)
+    why = _reason(reason)
+    with transaction.atomic():
+        partner = _editable_partner(partner_id)
+        return _grant(ctx, partner, key, why, [], True, extra)
+
+
+def _labels(partner_id: UUID) -> tuple[str, ...]:
+    """The experiences a partner already wears: a reseller upgrading to White
+    Label sells already, so its upgrade may carry products."""
+    held = selectors.active_capabilities(partner_id)
+    return tuple(item["key"] for item in capabilities.experience_labels(held))
+
+
+def _product_codes(key: str, products: Any, also: tuple[str, ...] = ()) -> list[str]:
     if products and not isinstance(products, list | tuple):
         # A string would be split into letters and a number would crash.
         raise PartnerValidationError(
@@ -166,7 +197,7 @@ def _product_codes(key: str, products: Any) -> list[str]:
             "products must be a list of product codes.", field="products"
         )
     codes = list(dict.fromkeys(raw))
-    if codes and key not in _SELLING:
+    if codes and not (_SELLING & {key, *also}):
         raise PartnerValidationError(
             "Only a selling experience can be given products to sell. An "
             "affiliate promotes products; it is not allowed to sell them.",
@@ -182,10 +213,16 @@ def _grant(
     why: str,
     codes: list[str],
     make_default: bool,
+    also: tuple[str, ...] = (),
 ) -> Transition:
     held = selectors.active_capabilities(partner.id)
     granted: list[str] = []
-    for capability in capabilities.experience_bundle(key):
+    wanted = dict.fromkeys(
+        capability
+        for experience_key in (key, *also)
+        for capability in capabilities.experience_bundle(experience_key)
+    )
+    for capability in wanted:
         if capability not in held:
             services._grant_capability(ctx, partner.id, capability=capability, reason=why)
             granted.append(capability)
@@ -201,6 +238,7 @@ def _grant(
         changes={
             "partner_id": str(partner.id),
             "experience": key,
+            "also": list(also),
             "capabilities": granted,
             "products": codes,
             "default": bool(make_default),
@@ -318,22 +356,25 @@ def transition_experience(
     retire: Any = None,
     products: Any = (),
     reason: Any = "",
+    also: Any = (),
 ) -> Transition:
-    """Move a partner to ``to``: give it that experience, make it the landing,
-    optionally give it products, and optionally retire another experience - in
-    one transaction, so a partner is never left half-way between the two."""
+    """Move a partner to ``to``: give it that experience (and the base
+    permissions in ``also``, ADR-063), make it the landing, optionally give it
+    products, and optionally retire another experience - in one transaction, so
+    a partner is never left half-way between the two."""
     authz.require(ctx, MANAGE)
     key = capabilities.require_experience(to)
+    extra = capabilities.require_also(key, also)
     away = capabilities.require_experience(retire) if retire else None
     if away == key:
         raise PartnerValidationError(
             "An experience cannot replace itself.", field="retire"
         )
     why = _reason(reason)
-    codes = _product_codes(key, products)
     with transaction.atomic():
         partner = _editable_partner(partner_id)
-        granted = _grant(ctx, partner, key, why, codes, True)
+        codes = _product_codes(key, products, (*extra, *_labels(partner.id)))
+        granted = _grant(ctx, partner, key, why, codes, True, extra)
         revoked: list[str] = []
         ended: list[str] = []
         if away is not None:

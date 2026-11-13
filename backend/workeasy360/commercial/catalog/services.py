@@ -50,6 +50,7 @@ from workeasy360.commercial.catalog.domain import (
     validate_media,
     validate_product_code,
     validate_product_type,
+    validate_refund_days,
     validate_slug,
     validate_store_text,
     validate_subcategory,
@@ -262,6 +263,7 @@ EDITABLE_PRODUCT_FIELDS = (
     "product_type",
     "best_for",
     "integrations",
+    "refund_days",
     *MERCHANDISING_LISTS,
     *MERCHANDISING_FLAGS,
     *LISTING_DETAIL_FIELDS,
@@ -336,6 +338,8 @@ def _clean_product_changes(changes: dict[str, Any]) -> dict[str, Any]:
         clean["best_for"] = validate_best_for(changes["best_for"])
     if "integrations" in changes:
         clean["integrations"] = validate_integrations(changes["integrations"])
+    if "refund_days" in changes:
+        clean["refund_days"] = validate_refund_days(changes["refund_days"])
     for key in MERCHANDISING_LISTS:
         if key in changes:
             clean[key] = validate_bullets(changes[key], field=key)
@@ -873,7 +877,11 @@ def reorder_screenshots(ctx: TenantContext, *, product_id: UUID, order: Any) -> 
 
 
 def set_product_status(
-    ctx: TenantContext, *, product_id: UUID, status: ProductStatus
+    ctx: TenantContext,
+    *,
+    product_id: UUID,
+    status: ProductStatus,
+    require_publishable: bool = False,
 ) -> Any:
     """Move a product through its lifecycle.
 
@@ -882,6 +890,13 @@ def set_product_status(
     when deciding whether a *new* subscription may be created. That is what
     makes "a retired product must not invalidate historical records" a
     structural property rather than a promise.
+
+    Making a *listed* product available puts it in the store, so a person doing
+    it through the console or the API is checked like publishing
+    (``require_publishable=True``, passed by the HTTP view; 2026-11-10). The
+    operator's ``register_products`` command and the catalog fixtures keep the
+    unchecked path: changing what a deployment's seeding step does could
+    unpublish a live product.
     """
     from workeasy360.commercial.catalog.models import Product
 
@@ -894,6 +909,15 @@ def set_product_status(
         if current is status:
             return product
 
+        if (
+            require_publishable
+            and status is ProductStatus.AVAILABLE
+            and product.listing == ProductListing.LISTED.value
+        ):
+            # A product is created listed, so making it available would put it in
+            # the store with no check at all (2026-11-10: a duplicate "crm" with
+            # no plans went live that way). Publishing is the checked step.
+            _assert_publishable(product)
         now = timezone.now()
         product.status = status.value
         stamps = {
@@ -1909,3 +1933,114 @@ def update_bundle(
             changes=changes or {"unchanged": True},
         )
     return bundle
+
+
+_APP_PLATFORMS = ("ios", "android", "windows", "macos", "web")
+_USAGE_METERS = ("ai_tokens", "whatsapp", "sms", "email", "api_trigger", "webhook")
+
+
+def clean_app_links(raw: Any) -> dict[str, str]:
+    """``{platform: https url}``, known platforms only, secure links only."""
+    from urllib.parse import urlsplit
+
+    if not isinstance(raw, dict):
+        raise CatalogValidationError(
+            "App links must name a platform and a link.", field="app_links"
+        )
+    links: dict[str, str] = {}
+    for platform, value in raw.items():
+        if platform not in _APP_PLATFORMS:
+            raise CatalogValidationError(
+                f"Unknown platform: {platform}.", field="app_links"
+            )
+        url = str(value or "").strip()
+        if not url:
+            continue
+        parts = urlsplit(url)
+        if parts.scheme != "https" or not parts.netloc or len(url) > 500:
+            raise CatalogValidationError(
+                "An app link must be a secure web address (https).", field="app_links"
+            )
+        links[platform] = url
+    return links
+
+
+def set_app_links(ctx: TenantContext, product_id: UUID, raw: Any) -> dict[str, str]:
+    """Where a product's apps are published. Audited."""
+    from workeasy360.commercial.catalog.models import Product
+    from workeasy360.platform.authz.control_plane import acting_scope
+
+    authz.require(ctx, "platform.staff_catalog.manage")
+    links = clean_app_links(raw)
+    with acting_scope(ctx), transaction.atomic():
+        product = Product.objects.select_for_update().filter(id=product_id).first()
+        if product is None:
+            raise CatalogValidationError("No such product.", field="product")
+        product.app_links = links
+        product.save(update_fields=["app_links", "updated_at"])
+        audit.record(
+            ctx,
+            "catalog.product_app_links_set",
+            resource_type="catalog.product",
+            resource_id=product.id,
+            changes={"platforms": sorted(links)},
+        )
+    return links
+
+
+def set_plan_rules(
+    ctx: TenantContext, plan_id: UUID, body: dict[str, Any]
+) -> dict[str, Any]:
+    """A plan's renewal and change rules and included usage. Audited. Only meters that
+    exist, only whole positive units: an empty rule set means none."""
+    from workeasy360.commercial.catalog.models import Plan
+    from workeasy360.platform.authz.control_plane import acting_scope
+
+    authz.require(ctx, "platform.staff_pricing.manage")
+    renewal = body.get("renewal_rule", Plan.RenewalRule.AUTO_RENEW)
+    change = body.get("change_rule", Plan.ChangeRule.ANY)
+    if renewal not in Plan.RenewalRule.values:
+        raise CatalogValidationError("Choose how this plan renews.", field="renewal_rule")
+    if change not in Plan.ChangeRule.values:
+        raise CatalogValidationError(
+            "Choose which plan changes are allowed.", field="change_rule"
+        )
+    included = body.get("included_usage") or {}
+    if not isinstance(included, dict):
+        raise CatalogValidationError(
+            "Included usage must name a meter and units.", field="included_usage"
+        )
+    clean: dict[str, int] = {}
+    for meter, units in included.items():
+        if meter not in _USAGE_METERS:
+            raise CatalogValidationError(
+                f"Unknown meter: {meter}.", field="included_usage"
+            )
+        if isinstance(units, bool) or not isinstance(units, int) or units < 0:
+            raise CatalogValidationError(
+                "Units must be a whole number.", field="included_usage"
+            )
+        if units:
+            clean[str(meter)] = units
+    with acting_scope(ctx), transaction.atomic():
+        plan = Plan.objects.select_for_update().filter(id=plan_id).first()
+        if plan is None:
+            raise CatalogValidationError("No such plan.", field="plan")
+        plan.renewal_rule = renewal
+        plan.change_rule = change
+        plan.included_usage = clean
+        plan.save(
+            update_fields=["renewal_rule", "change_rule", "included_usage", "updated_at"]
+        )
+        audit.record(
+            ctx,
+            "catalog.plan_rules_set",
+            resource_type="catalog.plan",
+            resource_id=plan.id,
+            changes={
+                "renewal_rule": renewal,
+                "change_rule": change,
+                "included_usage": clean,
+            },
+        )
+    return {"renewal_rule": renewal, "change_rule": change, "included_usage": clean}

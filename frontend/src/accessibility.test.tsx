@@ -228,21 +228,39 @@ describe("accessibility, Phase 5 UI (axe-core, WCAG 2.1 A + AA, non-visual rules
           },
         },
       ],
+      // 2026-11-11: the top bar's organization switcher and notifications.
+      "GET /api/v1/organizations": [
+        {
+          status: 200,
+          body: {
+            organizations: [
+              { organization_id: "o1", slug: "acme", display_name: "Acme", status: "active", membership_id: "m1", is_owner: false },
+              { organization_id: "o2", slug: "beta", display_name: "Beta", status: "active", membership_id: "m2", is_owner: false },
+            ],
+            next_cursor: null,
+            has_more: false,
+          },
+        },
+      ],
+      "GET /api/v1/orgs/acme/notifications": [{ status: 200, body: { items: [], count: 0 } }],
+      "GET /api/v1/orgs/acme/brand": [{ status: 200, body: { brand: null } }],
     });
     const { container } = render(
       <Shell>
         <h1>All apps</h1>
       </Shell>,
     );
-    // Visible text is the initials "AG"; the accessible name says what it is.
-    const account = await screen.findByRole("button", { name: "Account menu for Aman Gupta" });
-    expect(account).toHaveTextContent("AG");
-    expect(screen.getByRole("link", { name: "Product Hub" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "My Products" })).toHaveAttribute("aria-current", "page");
+    // The initials are drawn; the accessible name says whose menu it is, and the role.
+    const account = await screen.findByRole("button", { name: /^Account menu for Aman Gupta/ });
+    expect(account).toHaveTextContent("Aman Gupta");
+    // The current menu opens on its sub-menu, whose current page is marked.
+    const menu = screen.getByRole("button", { name: "My Products" });
+    expect(menu).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "All Products" })).toHaveAttribute("aria-current", "page");
     // The organization switcher is named for what it does, not only by the
-    // organization's name.
+    // organization's name (offered because this person belongs to two).
     expect(
-      screen.getByRole("button", { name: "Current organization: Acme. Switch organization." }),
+      await screen.findByRole("button", { name: "Current organization: Acme. Switch organization" }),
     ).toBeInTheDocument();
     await expectNoViolations(container);
   });

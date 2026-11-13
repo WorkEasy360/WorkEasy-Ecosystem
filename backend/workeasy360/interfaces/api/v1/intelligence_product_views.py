@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from uuid import UUID
 
 from django.conf import settings
 from django.http import HttpRequest, JsonResponse
@@ -32,6 +33,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
+from workeasy360.commercial.controlplane import usage_intake
 from workeasy360.contracts.errors import IntelligenceError
 from workeasy360.platform.ecosystem import clientauth, protocol, verification
 from workeasy360.platform.observability.correlation import current_correlation_id
@@ -115,6 +117,33 @@ def _payload_limit() -> int:
     return int(settings.AI_MAX_INPUT_BYTES) + 8_192
 
 
+def _organization_or_none(raw: Any) -> UUID | None:
+    try:
+        return UUID(str(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def _charge_for(client: Any, organization: UUID | None, answer: Any) -> None:
+    """AI Credits for a call that finished. Here because ``intelligence`` and
+    ``commercial`` may not import each other, and the tokens are the gateway's own
+    measure rather than anything a product said."""
+    body = answer.body if isinstance(answer.body, dict) else {}
+    usage = body.get("usage")
+    if organization is None or not isinstance(usage, dict) or not body.get("request_id"):
+        return
+    tokens = sum(
+        int(usage.get(field) or 0)
+        for field in ("input_tokens", "output_tokens", "embedding_tokens")
+    )
+    usage_intake.charge_ai_tokens(
+        product_code=client.product_code,
+        organization_id=organization,
+        request_id=str(body["request_id"]),
+        tokens=tokens,
+    )
+
+
 # --- skills --------------------------------------------------------------------------------
 
 
@@ -164,11 +193,18 @@ def ai_invoke(request: HttpRequest) -> JsonResponse:
     from workeasy360.intelligence.gateway import service
 
     def call(client: Any) -> tuple[int, Any]:
+        organization = _organization_or_none(request.POST.get("organization_id"))
+        if organization is not None and usage_intake.ai_credits_exhausted(organization):
+            return 402, {
+                "error": "ai_credits_exhausted",
+                "error_description": "This organization has no AI credits left.",
+            }
         answer = service.invoke(
             client,
             organization_id=request.POST.get("organization_id"),
             raw=request.POST.get("request"),
         )
+        _charge_for(client, organization, answer)
         return answer.status, answer.body
 
     return _handle(request, endpoint="ai_invoke", limit_bytes=_payload_limit(), call=call)
@@ -186,6 +222,11 @@ def ai_request_status(request: HttpRequest) -> JsonResponse:
             client,
             organization_id=request.POST.get("organization_id"),
             request_id=request.POST.get("request_id"),
+        )
+        # An asynchronous call is charged when the product collects its result; the
+        # key is the request, so asking again charges nothing.
+        _charge_for(
+            client, _organization_or_none(request.POST.get("organization_id")), answer
         )
         return answer.status, answer.body
 

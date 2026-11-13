@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminSignInUrl } from "@/features/auth/signInMode";
+import { adminSignInUrl, parseMode } from "@/features/auth/signInMode";
 import {
-  isState,
+  MODE_TO_PORTAL,
   pageOwner,
   portalForHost,
+  portalSignInPath,
   readPortalOrigins,
   servesPage,
-  signInUrl,
-  stateCookieName,
   type Destination,
+  type Portal,
   type PortalOrigins,
 } from "@/lib/portals";
 
@@ -58,8 +58,20 @@ const PUBLIC_PATHS = [
   // whose session has already gone still gets a page that returns them to
   // the product, rather than a sign-in form they did not ask for.
   "/sign-out",
+  // ADR-066: Switch Account's second step ends the central sign-in's session
+  // when there is one, and moves on to a sign-in page either way.
+  "/switch-account",
+  // ADR-066: the change-of-sign-in-email link, opened in whichever browser the
+  // mail is read in - the link is the credential.
+  "/confirm-email",
   // 2026-11-02: the public Store - browsing is open; buying signs in first.
   "/store",
+  // 2026-11-09: the partner application, filled in before any account exists.
+  "/partner/apply",
+  // 2026-11-10: a new partner's invitation link, opened before they have a password.
+  "/partner/accept-invitation",
+  // 2026-11-10: "Continue as Guest" - a static preview, no session and no API call.
+  "/partner/preview",
 ];
 
 /** ADR-053: a partner's branded Store (`/store/<partner>`) is browsable signed
@@ -74,23 +86,25 @@ export function isPublicPath(pathname: string): boolean {
 }
 
 /** Where a portal host lands a sign-in hand-off (ADR-043): reached before
- * the portal has a session, by definition. */
+ * the portal has a session, by definition. Kept for a hand-off already in
+ * flight; no portal starts one any more (ADR-059). */
 const HANDOFF_LANDING = "/auth/continue";
 
-export type PortalRouting = { kind: "serve" } | { kind: "redirect"; location: string; state?: string };
+export type PortalRouting = { kind: "serve" } | { kind: "redirect"; location: string };
 
 /**
  * The multi-portal routing decision for one page request (ADR-043), or `null`
  * when the host is not one of the platform's portals (a partner's white-label
  * domain, handled by {@link offCanonicalRedirect}). Display only: it picks
- * which host shows a page and sends a signed-out visitor to the central
- * sign-in; every permission is still decided by the server.
+ * which host shows a page and sends a signed-out visitor to a sign-in page;
+ * every permission is still decided by the server.
  *
- * `state` on a redirect is the portal's binding value for the hand-off: the
- * caller sets it as this host's own cookie. An existing valid one is reused,
- * so a second sign-in started before the first finishes does not void it. The
- * cookie is spent by the first redemption: a tab redeeming after that asks
- * for one more click ("Sign in again"), never a second password.
+ * ADR-059: each portal signs in on its **own** host. A signed-out visit to the
+ * Admin, Partner or customer portal goes to that portal's `/login`, the form
+ * there signs in against the same one endpoint, and the session cookie is set
+ * on that host directly - no central sign-in, no hand-off code, no binding
+ * cookie. `?mode=` on a sign-in address only says which portal's sign-in page
+ * to show. The central sign-in host keeps the product sign-in (`?resume=`).
  */
 export function routePortalRequest(args: {
   origins: PortalOrigins;
@@ -98,48 +112,60 @@ export function routePortalRequest(args: {
   pathname: string;
   search: string;
   hasSession: boolean;
-  existingState?: string | null;
-  newState: () => string;
 }): PortalRouting | null {
   const { origins, pathname, search, hasSession } = args;
   const portal = portalForHost(args.host, origins);
   if (portal === null) return null;
   const params = new URLSearchParams(search);
-  const startSignIn = (destination: Destination, next: string | null): PortalRouting => {
-    const state = isState(args.existingState) ? args.existingState : args.newState();
-    return { kind: "redirect", location: signInUrl(origins, destination, next, state), state };
-  };
+  const signIn = (destination: Destination, next: string | null): PortalRouting => ({
+    kind: "redirect",
+    location: `${origins[destination]}${portalSignInPath(destination, next)}`,
+  });
 
-  if (portal !== "auth" && pathname === "/login") {
-    const resume = params.get("resume");
-    if (resume) return { kind: "redirect", location: `${origins.auth}/login?resume=${encodeURIComponent(resume)}` };
-    return startSignIn(portal, params.get("next"));
+  if (pathname === "/login") {
+    // A product's sign-in (OIDC, ADR-044) completes on the central sign-in host.
+    if (params.get("resume")) {
+      return portal === "auth" ? { kind: "serve" } : { kind: "redirect", location: `${origins.auth}/login${search}` };
+    }
+    const mode = parseMode(params.get("mode"));
+    // ADR-065: the Store's own host signs its customers in itself - with or
+    // without `?mode=user`, which names the same people.
+    if (portal === "store" && (mode === null || mode === "user")) return { kind: "serve" };
+    const target: Portal = mode ? MODE_TO_PORTAL[mode] : portal === "auth" ? "app" : portal;
+    if (target === portal) return { kind: "serve" };
+    // Another portal's sign-in page: the same address on its own host, less
+    // what no longer applies there (the mode it names, an old binding value).
+    params.delete("mode");
+    params.delete("state");
+    const rest = params.toString();
+    return { kind: "redirect", location: `${origins[target]}/login${rest ? `?${rest}` : ""}` };
   }
   if (pathname === "/") {
+    // ADR-065: https://store.workeasy360.com/ is the marketplace itself
+    // (app/page.tsx renders it on that host).
+    if (portal === "store") return { kind: "serve" };
     if (portal === "admin") return { kind: "redirect", location: `${origins.admin}/admin` };
     if (portal === "partner") return { kind: "redirect", location: `${origins.partner}/partner` };
-    if (portal === "auth") return { kind: "redirect", location: `${origins.auth}/login` };
+    if (portal === "auth") return { kind: "redirect", location: `${origins.app}/login` };
     return { kind: "serve" }; // the public site's home, on the customer portal
   }
-  if (!servesPage(portal, pathname)) {
-    const owner = pageOwner(pathname);
-    if (owner) return { kind: "redirect", location: `${origins[owner]}${pathname}${search}` };
+  if (!servesPage(portal, pathname, origins)) {
+    // Including the Store's old addresses on the customer portal (ADR-065):
+    // `app.../store/...` opens the same page on the Store's own host.
+    const owner = pageOwner(pathname, origins);
+    if (owner && origins[owner]) return { kind: "redirect", location: `${origins[owner]}${pathname}${search}` };
   }
   const isPublic = isPublicPath(pathname) || (portal !== "auth" && pathname === HANDOFF_LANDING);
   if (!hasSession && !isPublic) {
     if (portal === "auth") {
       const resume = params.get("resume");
-      return { kind: "redirect", location: `${origins.auth}/login${resume ? `?resume=${encodeURIComponent(resume)}` : ""}` };
+      return resume
+        ? { kind: "redirect", location: `${origins.auth}/login?resume=${encodeURIComponent(resume)}` }
+        : { kind: "redirect", location: `${origins.app}/login` };
     }
-    return startSignIn(portal, `${pathname}${search}`);
+    return signIn(portal, `${pathname}${search}`);
   }
   return { kind: "serve" };
-}
-
-/** 32 random bytes, base64url: a hand-off binding value. */
-function randomState(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return Buffer.from(bytes).toString("base64url");
 }
 
 /**
@@ -179,8 +205,13 @@ function randomState(): string {
  * no-cookie player or Vimeo's player - those two origins only, and the page
  * frames a player address the server built from a parsed video id, never a
  * typed link. Nothing else of this app embeds a frame.
+ *
+ * `form-action` (2026-11-10, ADR-062): `'self'`, plus `formTargets` - on the
+ * Super Admin host only, the partner portal's origin, so Login as Guest can post
+ * its one-time ticket there in a form body (never a URL). Nothing else of this
+ * app submits a form to another origin, and no other host gets a target.
  */
-export function contentSecurityPolicy(nonce: string, isDev: boolean): string {
+export function contentSecurityPolicy(nonce: string, isDev: boolean, formTargets: readonly string[] = []): string {
   return `
     default-src 'self';
     script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""};
@@ -191,7 +222,7 @@ export function contentSecurityPolicy(nonce: string, isDev: boolean): string {
     frame-src 'self' https://www.youtube-nocookie.com https://player.vimeo.com;
     object-src 'none';
     base-uri 'self';
-    form-action 'self';
+    form-action 'self'${formTargets.map((target) => ` ${target}`).join("")};
     frame-ancestors 'none';
     upgrade-insecure-requests;
   `
@@ -253,31 +284,18 @@ export function proxy(request: NextRequest): NextResponse {
   const hasSessionCookie = request.cookies.has(SESSION_COOKIE) || request.cookies.has(HOST_SESSION_COOKIE);
 
   if (origins) {
-    const cookieName = stateCookieName(origins);
     const routed = routePortalRequest({
       origins,
       host,
       pathname,
       search: request.nextUrl.search,
       hasSession: hasSessionCookie,
-      existingState: request.cookies.get(cookieName)?.value,
-      newState: randomState,
     });
     if (routed?.kind === "redirect") {
-      const response = NextResponse.redirect(new URL(routed.location, request.url), 302);
-      if (routed.state) {
-        response.cookies.set(cookieName, routed.state, {
-          httpOnly: true,
-          sameSite: "lax",
-          secure: cookieName.startsWith("__Host-"),
-          path: "/",
-          maxAge: 600,
-        });
-      }
-      return response;
+      return NextResponse.redirect(new URL(routed.location, request.url), 302);
     }
     if (routed?.kind === "serve") {
-      return withSecurityHeaders(request, nonce, isDev, true);
+      return withSecurityHeaders(request, nonce, isDev, true, formTargetsFor(host, origins));
     }
   }
 
@@ -316,12 +334,28 @@ export function proxy(request: NextRequest): NextResponse {
   }
 
   const onCanonicalHost = offCanonicalRedirect(host, "/", "", canonical) === null;
-  return withSecurityHeaders(request, nonce, isDev, onCanonicalHost);
+  return withSecurityHeaders(request, nonce, isDev, onCanonicalHost, origins ? formTargetsFor(host, origins) : []);
+}
+
+/** The other origins a page on `host` may submit a form to: the partner
+ * portal, from the Super Admin host only (Login as Guest, ADR-062); the
+ * customer portal, from the Store's own host only ("My Account", ADR-065). */
+export function formTargetsFor(host: string, origins: PortalOrigins): string[] {
+  const portal = portalForHost(host, origins);
+  if (portal === "admin") return [origins.partner];
+  if (portal === "store") return [origins.app];
+  return [];
 }
 
 /** Serve the page, with the CSP and the security headers every page gets. */
-function withSecurityHeaders(request: NextRequest, nonce: string, isDev: boolean, onCanonicalHost: boolean): NextResponse {
-  const csp = contentSecurityPolicy(nonce, isDev);
+function withSecurityHeaders(
+  request: NextRequest,
+  nonce: string,
+  isDev: boolean,
+  onCanonicalHost: boolean,
+  formTargets: readonly string[] = [],
+): NextResponse {
+  const csp = contentSecurityPolicy(nonce, isDev, formTargets);
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
@@ -347,7 +381,7 @@ export const config = {
   // the file exists to tell them not to fetch.
   matcher: [
     {
-      source: "/((?!api|_next/static|_next/image|favicon.ico|robots.txt).*)",
+      source: "/((?!api|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },

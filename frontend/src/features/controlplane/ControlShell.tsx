@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { StatusScreen } from "@/components/StatusScreen";
 import {
@@ -10,18 +11,25 @@ import {
   type SidebarGroup,
 } from "@/components/sidebar/SidebarShell";
 import { logout } from "@/lib/api/auth";
+import { forgetAccountState, leaveTo } from "@/lib/accountState";
 import { ApiError } from "@/lib/api/client";
 import { adminApi, partnerApi, type PortalPartner } from "@/lib/api/controlPlane";
 import { useSession } from "@/lib/auth/useSession";
 import { usePortals } from "@/lib/portalContext";
 import { portalHref } from "@/lib/portals";
 import consoleStyles from "@/features/console/Console.module.css";
+import guestStyles from "./GuestBanner.module.css";
 import { adminSignInUrl } from "@/features/auth/signInMode";
 import loginStyles from "@/features/auth/LoginScreen.module.css";
 import { PARTNER_MENU, type Can } from "@/features/partnerpanel/menu";
 import { ForcedPasswordChange } from "./ForcedPasswordChange";
-import { AdminTools } from "./AdminTopbar";
-import { adminNav } from "./adminNav";
+import { AdminAccount, AdminTools, roleLabel } from "./AdminTopbar";
+import { ADMIN_PAGE_TITLES, adminNav } from "./adminNav";
+import { CATEGORY_MENU_LABEL, isCategory } from "./partnerCategories";
+import { ModuleNav } from "./ModuleNav";
+import { Icon } from "@/components/sidebar/icons";
+import { ToastProvider } from "./kit/Confirm";
+import { ADMIN_TITLE_SUFFIX } from "./kit/Layout";
 import { usePortalRouter } from "@/lib/portalRouter";
 
 export function useSignOut() {
@@ -33,7 +41,13 @@ export function useSignOut() {
   const signOutTo = (then: string) => {
     setFailed(false);
     logout().then(
-      () => router.replace(then),
+      () => {
+        // ADR-066: forget this person's browser state and load the next page
+        // afresh (lib/accountState.ts).
+        forgetAccountState();
+        if (then.startsWith("/")) leaveTo(then);
+        else router.replace(then);
+      },
       () => setFailed(true),
     );
   };
@@ -46,7 +60,7 @@ export function useSignOut() {
   return { signOut, signOutTo, banner };
 }
 
-// --- Super Admin -----------------------------------------------------------------
+// --- Admin ---------------------------------------------------------------------
 
 /** Exported so a screen can be rendered under a chosen permission set in tests. */
 export const AdminContext = createContext<{ permissions: string[] }>({ permissions: [] });
@@ -123,6 +137,22 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AdminState>({ status: "loading" });
   const { signOut, signOutTo, banner } = useSignOut();
 
+  // The console's own type scale, controls and page gutter (globals.css,
+  // :root[data-console="admin"]) - on <html>, so dialogs drawn on <body> have them too.
+  useEffect(() => {
+    document.documentElement.dataset.console = "admin";
+    return () => {
+      delete document.documentElement.dataset.console;
+    };
+  }, []);
+
+  // The browser tab names the page: "Users · WorkEasy360 Admin". A record's own
+  // page (a user, a partner) names itself from its page header.
+  useEffect(() => {
+    const title = pathname ? ADMIN_PAGE_TITLES[pathname.replace(/\/$/, "") || "/admin"] : undefined;
+    if (title) document.title = `${title} · ${ADMIN_TITLE_SUFFIX}`;
+  }, [pathname]);
+
   useEffect(() => {
     if (session.status !== "ready") return;
     // Sign in as an administrator, then come back to this page. The mode and
@@ -144,8 +174,13 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       });
   }, [session, router, pathname]);
 
+  // The server refuses every other call until a temporary password is replaced, so this comes
+  // first: otherwise that refusal would read as "you may not use the console".
+  if (session.status === "ready" && session.session.password_change_required) {
+    return <ForcedPasswordChange />;
+  }
   if (session.status === "loading" || state.status === "loading") {
-    return <StatusScreen>Loading the control plane…</StatusScreen>;
+    return <StatusScreen>Loading the admin console…</StatusScreen>;
   }
   if (state.status === "denied") {
     // Signed in, but the server says this account may not use the console.
@@ -162,29 +197,48 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   if (state.status === "error") {
     return (
       <StatusScreen role="alert">
-        <p>The control plane could not be reached right now.</p>
+        <p>The admin console could not be reached right now.</p>
       </StatusScreen>
     );
   }
   const who = session.status === "ready" ? session.session : null;
-  const entries: AccountMenuEntry[] = [
-    { label: "My organizations", href: portalHref(portals, "app", "/organizations/select") },
-    ...(who?.consoles?.partner ? [{ label: "Partner portal", href: portalHref(portals, "partner", "/partner") }] : []),
-    { label: "Sign out", onSelect: signOut },
+  const external = (href: string) => /^https?:\/\//.test(href);
+  const link = (label: string, icon: string, href: string) => ({ label, icon, href, external: external(href) });
+  const entries = [
+    link("Sign-in preferences", "user", portalHref(portals, "app", "/settings/sign-in")),
+    link("My organizations", "building", portalHref(portals, "app", "/organizations/select")),
+    ...(who?.consoles?.partner ? [link("Partner portal", "handshake", portalHref(portals, "partner", "/partner"))] : []),
+    link("Help & support", "help", portalHref(portals, "app", "/contact")),
+    { label: "Sign out", icon: "logout", onSelect: signOut, separator: true },
   ];
   return (
     <AdminContext.Provider value={{ permissions: state.permissions }}>
-      <SidebarShell
-        area="Super Admin"
-        variant="admin"
-        navTitle="Admin panel"
-        groups={adminNav(state.permissions)}
-        tools={<AdminTools permissions={state.permissions} />}
-        account={<AccountMenu name={who?.name || who?.email || ""} entries={entries} showName />}
-        banner={banner}
-      >
-        {children}
-      </SidebarShell>
+      <ToastProvider>
+        <SidebarShell
+          area="Admin Portal"
+          variant="admin"
+          navTitle={
+            <>
+              <Icon name="shield" size={16} /> Admin Portal
+            </>
+          }
+          railKey="w360.admin.rail"
+          groups={adminNav(state.permissions, pathname ?? "")}
+          tools={<AdminTools permissions={state.permissions} />}
+          account={
+            <AdminAccount
+              name={who?.name ?? ""}
+              email={who?.email ?? ""}
+              role={roleLabel(state.permissions)}
+              entries={entries}
+            />
+          }
+          banner={banner}
+        >
+          <ModuleNav permissions={state.permissions} />
+          {children}
+        </SidebarShell>
+      </ToastProvider>
     </AdminContext.Provider>
   );
 }
@@ -235,45 +289,113 @@ const STATUS_NOTICE: Record<string, string> = {
     "This partner account has ended. Its commission and payout history stays visible; nothing else is available.",
 };
 
-/** The portal layout for one partner. Navigation comes from the partner's
- * **capabilities** - there is no partner type anywhere in this file. */
-/** A staff member viewing a partner's portal as a guest (All Partners → Guest
- * login): said on every page, with the way out. The server makes it read-only
- * and ends it by itself; this only explains it. Exiting ends the guest view
- * (and this portal's session) on the server, then returns to the partner's
- * page in the Super Admin console. */
+/** Where a guest session's return goes: the Admin page the server named, only if it
+ * is one of the Admin's partner pages on the Admin's own origin; else the partner's
+ * own page in the Admin. `returned` marks a partner list (`?guest=ended`) so it
+ * brings back the search and filters it had in this tab (`lastPartnerList`). */
+export function guestReturnUrl(
+  returnUrl: string | undefined,
+  portals: ReturnType<typeof usePortals>,
+  partnerId: string,
+  { returned = false }: { returned?: boolean } = {},
+): string {
+  const fallback = portalHref(portals, "admin", `/admin/partners/${encodeURIComponent(partnerId)}`);
+  if (!returnUrl) return fallback;
+  try {
+    const base = portals ? portals.admin : window.location.origin;
+    const target = new URL(returnUrl, base);
+    const home = new URL(base);
+    if (target.origin !== home.origin || !/^\/admin\/partners(\/|$)/.test(target.pathname)) return fallback;
+    if (returned && /^\/admin\/partners\/(all|affiliate|reseller|white-label)$/.test(target.pathname)) {
+      target.search = "?guest=ended";
+    }
+    // Single host: a path on this origin, like every other link here.
+    return portals ? target.toString() : `${target.pathname}${target.search}`;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Guest Session (Login as Guest, ADR-062): a Super Admin viewing a partner's own
+ * dashboard. Said on every page, held at the top while the page scrolls - which
+ * partner, of which type, who is looking, until when - with two ways out, each of
+ * which ends the session on the server first:
+ *
+ * - **Return to Super Admin**: back to the Admin page it was started from (a
+ *   partner list keeps its search and filters);
+ * - **End Guest Session**: to that partner's own page in the Admin.
+ *
+ * The server makes the view read-only and ends it by itself; this only explains
+ * it. The Admin's own session is untouched, so no new sign-in is needed. The
+ * guest page is replaced in this tab's history rather than kept behind the Admin
+ * page. */
 export function GuestViewBanner({ partner, guest }: { partner: PortalPartner; guest: NonNullable<PortalPartner["guest"]> }) {
   const portals = usePortals();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"return" | "end" | null>(null);
   const [failed, setFailed] = useState(false);
   const ends = new Date(guest.expires_at);
-  async function exit() {
-    setBusy(true);
+  // The partner's type in the Admin's words: the list (Affiliate, Reseller, White
+  // Label) the server files it under, else the workspace it lands in.
+  const kind = isCategory(partner.category)
+    ? CATEGORY_MENU_LABEL[partner.category]
+    : (partner.workspaces?.find((w) => w.key === (partner.level ?? partner.landing))?.label ?? "");
+  const viewer = guest.viewer ? guest.viewer.name || guest.viewer.email : "";
+  async function leave(to: "return" | "end") {
+    setBusy(to);
     setFailed(false);
+    let answer: { return_url?: string };
     try {
-      await partnerApi.endGuestView();
+      answer = await partnerApi.endGuestView();
     } catch {
       // Not ended: stay here and say so, rather than leave the view running
       // behind a page that looks like it was left.
-      setBusy(false);
+      setBusy(null);
       setFailed(true);
       return;
     }
-    window.location.assign(portalHref(portals, "admin", `/admin/partners/${encodeURIComponent(partner.partner_id)}`));
+    window.location.replace(
+      to === "return"
+        ? guestReturnUrl(answer.return_url, portals, partner.partner_id, { returned: true })
+        : guestReturnUrl(undefined, portals, partner.partner_id),
+    );
   }
   return (
-    <div role="status" className={`w360-badge w360-badge-info ${consoleStyles.banner} ${consoleStyles.notice}`}>
-      Viewing Partner Portal as {partner.display_name}. Read-only
-      {Number.isNaN(ends.getTime()) ? "" : `, ends at ${ends.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}: you cannot change
-      anything here.{" "}
-      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => void exit()} disabled={busy}>
-        Exit Guest Session
-      </button>
-      {failed && <span role="alert"> The guest session could not be ended. Try again.</span>}
+    <div role="status" aria-label="Guest Session" className={`w360-badge w360-badge-info ${consoleStyles.banner} ${consoleStyles.notice} ${guestStyles.banner}`}>
+      <span className={guestStyles.text}>
+        {/* The specification's wording, then what it means. */}
+        <strong>Guest Session – Viewing Partner: {partner.display_name}</strong>
+        {kind && (
+          <>
+            {" "}
+            <span className={guestStyles.type}>Partner type: {kind}</span>
+          </>
+        )}{" "}
+        <span className={guestStyles.detail}>
+          Read only
+          {viewer && `, viewing as ${viewer}`}
+          {Number.isNaN(ends.getTime()) ? "" : `, until ${ends.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}. Nothing can be
+          changed here, and every page you open is recorded.
+        </span>
+      </span>{" "}
+      <span className={guestStyles.actions}>
+        <button type="button" className="w360-btn w360-btn-primary" onClick={() => void leave("return")} disabled={busy !== null} aria-busy={busy === "return" || undefined}>
+          {busy === "return" ? "Returning…" : "Return to Super Admin"}
+        </button>
+        <button type="button" className="w360-btn w360-btn-secondary" onClick={() => void leave("end")} disabled={busy !== null} aria-busy={busy === "end" || undefined}>
+          {busy === "end" ? "Ending…" : "End Guest Session"}
+        </button>
+      </span>
+      {failed && (
+        <span role="alert" className={guestStyles.problem}>
+          The guest session could not be ended. Try again.
+        </span>
+      )}
     </div>
   );
 }
 
+/** The portal layout for one partner. Navigation comes from the partner's
+ * **capabilities** - there is no partner type anywhere in this file. */
 export function PartnerShell({ partnerId, children }: { partnerId: string; children: React.ReactNode }) {
   const router = usePortalRouter();
   const portals = usePortals();
@@ -323,7 +445,7 @@ export function PartnerShell({ partnerId, children }: { partnerId: string; child
   const entries: AccountMenuEntry[] = [
     { label: "Switch partner account", href: "/partner" },
     { label: "My organizations", href: portalHref(portals, "app", "/organizations/select") },
-    ...(who?.consoles?.staff ? [{ label: "Super Admin console", href: portalHref(portals, "admin", "/admin") }] : []),
+    ...(who?.consoles?.staff ? [{ label: "Admin console", href: portalHref(portals, "admin", "/admin") }] : []),
     { label: "Sign out", onSelect: signOut },
   ];
   return (
@@ -340,6 +462,12 @@ export function PartnerShell({ partnerId, children }: { partnerId: string; child
             {partner.status !== "active" && (
               <p role="status" className={`w360-badge w360-badge-warning ${consoleStyles.banner} ${consoleStyles.notice}`}>
                 {STATUS_NOTICE[partner.status] ?? `This partner account is ${partner.status}.`}
+                {/* A draft partner's menu is empty: this link is the way in to its application. */}
+                {partner.status === "draft" && (
+                  <Link href={`/partner/${partner.partner_id}/kyc`} className="w360-btn w360-btn-secondary">
+                    Complete your application
+                  </Link>
+                )}
               </p>
             )}
           </>

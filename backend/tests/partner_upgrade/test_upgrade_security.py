@@ -380,7 +380,13 @@ def test_a_proposed_domain_claims_nothing_until_dns_proves_it(catalog, admin):
     two, two_id = make_affiliate(admin, email="owner@af-two.example.com", code="af-two")
     for client, partner_id in ((one, one_id), (two, two_id)):
         request = request_upgrade(client, partner_id, "white_label")
-        assert decide(admin, partner_id, request["id"], "approve").status_code == 200
+        # ADR-063: selling is granted beside White Label explicitly.
+        assert (
+            decide(
+                admin, partner_id, request["id"], "approve", also=["reseller"]
+            ).status_code
+            == 200
+        )
     # Both asked for the same hostname; approval only recorded the requests. No
     # domain is served, verified or active, so neither partner owns it yet.
     rows = PartnerDomain.objects.filter(hostname="app.acme-partner.example.org")

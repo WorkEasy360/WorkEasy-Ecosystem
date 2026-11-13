@@ -135,8 +135,9 @@ def referral_capture_view(request: HttpRequest) -> JsonResponse:
     if not 16 <= len(visitor) <= 64:
         visitor = secrets.token_urlsafe(24)
     held = request.COOKIES.get(settings.REFERRAL_COOKIE_NAME, "")[:200]
+    body = _body(request)
     captured = referrals.capture_visit(
-        _body(request).get("code"), visitor_id=visitor, held_token=held
+        body.get("code"), visitor_id=visitor, held_token=held, to=body.get("to")
     )
     if captured is None:
         # One shape for unknown, disabled and ineligible codes.

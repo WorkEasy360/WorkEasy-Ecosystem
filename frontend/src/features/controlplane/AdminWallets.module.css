@@ -1,0 +1,122 @@
+/* Wallets & Credits and Usage pricing (2026-11-09). Tokens only. Every grid child that
+   can hold wide content gets min-width: 0, so a table scrolls inside its card. */
+
+.stack {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.stack > * {
+  min-width: 0;
+}
+
+.panel {
+  grid-template-columns: minmax(0, 1fr);
+  outline: none;
+}
+
+.panel > * {
+  min-width: 0;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+}
+
+.cellActions {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: var(--w360-space-2);
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+}
+
+.note {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: var(--w360-fs-body);
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  min-height: var(--w360-control-h);
+  font-size: var(--w360-fs-body);
+  white-space: nowrap;
+}
+
+.balance {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A sign is always written too: colour never carries the direction alone. */
+.moneyIn {
+  color: var(--w360-success);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.moneyOut {
+  color: var(--w360-danger);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.ownerList {
+  display: grid;
+  gap: var(--w360-space-1);
+  max-height: 220px;
+  margin: var(--w360-space-2) 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.ownerOption {
+  display: grid;
+  width: 100%;
+  padding: var(--w360-space-2) var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-control);
+  background: var(--w360-surface);
+  color: var(--w360-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ownerOption:hover {
+  background: var(--w360-bg-soft);
+}
+
+.ownerHint {
+  overflow: hidden;
+  color: var(--w360-text-muted);
+  font-size: var(--w360-fs-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chosenOwner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+}
+
+.fieldsetLegend {
+  padding: 0 var(--w360-space-1);
+}

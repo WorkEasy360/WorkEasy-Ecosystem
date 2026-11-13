@@ -69,7 +69,11 @@ def test_a_reseller_is_created_and_signs_in_with_the_typed_credentials(catalog, 
     assert data["status"] == "draft"
     assert data["experience"] == "reseller"
     assert data["default_experience"] == "reseller"
-    assert data["administrator"] == {"email": ADMIN_EMAIL, "account_created": True}
+    assert data["administrator"] == {
+        "email": ADMIN_EMAIL,
+        "account_created": True,
+        "invited": False,
+    }
     assert set(data["capabilities"]) == set(capabilities.EXPERIENCE_BUNDLES["reseller"])
     assert data["payout_currency"] == "GBP"
 
@@ -86,9 +90,8 @@ def test_a_reseller_is_created_and_signs_in_with_the_typed_credentials(catalog, 
     assert "platform.partner_referral.create" not in me["permissions"]
 
 
-def test_a_white_label_partner_holds_the_commercial_set_plus_brand_and_domain(
-    catalog, admin
-):
+def test_a_white_label_partner_holds_brand_and_domain_and_nothing_to_sell(catalog, admin):
+    """ADR-063: White Label is an add-on; alone it sells, refers and earns nothing."""
     response = send(admin, CREATE, make_body("white_label", name="WL Partner"))
     assert response.status_code == 201, response.content
     pid = response.json()["id"]
@@ -97,14 +100,34 @@ def test_a_white_label_partner_holds_the_commercial_set_plus_brand_and_domain(
     assert held(pid) == set(capabilities.EXPERIENCE_BUNDLES["white_label"])
     me = portal_of(ADMIN_EMAIL)
     assert me["landing"] == "white_label"
-    # ADR-053: additive - the white-label bundle holds the reseller set, so the
-    # Reseller workspace is offered beside the White-label one.
-    assert [w["key"] for w in me["workspaces"]] == ["reseller", "white_label"]
+    assert [w["key"] for w in me["workspaces"]] == ["white_label"]
     assert "platform.partner_branding.manage" in me["permissions"]
     assert "platform.partner_domain.manage" in me["permissions"]
+    assert "platform.partner_customer.provision" not in me["permissions"]
+    assert "platform.partner_referral.create" not in me["permissions"]
+
+
+def test_a_white_label_partner_sells_only_when_reseller_is_granted_beside_it(
+    catalog, admin
+):
+    body = make_body("white_label", name="WL Seller")
+    body["also"] = ["reseller"]
+    response = send(admin, CREATE, body)
+    assert response.status_code == 201, response.content
+    pid = response.json()["id"]
+    ready(admin, pid)
+
+    assert held(pid) == set(capabilities.EXPERIENCE_BUNDLES["white_label"]) | set(
+        capabilities.EXPERIENCE_BUNDLES["reseller"]
+    )
+    me = portal_of(ADMIN_EMAIL)
+    assert me["landing"] == "white_label"
+    assert [w["key"] for w in me["workspaces"]] == ["reseller", "white_label"]
     assert "platform.partner_customer.provision" in me["permissions"]
-    # White-label is a label: it has no sub-partners unless granted separately.
-    assert "platform.partner_subpartner.manage" not in me["permissions"]
+    # Unknown types are refused, never guessed.
+    bad = make_body("white_label", name="WL Bad")
+    bad["also"] = ["superuser"]
+    assert send(admin, CREATE, bad).status_code == 400
 
 
 def test_an_affiliate_gets_referral_and_money_capabilities_and_nothing_to_sell(

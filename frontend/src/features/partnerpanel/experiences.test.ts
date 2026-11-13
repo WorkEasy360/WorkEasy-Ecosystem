@@ -2,29 +2,30 @@ import { describe, it, expect } from "vitest";
 import {
   CONTAINS,
   EXPERIENCE_ORDER,
-  LEVEL_ORDER,
   SHORT_ADDRESSES,
   WORKSPACES,
   entriesFor,
+  entryHref,
+  entryVisible,
   experienceFromSlug,
   firstAllowedPath,
   isLocked,
-  lockedEntryFor,
   pageAllowed,
   servedPaths,
   tabOf,
+  tabVisible,
   tabbedEntryFor,
-  unlockLevel,
   workspaceHome,
   type ExperienceKey,
 } from "./experiences";
 import { PAGE_PATHS } from "./workspacePages";
 
 /**
- * The unified partner dashboard (2026-11-03): one fourteen-entry menu for every
- * partner level. These tests read the data file: the entries and their order,
- * which level sees which entry locked, what each entry and tab needs, and that
- * no page of the earlier menus was lost.
+ * The Partner Admin Panel of 08 November 2026 (ADR-063): exactly eight menus,
+ * the same for every partner, every other page a tab of one of them. These tests
+ * read the data file: the entries and their order, what each entry and tab needs,
+ * what a partner that may not trade yet sees, and that no page of the earlier
+ * menus was lost.
  */
 
 const ALL = (...keys: string[]) => keys.some(() => true);
@@ -35,23 +36,16 @@ const HOLDING =
 
 const entries = (key: ExperienceKey) => WORKSPACES[key].groups.flatMap((g) => g.entries);
 const labels = (key: ExperienceKey) => entries(key).map((e) => e.label);
-const locked = (key: ExperienceKey) => entries(key).filter((e) => isLocked(WORKSPACES[key], e)).map((e) => e.label);
 const entry = (key: ExperienceKey, entryKey: string) => entries(key).find((e) => e.key === entryKey)!;
 
-const FOURTEEN = [
+const EIGHT = [
   "Dashboard",
-  "Affiliate",
-  "Reseller",
-  "White Label",
-  "Product Store",
+  "Products & Referrals",
   "Customers",
-  "Sales & Orders",
-  "Commission & Earnings",
-  "Wallet & Payouts",
-  "Communication",
-  "Staff",
-  "Helpdesk",
-  "Reports & Analytics",
+  "Billing & Subscriptions",
+  "Platform Wallet",
+  "Earnings & Payouts",
+  "Help",
   "Settings",
 ];
 
@@ -197,47 +191,16 @@ const OLD_ALIASES: Record<ExperienceKey, string[]> = {
   ],
 };
 
-describe("one menu for every level", () => {
-  it("every workspace draws the same fourteen entries, in the specification's order", () => {
-    for (const key of EXPERIENCE_ORDER) expect(labels(key), key).toEqual(FOURTEEN);
+
+describe("exactly eight menus", () => {
+  it("every workspace draws the same eight entries, in the specification's order", () => {
+    for (const key of EXPERIENCE_ORDER) expect(labels(key), key).toEqual(EIGHT);
   });
 
-  it("each level sees the entries above it locked", () => {
-    expect(locked("affiliate")).toEqual(["Reseller", "White Label", "Customers", "Sales & Orders", "Communication", "Staff"]);
-    expect(locked("reseller")).toEqual(["White Label"]);
-    expect(locked("white_label")).toEqual([]);
-  });
-
-  it("a locked entry names the level that opens it and says what it opens", () => {
-    expect(unlockLevel(entry("affiliate", "reseller"))).toBe("reseller");
-    expect(unlockLevel(entry("affiliate", "customers"))).toBe("reseller");
-    expect(unlockLevel(entry("reseller", "white-label"))).toBe("white_label");
+  it("nothing is drawn locked: a module the partner may not use is not drawn at all", () => {
     for (const key of EXPERIENCE_ORDER) {
-      for (const e of entries(key).filter((x) => isLocked(WORKSPACES[key], x))) {
-        expect(e.pitch, `${key}/${e.key}`).toBeTruthy();
-      }
+      for (const e of entries(key)) expect(isLocked(WORKSPACES[key], e), `${key}/${e.key}`).toBe(false);
     }
-  });
-
-  it("the levels are numbered 1-3 in the order a partner grows", () => {
-    expect(LEVEL_ORDER).toEqual(["affiliate", "reseller", "white_label"]);
-    expect(LEVEL_ORDER.map((k) => WORKSPACES[k].level.number)).toEqual([1, 2, 3]);
-  });
-
-  it("a locked entry's pages are never opened, whatever the permissions, and are named as locked", () => {
-    const aff = WORKSPACES.affiliate;
-    for (const path of ["users", "users/subscriptions", "payments", "product-billing", "plans", "agency", "team", "roles", "communication/channel", "brand-settings"]) {
-      expect(pageAllowed(aff, path, ALL), path).toBe(false);
-      expect(lockedEntryFor(aff, path), path).toBeDefined();
-    }
-    const res = WORKSPACES.reseller;
-    for (const path of ["brand-settings", "brand-settings/url-manager", "brand-settings/white-label-setup", "appearance", "translations"]) {
-      expect(pageAllowed(res, path, ALL), path).toBe(false);
-      expect(lockedEntryFor(res, path)?.key, path).toBe("white-label");
-    }
-    expect(lockedEntryFor(res, "users")).toBeUndefined();
-    expect(lockedEntryFor(WORKSPACES.white_label, "brand-settings")).toBeUndefined();
-    expect(pageAllowed(WORKSPACES.white_label, "brand-settings", ALL)).toBe(true);
   });
 
   it("every page of the earlier menus still opens in its workspace (no page lost)", () => {
@@ -249,165 +212,106 @@ describe("one menu for every level", () => {
         expect(served.has(alias) || def.aliases[alias] !== undefined, `${key}: ${alias}`).toBe(true);
       }
     }
-    // A page the old affiliate menu did not serve is served now only as a locked one.
-    for (const path of ["users", "plans", "agency", "team", "payments"]) {
-      expect(lockedEntryFor(WORKSPACES.affiliate, path), path).toBeDefined();
-    }
   });
 
-  it("the new pages are served: wallet, disputes, desk, saved replies, margin calculator", () => {
+  it("the specification's new pages are served", () => {
+    const fresh = [
+      "eligible-products",
+      "sales-resources",
+      "customers/setup",
+      "customers/activate",
+      "billing-records",
+      "platform-wallet",
+      "platform-wallet/transactions",
+      "help",
+      "business-kyc",
+    ];
     for (const key of EXPERIENCE_ORDER) {
       const served = servedPaths(WORKSPACES[key]);
-      for (const path of ["wallet", "disputes", "support-manager", "margin-calculator"]) expect(served.has(path), `${key}: ${path}`).toBe(true);
+      for (const path of fresh) expect(served.has(path), `${key}: ${path}`).toBe(true);
     }
-    expect(servedPaths(WORKSPACES.reseller).has("desk")).toBe(true);
-    expect(servedPaths(WORKSPACES.reseller).has("desk/replies")).toBe(true);
-    // An affiliate raises tickets; it has no customer desk.
-    expect(servedPaths(WORKSPACES.affiliate).has("desk")).toBe(false);
   });
 
-  it("each page sits in one entry and one tab", () => {
-    const MAPPING: [ExperienceKey, string, string, string][] = [
-      ["reseller", "store-console", "reseller", "My Products"],
-      ["reseller", "partner-products", "reseller", "My Products"],
-      ["reseller", "store-console/explore", "reseller", "Wholesale Catalogue"],
-      ["reseller", "product-manager", "reseller", "Product Settings"],
-      ["reseller", "pricing/rules", "reseller", "Pricing & Margins"],
-      ["reseller", "agency", "reseller", "Downline Partners"],
-      ["reseller", "store", "product-store", ""],
-      ["reseller", "promote/store-console", "affiliate", "Promote Products"],
-      ["reseller", "payments", "sales-orders", "Orders"],
-      ["reseller", "product-billing", "sales-orders", "Product Billing"],
-      ["reseller", "users/subscriptions", "customers", "Subscriptions"],
-      ["reseller", "payments/balance", "commission", "Balance"],
-      ["reseller", "affiliates/payouts", "wallet", "Payout History"],
-      ["reseller", "communication/logs", "communication", "Channels"],
-      ["reseller", "roles", "staff", "Roles"],
-      ["reseller", "desk", "helpdesk", "Customer Desk"],
-      ["reseller", "api-keys", "settings", "API Keys"],
-      ["white_label", "appearance", "white-label", "Brand Settings"],
-      ["white_label", "brand-settings/url-manager", "white-label", "Custom Domain"],
-      ["white_label", "translations", "white-label", "Translations"],
-      ["affiliate", "store-console", "product-store", "Approved / Promoting"],
-      ["affiliate", "affiliates/conversions", "affiliate", "Conversions"],
-      ["affiliate", "affiliates", "affiliate", "Link Overview"],
-      ["affiliate", "marketing-materials", "affiliate", "Marketing Assets"],
-    ];
-    for (const [key, path, owner, tab] of MAPPING) {
-      const owners = entriesFor(WORKSPACES[key], path).filter((e) => !isLocked(WORKSPACES[key], e));
-      expect(owners.map((e) => e.key), `${key}: ${path}`).toEqual([owner]);
-      if (tab) expect(tabOf(owners[0], path)?.label, `${key}: ${path}`).toBe(tab);
-    }
-    expect(servedPaths(WORKSPACES.affiliate).has("promote/store")).toBe(false);
-  });
-
-  it("no page is owned by two open entries", () => {
+  it("each page sits in exactly one entry and one tab", () => {
     for (const key of EXPERIENCE_ORDER) {
-      const owners = new Map<string, string[]>();
-      for (const e of entries(key).filter((x) => !isLocked(WORKSPACES[key], x))) {
-        for (const path of [e.path, ...(e.also ?? [])]) owners.set(path, [...(owners.get(path) ?? []), e.key]);
+      const def = WORKSPACES[key];
+      for (const path of servedPaths(def)) {
+        const owners = entriesFor(def, path);
+        expect(owners.length, `${key}: ${path}`).toBe(1);
+        const owner = owners[0];
+        if (owner.tabs) expect(tabOf(owner, path), `${key}: ${path} has a tab`).toBeDefined();
       }
-      for (const [path, keys] of owners) expect(keys, `${key}: ${path}`).toHaveLength(1);
     }
   });
 
-  it("an affiliate's Store Console is drawn under its Product Store, not the locked Reseller entry", () => {
-    const def = WORKSPACES.affiliate;
-    for (const path of ["store-console", "store-console/explore", "store-console/requests"]) {
-      expect(tabbedEntryFor(def, path)?.key, path).toBe("product-store");
-      expect(lockedEntryFor(def, path), path).toBeUndefined();
-      expect(pageAllowed(def, path, HOLDING("referral.view")), path).toBe(true);
-    }
+  it("the tabs follow the specification's sub-menus", () => {
+    const tabs = (k: string) => entry("reseller", k).tabs!.map((t) => t.label);
+    expect(tabs("dashboard")).toEqual(["Overview", "Reports", "Notifications"]);
+    expect(tabs("products")).toEqual(["Eligible Products", "Referral Links", "Referral Results", "Sales Resources", "Product Store", "Pricing & Margins"]);
+    expect(tabs("customers")).toEqual(["Assigned Organizations", "Products & Setup", "Plan Activation", "Downline Partners"]);
+    expect(tabs("billing")).toEqual(["Customer Subscriptions", "Billing Records", "Customer Orders"]);
+    expect(tabs("platform-wallet")).toEqual(["Balance & Recharge", "Transactions"]);
+    expect(tabs("earnings")).toEqual(["Commissions", "Payouts", "Disputes"]);
+    expect(tabs("help")).toEqual(["Support Tickets", "Help Content", "Customer Desk"]);
+    expect(tabs("settings")).toEqual(["Business & KYC", "My Account & Security", "Staff", "White Label", "Communication", "Sign-in & API"]);
   });
 
-  it("every page a workspace serves has a page behind it, and every alias lands on a served page", () => {
+  it("every served page has a page behind it, and every alias lands on a served page that is not itself an alias", () => {
     for (const key of EXPERIENCE_ORDER) {
       const def = WORKSPACES[key];
       const served = servedPaths(def);
-      for (const path of served) expect(PAGE_PATHS, `${key}: ${path}`).toContain(path);
+      for (const path of served) expect(PAGE_PATHS.includes(path), `${key}: ${path} has a page`).toBe(true);
       for (const [alias, target] of Object.entries(def.aliases)) {
         expect(served.has(target), `${key}: ${alias} -> ${target}`).toBe(true);
-        expect(served.has(alias), `${key}: ${alias} is also a page`).toBe(false);
+        expect(served.has(alias), `${key}: ${alias} is a page, not an alias`).toBe(false);
       }
     }
   });
 
   it("the containment of an upgraded partner's workspaces is unchanged", () => {
-    expect(CONTAINS.reseller).toEqual(["affiliate"]);
-    expect(CONTAINS.white_label).toEqual(["reseller", "affiliate"]);
-    expect(CONTAINS.affiliate).toEqual([]);
+    expect(CONTAINS).toEqual({ affiliate: [], reseller: ["affiliate"], white_label: ["reseller", "affiliate"] });
   });
 });
 
-describe("tabs keep their own permission", () => {
-  it("the Reseller entry's tabs each need their own view", () => {
-    const def = WORKSPACES.reseller;
-    expect(pageAllowed(def, "plans", HOLDING("pricing.view"))).toBe(true);
-    expect(pageAllowed(def, "margin-calculator", HOLDING("pricing.view"))).toBe(true);
-    expect(pageAllowed(def, "plans", HOLDING("product.view"))).toBe(false);
-    expect(pageAllowed(def, "store-console", HOLDING("pricing.view"))).toBe(false);
-    expect(pageAllowed(def, "agency", HOLDING("subpartner.view"))).toBe(true);
-    expect(pageAllowed(def, "agency", HOLDING("pricing.view"))).toBe(false);
-    expect(entry("reseller", "reseller").landing?.(HOLDING("pricing.view"))).toBe("plans");
-    expect(entry("reseller", "reseller").landing?.(HOLDING("subpartner.view"))).toBe("agency");
+describe("each module follows the permission it needs", () => {
+  const def = WORKSPACES.reseller;
+  const pages = (can: (...k: string[]) => boolean, paths: string[]) => paths.filter((p) => pageAllowed(def, p, can));
+
+  it("Customers is a reseller's: assigned organizations need the customer view, activation selling", () => {
+    expect(entryVisible(entry("reseller", "customers"), HOLDING("referral.view", "commission.view"))).toBe(false);
+    expect(pages(HOLDING("customer.view"), ["users", "customers/setup", "customers/activate"])).toEqual(["users", "customers/setup"]);
+    expect(pages(HOLDING("customer.view", "pricing.view"), ["customers/activate"])).toEqual(["customers/activate"]);
   });
 
-  it("Sales & Orders: orders need the customer view, product billing the product view", () => {
-    const def = WORKSPACES.reseller;
-    expect(pageAllowed(def, "payments", HOLDING("customer.view"))).toBe(true);
-    expect(pageAllowed(def, "payments", HOLDING("product.view"))).toBe(false);
-    expect(pageAllowed(def, "product-billing", HOLDING("product.view"))).toBe(true);
-    expect(entry("reseller", "sales-orders").landing?.(HOLDING("product.view"))).toBe("product-billing");
+  it("the Platform Wallet needs the wallet permission, which an affiliate never holds", () => {
+    expect(entryVisible(entry("reseller", "platform-wallet"), HOLDING("wallet.view"))).toBe(true);
+    expect(entryVisible(entry("affiliate", "platform-wallet"), HOLDING("referral.view", "commission.view", "payout.view"))).toBe(false);
   });
 
-  it("the Helpdesk's desk tabs need the desk view; every member has My Tickets", () => {
-    const def = WORKSPACES.reseller;
-    expect(pageAllowed(def, "support-manager", HOLDING("dashboard.view"))).toBe(true);
-    expect(pageAllowed(def, "desk", HOLDING("dashboard.view"))).toBe(false);
-    expect(pageAllowed(def, "desk", HOLDING("dashboard.view", "desk.view"))).toBe(true);
-    expect(pageAllowed(def, "desk/replies", HOLDING("dashboard.view", "desk.view"))).toBe(true);
-    expect(entry("affiliate", "helpdesk").tabs?.map((t) => t.label)).toEqual(["My Tickets", "Notifications"]);
+  it("referral links and results need the referral view; pricing needs the pricing view", () => {
+    expect(pages(HOLDING("referral.view"), ["referral-links", "leads", "plans"])).toEqual(["referral-links", "leads"]);
+    expect(pages(HOLDING("pricing.view"), ["referral-links", "leads", "plans", "margin-calculator"])).toEqual(["plans", "margin-calculator"]);
   });
 
-  it("White Label: the domain is its own permission, not the brand's", () => {
-    const def = WORKSPACES.white_label;
-    expect(pageAllowed(def, "brand-settings/url-manager", HOLDING("domain.view"))).toBe(true);
-    expect(pageAllowed(def, "brand-settings", HOLDING("domain.view"))).toBe(false);
-    expect(pageAllowed(def, "brand-settings/url-manager", HOLDING("branding.view"))).toBe(false);
-    expect(entry("white_label", "white-label").landing?.(HOLDING("domain.view"))).toBe("brand-settings/url-manager");
+  it("White Label settings need the brand or domain view - an approved White Label permission", () => {
+    expect(pages(HOLDING("profile.view"), ["brand-settings", "brand-settings/url-manager"])).toEqual([]);
+    expect(pages(HOLDING("profile.view", "domain.view"), ["brand-settings/url-manager"])).toEqual(["brand-settings/url-manager"]);
   });
 
-  it("money: commissions need the commission view, the wallet the payout view", () => {
-    const def = WORKSPACES.affiliate;
-    expect(pageAllowed(def, "wallet", HOLDING("payout.view"))).toBe(true);
-    expect(pageAllowed(def, "payouts", HOLDING("payout.view"))).toBe(true);
-    expect(pageAllowed(def, "payments/commissions", HOLDING("payout.view"))).toBe(false);
-    expect(pageAllowed(def, "disputes", HOLDING("commission.view"))).toBe(true);
-    expect(pageAllowed(def, "wallet", HOLDING("commission.view"))).toBe(false);
+  it("the customer desk needs the desk view; every member has support tickets and help content", () => {
+    expect(pages(HOLDING("dashboard.view"), ["support-manager", "help", "desk"])).toEqual(["support-manager", "help"]);
+    expect(pages(HOLDING("dashboard.view", "desk.view"), ["desk", "desk/replies"])).toEqual(["desk", "desk/replies"]);
   });
 
-  it("promoting needs the referral view, page by page, at every level", () => {
-    for (const key of EXPERIENCE_ORDER) {
-      const def = WORKSPACES[key];
-      for (const path of ["referral-links", "referral-codes", "campaigns", "marketing-materials", "conversions", "affiliates/settings"]) {
-        expect(pageAllowed(def, path, HOLDING("commission.view")), `${key}: ${path}`).toBe(false);
-        expect(pageAllowed(def, path, HOLDING("referral.view")), `${key}: ${path}`).toBe(true);
-      }
-    }
-    expect(pageAllowed(WORKSPACES.reseller, "promote/store", HOLDING("referral.view"))).toBe(true);
-    // An affiliate's Product Store needs the referral view; a seller's the product view.
-    expect(pageAllowed(WORKSPACES.affiliate, "store", HOLDING("referral.view"))).toBe(true);
-    expect(pageAllowed(WORKSPACES.reseller, "store", HOLDING("referral.view"))).toBe(false);
-    expect(pageAllowed(WORKSPACES.reseller, "store", HOLDING("product.view"))).toBe(true);
+  it("commissions need the commission view, payouts the payout view", () => {
+    expect(pages(HOLDING("payout.view"), ["payments/commissions", "wallet", "disputes"])).toEqual(["wallet"]);
+    expect(entryHref(entry("reseller", "earnings"), HOLDING("payout.view"))).toBe("wallet");
   });
-});
 
-describe("permissions are the only input", () => {
   it("names only partner permissions, never a capability, a partner type or the landing preference", () => {
     const known = new Set([
       "dashboard.view",
       "customer.view",
-      "product.view",
       "pricing.view",
       "commission.view",
       "payout.view",
@@ -418,6 +322,7 @@ describe("permissions are the only input", () => {
       "branding.view",
       "domain.view",
       "desk.view",
+      "wallet.view",
     ]);
     for (const key of EXPERIENCE_ORDER) {
       for (const e of entries(key)) {
@@ -437,35 +342,45 @@ describe("permissions are the only input", () => {
 
   const AFFILIATE = HOLDING("dashboard.view", "profile.view", "member.view", "referral.view", "commission.view", "payout.view", "product.view");
 
-  it("an affiliate's permissions open the affiliate pages and none of the commercial ones", () => {
-    const def = WORKSPACES.affiliate;
-    for (const path of ["dashboard", "referral-links", "leads", "payments/commissions", "wallet", "payouts", "reports", "account", "support-manager"]) {
-      expect(pageAllowed(def, path, AFFILIATE), path).toBe(true);
+  it("an affiliate sees its six modules and none of a reseller's", () => {
+    const shown = entries("affiliate").filter((e) => entryVisible(e, AFFILIATE)).map((e) => e.label);
+    expect(shown).toEqual(["Dashboard", "Products & Referrals", "Billing & Subscriptions", "Earnings & Payouts", "Help", "Settings"]);
+    for (const path of ["users", "customers/activate", "platform-wallet", "plans", "agency"]) {
+      expect(pageAllowed(WORKSPACES.affiliate, path, AFFILIATE), path).toBe(false);
     }
-    expect(pageAllowed(def, "users", AFFILIATE)).toBe(false);
-    expect(pageAllowed(def, "plans", AFFILIATE)).toBe(false);
-    expect(pageAllowed(def, "team", AFFILIATE)).toBe(false);
-  });
-
-  it("a finance role (money, no customers) is not offered the customer pages in the reseller workspace", () => {
-    const finance = HOLDING("dashboard.view", "profile.view", "pricing.view", "commission.view", "payout.view", "product.view");
-    const def = WORKSPACES.reseller;
-    expect(pageAllowed(def, "users", finance)).toBe(false);
-    expect(pageAllowed(def, "users/subscriptions", finance)).toBe(false);
-    expect(pageAllowed(def, "payments", finance)).toBe(false);
-    expect(pageAllowed(def, "payments/commissions", finance)).toBe(true);
-    expect(pageAllowed(def, "plans", finance)).toBe(true);
   });
 
   it("a payout-only member lands where it can read, and an ended partner on its money", () => {
-    const ended = HOLDING("commission.view", "payout.view");
-    expect(pageAllowed(WORKSPACES.reseller, "dashboard", ended)).toBe(false);
-    expect(firstAllowedPath(WORKSPACES.reseller, ended)).toBe("payments/commissions");
-    expect(firstAllowedPath(WORKSPACES.reseller, HOLDING("payout.view"))).toBe("wallet");
-    expect(firstAllowedPath(WORKSPACES.reseller, HOLDING("customer.view"))).toBe("users");
-    // A locked entry is never a landing.
-    expect(firstAllowedPath(WORKSPACES.affiliate, HOLDING("customer.view"))).toBeNull();
-    expect(firstAllowedPath(WORKSPACES.affiliate, HOLDING())).toBeNull();
+    expect(firstAllowedPath(def, HOLDING("payout.view"))).toBe("wallet");
+    expect(firstAllowedPath(def, HOLDING("commission.view", "payout.view"))).toBe("payments/commissions");
+  });
+});
+
+describe("before a partner may trade (ADR-063)", () => {
+  const ONBOARDING = HOLDING("dashboard.view", "profile.view");
+
+  it("only onboarding status, support, business and KYC, and security are drawn", () => {
+    for (const key of EXPERIENCE_ORDER) {
+      const shown = entries(key).filter((e) => entryVisible(e, ALL, false)).map((e) => e.label);
+      expect(shown, key).toEqual(["Dashboard", "Help", "Settings"]);
+      const tabs = entries(key)
+        .filter((e) => entryVisible(e, ALL, false))
+        .flatMap((e) => (e.tabs ?? []).filter((t) => tabVisible(t, ALL, false)).map((t) => t.label));
+      expect(tabs, key).toEqual(["Overview", "Notifications", "Support Tickets", "Help Content", "Business & KYC", "My Account & Security"]);
+    }
+  });
+
+  it("no commercial page opens, whatever the permissions say", () => {
+    for (const path of ["referral-links", "users", "customers/activate", "platform-wallet", "wallet", "reports", "team", "api-keys"]) {
+      expect(pageAllowed(WORKSPACES.reseller, path, ALL, false), path).toBe(false);
+    }
+    for (const path of ["dashboard", "support-manager", "help", "business-kyc", "account", "notifications"]) {
+      expect(pageAllowed(WORKSPACES.reseller, path, ONBOARDING, false), path).toBe(true);
+    }
+  });
+
+  it("Settings opens on Business & KYC", () => {
+    expect(entryHref(entry("reseller", "settings"), ONBOARDING, false)).toBe("business-kyc");
   });
 });
 
@@ -491,19 +406,22 @@ describe("addresses", () => {
     for (const { to } of SHORT_ADDRESSES) expect(to.startsWith("/partner/")).toBe(true);
   });
 
-  it("the specification's entry names are addresses too", () => {
+  it("the specification's names are addresses too", () => {
     for (const key of EXPERIENCE_ORDER) {
       const a = WORKSPACES[key].aliases;
+      expect(a["products-referrals"], key).toBe("eligible-products");
+      expect(a["plan-activation"], key).toBe("customers/activate");
+      expect(a["add-money"], key).toBe("platform-wallet");
       expect(a["wallet-payouts"], key).toBe("wallet");
       expect(a.helpdesk, key).toBe("support-manager");
       expect(a.staff, key).toBe("team");
-      expect(a["commission-earnings"], key).toBe("payments/commissions");
     }
   });
 
   it("entriesFor finds the entry that owns a page, and none for a stranger", () => {
     expect(entriesFor(WORKSPACES.reseller, "users").map((e) => e.key)).toEqual(["customers"]);
-    expect(entriesFor(WORKSPACES.reseller, "pricing/rules").map((e) => e.key)).toEqual(["reseller"]);
+    expect(entriesFor(WORKSPACES.reseller, "pricing/rules").map((e) => e.key)).toEqual(["products"]);
+    expect(tabbedEntryFor(WORKSPACES.affiliate, "store-console")?.key).toBe("products");
     expect(entriesFor(WORKSPACES.affiliate, "no-such-page")).toEqual([]);
   });
 });

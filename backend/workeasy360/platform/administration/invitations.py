@@ -95,7 +95,7 @@ def _ttl() -> timedelta:
 
 
 def _url(token: str) -> str:
-    return f"{portal_links.auth_url()}/invitations/accept#token={token}"
+    return f"{portal_links.account_url()}/invitations/accept#token={token}"
 
 
 def _authorize_role(ctx: TenantContext, role_key: str) -> None:

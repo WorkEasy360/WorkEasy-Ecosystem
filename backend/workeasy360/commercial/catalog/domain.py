@@ -341,7 +341,13 @@ MAX_TAG: Final = 32
 MAX_LIST_ITEMS: Final = 12
 MAX_LIST_ITEM: Final = 200
 #: The listing's bullet lists, in the order a product page shows them.
-MERCHANDISING_LISTS: Final = ("highlights", "benefits", "use_cases")
+MERCHANDISING_LISTS: Final = (
+    "highlights",
+    "benefits",
+    "use_cases",
+    # ADR-065: the Store page's "Setup requirements".
+    "setup_requirements",
+)
 #: The store's hand-set badges (``New`` is also shown for 30 days after launch;
 #: ``best_seller`` is the marketplace's "Best Seller", 2026-11-04).
 MERCHANDISING_FLAGS: Final = ("featured", "popular", "badge_new", "best_seller")
@@ -392,6 +398,28 @@ def validate_best_for(raw: Any) -> list[str]:
             "best_for entries are among: " + ", ".join(BEST_FOR) + ".", field="best_for"
         )
     return [key for key in BEST_FOR if key in raw]
+
+
+#: The longest refund promise a product page may make.
+MAX_REFUND_DAYS: Final = 365
+
+
+def validate_refund_days(raw: Any) -> int | None:
+    """A whole number of days from 1 to ``MAX_REFUND_DAYS``, or empty (0 or
+    nothing) for no refund promise."""
+    if raw in (None, "", 0):
+        return None
+    if (
+        isinstance(raw, bool)
+        or not isinstance(raw, int)
+        or not 1 <= raw <= MAX_REFUND_DAYS
+    ):
+        raise CatalogValidationError(
+            f"refund_days is a whole number of days from 1 to {MAX_REFUND_DAYS}, "
+            "or empty for no refund promise.",
+            field="refund_days",
+        )
+    return raw
 
 
 def validate_integrations(raw: Any) -> list[str]:
@@ -905,10 +933,29 @@ PUBLISH_REQUIREMENTS: Final[tuple[tuple[str, str], ...]] = (
     ("category", "Category"),
     ("tagline", "Short description"),
     ("logo", "Logo"),
-    ("application_url", "Application URL"),
-    ("launch_url", "Launch URL"),
+    # One launch destination, not two (2026-11-10): a product that signs people in
+    # with Workeasy360 launches at its integration's URL, an app-only product at an
+    # app-store link, anything else at its Application URL. Easy CRM was refused
+    # for an empty Application URL although its integration launches it.
+    ("launch", "Launch destination"),
+    ("return_destinations", "Approved return destinations"),
+    ("plans", "At least one active plan"),
+    ("channels", "At least one sales channel"),
     ("status", "Not archived"),
 )
+
+#: What each requirement asks for, shown under the checklist.
+PUBLISH_DETAILS: Final[dict[str, str]] = {
+    "launch": (
+        "An Application URL, the connected product's launch URL, or an app store link."
+    ),
+    "return_destinations": (
+        "A product that signs people in with Workeasy360 must list where they may be "
+        "sent back to. Not needed for a product with no connected sign-in."
+    ),
+    "plans": "A plan customers can be put on. Without one nothing can be sold.",
+    "channels": "The customer store, resellers, affiliates or white-label partners.",
+}
 
 
 def publish_checklist(
@@ -921,20 +968,33 @@ def publish_checklist(
     application_url: str,
     launch_url: str,
     status: ProductStatus,
+    has_app_link: bool = False,
+    return_destinations: bool | None = None,
+    has_active_plan: bool = False,
+    channel_open: bool = False,
 ) -> list[dict[str, Any]]:
-    """Each publish requirement and whether it is met. Pure: the caller reads
-    the product, its logo and its integration's launch URL."""
+    """Each publish requirement and whether it is met. Pure: the caller reads the
+    product, its logo, its plans, and its integration's launch URL and whether that
+    integration lists return destinations (``None``: no integration, so nothing to
+    approve)."""
     met = {
         "name": bool(name.strip()),
         "slug": bool(slug.strip()),
         "category": bool(category.strip()),
         "tagline": bool(tagline.strip()),
         "logo": has_logo,
-        "application_url": bool(application_url.strip()),
-        "launch_url": bool(launch_url.strip()),
+        "launch": bool(application_url.strip() or launch_url.strip() or has_app_link),
+        "return_destinations": return_destinations is not False,
+        "plans": has_active_plan,
+        "channels": channel_open,
         "status": status in (ProductStatus.DRAFT, ProductStatus.AVAILABLE),
     }
     return [
-        {"key": key, "label": label, "ok": met[key]}
+        {
+            "key": key,
+            "label": label,
+            "ok": met[key],
+            **({"detail": PUBLISH_DETAILS[key]} if key in PUBLISH_DETAILS else {}),
+        }
         for key, label in PUBLISH_REQUIREMENTS
     ]

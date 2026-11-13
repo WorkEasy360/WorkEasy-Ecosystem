@@ -26,6 +26,11 @@
 #   W360_ADMIN_ORIGIN, W360_PARTNER_ORIGIN, W360_APP_ORIGIN, W360_AUTH_ORIGIN, W360_API_ORIGIN
 #                                the five https origins (e.g. https://admin.workeasy360.com);
 #                                one ACME certificate each, renewed automatically
+#   W360_STORE_EDGE              on | off (default): the Digital Store's own host (ADR-065).
+#                                Turn it on only once its DNS record exists - a site with no
+#                                DNS would only retry its certificate.
+#   W360_STORE_ORIGIN            the Store's https origin (https://store.workeasy360.com),
+#                                read when W360_STORE_EDGE is on
 #   W360_EDGE_UPSTREAM_HOST      the API's host name (the host of W360_API_ORIGIN): the Host
 #                                Django sees for the edge's own requests
 #   W360_TLS_ISSUER              acme (default: Let's Encrypt/ZeroSSL) | internal (staging)
@@ -124,6 +129,38 @@ http://127.0.0.1:8081 {
 		}
 	}
 }
+
+# The Digital Store's own host (ADR-065), only when switched on. The web app for
+# its pages, the API for its calls - Django serves the Store host only the
+# customer endpoints its checkout and Recharge use (PortalSurfaceMiddleware) - and
+# its sitemap, which the API builds from configuration and the public catalog.
+(store_off) {
+}
+
+(store_on) {
+	{$W360_STORE_ORIGIN} {
+		import platform_site
+		@sitemap path /sitemap.xml
+		handle @sitemap {
+			rewrite * /api/v1/public/store/sitemap.xml
+			reverse_proxy api:8000 {
+				import upstream
+			}
+		}
+		handle /api/* {
+			reverse_proxy api:8000 {
+				import upstream
+			}
+		}
+		handle {
+			reverse_proxy web:3000 {
+				import upstream
+			}
+		}
+	}
+}
+
+import store_{$W360_STORE_EDGE:off}
 
 # The central sign-in. It is also the OIDC issuer (W360_OIDC_ISSUER): the
 # authorization endpoint needs this host's session, and products fetch the

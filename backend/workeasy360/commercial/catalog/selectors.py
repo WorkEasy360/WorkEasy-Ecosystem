@@ -402,6 +402,7 @@ def merchandising(product: Any) -> dict[str, Any]:
         "highlights": list(product.highlights or []),
         "benefits": list(product.benefits or []),
         "use_cases": list(product.use_cases or []),
+        "setup_requirements": list(product.setup_requirements or []),
         "video_url": product.video_url,
         "featured": product.featured,
         "popular": product.popular,
@@ -410,6 +411,7 @@ def merchandising(product: Any) -> dict[str, Any]:
         "product_type": product.product_type,
         "best_for": list(product.best_for or []),
         "integrations": list(product.integrations or []),
+        "refund_days": product.refund_days,
     }
 
 
@@ -443,6 +445,7 @@ def product_row(product: Any) -> dict[str, Any]:
         "reseller_enabled": product.reseller_enabled,
         "affiliate_enabled": product.affiliate_enabled,
         "white_label_enabled": product.white_label_enabled,
+        "app_links": dict(product.app_links or {}),
         **merchandising(product),
         "created_at": product.created_at.isoformat() if product.created_at else None,
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
@@ -491,12 +494,21 @@ def publish_readiness(
     its own fields (with ``overrides`` applied, for an edit not yet saved),
     whether it has a logo, and its integration's launch URL - read through the
     registry's ungated, narrow ``launch_target``."""
-    from workeasy360.commercial.catalog.models import ProductMedia
+    from workeasy360.commercial.catalog.models import Plan, ProductMedia
     from workeasy360.platform.ecosystem import selectors as ecosystem_selectors
 
-    fields = ("name", "slug", "category", "tagline", "application_url")
+    fields = (
+        "name",
+        "slug",
+        "category",
+        "tagline",
+        "application_url",
+        "app_links",
+        *CHANNEL_FLAGS.values(),
+    )
     values = {**{f: getattr(product, f) for f in fields}, **(overrides or {})}
     target = ecosystem_selectors.launch_target(product.code)
+    links = values["app_links"] if isinstance(values["app_links"], dict) else {}
     return publish_checklist(
         name=values["name"],
         slug=values["slug"],
@@ -508,6 +520,14 @@ def publish_readiness(
         application_url=values["application_url"],
         launch_url=target.launch_url if target is not None else "",
         status=product.status_enum,
+        has_app_link=any(str(url).strip() for url in links.values()),
+        return_destinations=ecosystem_selectors.has_return_destinations(product.code),
+        has_active_plan=Plan.objects.filter(
+            product_id=product.id,
+            addon_for__isnull=True,
+            status=CatalogStatus.AVAILABLE.value,
+        ).exists(),
+        channel_open=any(bool(values[flag]) for flag in CHANNEL_FLAGS.values()),
     )
 
 
@@ -976,6 +996,9 @@ def plan_listing(*, product_code: str | None = None) -> list[dict[str, Any]]:
             "sort_order": p.sort_order,
             "billing_type": p.billing_type,
             "kind": p.kind,
+            "renewal_rule": p.renewal_rule,
+            "change_rule": p.change_rule,
+            "included_usage": dict(p.included_usage or {}),
             "recommended": p.product.recommended_plan_id == p.id,
             "product": {
                 "id": str(p.product_id),
@@ -1141,6 +1164,10 @@ def marketplace_offers(*, at: Any) -> dict[str, list[dict[str, Any]]]:
                 "trial_days": v.trial_days,
                 "recommended": v.plan.product.recommended_plan_id == v.plan_id,
                 "sort_order": v.plan.sort_order,
+                # ADR-065: what the Store's plan cards state - how the plan
+                # renews and the usage it includes each month.
+                "renewal_rule": v.plan.renewal_rule,
+                "included_usage": dict(v.plan.included_usage or {}),
             }
         )
     bundle_rows = (
@@ -1187,6 +1214,27 @@ def marketplace_offers(*, at: Any) -> dict[str, list[dict[str, Any]]]:
             }
         )
     return {"plans": plans, "bundles": bundles}
+
+
+def store_page_slug(product_code: str) -> str | None:
+    """The slug of ``product_code``'s Store page (``/store/product/<slug>``),
+    or ``None`` when the Store does not sell it: listed, available and allowed
+    on the customer Store - the same rule as :func:`public_products`, so a link
+    built from it never lands on a missing page. One query."""
+    from workeasy360.commercial.catalog.models import Product
+    from workeasy360.contracts.enums import ProductListing, ProductStatus
+
+    slug = (
+        Product.objects.filter(
+            code=product_code,
+            listing=ProductListing.LISTED.value,
+            status=ProductStatus.AVAILABLE.value,
+            customer_store_enabled=True,
+        )
+        .values_list("slug", flat=True)
+        .first()
+    )
+    return str(slug) if slug else None
 
 
 def public_products() -> list[dict[str, Any]]:
@@ -1285,6 +1333,20 @@ def product_counts(*, start: Any, end: Any) -> dict[str, int]:
     return {key: int(value or 0) for key, value in counts.items()}
 
 
+def products_by_codes(codes: Any) -> dict[str, dict[str, Any]]:
+    """These products as the catalog screens show them, by code - one query
+    (ADR-063: a partner's customer page links each product it holds)."""
+    from workeasy360.commercial.catalog.models import Product
+
+    wanted = sorted({str(c) for c in codes if c})
+    if not wanted:
+        return {}
+    return {
+        p.code: product_row(p)
+        for p in Product.objects.filter(code__in=wanted).select_related("trial_config")
+    }
+
+
 def product_names(codes: list[str]) -> dict[str, str]:
     """Display names by product code (one query)."""
     from workeasy360.commercial.catalog.models import Product
@@ -1327,3 +1389,47 @@ def store_counts() -> dict[str, int]:
         **{f"products_{k}": int(v or 0) for k, v in products.items()},
         **{f"plans_{k}": int(v or 0) for k, v in plans.items()},
     }
+
+
+def search_products(term: str, *, limit: int = 5) -> list[dict[str, str]]:
+    """Products by name or code, for the Admin console's search."""
+    from workeasy360.commercial.catalog.models import Product
+
+    rows = Product.objects.filter(
+        Q(name__icontains=term) | Q(code__icontains=term)
+    ).order_by("sort_order", "code")[: max(1, min(limit, 25))]
+    return [{"id": str(row.id), "name": row.name, "code": row.code} for row in rows]
+
+
+def plan_rules(plan_code: str) -> dict[str, Any] | None:
+    """A plan's renewal and change rules and included usage. Unknown plan: ``None``."""
+    from workeasy360.commercial.catalog.models import Plan
+
+    return (
+        Plan.objects.filter(code=plan_code)
+        .values("renewal_rule", "change_rule", "included_usage")
+        .first()
+    )
+
+
+def renewal_rules_of(plan_codes: Any) -> dict[str, str]:
+    """The renewal rule of each of these plans. A plan not found is simply absent."""
+    from workeasy360.commercial.catalog.models import Plan
+
+    return dict(
+        Plan.objects.filter(code__in=set(plan_codes)).values_list("code", "renewal_rule")
+    )
+
+
+def included_usage_of(plan_codes: Any) -> dict[str, int]:
+    """What these plans include each month, added up per meter."""
+    from workeasy360.commercial.catalog.models import Plan
+
+    totals: dict[str, int] = {}
+    for usage in Plan.objects.filter(code__in=list(plan_codes)).values_list(
+        "included_usage", flat=True
+    ):
+        for meter, units in (usage or {}).items():
+            if isinstance(units, int) and not isinstance(units, bool) and units > 0:
+                totals[str(meter)] = totals.get(str(meter), 0) + units
+    return totals

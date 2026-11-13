@@ -68,6 +68,10 @@ const TAB_ROUTES = [
   "/communication/logs",
 ];
 
+/** Pages deliberately in no menu. The KYC application is a draft partner's way in, from
+ * the status notice in the shell: a draft partner's menu is empty. */
+const NOT_IN_MENU = ["/kyc"];
+
 const APP = join(__dirname, "..", "..", "app", "partner", "[partnerId]");
 
 function pageRoutes(dir = APP): string[] {
@@ -120,7 +124,7 @@ describe("the approved partner menu", () => {
 describe("the partner routes", () => {
   it("serve only the approved pages and their tabs", () => {
     const entryPaths = PARTNER_MENU.flatMap((g) => g.entries).map((e) => e.path);
-    const allowed = new Set([...entryPaths, ...TAB_ROUTES]);
+    const allowed = new Set([...entryPaths, ...TAB_ROUTES, ...NOT_IN_MENU]);
     const found = pageRoutes();
     expect(found.filter((r) => !allowed.has(r))).toEqual([]);
     expect(entryPaths.filter((r) => !found.includes(r))).toEqual([]);
@@ -142,6 +146,7 @@ describe("the partner routes", () => {
         "channel-manager",
         "communication",
         "integrations",
+        "kyc",
         "notifications",
         "partner-products",
         "payments",

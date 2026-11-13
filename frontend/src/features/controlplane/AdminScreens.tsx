@@ -1,89 +1,147 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import Link from "next/link";
-import { adminApi, type CustomerDetail, type Diagnosis } from "@/lib/api/controlPlane";
+import { Icon } from "@/components/sidebar/icons";
+import { adminApi, type AuditRow, type CustomerDetail, type CustomerRow, type Diagnosis, type ProductTrialView } from "@/lib/api/controlPlane";
 import { adminConsoleApi } from "@/lib/api/adminConsole";
+import { accessApi } from "@/lib/api/adminPanel";
 import { can, useAdmin } from "./ControlShell";
 import { CustomerBilling } from "./AdminBilling";
-import { StaffRolesPanel } from "./AdminCommerce";
-import { LoadGate, MoreButton, ReasonAction, Status, Table, autoReason, useAction, useLoad, usePaged, when } from "./ui";
-import styles from "./ControlPlane.module.css";
+import { ROLES, StaffRolesPanel, TableSection, sourceLabel } from "./AdminCommerce";
+import { DateRange } from "./AdminListParts";
+import { DateText } from "./AdminUsers";
+import { AssignPlanPopup, AssignmentHistoryCard, CustomerMembersCard, NewCustomerPopup, PartnerAssignmentCard } from "./CustomerExtras";
+import { FormPopup } from "./Modal";
+import { TextField } from "./widgets";
+import { LoadGate, ReasonAction, autoReason, useAction, useLoad, usePaged } from "./ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  DataTable,
+  DescriptionList,
+  EmptyState,
+  FilterBar,
+  IdCell,
+  KeyText,
+  Page,
+  PageHeader,
+  PersonCell,
+  SearchInput,
+  SectionHeader,
+  Select,
+  Stack,
+  StatusBadge,
+  Tabs,
+  Trunc,
+  EMPTY,
+  eventLabel,
+  formatDate,
+  formatDateTime,
+  productName,
+  sentence,
+  useConfirm,
+  type Column,
+} from "./kit";
+import { downloadCsv } from "./kit/csv";
+import local from "./AdminPeople.module.css";
+
+const plus = (label: string) => (
+  <>
+    <Icon name="plus" size={16} />
+    {label}
+  </>
+);
 
 // --- customers --------------------------------------------------------------------
 
+const CUSTOMER_STATUS = [
+  { value: "", label: "Any" },
+  { value: "active", label: "Active" },
+  { value: "suspended", label: "Suspended" },
+];
+
 export function Customers() {
-  const searchId = useId();
-  const [draft, setDraft] = useState("");
-  // The query is applied on submit, not per keystroke: one bounded request per search.
+  const { permissions } = useAdmin();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const paged = usePaged((cursor) => adminApi.customers({ q: query || undefined, status: status || undefined, cursor }), [query, status]);
 
+  const columns: Column<CustomerRow>[] = [
+    {
+      key: "org",
+      header: "Organization",
+      value: (c) => c.display_name,
+      render: (c) => (
+        <Stack
+          main={
+            <Link href={`/admin/customers/${c.organization_id}`}>
+              <Trunc>{c.display_name}</Trunc>
+            </Link>
+          }
+          sub={<Trunc>{c.owner_email || "No owner yet"}</Trunc>}
+        />
+      ),
+    },
+    { key: "status", header: "Status", value: (c) => c.status, render: (c) => <StatusBadge value={c.status} /> },
+    { key: "subscription", header: "Subscription", value: (c) => c.subscription_status, render: (c) => <StatusBadge value={c.subscription_status} /> },
+    { key: "products", header: "Products", value: (c) => c.products, render: (c) => <Trunc>{c.products.map(productName).join(", ")}</Trunc> },
+    { key: "seats", header: "Seats", align: "right", value: (c) => c.seat_capacity, render: (c) => c.seat_capacity ?? EMPTY },
+    {
+      key: "partner",
+      header: "Partner",
+      value: (c) => c.partner?.partner_name ?? "Direct",
+      render: (c) => (c.partner ? <Stack main={<Trunc>{c.partner.partner_name}</Trunc>} sub={sentence(c.partner.link_status)} /> : "Direct"),
+    },
+    { key: "created", header: "Created", value: (c) => c.created_at, render: (c) => <DateText iso={c.created_at} /> },
+  ];
+
   return (
-    <div className={styles.stack}>
-      <h1>Customers</h1>
-      <form
-        className={styles.row}
-        role="search"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setQuery(draft.trim());
-        }}
+    <Page>
+      <PageHeader
+        title="Customers"
+        subtitle="Every customer organization on the platform."
+        info="Subscription, products and seats reflect the last reconciliation."
+        primary={can(permissions, "platform.staff_customer.manage") ? <NewCustomerPopup onCreated={paged.reload} /> : undefined}
+      />
+      <FilterBar
+        onClear={
+          query || status
+            ? () => {
+                setQuery("");
+                setStatus("");
+              }
+            : undefined
+        }
       >
-        <label className="w360-label" htmlFor={searchId}>
-          Search by name or slug
-        </label>
-        <input id={searchId} className="w360-input" value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={100} />
-        <label className="w360-label" htmlFor={`${searchId}-status`}>
-          Status
-        </label>
-        <select id={`${searchId}-status`} className="w360-input" value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="">Any</option>
-          <option value="active">Active</option>
-          <option value="suspended">Suspended</option>
-        </select>
-        <button type="submit" className="w360-btn w360-btn-secondary">
-          Search
-        </button>
-      </form>
-      {paged.state === "loading" && <p aria-live="polite">Loading customers…</p>}
-      {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to the customer directory.</p>}
-      {paged.state === "error" && <p role="alert">Couldn&apos;t load customers.</p>}
-      {paged.state === "ready" && (
-        <>
-          <Table
-            caption="Customer organizations"
-            head={["Organization", "Status", "Subscription", "Products", "Seats", "Partner", "Created"]}
-            isEmpty={paged.rows.length === 0}
-            empty="No customers match."
-          >
-            {paged.rows.map((c) => (
-              <tr key={c.organization_id}>
-                <th scope="row">
-                  <Link href={`/admin/customers/${c.organization_id}`}>{c.display_name}</Link>
-                  <div className={styles.muted}>{c.owner_email || "no owner yet"}</div>
-                </th>
-                <td>
-                  <Status value={c.status} />
-                </td>
-                <td>
-                  <Status value={c.subscription_status} />
-                </td>
-                <td>{c.products.join(", ") || "—"}</td>
-                <td>{c.seat_capacity ?? "—"}</td>
-                <td>{c.partner ? `${c.partner.partner_name} (${c.partner.link_status})` : "Direct"}</td>
-                <td>{when(c.created_at)}</td>
-              </tr>
-            ))}
-          </Table>
-          <p className={styles.muted}>Subscription, products and seats reflect the last reconciliation.</p>
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
-        </>
-      )}
-    </div>
+        <SearchInput label="Search by name or slug" value={query} onSearch={setQuery} />
+        <Select label="Status" prefix="Status:" value={status} onChange={setStatus} options={CUSTOMER_STATUS} />
+      </FilterBar>
+      <DataTable
+        caption="Customer organizations"
+        columns={columns}
+        rows={paged.rows}
+        rowKey={(c) => c.organization_id}
+        rowHref={(c) => `/admin/customers/${c.organization_id}`}
+        loading={paged.state === "loading"}
+        error={
+          paged.state === "forbidden"
+            ? "You don't have access to the customer directory."
+            : paged.state === "error"
+              ? "Couldn't load customers."
+              : null
+        }
+        onLoadMore={() => void paged.more()}
+        hasMore={paged.hasMore}
+        empty={<EmptyState icon="building" title="No customers match." hint={query || status ? "Try another search or clear the filters." : undefined} />}
+      />
+    </Page>
   );
 }
+
+type Act = (action: () => Promise<unknown>, success: string) => Promise<void>;
 
 export function CustomerDetailScreen({ organizationId }: { organizationId: string }) {
   const { permissions } = useAdmin();
@@ -92,146 +150,227 @@ export function CustomerDetailScreen({ organizationId }: { organizationId: strin
   const manage = can(permissions, "platform.staff_customer.manage");
   const subs = can(permissions, "platform.staff_subscription.manage");
   const payments = can(permissions, "platform.staff_payment.view");
+  const [assigned, setAssigned] = useState(0);
 
   return (
-    <div className={styles.stack}>
+    <Page>
       <LoadGate load={load} what="this customer">
-        {(d) => (
-          <>
-            <h1>
-              {d.organization.display_name} <Status value={d.organization.status} />
-            </h1>
-            <p className={styles.muted}>
-              {d.organization.slug} · created {when(d.organization.created_at)}
-              {d.organization.suspension_reason && ` · suspended: ${d.organization.suspension_reason}`}
-            </p>
-            {feedback}
-            {manage && (
-              <div className={styles.row}>
-                {d.organization.status === "active" ? (
-                  <ReasonAction
-                    label="Suspend organization"
-                    busy={busy}
-                    onConfirm={(reason) => act(() => adminApi.suspendCustomer(organizationId, reason), "Organization suspended.")}
-                  />
-                ) : (
-                  <ReasonAction
-                    label="Reactivate organization"
-                    busy={busy}
-                    onConfirm={(reason) => act(() => adminApi.reactivateCustomer(organizationId, reason), "Organization reactivated.")}
-                  />
-                )}
-                <ReasonAction
-                  label="Reset network allow-list"
-                  busy={busy}
-                  onConfirm={(reason) =>
-                    act(
-                      () => adminConsoleApi.resetNetworkPolicy(organizationId, reason),
-                      "The IP allow-list is off: members can sign in from any network again.",
-                    )
-                  }
+        {(d) => {
+          const org = d.organization;
+          return (
+            <>
+              <PageHeader
+                crumbs={[{ label: "Customers", href: "/admin/customers" }, { label: org.display_name }]}
+                documentTitle={`${org.display_name} · Customers`}
+                title={org.display_name}
+                badges={<StatusBadge value={org.status} />}
+                meta={[
+                  <code key="slug">{org.slug}</code>,
+                  <span key="created">
+                    Created <DateText iso={org.created_at} />
+                  </span>,
+                  ...(org.suspension_reason ? [`Suspended: ${org.suspension_reason}`] : []),
+                ]}
+                actions={
+                  manage ? (
+                    <>
+                      <ReasonAction
+                        label="Reset network allow-list"
+                        busy={busy}
+                        onConfirm={(reason) =>
+                          act(
+                            () => adminConsoleApi.resetNetworkPolicy(organizationId, reason),
+                            "The IP allow-list is off: members can sign in from any network again.",
+                          )
+                        }
+                      />
+                      {org.status === "active" ? (
+                        <ReasonAction
+                          label="Suspend organization"
+                          danger
+                          busy={busy}
+                          message="Every member loses access to the organization's products until it is reactivated."
+                          onConfirm={(reason) => act(() => adminApi.suspendCustomer(organizationId, reason), "Organization suspended.")}
+                        />
+                      ) : (
+                        <ReasonAction
+                          label="Reactivate organization"
+                          busy={busy}
+                          onConfirm={(reason) => act(() => adminApi.reactivateCustomer(organizationId, reason), "Organization reactivated.")}
+                        />
+                      )}
+                    </>
+                  ) : undefined
+                }
+              />
+              {feedback}
+
+              <Card
+                title="Subscription"
+                actions={
+                  subs ? (
+                    <AssignPlanPopup
+                      organizationId={organizationId}
+                      // The customer's page announces it and reloads, with any new subscription listed.
+                      onAssigned={(message) => {
+                        setAssigned((n) => n + 1);
+                        void act(async () => {}, message ?? "Plan assigned.");
+                      }}
+                    />
+                  ) : undefined
+                }
+              >
+                <SubscriptionPanel detail={d} canManage={subs} busy={busy} act={act} organizationId={organizationId} />
+              </Card>
+
+              <Card
+                title="Entitlements and seats"
+                description="Rebuilt from subscriptions, bundles, staff overrides (time-boxed grants) and product trials. The Source column names which one gives each product."
+              >
+                <DataTable
+                  caption="Products this customer holds"
+                  columns={[
+                    { key: "product", header: "Product", value: ([code]) => code, render: ([code]) => productName(code) },
+                    { key: "status", header: "Status", value: ([, e]) => e.status, render: ([, e]) => <StatusBadge value={e.status} /> },
+                    { key: "source", header: "Source", value: ([, e]) => sourceLabel(e.source_kind), render: ([, e]) => sourceLabel(e.source_kind) },
+                    {
+                      key: "seats",
+                      header: "Seats",
+                      align: "right",
+                      value: ([code]) => d.licenses.find((l) => l.product_code === code)?.seats_total,
+                      render: ([code]) => d.licenses.find((l) => l.product_code === code)?.seats_total ?? EMPTY,
+                    },
+                    {
+                      key: "assigned",
+                      header: "Assigned",
+                      align: "right",
+                      value: ([code]) => d.licenses.find((l) => l.product_code === code)?.seats_assigned,
+                      render: ([code]) => d.licenses.find((l) => l.product_code === code)?.seats_assigned ?? EMPTY,
+                    },
+                    {
+                      key: "over",
+                      header: "Over limit",
+                      align: "right",
+                      render: ([code]) => d.licenses.find((l) => l.product_code === code)?.over_limit ?? 0,
+                    },
+                  ]}
+                  rows={Object.entries(d.entitlements)}
+                  rowKey={([code]) => code}
+                  pageSize={0}
+                  maxHeight={false}
+                  empty={<EmptyState icon="box" title="No entitlements" compact />}
                 />
-              </div>
-            )}
+                <OverridePanel detail={d} canManage={subs} busy={busy} act={act} organizationId={organizationId} />
+              </Card>
 
-            <section className={`w360-card ${styles.card}`} aria-labelledby="subs">
-              <h2 id="subs" className={styles.cardTitle}>
-                Subscription
-              </h2>
-              <SubscriptionPanel detail={d} canManage={subs} busy={busy} act={act} organizationId={organizationId} />
-            </section>
+              <ProductTrialsCard trials={d.product_trials ?? []} />
 
-            <section className={`w360-card ${styles.card}`} aria-labelledby="ent">
-              <h2 id="ent" className={styles.cardTitle}>
-                Entitlements and seats
-              </h2>
-              <Table
-                caption="Products this customer holds"
-                head={["Product", "Status", "Seats", "Assigned", "Over limit"]}
-                isEmpty={Object.keys(d.entitlements).length === 0}
-                empty="No entitlements."
-              >
-                {Object.entries(d.entitlements).map(([code, e]) => {
-                  const lic = d.licenses.find((l) => l.product_code === code);
-                  return (
-                    <tr key={code}>
-                      <th scope="row">{code}</th>
-                      <td>
-                        <Status value={e.status} />
-                      </td>
-                      <td>{lic?.seats_total ?? "—"}</td>
-                      <td>{lic?.seats_assigned ?? "—"}</td>
-                      <td>{lic?.over_limit ?? 0}</td>
-                    </tr>
-                  );
-                })}
-              </Table>
-              <p className={styles.muted}>Entitlements are rebuilt from subscriptions; staff overrides are time-boxed grants.</p>
-              <OverridePanel detail={d} canManage={subs} busy={busy} act={act} organizationId={organizationId} />
-            </section>
+              {can(permissions, "platform.staff_partner.view") && <PartnerAssignmentCard organizationId={organizationId} onChanged={reload} />}
 
-            <section className={`w360-card ${styles.card}`} aria-labelledby="meta">
-              <h2 id="meta" className={styles.cardTitle}>
-                Members, billing and partner
-              </h2>
-              <p>
-                Members: {Object.entries(d.members).map(([k, v]) => `${v} ${k}`).join(", ")}
-              </p>
-              <p>
-                Partner:{" "}
-                {d.partner ? (
-                  <>
-                    <Link href={`/admin/partners/${d.partner.partner_id}`}>{d.partner.display_name}</Link>{" "}
-                    <Status value={d.partner.link_status} />
-                  </>
-                ) : (
-                  "none (direct customer)"
-                )}
-              </p>
-              {d.billing ? (
-                <p>
-                  Billing: {d.billing.currency}, {d.billing.collection_mode}
-                  {d.billing.billing_region && `, ${d.billing.billing_region}`}. <em>{d.billing.note}</em>
-                </p>
-              ) : (
-                <p className={styles.muted}>No billing account, or you don&apos;t hold billing access.</p>
-              )}
-            </section>
+              <Card title="Members, billing and partner">
+                <DescriptionList
+                  items={[
+                    {
+                      label: "Members",
+                      value: Object.entries(d.members).length
+                        ? Object.entries(d.members)
+                            .map(([k, v]) => `${v} ${k}`)
+                            .join(", ")
+                        : null,
+                    },
+                    {
+                      label: "Partner",
+                      value: d.partner ? (
+                        <span className={local.holders}>
+                          <Link href={`/admin/partners/${d.partner.partner_id}`}>{d.partner.display_name}</Link>
+                          <StatusBadge value={d.partner.link_status} />
+                        </span>
+                      ) : (
+                        "None (direct customer)"
+                      ),
+                    },
+                    {
+                      label: "Billing",
+                      value: d.billing ? (
+                        <Stack
+                          main={`${d.billing.currency}, ${sentence(d.billing.collection_mode)}${d.billing.billing_region ? `, ${d.billing.billing_region}` : ""}`}
+                          sub={d.billing.note}
+                        />
+                      ) : (
+                        "No billing account, or you don't hold billing access."
+                      ),
+                    },
+                  ]}
+                />
+              </Card>
 
-            {payments && <CustomerBilling organizationId={organizationId} />}
+              <CustomerMembersCard organizationId={organizationId} />
+              <AssignmentHistoryCard organizationId={organizationId} refresh={assigned} />
 
-            <section className={`w360-card ${styles.card}`} aria-labelledby="diag">
-              <h2 id="diag" className={styles.cardTitle}>
-                Why can&apos;t someone launch a product?
-              </h2>
-              <DiagnosticForm organizationId={organizationId} />
-            </section>
+              {payments && <CustomerBilling organizationId={organizationId} />}
 
-            <section className={`w360-card ${styles.card}`} aria-labelledby="aud">
-              <h2 id="aud" className={styles.cardTitle}>
-                Recent audit trail
-              </h2>
-              <Table
-                caption="This customer's own audit log"
-                head={["When", "Action", "By", "Outcome"]}
-                isEmpty={d.audit.length === 0}
-                empty="No entries."
-              >
-                {d.audit.map((a) => (
-                  <tr key={a.id}>
-                    <td>{when(a.occurred_at)}</td>
-                    <td>{a.action}</td>
-                    <td>{a.actor_kind}</td>
-                    <td>{a.outcome}</td>
-                  </tr>
-                ))}
-              </Table>
-            </section>
-          </>
-        )}
+              <Card title="Why can't someone launch a product?" description="A read-only check of every step; nothing is changed.">
+                <DiagnosticForm organizationId={organizationId} />
+              </Card>
+
+              <TableSection title="Recent audit trail">
+                <DataTable
+                  caption="This customer's own audit log"
+                  columns={AUDIT_COLUMNS}
+                  rows={d.audit}
+                  rowKey={(a) => a.id}
+                  pageSize={0}
+                  maxHeight={false}
+                  empty={<EmptyState icon="audit" title="No entries" compact />}
+                />
+              </TableSection>
+            </>
+          );
+        }}
       </LoadGate>
-    </div>
+    </Page>
   );
+}
+
+/** Product trials (Phase 11) are their own record, not a subscription and not an
+ * override, so they are listed here and never folded into either. "In effect"
+ * comes from the server's clock: a trial past its end has ended even before the
+ * scheduled job marks its record. */
+function ProductTrialsCard({ trials }: { trials: ProductTrialView[] }) {
+  return (
+    <Card
+      title="Product trials"
+      description="Free trials of one product each. A trial is not a subscription, so the Subscriptions page does not count it."
+    >
+      <DataTable
+        caption="Product trials"
+        columns={[
+          { key: "product", header: "Product", value: (t) => t.product_code, render: (t) => productName(t.product_code) },
+          {
+            key: "state",
+            header: "State",
+            value: (t) => trialState(t),
+            render: (t) => <Badge tone={t.in_effect ? "warning" : "neutral"}>{trialState(t)}</Badge>,
+          },
+          { key: "started", header: "Started", value: (t) => t.started_at, render: (t) => formatDate(t.started_at) },
+          { key: "ends", header: "Ends", value: (t) => t.ends_at, render: (t) => formatDate(t.ends_at) },
+          { key: "seats", header: "Seats", align: "right", value: (t) => t.seats, render: (t) => t.seats },
+        ]}
+        rows={trials}
+        rowKey={(t) => t.id}
+        pageSize={0}
+        maxHeight={false}
+        empty={<EmptyState icon="box" title="No product trials" compact />}
+      />
+    </Card>
+  );
+}
+
+function trialState(t: ProductTrialView): string {
+  if (t.in_effect) return "Active";
+  if (t.status === "converted") return "Converted to paid";
+  if (t.status === "cancelled") return "Cancelled";
+  return "Ended";
 }
 
 const OVERRIDE_DAYS = [7, 30, 90];
@@ -246,88 +385,100 @@ function OverridePanel({
   detail: CustomerDetail;
   canManage: boolean;
   busy: boolean;
-  act: (action: () => Promise<unknown>, success: string) => Promise<void>;
+  act: Act;
   organizationId: string;
 }) {
-  const kindId = useId();
   const codeId = useId();
-  const daysId = useId();
   const [kind, setKind] = useState<"product_code" | "feature_key">("product_code");
   const [code, setCode] = useState("");
-  const [days, setDays] = useState(30);
+  const [days, setDays] = useState("30");
+
+  const grant = canManage ? (
+    <FormPopup
+      label={plus("Grant override")}
+      title="Grant an override"
+      intro="A time-boxed grant on top of what the subscriptions give; access is recomputed when it starts and when it ends."
+      size="sm"
+      submitLabel="Grant override"
+      canSubmit={Boolean(code.trim())}
+      disabled={busy}
+      onOpen={() => {
+        setKind("product_code");
+        setCode("");
+        setDays("30");
+      }}
+      onSubmit={async () => {
+        const expires = new Date(Date.now() + Number(days) * 24 * 60 * 60 * 1000).toISOString();
+        await adminApi.grantOverride(organizationId, { [kind]: code.trim(), reason: autoReason("Grant override"), expires_at: expires });
+      }}
+      // The customer's page announces it and reloads, with the override listed.
+      onDone={() => void act(async () => {}, "Override granted; access was recomputed.")}
+    >
+      <Select
+        label="Grant access to"
+        showLabel
+        fullWidth
+        value={kind}
+        onChange={(v) => setKind(v as typeof kind)}
+        options={[
+          { value: "product_code", label: "A product" },
+          { value: "feature_key", label: "A feature" },
+        ]}
+      />
+      <div className={local.field}>
+        <label className="w360-label" htmlFor={codeId}>
+          {kind === "product_code" ? "Product code" : "Feature key"}
+        </label>
+        <input id={codeId} className="w360-input" required value={code} onChange={(e) => setCode(e.target.value)} />
+      </div>
+      <Select
+        label="Expires after"
+        showLabel
+        fullWidth
+        value={days}
+        onChange={setDays}
+        options={OVERRIDE_DAYS.map((d) => ({ value: String(d), label: `${d} days` }))}
+      />
+    </FormPopup>
+  ) : null;
 
   return (
-    <div className={styles.stack}>
-      <h3 className={styles.cardTitle}>Staff overrides</h3>
-      <Table
+    <div className={local.stack}>
+      <SectionHeader level={3} title="Staff overrides" actions={grant} />
+      <DataTable
         caption="Active staff overrides"
-        head={["Grants", "Reason", "Expires", ""]}
-        isEmpty={detail.entitlement_overrides.length === 0}
-        empty="No overrides."
-      >
-        {detail.entitlement_overrides.map((o) => (
-          <tr key={o.id}>
-            <th scope="row">{o.product_code || o.feature_key}</th>
-            <td>{o.reason}</td>
-            <td>{when(o.expires_at)}</td>
-            <td>
-              {canManage && (
+        columns={[
+          {
+            key: "grants",
+            header: "Grants",
+            value: (o) => o.product_code || o.feature_key,
+            render: (o) => (o.product_code ? productName(o.product_code) : <Stack main={o.feature_key} sub="Feature" />),
+          },
+          { key: "reason", header: "Reason", value: (o) => o.reason, render: (o) => <Trunc max="lg">{o.reason}</Trunc> },
+          { key: "expires", header: "Expires", value: (o) => o.expires_at, render: (o) => (o.expires_at ? formatDateTime(o.expires_at) : "No expiry") },
+          {
+            key: "action",
+            header: "Action",
+            align: "right",
+            render: (o) =>
+              canManage ? (
                 <ReasonAction
                   label="Revoke"
+                  size="sm"
+                  danger
                   busy={busy}
+                  message="The customer loses this access now, unless a subscription also gives it."
                   onConfirm={(r) => act(() => adminApi.revokeOverride(organizationId, o.id, r), "Override revoked; access was recomputed.")}
                 />
-              )}
-            </td>
-          </tr>
-        ))}
-      </Table>
-      {canManage && (
-        <form
-          className={styles.form}
-          onSubmit={(e) => {
-            e.preventDefault();
-            const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
-            void act(async () => {
-              await adminApi.grantOverride(organizationId, { [kind]: code.trim(), reason: autoReason("Grant override"), expires_at: expires });
-              setCode("");
-            }, "Override granted; access was recomputed.");
-          }}
-        >
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={kindId}>
-              Grant access to
-            </label>
-            <select id={kindId} className="w360-input" value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
-              <option value="product_code">A product</option>
-              <option value="feature_key">A feature</option>
-            </select>
-          </div>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={codeId}>
-              {kind === "product_code" ? "Product code" : "Feature key"}
-            </label>
-            <input id={codeId} className="w360-input" required value={code} onChange={(e) => setCode(e.target.value)} />
-          </div>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={daysId}>
-              Expires after
-            </label>
-            <select id={daysId} className="w360-input" value={days} onChange={(e) => setDays(Number(e.target.value))}>
-              {OVERRIDE_DAYS.map((d) => (
-                <option key={d} value={d}>
-                  {d} days
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !code.trim()}>
-              Grant override
-            </button>
-          </div>
-        </form>
-      )}
+              ) : null,
+          },
+        ]}
+        rows={detail.entitlement_overrides}
+        rowKey={(o) => o.id}
+        pageSize={0}
+        maxHeight={false}
+        empty={<EmptyState icon="key" title="No overrides" compact />}
+      />
     </div>
   );
 }
@@ -342,54 +493,65 @@ function SubscriptionPanel({
   detail: CustomerDetail;
   canManage: boolean;
   busy: boolean;
-  act: (action: () => Promise<unknown>, success: string) => Promise<void>;
+  act: Act;
   organizationId: string;
 }) {
-  if (detail.subscriptions.length === 0) return <p className={styles.muted}>No subscription.</p>;
+  if (detail.subscriptions.length === 0) return <EmptyState icon="card" title="No subscription" compact />;
   return (
     <>
       {detail.subscriptions.map((s) => (
-        <div key={s.id} className={styles.stack}>
-          <p>
-            <Status value={s.status} /> · {s.currency} · {s.billing_interval} · period ends {when(s.current_period_end)}
-            {s.cancel_at && ` · cancels ${when(s.cancel_at)}`}
-          </p>
-          <Table
+        <div key={s.id} className={local.stack}>
+          <div className={local.orgItem}>
+            <DescriptionList
+              columns={2}
+              items={[
+                { label: "Status", value: <StatusBadge value={s.status} /> },
+                { label: "Billing", value: `${s.currency} · ${sentence(s.billing_interval)}` },
+                { label: "Period ends", value: formatDateTime(s.current_period_end) },
+                { label: "Cancels", value: s.cancel_at ? formatDateTime(s.cancel_at) : null, when: Boolean(s.cancel_at) },
+              ]}
+            />
+            {canManage && (
+              <div className={local.actions}>
+                {s.status === "suspended" ? (
+                  <ReasonAction
+                    label="Resume subscription"
+                    busy={busy}
+                    onConfirm={(r) => act(() => adminApi.subscriptionAction(organizationId, s.id, "resume", r, s.version), "Subscription resumed.")}
+                  />
+                ) : (
+                  <ReasonAction
+                    label="Suspend subscription"
+                    danger
+                    busy={busy}
+                    message="The customer loses access to the subscribed products until it is resumed."
+                    onConfirm={(r) => act(() => adminApi.subscriptionAction(organizationId, s.id, "suspend", r, s.version), "Subscription suspended.")}
+                  />
+                )}
+                <ReasonAction
+                  label="Cancel at period end"
+                  danger
+                  busy={busy}
+                  message="The subscription ends when the current period ends."
+                  onConfirm={(r) => act(() => adminApi.subscriptionAction(organizationId, s.id, "cancel", r, s.version), "Cancellation scheduled.")}
+                />
+              </div>
+            )}
+          </div>
+          <DataTable
             caption="Subscription lines"
-            head={["Product", "Plan", "Quantity", "Closed"]}
-            isEmpty={s.items.length === 0}
-          >
-            {s.items.map((i) => (
-              <tr key={i.id}>
-                <td>{i.product_code || i.bundle_code}</td>
-                <td>{i.plan_code || "bundle"}</td>
-                <td>{i.quantity}</td>
-                <td>{i.removed_at ? when(i.removed_at) : "—"}</td>
-              </tr>
-            ))}
-          </Table>
-          {canManage && (
-            <div className={styles.row}>
-              {s.status === "suspended" ? (
-                <ReasonAction
-                  label="Resume subscription"
-                  busy={busy}
-                  onConfirm={(r) => act(() => adminApi.subscriptionAction(organizationId, s.id, "resume", r, s.version), "Subscription resumed.")}
-                />
-              ) : (
-                <ReasonAction
-                  label="Suspend subscription"
-                  busy={busy}
-                  onConfirm={(r) => act(() => adminApi.subscriptionAction(organizationId, s.id, "suspend", r, s.version), "Subscription suspended.")}
-                />
-              )}
-              <ReasonAction
-                label="Cancel at period end"
-                busy={busy}
-                onConfirm={(r) => act(() => adminApi.subscriptionAction(organizationId, s.id, "cancel", r, s.version), "Cancellation scheduled.")}
-              />
-            </div>
-          )}
+            columns={[
+              { key: "product", header: "Product", value: (i) => i.product_code || i.bundle_code, render: (i) => productName(i.product_code || i.bundle_code) },
+              { key: "plan", header: "Plan", value: (i) => i.plan_code, render: (i) => (i.plan_code ? sentence(i.plan_code) : "Bundle") },
+              { key: "qty", header: "Quantity", align: "right", value: (i) => i.quantity, render: (i) => i.quantity },
+              { key: "closed", header: "Closed", value: (i) => i.removed_at, render: (i) => (i.removed_at ? formatDateTime(i.removed_at) : EMPTY) },
+            ]}
+            rows={s.items}
+            rowKey={(i) => i.id}
+            pageSize={0}
+            maxHeight={false}
+            empty={<EmptyState icon="box" title="No lines" compact />}
+          />
         </div>
       ))}
     </>
@@ -420,46 +582,55 @@ function DiagnosticForm({ organizationId }: { organizationId: string }) {
   }
 
   return (
-    <>
-      <form className={styles.form} onSubmit={submit}>
-        <div className={styles.field}>
+    <div className={local.stack}>
+      <form className={local.diagForm} onSubmit={submit}>
+        <div className={local.field}>
           <label className="w360-label" htmlFor={productId}>
             Product code
           </label>
-          <input id={productId} className="w360-input" required value={product} onChange={(e) => setProduct(e.target.value)} maxLength={32} />
+          <input id={productId} className="w360-input" required value={product} onChange={(e) => setProduct(e.target.value)} maxLength={32} placeholder="easy_crm" />
         </div>
-        <div className={styles.field}>
+        <div className={local.field}>
           <label className="w360-label" htmlFor={emailId}>
             Member&apos;s email (optional)
           </label>
           <input id={emailId} className="w360-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={254} />
         </div>
-        <div>
-          <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !product.trim()}>
-            Run read-only diagnostic
-          </button>
-        </div>
+        <Button type="submit" variant="primary" icon="play" loading={busy} disabled={!product.trim()}>
+          Run diagnostics
+        </Button>
       </form>
-      {error && <p role="alert">{error}</p>}
+      {error && <Alert tone="danger">{error}</Alert>}
       {result && <DiagnosticResult result={result} />}
-    </>
+    </div>
   );
 }
 
+/** The result of the read-only launch check: the verdict, then each step with
+ * its status. Shared with the partner portal's customer page. */
 export function DiagnosticResult({ result }: { result: Diagnosis }) {
   return (
-    <div aria-live="polite">
-      <p>
-        <strong>{result.can_launch ? "Nothing blocks a launch." : `Blocked at: ${result.blocking_step}.`}</strong>{" "}
-        <span className={styles.muted}>Read-only — nothing was changed.</span>
-      </p>
-      <ol className={styles.chain}>
+    <div aria-live="polite" className={local.stack}>
+      <Alert
+        tone={result.can_launch ? "success" : "danger"}
+        title={result.can_launch ? "Nothing blocks a launch." : `Blocked at: ${result.blocking_step}.`}
+      >
+        Read-only — nothing was changed.
+      </Alert>
+      <ol className={local.chain} aria-label="Steps checked">
         {result.chain.map((s) => (
-          <li key={s.step} className={styles.chainItem}>
-            <span className={s.ok ? "w360-badge w360-badge-success" : "w360-badge w360-badge-danger"}>{s.ok ? "ok" : "blocked"}</span>
-            <span>
-              {s.step}: <code>{s.code}</code>
-            </span>
+          <li key={s.step} className={local.chainItem}>
+            {s.ok ? (
+              <Badge tone="success" icon="check">
+                ok
+              </Badge>
+            ) : (
+              <Badge tone="danger" icon="x">
+                blocked
+              </Badge>
+            )}
+            <span>{sentence(s.step)}</span>
+            <code>{s.code}</code>
           </li>
         ))}
       </ol>
@@ -467,79 +638,311 @@ export function DiagnosticResult({ result }: { result: Diagnosis }) {
   );
 }
 
-// --- support ---------------------------------------------------------------------------
+// --- diagnostics ---------------------------------------------------------------------------
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Settings → Diagnostics: find the organization by name, slug or ID, then
+ * run the same read-only launch check as on the customer's page. */
 export function SupportScreen() {
-  const id = useId();
-  const [orgId, setOrgId] = useState("");
-  const valid = /^[0-9a-f-]{36}$/i.test(orgId.trim());
+  const [query, setQuery] = useState("");
+  const [chosen, setChosen] = useState<{ id: string; name: string } | null>(null);
+  const byId = UUID.test(query.trim());
+  const paged = usePaged(
+    (cursor) => (query && !byId ? adminApi.customers({ q: query, cursor }) : Promise.resolve({ results: [], next_cursor: null, has_more: false })),
+    [query, byId],
+  );
   return (
-    <div className={styles.stack}>
-      <h1>Support diagnostics</h1>
-      <p className={styles.lead}>
-        Run the same read-only reason chain from the customer page for an organization id. It reports state, never a
-        secret, and changes nothing.
-      </p>
-      <div className={styles.field}>
-        <label className="w360-label" htmlFor={id}>
-          Organization id
-        </label>
-        <input id={id} className="w360-input" value={orgId} onChange={(e) => setOrgId(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000" />
-      </div>
-      {valid && (
-        <section className={`w360-card ${styles.card}`}>
-          <DiagnosticForm organizationId={orgId.trim()} />
-        </section>
-      )}
-    </div>
+    <Page>
+      <PageHeader
+        title="Diagnostics"
+        subtitle="Why can't a customer launch a product? A read-only check that changes nothing."
+        info="It runs the same chain of checks as the customer's page and reports state - never a secret."
+      />
+      <Card title="1. Find the organization" description="Search by name or slug, or paste an organization ID.">
+        <SearchInput
+          label="Find an organization"
+          value={query}
+          onSearch={(v) => {
+            setQuery(v);
+            if (UUID.test(v.trim())) setChosen({ id: v.trim(), name: v.trim() });
+          }}
+          placeholder="Organization name, slug or ID…"
+        />
+        {query && !byId && paged.state === "loading" && <p className={local.note}>Searching…</p>}
+        {query && !byId && paged.state === "ready" && paged.rows.length === 0 && (
+          <EmptyState icon="search" title="No organization matches" hint="Try another name, or paste the organization's ID." compact />
+        )}
+        {paged.state === "forbidden" && <Alert tone="warning">You don&apos;t have access to the customer directory; paste an organization ID instead.</Alert>}
+        {paged.rows.length > 0 && (
+          <ul className={local.lookupList} aria-label="Matching organizations">
+            {paged.rows.slice(0, 8).map((c) => (
+              <li key={c.organization_id}>
+                <button
+                  type="button"
+                  className={local.lookupOption}
+                  aria-pressed={chosen?.id === c.organization_id}
+                  onClick={() => setChosen({ id: c.organization_id, name: c.display_name })}
+                >
+                  <PersonCell name={c.display_name} email={c.owner_email || c.slug} />
+                  <StatusBadge value={c.status} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+      <Card
+        title="2. Run the check"
+        description={chosen ? <>For {chosen.name}</> : "Choose an organization first."}
+      >
+        {chosen ? (
+          <DiagnosticForm key={chosen.id} organizationId={chosen.id} />
+        ) : (
+          <div className={local.diagForm}>
+            <Button variant="primary" icon="play" disabled>
+              Run diagnostics
+            </Button>
+          </div>
+        )}
+      </Card>
+    </Page>
   );
 }
 
 // --- audit ------------------------------------------------------------------------------
 
+const AUDIT_COLUMNS: Column<AuditRow>[] = [
+  { key: "when", header: "When", value: (a) => a.occurred_at, render: (a) => <DateText iso={a.occurred_at} relative /> },
+  {
+    key: "action",
+    header: "Action",
+    value: (a) => a.action,
+    render: (a) => <Stack main={eventLabel(a.action)} sub={<KeyText>{a.action}</KeyText>} />,
+  },
+  { key: "actor", header: "By", value: (a) => a.actor_kind, render: (a) => sentence(a.actor_kind) },
+  {
+    key: "outcome",
+    header: "Outcome",
+    value: (a) => a.outcome,
+    render: (a) => (a.outcome ? <StatusBadge value={a.outcome === "success" ? "succeeded" : a.outcome} label={sentence(a.outcome)} /> : EMPTY),
+  },
+];
+
+const AUDIT_AREAS = [
+  { value: "", label: "All actions" },
+  { value: "staff.", label: "Staff" },
+  { value: "partner.", label: "Partners" },
+  { value: "payout.", label: "Payouts" },
+  { value: "customer.", label: "Customers" },
+  { value: "catalog.", label: "Catalog" },
+  { value: "commercial.", label: "Billing" },
+  { value: "platform.", label: "Platform" },
+];
+
+const PERSON_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function AuditScreen() {
   const [prefix, setPrefix] = useState("");
-  const id = useId();
-  const paged = usePaged((cursor) => adminApi.audit(cursor, prefix || undefined), [prefix]);
+  const [area, setArea] = useState("");
+  const [actorId, setActorId] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [actor, setActor] = useState("");
+  const [resource, setResource] = useState("");
+  const action = prefix || area;
+  // The server refuses anything but a whole ID: an incomplete one is said here and not sent.
+  const actorValid = !actorId || PERSON_ID.test(actorId);
+  const sentActor = actorValid ? actorId : "";
+  const paged = usePaged(
+    (cursor) => adminApi.audit(cursor, action || undefined, { actor: sentActor || undefined, from: from || undefined, to: to || undefined }),
+    [action, sentActor, from, to],
+  );
+
+  // The audit endpoint filters by action prefix, person and dates; the kind of
+  // actor and the resource narrow the entries loaded so far.
+  const actors = useMemo(() => [...new Set(paged.rows.map((a) => a.actor_kind).filter(Boolean))].sort(), [paged.rows]);
+  const resources = useMemo(() => [...new Set(paged.rows.map((a) => a.resource_type).filter(Boolean))].sort(), [paged.rows]);
+  const rows = useMemo(
+    () => paged.rows.filter((a) => (!actor || a.actor_kind === actor) && (!resource || a.resource_type === resource)),
+    [paged.rows, actor, resource],
+  );
+
+  const columns: Column<AuditRow>[] = [
+    ...AUDIT_COLUMNS.slice(0, 3),
+    {
+      key: "resource",
+      header: "Resource",
+      value: (a) => a.resource_type,
+      render: (a) => (a.resource_type ? <Stack main={eventLabel(a.resource_type)} sub={<IdCell value={a.resource_id} label="Copy resource ID" />} /> : EMPTY),
+    },
+    { key: "reason", header: "Reason", value: (a) => a.reason, render: (a) => <Trunc max="lg">{a.reason}</Trunc> },
+    AUDIT_COLUMNS[3],
+  ];
+  const filtered = Boolean(prefix || area || actorId || from || to || actor || resource);
   return (
-    <div className={styles.stack}>
-      <h1>Control-plane audit</h1>
-      <div className={styles.field}>
-        <label className="w360-label" htmlFor={id}>
-          Filter by action prefix (e.g. payout., partner.)
-        </label>
-        <input id={id} className="w360-input" value={prefix} onChange={(e) => setPrefix(e.target.value)} maxLength={64} />
-      </div>
-      {paged.state === "loading" && <p aria-live="polite">Loading…</p>}
-      {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to the audit trail.</p>}
-      {paged.state === "error" && <p role="alert">Couldn&apos;t load the audit trail.</p>}
-      {paged.state === "ready" && (
-        <>
-          <Table caption="Control-plane audit entries" head={["When", "Action", "By", "Resource", "Reason"]} isEmpty={paged.rows.length === 0}>
-            {paged.rows.map((a) => (
-              <tr key={a.id}>
-                <td>{when(a.occurred_at)}</td>
-                <td>{a.action}</td>
-                <td>{a.actor_kind}</td>
-                <td className={styles.mono}>{a.resource_type}</td>
-                <td>{a.reason}</td>
-              </tr>
-            ))}
-          </Table>
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
-        </>
+    <Page>
+      <PageHeader title="Audit log" subtitle="Every staff action in the admin console, newest first." />
+      <FilterBar
+        onClear={
+          filtered
+            ? () => {
+                setPrefix("");
+                setArea("");
+                setActorId("");
+                setFrom("");
+                setTo("");
+                setActor("");
+                setResource("");
+              }
+            : undefined
+        }
+        end={
+          <Button
+            icon="download"
+            disabled={rows.length === 0}
+            onClick={() =>
+              downloadCsv(
+                "audit-log.csv",
+                ["When", "Action", "By", "Resource", "Resource ID", "Outcome", "Reason"],
+                rows.map((a) => [a.occurred_at, a.action, a.actor_kind, a.resource_type, a.resource_id, a.outcome, a.reason]),
+              )
+            }
+          >
+            Export CSV
+          </Button>
+        }
+      >
+        <SearchInput label="Filter by action (e.g. payout., partner.)" value={prefix} onSearch={setPrefix} placeholder="Action, e.g. partner." />
+        <Select label="Area" prefix="Area:" value={area} onChange={setArea} options={AUDIT_AREAS} />
+        <Select label="By" prefix="By:" value={actor} onChange={setActor} options={[{ value: "", label: "Anyone" }, ...actors.map((a) => ({ value: a, label: sentence(a) }))]} />
+        <Select
+          label="Resource"
+          prefix="Resource:"
+          value={resource}
+          onChange={setResource}
+          options={[{ value: "", label: "Any" }, ...resources.map((r) => ({ value: r, label: eventLabel(r) }))]}
+        />
+        <SearchInput label="Filter by the person's ID" value={actorId} onSearch={setActorId} placeholder="Person's ID" maxLength={36} />
+        <DateRange from={from} to={to} onFrom={setFrom} onTo={setTo} />
+      </FilterBar>
+      {!actorValid && (
+        <p className="w360-error-text" role="alert">
+          Enter the person&apos;s whole ID, as shown on their user page.
+        </p>
       )}
-    </div>
+      <DataTable
+        caption="Audit entries"
+        columns={columns}
+        rows={rows}
+        rowKey={(a) => a.id}
+        loading={paged.state === "loading"}
+        error={paged.state === "forbidden" ? "You don't have access to the audit trail." : paged.state === "error" ? "Couldn't load the audit trail." : null}
+        onLoadMore={() => void paged.more()}
+        hasMore={paged.hasMore}
+        empty={<EmptyState icon="audit" title="No audit entries" hint={filtered ? "Try other filters." : undefined} />}
+      />
+    </Page>
   );
 }
 
-// --- security ---------------------------------------------------------------------------
+// --- staff access ---------------------------------------------------------------------------
+
+type Grant = { id: string; email: string; permission: string; granted_at: string; expires_at: string | null; reason: string };
+
+/** "platform.staff_customer.view" -> { area: "Customer", verb: "View" }. */
+function permissionParts(key: string): { area: string; verb: string } {
+  const m = /^platform\.staff_([a-z_]+)\.([a-z_]+)$/.exec(key);
+  return m ? { area: sentence(m[1]), verb: sentence(m[2]) } : { area: key, verb: "" };
+}
+
+const LOOKS_LIKE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** A new Admin: an account, the staff designation and a role, in one audited step. Nobody
+ * chooses a password for someone else; the server sends a link to set their own. Someone
+ * who already has an account keeps it, and their password. */
+function NewAdminPopup({ onDone }: { onDone: () => void }) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("SUPPORT_ADMIN");
+  const [reason, setReason] = useState("");
+  const emailText = email.trim();
+  const emailBad = Boolean(emailText) && !LOOKS_LIKE_EMAIL.test(emailText);
+  return (
+    <FormPopup
+      label={plus("New Admin")}
+      title="New Admin"
+      intro="They will get a link to set their own password. Nobody chooses it for them."
+      size="sm"
+      submitLabel="Create Admin"
+      canSubmit={Boolean(name.trim() && emailText && !emailBad && reason.trim().length >= 10)}
+      onOpen={() => {
+        setName("");
+        setEmail("");
+        setRole("SUPPORT_ADMIN");
+        setReason("");
+      }}
+      onSubmit={async () => {
+        const made = await accessApi.createStaff({ full_name: name.trim(), email: emailText, role, reason: reason.trim() });
+        return made.new_account
+          ? "Admin created. They will get a link to set their own password."
+          : "This person already had an account, so they keep their password. The role has been added.";
+      }}
+      onDone={onDone}
+    >
+      <TextField label="Full name" required value={name} onChange={setName} maxLength={200} autoComplete="off" />
+      <TextField
+        label="Email"
+        type="email"
+        required
+        value={email}
+        onChange={setEmail}
+        maxLength={254}
+        autoComplete="off"
+        error={emailBad ? "Enter a valid email address." : undefined}
+      />
+      <div className={local.field}>
+        <Select label="Role" showLabel fullWidth value={role} onChange={setRole} options={ROLES} />
+      </div>
+      <TextField label="Reason" required hint="At least 10 characters. Kept in the audit log." value={reason} onChange={setReason} maxLength={200} autoComplete="off" />
+    </FormPopup>
+  );
+}
 
 export function SecurityScreen() {
   const { permissions } = useAdmin();
+  const [tab, setTab] = useState<"roles" | "permissions">("roles");
+  // A new Admin changes who holds what: the lists below read it again.
+  const [changes, setChanges] = useState(0);
+  return (
+    <Page>
+      <PageHeader
+        title="Staff access"
+        subtitle="Who can do what in the admin console."
+        info="Grants take effect and end immediately, a time-boxed grant ends on its own when it expires, and the last permanent security administrator cannot be removed."
+        primary={can(permissions, "platform.staff_security.manage") ? <NewAdminPopup onDone={() => setChanges((n) => n + 1)} /> : undefined}
+        tabs={
+          <Tabs
+            label="Staff access"
+            selected={tab}
+            onSelect={setTab}
+            tabs={[
+              { key: "roles", label: "Roles" },
+              { key: "permissions", label: "Permissions" },
+            ]}
+          />
+        }
+      />
+      {tab === "roles" ? <StaffRolesPanel key={changes} /> : <PermissionsPanel key={changes} />}
+    </Page>
+  );
+}
+
+function PermissionsPanel() {
+  const { permissions } = useAdmin();
   const [load, reload] = useLoad(() => adminApi.securityGrants(), []);
-  const { act, busy, feedback } = useAction(reload);
   const manage = can(permissions, "platform.staff_security.manage");
+  const { ask, dialog: confirm } = useConfirm();
   const emailId = useId();
   const permId = useId();
   const expiresId = useId();
@@ -548,75 +951,142 @@ export function SecurityScreen() {
   // Optional: the last moment of the chosen (local) day. Empty means no expiry.
   const [expiresOn, setExpiresOn] = useState("");
   const [today] = useState(() => new Date().toISOString().slice(0, 10));
+  const [query, setQuery] = useState("");
+  const [area, setArea] = useState("");
+  const [expiry, setExpiry] = useState("");
+
+  const grant = manage ? (
+    <FormPopup
+      label={plus("Grant a permission")}
+      title="Grant a permission"
+      intro="It takes effect immediately; a time-boxed grant ends on its own when it expires."
+      size="sm"
+      submitLabel="Grant"
+      canSubmit={Boolean(email.trim() && permission.trim())}
+      onOpen={() => {
+        setEmail("");
+        setPermission("platform.staff_customer.view");
+        setExpiresOn("");
+      }}
+      onSubmit={async () => {
+        const expiresAt = expiresOn ? new Date(`${expiresOn}T23:59:59`).toISOString() : undefined;
+        await adminApi.grantPermission(email.trim(), permission.trim(), autoReason("Grant permission"), expiresAt);
+        return "Permission granted.";
+      }}
+      onDone={reload}
+    >
+      <div className={local.field}>
+        <label className="w360-label" htmlFor={emailId}>
+          Staff member&apos;s email
+        </label>
+        <input id={emailId} className="w360-input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+      </div>
+      <div className={local.field}>
+        <label className="w360-label" htmlFor={permId}>
+          Permission
+        </label>
+        <input id={permId} className="w360-input" required value={permission} onChange={(e) => setPermission(e.target.value)} />
+      </div>
+      <div className={local.field}>
+        <label className="w360-label" htmlFor={expiresId}>
+          Expires on (optional)
+        </label>
+        <input id={expiresId} className="w360-input" type="date" min={today} value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
+      </div>
+    </FormPopup>
+  ) : null;
 
   return (
-    <div className={styles.stack}>
-      <h1>Staff access</h1>
-      <StaffRolesPanel />
-      <h2>Individual permissions</h2>
-      <p className={styles.lead}>
-        Who holds which <code>platform.staff_*</code> permission. Grants take effect and end immediately, a time-boxed
-        grant ends on its own when it expires, and the last permanent security administrator cannot be removed.
-      </p>
-      {feedback}
+    <TableSection title="Individual permissions" description="Each permission held, by whom and until when." actions={grant}>
       <LoadGate load={load} what="permissions">
-        {(d) => (
-          <Table caption="Active grants" head={["Holder", "Permission", "Granted", "Expires", "Reason", ""]} isEmpty={d.results.length === 0}>
-            {d.results.map((g) => (
-              <tr key={g.id}>
-                <th scope="row">{g.email}</th>
-                <td className={styles.mono}>{g.permission}</td>
-                <td>{when(g.granted_at)}</td>
-                <td>{g.expires_at ? when(g.expires_at) : "No expiry"}</td>
-                <td>{g.reason}</td>
-                <td>
-                  {manage && (
-                    <ReasonAction label="Revoke" busy={busy} onConfirm={(r) => act(() => adminApi.revokePermission(g.id, r), "Permission revoked.")} />
-                  )}
-                </td>
-              </tr>
-            ))}
-          </Table>
-        )}
+        {(d) => {
+          const areas = [...new Set(d.results.map((g) => permissionParts(g.permission).area))].sort();
+          const needle = query.toLowerCase();
+          const rows = d.results.filter(
+            (g) =>
+              (!needle || `${g.email} ${g.permission}`.toLowerCase().includes(needle)) &&
+              (!area || permissionParts(g.permission).area === area) &&
+              (!expiry || (expiry === "timed" ? Boolean(g.expires_at) : !g.expires_at)),
+          );
+          const columns: Column<Grant>[] = [
+            { key: "holder", header: "Holder", value: (g) => g.email, render: (g) => <PersonCell name={g.email} /> },
+            {
+              key: "permission",
+              header: "Permission",
+              value: (g) => g.permission,
+              render: (g) => {
+                const p = permissionParts(g.permission);
+                return <Stack main={p.verb ? `${p.area} · ${p.verb}` : p.area} sub={<KeyText>{g.permission}</KeyText>} />;
+              },
+            },
+            { key: "granted", header: "Granted", value: (g) => g.granted_at, render: (g) => <DateText iso={g.granted_at} /> },
+            { key: "expires", header: "Expires", value: (g) => g.expires_at, render: (g) => (g.expires_at ? <DateText iso={g.expires_at} /> : "No expiry") },
+            { key: "reason", header: "Reason", value: (g) => g.reason, render: (g) => <Trunc max="md">{g.reason}</Trunc> },
+          ];
+          return (
+            <div className={local.stack}>
+              <FilterBar
+                  onClear={
+                    query || area || expiry
+                      ? () => {
+                          setQuery("");
+                          setArea("");
+                          setExpiry("");
+                        }
+                      : undefined
+                  }
+                >
+                  <SearchInput label="Search by email or permission" value={query} onSearch={setQuery} />
+                  <Select label="Area" prefix="Area:" value={area} onChange={setArea} options={[{ value: "", label: "All" }, ...areas.map((a) => ({ value: a, label: a }))]} />
+                  <Select
+                    label="Expiry"
+                    prefix="Expiry:"
+                    value={expiry}
+                    onChange={setExpiry}
+                    options={[
+                      { value: "", label: "Any" },
+                      { value: "timed", label: "Time-boxed" },
+                      { value: "permanent", label: "No expiry" },
+                    ]}
+                  />
+                </FilterBar>
+              <DataTable
+                caption="Active grants"
+                columns={columns}
+                rows={rows}
+                rowKey={(g) => g.id}
+                rowLabel={(g) => `${g.email}, ${g.permission}`}
+                rowMenu={
+                  manage
+                    ? (g) => [
+                        {
+                          label: "Revoke",
+                          icon: "ban",
+                          danger: true,
+                          onSelect: () =>
+                            ask({
+                              title: `Revoke ${g.permission} from ${g.email}?`,
+                              message: "It ends at once. The last permanent security administrator cannot be removed.",
+                              confirmLabel: "Revoke",
+                              danger: true,
+                              reason: true,
+                              onConfirm: async (reason) => {
+                                await adminApi.revokePermission(g.id, reason);
+                                reload();
+                                return "Permission revoked.";
+                              },
+                            }),
+                        },
+                      ]
+                    : undefined
+                }
+                empty={<EmptyState icon="key" title={d.results.length ? "No permission matches" : "No permissions granted"} compact />}
+              />
+            </div>
+          );
+        }}
       </LoadGate>
-      {manage && (
-        <form
-          className={`w360-card ${styles.card} ${styles.form}`}
-          onSubmit={(e) => {
-            e.preventDefault();
-            const expiresAt = expiresOn ? new Date(`${expiresOn}T23:59:59`).toISOString() : undefined;
-            void act(
-              () => adminApi.grantPermission(email.trim(), permission.trim(), autoReason("Grant permission"), expiresAt),
-              "Permission granted.",
-            );
-          }}
-        >
-          <h2 className={styles.cardTitle}>Grant a permission</h2>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={emailId}>
-              Staff member&apos;s email
-            </label>
-            <input id={emailId} className="w360-input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-          </div>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={permId}>
-              Permission
-            </label>
-            <input id={permId} className="w360-input" required value={permission} onChange={(e) => setPermission(e.target.value)} />
-          </div>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={expiresId}>
-              Expires on (optional)
-            </label>
-            <input id={expiresId} className="w360-input" type="date" min={today} value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
-          </div>
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-              Grant
-            </button>
-          </div>
-        </form>
-      )}
-    </div>
+      {confirm}
+    </TableSection>
   );
 }

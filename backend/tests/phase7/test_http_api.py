@@ -212,6 +212,10 @@ def test_customer_detail_shows_commercial_facts_and_no_product_domain_data(
         "entitlements",
         "licenses",
         "entitlement_overrides",
+        # 2026-11-10 (ADR-061): the customer's product trials and where each
+        # product's access comes from - both commercial facts.
+        "product_trials",
+        "access_sources",
         "billing",
         "partner",
         "audit",

@@ -29,7 +29,14 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from workeasy360.commercial.payments import checkout, orders, refunds, staff, webhooks
+from workeasy360.commercial.payments import (
+    checkout,
+    orders,
+    refunds,
+    staff,
+    wallet_orders,
+    webhooks,
+)
 from workeasy360.commercial.payments import selectors as payment_selectors
 from workeasy360.contracts.errors import AuthenticationRequired, PaymentValidationError
 from workeasy360.contracts.values import json_input
@@ -63,6 +70,8 @@ _ORDER_FIELDS = (
     "with_trial",
     # ADR-052: a cart - plan ids and quantities, never a price.
     "cart_items",
+    # ADR-058: the coupon code the customer typed; the server prices it.
+    "coupon_code",
 )
 
 
@@ -168,11 +177,27 @@ def invoice_pay_view(
     blocked = limited(request, "payment_start", user=request.user)
     if blocked is not None:
         return blocked
-    key = request.headers.get("Idempotency-Key") or _body(request).get("idempotency_key")
-    result = checkout.start_payment(
-        ctx, invoice_id=invoice_id, idempotency_key=str(key or "")[:129]
+    # A JSON body is optional (the console posts none); only JSON is read.
+    body = _body(request) if request.content_type == "application/json" else {}
+    key = request.headers.get("Idempotency-Key") or body.get("idempotency_key")
+    # ADR-065: the payer may pay part or all of it from the Platform Wallet; the
+    # server checks that amount against the invoice and the wallet. The host the
+    # payment started on decides only where the provider returns the payer.
+    result = wallet_orders.member_pay_invoice(
+        ctx,
+        invoice_id=invoice_id,
+        idempotency_key=str(key or "")[:129],
+        wallet_amount_minor=body.get("wallet_amount_minor", 0),
+        return_portal=_return_portal(request),
     )
     return JsonResponse(result, status=202)
+
+
+def _return_portal(request: HttpRequest) -> str:
+    from workeasy360.contracts.values import portals
+    from workeasy360.platform.identity import portals as portal_links
+
+    return portals.STORE if portal_links.request_portal(request) == portals.STORE else ""
 
 
 @require_http_methods(["GET"])
@@ -251,16 +276,29 @@ def events_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
 @staff_view(["GET"])
 def staff_orders_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     """Every order across customers (Phase 9)."""
+    from workeasy360.commercial.partners.selectors import partner_names
     from workeasy360.contracts.values.cursor import clamp_limit
 
-    return JsonResponse(
-        orders.staff_orders(
-            ctx,
-            status=request.GET.get("status") or None,
-            cursor=request.GET.get("cursor") or None,
-            limit=clamp_limit(request.GET.get("limit"), maximum=orders.MAX_PAGE),
-        )
+    result = orders.staff_orders(
+        ctx,
+        status=request.GET.get("status") or None,
+        channel=request.GET.get("channel") or None,
+        cursor=request.GET.get("cursor") or None,
+        limit=clamp_limit(request.GET.get("limit"), maximum=orders.MAX_PAGE),
     )
+    # The source reference by name: payments sits below partners, so the names
+    # are added here, one query for the page.
+    names = {
+        str(pid): name
+        for pid, name in partner_names(
+            {r["partner_id"] for r in result["results"] if r["partner_id"]}
+        ).items()
+    }
+    for row in result["results"]:
+        row["partner_name"] = (
+            names.get(row["partner_id"], "") if row["partner_id"] else ""
+        )
+    return JsonResponse(result)
 
 
 @staff_view(["POST"])

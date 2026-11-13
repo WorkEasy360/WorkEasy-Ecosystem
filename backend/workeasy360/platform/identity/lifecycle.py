@@ -34,6 +34,15 @@ from workeasy360.contracts.enums import UserStatus
 _LOCKOUT_FIELDS = ["failed_login_count", "locked_until"]
 
 
+def spend_password_time(password: str) -> None:
+    """Take as long as hashing this password would, and keep nothing. A request that creates
+    no account answers no sooner than one that does, so the time taken cannot say whether an
+    address is registered."""
+    from django.contrib.auth.hashers import make_password
+
+    make_password(password)
+
+
 def create_account(
     *,
     email: str,
@@ -42,11 +51,17 @@ def create_account(
     status: UserStatus = UserStatus.ACTIVE,
     source: str = "",
     verified: bool = False,
+    password_change_required: bool = False,
 ) -> Any:
     """A new account. ``password=None`` creates one that cannot sign in until
     its owner sets a password through a proof of the mailbox. Raises
     ``IntegrityError`` if the address was taken a moment ago - the caller
-    decides what that means for its flow."""
+    decides what that means for its flow.
+
+    ``password_change_required`` is for a password someone other than the owner
+    typed (staff creating a partner's account): every call but the password
+    change is refused until the owner replaces it, as with
+    :func:`set_temporary_password`."""
     from workeasy360.platform.identity.models import User
 
     return User.objects.create_user(
@@ -56,6 +71,7 @@ def create_account(
         status=status.value,
         acquisition_source=source,
         email_verified_at=timezone.now() if verified else None,
+        password_change_required=bool(password_change_required and password),
     )
 
 
@@ -75,6 +91,21 @@ def lock_by_email(address: str, *, statuses: tuple[str, ...] | None = None) -> A
     if statuses is not None:
         rows = rows.filter(status__in=statuses)
     return rows.first()
+
+
+def change_email(user: Any, typed: str, *, at: datetime | None = None) -> None:
+    """A proved new sign-in address (ADR-066): normalised for sign-in, kept as
+    typed for display, and verified - the link that brought it here proved the
+    mailbox. The caller holds the row lock and has checked the address is
+    free; the unique index is the last word on a race."""
+    from workeasy360.platform.identity.email import normalize_email
+
+    user.email = normalize_email(typed)
+    user.email_original = typed
+    user.email_verified_at = at or timezone.now()
+    user.save(
+        update_fields=["email", "email_original", "email_verified_at", "updated_at"]
+    )
 
 
 def activate_verified(user: Any, *, at: datetime | None = None) -> None:

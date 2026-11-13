@@ -260,6 +260,23 @@ def launch_target(product_code: str) -> LaunchTargetDTO | None:
     )
 
 
+def has_return_destinations(product_code: str) -> bool | None:
+    """Whether this product's integration lists at least one approved return
+    destination (``redirect_uris``), or ``None`` when it has no integration and so
+    nothing to approve. A yes or no only - never the addresses themselves, so this
+    is as ungated as :func:`launch_target`."""
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    row = (
+        ProductIntegration.objects.filter(product_code=str(product_code))
+        .values("manifest")
+        .first()
+    )
+    if row is None:
+        return None
+    return bool((row["manifest"] or {}).get("redirect_uris"))
+
+
 def launch_urls(product_codes: Iterable[str]) -> dict[str, str]:
     """``{product_code: launch_url}`` for the registered integrations of these
     products, in one query (the Product Manager's list, ADR-051). Ungated for
@@ -413,3 +430,66 @@ def _integration_dto(row: Any) -> IntegrationDTO:
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+def login_clients() -> list[dict[str, Any]]:
+    """Every product that signs in with Workeasy360 and the addresses it may return to.
+    Never a credential. For a staff screen whose caller has authorized."""
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    return [
+        {
+            "product_code": row.product_code,
+            "client_id": row.client_id,
+            "status": row.status,
+            "redirect_uris": list((row.manifest or {}).get("redirect_uris") or []),
+            "post_logout_redirect_uris": list(
+                (row.manifest or {}).get("post_logout_redirect_uris") or []
+            ),
+            "launch_url": (row.manifest or {}).get("launch_url") or "",
+        }
+        for row in ProductIntegration.objects.order_by("product_code")
+    ]
+
+
+def permits_return(product_code: str, url: str) -> bool:
+    """ADR-065: whether the Store may send a buyer back to ``url`` after a purchase
+    that started in this product - an https address on the origin of the product's
+    registered launch page, one of its approved return destinations or its sign-out
+    returns. A yes or no only, as ungated as :func:`launch_target`; never an address."""
+    from urllib.parse import urlsplit
+
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    def origin(value: object) -> str:
+        try:
+            parts = urlsplit(str(value or ""))
+        except ValueError:
+            return ""
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or parts.username
+            or parts.password
+        ):
+            return ""
+        return f"https://{parts.netloc.lower()}"
+
+    wanted = origin(url)
+    if not wanted:
+        return False
+    row = (
+        ProductIntegration.objects.filter(product_code=str(product_code))
+        .values("manifest")
+        .first()
+    )
+    if row is None:
+        return False
+    manifest = row["manifest"] or {}
+    allowed = {
+        origin(manifest.get("launch_url")),
+        *(origin(u) for u in manifest.get("redirect_uris") or []),
+        *(origin(u) for u in manifest.get("post_logout_redirect_uris") or []),
+    }
+    allowed.discard("")
+    return wanted in allowed

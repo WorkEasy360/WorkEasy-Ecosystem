@@ -3,10 +3,12 @@
 import { useId, useState } from "react";
 import { ASSIGNABLE_ROLES, consoleApi, type MemberRow } from "@/lib/api/console";
 import { MoreButton, Status, Table, useAction, usePaged, when } from "@/features/controlplane/ui";
+import { DialogHead, FormPopup, Modal, dialog } from "@/features/controlplane/Modal";
+import { Button, Card, FilterBar, Page, SearchInput, StatusChips } from "@/features/controlplane/kit";
 import cp from "@/features/controlplane/ControlPlane.module.css";
-import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
-import { ConfirmAction, PageHeader, PagedState, day, roleLabel } from "./consoleUi";
+import { ConfirmAction, PageHeader, PagedState, ROLE_DESCRIPTIONS, day, roleLabel } from "./consoleUi";
+import { InviteMemberPopup } from "./InvitationsScreen";
 import { useOrgAccess } from "./OrgAccess";
 
 const STATUS_FILTERS = [
@@ -16,23 +18,48 @@ const STATUS_FILTERS = [
   { value: "suspended", label: "Suspended" },
 ];
 
+/** "View permissions": what each role may do, as the access-control model defines it. */
+function RolesDialog({ onClose }: { onClose: () => void }) {
+  const titleId = useId();
+  return (
+    <Modal labelledBy={titleId} onClose={onClose} size="md">
+      <DialogHead titleId={titleId} title="Roles and permissions" onClose={onClose} />
+      <div className={dialog.body}>
+        <dl className={local.details}>
+          {Object.entries(ROLE_DESCRIPTIONS).map(([key, text]) => (
+            <div key={key}>
+              <dt>{roleLabel(key)}</dt>
+              <dd>{text}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className={local.muted}>
+          Paying invoices, topping up wallets and buying plans need the Owner or a Billing Manager. Everyone else sees
+          &quot;Contact Organization Admin&quot; instead. Every action is checked again by WorkEasy360.
+        </p>
+      </div>
+      <div className={dialog.foot}>
+        <Button onClick={onClose}>Close</Button>
+      </div>
+    </Modal>
+  );
+}
+
 /**
  * The member directory, and what an administrator may do to each member.
  *
  * Actions are offered only where the backend would allow them - never on the
  * owner (ownership moves by transfer) and never on yourself (the same mistake
  * made on oneself has no one left to undo it) - and every one is authorized
- * again by the server. Role changes and signing a member out are dangerous
- * so they run through `useAction`.
+ * again by the server. Signing a member out is dangerous so it runs through
+ * `useAction`; a role is changed in a small popup from the row.
  */
 export function MembersScreen() {
   const { slug, access, can } = useOrgAccess();
-  const searchId = useId();
-  const statusId = useId();
-  const [draft, setDraft] = useState("");
-  // Applied on submit, not per keystroke: one bounded request per search.
+  // Applied as the search settles or on Enter: one bounded request per search.
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
+  const [roles, setRoles] = useState(false);
   const paged = usePaged(
     (cursor) => consoleApi.members(slug, { status: status || undefined, q: query || undefined, cursor }),
     [slug, status, query],
@@ -42,92 +69,81 @@ export function MembersScreen() {
   const orgName = access?.organization.display_name ?? "this organization";
 
   return (
-    <div className={styles.page}>
+    <Page>
       {/* Members and Invitations are tabs of Organization & Team (2026-11-03): no header link between them. */}
       <PageHeader
         title="Members"
         lead="Everyone who belongs to this organization, their role and when they last signed in."
+        actions={
+          <Button icon="key" aria-haspopup="dialog" onClick={() => setRoles(true)}>
+            View permissions
+          </Button>
+        }
+        primary={can("platform.member.invite") ? <InviteMemberPopup slug={slug} label="Invite Member" /> : undefined}
       />
-      <form
-        className={local.toolbar}
-        role="search"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setQuery(draft.trim());
-        }}
-      >
-        <div className={cp.field}>
-          <label className="w360-label" htmlFor={statusId}>
-            Status
-          </label>
-          <select id={statusId} className="w360-input" value={status} onChange={(e) => setStatus(e.target.value)}>
-            {STATUS_FILTERS.map((f) => (
-              <option key={f.value} value={f.value}>
-                {f.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className={cp.field}>
-          <label className="w360-label" htmlFor={searchId}>
-            Search by name or email
-          </label>
-          <input
-            id={searchId}
-            className="w360-input"
-            type="search"
-            maxLength={100}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-        </div>
-        <button type="submit" className="w360-btn w360-btn-secondary">
-          Search
-        </button>
-      </form>
-      {feedback}
-      <PagedState state={paged.state} what="members" />
-      {paged.state === "ready" && (
-        <>
-          <Table
-            caption="Organization members"
-            head={["Member", "Roles", "Status", "Last sign-in", "Joined", "Actions"]}
-            isEmpty={paged.rows.length === 0}
-            empty={query || status ? "No members match." : "No members yet."}
+      {roles && <RolesDialog onClose={() => setRoles(false)} />}
+      <Card title="Team members">
+        <div className={local.section}>
+          <FilterBar
+            label="Filter members"
+            onClear={
+              query || status
+                ? () => {
+                    setQuery("");
+                    setStatus("");
+                  }
+                : undefined
+            }
           >
-            {paged.rows.map((m) => (
-              <tr key={m.membership_id}>
-                <th scope="row">
-                  {m.name || m.email}
-                  {m.name && <div className={cp.muted}>{m.email}</div>}
-                </th>
-                <td>{m.roles.length ? m.roles.map(roleLabel).join(", ") : "—"}</td>
-                <td>
-                  <Status value={m.status} />
-                </td>
-                <td>{m.last_sign_in_at ? when(m.last_sign_in_at) : "Never"}</td>
-                <td>{day(m.joined_at)}</td>
-                <td>
-                  {m.is_owner || m.membership_id === me ? (
-                    <span className={cp.muted}>{m.is_owner ? "Owner" : "You"}</span>
-                  ) : (
-                    <MemberActions
-                      member={m}
-                      orgName={orgName}
-                      busy={busy}
-                      can={can}
-                      run={(action, success) => void act(action, success)}
-                      slug={slug}
-                    />
-                  )}
-                </td>
-              </tr>
-            ))}
-          </Table>
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
-        </>
-      )}
-    </div>
+            <SearchInput label="Search by name or email" value={query} onSearch={setQuery} />
+            <StatusChips label="Status" value={status} onChange={setStatus} chips={STATUS_FILTERS} />
+          </FilterBar>
+          {feedback}
+          <PagedState state={paged.state} what="members" />
+          {paged.state === "ready" && (
+            <>
+              <Table
+                caption="Organization members"
+                head={["Member", "Roles", "Status", "Last sign-in", "Joined", "Actions"]}
+                isEmpty={paged.rows.length === 0}
+                empty={query || status ? "No members match." : "No members yet."}
+              >
+                {paged.rows.map((m) => (
+                  <tr key={m.membership_id}>
+                    <th scope="row">
+                      {m.name || m.email}
+                      {m.name && <div className={cp.muted}>{m.email}</div>}
+                    </th>
+                    <td>{m.roles.length ? m.roles.map(roleLabel).join(", ") : "—"}</td>
+                    <td>
+                      <Status value={m.status} />
+                    </td>
+                    <td>{m.last_sign_in_at ? when(m.last_sign_in_at) : "Never"}</td>
+                    <td>{day(m.joined_at)}</td>
+                    <td>
+                      {m.is_owner || m.membership_id === me ? (
+                        <span className={cp.muted}>{m.is_owner ? "Owner" : "You"}</span>
+                      ) : (
+                        <MemberActions
+                          member={m}
+                          orgName={orgName}
+                          busy={busy}
+                          can={can}
+                          run={(action, success) => void act(action, success)}
+                          reload={paged.reload}
+                          slug={slug}
+                        />
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </Table>
+              <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+            </>
+          )}
+        </div>
+      </Card>
+    </Page>
   );
 }
 
@@ -137,6 +153,7 @@ function MemberActions({
   busy,
   can,
   run,
+  reload,
   slug,
 }: {
   member: MemberRow;
@@ -144,6 +161,7 @@ function MemberActions({
   busy: boolean;
   can: (permission: string) => boolean;
   run: (action: () => Promise<unknown>, success: string) => void;
+  reload: () => void;
   slug: string;
 }) {
   const who = member.name || member.email;
@@ -154,12 +172,15 @@ function MemberActions({
   return (
     <div className={local.actions}>
       {can("platform.role.assign") && hasRole && (
-        <RoleForm
-          key={current}
+        <RolePopup
           who={who}
           current={current}
           busy={busy}
-          onSave={(role) => run(() => consoleApi.changeRole(slug, id, role), `${who} is now ${roleLabel(role)}.`)}
+          onSave={async (role) => {
+            await consoleApi.changeRole(slug, id, role);
+            return `${who} is now ${roleLabel(role)}.`;
+          }}
+          onDone={reload}
         />
       )}
       {can("platform.member.update") && member.status === "active" && (
@@ -211,45 +232,48 @@ function MemberActions({
   );
 }
 
-function RoleForm({
+/** A member's role, changed in a small popup from the row (2026-11-05). */
+function RolePopup({
   who,
   current,
   busy,
   onSave,
+  onDone,
 }: {
   who: string;
   current: string;
   busy: boolean;
-  onSave: (role: string) => void;
+  onSave: (role: string) => Promise<string>;
+  onDone: () => void;
 }) {
   const id = useId();
   const [role, setRole] = useState(current);
   return (
-    <form
-      className={local.inlineForm}
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSave(role);
-      }}
+    <FormPopup
+      label="Change role"
+      buttonClassName="w360-btn w360-btn-secondary"
+      buttonAriaLabel={`Change role for ${who}`}
+      disabled={busy}
+      title={`Change role for ${who}`}
+      size="sm"
+      submitLabel="Save role"
+      canSubmit={role !== current}
+      onOpen={() => setRole(current)}
+      onSubmit={() => onSave(role)}
+      onDone={onDone}
     >
-      <label className="w360-visually-hidden" htmlFor={id}>
-        Role for {who}
-      </label>
-      <select id={id} className="w360-input" value={role} onChange={(e) => setRole(e.target.value)}>
-        {ASSIGNABLE_ROLES.map((r) => (
-          <option key={r.key} value={r.key}>
-            {r.label}
-          </option>
-        ))}
-      </select>
-      <button
-        type="submit"
-        className="w360-btn w360-btn-secondary"
-        aria-label={`Save role for ${who}`}
-        disabled={busy || role === current}
-      >
-        Save role
-      </button>
-    </form>
+      <div className={cp.field}>
+        <label className="w360-label" htmlFor={id}>
+          Role for {who}
+        </label>
+        <select id={id} className="w360-input" value={role} onChange={(e) => setRole(e.target.value)}>
+          {ASSIGNABLE_ROLES.map((r) => (
+            <option key={r.key} value={r.key}>
+              {r.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </FormPopup>
   );
 }

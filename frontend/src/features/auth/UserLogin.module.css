@@ -1,0 +1,22 @@
+/* The customer portal's sign-in (UserLogin.tsx): the Partner sign-in's card foot
+   with the five platform labels of the owner's reference image. Tokens only. */
+
+/* Each column at least as wide as its longest word: a label wraps between words
+   ("Wallets & / Credits"), never inside one ("Subscription / s"). */
+.platformList {
+  grid-template-columns: repeat(5, minmax(min-content, 1fr));
+  gap: 4px;
+  padding: 14px 6px;
+}
+
+.platformList span {
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+@media (max-width: 480px) {
+  .platformList {
+    grid-template-columns: repeat(3, minmax(min-content, 1fr));
+    row-gap: 14px;
+  }
+}

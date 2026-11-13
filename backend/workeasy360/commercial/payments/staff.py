@@ -540,6 +540,9 @@ def void_invoice(
             invoice_id=invoice.id,
             status__in=("pending", "awaiting_payment"),
         ).update(status="cancelled", checkout_url="", completed_at=now, updated_at=now)
+        from workeasy360.commercial.payments import wallet_orders
+
+        wallet_orders.release_for_invoice(invoice, why="invoice_void")
         invoice.status = Invoice.Status.VOID
         invoice.voided_at = now
         invoice.void_reason = why

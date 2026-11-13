@@ -19,6 +19,8 @@ from config.settings.base import (
     EMAIL_USE_SSL,
     EMAIL_USE_TLS,
     FILE_STORAGE_BACKEND,
+    KYC_MALWARE_SCAN_REQUIRED,
+    PARTNER_KYC_REQUIRED,
     PORTAL_HANDOFF_TTL_S,
     REDIS_URL,
     S3_BUCKET,
@@ -241,6 +243,19 @@ env.check(
     "DEBUG must be False in production.",
 )
 env.check(
+    PARTNER_KYC_REQUIRED,
+    "W360_PARTNER_KYC_REQUIRED must stay on in production: registering must never "
+    "be enough to become an active partner.",
+)
+# 2026-11-10: KYC documents are served only after a real malware scan. Without a
+# scanner (W360_FILES_MALWARE_SCANNER=clamd) they wait in quarantine and no
+# application can be approved: closed, not open. Turning this off is refused.
+env.check(
+    KYC_MALWARE_SCAN_REQUIRED,
+    "W360_KYC_MALWARE_SCAN_REQUIRED must stay on in production: an unscanned KYC "
+    "document must never be treated as safe.",
+)
+env.check(
     "*" not in ALLOWED_HOSTS,
     "W360_ALLOWED_HOSTS must not contain '*': it defeats Host-header "
     "validation and enables cache-poisoning and password-reset-link attacks.",
@@ -256,8 +271,10 @@ env.check(
     "name pointed at the edge.",
 )
 _PORTAL_ORIGINS = {name: o for name, o in W360_PORTAL_ORIGINS.items() if o}
+# ADR-065: the five required portals, plus the Store's host when it is set.
+_STORE_ORIGIN = _PORTAL_ORIGINS.get("store", "")
 env.check(
-    len(_PORTAL_ORIGINS) == 5
+    len(_PORTAL_ORIGINS) == 5 + (1 if _STORE_ORIGIN else 0)
     and all(
         (p := _parse_origin(o)) is not None and p[0] == "https"
         for o in _PORTAL_ORIGINS.values()
@@ -273,7 +290,8 @@ env.check(
 env.check(
     {_host_of(o).split(":")[0] for o in _PORTAL_ORIGINS.values()} == set(ALLOWED_HOSTS),
     "W360_ALLOWED_HOSTS must be exactly the five portal hosts (admin, partner, app, "
-    "auth, api): no other name may reach the application.",
+    "auth, api), plus store when W360_STORE_ORIGIN is set: no other name may reach "
+    "the application.",
 )
 env.check(
     10 <= PORTAL_HANDOFF_TTL_S <= 300,
@@ -281,11 +299,13 @@ env.check(
     "one-time sign-in, used within seconds.",
 )
 _WEB_ORIGINS = {_PORTAL_ORIGINS.get(n, "") for n in ("admin", "partner", "app", "auth")}
+if _STORE_ORIGIN:
+    _WEB_ORIGINS.add(_STORE_ORIGIN)
 env.check(
     set(CSRF_TRUSTED_ORIGINS) == _WEB_ORIGINS
     and not any("*" in o for o in CSRF_TRUSTED_ORIGINS),
     "W360_CSRF_TRUSTED_ORIGINS must be exactly the four portal origins (admin, "
-    "partner, app, auth): no wildcard, no product host, no partner domain - a "
+    "partner, app, auth), plus store when W360_STORE_ORIGIN is set: no wildcard, no product host, no partner domain - a "
     "partner's custom domain serves no form at all (ADR-039), and products call "
     "the API server-to-server (ADR-043).",
 )

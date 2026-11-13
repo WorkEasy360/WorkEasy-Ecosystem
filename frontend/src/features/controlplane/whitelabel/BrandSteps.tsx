@@ -89,7 +89,7 @@ export function IdentityStep({ ctx }: { ctx: Ctx }) {
           spellCheck={false}
           autoComplete="off"
           error={errors.accent}
-          hint="A six-digit hex colour such as #1a56db. Leave it empty to keep the Workeasy360 colour."
+          hint="A six-digit hex colour such as #1a56db. Leave it empty to keep the WorkEasy360 colour."
         />
         <div className={styles.field}>
           <label className="w360-label" htmlFor={pickerId}>

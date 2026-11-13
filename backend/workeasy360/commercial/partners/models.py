@@ -33,6 +33,7 @@ import uuid
 from typing import Any
 
 from django.db import models
+from django.utils import timezone
 
 from workeasy360.contracts.enums import (
     DomainStatus,
@@ -1515,13 +1516,23 @@ class PartnerTicket(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     partner = models.ForeignKey(
-        PartnerAccount, on_delete=models.PROTECT, related_name="tickets"
+        PartnerAccount,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="tickets",
     )
     number = models.PositiveIntegerField()
     direction = models.CharField(max_length=8)
-    #: The customer organization of a ``customer`` ticket (a soft reference,
-    #: like the ledger's); empty for a ``platform`` ticket.
+    #: The customer organization of a ``customer`` or ``direct`` ticket (a soft
+    #: reference, like the ledger's); empty for a ``platform`` ticket.
     organization_id = models.UUIDField(null=True, blank=True)
+    #: Who at Workeasy360 is working it. ``direct`` and ``platform`` tickets only.
+    assigned_to = models.ForeignKey(
+        "identity.User", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    #: How it ended, in the desk's words. Shown to whoever asked.
+    resolution = models.CharField(max_length=500, blank=True, default="", db_default="")
     subject = models.CharField(max_length=200)
     category = models.CharField(max_length=16, default="general")
     priority = models.CharField(max_length=8, default="normal")
@@ -1547,8 +1558,21 @@ class PartnerTicket(models.Model):
                 fields=["partner", "number"], name="uq_partner_ticket_number"
             ),
             models.CheckConstraint(
-                condition=models.Q(direction="platform", organization_id__isnull=True)
-                | models.Q(direction="customer", organization_id__isnull=False),
+                condition=models.Q(
+                    direction="platform",
+                    organization_id__isnull=True,
+                    partner__isnull=False,
+                )
+                | models.Q(
+                    direction="customer",
+                    organization_id__isnull=False,
+                    partner__isnull=False,
+                )
+                | models.Q(
+                    direction="direct",
+                    organization_id__isnull=False,
+                    partner__isnull=True,
+                ),
                 name="ck_partner_ticket_direction",
             ),
             models.CheckConstraint(
@@ -1785,3 +1809,259 @@ class PartnerWithdrawalRequest(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"{self.partner_id}: {self.amount_minor} {self.currency} [{self.status}]"
+
+
+# --- KYC (2026-11-09): commercial/partners/kyc.py ---------------------------------
+
+
+class KycRequirement(models.Model):
+    """One document an Admin requires of an application. Data, never code: with
+    none entered, an application is business details alone."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    key = models.SlugField(max_length=48, unique=True)
+    label = models.CharField(max_length=120)
+    help_text = models.CharField(max_length=300, blank=True, default="")
+    is_required = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    display_order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "partners_kyc_requirement"
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return self.key
+
+
+class PartnerKyc(models.Model):
+    """A partner's application. Its status is **not** the partner's: a partner may
+    be suspended and approved at once."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        SUBMITTED = "submitted", "Submitted"
+        UNDER_REVIEW = "under_review", "Under review"
+        CORRECTION_REQUIRED = "correction_required", "Correction required"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
+    partner = models.OneToOneField(
+        PartnerAccount, primary_key=True, on_delete=models.PROTECT, related_name="kyc"
+    )
+    status = models.CharField(
+        max_length=24, choices=Status.choices, default=Status.DRAFT, db_index=True
+    )
+    #: ``application`` (the public form) or ``staff`` (an Admin added the partner).
+    source = models.CharField(max_length=16, default="staff", db_default="staff")
+    #: What the person asked to become. Grants nothing until approval.
+    requested_experience = models.CharField(max_length=16, blank=True, default="")
+    #: The business details, bounded field by field in ``kyc._clean_details``.
+    details = models.JSONField(default=dict, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    #: Who has picked this up.
+    reviewer = models.ForeignKey(
+        "identity.User", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decided_by = models.ForeignKey(
+        "identity.User", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    decision_reason = models.CharField(max_length=500, blank=True, default="")
+    version = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "partners_kyc"
+        indexes = [
+            models.Index(fields=["status", "submitted_at"], name="ix_partner_kyc_queue"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.partner_id} [{self.status}]"
+
+
+class PartnerKycDocument(models.Model):
+    """One uploaded document. ``file_id`` is a soft reference into the files
+    platform, under the platform's own scope. Replaced documents stay, with
+    ``removed_at`` set, so what a reviewer saw is never lost."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="kyc_documents"
+    )
+    requirement_key = models.CharField(max_length=48)
+    file_id = models.UUIDField()
+    filename = models.CharField(max_length=200)
+    content_type = models.CharField(max_length=64)
+    size_bytes = models.BigIntegerField()
+    uploaded_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    removed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "partners_kyc_document"
+        indexes = [
+            models.Index(fields=["partner", "removed_at"], name="ix_kyc_doc_partner"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["partner", "requirement_key"],
+                condition=models.Q(removed_at__isnull=True),
+                name="uq_kyc_doc_one_live_per_requirement",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.partner_id}:{self.requirement_key}"
+
+
+class PartnerKycDecision(models.Model):
+    """Every review step: who, when, from what, to what and why. Append-only."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="kyc_decisions"
+    )
+    decision = models.CharField(max_length=24)
+    from_status = models.CharField(max_length=24)
+    to_status = models.CharField(max_length=24)
+    reason = models.CharField(max_length=500, blank=True, default="")
+    flagged_requirements = models.JSONField(default=list, blank=True)
+    decided_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    decided_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "partners_kyc_decision"
+        indexes = [
+            models.Index(
+                fields=["partner", "-decided_at"], name="ix_kyc_decision_partner"
+            ),
+            models.Index(fields=["-decided_at"], name="ix_kyc_decision_time"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.partner_id}:{self.to_status}"
+
+
+class PartnerKycDocumentAccess(models.Model):
+    """Every time staff opened a KYC document. Append-only, written before the bytes
+    leave."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="+"
+    )
+    document = models.ForeignKey(
+        PartnerKycDocument, on_delete=models.PROTECT, related_name="+"
+    )
+    accessed_by = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    ip_prefix = models.CharField(max_length=64, blank=True, default="")
+    accessed_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "partners_kyc_document_access"
+        indexes = [
+            models.Index(
+                fields=["partner", "-accessed_at"], name="ix_kyc_access_partner"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.document_id} by {self.accessed_by_id}"
+
+
+class PartnerGuestSession(models.Model):
+    """One staff member's read-only guest view of one partner's portal
+    (``guest.py``, ADR-062): All Partners → Login as Guest.
+
+    The record of who looked at which partner, why, from which sign-in, for how
+    long, and how it ended. It is the authority for the view while it lasts:
+    every partner request of a guest reads its row (live = not ended and not
+    expired), so ending or revoking it takes effect on the next request.
+
+    Never the partner's identity or credentials: ``staff_user`` is who acts.
+    ``sign_in_id`` is the staff member's own sign-in (``UserSession.sign_in_id``),
+    so signing out of the Admin ends the view. ``entry_digest`` is the SHA-256
+    of a one-time, sixty-second ticket that opens the partner portal's own
+    session on its host; the ticket itself is never stored, and the digest is
+    cleared when it is spent.
+    """
+
+    END_REASONS = ("exited", "revoked", "signed_out", "replaced", "expired")
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(
+        PartnerAccount, on_delete=models.PROTECT, related_name="+"
+    )
+    staff_user = models.ForeignKey(
+        "identity.User", on_delete=models.PROTECT, related_name="+"
+    )
+    sign_in_id = models.UUIDField()
+    reason = models.CharField(max_length=200)
+    #: Where "Exit Guest Mode" returns in the Admin (a validated path).
+    return_path = models.CharField(max_length=200, blank=True, default="")
+    started_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    entry_digest = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    entry_expires_at = models.DateTimeField(null=True, blank=True)
+    entered_at = models.DateTimeField(null=True, blank=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    end_reason = models.CharField(max_length=16, blank=True, default="")
+    ended_by = models.ForeignKey(
+        "identity.User",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        db_table = "partners_guest_session"
+        indexes = [
+            models.Index(
+                fields=["partner", "-started_at"], name="ix_guest_session_partner"
+            ),
+            models.Index(
+                fields=["staff_user", "sign_in_id"], name="ix_guest_session_sign_in"
+            ),
+        ]
+        constraints = [
+            # One open guest view per sign-in: starting another ends the first.
+            models.UniqueConstraint(
+                fields=["sign_in_id"],
+                condition=models.Q(ended_at__isnull=True),
+                name="uq_guest_session_open_per_sign_in",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(expires_at__gt=models.F("started_at")),
+                name="ck_guest_session_expires_after_start",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(ended_at__isnull=True, end_reason="")
+                    | models.Q(
+                        ended_at__isnull=False,
+                        end_reason__in=[
+                            "exited",
+                            "revoked",
+                            "signed_out",
+                            "replaced",
+                            "expired",
+                        ],
+                    )
+                ),
+                name="ck_guest_session_end_reason",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"guest {self.staff_user_id} -> {self.partner_id}"

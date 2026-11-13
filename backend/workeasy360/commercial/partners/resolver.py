@@ -16,13 +16,20 @@ suspended    the read-only subset only: history stays visible, nothing new
              can be done (Task 62)
 terminated   only commission and payout visibility, so money owed remains
              readable after the relationship ends
-draft        nothing - a partner that has not been activated cannot act
+draft        the onboarding tier only (ADR-063): its dashboard, which then
+             shows onboarding, its support tickets and notifications, and a
+             read of its own profile. The KYC application is reached through
+             its own administrator check, not a permission
 ===========  ==========================================================
+
+An **active** partner the Admin's legacy policy confines (active before KYC
+existed, no approved application, policy ``restrict``) gets the onboarding
+tier too, until its application is approved.
 """
 
 from __future__ import annotations
 
-from workeasy360.commercial.partners import capabilities, selectors
+from workeasy360.commercial.partners import capabilities, kyc, selectors
 from workeasy360.contracts.enums import PartnerMemberRole, PartnerStatus
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.authz.registry import permission_registry
@@ -46,7 +53,12 @@ def partner_permissions(ctx: TenantContext) -> frozenset[str]:
 
     status = partner.status_enum
     if status is PartnerStatus.DRAFT:
-        return frozenset()
+        return permission_registry.expand(capabilities.ONBOARDING_PERMISSIONS)
+
+    if status is PartnerStatus.ACTIVE and not kyc.cleared(
+        partner.id, status=partner.status
+    ):
+        return permission_registry.expand(capabilities.ONBOARDING_PERMISSIONS)
 
     held = selectors.active_capabilities(ctx.partner_id)
 

@@ -20,6 +20,7 @@ from workeasy360.interfaces.api.v1 import (
     account_views,
     admin_catalog_views,
     admin_console_views,
+    admin_panel_views,
     admin_product_manager_views,
     admin_product_views,
     admin_programme_views,
@@ -34,14 +35,17 @@ from workeasy360.interfaces.api.v1 import (
     intelligence_product_views,
     intelligence_views,
     launcher_views,
+    org_account_views,
     partner_api_views,
     partner_desk_views,
     partner_panel_views,
     partner_views,
+    partner_wallet_views,
     payment_views,
     public_site_views,
     public_views,
     trial_views,
+    usage_product_views,
     views,
 )
 
@@ -52,10 +56,30 @@ urlpatterns = [
     # selected, which is the whole point of existing (Tasks 4, 5).
     path("auth/login", auth_views.login_view, name="auth-login"),
     path("auth/logout", auth_views.logout_view, name="auth-logout"),
+    # ADR-066: Switch Account - started on a portal, finished on the central
+    # sign-in host (the session products are signed in with).
+    path(
+        "auth/switch-account",
+        auth_views.switch_account_view,
+        name="auth-switch-account",
+    ),
+    path(
+        "auth/switch-account/finish",
+        auth_views.switch_account_finish_view,
+        name="auth-switch-account-finish",
+    ),
     path("auth/session", auth_views.session_view, name="auth-session"),
     # Portal hand-off (ADR-043): issued on the central sign-in host, redeemed
     # once on the portal host it names.
     path("auth/handoff", auth_views.handoff_view, name="auth-handoff"),
+    # ADR-065: the Store's "My Account" links - a pass from the Store's host,
+    # spent on the customer portal's.
+    path("auth/account-pass", auth_views.account_pass_view, name="auth-account-pass"),
+    path(
+        "auth/account-pass/enter",
+        auth_views.account_pass_enter_view,
+        name="auth-account-pass-enter",
+    ),
     path(
         "auth/handoff/redeem",
         auth_views.handoff_redeem_view,
@@ -64,6 +88,8 @@ urlpatterns = [
     path("organizations", auth_views.organizations_view, name="organizations"),
     # --- Phase 8 extension: the account itself ---
     path("auth/password", account_views.password_view, name="auth-password"),
+    # ADR-066: change the sign-in email (a link to the new address confirms).
+    path("auth/email", account_views.email_change_view, name="auth-email"),
     path("auth/sessions", account_views.sessions_view, name="auth-sessions"),
     path(
         "auth/sessions/revoke-others",
@@ -121,11 +147,49 @@ urlpatterns = [
         name="public-store-product",
     ),
     path(
+        "public/store/products/<slug:slug>/coupon",
+        public_site_views.store_coupon_view,
+        name="public-store-coupon",
+    ),
+    # ADR-065: the Digital Store's own host - Recharge terms, the checkout's
+    # "Pay via", and the return address a product's purchase may come back to.
+    path(
+        "public/store/recharge",
+        public_site_views.store_recharge_view,
+        name="public-store-recharge",
+    ),
+    path(
+        "public/store/sitemap.xml",
+        public_site_views.store_sitemap_view,
+        name="public-store-sitemap",
+    ),
+    path(
+        "public/store/partner-programme",
+        public_site_views.store_partner_programme_view,
+        name="public-store-partner-programme",
+    ),
+    path(
+        "public/store/payment-option",
+        public_site_views.store_payment_option_view,
+        name="public-store-payment-option",
+    ),
+    path(
+        "public/store/return-check",
+        public_site_views.store_return_check_view,
+        name="public-store-return-check",
+    ),
+    path(
         "public/catalog/products/<slug:slug>",
         public_site_views.catalog_product_view,
         name="public-catalog-product",
     ),
     path("public/signup", public_site_views.signup_view, name="public-signup"),
+    path("public/help", admin_panel_views.public_help_view, name="public-help"),
+    path(
+        "public/partner-applications",
+        admin_panel_views.partner_application_view,
+        name="public-partner-application",
+    ),
     path(
         "public/storefront/<slug:slug>",
         public_views.storefront_view,
@@ -170,6 +234,11 @@ urlpatterns = [
         "public/password/reset",
         public_site_views.reset_password_view,
         name="public-password-reset",
+    ),
+    path(
+        "public/email/confirm",
+        public_site_views.confirm_email_change_view,
+        name="public-email-confirm",
     ),
     # Payment providers' signed callbacks: no session, the signature is the
     # credential (payment_views.SIGNED_WEBHOOK_VIEWS).
@@ -359,9 +428,66 @@ urlpatterns = [
         commercial_views.billing_account_view,
         name="billing-account",
     ),
+    # --- User Admin Panel (2026-11-11): the organization's three wallets, the bell
+    # and the member's own alert choices (org_account_views docstring).
+    path(
+        "orgs/<slug:org_slug>/wallets",
+        org_account_views.wallets_view,
+        name="org-wallets",
+    ),
+    path(
+        "orgs/<slug:org_slug>/wallets/transactions",
+        org_account_views.wallet_transactions_view,
+        name="org-wallets-transactions",
+    ),
+    path(
+        "orgs/<slug:org_slug>/wallets/usage",
+        org_account_views.wallet_usage_view,
+        name="org-wallets-usage",
+    ),
+    path(
+        "orgs/<slug:org_slug>/wallets/top-up",
+        org_account_views.wallet_top_up_view,
+        name="org-wallets-top-up",
+    ),
+    path(
+        "orgs/<slug:org_slug>/wallets/credit-packs",
+        org_account_views.wallet_credit_pack_view,
+        name="org-wallets-credit-packs",
+    ),
+    path(
+        "orgs/<slug:org_slug>/notifications",
+        org_account_views.notifications_view,
+        name="org-notifications",
+    ),
+    path(
+        "orgs/<slug:org_slug>/notification-preferences",
+        org_account_views.notification_preferences_view,
+        name="org-notification-preferences",
+    ),
     # Phase 9: pay-first orders replace the direct purchase and activation
     # routes. The order's invoice is paid through billing/invoices/<id>/pay.
     path("orgs/<slug:org_slug>/orders", payment_views.orders_view, name="orders"),
+    path(
+        "orgs/<slug:org_slug>/support-tickets",
+        admin_panel_views.org_support_tickets_view,
+        name="orgs-org-slug-support-tickets",
+    ),
+    path(
+        "orgs/<slug:org_slug>/support-tickets/<uuid:ticket_id>",
+        admin_panel_views.org_support_ticket_view,
+        name="orgs-org-slug-support-tickets-ticket-id",
+    ),
+    path(
+        "orgs/<slug:org_slug>/setup",
+        admin_panel_views.org_setup_view,
+        name="orgs-org-slug-setup",
+    ),
+    path(
+        "orgs/<slug:org_slug>/setup/<uuid:record_id>/submit",
+        admin_panel_views.org_setup_submit_view,
+        name="orgs-org-slug-setup-record-id-submit",
+    ),
     # Phase 11: a per-product free trial (not a subscription; see
     # commercial/subscriptions/models.py ProductTrial).
     path("orgs/<slug:org_slug>/trials", trial_views.trials_view, name="trials"),
@@ -542,6 +668,9 @@ urlpatterns = [
     # The same trust boundary as event ingestion - a product's client
     # credential, no session, no tenant path; the organization is bound by
     # the live entitlement decision inside each service.
+    path(
+        "integrations/usage/events", usage_product_views.usage_events, name="usage-events"
+    ),
     path(
         "integrations/ai/skills",
         intelligence_product_views.ai_skills,
@@ -755,6 +884,274 @@ urlpatterns = [
 _admin = [
     path("admin/session", admin_views.session_view, name="admin-session"),
     path("admin/dashboard", admin_views.dashboard_view, name="admin-dashboard"),
+    path(
+        "admin/dashboard/overview",
+        admin_panel_views.dashboard_overview_view,
+        name="admin-dashboard-overview",
+    ),
+    path(
+        "admin/dashboard/growth",
+        admin_panel_views.dashboard_growth_view,
+        name="admin-dashboard-growth",
+    ),
+    path(
+        "admin/dashboard/money",
+        admin_panel_views.dashboard_money_view,
+        name="admin-dashboard-money",
+    ),
+    path("admin/search", admin_panel_views.search_view, name="admin-search"),
+    path("admin/invoices", admin_panel_views.invoices_view, name="admin-invoices"),
+    path(
+        "admin/payments/all", admin_panel_views.payments_view, name="admin-payments-all"
+    ),
+    path(
+        "admin/orders/stuck",
+        admin_panel_views.stuck_orders_view,
+        name="admin-orders-stuck",
+    ),
+    path(
+        "admin/orders/<uuid:order_id>/retry-activation",
+        admin_panel_views.retry_activation_view,
+        name="admin-orders-order-id-retry-activation",
+    ),
+    path("admin/refunds", admin_panel_views.refunds_view, name="admin-refunds"),
+    path(
+        "admin/credit-notes",
+        admin_panel_views.credit_notes_view,
+        name="admin-credit-notes",
+    ),
+    path(
+        "admin/subscriptions",
+        admin_panel_views.subscriptions_view,
+        name="admin-subscriptions",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/invoices/<uuid:invoice_id>/pay-from-wallet",
+        admin_panel_views.pay_invoice_from_wallet_view,
+        name="admin-customers-organization-id-invoices-invoice-id-pay-from-wallet",
+    ),
+    path("admin/wallets", admin_panel_views.wallets_view, name="admin-wallets"),
+    path(
+        "admin/wallets/entries",
+        admin_panel_views.wallet_entries_view,
+        name="admin-wallets-entries",
+    ),
+    path(
+        "admin/wallets/entries/<uuid:entry_id>/reverse",
+        admin_panel_views.wallet_reverse_view,
+        name="admin-wallets-entries-entry-id-reverse",
+    ),
+    path(
+        "admin/wallets/reconcile",
+        admin_panel_views.wallet_reconcile_view,
+        name="admin-wallets-reconcile",
+    ),
+    path(
+        "admin/wallets/events",
+        admin_panel_views.usage_events_view,
+        name="admin-wallets-events",
+    ),
+    path(
+        "admin/wallets/events/<uuid:event_id>/retry",
+        admin_panel_views.usage_event_retry_view,
+        name="admin-wallets-events-event-id-retry",
+    ),
+    path(
+        "admin/wallets/events/<uuid:event_id>/review",
+        admin_panel_views.usage_event_review_view,
+        name="admin-wallets-events-event-id-review",
+    ),
+    path(
+        "admin/wallets/<uuid:wallet_id>",
+        admin_panel_views.wallet_view,
+        name="admin-wallets-wallet-id",
+    ),
+    path(
+        "admin/wallets/<uuid:wallet_id>/top-up",
+        admin_panel_views.wallet_top_up_view,
+        name="admin-wallets-wallet-id-top-up",
+    ),
+    path(
+        "admin/wallets/<uuid:wallet_id>/adjust",
+        admin_panel_views.wallet_adjust_view,
+        name="admin-wallets-wallet-id-adjust",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/wallet-orders",
+        admin_panel_views.wallet_order_view,
+        name="admin-customers-organization-id-wallet-orders",
+    ),
+    path(
+        "admin/usage-rates", admin_panel_views.usage_rates_view, name="admin-usage-rates"
+    ),
+    path(
+        "admin/usage-rates/<uuid:rate_id>/remove",
+        admin_panel_views.usage_rate_remove_view,
+        name="admin-usage-rates-rate-id-remove",
+    ),
+    path(
+        "admin/credit-packs",
+        admin_panel_views.credit_packs_view,
+        name="admin-credit-packs",
+    ),
+    path(
+        "admin/credit-packs/<uuid:pack_id>",
+        admin_panel_views.credit_pack_view,
+        name="admin-credit-packs-pack-id",
+    ),
+    path(
+        "admin/catalog/products/<uuid:product_id>/app-links",
+        admin_panel_views.product_app_links_view,
+        name="admin-catalog-products-product-id-app-links",
+    ),
+    path(
+        "admin/catalog/plans/<uuid:plan_id>/rules",
+        admin_panel_views.plan_rules_view,
+        name="admin-catalog-plans-plan-id-rules",
+    ),
+    path("admin/reports", admin_panel_views.reports_view, name="admin-reports"),
+    path(
+        "admin/reports/<slug:kind>",
+        admin_panel_views.report_view,
+        name="admin-reports-kind",
+    ),
+    path("admin/tickets", admin_panel_views.support_tickets_view, name="admin-tickets"),
+    path(
+        "admin/tickets/<uuid:ticket_id>",
+        admin_panel_views.support_ticket_view,
+        name="admin-tickets-ticket-id",
+    ),
+    path(
+        "admin/tickets/<uuid:ticket_id>/assign",
+        admin_panel_views.support_assign_view,
+        name="admin-tickets-ticket-id-assign",
+    ),
+    path(
+        "admin/tickets/<uuid:ticket_id>/resolve",
+        admin_panel_views.support_resolve_view,
+        name="admin-tickets-ticket-id-resolve",
+    ),
+    path(
+        "admin/ticket-people",
+        admin_panel_views.support_people_view,
+        name="admin-ticket-people",
+    ),
+    path(
+        "admin/help-content",
+        admin_panel_views.help_articles_view,
+        name="admin-help-content",
+    ),
+    path(
+        "admin/help-content/<uuid:article_id>",
+        admin_panel_views.help_article_view,
+        name="admin-help-content-article-id",
+    ),
+    path(
+        "admin/help-content/<uuid:article_id>/status",
+        admin_panel_views.help_article_status_view,
+        name="admin-help-content-article-id-status",
+    ),
+    path(
+        "admin/customers/create",
+        admin_panel_views.customer_create_view,
+        name="admin-customers-create",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/members",
+        admin_panel_views.customer_members_view,
+        name="admin-customers-organization-id-members",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/assignment-history",
+        admin_panel_views.customer_history_view,
+        name="admin-customers-organization-id-assignment-history",
+    ),
+    path(
+        "admin/customers/<uuid:organization_id>/assign-plan",
+        admin_panel_views.customer_assign_plan_view,
+        name="admin-customers-organization-id-assign-plan",
+    ),
+    path("admin/setup", admin_panel_views.setup_queue_view, name="admin-setup"),
+    path(
+        "admin/setup/requirements",
+        admin_panel_views.setup_requirements_view,
+        name="admin-setup-requirements",
+    ),
+    path(
+        "admin/setup/requirements/<uuid:requirement_id>",
+        admin_panel_views.setup_requirement_view,
+        name="admin-setup-requirements-requirement-id",
+    ),
+    path(
+        "admin/setup/<uuid:record_id>/decision",
+        admin_panel_views.setup_decision_view,
+        name="admin-setup-record-id-decision",
+    ),
+    path(
+        "admin/settings/domains",
+        admin_panel_views.domains_overview_view,
+        name="admin-settings-domains",
+    ),
+    path(
+        "admin/settings/domains/check",
+        admin_panel_views.domains_check_view,
+        name="admin-settings-domains-check",
+    ),
+    path(
+        "admin/settings/login-clients",
+        admin_panel_views.login_clients_view,
+        name="admin-settings-login-clients",
+    ),
+    path(
+        "admin/security/accounts",
+        admin_panel_views.staff_account_create_view,
+        name="admin-security-accounts",
+    ),
+    path(
+        "admin/security/sign-ins",
+        admin_panel_views.sign_in_audit_view,
+        name="admin-security-sign-ins",
+    ),
+    path(
+        "admin/kyc/requirements",
+        admin_panel_views.kyc_requirements_view,
+        name="admin-kyc-requirements",
+    ),
+    path(
+        "admin/kyc/requirements/<uuid:requirement_id>",
+        admin_panel_views.kyc_requirement_view,
+        name="admin-kyc-requirement",
+    ),
+    path(
+        "admin/kyc/applications",
+        admin_panel_views.kyc_applications_view,
+        name="admin-kyc-applications",
+    ),
+    path(
+        "admin/kyc/document-access",
+        admin_panel_views.kyc_access_log_view,
+        name="admin-kyc-document-access",
+    ),
+    path(
+        "admin/kyc/applications/<uuid:partner_id>",
+        admin_panel_views.kyc_application_view,
+        name="admin-kyc-application",
+    ),
+    path(
+        "admin/kyc/applications/<uuid:partner_id>/review",
+        admin_panel_views.kyc_start_review_view,
+        name="admin-kyc-review",
+    ),
+    path(
+        "admin/kyc/applications/<uuid:partner_id>/decision",
+        admin_panel_views.kyc_decision_view,
+        name="admin-kyc-decision",
+    ),
+    path(
+        "admin/kyc/applications/<uuid:partner_id>/documents/<uuid:document_id>/content",
+        admin_panel_views.kyc_document_content_view,
+        name="admin-kyc-document-content",
+    ),
     path("admin/attention", admin_views.attention_view, name="admin-attention"),
     path("admin/audit", admin_views.audit_view, name="admin-audit"),
     path("admin/customers", admin_views.customers_view, name="admin-customers"),
@@ -796,6 +1193,17 @@ _admin = [
         "admin/customers/<uuid:organization_id>",
         admin_views.customer_detail_view,
         name="admin-customer-detail",
+    ),
+    # 2026-11-10: assign or change a customer's partner, and the history.
+    path(
+        "admin/customers/<uuid:organization_id>/partner",
+        admin_views.customer_partner_view,
+        name="admin-customer-partner",
+    ),
+    path(
+        "admin/partners/assignable",
+        admin_views.assignable_partners_view,
+        name="admin-partners-assignable",
     ),
     path(
         "admin/customers/<uuid:organization_id>/suspend",
@@ -925,6 +1333,17 @@ _admin = [
         "admin/store/price-ranges/<uuid:range_id>",
         admin_store_views.price_range_view,
         name="admin-store-price-range",
+    ),
+    # ADR-058: coupons.
+    path(
+        "admin/store/coupons",
+        admin_store_views.coupons_view,
+        name="admin-store-coupons",
+    ),
+    path(
+        "admin/store/coupons/<uuid:coupon_id>",
+        admin_store_views.coupon_view,
+        name="admin-store-coupon",
     ),
     # ADR-051: the Product Manager - add (wizard), one product, its lifecycle,
     # its listing images and its activity. Edits reuse admin/catalog/products.
@@ -1279,6 +1698,17 @@ _admin = [
         admin_views.partner_guest_view_start_view,
         name="admin-partner-guest-view",
     ),
+    # ADR-062: Manage Guest Access - this partner's guest views, and revoking one.
+    path(
+        "admin/partners/<uuid:partner_id>/guest-sessions",
+        admin_views.partner_guest_sessions_view,
+        name="admin-partner-guest-sessions",
+    ),
+    path(
+        "admin/partners/<uuid:partner_id>/guest-sessions/<uuid:session_id>/revoke",
+        admin_views.partner_guest_session_revoke_view,
+        name="admin-partner-guest-session-revoke",
+    ),
     path(
         "admin/partners/white-label",
         admin_views.partner_white_label_view,
@@ -1513,6 +1943,11 @@ _admin = [
         name="admin-commission-rules",
     ),
     path(
+        "admin/commission/terms",
+        admin_views.commission_terms_view,
+        name="admin-commission-terms",
+    ),
+    path(
         "admin/commission/accruals",
         admin_views.commission_accruals_view,
         name="admin-commission-accruals",
@@ -1587,6 +2022,13 @@ _partner = [
         "partner/guest-view/end",
         partner_views.guest_view_end_view,
         name="partner-guest-view-end",
+    ),
+    # ADR-062: Login as Guest's second step, on the partner host (a form post
+    # of a one-time ticket from the Admin page).
+    path(
+        "partner/guest-view/enter",
+        auth_views.guest_enter_view,
+        name="partner-guest-view-enter",
     ),
     path(
         "partner/<uuid:partner_id>/customers",
@@ -1992,6 +2434,31 @@ _partner = [
         name="partner-api-key-revoke",
     ),
     path(
+        "partner/<uuid:partner_id>/kyc",
+        admin_panel_views.partner_kyc_view,
+        name="partner-kyc",
+    ),
+    path(
+        "partner/<uuid:partner_id>/kyc/documents",
+        admin_panel_views.partner_kyc_documents_view,
+        name="partner-kyc-documents",
+    ),
+    path(
+        "partner/<uuid:partner_id>/kyc/documents/<uuid:document_id>",
+        admin_panel_views.partner_kyc_document_view,
+        name="partner-kyc-document",
+    ),
+    path(
+        "partner/<uuid:partner_id>/kyc/documents/<uuid:document_id>/content",
+        admin_panel_views.partner_kyc_document_content_view,
+        name="partner-kyc-document-content",
+    ),
+    path(
+        "partner/<uuid:partner_id>/kyc/submit",
+        admin_panel_views.partner_kyc_submit_view,
+        name="partner-kyc-submit",
+    ),
+    path(
         "partner/<uuid:partner_id>/notifications",
         partner_panel_views.notifications_view,
         name="partner-notifications",
@@ -2046,6 +2513,73 @@ _partner = [
         "partner/<uuid:partner_id>/withdrawals/<uuid:withdrawal_id>/cancel",
         partner_desk_views.withdrawal_cancel_view,
         name="partner-withdrawal-cancel",
+    ),
+    # ADR-063: the reseller's Platform Wallet and the plans it pays for, the
+    # partner's subscriptions and billing records, help and sales material.
+    path(
+        "partner/<uuid:partner_id>/platform-wallet",
+        partner_wallet_views.wallet_view,
+        name="partner-platform-wallet",
+    ),
+    path(
+        "partner/<uuid:partner_id>/platform-wallet/transactions",
+        partner_wallet_views.wallet_transactions_view,
+        name="partner-platform-wallet-transactions",
+    ),
+    path(
+        "partner/<uuid:partner_id>/platform-wallet/top-up",
+        partner_wallet_views.wallet_top_up_view,
+        name="partner-platform-wallet-top-up",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/activation/quote",
+        partner_wallet_views.activation_quote_view,
+        name="partner-customer-activation-quote",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/activation",
+        partner_wallet_views.activation_view,
+        name="partner-customer-activation",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/products-setup",
+        partner_wallet_views.customer_products_view,
+        name="partner-customer-products-setup",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/subscriptions/<uuid:subscription_id>/renewal",
+        partner_wallet_views.renewal_view,
+        name="partner-customer-renewal",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/plan-change/quote",
+        partner_wallet_views.plan_change_quote_view,
+        name="partner-customer-plan-change-quote",
+    ),
+    path(
+        "partner/<uuid:partner_id>/customers/<uuid:organization_id>/plan-change",
+        partner_wallet_views.plan_change_view,
+        name="partner-customer-plan-change",
+    ),
+    path(
+        "partner/<uuid:partner_id>/subscriptions",
+        partner_wallet_views.subscriptions_view,
+        name="partner-subscriptions",
+    ),
+    path(
+        "partner/<uuid:partner_id>/billing-records",
+        partner_wallet_views.billing_records_view,
+        name="partner-billing-records",
+    ),
+    path(
+        "partner/<uuid:partner_id>/help-articles",
+        partner_wallet_views.help_articles_view,
+        name="partner-help-articles",
+    ),
+    path(
+        "partner/<uuid:partner_id>/sales-resources",
+        partner_wallet_views.sales_resources_view,
+        name="partner-sales-resources",
     ),
 ]
 

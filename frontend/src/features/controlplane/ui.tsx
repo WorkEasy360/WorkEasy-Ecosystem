@@ -2,7 +2,12 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { ApiError } from "@/lib/api/client";
-import styles from "./ControlPlane.module.css";
+import { StatusBadge } from "./kit/Badge";
+import { Button } from "./kit/Button";
+import { ConfirmDialog } from "./kit/Confirm";
+import { EmptyState, LoadingBlock } from "./kit/Layout";
+import { EMPTY, formatDateTime } from "./kit/format";
+import kit from "./kit/Kit.module.css";
 
 // --- errors ------------------------------------------------------------------
 
@@ -71,11 +76,21 @@ export function LoadGate<T>({
   what: string;
   children: (data: T) => React.ReactNode;
 }) {
-  if (load.status === "loading") return <p aria-live="polite">Loading {what}…</p>;
+  if (load.status === "loading") return <LoadingBlock what={what} />;
   if (load.status === "forbidden") {
-    return <p role="alert">You don&apos;t have access to {what}.</p>;
+    return (
+      <div role="alert">
+        <EmptyState icon="lock" title={`You don't have access to ${what}.`} compact />
+      </div>
+    );
   }
-  if (load.status === "error") return <p role="alert">{load.message}</p>;
+  if (load.status === "error") {
+    return (
+      <div role="alert">
+        <EmptyState icon="alert" title={load.message} compact />
+      </div>
+    );
+  }
   return <>{children(load.data)}</>;
 }
 
@@ -146,7 +161,7 @@ export function useAction(after?: () => void) {
 /** The reason recorded for an audited action. Nobody is asked to type one (the
  * owner's call, 2026-10-27); the server still requires a reason, so the action
  * states what was done and where, and the audit entry keeps who and when. */
-export function autoReason(action: string, where = "Super Admin console"): string {
+export function autoReason(action: string, where = "Admin console"): string {
   return `${action} - ${where}`.slice(0, 200);
 }
 
@@ -160,6 +175,10 @@ export function ReasonAction({
   busy,
   danger = false,
   where,
+  message,
+  typeToConfirm,
+  size,
+  icon,
 }: {
   label: string;
   confirmLabel?: string;
@@ -168,84 +187,57 @@ export function ReasonAction({
   danger?: boolean;
   /** Where the action is taken, for the recorded reason (default: the Super Admin console). */
   where?: string;
+  /** What the confirmation dialog says will happen (destructive actions). */
+  message?: React.ReactNode;
+  /** The word to type before a grave action runs (Terminate). */
+  typeToConfirm?: string;
+  size?: "sm" | "md";
+  icon?: string;
 }) {
   const [confirming, setConfirming] = useState(false);
-  const run = () => {
+  const run = (reason?: string) => {
     setConfirming(false);
-    onConfirm(autoReason(label, where));
+    onConfirm(reason ?? autoReason(label, where));
   };
 
-  if (!danger || !confirming) {
-    return (
-      <button
-        type="button"
-        className="w360-btn w360-btn-secondary"
+  return (
+    <>
+      <Button
+        variant={danger ? "danger" : "secondary"}
+        size={size}
+        icon={icon}
         disabled={busy}
         onClick={() => (danger ? setConfirming(true) : run())}
       >
         {label}
-      </button>
-    );
-  }
-  return (
-    <div className={styles.row} role="group" aria-label={`Confirm ${label}`}>
-      <button type="button" className="w360-btn w360-btn-danger" disabled={busy} onClick={run} autoFocus>
-        {confirmLabel ?? `Confirm ${label.toLowerCase()}`}
-      </button>
-      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setConfirming(false)}>
-        Cancel
-      </button>
-    </div>
+      </Button>
+      {danger && confirming && (
+        <ConfirmDialog
+          options={{
+            title: `${label}?`,
+            message: message ?? "This takes effect at once and is recorded in the audit log.",
+            confirmLabel: confirmLabel ?? `Confirm ${label.toLowerCase()}`,
+            danger: true,
+            reason: true,
+            groupLabel: `Confirm ${label}`,
+            actionName: label,
+            typeToConfirm,
+            where,
+            onConfirm: (reason) => run(reason),
+          }}
+          onClose={() => setConfirming(false)}
+        />
+      )}
+    </>
   );
 }
 
 // --- presentation ------------------------------------------------------------------------
 
-const BADGES: Record<string, string> = {
-  active: "w360-badge w360-badge-success",
-  verified: "w360-badge w360-badge-success",
-  approved: "w360-badge w360-badge-success",
-  paid: "w360-badge w360-badge-success",
-  enabled: "w360-badge w360-badge-success",
-  connected: "w360-badge w360-badge-success",
-  granted: "w360-badge w360-badge-success",
-  needs_setup: "w360-badge w360-badge-warning",
-  not_available: "w360-badge w360-badge-neutral",
-  disconnected: "w360-badge w360-badge-danger",
-  error: "w360-badge w360-badge-danger",
-  accepted: "w360-badge w360-badge-success",
-  succeeded: "w360-badge w360-badge-success",
-  trialing: "w360-badge w360-badge-info",
-  trial: "w360-badge w360-badge-info",
-  open: "w360-badge w360-badge-neutral",
-  pending: "w360-badge w360-badge-neutral",
-  awaiting_payment: "w360-badge w360-badge-neutral",
-  locked: "w360-badge w360-badge-warning",
-  grace: "w360-badge w360-badge-warning",
-  needs_review: "w360-badge w360-badge-warning",
-  void: "w360-badge w360-badge-danger",
-  revoked: "w360-badge w360-badge-danger",
-  expired: "w360-badge w360-badge-danger",
-  draft: "w360-badge w360-badge-neutral",
-  ready: "w360-badge w360-badge-neutral",
-  requested: "w360-badge w360-badge-neutral",
-  pending_approval: "w360-badge w360-badge-warning",
-  profile_required: "w360-badge w360-badge-warning",
-  rejected: "w360-badge w360-badge-danger",
-  verification_pending: "w360-badge w360-badge-warning",
-  suspended: "w360-badge w360-badge-warning",
-  past_due: "w360-badge w360-badge-warning",
-  failed: "w360-badge w360-badge-danger",
-  terminated: "w360-badge w360-badge-danger",
-  cancelled: "w360-badge w360-badge-danger",
-  disabled: "w360-badge w360-badge-danger",
-  ended: "w360-badge w360-badge-danger",
-};
-
-/** Status is text first; colour only reinforces it (WCAG 1.4.1). */
-export function Status({ value }: { value: string }) {
-  if (!value) return <span className={styles.muted}>—</span>;
-  return <span className={BADGES[value] ?? "w360-badge w360-badge-neutral"}>{value.replace(/_/g, " ")}</span>;
+/** Status is text first; colour only reinforces it (WCAG 1.4.1). One map for
+ * the whole console: kit/Badge. */
+export function Status({ value, label }: { value: string; label?: string }) {
+  return <StatusBadge value={value} label={label} />;
 }
 
 /** Money is (integer minor units, currency). Display only: the browser never
@@ -259,44 +251,62 @@ export function money(minor: number, currency: string): string {
   }
 }
 
+/** "24 Oct 2026, 6:45 AM" (kit/format). */
 export function when(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+  return iso ? formatDateTime(iso) : EMPTY;
 }
 
+/** A simple table in the console's one table style (kit/DataTable for sorting,
+ * row menus and pages). The caption is read by assistive technology only: the
+ * section's heading already says what the table is. */
 export function Table({
   caption,
   head,
   children,
   empty,
   isEmpty,
+  emptyHint,
+  emptyAction,
+  numeric = [],
 }: {
   caption: string;
   head: string[];
   children: React.ReactNode;
   empty?: string;
   isEmpty?: boolean;
+  emptyHint?: React.ReactNode;
+  emptyAction?: React.ReactNode;
+  /** Headings of the columns that hold numbers or amounts (right-aligned). */
+  numeric?: string[];
 }) {
   const captionId = useId();
-  if (isEmpty) return <p className={styles.empty}>{empty ?? "Nothing to show."}</p>;
-  // A table wider than its column scrolls sideways; the wrapper is a named,
-  // focusable region so a keyboard user can scroll it too (WCAG 2.1.1).
+  if (isEmpty) {
+    return (
+      <div className={kit.tableCard}>
+        <EmptyState icon="box" title={empty ?? "Nothing to show."} hint={emptyHint} action={emptyAction} compact />
+      </div>
+    );
+  }
+  // A table wider than its column scrolls sideways inside its card; the
+  // wrapper is a named, focusable region so a keyboard user can scroll it too
+  // (WCAG 2.1.1).
   return (
-    <div className={styles.tableWrap} role="region" aria-labelledby={captionId} tabIndex={0}>
-      <table className={styles.table}>
-        <caption id={captionId}>{caption}</caption>
-        <thead>
-          <tr>
-            {head.map((h) => (
-              <th key={h} scope="col">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>{children}</tbody>
-      </table>
+    <div className={kit.tableCard}>
+      <div className={kit.tableScroll} role="region" aria-labelledby={captionId} tabIndex={0}>
+        <table className={kit.dt}>
+          <caption id={captionId}>{caption}</caption>
+          <thead>
+            <tr>
+              {head.map((h, i) => (
+                <th key={`${h}-${i}`} scope="col" className={numeric.includes(h) ? kit.num : undefined}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>{children}</tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -340,7 +350,7 @@ export function usePaged<T>(
       const page = await fetchPage(current.next);
       setData((d) =>
         d && d.stamp === stamp
-          ? { ...d, rows: [...d.rows, ...page.results], next: page.has_more ? page.next_cursor : null }
+          ? { ...d, state: "ready", rows: [...d.rows, ...page.results], next: page.has_more ? page.next_cursor : null }
           : d,
       );
     } catch {
@@ -360,8 +370,8 @@ export function usePaged<T>(
 export function MoreButton({ hasMore, onMore }: { hasMore: boolean; onMore: () => void }) {
   if (!hasMore) return null;
   return (
-    <button type="button" className="w360-btn w360-btn-secondary" onClick={onMore}>
+    <Button size="sm" onClick={onMore}>
       Load more
-    </button>
+    </Button>
   );
 }

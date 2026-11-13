@@ -133,3 +133,53 @@ def product_holders(organization_ids: Any, product_code: str) -> tuple[int, int]
         organization_id__in=organization_ids, product_codes__contains=[product_code]
     )
     return held.count(), held.filter(subscription_status__in=ACTIVE_STATES).count()
+
+
+def setup_states(organization_id: UUID) -> list[dict[str, Any]]:
+    """Where this customer's product setups stand, for its partner (ADR-063):
+    the state, what each product asks for, and the reason a correction was
+    asked - never the answers themselves, which are the customer's. A read: it
+    opens nothing (the customer's own page does that)."""
+    from workeasy360.commercial.provisioning.models import CustomerSetup, SetupRequirement
+
+    rows = list(
+        CustomerSetup.objects.filter(organization_id=organization_id).order_by(
+            "product_code"
+        )
+    )
+    needs: dict[str, list[dict[str, Any]]] = {}
+    for req in SetupRequirement.objects.filter(
+        is_active=True, product_code__in={r.product_code for r in rows}
+    ).order_by("display_order"):
+        needs.setdefault(req.product_code, []).append(
+            {"label": req.label, "required": req.is_required}
+        )
+    return [
+        {
+            "product_code": r.product_code,
+            "status": r.status,
+            "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
+            "decided_at": r.decided_at.isoformat() if r.decided_at else None,
+            "decision_reason": r.decision_reason
+            if r.status == "correction_required"
+            else "",
+            "requirements": needs.get(r.product_code, []),
+        }
+        for r in rows
+    ]
+
+
+def pending_setup_organizations(organization_ids: Any) -> set[UUID]:
+    """Which of these organizations have a product setup still open (pending,
+    submitted or sent back for correction). One query."""
+    from workeasy360.commercial.provisioning.models import CustomerSetup
+
+    ids = [o for o in organization_ids if o]
+    if not ids:
+        return set()
+    return set(
+        CustomerSetup.objects.filter(
+            organization_id__in=ids,
+            status__in=("pending", "submitted", "correction_required"),
+        ).values_list("organization_id", flat=True)
+    )

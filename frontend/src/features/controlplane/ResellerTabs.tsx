@@ -2,8 +2,10 @@
 
 import { useId, useState } from "react";
 import Link from "next/link";
+import { Icon } from "@/components/sidebar/icons";
 import { ReferralTrailPanel } from "@/features/partnerpanel/AffiliateProducts";
 import { adminProgrammeApi } from "@/lib/api/adminProgramme";
+import { ApiError } from "@/lib/api/client";
 import { adminApi, type PartnerDetail } from "@/lib/api/controlPlane";
 import {
   partnerConsoleApi,
@@ -18,6 +20,7 @@ import { can, useAdmin } from "./ControlShell";
 import { CommissionSummary, ExperienceLabels } from "./PartnerConsole";
 import { CustomerTable, StaffOwnerActions } from "./PartnerCustomers";
 import { PayoutRowView } from "./AdminMoney";
+import { FormDialog, FormPopup } from "./Modal";
 import { MembersSection } from "./PartnerMembers";
 import { Section } from "./PartnerSection";
 import { TAB_LABELS, type TabKey, type TabProps } from "./partnerTabs";
@@ -52,12 +55,23 @@ const SECTION_TEXT: Record<CompletionSection["state"], string> = {
   optional: "Not required",
 };
 
-const SECTION_BADGE: Record<CompletionSection["state"], string> = {
-  complete: "w360-badge w360-badge-success",
-  incomplete: "w360-badge w360-badge-warning",
-  pending: "w360-badge w360-badge-neutral",
-  optional: "w360-badge w360-badge-neutral",
+/** Each section's state as an icon (shape, not colour alone), its word kept for
+ * assistive technology and as a tooltip. */
+const SECTION_ICON: Record<CompletionSection["state"], string> = {
+  complete: "checkCircle",
+  incomplete: "alert",
+  pending: "clock",
+  optional: "circle",
 };
+
+function SectionState({ state }: { state: CompletionSection["state"] }) {
+  return (
+    <span className={ps.stateIcon} data-state={state} title={SECTION_TEXT[state]}>
+      <Icon name={SECTION_ICON[state]} size={18} />
+      <span className="w360-visually-hidden">{SECTION_TEXT[state]}</span>
+    </span>
+  );
+}
 
 /** Where each completion section is filled in: a step of Complete Your Profile,
  * or (for the capabilities and the administrator) a tab of this page. */
@@ -116,7 +130,7 @@ export function CompletionList({
         const open = s.state !== "complete";
         return (
           <li key={s.key} className={ps.progressRow}>
-            <span className={SECTION_BADGE[s.state]}>{SECTION_TEXT[s.state]}</span>
+            <SectionState state={s.state} />
             <span className={ps.progressText}>
               <strong>
                 {s.label}
@@ -126,12 +140,12 @@ export function CompletionList({
             </span>
             {open && manage && step && onStep?.steps.includes(step) && (
               <button type="button" className={`w360-btn w360-btn-secondary ${ps.linkButton}`} onClick={() => onStep.go(step)}>
-                Complete<span className="w360-visually-hidden"> {s.label}</span>
+                Add details<span className="w360-visually-hidden"> for {s.label}</span>
               </button>
             )}
             {open && manage && step && !onStep && (
               <Link className={`w360-btn w360-btn-secondary ${ps.linkButton}`} href={`/admin/partners/${partnerId}/profile?step=${step}`}>
-                Complete<span className="w360-visually-hidden"> {s.label}</span>
+                Add details<span className="w360-visually-hidden"> for {s.label}</span>
               </Link>
             )}
             {open && manage && onStep && (s.key === "administrator" ? !onStep.steps.includes("team") : tab !== undefined) && (
@@ -141,7 +155,7 @@ export function CompletionList({
             )}
             {open && manage && onStep && s.key === "administrator" && onStep.steps.includes("team") && (
               <button type="button" className={`w360-btn w360-btn-secondary ${ps.linkButton}`} onClick={() => onStep.go("team")}>
-                Complete<span className="w360-visually-hidden"> {s.label}</span>
+                Add details<span className="w360-visually-hidden"> for {s.label}</span>
               </button>
             )}
             {open && tab && onOpen && available?.includes(tab) && (
@@ -192,7 +206,7 @@ function OverviewBody({
         </p>
         <CompletionList sections={d.profile_completion.sections} partnerId={partner.id} onOpen={onOpen} available={available} />
       </Section>
-      <ul className={ps.stats} aria-label="Key figures">
+      <ul className={ps.stats} aria-label="Key figures" data-count={labels.includes("white_label") ? 6 : 5}>
         <Stat label="Customers" note={d.customers.owner_activation_pending > 0 ? `${d.customers.owner_activation_pending} awaiting owner activation` : undefined}>
           {d.customers.live}
         </Stat>
@@ -206,7 +220,9 @@ function OverviewBody({
         <Stat label="Pending payout" note="open">
           {d.payouts.open}
         </Stat>
-        <Stat label="Domain status">{d.white_label.domain_status === "none" ? "None" : <Status value={d.white_label.domain_status} />}</Stat>
+        {labels.includes("white_label") && (
+          <Stat label="Domain status">{d.white_label.domain_status === "none" ? "—" : <Status value={d.white_label.domain_status} />}</Stat>
+        )}
       </ul>
       <div className={local.split}>
         <Section title="Partner">
@@ -485,6 +501,41 @@ function PromotionPanel({ partnerId, partner, rev, promotes }: TabProps & { prom
           <Link href={`/admin/partners/product-requests?status=all&q=${encodeURIComponent(partner.code)}`}>Product Requests</Link>.
         </p>
       )}
+      {manage && (
+        <div>
+          <FormPopup
+            label="+ Assign a product"
+            title="Assign a product to promote"
+            size="sm"
+            submitLabel="Assign product"
+            disabled={busy}
+            canSubmit={!!product}
+            onOpen={() => setProduct("")}
+            onSubmit={async () => {
+              await adminProgrammeApi.grantPromotion(partnerId, product);
+              return "Product assigned for promotion.";
+            }}
+            onDone={reload}
+          >
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={productId}>
+                Assign a product to promote
+              </label>
+              <select id={productId} className="w360-input" required value={product} onChange={(e) => setProduct(e.target.value)}>
+                <option value="">Choose…</option>
+                {catalog.status === "ready" &&
+                  catalog.data.results
+                    .filter((p) => p.status === "available" && !held.has(p.code))
+                    .map((p) => (
+                      <option key={p.code} value={p.code}>
+                        {p.name}
+                      </option>
+                    ))}
+              </select>
+            </div>
+          </FormPopup>
+        </div>
+      )}
       {feedback}
       <LoadGate load={grants} what="the promotion grants">
         {(d) => (
@@ -511,38 +562,6 @@ function PromotionPanel({ partnerId, partner, rev, promotes }: TabProps & { prom
           </Table>
         )}
       </LoadGate>
-      {manage && (
-        <form
-          className={styles.form}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(() => adminProgrammeApi.grantPromotion(partnerId, product), "Product assigned for promotion.");
-            setProduct("");
-          }}
-        >
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={productId}>
-              Assign a product to promote
-            </label>
-            <select id={productId} className="w360-input" required value={product} onChange={(e) => setProduct(e.target.value)}>
-              <option value="">Choose…</option>
-              {catalog.status === "ready" &&
-                catalog.data.results
-                  .filter((p) => p.status === "available" && !held.has(p.code))
-                  .map((p) => (
-                    <option key={p.code} value={p.code}>
-                      {p.name}
-                    </option>
-                  ))}
-            </select>
-          </div>
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !product}>
-              Assign product
-            </button>
-          </div>
-        </form>
-      )}
     </Section>
   );
 }
@@ -564,6 +583,41 @@ function ProductGrantsPanel({ partner, summary, bump }: TabProps) {
           Chosen from the product catalog; a product added to the catalog appears here. Allowing a product lets the partner sell it - it
           gives no customer access by itself.
         </p>
+        {manage && partner.status !== "terminated" && (
+          <div>
+            <FormPopup
+              label="+ Allow a product"
+              title="Allow a product"
+              size="sm"
+              submitLabel="Allow product"
+              disabled={busy}
+              canSubmit={!!product}
+              onOpen={() => setProduct("")}
+              onSubmit={async () => {
+                await adminApi.grantProduct(partner.id, product);
+                return "Product allowed.";
+              }}
+              onDone={bump}
+            >
+              <div className={styles.field}>
+                <label className="w360-label" htmlFor={productId}>
+                  Allow a product
+                </label>
+                <select id={productId} className="w360-input" required value={product} onChange={(e) => setProduct(e.target.value)}>
+                  <option value="">Choose…</option>
+                  {catalog.status === "ready" &&
+                    catalog.data.results
+                      .filter((p) => p.status === "available" && !granted.has(p.code))
+                      .map((p) => (
+                        <option key={p.code} value={p.code}>
+                          {p.name}
+                        </option>
+                      ))}
+                </select>
+              </div>
+            </FormPopup>
+          </div>
+        )}
         <Table caption="Product grants" head={["Product", "Plan", ""]} isEmpty={partner.product_grants.length === 0} empty="None: this partner cannot sell anything yet.">
           {partner.product_grants.map((g) => (
             <tr key={g.id}>
@@ -579,38 +633,6 @@ function ProductGrantsPanel({ partner, summary, bump }: TabProps) {
             </tr>
           ))}
         </Table>
-        {manage && partner.status !== "terminated" && (
-          <form
-            className={styles.form}
-            onSubmit={(e) => {
-              e.preventDefault();
-              void act(() => adminApi.grantProduct(partner.id, product), "Product allowed.");
-              setProduct("");
-            }}
-          >
-            <div className={styles.field}>
-              <label className="w360-label" htmlFor={productId}>
-                Allow a product
-              </label>
-              <select id={productId} className="w360-input" required value={product} onChange={(e) => setProduct(e.target.value)}>
-                <option value="">Choose…</option>
-                {catalog.status === "ready" &&
-                  catalog.data.results
-                    .filter((p) => p.status === "available" && !granted.has(p.code))
-                    .map((p) => (
-                      <option key={p.code} value={p.code}>
-                        {p.name}
-                      </option>
-                    ))}
-              </select>
-            </div>
-            <div>
-              <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !product}>
-                Allow product
-              </button>
-            </div>
-          </form>
-        )}
       </Section>
 
       <Section title="Product options">
@@ -641,28 +663,28 @@ function ProductGrantsPanel({ partner, summary, bump }: TabProps) {
 export function PricingTab({ partnerId, partner, rev, bump }: TabProps) {
   const { permissions } = useAdmin();
   const canPrice = can(permissions, "platform.staff_pricing.manage");
-  const { act, busy, feedback } = useAction(bump);
   const [pricing] = useLoad(() => partnerConsoleApi.pricing(partnerId), [partnerId, rev]);
+  // The table is re-read after a save, so the outcome is announced here, above it.
+  const [notice, setNotice] = useState<string | null>(null);
   return (
     <div className={styles.stack}>
-      {feedback}
       <Section title="Prices">
         <p className={styles.muted}>
           Optional. The customer pays the partner price; the partner earns commission on it. A plan without a partner price is charged the
           list price. The server calculates every figure - nothing here computes a price.
         </p>
+        {notice && <p role="status">{notice}</p>}
         <LoadGate load={pricing} what="the prices">
           {(d) => (
             <PricingTable
               rows={d.results}
               canPrice={canPrice && partner.status !== "terminated"}
-              busy={busy}
-              onSave={(row, minor) =>
-                act(
-                  () => partnerConsoleApi.setPartnerPrice(partner.id, { plan_version_id: row.plan_version_id, interval: row.interval, amount_minor: minor }),
-                  "Partner price saved.",
-                )
-              }
+              onSave={(row, minor) => partnerConsoleApi.setPartnerPrice(partner.id, { plan_version_id: row.plan_version_id, interval: row.interval, amount_minor: minor })}
+              onEdit={() => setNotice(null)}
+              onSaved={(message) => {
+                setNotice(message ?? null);
+                bump();
+              }}
               currency={d.currency}
             />
           )}
@@ -678,12 +700,10 @@ export function CommissionTab(props: TabProps & { ledger?: boolean }) {
   const { partnerId, rev, bump, ledger = true } = props;
   const { permissions } = useAdmin();
   const canCommission = can(permissions, "platform.staff_commission.manage");
-  const { act, busy, feedback } = useAction(bump);
   const [catalog] = useLoad(() => partnerConsoleApi.products().catch(() => ({ results: [] })), []);
   return (
     <div className={styles.stack}>
-      {feedback}
-      <CommissionSection partnerId={partnerId} rev={rev} canManage={canCommission} act={act} busy={busy} products={catalog.status === "ready" ? catalog.data.results : []} />
+      <CommissionSection partnerId={partnerId} rev={rev} canManage={canCommission} onChanged={bump} products={catalog.status === "ready" ? catalog.data.results : []} />
       {ledger && can(permissions, "platform.staff_commission.view") && (
         <Section title="Commission earned">
           <CommissionsTab {...props} />
@@ -781,24 +801,23 @@ function PricingTable({
   rows,
   currency,
   canPrice,
-  busy,
   onSave,
+  onEdit,
+  onSaved,
 }: {
   rows: PartnerPricingRow[];
   currency: string;
   canPrice: boolean;
-  busy: boolean;
-  onSave: (row: PartnerPricingRow, minor: number) => void;
+  /** Saves the price; a refusal is thrown, and shown in the popup. */
+  onSave: (row: PartnerPricingRow, minor: number) => Promise<unknown>;
+  onEdit: () => void;
+  onSaved: (message: string | undefined) => void;
 }) {
-  const [typed, setTyped] = useState<Record<string, string>>({});
-  const [problem, setProblem] = useState<string | null>(null);
+  // One plan's price is set in a small popup opened from its row (2026-11-05).
+  const [editing, setEditing] = useState<PartnerPricingRow | null>(null);
+  const [typed, setTyped] = useState("");
   return (
     <>
-      {problem && (
-        <p role="alert" className="w360-error-text">
-          {problem}
-        </p>
-      )}
       <Table
         caption="Partner prices"
         head={["Plan", "Cycle", "List price", "Partner price", "Discount", "Commission per sale", "Platform keeps", ...(canPrice ? ["Set price"] : [])]}
@@ -823,34 +842,56 @@ function PricingTable({
               <td className={styles.num}>{r.platform_net_minor === null ? "—" : money(r.platform_net_minor, r.currency)}</td>
               {canPrice && (
                 <td>
-                  <form
-                    className={styles.row}
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      const minor = toMinor(typed[key] ?? "", currency);
-                      if (minor === null) {
-                        setProblem(`Enter an amount in ${currency}, for example 45.00.`);
-                        return;
-                      }
-                      setProblem(null);
-                      onSave(r, minor);
-                      setTyped((t) => ({ ...t, [key]: "" }));
+                  <button
+                    type="button"
+                    className="w360-btn w360-btn-secondary"
+                    aria-haspopup="dialog"
+                    onClick={() => {
+                      setTyped("");
+                      onEdit();
+                      setEditing(r);
                     }}
                   >
-                    <label className="w360-visually-hidden" htmlFor={`set-${key}`}>
-                      New partner price for {r.plan_name} ({r.interval}) in {currency}
-                    </label>
-                    <input id={`set-${key}`} className="w360-input" inputMode="decimal" value={typed[key] ?? ""} onChange={(e) => setTyped((t) => ({ ...t, [key]: e.target.value }))} />
-                    <button type="submit" className="w360-btn w360-btn-secondary" disabled={busy || !(typed[key] ?? "").trim()}>
-                      Save
-                    </button>
-                  </form>
+                    Set price{" "}
+                    <span className="w360-visually-hidden">
+                      for {r.plan_name} ({r.interval})
+                    </span>
+                  </button>
                 </td>
               )}
             </tr>
           );
         })}
       </Table>
+      {editing && (
+        <FormDialog
+          title={`Partner price: ${editing.product_name} — ${editing.plan_name}`}
+          intro={`${editing.interval.replace(/_/g, " ")} · list price ${editing.list_price_minor === null ? "none" : money(editing.list_price_minor, editing.currency)}`}
+          size="sm"
+          canSubmit={!!typed.trim()}
+          onSubmit={async () => {
+            const minor = toMinor(typed, currency);
+            if (minor === null) throw new ApiError(400, { detail: `Enter an amount in ${currency}, for example 45.00.` });
+            await onSave(editing, minor);
+            return "Partner price saved.";
+          }}
+          onDone={onSaved}
+          onClose={() => setEditing(null)}
+        >
+          <div className={styles.field}>
+            <label className="w360-label" htmlFor={`set-${editing.plan_version_id}-${editing.interval}`}>
+              New partner price for {editing.plan_name} ({editing.interval}) in {currency}
+            </label>
+            <input
+              id={`set-${editing.plan_version_id}-${editing.interval}`}
+              className="w360-input"
+              inputMode="decimal"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+            />
+          </div>
+        </FormDialog>
+      )}
     </>
   );
 }
@@ -859,15 +900,14 @@ function CommissionSection({
   partnerId,
   rev,
   canManage,
-  act,
-  busy,
+  onChanged,
   products,
 }: {
   partnerId: string;
   rev: number;
   canManage: boolean;
-  act: (action: () => Promise<unknown>, success: string) => Promise<void>;
-  busy: boolean;
+  /** After a rate is assigned: reload the partner. */
+  onChanged: () => void;
   products: { code: string; name: string; status: string }[];
 }) {
   const [state] = useLoad(() => partnerConsoleApi.commission(partnerId), [partnerId, rev]);
@@ -877,7 +917,6 @@ function CommissionSection({
   const [rate, setRate] = useState("");
   const [scope, setScope] = useState("");
   const [from, setFrom] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
   return (
     <Section title="Commission">
       <p className={styles.muted}>
@@ -908,74 +947,71 @@ function CommissionSection({
                 </tr>
               ))}
             </Table>
-            {canManage ? (
-              <form
-                className={styles.form}
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const bp = toBasisPoints(rate);
-                  if (bp === null) {
-                    setProblem("Enter a percentage from 0 to 100 with at most two decimals, for example 15 or 12.5.");
-                    return;
-                  }
-                  setProblem(null);
-                  void act(
-                    () =>
-                      partnerConsoleApi.assignCommission(partnerId, {
-                        rate_bp: bp,
-                        reason: autoReason("Assign commission rate"),
-                        expected_version: d.live_versions[scope] ?? 0,
-                        product_code: scope || undefined,
-                        effective_from: from ? new Date(from).toISOString() : undefined,
-                      }),
-                    "Commission rate assigned.",
-                  );
-                }}
-              >
-                <div className={styles.field}>
-                  <label className="w360-label" htmlFor={rateId}>
-                    New rate (%)
-                  </label>
-                  <input id={rateId} className="w360-input" inputMode="decimal" required value={rate} onChange={(e) => setRate(e.target.value)} />
-                </div>
-                <div className={styles.field}>
-                  <label className="w360-label" htmlFor={scopeId}>
-                    Applies to
-                  </label>
-                  <select id={scopeId} className="w360-input" value={scope} onChange={(e) => setScope(e.target.value)}>
-                    <option value="">All products</option>
-                    {products
-                      .filter((p) => p.status === "available")
-                      .map((p) => (
-                        <option key={p.code} value={p.code}>
-                          {p.name} only
-                        </option>
-                      ))}
-                  </select>
-                </div>
-                <div className={styles.field}>
-                  <label className="w360-label" htmlFor={fromId}>
-                    Takes effect (optional; default now)
-                  </label>
-                  <input id={fromId} className="w360-input" type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
-                </div>
-                {problem && (
-                  <p role="alert" className="w360-error-text">
-                    {problem}
-                  </p>
-                )}
-                <div>
-                  <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !rate.trim()}>
-                    Assign rate
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <p className={styles.muted}>Assigning a rate needs the platform.staff_commission.manage permission.</p>
-            )}
           </>
         )}
       </LoadGate>
+      {canManage ? (
+        <div>
+          <FormPopup
+            label="+ Assign a new rate"
+            title="Assign a commission rate"
+            intro="A new version from the date you choose - never earlier. Sales already made keep their rate."
+            submitLabel="Assign rate"
+            disabled={state.status !== "ready"}
+            canSubmit={!!rate.trim()}
+            onOpen={() => {
+              setRate("");
+              setScope("");
+              setFrom("");
+            }}
+            onSubmit={async () => {
+              const bp = toBasisPoints(rate);
+              if (bp === null) {
+                throw new ApiError(400, { detail: "Enter a percentage from 0 to 100 with at most two decimals, for example 15 or 12.5." });
+              }
+              await partnerConsoleApi.assignCommission(partnerId, {
+                rate_bp: bp,
+                reason: autoReason("Assign commission rate"),
+                expected_version: (state.status === "ready" ? state.data.live_versions[scope] : undefined) ?? 0,
+                product_code: scope || undefined,
+                effective_from: from ? new Date(from).toISOString() : undefined,
+              });
+              return "Commission rate assigned.";
+            }}
+            onDone={onChanged}
+          >
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={rateId}>
+                New rate (%)
+              </label>
+              <input id={rateId} className="w360-input" inputMode="decimal" required value={rate} onChange={(e) => setRate(e.target.value)} />
+            </div>
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={scopeId}>
+                Applies to
+              </label>
+              <select id={scopeId} className="w360-input" value={scope} onChange={(e) => setScope(e.target.value)}>
+                <option value="">All products</option>
+                {products
+                  .filter((p) => p.status === "available")
+                  .map((p) => (
+                    <option key={p.code} value={p.code}>
+                      {p.name} only
+                    </option>
+                  ))}
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={fromId}>
+                Takes effect (optional; default now)
+              </label>
+              <input id={fromId} className="w360-input" type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
+            </div>
+          </FormPopup>
+        </div>
+      ) : (
+        <p className={styles.muted}>Assigning a rate needs the platform.staff_commission.manage permission.</p>
+      )}
     </Section>
   );
 }
@@ -1104,6 +1140,35 @@ export function PayoutsTab({ partnerId, rev, bump }: TabProps) {
         A payout is a reviewed batch of cleared commission. This platform <strong>moves no money</strong>: “paid” records that a person
         confirmed a transfer made elsewhere. The person who prepares a payout cannot approve it.
       </p>
+      {manage && (
+        <div>
+          <FormPopup
+            label="Prepare a payout"
+            title="Prepare a payout for this partner"
+            intro="A draft batch of the commission cleared by the date you choose. Someone else approves it."
+            size="sm"
+            submitLabel="Prepare payout"
+            disabled={busy}
+            canSubmit={!!periodEnd}
+            onOpen={() => setPeriodEnd("")}
+            onSubmit={async () => {
+              await adminApi.preparePayout(partnerId, periodEnd);
+              return "Draft payout prepared from cleared commission.";
+            }}
+            onDone={() => {
+              paged.reload();
+              bump();
+            }}
+          >
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={dateId}>
+                Include everything cleared by
+              </label>
+              <input id={dateId} className="w360-input" type="date" required value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+            </div>
+          </FormPopup>
+        </div>
+      )}
       {feedback}
       {paged.state === "loading" && <p aria-live="polite">Loading payouts…</p>}
       {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to payouts.</p>}
@@ -1117,28 +1182,6 @@ export function PayoutsTab({ partnerId, rev, bump }: TabProps) {
           </Table>
           <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
         </>
-      )}
-      {manage && (
-        <form
-          className={`w360-card ${styles.card} ${styles.form}`}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(() => adminApi.preparePayout(partnerId, periodEnd), "Draft payout prepared from cleared commission.");
-          }}
-        >
-          <h3 className={styles.cardTitle}>Prepare a payout for this partner</h3>
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={dateId}>
-              Include everything cleared by
-            </label>
-            <input id={dateId} className="w360-input" type="date" required value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
-          </div>
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !periodEnd}>
-              Prepare payout
-            </button>
-          </div>
-        </form>
       )}
     </div>
   );
@@ -1268,42 +1311,50 @@ export function UsersTab({ partner, bump }: TabProps) {
           ))}
         </Table>
         {manage && caps.status === "ready" && (
-          <form
-            className={styles.form}
-            onSubmit={(e) => {
-              e.preventDefault();
-              void act(() => adminApi.grantCapability(p.id, capability, capReason.trim()), "Capability granted.");
-            }}
-          >
-            <div className={styles.field}>
-              <label className="w360-label" htmlFor={capId}>
-                Grant a capability
-              </label>
-              <select id={capId} className="w360-input" required value={capability} onChange={(e) => setCapability(e.target.value)}>
-                <option value="">Choose…</option>
-                {caps.data.results.map((c) => (
-                  <option key={c.key} value={c.key}>
-                    {c.label} ({c.key})
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className={styles.field}>
-              <label className="w360-label" htmlFor={`${capId}-r`}>
-                Reason (recorded)
-              </label>
-              <input id={`${capId}-r`} className="w360-input" required minLength={10} maxLength={200} value={capReason} onChange={(e) => setCapReason(e.target.value)} />
-            </div>
-            <div>
-              <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !capability || capReason.trim().length < 10}>
-                Grant capability
-              </button>
-            </div>
-          </form>
+          <div>
+            <FormPopup
+              label="+ Grant a capability"
+              title="Grant a capability"
+              size="sm"
+              submitLabel="Grant capability"
+              disabled={busy}
+              canSubmit={!!capability && capReason.trim().length >= 10}
+              onOpen={() => {
+                setCapability("");
+                setCapReason("");
+              }}
+              onSubmit={async () => {
+                await adminApi.grantCapability(p.id, capability, capReason.trim());
+                return "Capability granted.";
+              }}
+              onDone={bump}
+            >
+              <div className={styles.field}>
+                <label className="w360-label" htmlFor={capId}>
+                  Grant a capability
+                </label>
+                <select id={capId} className="w360-input" required value={capability} onChange={(e) => setCapability(e.target.value)}>
+                  <option value="">Choose…</option>
+                  {caps.data.results.map((c) => (
+                    <option key={c.key} value={c.key}>
+                      {c.label} ({c.key})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className={styles.field}>
+                <label className="w360-label" htmlFor={`${capId}-r`}>
+                  Reason (recorded)
+                </label>
+                <input id={`${capId}-r`} className="w360-input" required minLength={10} maxLength={200} value={capReason} onChange={(e) => setCapReason(e.target.value)} />
+                <p className="w360-hint">At least 10 characters.</p>
+              </div>
+            </FormPopup>
+          </div>
         )}
       </Section>
 
-      <MembersSection partner={p} manage={manage} act={act} busy={busy} />
+      <MembersSection partner={p} manage={manage} act={act} busy={busy} onChanged={bump} />
     </div>
   );
 }

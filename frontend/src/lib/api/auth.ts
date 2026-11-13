@@ -19,10 +19,12 @@ export function getSession(): Promise<SessionState> {
   return apiFetch<SessionState>("/api/v1/auth/session");
 }
 
-export function login(email: string, password: string): Promise<LoginResult> {
+/** `remember` is the Admin and Partner sign-ins' "Remember me": left out by every other form,
+ * which keep the normal session. */
+export function login(email: string, password: string, options: { remember?: boolean } = {}): Promise<LoginResult> {
   return apiFetch<LoginResult>("/api/v1/auth/login", {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, ...options }),
   });
 }
 
@@ -30,6 +32,23 @@ export function login(email: string, password: string): Promise<LoginResult> {
  * and every portal (ADR-043). */
 export function logout(): Promise<void> {
   return apiFetch<void>("/api/v1/auth/logout", { method: "POST" });
+}
+
+/** Switch Account (ADR-066), step one, on a portal: signs this portal out and
+ * answers where to go next - the central sign-in host's `/switch-account`
+ * page (a signed hand-over in the fragment) on portal hosts, or this
+ * portal's sign-in page on a single host. */
+export function switchAccount(): Promise<{ redirect_url: string }> {
+  return apiFetch("/api/v1/auth/switch-account", { method: "POST" });
+}
+
+/** Switch Account, step two, on the central sign-in host: ends its session if
+ * it is the switching person's, and answers the sign-in page to open. */
+export function finishSwitchAccount(handle: string): Promise<{ redirect_url: string }> {
+  return apiFetch("/api/v1/auth/switch-account/finish", {
+    method: "POST",
+    body: JSON.stringify({ handle }),
+  });
 }
 
 export type HandoffErrorCode = "portal_access_denied" | "handoff_invalid" | "login_required";

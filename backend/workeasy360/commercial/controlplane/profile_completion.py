@@ -55,13 +55,15 @@ _RESELLER: Final = capabilities.experience_keys(capabilities.RESELLER)
 _WHITE_LABEL: Final = capabilities.experience_keys(capabilities.WHITE_LABEL)
 _AFFILIATE: Final = capabilities.experience_keys(capabilities.AFFILIATE)
 
-#: Holding any of these makes the section required.
-PRODUCTS_FOR: Final = _RESELLER | _WHITE_LABEL
+#: Holding any of these makes the section required. ADR-063: White Label alone
+#: sells nothing, so products and pricing follow the reseller's keys only (a
+#: partner approved before then holds those too).
+PRODUCTS_FOR: Final = _RESELLER
 COMMISSION_FOR: Final = _RESELLER | _AFFILIATE
 BRAND_FOR: Final = _WHITE_LABEL
 REFERRAL_FOR: Final = _AFFILIATE
 #: Pricing and a custom domain are shown to a partner that holds these, never required.
-PRICING_FOR: Final = _RESELLER | _WHITE_LABEL
+PRICING_FOR: Final = _RESELLER
 DOMAIN_FOR: Final = _WHITE_LABEL
 ANY_CAPABILITY: Final = frozenset(capabilities.CAPABILITIES)
 

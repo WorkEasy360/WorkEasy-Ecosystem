@@ -384,3 +384,36 @@ def test_the_hierarchy_writes_are_audited_without_secrets(seller, owner_client):
         r["action"] for r in rows
     }
     assert "admin@northern.example.com" not in str(rows)
+
+
+# --- the KYC gate reaches sub-partners too (2026-11-10) -------------------------------
+
+
+def test_a_parent_cannot_activate_a_sub_partner_whose_kyc_is_not_approved(
+    seller, owner_client, settings
+):
+    """Found by the 2026-11-10 audit: ``activate_sub_partner`` wrote the status
+    itself and never asked about KYC, so a parent could activate an unreviewed
+    partner. Every KYC state but approved is refused; approved passes."""
+    from workeasy360.commercial.partners.models import PartnerKyc
+
+    settings.PARTNER_KYC_REQUIRED = True
+    pid = seller["partner"].id
+    child_id = create(owner_client, pid).json()["id"]
+    url = api(pid, f"sub-partners/{child_id}/activate")
+    for state in (
+        "draft",
+        "submitted",
+        "under_review",
+        "correction_required",
+        "rejected",
+    ):
+        PartnerKyc.objects.update_or_create(
+            partner_id=child_id, defaults={"status": state}
+        )
+        refused = send(owner_client, "post", url, {})
+        assert refused.status_code == 400, (state, refused.content)
+        assert PartnerAccount.objects.get(id=child_id).status == "draft", state
+    PartnerKyc.objects.filter(partner_id=child_id).update(status="approved")
+    ok = send(owner_client, "post", url, {})
+    assert ok.status_code == 200 and ok.json()["status"] == "active"

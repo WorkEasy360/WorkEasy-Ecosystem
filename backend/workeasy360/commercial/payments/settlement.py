@@ -147,9 +147,18 @@ def record_success(
     invoice.amount_paid_minor += attempt.amount_minor
     fields = ["amount_paid_minor", "version", "updated_at"]
     invoice.version += 1
+    from workeasy360.commercial.payments import wallet_orders
+
     if not was_open:
         after.refund_attempt = attempt.id
         metrics.increment("payments_unexpected_payments_total")
+        wallet_orders.release_for_attempt(attempt, why="invoice_not_open")
+    elif attempt.provider_key != wallet_orders.WALLET_PROVIDER:
+        # ADR-065: the Platform Wallet's part of this payment, held while the
+        # payer was at the provider, is taken now - in this same transaction.
+        invoice.amount_paid_minor += wallet_orders.capture_for_attempt(
+            attempt, invoice, now=now
+        )
     if (
         invoice.status == Invoice.Status.OPEN
         and invoice.amount_paid_minor >= invoice.total_minor
@@ -216,6 +225,10 @@ def record_failure(
             "updated_at",
         ]
     )
+    # ADR-065: what this payment held in the Platform Wallet is spendable again.
+    from workeasy360.commercial.payments import wallet_orders
+
+    wallet_orders.release_for_attempt(attempt, why=status)
     audit.record_system(
         attempt.organization_id,
         f"billing.payment_{status}",
@@ -276,6 +289,13 @@ def record_refund(
     invoice.amount_refunded_minor += refund.amount_minor
     invoice.version += 1
     invoice.save(update_fields=["amount_refunded_minor", "version", "updated_at"])
+    _issue_credit_note(refund, invoice)
+    # A refund of a top-up or a credit pack takes it back out of the wallet. A refund
+    # of a wallet payment already put it back, before asking this to confirm it.
+    if attempt.provider_key != "wallet":
+        from workeasy360.commercial.payments import wallet_orders
+
+        wallet_orders.reverse_for_refund(refund, invoice)
     audit.record_system(
         refund.organization_id,
         "billing.refund_succeeded",
@@ -290,3 +310,28 @@ def record_refund(
     )
     metrics.increment("payments_refunds_succeeded_total")
     return APPLIED
+
+
+def _issue_credit_note(refund: Any, invoice: Any) -> None:
+    """The document a confirmed refund leaves, naming what it reversed. In the
+    refund's own transaction; one per refund, whichever way it was confirmed."""
+    from django.db import connection
+
+    from workeasy360.commercial.payments.models import CreditNote
+
+    if CreditNote.objects.filter(refund_id=refund.id).exists():
+        return
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT nextval('payments_credit_note_number_seq')")
+        sequence = cursor.fetchone()[0]
+    CreditNote.objects.create(
+        number=f"CN-{sequence:06d}",
+        organization_id=refund.organization_id,
+        refund_id=refund.id,
+        attempt_id=refund.attempt_id,
+        invoice_id=invoice.id,
+        invoice_number=invoice.number,
+        amount_minor=refund.amount_minor,
+        currency=refund.currency,
+        reason=refund.reason,
+    )

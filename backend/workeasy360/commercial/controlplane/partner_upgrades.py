@@ -122,10 +122,12 @@ def approve(
     products: Any = None,
     commercial_reference: Any = "",
     note: Any = "",
+    also: Any = None,
 ) -> dict[str, Any]:
     """Approve a submitted upgrade: grant the bundle, make it the landing, apply
     the brand and domain, check the profile, stamp the request - or change
-    nothing at all."""
+    nothing at all. ``also`` (ADR-063): base permissions granted explicitly
+    beside the new type; an upgrade to White Label alone adds branding only."""
     authz.require(ctx, upgrades.STAFF_MANAGE)
     reference = clean_text(
         commercial_reference, field="commercial_reference", max_length=120, required=False
@@ -147,6 +149,7 @@ def approve(
             partner_id,
             to=target,
             products=codes,
+            also=also or (),
             reason=f"Upgrade approved: {row.from_experience or 'no experience'} to {target}",
         )
         if target == capabilities.WHITE_LABEL:

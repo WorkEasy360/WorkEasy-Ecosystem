@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { ApiError } from "@/lib/api/client";
 import { logout } from "@/lib/api/auth";
+import { forgetAccountState } from "@/lib/accountState";
 import { accountApi, type InvitationPreview } from "@/lib/api/console";
 import { useSession } from "@/lib/auth/useSession";
 import { takeFragmentToken } from "@/lib/auth/fragmentToken";
@@ -218,7 +219,13 @@ function Invitation({
             onClick={() => {
               setBusy(true);
               logout()
-                .then(onSignedOut, () => setProblems(["Signing out didn't complete. Try again."]))
+                .then(
+                  () => {
+                    forgetAccountState();
+                    onSignedOut();
+                  },
+                  () => setProblems(["Signing out didn't complete. Try again."]),
+                )
                 .finally(() => setBusy(false));
             }}
           >
@@ -285,7 +292,7 @@ export function NewAccountForm({
   const [confirm, setConfirm] = useState("");
 
   return (
-    <form
+    <form method="post"
       className="w360-stack-form"
       noValidate
       onSubmit={(e) => {

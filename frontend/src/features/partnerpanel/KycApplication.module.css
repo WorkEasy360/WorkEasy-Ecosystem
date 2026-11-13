@@ -1,0 +1,101 @@
+/* A partner's own KYC application and the public application form (2026-11-09). Tokens only. */
+
+.stack {
+  display: grid;
+  gap: var(--w360-space-4);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.stack > * {
+  min-width: 0;
+}
+
+.grid {
+  display: grid;
+  gap: var(--w360-space-3) var(--w360-space-4);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.span {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 640px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.formActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-3);
+  margin-top: var(--w360-space-4);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-text-muted);
+}
+
+.docs {
+  display: grid;
+  gap: var(--w360-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.doc {
+  display: grid;
+  gap: var(--w360-space-2);
+  min-width: 0;
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-control);
+}
+
+/* A document the reviewer asked to have corrected. The badge says so in words. */
+.flagged {
+  border-color: var(--w360-warning);
+  background: var(--w360-warning-bg);
+}
+
+.flagged .note {
+  color: var(--w360-text);
+}
+
+.docHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  font-weight: 600;
+}
+
+.file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  min-width: 0;
+}
+
+.fileName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.upload {
+  display: grid;
+  gap: var(--w360-space-1);
+  max-width: 420px;
+}
+
+.missing {
+  margin: var(--w360-space-1) 0 0;
+  padding-left: var(--w360-space-5);
+}

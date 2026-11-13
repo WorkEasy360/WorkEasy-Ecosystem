@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { AdminContextForTest, expectNoViolations, mockApi, ok } from "./testSupport";
 import { PartnerTicketsScreen, WithdrawalsScreen } from "./PartnerDesk";
@@ -64,11 +64,18 @@ describe("Partner Tickets", () => {
     await expectNoViolations(container);
     fireEvent.click(screen.getByRole("button", { name: "#7" }));
     expect(await screen.findByText("Order 42 earned nothing.")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Answer"), { target: { value: "Looking into it." } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    // The answer is written in a popup (2026-11-05).
+    expect(screen.queryByLabelText("Answer")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    const popup = screen.getByRole("dialog", { name: "Reply to #7" });
+    expect(within(popup).getByRole("button", { name: "Send" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Answer"), { target: { value: "Looking into it." } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/partner-tickets/t1")).toBe(true));
     const sent = calls.find((c) => c.key === "POST /api/v1/admin/partner-tickets/t1")!;
     expect(sent.body).toEqual({ message: "Looking into it.", internal: false });
+    expect(await screen.findByText("Saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("a viewer reads but gets no answer form", async () => {
@@ -80,6 +87,7 @@ describe("Partner Tickets", () => {
     fireEvent.click(await screen.findByRole("button", { name: "#7" }));
     expect(await screen.findByText(/answering needs the partner management permission/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Answer")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reply" })).toBeNull();
   });
 });
 
@@ -142,11 +150,43 @@ describe("Withdrawals", () => {
     expect(calls.find((c) => c.key === "POST /api/v1/admin/partner-withdrawals/w1")!.body).toEqual({ action: "start_payout" });
   });
 
+  it("rejects a withdrawal and payout details with a reason typed in a popup", async () => {
+    const calls = mockApi({
+      "GET /api/v1/admin/partner-withdrawals": [ok(QUEUE)],
+      "POST /api/v1/admin/partner-withdrawals/w1": [ok({ ...WITHDRAWAL, status: "rejected" })],
+      "POST /api/v1/admin/partners/p1/payout-method": [ok({ ...METHOD, verification: "rejected" })],
+    });
+    queue(["platform.staff_payout.manage"]);
+    await screen.findByText("Payout details to verify (1)");
+    expect(screen.queryByLabelText("Why")).toBeNull();
+    expect(screen.queryByLabelText("Reason if rejecting")).toBeNull();
+
+    const requests = screen.getByRole("table", { name: "Withdrawal requests" });
+    fireEvent.click(within(requests).getByRole("button", { name: "Reject…" }));
+    let popup = screen.getByRole("dialog", { name: "Reject the withdrawal of Acme Partners" });
+    expect(within(popup).getByRole("button", { name: "Reject" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Why"), { target: { value: "Bank details do not match" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Reject" }));
+    expect(await screen.findByText("Request rejected.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(calls.find((c) => c.key === "POST /api/v1/admin/partner-withdrawals/w1")!.body).toEqual({ action: "reject", note: "Bank details do not match" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Reject the payout details of Acme Partners" }));
+    popup = screen.getByRole("dialog", { name: "Reject the payout details of Acme Partners" });
+    fireEvent.change(within(popup).getByLabelText("Reason if rejecting"), { target: { value: "PAN unreadable" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/partners/p1/payout-method")).toBe(true));
+    expect(calls.find((c) => c.key === "POST /api/v1/admin/partners/p1/payout-method")!.body).toEqual({ decision: "rejected", note: "PAN unreadable" });
+  });
+
   it("offers no money buttons without the payout permission", async () => {
     mockApi({ "GET /api/v1/admin/partner-withdrawals": [ok(QUEUE)] });
     queue(["platform.staff_partner.view"]);
     expect((await screen.findAllByRole("link", { name: "Acme Partners" })).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Start payout" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Verify" })).toBeNull();
+    // ("Rejected" is a status filter chip, not an action.)
+    expect(screen.queryByRole("button", { name: "Reject…" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Reject the payout details/ })).toBeNull();
   });
 });

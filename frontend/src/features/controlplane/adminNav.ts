@@ -1,68 +1,121 @@
 import type { SidebarGroup, SidebarItem } from "@/components/sidebar/SidebarShell";
-import { centerItems } from "./partnerCenterNav";
+import { adminModules, locate } from "./adminModules";
+import { CATEGORIES, CATEGORY_MENU_LABEL, CATEGORY_PATH, type PartnerCategory } from "./partnerCategories";
 
-const can = (permissions: string[], key: string) => permissions.includes(key);
+/** Where this browser keeps the order the staff member gave the Partners menu. */
+export const PARTNER_MENU_ORDER_KEY = "w360.admin.menu.partners";
 
-/** The Super Admin's navigation (2026-10-26 redesign): Dashboard, then one
- * collapsible section per area - User, Partner, Product Store, Communication,
- * Staff, Settings. A section opens by itself on any of its pages. Each page
- * appears only when the staff member holds the grant it needs, and a section
- * with none of its pages left is not shown. Navigation convenience only: every
- * request is authorized again by the backend. */
-export function adminNav(p: string[]): SidebarGroup[] {
-  const section = (key: string, label: string, icon: string, children: SidebarItem[]): SidebarItem => ({
-    href: `#${key}`,
-    label,
-    icon,
-    children,
-  });
+const CATEGORY_ICON: Record<PartnerCategory, string> = {
+  affiliate: "gift",
+  reseller: "store",
+  white_label: "palette",
+};
+
+/** Partners ▼ (ADR-062, the owner's brief of 2026-11-10): Affiliate, Reseller and
+ * White Label - each the All Partners table with its type fixed - then All
+ * Partners itself. The staff member may reorder them (drag, or Alt+Arrow keys);
+ * the order is a preference of this browser and changes no partner's type. */
+function partnerMenu(): SidebarItem[] {
   return [
-    {
-      items: [
-        { href: "/admin", label: "Dashboard", icon: "dashboard", exact: true },
-        section("user", "User", "users", [
-          { href: "/admin/users", label: "Users", when: can(p, "platform.staff_user.view") },
-          { href: "/admin/subscriptions", label: "Subscriptions", when: can(p, "platform.staff_customer.view") },
-          { href: "/admin/entitlements", label: "Entitlements", when: can(p, "platform.staff_customer.view") },
-        ]),
-        // The Partners area's own sections (ADR-048): its dashboard, All Partners
-        // (a partner's own pages belong to it) and Add Partner.
-        section(
-          "partner",
-          "Partner",
-          "handshake",
-          centerItems(p).map((item) => ({
-            href: item.href,
-            label: item.href === "/admin/partners" ? "Partner dashboard" : item.label,
-            exact: item.exact,
-            alsoMatchPattern: item.alsoMatches,
-          })),
-        ),
-        section("store", "Product Store", "store", [
-          { href: "/admin/products", label: "Product manager", when: can(p, "platform.staff_catalog.view") },
-          { href: "/admin/store", label: "Store", when: can(p, "platform.staff_catalog.view") },
-          { href: "/admin/plans", label: "Plans & add-ons", when: can(p, "platform.staff_catalog.view") },
-          { href: "/admin/pricing", label: "Currency & pricing", when: can(p, "platform.staff_catalog.view") },
-          { href: "/admin/orders", label: "Orders", when: can(p, "platform.staff_payment.view") },
-          { href: "/admin/payments", label: "Payments", when: can(p, "platform.staff_payment.view") },
-        ]),
-        section("communication", "Communication", "mail", [
-          {
-            href: "/admin/communication",
-            label: "Email & templates",
-            when: can(p, "platform.staff_communication.view"),
-          },
-          { href: "/admin/ai", label: "AI", when: can(p, "platform.staff_ai.view") },
-        ]),
-        section("staff", "Staff", "shield", [
-          { href: "/admin/security", label: "Staff access", when: can(p, "platform.staff_security.view") },
-          { href: "/admin/audit", label: "Audit", when: can(p, "platform.staff_audit.view") },
-          { href: "/admin/diagnostics", label: "Diagnostics", when: can(p, "platform.staff_support.view") },
-        ]),
-        section("settings", "Settings", "settings", [
-          { href: "/admin/settings", label: "Platform settings", when: can(p, "platform.staff_settings.view") },
-        ]),
-      ],
-    },
+    ...CATEGORIES.map((category) => ({
+      href: CATEGORY_PATH[category],
+      label: CATEGORY_MENU_LABEL[category],
+      icon: CATEGORY_ICON[category],
+      exact: true,
+    })),
+    { href: "/admin/partners/all", label: "All Partners", icon: "handshake", exact: true },
   ];
 }
+
+/** The Admin's sidebar (2026-11-09): the nine modules. A module opens its first
+ * page this staff member may see; its other pages are tabs inside it (ModuleNav).
+ * The module holding `pathname` is the current entry, by the map in
+ * `adminModules.ts` rather than by the address's prefix.
+ *
+ * Partners alone opens beneath it (ADR-062) for a staff member who may see the
+ * partner lists; its tabs are unchanged. */
+export function adminNav(p: string[], pathname = ""): SidebarGroup[] {
+  const modules = adminModules(p);
+  const here = locate(pathname, modules);
+  const items: SidebarItem[] = modules.map((module) => {
+    const item: SidebarItem = {
+      href: module.sections[0].pages[0].href,
+      label: module.label,
+      icon: module.icon,
+      current: here?.module.key === module.key,
+    };
+    const lists = module.sections.some((section) => section.pages.some((page) => page.href === "/admin/partners/all"));
+    if (module.key === "partners" && lists) {
+      item.children = partnerMenu();
+      item.reorderKey = PARTNER_MENU_ORDER_KEY;
+    }
+    return item;
+  });
+  return [{ items }];
+}
+
+/** Each page's title (= its menu label), for the browser tab: "Users · WorkEasy360 Admin".
+ * A record's own page (a user, a partner) sets its own from its name. */
+export const ADMIN_PAGE_TITLES: Record<string, string> = {
+  "/admin": "Dashboard",
+  "/admin/notifications": "Notifications",
+  "/admin/users": "Users",
+  "/admin/subscriptions": "Subscriptions",
+  "/admin/entitlements": "Entitlements",
+  "/admin/customers": "Customers",
+  "/admin/partners": "Partner overview",
+  "/admin/partners/all": "All partners",
+  "/admin/partners/affiliate": "Affiliate partners",
+  "/admin/partners/reseller": "Reseller partners",
+  "/admin/partners/white-label": "White Label partners",
+  "/admin/partners/new": "New partner",
+  "/admin/partners/product-requests": "Product requests",
+  "/admin/partners/upgrade-fees": "Upgrade fees",
+  "/admin/partners/tickets": "Partner tickets",
+  "/admin/partners/withdrawals": "Withdrawals",
+  "/admin/products": "Products",
+  "/admin/products/new": "New product",
+  "/admin/store": "Store",
+  "/admin/store/dashboard": "Store",
+  "/admin/store/commercial-rules": "Store",
+  "/admin/store/coupons": "Store",
+  "/admin/plans": "Plans & add-ons",
+  "/admin/pricing": "Currency & pricing",
+  "/admin/orders": "Orders",
+  "/admin/payments": "Payments",
+  "/admin/communication": "Email templates",
+  "/admin/ai": "AI platform",
+  "/admin/security": "Staff access",
+  "/admin/audit": "Audit log",
+  "/admin/diagnostics": "Diagnostics",
+  "/admin/settings": "Platform settings",
+  "/admin/customers/setup": "Setup",
+  "/admin/partners/applications": "Applications",
+  "/admin/partners/kyc-requirements": "KYC requirements",
+  "/admin/partners/commission-rules": "Commission rules",
+  "/admin/usage-pricing": "Usage rates",
+  "/admin/usage-pricing/credit-packs": "Credit packs",
+  "/admin/invoices": "Invoices",
+  "/admin/payments/failed": "Failed & stuck",
+  "/admin/refunds": "Refunds",
+  "/admin/credit-notes": "Credit notes",
+  "/admin/commissions": "Commission entries",
+  "/admin/payouts": "Payouts",
+  "/admin/wallets": "Platform Wallet",
+  "/admin/wallets/ai-credits": "AI Credits",
+  "/admin/wallets/consumption": "Consumption Wallet",
+  "/admin/wallets/transactions": "Transaction Controls",
+  "/admin/tickets": "Tickets",
+  "/admin/help-content": "Help Content",
+  "/admin/reports/sales": "Sales",
+  "/admin/reports/payments": "Payments",
+  "/admin/reports/renewals": "Subscription Renewals",
+  "/admin/reports/wallet-movements": "Wallet Movements",
+  "/admin/reports/usage": "Usage by Product",
+  "/admin/reports/partner-conversions": "Partner Conversions",
+  "/admin/reports/commissions": "Commissions",
+  "/admin/reports/payouts": "Payouts",
+  "/admin/settings/domains": "Domains & Apps",
+  "/admin/settings/login-clients": "Login clients",
+  "/admin/security/sign-ins": "Sign-in audit",
+};

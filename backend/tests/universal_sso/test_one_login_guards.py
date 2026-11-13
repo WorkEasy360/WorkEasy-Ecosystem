@@ -52,7 +52,7 @@ def _codes(registration) -> int:
     ).count()
 
 
-# --- the automatic default is no way around anything -------------------------------------------------
+# --- the default (Ask once since ADR-066) is no way around anything ---------------------------------
 
 
 def test_the_default_is_no_way_around_entitlement(
@@ -96,14 +96,17 @@ def test_the_default_is_no_way_into_another_organization(
 def test_the_default_is_no_way_past_the_end_of_a_trial(
     client, signing_key, sso_product, trial_org, signed_in, monkeypatch
 ):
-    """Trial access requires an active trial: silent sign-in while the 7-day
-    trial runs; from ``ends_at`` (server time, before any sweeper) refused."""
+    """Trial access requires an active trial: while the 7-day trial runs the
+    default (Ask once) shows the chooser; from ``ends_at`` (server time, before
+    any sweeper) refused - before any question."""
     from django.utils import timezone
 
     books = sso_product("books")
     trial = trial_org("books")
     signed_in(trial["user"], sign_in_preference=None)
-    assert "code" in query_of(_authorize(client, books, trial["organization_id"]))
+    assert path_of(_authorize(client, books, trial["organization_id"])) == (
+        "/product-access"
+    )
 
     monkeypatch.setattr(timezone, "now", lambda: trial["ends_at"] + timedelta(seconds=1))
     signed_in(trial["user"], sign_in_preference=None)
@@ -132,10 +135,11 @@ def test_typing_a_products_address_signs_a_one_organization_person_in_to_it(
     client, signing_key, sso_product, entitled_org, signed_in, product_client
 ):
     """Journey B: no organization hint (the product cannot know one), one
-    organization - signed in silently, bound to that organization."""
+    organization - signed in silently (set to Automatic, or already entered in
+    this sign-in under Ask once), bound to that organization."""
     crm = sso_product("crm")
     org = entitled_org("crm")
-    signed_in(org["user"], sign_in_preference=None)
+    signed_in(org["user"], sign_in_preference="auto_sso")
     reference = product_client(crm)
     request = reference.begin_authorization(organization_id="")
     request["query"].pop("organization")  # typed address: nothing to name
@@ -188,7 +192,11 @@ def test_after_the_central_sign_in_the_only_organization_is_used(
     org = entitled_org("crm")
     parked = _authorize(client, crm, None)
     assert path_of(parked) == "/login"
-    signed_in(org["user"], sign_in_preference=None)
+    # force_login records no sign-in time, so the resume cannot tell this
+    # session was opened for the request: Automatic keeps the subject - the
+    # organization - in view (test_whoever_just_signed_in_for_this_request_is_not_asked_again
+    # signs in for real and is not asked under any preference).
+    signed_in(org["user"], sign_in_preference="auto_sso")
     resumed = client.get(RESUME, {"resume": resume_token_of(parked)})
     assert resumed["Location"].startswith(crm["redirect_uri"] + "?")
     assert query_of(resumed)["code"][0]
@@ -219,11 +227,37 @@ def test_prompt_none_with_one_organization_completes_silently(
 ):
     crm = sso_product("crm")
     org = entitled_org("crm")
-    signed_in(org["user"], sign_in_preference=None)
+    signed_in(org["user"], sign_in_preference="auto_sso")
     _verifier, query = authorize_query(crm, None, prompt="none")
     response = client.get(AUTHORIZE, query)
     assert response["Location"].startswith(crm["redirect_uri"] + "?")
     assert query_of(response)["code"][0]
+
+
+def test_prompt_none_under_ask_once_reports_the_question_until_it_is_answered(
+    client, signing_key, sso_product, entitled_org, signed_in
+):
+    """A silent probe never skips the first-entry question (ADR-066): it is
+    told ``interaction_required``; once this sign-in has entered the product,
+    the same probe completes."""
+    crm = sso_product("crm")
+    org = entitled_org("crm")
+    signed_in(org["user"], sign_in_preference=None)
+    _verifier, query = authorize_query(crm, None, prompt="none")
+    assert query_of(client.get(AUTHORIZE, query))["error"] == [
+        protocol.INTERACTION_REQUIRED
+    ]
+    asked = _authorize(client, crm, None)
+    answered = client.post(
+        CHOOSE,
+        {"resume": resume_token_of(asked), "choice": "workeasy360"},
+        content_type="application/json",
+    )
+    assert client.get(answered.json()["redirect_url"])["Location"].startswith(
+        crm["redirect_uri"] + "?"
+    )
+    _verifier, query = authorize_query(crm, None, prompt="none")
+    assert query_of(client.get(AUTHORIZE, query))["code"][0]
 
 
 def test_an_implied_organization_that_cannot_be_signed_in_to_is_refused_as_such(
@@ -354,7 +388,7 @@ def test_the_log_says_where_the_organization_came_from(
 ):
     crm = sso_product("crm")
     org = entitled_org("crm")
-    signed_in(org["user"], sign_in_preference=None)
+    signed_in(org["user"], sign_in_preference="auto_sso")
     with caplog.at_level("DEBUG"):
         _authorize(client, crm, None)
         _authorize(client, crm, org["organization_id"])

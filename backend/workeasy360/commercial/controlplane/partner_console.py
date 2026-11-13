@@ -36,7 +36,7 @@ from uuid import UUID
 from django.utils import timezone
 
 from workeasy360.commercial.commissions import selectors as commission_selectors
-from workeasy360.commercial.partners import capabilities, upgrades
+from workeasy360.commercial.partners import capabilities, kyc, upgrades
 from workeasy360.commercial.partners import console_reads as partner_reads
 from workeasy360.contracts.enums import PartnerStatus
 from workeasy360.contracts.errors import PartnerRecordNotFound, PartnerValidationError
@@ -121,6 +121,16 @@ def _clean_query(value: str | None) -> str | None:
     return text or None
 
 
+def _clean_category(value: str | None) -> str | None:
+    """Partners → Affiliate, Reseller or White Label (ADR-062): the one type a
+    partner is listed under. Never free text."""
+    if not value:
+        return None
+    if value not in capabilities.CATEGORIES:
+        raise PartnerValidationError("Unknown partner category.", field="category")
+    return value
+
+
 # --- overview -----------------------------------------------------------------
 
 
@@ -138,11 +148,7 @@ def overview(ctx: TenantContext) -> dict[str, Any]:
     authz.require(ctx, PARTNER_VIEW)
     now = timezone.now()
     counts = partner_reads.overview_counts(
-        now,
-        reseller_keys=capabilities.experience_keys(capabilities.RESELLER),
-        white_label_keys=capabilities.experience_keys(capabilities.WHITE_LABEL),
-        affiliate_keys=capabilities.experience_keys(capabilities.AFFILIATE),
-        incomplete=profile_completion.incomplete_q(now),
+        now, incomplete=profile_completion.incomplete_q(now)
     )
     cards = [
         ("total_partners", "Total partners"),
@@ -198,6 +204,8 @@ def resellers_page(
     profile: str | None = None,
     limit: Any = DEFAULT_PAGE,
     cursor: str | None = None,
+    kyc_filter: str | None = None,
+    category: str | None = None,
 ) -> Page:
     """One page of partners with the aggregates the partner lists show.
 
@@ -210,6 +218,10 @@ def resellers_page(
     ``complete`` or ``incomplete`` (``controlplane.profile_completion``). Every
     filter is applied by the database - a label is a filter over grants, not a
     table - and every variant has the same row shape.
+
+    ``category`` (ADR-062: Partners → Affiliate, Reseller, White Label) lists
+    the partners whose type is that one - the type each row shows - so every
+    partner is under exactly one; it composes with every other filter.
     """
     from workeasy360.commercial.controlplane import profile_completion
 
@@ -224,8 +236,14 @@ def resellers_page(
     needle = _clean_query(query)
     wanted_capability = _clean_capability(capability)
     wanted_product = _clean_product(product)
+    wanted_category = _clean_category(category)
     now = timezone.now()
     wanted_profile = profile_completion.profile_filter(profile, now)
+    wanted_kyc = kyc.list_filter(kyc_filter)
+    if wanted_kyc is not None:
+        wanted_profile = (
+            wanted_kyc if wanted_profile is None else wanted_profile & wanted_kyc
+        )
 
     rows, has_more = partner_reads.partner_rows(
         now,
@@ -241,6 +259,7 @@ def resellers_page(
         cursor=cursor,
         page_size=page_size,
         extra=wanted_profile,
+        category=wanted_category,
     )
     facts = _aggregates([r.id for r in rows], now)
     completion = profile_completion.for_partners(
@@ -252,6 +271,7 @@ def resellers_page(
     )
 
     upgrading = upgrades.open_for_partners([r.id for r in rows])
+    kyc_statuses = kyc.statuses_for([r.id for r in rows])
     items = []
     for row in rows:
         held = facts["capabilities"].get(row.id, set())
@@ -275,11 +295,18 @@ def resellers_page(
                 "created_at": row.created_at.isoformat(),
                 "experience": capabilities.experience_labels(held),
                 "profile_completion": profile_completion.summary_line(completion[row.id]),
+                # KYC beside the status, never instead of it (ADR-060): a legacy
+                # partner active before KYC was required is marked, not hidden.
+                "kyc": kyc.standing(row.status, kyc_statuses.get(row.id, "draft")),
                 # The workspace its portal opens first - derived from the grants
                 # and the stored preference, a landing and never an authority.
                 "primary_experience": capabilities.resolve_landing(
                     row.default_experience, held
                 ),
+                # The one type it is listed under (ADR-062): the type above, or
+                # for a partner whose grants earn none yet (a new draft) the
+                # type it was created as. A listing, never an authority.
+                "category": capabilities.partner_category(row.default_experience, held),
                 # The open upgrade request, if any: a badge, never an authority.
                 "upgrade": upgrading.get(row.id),
                 "capability_count": len(held),

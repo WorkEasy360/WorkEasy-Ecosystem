@@ -13,7 +13,24 @@ import {
 import type { RequestKind } from "@/lib/api/partnerPanel";
 import { can, useAdmin } from "./ControlShell";
 import { Section } from "./PartnerSection";
+import { FormPopup } from "./Modal";
 import { LoadGate, Status, Table, useAction, useLoad, when } from "./ui";
+import {
+  Button,
+  DataTable,
+  EmptyState,
+  FilterBar,
+  IconButton,
+  Page,
+  PageHeader,
+  SearchInput,
+  Select,
+  StatusChips,
+  formatDate,
+  formatNumber,
+  kit,
+  type Column,
+} from "./kit";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
 
@@ -61,11 +78,8 @@ export function ProductRequestsConsole() {
   const status = (params?.get("status") as PromotionRequestStatus | "all" | null) ?? "pending";
   const q = params?.get("q") ?? "";
   const kind = (params?.get("kind") as RequestKind | null) ?? "";
-  const kindId = useId();
   const offset = Number(params?.get("offset") ?? 0) || 0;
   const open = params?.get("request") ?? null;
-  const searchId = useId();
-  const [draft, setDraft] = useState(q);
   const [load, reload] = useLoad(() => adminProgrammeApi.promotionRequests({ status, kind: kind || undefined, q: q || undefined, offset }),
     [status, kind, q, offset],
   );
@@ -80,132 +94,113 @@ export function ProductRequestsConsole() {
     router.push(text ? `${pathname}?${text}` : pathname);
   };
 
+  const counts = load.status === "ready" ? load.data.counts : null;
+  const all = counts ? counts.pending + counts.approved + counts.rejected + counts.revoked : null;
+  const requestHref = (id: string) => {
+    const query = new URLSearchParams(params?.toString() ?? "");
+    query.set("request", id);
+    return `${pathname}?${query.toString()}`;
+  };
+
   return (
-    <div className={styles.stack}>
-      <div className={local.headerRow}>
-        <h1>Product Requests</h1>
-      </div>
-      <p className={styles.muted}>
-        Affiliates ask here to promote a product from the Store, and resellers to sell one. Approving lets that partner create links, codes
-        and campaigns for that one product, or sell it to customers; it gives no other access.
-      </p>
-      <nav aria-label="Request status" className={local.filters}>
-        {TABS.map((t) => {
-          const count = load.status === "ready" && t.key !== "all" ? load.data.counts[t.key] : null;
-          return (
-            <Link
-              key={t.key}
-              href={`${pathname}?status=${t.key}${kind ? `&kind=${kind}` : ""}${q ? `&q=${encodeURIComponent(q)}` : ""}`}
-              aria-current={status === t.key ? "page" : undefined}
-              className={status === t.key ? "w360-btn w360-btn-primary" : "w360-btn w360-btn-secondary"}
-            >
-              {t.label}
-              {count !== null ? ` (${count})` : ""}
-            </Link>
-          );
-        })}
-      </nav>
-      <form
-        className={local.filters}
-        role="search"
-        aria-label="Search requests"
-        onSubmit={(e) => {
-          e.preventDefault();
-          go({ q: draft.trim().slice(0, 80), offset: null });
-        }}
-      >
-        <div className={local.searchField}>
-          <label className="w360-label" htmlFor={searchId}>
-            Search by partner or product
-          </label>
-          <input id={searchId} type="search" className="w360-input" maxLength={80} value={draft} onChange={(e) => setDraft(e.target.value)} />
-        </div>
-        <div>
-          <label className="w360-label" htmlFor={kindId}>
-            Type
-          </label>
-          <select id={kindId} className="w360-input" value={kind} onChange={(e) => go({ kind: e.target.value || null, offset: null })}>
-            {KINDS.map((k) => (
-              <option key={k.key} value={k.key}>
-                {k.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <button type="submit" className="w360-btn w360-btn-secondary">
-          Search
-        </button>
-      </form>
-      {open && (
-        <RequestReview
-          requestId={open}
-          onClose={() => go({ request: null })}
-          onDecided={reload}
-        />
-      )}
+    <Page>
+      <PageHeader
+        title="Product requests"
+        subtitle="Affiliates asking to promote a Store product, and resellers asking to sell one."
+        info="Approving lets that partner create links, codes and campaigns for that one product, or sell it to customers; it gives no other access."
+      />
+      <StatusChips
+        label="Request status"
+        value={status}
+        onChange={(next) => go({ status: next, offset: null, request: null })}
+        chips={TABS.map((t) => ({ value: t.key, label: t.label, count: t.key === "all" ? all : (counts?.[t.key] ?? null) }))}
+      />
+      <FilterBar label="Filter requests" onClear={q || kind ? () => go({ q: null, kind: null, offset: null }) : undefined}>
+        <SearchInput label="Search by partner or product" value={q} onSearch={(text) => go({ q: text.slice(0, 80) || null, offset: null })} />
+        <Select label="Type" value={kind} options={KINDS.map((k) => ({ value: k.key, label: k.label }))} onChange={(v) => go({ kind: v || null, offset: null })} />
+      </FilterBar>
+      {open && <RequestReview requestId={open} onClose={() => go({ request: null })} onDecided={reload} />}
       <LoadGate load={load} what="product requests">
-        {(d) => <Queue data={d} status={status} onOpen={(id) => go({ request: id })} onPage={(o) => go({ offset: String(o) })} />}
+        {(d) => (
+          <Queue data={d} status={status} rowHref={requestHref} onOpen={(id) => go({ request: id })} onPage={(o) => go({ offset: String(o) })} />
+        )}
       </LoadGate>
-    </div>
+    </Page>
   );
 }
+
+type PromotionRequestRow = PromotionRequestQueue["items"][number];
 
 function Queue({
   data,
   status,
+  rowHref,
   onOpen,
   onPage,
 }: {
   data: PromotionRequestQueue;
   status: string;
+  rowHref: (id: string) => string;
   onOpen: (id: string) => void;
   onPage: (offset: number) => void;
 }) {
+  const columns: Column<PromotionRequestRow>[] = [
+    {
+      key: "partner",
+      header: "Partner",
+      value: (r) => r.partner_name,
+      render: (r) => (
+        <span className={kit.cellStack}>
+          <Link href={`/admin/partners/${r.partner_id}`} className={kit.cellLink}>
+            {r.partner_name}
+          </Link>
+          <span className={kit.cellSub}>{r.partner_code}</span>
+        </span>
+      ),
+    },
+    { key: "type", header: "Type", value: (r) => r.kind, render: (r) => KIND_WORDS[r.kind].type },
+    { key: "product", header: "Product", value: (r) => r.product_name, render: (r) => r.product_name },
+    { key: "channel", header: "Channel", value: (r) => r.channel_label, render: (r) => r.channel_label },
+    { key: "requested", header: "Requested", value: (r) => r.requested_at, render: (r) => formatDate(r.requested_at) },
+    { key: "status", header: "Status", value: (r) => r.status, render: (r) => <AccessBadge status={r.status} /> },
+    {
+      key: "review",
+      header: "Action",
+      align: "right",
+      render: (r) => (
+        <Button size="sm" onClick={() => onOpen(r.id)}>
+          Review<span className="w360-visually-hidden"> the request from {r.partner_name} for {r.product_name}</span>
+        </Button>
+      ),
+    },
+  ];
+  const last = data.offset + data.items.length;
   return (
     <>
-      <Table
+      <DataTable
         caption={`Product requests: ${status}`}
-        head={["Partner", "Type", "Product", "Channel", "Requested", "Status", ""]}
-        isEmpty={data.items.length === 0}
-        empty={status === "pending" ? "No request is waiting for a decision." : "No requests."}
-      >
-        {data.items.map((r) => (
-          <tr key={r.id}>
-            <th scope="row">
-              <Link href={`/admin/partners/${r.partner_id}`}>{r.partner_name}</Link>
-              <span className={styles.muted}> · {r.partner_code}</span>
-            </th>
-            <td>{KIND_WORDS[r.kind].type}</td>
-            <td>{r.product_name}</td>
-            <td>{r.channel_label}</td>
-            <td>{when(r.requested_at)}</td>
-            <td>
-              <AccessBadge status={r.status} />
-            </td>
-            <td>
-              <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpen(r.id)}>
-                Review<span className="w360-visually-hidden"> the request from {r.partner_name} for {r.product_name}</span>
-              </button>
-            </td>
-          </tr>
-        ))}
-      </Table>
+        columns={columns}
+        rows={data.items}
+        rowKey={(r) => r.id}
+        rowHref={(r) => rowHref(r.id)}
+        pageSize={0}
+        empty={
+          <EmptyState
+            icon="store"
+            title={status === "pending" ? "No request is waiting for a decision." : "No requests."}
+            hint="Requests partners make from the Store appear here."
+          />
+        }
+      />
       {data.total > data.limit && (
-        <div className={styles.row}>
-          <button type="button" className="w360-btn w360-btn-secondary" disabled={data.offset === 0} onClick={() => onPage(Math.max(0, data.offset - PAGE))}>
-            Previous
-          </button>
-          <span className={styles.muted}>
-            {data.offset + 1}–{Math.min(data.offset + data.items.length, data.total)} of {data.total}
+        <div className={kit.tableFoot}>
+          <span>
+            Showing {formatNumber(data.offset + 1)}–{formatNumber(Math.min(last, data.total))} of {formatNumber(data.total)}
           </span>
-          <button
-            type="button"
-            className="w360-btn w360-btn-secondary"
-            disabled={data.offset + data.items.length >= data.total}
-            onClick={() => onPage(data.offset + PAGE)}
-          >
-            Next
-          </button>
+          <span className={kit.pager}>
+            <IconButton icon="chevronLeft" label="Previous" size="sm" variant="secondary" disabled={data.offset === 0} onClick={() => onPage(Math.max(0, data.offset - PAGE))} />
+            <IconButton icon="chevronRight" label="Next" size="sm" variant="secondary" disabled={last >= data.total} onClick={() => onPage(data.offset + PAGE)} />
+          </span>
         </div>
       )}
     </>
@@ -220,16 +215,16 @@ function RequestReview({ requestId, onClose, onDecided }: { requestId: string; o
     reload();
     onDecided();
   });
-  const [mode, setMode] = useState<"reject" | "revoke" | null>(null);
-  const [reason, setReason] = useState("");
-  const reasonId = useId();
+  // A rejection or revocation is made in a popup; its outcome is the review's own.
+  const announce = (message: string) => void act(async () => {}, message);
+  const headingId = useId();
   const heading = useRef<HTMLHeadingElement | null>(null);
   useEffect(() => heading.current?.focus(), [requestId]);
 
   return (
-    <section className={`w360-card ${styles.card}`} aria-labelledby={`${reasonId}-h`}>
+    <section className={`w360-card ${styles.card}`} aria-labelledby={`${headingId}-h`}>
       <div className={local.headerRow}>
-        <h2 id={`${reasonId}-h`} ref={heading} tabIndex={-1} className={styles.cardTitle}>
+        <h2 id={`${headingId}-h`} ref={heading} tabIndex={-1} className={styles.cardTitle}>
           Review request
         </h2>
         <button type="button" className="w360-btn w360-btn-secondary" onClick={onClose}>
@@ -308,73 +303,42 @@ function RequestReview({ requestId, onClose, onDecided }: { requestId: string; o
               </Section>
 
               {manage && (r.status === "pending" || r.status === "approved") && (
-                <div className={styles.stack}>
-                  {mode === null && (
-                    <div className={styles.row}>
-                      {r.status === "pending" && (
-                        <>
-                          <button
-                            type="button"
-                            className="w360-btn w360-btn-primary"
-                            disabled={busy}
-                            onClick={() => void act(() => adminProgrammeApi.decidePromotionRequest(r.id, "approve"), `Approved: ${d.partner.name} may ${words.verb} ${d.product.name}.`)}
-                          >
-                            Approve
-                          </button>
-                          <button type="button" className="w360-btn w360-btn-secondary" disabled={busy} onClick={() => setMode("reject")}>
-                            Reject
-                          </button>
-                        </>
-                      )}
-                      {r.status === "approved" && (
-                        <button type="button" className="w360-btn w360-btn-danger" disabled={busy} onClick={() => setMode("revoke")}>
-                          Revoke permission
-                        </button>
-                      )}
-                    </div>
+                <div className={styles.row}>
+                  {r.status === "pending" && (
+                    <>
+                      <button
+                        type="button"
+                        className="w360-btn w360-btn-primary"
+                        disabled={busy}
+                        onClick={() => void act(() => adminProgrammeApi.decidePromotionRequest(r.id, "approve"), `Approved: ${d.partner.name} may ${words.verb} ${d.product.name}.`)}
+                      >
+                        Approve
+                      </button>
+                      <ReasonPopup
+                        action="reject"
+                        label="Reject"
+                        reasonLabel={`Reason (the ${words.who} reads it)`}
+                        disabled={busy}
+                        onSubmit={(reason) => adminProgrammeApi.decidePromotionRequest(r.id, "reject", reason)}
+                        onDone={() => announce(`Request rejected. The ${words.who} sees your reason.`)}
+                      />
+                    </>
                   )}
-                  {mode !== null && (
-                    <form
-                      className={styles.form}
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        const action = mode;
-                        void act(async () => {
-                          await adminProgrammeApi.decidePromotionRequest(r.id, action, reason.trim() || undefined);
-                          setMode(null);
-                          setReason("");
-                        }, action === "reject"
-                          ? `Request rejected. The ${words.who} sees your reason.`
-                          : r.kind === "sell"
+                  {r.status === "approved" && (
+                    <ReasonPopup
+                      action="revoke"
+                      label="Revoke permission"
+                      reasonLabel={`Reason (optional, the ${words.who} reads it)`}
+                      disabled={busy}
+                      onSubmit={(reason) => adminProgrammeApi.decidePromotionRequest(r.id, "revoke", reason)}
+                      onDone={() =>
+                        announce(
+                          r.kind === "sell"
                             ? "Permission revoked. New sales stop now; existing customers keep their subscriptions."
-                            : "Permission revoked. New links stop now; earned commission is kept.");
-                      }}
-                    >
-                      <div className={styles.field}>
-                        <label className="w360-label" htmlFor={reasonId}>
-                          {mode === "reject" ? `Reason (the ${words.who} reads it)` : `Reason (optional, the ${words.who} reads it)`}
-                        </label>
-                        <textarea
-                          id={reasonId}
-                          className="w360-input"
-                          rows={3}
-                          maxLength={500}
-                          required={mode === "reject"}
-                          minLength={mode === "reject" ? 3 : undefined}
-                          value={reason}
-                          onChange={(e) => setReason(e.target.value)}
-                          autoFocus
-                        />
-                      </div>
-                      <div className={styles.row}>
-                        <button type="submit" className={mode === "reject" ? "w360-btn w360-btn-primary" : "w360-btn w360-btn-danger"} disabled={busy}>
-                          {mode === "reject" ? "Reject request" : "Revoke permission"}
-                        </button>
-                        <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setMode(null)}>
-                          Cancel
-                        </button>
-                      </div>
-                    </form>
+                            : "Permission revoked. New links stop now; earned commission is kept.",
+                        )
+                      }
+                    />
                   )}
                 </div>
               )}
@@ -417,5 +381,60 @@ function RequestReview({ requestId, onClose, onDecided }: { requestId: string; o
         }}
       </LoadGate>
     </section>
+  );
+}
+
+/** Reject or revoke, with the reason the partner reads, in a small popup. A
+ * refusal stays in the popup with the reason kept; a rejection needs one. */
+function ReasonPopup({
+  action,
+  label,
+  reasonLabel,
+  disabled,
+  onSubmit,
+  onDone,
+}: {
+  action: "reject" | "revoke";
+  label: string;
+  reasonLabel: string;
+  disabled: boolean;
+  onSubmit: (reason: string | undefined) => Promise<unknown>;
+  onDone: () => void;
+}) {
+  const reasonId = useId();
+  const [reason, setReason] = useState("");
+  const reject = action === "reject";
+  return (
+    <FormPopup
+      label={label}
+      buttonClassName={reject ? "w360-btn w360-btn-secondary" : "w360-btn w360-btn-danger"}
+      title={reject ? "Reject the request" : "Revoke the permission"}
+      size="sm"
+      submitLabel={reject ? "Reject request" : "Revoke permission"}
+      danger={!reject}
+      canSubmit={!reject || reason.trim().length >= 3}
+      disabled={disabled}
+      onOpen={() => setReason("")}
+      onSubmit={async () => {
+        await onSubmit(reason.trim() || undefined);
+      }}
+      onDone={onDone}
+    >
+      <div className={styles.field}>
+        <label className="w360-label" htmlFor={reasonId}>
+          {reasonLabel}
+        </label>
+        <textarea
+          id={reasonId}
+          className="w360-input"
+          rows={3}
+          maxLength={500}
+          required={reject}
+          minLength={reject ? 3 : undefined}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
+      </div>
+    </FormPopup>
   );
 }

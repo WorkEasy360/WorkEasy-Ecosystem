@@ -1,0 +1,341 @@
+/* Wallets & Credits (User Admin Panel, 2026-11-11). Built on the console tokens
+   (globals.css :root[data-console]); three cards that never merge into one. */
+
+.walletGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--w360-space-4);
+  align-items: stretch;
+}
+
+@media (max-width: 1100px) {
+  .walletGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .walletGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.walletCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w360-space-3);
+  min-width: 0;
+  padding: var(--w360-space-5);
+  background: var(--w360-surface);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-card);
+  box-shadow: var(--w360-shadow-card);
+}
+
+.walletHead {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+  min-width: 0;
+}
+
+.walletTitle {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  flex: 1;
+  min-width: 0;
+}
+
+.walletIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  flex: none;
+  color: var(--w360-success);
+  background: var(--w360-success-bg);
+}
+
+.walletIcon[data-kind="ai_credits"] {
+  color: #5b3fc4;
+  background: #efeafd;
+}
+
+.walletIcon[data-kind="consumption"] {
+  color: var(--w360-info);
+  background: var(--w360-info-bg);
+}
+
+.balance {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.purpose,
+.muted,
+.footnote {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: 0.875rem;
+}
+
+.footnote {
+  margin-top: var(--w360-space-2);
+}
+
+.walletActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  margin-top: auto;
+}
+
+.more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--w360-brand);
+  text-decoration: none;
+}
+
+.more:hover {
+  text-decoration: underline;
+}
+
+.recent {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--w360-space-2);
+}
+
+.recent li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--w360-space-3);
+  font-size: 0.875rem;
+}
+
+.recentText {
+  display: grid;
+  min-width: 0;
+}
+
+.amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.amount[data-sign="in"] {
+  color: var(--w360-success);
+}
+
+.amount[data-sign="out"] {
+  color: var(--w360-text);
+}
+
+.facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--w360-space-3);
+}
+
+.facts div {
+  min-width: 0;
+}
+
+.facts dt {
+  font-size: 0.75rem;
+  color: var(--w360-text-muted);
+}
+
+.facts dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.meters {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.meters th,
+.meters td {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--w360-border);
+  text-align: right;
+}
+
+.meters th:first-child,
+.meters thead th:first-child {
+  text-align: left;
+  font-weight: 600;
+}
+
+.meters thead th {
+  font-weight: 600;
+  color: var(--w360-text-muted);
+}
+
+.meters tr:last-child th,
+.meters tr:last-child td {
+  border-bottom: 0;
+}
+
+.dates {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  font-size: 0.875rem;
+}
+
+.dates input {
+  width: auto;
+  min-width: 9.5rem;
+}
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: var(--w360-space-3) var(--w360-space-4);
+  font-size: 0.875rem;
+  color: var(--w360-text-muted);
+}
+
+.mono {
+  font-family: var(--w360-font-mono, ui-monospace, monospace);
+  font-size: 0.8125rem;
+}
+
+.quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+}
+
+.packs {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--w360-space-2);
+}
+
+.pack {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "radio name price" "radio credits price";
+  align-items: center;
+  column-gap: var(--w360-space-3);
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.pack[data-chosen] {
+  border-color: var(--w360-brand);
+  background: var(--w360-brand-soft);
+}
+
+.pack input {
+  grid-area: radio;
+}
+
+.packName {
+  grid-area: name;
+  font-weight: 600;
+}
+
+.packCredits {
+  grid-area: credits;
+  font-size: 0.8125rem;
+  color: var(--w360-text-muted);
+}
+
+.packPrice {
+  grid-area: price;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Profile and preferences pages. */
+.fieldGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--w360-space-3);
+}
+
+@media (max-width: 640px) {
+  .fieldGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.prefList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.prefRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--w360-space-4);
+  padding: var(--w360-space-3) 0;
+  border-bottom: 1px solid var(--w360-border);
+}
+
+.prefRow:last-child {
+  border-bottom: 0;
+}
+
+.prefText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.prefText span {
+  color: var(--w360-text-muted);
+  font-size: 0.875rem;
+}
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.switch input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--w360-brand);
+}
+
+.preline {
+  white-space: pre-line;
+}

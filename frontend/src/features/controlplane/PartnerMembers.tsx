@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { ApiError } from "@/lib/api/client";
 import { adminApi, type PartnerDetail, type PartnerMemberRow } from "@/lib/api/controlPlane";
 import { partnerConsoleApi } from "@/lib/api/partnerConsole";
+import { dialog, FormPopup } from "./Modal";
 import { Section } from "./PartnerSection";
 import { Table, when } from "./ui";
 import { Segmented, SelectField, TextField } from "./widgets";
@@ -18,9 +19,10 @@ import ps from "./PartnerProfileTabs.module.css";
  * - **Invite** names a person (first and last name, used only when the address
  *   has no account yet) and says when the setup link goes out. There is no
  *   password field anywhere: a person chooses their own from the emailed link.
- * - **Change role** moves a person between Administrator and Viewer. The server
- *   refuses to take the last administrator off an active partner, and its
- *   refusal is shown as written.
+ *   It opens in a popup (2026-11-05, the owner: every form in a popup).
+ * - **Change role** moves a person between Administrator and Viewer, in a small
+ *   popup. The server refuses to take the last administrator off an active
+ *   partner, and its refusal is shown as written, inside the popup.
  * - **Send or resend the setup link** for someone who has not chosen a password.
  * - **Remove** ends this person's *partner* access at once. It does not delete
  *   their Workeasy360 account, and nothing they belong to elsewhere changes.
@@ -39,12 +41,46 @@ function MemberStatus({ member: m }: { member: PartnerMemberRow }) {
   if (m.invitation_deferred) {
     return <span className="w360-badge w360-badge-warning">Invitation not sent yet (sent when the partner is activated)</span>;
   }
-  if (m.invitation_sent_at) return <span className="w360-badge w360-badge-neutral">Invitation sent {when(m.invitation_sent_at)}</span>;
+  if (m.invitation_sent_at) return <InvitationState member={m} />;
   // Attached before invitations were tracked: no record of one being sent.
   return <span className="w360-badge w360-badge-neutral">Invitation pending</span>;
 }
 
-export function MembersSection({ partner, manage, act, busy }: { partner: PartnerDetail; manage: boolean; act: Act; busy: boolean }) {
+/** What happened to the setup email, from its delivery record, never assumed:
+ * "queued" until the mail worker has sent it, "sent" once the mail server took it
+ * (not proof it reached the inbox), "failed" when every attempt failed. A
+ * development server prints mail to its log instead of sending it, and says so. */
+function InvitationState({ member: m }: { member: PartnerMemberRow }) {
+  const d = m.invitation_delivery;
+  if (!d) return <span className="w360-badge w360-badge-neutral">Invitation queued {when(m.invitation_sent_at as string)}</span>;
+  const local = d.delivery_mode !== "smtp";
+  if (d.state === "sent") {
+    return local ? (
+      <span className="w360-badge w360-badge-warning">Invitation written to the server log (email is not configured here)</span>
+    ) : (
+      <span className="w360-badge w360-badge-neutral">Invitation emailed {when(d.sent_at ?? d.queued_at)}</span>
+    );
+  }
+  if (d.state === "failed") return <span className="w360-badge w360-badge-danger">Invitation email failed: resend it</span>;
+  if (d.state === "suppressed") return <span className="w360-badge w360-badge-danger">Invitation not sent: this address is blocked from email</span>;
+  if (d.state === "retrying") return <span className="w360-badge w360-badge-warning">Invitation email failed, retrying ({d.attempts} attempts)</span>;
+  return <span className="w360-badge w360-badge-neutral">Invitation queued {when(d.queued_at)}, not sent yet</span>;
+}
+
+export function MembersSection({
+  partner,
+  manage,
+  act,
+  busy,
+  onChanged,
+}: {
+  partner: PartnerDetail;
+  manage: boolean;
+  act: Act;
+  busy: boolean;
+  /** After a change made in a popup (invite, role): reload the partner. */
+  onChanged: () => void;
+}) {
   return (
     <Section title="Partner users">
       <p className={styles.muted}>
@@ -52,6 +88,14 @@ export function MembersSection({ partner, manage, act, busy }: { partner: Partne
         sent. The administrator set up through Add Partner signs in with the password typed there; it is never shown again, and “Send
         password reset link” lets them choose a new one. The contacts on the Contacts tab are not users.
       </p>
+      {manage &&
+        (partner.status === "terminated" ? (
+          <p className={styles.muted}>This partner is terminated, so it takes on no new users.</p>
+        ) : (
+          <div>
+            <InviteForm partner={partner} busy={busy} onChanged={onChanged} />
+          </div>
+        ))}
       <Table
         caption="Members"
         head={["Name", "Email", "Role", "Status", "Last activity", ...(manage ? ["Actions"] : [])]}
@@ -59,40 +103,49 @@ export function MembersSection({ partner, manage, act, busy }: { partner: Partne
         empty="No users yet."
       >
         {partner.members.map((m) => (
-          <MemberRow key={m.id} partnerId={partner.id} member={m} manage={manage} act={act} busy={busy} />
+          <MemberRow key={m.id} partnerId={partner.id} member={m} manage={manage} act={act} busy={busy} onChanged={onChanged} />
         ))}
       </Table>
-      {manage &&
-        (partner.status === "terminated" ? (
-          <p className={styles.muted}>This partner is terminated, so it takes on no new users.</p>
-        ) : (
-          <InviteForm partner={partner} act={act} busy={busy} />
-        ))}
     </Section>
   );
 }
 
 // --- one person -----------------------------------------------------------------------------
 
-type Panel = "role" | "remove";
-
-function MemberRow({ partnerId, member: m, manage, act, busy }: { partnerId: string; member: PartnerMemberRow; manage: boolean; act: Act; busy: boolean }) {
-  const [panel, setPanel] = useState<Panel | null>(null);
-  // Closing a confirmation without acting returns keyboard focus to the button
-  // that opened it; acting moves it to the announced outcome (useAction).
-  const restore = useRef<Panel | null>(null);
-  const triggers = useRef<Record<Panel, HTMLButtonElement | null>>({ role: null, remove: null });
+function MemberRow({
+  partnerId,
+  member: m,
+  manage,
+  act,
+  busy,
+  onChanged,
+}: {
+  partnerId: string;
+  member: PartnerMemberRow;
+  manage: boolean;
+  act: Act;
+  busy: boolean;
+  onChanged: () => void;
+}) {
+  const [removing, setRemoving] = useState(false);
+  const [role, setRole] = useState(m.role);
+  const roleId = useId();
+  // Closing the removal confirmation without acting returns keyboard focus to
+  // the button that opened it; acting moves it to the announced outcome (useAction).
+  // (The role popup puts focus back on its button itself.)
+  const restore = useRef(false);
+  const removeButton = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
-    if (panel === null && restore.current) {
-      triggers.current[restore.current]?.focus();
-      restore.current = null;
+    if (!removing && restore.current) {
+      removeButton.current?.focus();
+      restore.current = false;
     }
-  }, [panel]);
+  }, [removing]);
 
   const cancel = () => {
-    restore.current = panel;
-    setPanel(null);
+    restore.current = true;
+    setRemoving(false);
   };
 
   function resend() {
@@ -101,7 +154,9 @@ function MemberRow({ partnerId, member: m, manage, act, busy }: { partnerId: str
       if (!result.sent) {
         throw new ApiError(409, { detail: "No link was sent: this person has already chosen a password." });
       }
-    }, m.invitation_deferred ? "The setup link was sent now, instead of when the partner is activated." : "A new setup link was sent. The old one no longer works.");
+    }, m.invitation_deferred
+      ? "A setup link was queued for email now, instead of when the partner is activated."
+      : "A new setup link was queued for email. The old one no longer works.");
   }
 
   return (
@@ -115,43 +170,51 @@ function MemberRow({ partnerId, member: m, manage, act, busy }: { partnerId: str
       <td>{m.last_login_at ? when(m.last_login_at) : "Never signed in"}</td>
       {manage && (
         <td>
-          {panel === "role" ? (
-            <RolePanel
-              member={m}
-              busy={busy}
-              onCancel={cancel}
-              onConfirm={(role) => {
-                setPanel(null);
-                void act(() => partnerConsoleApi.changeMemberRole(partnerId, m.id, role), "Role changed. It takes effect on this person's next request.");
-              }}
-            />
-          ) : panel === "remove" ? (
+          {removing ? (
             <RemovePanel
               member={m}
               busy={busy}
               onCancel={cancel}
               onConfirm={() => {
-                setPanel(null);
+                setRemoving(false);
                 void act(
                   () => adminApi.removeMember(partnerId, m.id),
-                  "User removed. Their partner access ended immediately; their Workeasy360 account was not deleted.",
+                  "User removed. Their partner access ended immediately; their WorkEasy360 account was not deleted.",
                 );
               }}
             />
           ) : (
             <div className={ps.memberActions}>
-              <button
-                type="button"
-                ref={(el) => {
-                  triggers.current.role = el;
-                }}
-                className="w360-btn w360-btn-secondary"
+              <FormPopup
+                label={
+                  <>
+                    Change role <span className="w360-visually-hidden">for {m.email}</span>
+                  </>
+                }
+                buttonClassName="w360-btn w360-btn-secondary"
                 disabled={busy}
-                onClick={() => setPanel("role")}
+                title={`Change role for ${m.email}`}
+                intro="It takes effect on their next request. An active partner must always keep one administrator."
+                size="sm"
+                submitLabel="Confirm role change"
+                canSubmit={role !== m.role}
+                onOpen={() => setRole(m.role)}
+                onSubmit={async () => {
+                  await partnerConsoleApi.changeMemberRole(partnerId, m.id, role);
+                  return "Role changed. It takes effect on this person's next request.";
+                }}
+                onDone={onChanged}
               >
-                Change role{" "}
-                <span className="w360-visually-hidden">for {m.email}</span>
-              </button>
+                <div className={styles.field}>
+                  <label className="w360-label" htmlFor={roleId}>
+                    New role for {m.email}
+                  </label>
+                  <select id={roleId} className="w360-input" value={role} onChange={(e) => setRole(e.target.value)}>
+                    <option value="admin">Administrator</option>
+                    <option value="viewer">Viewer (read-only)</option>
+                  </select>
+                </div>
+              </FormPopup>
               {!m.password_set && (
                 <button type="button" className="w360-btn w360-btn-secondary" disabled={busy} onClick={() => void resend()}>
                   Resend setup link{" "}
@@ -176,12 +239,10 @@ function MemberRow({ partnerId, member: m, manage, act, busy }: { partnerId: str
               )}
               <button
                 type="button"
-                ref={(el) => {
-                  triggers.current.remove = el;
-                }}
+                ref={removeButton}
                 className="w360-btn w360-btn-secondary"
                 disabled={busy}
-                onClick={() => setPanel("remove")}
+                onClick={() => setRemoving(true)}
               >
                 Remove{" "}
                 <span className="w360-visually-hidden">user {m.email}</span>
@@ -194,34 +255,6 @@ function MemberRow({ partnerId, member: m, manage, act, busy }: { partnerId: str
   );
 }
 
-function RolePanel({ member, busy, onCancel, onConfirm }: { member: PartnerMemberRow; busy: boolean; onCancel: () => void; onConfirm: (role: string) => void }) {
-  const id = useId();
-  const [role, setRole] = useState(member.role);
-  return (
-    <div role="group" aria-labelledby={`${id}-title`} className={ps.panel}>
-      <p id={`${id}-title`}>
-        <strong>Change role for {member.email}</strong>
-      </p>
-      <label className="w360-label" htmlFor={`${id}-role`}>
-        New role for {member.email}
-      </label>
-      <select id={`${id}-role`} className="w360-input" autoFocus value={role} onChange={(e) => setRole(e.target.value)}>
-        <option value="admin">Administrator</option>
-        <option value="viewer">Viewer (read-only)</option>
-      </select>
-      <p className={styles.muted}>It takes effect on their next request. An active partner must always keep one administrator.</p>
-      <div className={styles.row}>
-        <button type="button" className="w360-btn w360-btn-primary" disabled={busy || role === member.role} onClick={() => onConfirm(role)}>
-          Confirm role change
-        </button>
-        <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function RemovePanel({ member, busy, onCancel, onConfirm }: { member: PartnerMemberRow; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
   const id = useId();
   return (
@@ -230,7 +263,7 @@ function RemovePanel({ member, busy, onCancel, onConfirm }: { member: PartnerMem
         <strong>Remove {member.email}?</strong>
       </p>
       <p id={`${id}-why`}>
-        This ends this person&apos;s partner access immediately. It does not delete their Workeasy360 account, and anything they belong
+        This ends this person&apos;s partner access immediately. It does not delete their WorkEasy360 account, and anything they belong
         to outside this partner is untouched.
       </p>
       <div className={styles.row}>
@@ -249,8 +282,7 @@ function RemovePanel({ member, busy, onCancel, onConfirm }: { member: PartnerMem
 
 type Timing = "now" | "on_activation";
 
-function InviteForm({ partner, act, busy }: { partner: PartnerDetail; act: Act; busy: boolean }) {
-  const titleId = useId();
+function InviteForm({ partner, busy, onChanged }: { partner: PartnerDetail; busy: boolean; onChanged: () => void }) {
   // Deferring only means something while the partner is a draft: the people
   // named then are emailed when it is first activated, and never otherwise.
   const draft = partner.status === "draft";
@@ -260,40 +292,35 @@ function InviteForm({ partner, act, busy }: { partner: PartnerDetail; act: Act; 
   const [role, setRole] = useState("admin");
   const [timing, setTiming] = useState<Timing>("now");
 
+  function reset() {
+    setEmail("");
+    setFirst("");
+    setLast("");
+    setRole("admin");
+    setTiming("now");
+  }
+
   return (
-    <form
-      className={ps.inviteForm}
-      aria-labelledby={titleId}
-      onSubmit={(e) => {
-        e.preventDefault();
+    <FormPopup
+      label="+ Invite a person"
+      title="Invite a person"
+      submitLabel="Invite"
+      disabled={busy}
+      canSubmit={!!email.trim()}
+      onOpen={reset}
+      onSubmit={async () => {
         const extra: { first_name?: string; last_name?: string; send_invitation?: Timing } = {};
         if (first.trim()) extra.first_name = first.trim();
         if (last.trim()) extra.last_name = last.trim();
         if (draft) extra.send_invitation = timing;
-        void act(
-          async () => {
-            await partnerConsoleApi.inviteAdministrator(partner.id, email.trim(), role, extra);
-            setEmail("");
-            setFirst("");
-            setLast("");
-          },
-          draft && timing === "on_activation"
-            ? "Added. The invitation will be emailed when this partner is activated."
-            : "Added. If this person has no password yet, a link to choose one was emailed.",
-        );
+        await partnerConsoleApi.inviteAdministrator(partner.id, email.trim(), role, extra);
+        return draft && timing === "on_activation"
+          ? "Added. The invitation will be emailed when this partner is activated."
+          : "Added. If this person has no password yet, a link to choose one was emailed.";
       }}
+      onDone={onChanged}
     >
-      <h4 id={titleId} className={styles.cardTitle}>
-        Invite a person
-      </h4>
       <TextField label="Email address" type="email" value={email} onChange={setEmail} maxLength={254} autoComplete="off" required showRequired />
-      <div className={ps.nameRow}>
-        <TextField label="First name (optional)" value={first} onChange={setFirst} maxLength={120} autoComplete="off" />
-        <TextField label="Last name (optional)" value={last} onChange={setLast} maxLength={120} autoComplete="off" />
-      </div>
-      <p className="w360-hint">
-        Names are used only if this address has no Workeasy360 account yet; an existing account is attached as it is and never renamed.
-      </p>
       <SelectField
         label="Role"
         value={role}
@@ -303,25 +330,29 @@ function InviteForm({ partner, act, busy }: { partner: PartnerDetail; act: Act; 
           { value: "viewer", label: "Viewer (read-only)" },
         ]}
       />
+      <TextField label="First name (optional)" value={first} onChange={setFirst} maxLength={120} autoComplete="off" />
+      <TextField label="Last name (optional)" value={last} onChange={setLast} maxLength={120} autoComplete="off" />
+      <p className={`w360-hint ${dialog.span}`}>
+        Names are used only if this address has no WorkEasy360 account yet; an existing account is attached as it is and never renamed.
+      </p>
       {draft ? (
-        <Segmented<Timing>
-          legend="Send the invitation"
-          options={[
-            { value: "now", label: "Now" },
-            { value: "on_activation", label: "When the partner is activated" },
-          ]}
-          value={timing}
-          onChange={setTiming}
-          hint="The email contains a link to choose a password. Nobody is sent a password."
-        />
+        <div className={dialog.span}>
+          <Segmented<Timing>
+            legend="Send the invitation"
+            options={[
+              { value: "now", label: "Now" },
+              { value: "on_activation", label: "When the partner is activated" },
+            ]}
+            value={timing}
+            onChange={setTiming}
+            hint="The email contains a link to choose a password. Nobody is sent a password."
+          />
+        </div>
       ) : (
-        <p className={styles.muted}>A link to choose a password is emailed now, unless the person already has one. Nobody is sent a password.</p>
+        <p className={`${styles.muted} ${dialog.span}`}>
+          A link to choose a password is emailed now, unless the person already has one. Nobody is sent a password.
+        </p>
       )}
-      <div>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !email.trim()}>
-          Invite
-        </button>
-      </div>
-    </form>
+    </FormPopup>
   );
 }

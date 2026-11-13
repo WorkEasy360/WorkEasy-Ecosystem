@@ -116,6 +116,182 @@ def billing_account_or_none(organization_id: UUID) -> Any:
     return BillingAccount.objects.filter(organization_id=organization_id).first()
 
 
+# --- the billing profile (User Admin Panel, 2026-11-11) ------------------------------
+
+PROFILE_MANAGE = "platform.billing.manage"
+
+#: Field -> (most characters, what the field is called in an error).
+PROFILE_FIELDS: dict[str, tuple[int, str]] = {
+    "legal_name": (200, "Business name"),
+    "address_line1": (200, "Address line 1"),
+    "address_line2": (200, "Address line 2"),
+    "city": (100, "City"),
+    "state": (100, "State or region"),
+    "postal_code": (20, "Postal code"),
+    "country": (2, "Country"),
+    "tax_reference": (64, "Tax ID"),
+    "billing_email": (254, "Billing email"),
+}
+
+
+def _clean_profile_value(field: str, raw: Any) -> str:
+    if raw is None:
+        raw = ""
+    if not isinstance(raw, str):
+        raise CatalogValidationError(
+            f"{PROFILE_FIELDS[field][1]} must be text.", field=field
+        )
+    value = " ".join(raw.split())
+    most, label = PROFILE_FIELDS[field]
+    if len(value) > most:
+        raise CatalogValidationError(
+            f"{label} can be at most {most} characters.", field=field
+        )
+    if any(ord(ch) < 32 for ch in value):
+        raise CatalogValidationError(
+            f"{label} contains a control character.", field=field
+        )
+    if field == "country":
+        value = value.upper()
+        if value and not (len(value) == 2 and value.isascii() and value.isalpha()):
+            raise CatalogValidationError(
+                "Choose a country (a two-letter code such as IN).", field=field
+            )
+    elif field == "postal_code":
+        if value and not all(ch.isalnum() or ch in " -" for ch in value):
+            raise CatalogValidationError(
+                "A postal code has letters, digits, spaces and dashes only.", field=field
+            )
+    elif field == "tax_reference":
+        value = value.upper()
+        if value and not all(ch.isalnum() or ch in " -/." for ch in value):
+            raise CatalogValidationError(
+                "A tax ID has letters, digits and - / . only.", field=field
+            )
+    elif field == "billing_email" and value:
+        from django.core.exceptions import ValidationError
+        from django.core.validators import validate_email
+
+        try:
+            validate_email(value)
+        except ValidationError as exc:
+            raise CatalogValidationError(
+                "Enter a valid billing email.", field=field
+            ) from exc
+        value = value.lower()
+    return value
+
+
+def update_billing_profile(ctx: TenantContext, changes: dict[str, Any]) -> Any:
+    """Change who the organization's invoices are made out to, and where. Only the
+    fields named in ``changes`` (the profile fields, nothing else: never the currency,
+    the collection mode or the region). Audited by field name - the values are the
+    customer's own business details and stay on the account."""
+    from workeasy360.commercial.billing.models import BillingAccount
+
+    authz.require(ctx, PROFILE_MANAGE)
+    unknown = sorted(set(changes) - set(PROFILE_FIELDS))
+    if unknown:
+        raise CatalogValidationError(
+            f"These cannot be changed here: {', '.join(unknown)}.", field=unknown[0]
+        )
+    cleaned = {field: _clean_profile_value(field, raw) for field, raw in changes.items()}
+    with transaction.atomic():
+        account = (
+            BillingAccount.objects.select_for_update()
+            .filter(organization_id=ctx.organization_id)
+            .first()
+        )
+        if account is None:
+            raise CatalogValidationError(
+                "This organization has no billing account yet. Open one first.",
+                field="billing_account",
+            )
+        changed = [f for f, v in cleaned.items() if getattr(account, f) != v]
+        if not changed:
+            return account
+        for field in changed:
+            setattr(account, field, cleaned[field])
+        account.save(update_fields=[*changed, "updated_at"])
+        audit.record(
+            ctx,
+            "commercial.billing_account.profile_changed",
+            resource_type="billing.account",
+            resource_id=account.id,
+            changes={"fields": sorted(changed)},
+        )
+    return account
+
+
+def billing_profile_json(account: Any) -> dict[str, Any]:
+    """The account as the customer's billing pages show it."""
+    return {
+        "id": str(account.id),
+        "currency": account.currency,
+        "collection_mode": account.collection_mode,
+        "billing_email": account.billing_email,
+        "billing_region": account.billing_region,
+        "tax_reference": account.tax_reference,
+        "legal_name": account.legal_name,
+        "address_line1": account.address_line1,
+        "address_line2": account.address_line2,
+        "city": account.city,
+        "state": account.state,
+        "postal_code": account.postal_code,
+        "country": account.country,
+        "updated_at": account.updated_at.isoformat() if account.updated_at else None,
+    }
+
+
+def adopt_partner_wallet(ctx: TenantContext) -> Any:
+    """ADR-063: the customer in ``ctx`` (a partner acting on it) is from now on
+    paid for by that partner from its Platform Wallet, and never invoiced.
+
+    Only from automatic collection, the default a reseller's new customer gets;
+    an account staff set to be invoiced or billed through its partner offline
+    keeps those terms (changing them is ``set_billing_terms``). The caller has
+    checked the customer holds no subscription it pays for itself. Idempotent."""
+    from workeasy360.commercial.billing.models import BillingAccount
+
+    authz.require(ctx, MANAGE)
+    if ctx.principal is not PrincipalKind.PARTNER:
+        raise CatalogValidationError(
+            "Only the customer's partner pays from its wallet.", field="collection_mode"
+        )
+    with transaction.atomic():
+        account = (
+            BillingAccount.objects.select_for_update()
+            .filter(organization_id=ctx.organization_id)
+            .first()
+        )
+        if account is None:
+            raise CatalogValidationError(
+                "This customer has no billing account yet.", field="billing_account"
+            )
+        if account.collection_mode == CollectionMode.PARTNER_WALLET.value:
+            return account
+        if account.collection_mode != CollectionMode.AUTOMATIC.value:
+            raise CatalogValidationError(
+                "Workeasy360 bills this customer on agreed terms. Ask support to "
+                "move it to your Platform Wallet.",
+                field="collection_mode",
+            )
+        account.collection_mode = CollectionMode.PARTNER_WALLET.value
+        account.save(update_fields=["collection_mode", "updated_at"])
+        audit.record(
+            ctx,
+            "commercial.billing_account.terms_changed",
+            resource_type="billing.account",
+            resource_id=account.id,
+            changes={
+                "before": {"collection_mode": CollectionMode.AUTOMATIC.value},
+                "after": {"collection_mode": account.collection_mode},
+            },
+            reason="The partner pays for this customer from its Platform Wallet.",
+        )
+    return account
+
+
 STAFF_TERMS = "platform.staff_payment.manage"
 
 

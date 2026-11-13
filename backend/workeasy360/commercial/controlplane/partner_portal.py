@@ -413,7 +413,45 @@ def dashboard(
         ).items
     if SUBPARTNER_VIEW in permissions:
         out["sub_partners"] = sub_partner_counts(partner_id)
+    _onboarding_sections(out, partner_id, row, permissions, start, end)
     return out
+
+
+def _onboarding_sections(
+    out: dict[str, Any],
+    partner_id: UUID,
+    row: Any,
+    permissions: frozenset[str],
+    start: datetime,
+    end: datetime,
+) -> None:
+    """ADR-063, the specification's 4.1: the KYC and account states (separate),
+    the permissions the partner holds, referral performance with renewals, and
+    the Platform Wallet beside - never merged with - the earnings."""
+    from workeasy360.commercial.partners import capabilities, kyc
+    from workeasy360.commercial.wallets import api as wallets
+
+    held = partner_selectors.active_capabilities(partner_id)
+    out["onboarding"] = {
+        **kyc.onboarding_state(partner_id, status=row.status),
+        "permissions": [item["key"] for item in capabilities.experience_labels(held)],
+    }
+    out["referrals"] = None
+    if REFERRAL_VIEW in permissions:
+        activity = commission_selectors.referral_activity(partner_id, start, end)[
+            "totals"
+        ]
+        out["referrals"] = {
+            "clicks": activity["clicks"],
+            "registrations": activity["registrations"],
+            "conversions": activity["conversions"],
+            "renewals": commission_selectors.renewal_count(partner_id, start, end),
+        }
+    out["platform_wallet"] = (
+        wallets.partner_wallets(partner_id)
+        if "platform.partner_wallet.view" in permissions
+        else None
+    )
 
 
 def _sales_totals(series: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1079,11 +1117,11 @@ def authentication(ctx: TenantContext) -> dict[str, Any]:
     users = panel_selectors.active_member_user_ids(partner_id)
     return {
         **AUTHENTICATION,
-        "sign_in_url": portal_links.auth_url(),
+        "sign_in_url": portal_links.account_url(),
         "brand_domains": domains,
         "team": {"members": len(users)},
         "controlled_by_workeasy360": [
-            "Where people sign in (the central sign-in page)",
+            "Where people sign in (each portal's own sign-in page)",
             "How long a session lasts",
             "The issuer and signing keys other products trust",
             "Which Workeasy360 staff may do what",

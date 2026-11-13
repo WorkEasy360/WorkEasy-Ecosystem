@@ -249,6 +249,36 @@ def attention(ctx: TenantContext) -> dict[str, Any]:
     if authz.check(ctx, COMMISSION_VIEW).allowed:
         payouts = commission_selectors.pending_payout_summary()
         items.append({"key": "payouts", "count": sum(row["count"] for row in payouts)})
+    if authz.check(ctx, "platform.staff_kyc.view").allowed:
+        from workeasy360.commercial.partners.kyc import (
+            awaiting_activation_count,
+            awaiting_review_count,
+        )
+
+        items.append({"key": "kyc_reviews", "count": awaiting_review_count()})
+        # Approved, but approval does not activate: an Admin still has to.
+        items.append(
+            {"key": "kyc_awaiting_activation", "count": awaiting_activation_count()}
+        )
+    if authz.check(ctx, PAYMENT_VIEW).allowed:
+        from workeasy360.commercial.payments import admin_reads as payment_reads
+
+        items.append(
+            {
+                "key": "failed_payments",
+                "count": payment_reads.failed_payment_count()
+                + payment_reads.stuck_activation_count()
+                + payment_reads.refunds_waiting_count(),
+            }
+        )
+    if authz.check(ctx, "platform.staff_wallet.view").allowed:
+        from workeasy360.commercial.wallets.selectors import low_balance_count
+
+        items.append({"key": "low_balance", "count": low_balance_count()})
+    if authz.check(ctx, "platform.staff_support.view").allowed:
+        from workeasy360.commercial.partners.support_desk import open_ticket_count
+
+        items.append({"key": "support_tickets", "count": open_ticket_count()})
     return {"items": [item for item in items if item["count"] > 0]}
 
 
@@ -257,6 +287,9 @@ def control_plane_audit(
     ctx: TenantContext,
     *,
     action_prefix: str | None = None,
+    actor_user_id: Any = None,
+    start: Any = None,
+    end: Any = None,
     limit: int = 25,
     cursor: str | None = None,
 ) -> Page:
@@ -264,5 +297,10 @@ def control_plane_audit(
     catalog and staff-permission actions."""
     authz.require(ctx, AUDIT_VIEW)
     return audit_selectors.audit_page(
-        action_prefix=action_prefix, limit=limit, cursor=cursor
+        action_prefix=action_prefix,
+        actor_user_id=actor_user_id,
+        start=start,
+        end=end,
+        limit=limit,
+        cursor=cursor,
     )

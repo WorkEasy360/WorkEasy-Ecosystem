@@ -32,7 +32,12 @@ def _hash(token: str) -> str:
 
 
 def issue(
-    user_id: Any, purpose: str, *, ttl: timedelta, organization_name: str = ""
+    user_id: Any,
+    purpose: str,
+    *,
+    ttl: timedelta,
+    organization_name: str = "",
+    new_email: str = "",
 ) -> str:
     """Mint a link for ``purpose`` and retire the account's earlier unused
     ones of the same purpose - only the latest emailed link works. Returns the
@@ -50,6 +55,7 @@ def issue(
             purpose=purpose,
             token_hash=_hash(token),
             organization_name=organization_name[:150],
+            new_email=new_email[:254],
             created_at=now,
             expires_at=now + ttl,
         )

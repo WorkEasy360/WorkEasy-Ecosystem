@@ -591,12 +591,12 @@ def test_every_commercial_mutation_is_audited():
                 # core (ADR-045 split the staff-only partner commands so the
                 # partner's own team and sub-partner commands share the core)
                 # is audited when the core is.
+                wanted = f"_{node.name}"
                 core = next(
                     (
                         other
                         for other in tree.body
-                        if isinstance(other, ast.FunctionDef)
-                        and other.name == f"_{node.name}"
+                        if isinstance(other, ast.FunctionDef) and other.name == wanted
                     ),
                     None,
                 )

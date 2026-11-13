@@ -103,10 +103,20 @@ function portal(capabilities: string[], status = "active", role = "admin"): Repl
 }
 
 /** Every page in the menu, each collapsible section opened first. */
+/** Every page in the menu: the sections are an accordion (one open at a
+ * time), so each is opened in turn and its pages collected. */
 function navLabels(): string[] {
   const nav = screen.getByRole("navigation");
-  for (const b of within(nav).queryAllByRole("button")) if (b.getAttribute("aria-expanded") === "false") fireEvent.click(b);
-  return within(nav).queryAllByRole("link").map((a) => a.textContent ?? "");
+  const seen: string[] = [];
+  const collect = () => {
+    for (const a of within(nav).queryAllByRole("link")) if (!seen.includes(a.textContent ?? "")) seen.push(a.textContent ?? "");
+  };
+  collect();
+  for (const b of within(nav).queryAllByRole("button").filter((b) => b.hasAttribute("aria-expanded"))) {
+    if (b.getAttribute("aria-expanded") === "false") fireEvent.click(b);
+    collect();
+  }
+  return seen;
 }
 
 beforeEach(() => {
@@ -114,7 +124,7 @@ beforeEach(() => {
   pathname = "/admin";
 });
 
-describe("the Super Admin shell", () => {
+describe("the Admin shell", () => {
   it("shows only the navigation the staff member's permissions allow", async () => {
     mockApi({
       "GET /api/v1/auth/session": [SIGNED_IN],
@@ -128,7 +138,7 @@ describe("the Super Admin shell", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(navLabels()).toEqual(["Dashboard", "Subscriptions", "Entitlements", "Audit"]);
+    expect(navLabels()).toEqual(["Dashboard", "Customers", "Billing & Subscriptions", "Settings"]);
   });
 
   it("says plainly that the account has no administrator access when the backend refuses, and offers the User way in", async () => {
@@ -161,7 +171,11 @@ describe("the Super Admin shell", () => {
       "GET /api/v1/admin/session": [{ status: 403, body: { code: "permission_denied" } }],
       "POST /api/v1/auth/logout": [{ status: 200, body: { ok: true } }],
     });
-    const replace = vi.spyOn(nav.router, "replace");
+    // ADR-066: leaving an account is a full page load (nothing of it stays in
+    // memory or in Back) after its browser state is forgotten.
+    const replace = vi.fn();
+    vi.stubGlobal("location", { ...window.location, replace });
+    sessionStorage.setItem("w360.admin.partners.list", "[]");
     render(
       <AdminShell>
         <h1>Secret</h1>
@@ -172,7 +186,8 @@ describe("the Super Admin shell", () => {
     await waitFor(() =>
       expect(replace).toHaveBeenCalledWith(`/login?mode=admin&next=${encodeURIComponent("/admin/partners/new")}`),
     );
-    replace.mockRestore();
+    expect(sessionStorage.getItem("w360.admin.partners.list")).toBeNull();
+    vi.unstubAllGlobals();
     pathname = "/admin";
   });
 
@@ -298,7 +313,7 @@ describe("Super Admin screens", () => {
     await expectNoViolations(container);
   });
 
-  it("the directory searches on submit, not on every keystroke", async () => {
+  it("the directory searches as you type, once the typing settles - not on every keystroke", async () => {
     const calls = mockApi({
       "GET /api/v1/admin/customers": [{ status: 200, body: { results: [], next_cursor: null, has_more: false } }],
     });
@@ -312,8 +327,8 @@ describe("Super Admin screens", () => {
     fireEvent.change(screen.getByLabelText("Search by name or slug"), { target: { value: "acm" } });
     fireEvent.change(screen.getByLabelText("Search by name or slug"), { target: { value: "acme" } });
     expect(calls.length).toBe(before);
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() => expect(calls.length).toBe(before + 1));
+    expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
   });
 
   it("preparing a payout sends only a partner and a date - never an amount", async () => {
@@ -329,14 +344,20 @@ describe("Super Admin screens", () => {
     await screen.findByText("No payouts.");
     // The partner is the page's own: there is no partner field to type into.
     expect(screen.queryByLabelText(/Partner id/i)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Prepare payout" })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Include everything cleared by"), { target: { value: "2026-06-30" } });
-    fireEvent.click(screen.getByRole("button", { name: "Prepare payout" }));
+    // Preparing opens a popup (2026-11-05).
+    fireEvent.click(screen.getByRole("button", { name: "Prepare a payout" }));
+    const popup = screen.getByRole("dialog", { name: "Prepare a payout for this partner" });
+    expect(within(popup).queryByLabelText(/Partner id/i)).not.toBeInTheDocument();
+    expect(within(popup).getByRole("button", { name: "Prepare payout" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Include everything cleared by"), { target: { value: "2026-06-30" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Prepare payout" }));
     await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/admin/payouts")).toBe(true));
     const post = calls.find((c) => c.key === "POST /api/v1/admin/payouts")!;
     expect(Object.keys(post.body as object).sort()).toEqual(["partner_id", "period_end"]);
     expect(post.body).toEqual({ partner_id: PARTNER, period_end: "2026-06-30" });
     expect(post.headers["idempotency-key"]).toBeTruthy();
+    expect(await screen.findByText("Draft payout prepared from cleared commission.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("approval is offered only to someone who may approve, and never to prepare-only staff", async () => {
@@ -395,11 +416,45 @@ describe("Super Admin screens", () => {
     expect(screen.queryByLabelText(/Reason for/)).not.toBeInTheDocument();
     expect(await screen.findByRole("status")).toHaveTextContent(/Payout approved/);
     expect(calls.find((c) => c.key === "POST /api/v1/admin/payouts/p1/approve")!.body).toMatchObject({
-      reason: "Approve - Super Admin console",
+      reason: "Approve - Admin console",
     });
   });
 
-  it("a destructive action asks once to confirm, then puts keyboard focus on the outcome", async () => {
+  it("records an approved payout as paid from a popup, with the transfer reference only", async () => {
+    const approved = {
+      id: "p1",
+      status: "approved",
+      currency: "GBP",
+      period_end: "2026-06-30",
+      gross_minor: 1000,
+      adjustments_minor: 0,
+      payable_minor: 1000,
+      line_count: 1,
+      version: 2,
+    };
+    const calls = mockApi({
+      "GET /api/v1/admin/payouts": [{ status: 200, body: { results: [approved], next_cursor: null, has_more: false } }],
+      "POST /api/v1/admin/payouts/p1/paid": [{ status: 200, body: { ...approved, status: "paid", version: 3 } }],
+    });
+    render(
+      <AdminContextForTest permissions={["platform.staff_payout.manage"]}>
+        <PayoutsFor />
+      </AdminContextForTest>,
+    );
+    expect(screen.queryByLabelText(/Transfer reference/)).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Record the payout for 2026-06-30 as paid" }));
+    const popup = screen.getByRole("dialog", { name: "Record a payout as paid" });
+    const record = within(popup).getByRole("button", { name: "Record as paid" });
+    fireEvent.change(within(popup).getByLabelText(/Transfer reference/), { target: { value: "AB" } });
+    expect(record).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText(/Transfer reference/), { target: { value: " BACS-2026-06 " } });
+    fireEvent.click(record);
+    expect(await screen.findByText("Recorded as paid.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.find((c) => c.key === "POST /api/v1/admin/payouts/p1/paid")!.body).toEqual({ expected_version: 2, reference: "BACS-2026-06" });
+  });
+
+  it("a destructive action asks once to confirm in a dialog, then gives focus back to its button", async () => {
     function Harness() {
       const { act, feedback } = useAction();
       return (
@@ -410,13 +465,14 @@ describe("Super Admin screens", () => {
       );
     }
     render(<Harness />);
+    screen.getByRole("button", { name: "Suspend" }).focus();
     fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
     const confirm = within(screen.getByRole("group", { name: "Confirm Suspend" })).getByRole("button", { name: "Confirm suspend" });
     expect(screen.queryByLabelText(/Reason for/)).not.toBeInTheDocument();
     fireEvent.click(confirm);
     const status = await screen.findByRole("status");
     expect(status).toHaveTextContent("Suspended.");
-    await waitFor(() => expect(status).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Suspend" })).toHaveFocus());
   });
 
   it("puts keyboard focus nowhere new when the button that started the action is still there", async () => {
@@ -470,7 +526,7 @@ describe("the partner shell", () => {
   it("a staff guest view says it is read-only on every page and offers the way out", async () => {
     pathname = `/partner/${PARTNER}`;
     const assign = vi.fn();
-    vi.stubGlobal("location", { ...window.location, assign });
+    vi.stubGlobal("location", { ...window.location, replace: assign });
     const reply = portal(["customer.provision"], "active", "viewer");
     const body = reply.body as { partners: Record<string, unknown>[] };
     body.partners[0].guest = { partner_id: PARTNER, reason: "Support ticket 42", expires_at: "2026-03-01T10:30:00Z" };
@@ -485,10 +541,13 @@ describe("the partner shell", () => {
       </PartnerShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    const banner = screen.getByText(/Viewing Partner Portal as Acme Partners\./);
-    expect(banner).toHaveTextContent("you cannot change anything here.");
+    const banner = screen.getByRole("status", { name: "Guest Session" });
+    expect(banner).toHaveTextContent("Guest Session – Viewing Partner: Acme Partners");
+    expect(banner).toHaveTextContent("Read only");
+    expect(banner).toHaveTextContent("Nothing can be changed here, and every page you open is recorded.");
     await expectNoViolations(container);
-    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Session" }));
+    fireEvent.click(within(banner).getByRole("button", { name: "Return to Super Admin" }));
+    // No way back named: the partner's own page in the Admin.
     await waitFor(() => expect(assign).toHaveBeenCalledWith(`/admin/partners/${PARTNER}`));
     expect(calls.some((c) => c.key === "POST /api/v1/partner/guest-view/end")).toBe(true);
     vi.unstubAllGlobals();
@@ -587,15 +646,20 @@ describe("partner screens", () => {
         <PartnerCustomers />
       </PartnerShell>,
     );
+    // The form is a popup (2026-11-05): a failure keeps it open with what was
+    // typed, a success closes it.
     const submit = async () => {
-      fireEvent.change(await screen.findByLabelText("Organization name"), { target: { value: "Globex" } });
-      fireEvent.change(screen.getByLabelText(/Owner.s email/), { target: { value: "o@globex.test" } });
-      fireEvent.click(screen.getByRole("button", { name: "Create customer" }));
+      if (!screen.queryByRole("dialog")) fireEvent.click(await screen.findByRole("button", { name: "+ Add a customer" }));
+      const popup = screen.getByRole("dialog", { name: "Add a customer" });
+      fireEvent.change(within(popup).getByLabelText("Organization name"), { target: { value: "Globex" } });
+      fireEvent.change(within(popup).getByLabelText(/Owner.s email/), { target: { value: "o@globex.test" } });
+      fireEvent.click(within(popup).getByRole("button", { name: "Create customer" }));
     };
     await submit();
-    await screen.findByText(/Something went wrong/);
+    await within(screen.getByRole("dialog")).findByText(/Something went wrong/);
     await submit();
     await screen.findByText(/Customer created/);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await submit();
     await waitFor(() => expect(calls.filter((c) => c.key.startsWith("POST") && c.key.endsWith("/customers")).length).toBe(3));
     const keys = calls.filter((c) => c.key.startsWith("POST") && c.key.endsWith("/customers")).map((c) => c.headers["idempotency-key"]);
@@ -617,6 +681,7 @@ describe("partner screens", () => {
     );
     await screen.findByText("No customers yet.");
     expect(screen.queryByLabelText("Organization name")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Add a customer" })).not.toBeInTheDocument();
   });
 
   it("shows an ended relationship as history with nothing to act on", async () => {
@@ -658,17 +723,21 @@ describe("partner screens", () => {
         <PartnerBranding />
       </PartnerShell>,
     );
-    fireEvent.change(await screen.findByLabelText("Brand name"), { target: { value: "Acme" } });
-    fireEvent.change(screen.getByLabelText(/Accent colour/), { target: { value: "red;background:url(//evil)" } });
-    expect(screen.getByRole("button", { name: "Save branding" })).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent(/six-digit hex/);
+    // The page shows the saved brand; the fields open in a popup (2026-11-05).
+    fireEvent.click(await screen.findByRole("button", { name: "Edit branding" }));
+    const popup = screen.getByRole("dialog", { name: "Edit branding" });
+    fireEvent.change(within(popup).getByLabelText("Brand name"), { target: { value: "Acme" } });
+    fireEvent.change(within(popup).getByLabelText(/Accent colour/), { target: { value: "red;background:url(//evil)" } });
+    expect(within(popup).getByRole("button", { name: "Save branding" })).toBeDisabled();
+    expect(within(popup).getByRole("alert")).toHaveTextContent(/six-digit hex/);
     // What the person typed stays in the input; nothing reaches a style or the page.
-    const preview = container.querySelector("section[aria-labelledby=preview-h]") as HTMLElement;
+    const preview = popup.querySelector("section[aria-labelledby]") as HTMLElement;
     expect(preview.style.getPropertyValue("--w360-brand")).toBe("");
-    expect(container.querySelectorAll("[style*=evil]")).toHaveLength(0);
-    fireEvent.change(screen.getByLabelText(/Accent colour/), { target: { value: "#1a56db" } });
-    expect(screen.getByRole("button", { name: "Save branding" })).toBeEnabled();
+    expect(document.querySelectorAll("[style*=evil]")).toHaveLength(0);
+    fireEvent.change(within(popup).getByLabelText(/Accent colour/), { target: { value: "#1a56db" } });
+    expect(within(popup).getByRole("button", { name: "Save branding" })).toBeEnabled();
     await expectNoViolations(container);
+    await expectNoViolations(popup);
   });
 
   it("branding: saving without choosing a new logo sends the current one back (a save replaces the brand)", async () => {
@@ -699,9 +768,15 @@ describe("partner screens", () => {
         <PartnerBranding />
       </PartnerShell>,
     );
-    fireEvent.change(await screen.findByLabelText("Brand name"), { target: { value: "Acme Two" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save branding" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit branding" }));
+    const popup = screen.getByRole("dialog", { name: "Edit branding" });
+    // The popup starts from what is saved.
+    expect(within(popup).getByLabelText("Brand name")).toHaveValue("Acme");
+    fireEvent.change(within(popup).getByLabelText("Brand name"), { target: { value: "Acme Two" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save branding" }));
     await waitFor(() => expect(calls.some((c) => c.key.startsWith("PUT"))).toBe(true));
+    expect(await screen.findByText("Branding saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     const put = calls.find((c) => c.key.startsWith("PUT"))!;
     expect(put.body).toMatchObject({
       brand_name: "Acme Two",
@@ -722,10 +797,12 @@ describe("partner screens", () => {
         <PartnerBranding />
       </PartnerShell>,
     );
-    const input = await screen.findByLabelText(/Logo/);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit branding" }));
+    const popup = screen.getByRole("dialog", { name: "Edit branding" });
+    const input = within(popup).getByLabelText(/Logo/);
     const svg = new File(["<svg/>"], "logo.svg", { type: "image/svg+xml" });
     fireEvent.change(input, { target: { files: [svg] } });
-    expect(await screen.findByRole("alert")).toHaveTextContent(/PNG or JPEG/);
+    expect(await within(popup).findByRole("alert")).toHaveTextContent(/PNG or JPEG/);
     expect(calls.some((c) => c.key.includes("logo"))).toBe(false);
   });
 
@@ -761,6 +838,31 @@ describe("partner screens", () => {
     expect(screen.getByRole("button", { name: "Check DNS" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Activate" })).not.toBeInTheDocument();
     await expectNoViolations(container);
+  });
+
+  it("domains: a hostname is requested from a popup, lower-cased, and the popup closes", async () => {
+    pathname = `/partner/${PARTNER}/domains`;
+    const calls = mockApi({
+      "GET /api/v1/auth/session": [SIGNED_IN],
+      "GET /api/v1/partner/portal": [portal(["domain.manage"])],
+      [`GET /api/v1/partner/${PARTNER}/domains`]: [{ status: 200, body: { results: [] } }],
+      [`POST /api/v1/partner/${PARTNER}/domains`]: [{ status: 201, body: {} }],
+    });
+    render(
+      <PartnerShell partnerId={PARTNER}>
+        <PartnerDomains />
+      </PartnerShell>,
+    );
+    await screen.findByText("No domains yet.");
+    expect(screen.queryByLabelText(/^Hostname/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "+ Add a domain" }));
+    const popup = screen.getByRole("dialog", { name: "Add a domain" });
+    expect(within(popup).getByRole("button", { name: "Request domain" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText(/^Hostname/), { target: { value: " App.Acme.Test " } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Request domain" }));
+    expect(await screen.findByText(/Domain requested/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.find((c) => c.key === `POST /api/v1/partner/${PARTNER}/domains`)!.body).toEqual({ hostname: "app.acme.test" });
   });
 });
 
@@ -898,10 +1000,13 @@ describe("hostile text is rendered as text (XSS)", () => {
         <PartnerBranding />
       </PartnerShell>,
     );
-    fireEvent.change(await screen.findByLabelText("Brand name"), { target: { value: EVIL } });
+    fireEvent.click(await screen.findByRole("button", { name: "Edit branding" }));
+    const popup = screen.getByRole("dialog", { name: "Edit branding" });
+    fireEvent.change(within(popup).getByLabelText("Brand name"), { target: { value: EVIL } });
     expect(container.querySelector("img:not([data-w360-logo])")).toBeNull(); // the shell's own logo aside
-    expect(container.querySelector("script")).toBeNull();
-    expect(container.querySelector("strong")?.textContent).toBe(EVIL);
+    expect(popup.querySelector("img")).toBeNull();
+    expect(document.querySelector("script")).toBeNull();
+    expect(popup.querySelector("strong")?.textContent).toBe(EVIL);
   });
 });
 

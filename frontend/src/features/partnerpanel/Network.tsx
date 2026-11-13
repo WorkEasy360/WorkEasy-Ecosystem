@@ -7,7 +7,9 @@ import { partnerApi } from "@/lib/api/controlPlane";
 import { panelApi, type MemberRow, type SubPartnerRow } from "@/lib/api/partnerPanel";
 import { PartnerCustomers, PartnerPayouts } from "@/features/controlplane/PartnerScreens";
 import { ReferralTrailPanel } from "./AffiliateProducts";
+import { dialog, FormDialog, FormPopup } from "@/features/controlplane/Modal";
 import { NotAvailable, PageHeader, SubNav, UsersNav, usePanel } from "./PanelKit";
+import { useFieldChecks, useNote } from "./workspaceKit";
 import styles from "./PartnerPanel.module.css";
 
 // --- users: the customers a partner serves -------------------------------------------
@@ -30,6 +32,7 @@ export function Agency() {
   const { id, can, active } = usePanel();
   const paged = usePaged((cursor) => panelApi.subPartners(id, cursor), [id]);
   const { act, busy, feedback } = useAction(paged.reload);
+  const saved = useNote();
   return (
     <div className={styles.page}>
       <PageHeader
@@ -37,6 +40,7 @@ export function Agency() {
         lead="The agencies you have set up under your own account. Each signs in on its own, sees only its own customers, and can use only what you give it."
       />
       {feedback}
+      {saved.node}
       {paged.state === "loading" && <p aria-live="polite">Loading agencies…</p>}
       {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to agencies.</p>}
       {paged.state === "error" && <p role="alert">Couldn&apos;t load agencies.</p>}
@@ -49,7 +53,7 @@ export function Agency() {
             empty="You have no agencies yet."
           >
             {paged.rows.map((p) => (
-              <SubPartnerRowView key={p.id} row={p} manage={can("subpartner.manage") && active} act={act} busy={busy} onChanged={paged.reload} partnerId={id} />
+              <SubPartnerRowView key={p.id} row={p} manage={can("subpartner.manage") && active} act={act} busy={busy} onChanged={paged.reload} onSaved={saved.show} partnerId={id} />
             ))}
           </Table>
           <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
@@ -67,6 +71,7 @@ function SubPartnerRowView({
   busy,
   partnerId,
   onChanged,
+  onSaved,
 }: {
   row: SubPartnerRow;
   manage: boolean;
@@ -74,142 +79,141 @@ function SubPartnerRowView({
   busy: boolean;
   partnerId: string;
   onChanged: () => void;
+  onSaved: (m: string | undefined) => void;
 }) {
   const [editing, setEditing] = useState(false);
   return (
-    <>
-      <tr>
-        <th scope="row">
-          {row.name}
-          <div className={styles.muted}>{row.experiences.join(" · ") || "No capabilities yet"}</div>
-        </th>
-        <td>
-          <Status value={row.status} />
-        </td>
-        <td>
-          {row.administrator.name || "—"}
-          <div className={styles.muted}>{row.administrator.email}</div>
-        </td>
-        <td>{row.country || "—"}</td>
-        <td>{row.currency}</td>
-        <td className={styles.num}>{row.customers}</td>
-        <td>{row.products.join(", ") || "—"}</td>
-        <td>{when(row.administrator.last_login_at)}</td>
-        <td>{when(row.created_at)}</td>
-        <td>
-          {manage && (
-            <div className={styles.actions}>
-              {row.status === "draft" && (
-                <button
-                  type="button"
-                  className="w360-btn w360-btn-primary"
-                  disabled={busy}
-                  onClick={() => void act(() => panelApi.subPartnerAction(partnerId, row.id, "activate"), `${row.name} is active. Its administrator has been emailed a link to set a password.`)}
-                >
-                  Activate
-                </button>
-              )}
-              {row.status === "active" && (
-                <ReasonAction
-                  label="Suspend"
-                  confirmLabel="Suspend"
-                  danger
-                  where="partner portal"
-                  busy={busy}
-                  onConfirm={(reason) => void act(() => panelApi.subPartnerAction(partnerId, row.id, "suspend", reason), `${row.name} is suspended.`)}
-                />
-              )}
-              {row.status === "suspended" && (
-                <button
-                  type="button"
-                  className="w360-btn w360-btn-secondary"
-                  disabled={busy}
-                  onClick={() => void act(() => panelApi.subPartnerAction(partnerId, row.id, "resume"), `${row.name} is active again.`)}
-                >
-                  Resume
-                </button>
-              )}
-              <button type="button" className="w360-btn w360-btn-secondary" aria-expanded={editing} onClick={() => setEditing((e) => !e)}>
-                Products & access
+    <tr>
+      <th scope="row">
+        {row.name}
+        <div className={styles.muted}>{row.experiences.join(" · ") || "No capabilities yet"}</div>
+      </th>
+      <td>
+        <Status value={row.status} />
+      </td>
+      <td>
+        {row.administrator.name || "—"}
+        <div className={styles.muted}>{row.administrator.email}</div>
+      </td>
+      <td>{row.country || "—"}</td>
+      <td>{row.currency}</td>
+      <td className={styles.num}>{row.customers}</td>
+      <td>{row.products.join(", ") || "—"}</td>
+      <td>{when(row.administrator.last_login_at)}</td>
+      <td>{when(row.created_at)}</td>
+      <td>
+        {manage && (
+          <div className={styles.actions}>
+            {row.status === "draft" && (
+              <button
+                type="button"
+                className="w360-btn w360-btn-primary"
+                disabled={busy}
+                onClick={() => void act(() => panelApi.subPartnerAction(partnerId, row.id, "activate"), `${row.name} is active. Its administrator has been emailed a link to set a password.`)}
+              >
+                Activate
               </button>
-            </div>
-          )}
-        </td>
-      </tr>
-      {editing && (
-        <tr>
-          <td colSpan={10}>
-            <Equip partnerId={partnerId} row={row} onDone={() => { setEditing(false); onChanged(); }} />
-          </td>
-        </tr>
-      )}
-    </>
+            )}
+            {row.status === "active" && (
+              <ReasonAction
+                label="Suspend"
+                confirmLabel="Suspend"
+                danger
+                where="partner portal"
+                busy={busy}
+                onConfirm={(reason) => void act(() => panelApi.subPartnerAction(partnerId, row.id, "suspend", reason), `${row.name} is suspended.`)}
+              />
+            )}
+            {row.status === "suspended" && (
+              <button
+                type="button"
+                className="w360-btn w360-btn-secondary"
+                disabled={busy}
+                onClick={() => void act(() => panelApi.subPartnerAction(partnerId, row.id, "resume"), `${row.name} is active again.`)}
+              >
+                Resume
+              </button>
+            )}
+            <button type="button" className="w360-btn w360-btn-secondary" aria-haspopup="dialog" onClick={() => setEditing(true)}>
+              Products & access
+            </button>
+          </div>
+        )}
+        {editing && (
+          <Equip
+            partnerId={partnerId}
+            row={row}
+            onDone={(m) => {
+              onSaved(m);
+              onChanged();
+            }}
+            onClose={() => setEditing(false)}
+          />
+        )}
+      </td>
+    </tr>
   );
 }
 
-function Equip({ partnerId, row, onDone }: { partnerId: string; row: SubPartnerRow; onDone: () => void }) {
+/** What an agency can do and sell, in a popup opened from its row. */
+function Equip({ partnerId, row, onDone, onClose }: { partnerId: string; row: SubPartnerRow; onDone: (m: string | undefined) => void; onClose: () => void }) {
   const [load] = useLoad(() => panelApi.subPartnerOptions(partnerId), [partnerId]);
-  const { act, busy, feedback } = useAction(onDone);
   const [caps, setCaps] = useState<string[]>(row.capabilities);
   const [products, setProducts] = useState<string[]>(row.products);
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   return (
-    <LoadGate load={load} what="what you can give">
-      {(o) => (
-        <form
-          className={styles.page}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(() => panelApi.equipSubPartner(partnerId, row.id, caps, products), "Saved.");
-          }}
-        >
-          {feedback}
-          <div className={styles.twoCol}>
-            <fieldset className={styles.checks}>
-              <legend>What {row.name} can do</legend>
-              {o.capabilities.map((c) => (
-                <label key={c.key}>
-                  <input type="checkbox" checked={caps.includes(c.key)} onChange={() => setCaps((l) => toggle(l, c.key))} />
-                  <span>
-                    {c.label}
-                    <span className={styles.muted}> — {c.description}</span>
-                  </span>
-                </label>
-              ))}
-              {o.capabilities.length === 0 && <p className={styles.muted}>You hold nothing you may hand on.</p>}
-            </fieldset>
-            <fieldset className={styles.checks}>
-              <legend>Products it may sell</legend>
-              {o.products.map((p) => (
-                <label key={p.code}>
-                  <input type="checkbox" checked={products.includes(p.code)} onChange={() => setProducts((l) => toggle(l, p.code))} />
-                  <span>{p.name}</span>
-                </label>
-              ))}
-              {o.products.length === 0 && <p className={styles.muted}>You hold no product you may hand on.</p>}
-            </fieldset>
-          </div>
-          <p className={styles.muted}>
-            Anything money-related (commission, payouts) and custom domains are Workeasy360&apos;s to enable. Only powers you hold yourself can be given.
-          </p>
-          <div className={styles.actions}>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-              Save
-            </button>
-            <button type="button" className="w360-btn w360-btn-secondary" onClick={onDone}>
-              Close
-            </button>
-          </div>
-        </form>
+    <FormDialog
+      title={`Products & access: ${row.name}`}
+      intro="Anything money-related (commission, payouts) and custom domains are Workeasy360's to enable. Only powers you hold yourself can be given."
+      submitLabel="Save"
+      canSubmit={load.status === "ready"}
+      onSubmit={async () => {
+        await panelApi.equipSubPartner(partnerId, row.id, caps, products);
+        return "Saved.";
+      }}
+      onDone={onDone}
+      onClose={onClose}
+    >
+      {load.status === "ready" ? (
+        <>
+          <fieldset className={styles.checks}>
+            <legend>What {row.name} can do</legend>
+            {load.data.capabilities.map((c) => (
+              <label key={c.key}>
+                <input type="checkbox" checked={caps.includes(c.key)} onChange={() => setCaps((l) => toggle(l, c.key))} />
+                <span>
+                  {c.label}
+                  <span className={styles.muted}> — {c.description}</span>
+                </span>
+              </label>
+            ))}
+            {load.data.capabilities.length === 0 && <p className={styles.muted}>You hold nothing you may hand on.</p>}
+          </fieldset>
+          <fieldset className={styles.checks}>
+            <legend>Products it may sell</legend>
+            {load.data.products.map((p) => (
+              <label key={p.code}>
+                <input type="checkbox" checked={products.includes(p.code)} onChange={() => setProducts((l) => toggle(l, p.code))} />
+                <span>{p.name}</span>
+              </label>
+            ))}
+            {load.data.products.length === 0 && <p className={styles.muted}>You hold no product you may hand on.</p>}
+          </fieldset>
+        </>
+      ) : (
+        <div className={dialog.span}>
+          <LoadGate load={load} what="what you can give">
+            {() => null}
+          </LoadGate>
+        </div>
       )}
-    </LoadGate>
+    </FormDialog>
   );
 }
 
 function NewSubPartner({ onCreated }: { onCreated: () => void }) {
   const { id } = usePanel();
   const [options] = useLoad(() => panelApi.subPartnerOptions(id), [id]);
-  const { act, busy, feedback } = useAction(onCreated);
   const nameId = useId();
   const emailId = useId();
   const personId = useId();
@@ -218,6 +222,7 @@ function NewSubPartner({ onCreated }: { onCreated: () => void }) {
   const [person, setPerson] = useState("");
   const [caps, setCaps] = useState<string[]>([]);
   const [products, setProducts] = useState<string[]>([]);
+  const checks = useFieldChecks();
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   return (
     <section id="new-sub-partner" className={styles.panel} aria-labelledby="new-sub-partner-title">
@@ -227,74 +232,75 @@ function NewSubPartner({ onCreated }: { onCreated: () => void }) {
           !o.depth.can_have_children ? (
             <p className={styles.muted}>An agency cannot have agencies of its own.</p>
           ) : (
-            <form
-              className={styles.page}
-              onSubmit={(e) => {
-                e.preventDefault();
-                void act(async () => {
-                  await panelApi.createSubPartner(id, {
-                    display_name: name.trim(),
-                    administrator_email: email.trim(),
-                    administrator_name: person.trim(),
-                    capabilities: caps,
-                    products,
-                  });
-                  setName("");
-                  setEmail("");
-                  setPerson("");
-                  setCaps([]);
-                  setProducts([]);
-                }, "Agency created in draft. Activate it when you are ready: its administrator is emailed a link to set a password then.");
-              }}
-            >
-              {feedback}
-              <div className={styles.formGrid}>
-                <div>
-                  <label className="w360-label" htmlFor={nameId}>
-                    Partner name
-                  </label>
-                  <input id={nameId} className="w360-input" required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
-                </div>
-                <div>
-                  <label className="w360-label" htmlFor={personId}>
-                    Administrator&apos;s name
-                  </label>
-                  <input id={personId} className="w360-input" maxLength={120} value={person} onChange={(e) => setPerson(e.target.value)} />
-                </div>
-                <div>
-                  <label className="w360-label" htmlFor={emailId}>
-                    Administrator&apos;s email
-                  </label>
-                  <input id={emailId} className="w360-input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-                </div>
-              </div>
-              <div className={styles.twoCol}>
-                <fieldset className={styles.checks}>
-                  <legend>What it can do</legend>
-                  {o.capabilities.map((c) => (
-                    <label key={c.key}>
-                      <input type="checkbox" checked={caps.includes(c.key)} onChange={() => setCaps((l) => toggle(l, c.key))} />
-                      <span>{c.label}</span>
-                    </label>
-                  ))}
-                </fieldset>
-                <fieldset className={styles.checks}>
-                  <legend>Products it may sell</legend>
-                  {o.products.map((p) => (
-                    <label key={p.code}>
-                      <input type="checkbox" checked={products.includes(p.code)} onChange={() => setProducts((l) => toggle(l, p.code))} />
-                      <span>{p.name}</span>
-                    </label>
-                  ))}
-                </fieldset>
-              </div>
+            <>
               <NotAvailable title="What an agency does not get" reasons={Object.values(o.not_implemented)} />
-              <div>
-                <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !name.trim() || !email.trim()}>
-                  Add agency
-                </button>
+              <div className={styles.actions}>
+                <FormPopup
+                  label="+ Add an agency"
+                  title="Add an agency"
+                  intro="It starts in draft. Activate it when you are ready: its administrator is emailed a link to set a password then."
+                  submitLabel="Add agency"
+                  canSubmit={Boolean(name.trim() && email.trim())}
+                  onOpen={() => {
+                    setName("");
+                    setEmail("");
+                    setPerson("");
+                    setCaps([]);
+                    setProducts([]);
+                  }}
+                  onSubmit={async () => {
+                    checks.check();
+                    await panelApi.createSubPartner(id, {
+                      display_name: name.trim(),
+                      administrator_email: email.trim(),
+                      administrator_name: person.trim(),
+                      capabilities: caps,
+                      products,
+                    });
+                    return "Agency created in draft. Activate it when you are ready: its administrator is emailed a link to set a password then.";
+                  }}
+                  onDone={onCreated}
+                >
+                  <div className={dialog.span}>
+                    <label className="w360-label" htmlFor={nameId}>
+                      Partner name
+                    </label>
+                    <input id={nameId} className="w360-input" required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="w360-label" htmlFor={personId}>
+                      Administrator&apos;s name
+                    </label>
+                    <input id={personId} className="w360-input" maxLength={120} value={person} onChange={(e) => setPerson(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="w360-label" htmlFor={emailId}>
+                      Administrator&apos;s email
+                    </label>
+                    <input id={emailId} className="w360-input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+                  </div>
+                  <fieldset className={styles.checks}>
+                    <legend>What it can do</legend>
+                    {o.capabilities.map((c) => (
+                      <label key={c.key}>
+                        <input type="checkbox" checked={caps.includes(c.key)} onChange={() => setCaps((l) => toggle(l, c.key))} />
+                        <span>{c.label}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                  <fieldset className={styles.checks}>
+                    <legend>Products it may sell</legend>
+                    {o.products.map((p) => (
+                      <label key={p.code}>
+                        <input type="checkbox" checked={products.includes(p.code)} onChange={() => setProducts((l) => toggle(l, p.code))} />
+                        <span>{p.name}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                  {checks.probe}
+                </FormPopup>
               </div>
-            </form>
+            </>
           )
         }
       </LoadGate>
@@ -321,14 +327,12 @@ function AffiliateNav() {
 export function Affiliates() {
   const { id, can, active } = usePanel();
   const [load, reload] = useLoad(() => panelApi.affiliates(id), [id]);
-  const { act, busy, feedback } = useAction(reload);
   const labelId = useId();
   const [label, setLabel] = useState("");
   return (
     <div className={styles.page}>
       <PageHeader title="Affiliates" lead="Your referral links, and the agencies that refer customers for you." />
       <AffiliateNav />
-      {feedback}
       <LoadGate load={load} what="affiliates">
         {(d) => (
           <>
@@ -354,27 +358,28 @@ export function Affiliates() {
               ))}
             </Table>
             {can("referral.create") && active && (
-              <form
-                className={styles.panel}
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void act(async () => {
+              <div className={styles.actions}>
+                <FormPopup
+                  label="+ Create a referral link"
+                  title="Create a referral link"
+                  size="sm"
+                  submitLabel="Create link"
+                  canSubmit={Boolean(label.trim())}
+                  onOpen={() => setLabel("")}
+                  onSubmit={async () => {
                     await partnerApi.createReferralCode(id, label.trim());
-                    setLabel("");
-                  }, "Referral link created.");
-                }}
-              >
-                <h2>Create a referral link</h2>
-                <label className="w360-label" htmlFor={labelId}>
-                  Campaign label (only you see this)
-                </label>
-                <input id={labelId} className="w360-input" required maxLength={64} value={label} onChange={(e) => setLabel(e.target.value)} />
-                <div>
-                  <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !label.trim()}>
-                    Create link
-                  </button>
-                </div>
-              </form>
+                    return "Referral link created.";
+                  }}
+                  onDone={reload}
+                >
+                  <div>
+                    <label className="w360-label" htmlFor={labelId}>
+                      Campaign label (only you see this)
+                    </label>
+                    <input id={labelId} className="w360-input" required maxLength={64} value={label} onChange={(e) => setLabel(e.target.value)} />
+                  </div>
+                </FormPopup>
+              </div>
             )}
             {d.affiliates.length > 0 && (
               <Table caption="Agencies that refer for you" head={["Partner", "Status", "Administrator", "Active links", "Captured", "Converted"]}>
@@ -516,6 +521,7 @@ export function Team() {
   const [email, setEmail] = useState("");
   const [person, setPerson] = useState("");
   const [role, setRole] = useState("viewer");
+  const checks = useFieldChecks();
   return (
     <div className={styles.page}>
       <PageHeader
@@ -527,30 +533,25 @@ export function Team() {
       <LoadGate load={load} what="your team">
         {(d) => (
           <>
-            <Table
-              caption="Your team"
-              head={["Name", "Email", "Role", "Status", "Last sign-in", "Joined", "Actions"]}
-              isEmpty={d.members.length === 0}
-              empty="No users."
-            >
-              {d.members.map((m) => (
-                <MemberLine key={m.id} m={m} roles={d.roles} manage={d.can_manage && active} act={act} busy={busy} partnerId={id} />
-              ))}
-            </Table>
             {d.can_manage && active && (
-              <form
-                className={styles.panel}
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void act(async () => {
-                    await panelApi.inviteMember(id, { email: email.trim(), full_name: person.trim(), role });
+              <div className={styles.actions}>
+                <FormPopup
+                  label="+ Invite someone"
+                  title="Invite someone"
+                  submitLabel="Send invitation"
+                  canSubmit={Boolean(email.trim())}
+                  onOpen={() => {
                     setEmail("");
                     setPerson("");
-                  }, "Invitation sent. If they have no password yet, the email carries a one-time link to choose one.");
-                }}
-              >
-                <h2>Invite someone</h2>
-                <div className={styles.formGrid}>
+                    setRole("viewer");
+                  }}
+                  onSubmit={async () => {
+                    checks.check();
+                    await panelApi.inviteMember(id, { email: email.trim(), full_name: person.trim(), role });
+                    return "Invitation sent. If they have no password yet, the email carries a one-time link to choose one.";
+                  }}
+                  onDone={reload}
+                >
                   <div>
                     <label className="w360-label" htmlFor={nameId}>
                       Name
@@ -563,27 +564,35 @@ export function Team() {
                     </label>
                     <input id={emailId} className="w360-input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
                   </div>
-                  <div>
+                  <div className={dialog.span}>
                     <label className="w360-label" htmlFor={roleId}>
                       Role for the new user
                     </label>
-                    <select id={roleId} className="w360-input" value={role} onChange={(e) => setRole(e.target.value)}>
+                    <select id={roleId} className="w360-input" value={role} onChange={(e) => setRole(e.target.value)} aria-describedby={`${roleId}-about`}>
                       {d.roles.map((r) => (
                         <option key={r.key} value={r.key}>
                           {r.label}
                         </option>
                       ))}
                     </select>
+                    <p id={`${roleId}-about`} className="w360-hint">
+                      {d.roles.find((r) => r.key === role)?.description}
+                    </p>
                   </div>
-                </div>
-                <p className={styles.muted}>{d.roles.find((r) => r.key === role)?.description}</p>
-                <div>
-                  <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !email.trim()}>
-                    Send invitation
-                  </button>
-                </div>
-              </form>
+                  {checks.probe}
+                </FormPopup>
+              </div>
             )}
+            <Table
+              caption="Your team"
+              head={["Name", "Email", "Role", "Status", "Last sign-in", "Joined", "Actions"]}
+              isEmpty={d.members.length === 0}
+              empty="No users."
+            >
+              {d.members.map((m) => (
+                <MemberLine key={m.id} m={m} roles={d.roles} manage={d.can_manage && active} act={act} busy={busy} partnerId={id} />
+              ))}
+            </Table>
           </>
         )}
       </LoadGate>

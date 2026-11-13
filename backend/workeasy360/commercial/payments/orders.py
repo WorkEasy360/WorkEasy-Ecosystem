@@ -46,9 +46,9 @@ and bundles of listed products.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 from django.conf import settings
@@ -178,6 +178,8 @@ class _CartLine:
     #: The plan's one-time set-up fee (ADR-056), charged with this purchase on
     #: top of ``amount_due_minor`` and never on a renewal.
     setup_fee_minor: int = 0
+    #: ADR-058: what the order's coupon takes off this line's first payment.
+    discount_minor: int = 0
 
     def as_record(self) -> dict[str, Any]:
         """The line as the order stores it (``Order.lines``)."""
@@ -191,6 +193,7 @@ class _CartLine:
             "recurring_amount_minor": self.recurring_amount_minor,
             "amount_due_minor": self.amount_due_minor,
             "setup_fee_minor": self.setup_fee_minor,
+            "discount_minor": self.discount_minor,
             "snapshot": self.snapshot,
         }
 
@@ -217,6 +220,22 @@ class Quote:
     seller: Seller = DIRECT
     #: One-time set-up fees included in ``amount_due_minor`` (ADR-056).
     setup_fee_minor: int = 0
+    #: ADR-058: the coupon applied (``pricing.coupons.AppliedCoupon``) and what
+    #: it took off, and the GST added (``billing.tax.Tax``) - both already in
+    #: ``amount_due_minor``.
+    coupon: Any = None
+    discount_minor: int = 0
+    tax: Any = None
+
+    @property
+    def tax_minor(self) -> int:
+        return int(self.tax.amount_minor) if self.tax is not None else 0
+
+    @property
+    def charge_minor(self) -> int:
+        """What the products themselves cost now, after the coupon - the
+        invoice's charge line(s); set-up fees and GST are their own lines."""
+        return self.amount_due_minor - self.setup_fee_minor - self.tax_minor
 
     @property
     def requires_payment(self) -> bool:
@@ -256,6 +275,20 @@ class Quote:
             "trial_days": self.trial_days,
             "requires_payment": self.requires_payment,
             "setup_fee_minor": self.setup_fee_minor if self.requires_payment else 0,
+            # ADR-058: before the coupon and GST; then the coupon, then GST.
+            "subtotal_minor": (
+                self.charge_minor + self.discount_minor + self.setup_fee_minor
+                if self.requires_payment
+                else 0
+            ),
+            "coupon": self.coupon.as_dict()
+            if self.coupon is not None and self.requires_payment
+            else None,
+            "discount_minor": self.discount_minor if self.requires_payment else 0,
+            "tax": self.tax.as_dict()
+            if self.tax is not None and self.requires_payment
+            else None,
+            "tax_minor": self.tax_minor if self.requires_payment else 0,
             "channel": self.seller.channel,
             "lines": [
                 {
@@ -270,6 +303,7 @@ class Quote:
                     "setup_fee_minor": line.setup_fee_minor
                     if self.requires_payment
                     else 0,
+                    "discount_minor": line.discount_minor if self.requires_payment else 0,
                 }
                 for line in self.lines
             ],
@@ -659,6 +693,73 @@ def _quote_cart(
 def _quote(
     ctx: TenantContext,
     *,
+    coupon_code: Any = None,
+    at: datetime,
+    seller: Seller = DIRECT,
+    **request: Any,
+) -> Quote:
+    """The order as the server prices it: the plan, bundle, cart or activation
+    (``_base_quote``), then the coupon off its first payment, then GST on what
+    is left (ADR-058)."""
+    return _finish(
+        ctx,
+        _base_quote(ctx, at=at, seller=seller, **request),
+        coupon_code=coupon_code,
+        at=at,
+    )
+
+
+def _finish(ctx: TenantContext, q: Quote, *, coupon_code: Any, at: datetime) -> Quote:
+    """Apply a coupon and GST to a priced order. Only to what is paid now:
+    a trial, a free plan or a sales-led account owes nothing, so neither
+    applies (an invoice-billed renewal still carries GST - ``invoicing``)."""
+    from workeasy360.commercial.billing.tax import tax_for
+    from workeasy360.commercial.pricing import coupons
+
+    if not q.requires_payment:
+        return q
+    coupon = None
+    discount = 0
+    lines = q.lines
+    if coupon_code not in (None, ""):
+        if q.lines:
+            amounts = {line.plan.product_code: line.amount_due_minor for line in q.lines}
+        else:
+            # A plan or bundle (or a trial's activation) is one charge; a
+            # coupon for any of its products applies to it.
+            key = "+".join(q.target.product_codes) or "order"
+            amounts = {key: q.amount_due_minor - q.setup_fee_minor}
+        coupon = coupons.evaluate(
+            coupon_code,
+            currency=q.currency,
+            amounts=amounts,
+            products={k: frozenset(k.split("+")) for k in amounts},
+            organization_id=ctx.organization_id,
+            at=at,
+        )
+        discount = coupon.discount_minor
+        if q.lines:
+            lines = tuple(
+                replace(
+                    line, discount_minor=coupon.per_product.get(line.plan.product_code, 0)
+                )
+                for line in q.lines
+            )
+    taxable = q.amount_due_minor - discount
+    tax = tax_for(q.currency, taxable)
+    return replace(
+        q,
+        lines=lines,
+        coupon=coupon,
+        discount_minor=discount,
+        tax=tax,
+        amount_due_minor=taxable + (tax.amount_minor if tax is not None else 0),
+    )
+
+
+def _base_quote(
+    ctx: TenantContext,
+    *,
     plan_version_id: Any = None,
     bundle_version_id: Any = None,
     activate_subscription_id: Any = None,
@@ -839,6 +940,19 @@ def _quote(
     )
 
 
+def build_quote(
+    ctx: TenantContext,
+    *,
+    seller: Seller = DIRECT,
+    at: datetime | None = None,
+    **request: Any,
+) -> Quote:
+    """The priced quote itself, for a caller that works out what a partner pays
+    from it (ADR-063). The same path ``quote`` and ``place`` price with."""
+    authz.require(ctx, MANAGE)
+    return _quote(ctx, at=at or timezone.now(), seller=seller, **request)
+
+
 def quote(
     ctx: TenantContext, *, seller: Seller = DIRECT, **request: Any
 ) -> dict[str, Any]:
@@ -904,6 +1018,7 @@ def place(
 
     now = timezone.now()
     q = _quote(ctx, at=now, seller=seller, **request)
+    _refuse_partner_wallet_account(q)
     if q.requires_payment:
         order = _place_payable(ctx, q, idempotency_key=idempotency_key, request=request)
     else:
@@ -912,6 +1027,163 @@ def place(
         "commercial_orders_placed_total",
         kind=q.target.kind,
         requires_payment=str(q.requires_payment).lower(),
+    )
+    return order_view(order)
+
+
+def _refuse_partner_wallet_account(q: Quote) -> None:
+    """ADR-063: a customer whose plans its partner pays from the partner's Platform
+    Wallet is never invoiced, so an ordinary order would grant a plan nobody paid
+    for. Only ``place_paid_by_partner_wallet`` sells to such an account."""
+    if q.collection_mode == CollectionMode.PARTNER_WALLET.value:
+        raise OrderNotAllowed(
+            "This customer's plans are paid by their partner from the partner's "
+            "Platform Wallet. The partner activates or changes them.",
+            reason="partner_wallet_account",
+        )
+
+
+@dataclass(frozen=True)
+class WalletCharge:
+    """What a partner pays from its Platform Wallet for one order (ADR-063):
+    worked out above payments (the partner's purchase price is a commissions
+    rule), handed in, and recorded with the order. ``detail`` is shown to the
+    partner only, never to the customer."""
+
+    amount_minor: int
+    detail: dict[str, Any] = field(default_factory=dict)
+
+
+class WalletChargeChanged(CommercialError):
+    """The amount the partner confirmed is not what the order costs now."""
+
+    code = "price_changed"
+    http_status = 409
+
+
+def place_paid_by_partner_wallet(
+    ctx: TenantContext,
+    *,
+    seller: Seller,
+    idempotency_key: str,
+    wallet_id: UUID,
+    price: Callable[[Quote], WalletCharge],
+    expected_charge_minor: Any,
+    **request: Any,
+) -> dict[str, Any]:
+    """A reseller activates a plan for its customer and pays from its Platform
+    Wallet at its approved purchase price (ADR-063, the specification's 6.3).
+
+    **One transaction**: the quote, the exact-amount check, the subscription
+    line, the order and the wallet debit commit together or not at all - an
+    overdraft (``InsufficientBalance``) leaves no line and no order. **Once**:
+    the order's key is claimed and the debit's key is the order, so a retry
+    returns the same order and moves no money twice. The customer is never
+    invoiced (``partner_wallet`` collection) and is shown no partner price."""
+    from workeasy360.commercial.payments.models import Order
+    from workeasy360.commercial.subscriptions import services as subscriptions
+    from workeasy360.commercial.wallets import api as wallets
+    from workeasy360.commercial.wallets import ledger
+
+    authz.require(ctx, MANAGE)
+    if not idempotency_key or len(idempotency_key) > 128:
+        raise CatalogValidationError(
+            "An Idempotency-Key of at most 128 characters is required.",
+            field="idempotency_key",
+        )
+    if not seller.is_partner:
+        raise OrderNotAllowed(
+            "Only a partner pays from its wallet.", reason="not_partner"
+        )
+    replay = Order.objects.filter(idempotency_key=idempotency_key).first()
+    if replay is not None:
+        _assert_same_request(ctx, replay, idempotency_key, request)
+        return order_view(replay)
+    if isinstance(expected_charge_minor, bool) or not isinstance(
+        expected_charge_minor, int
+    ):
+        raise CatalogValidationError(
+            "Confirm the amount shown before activating.", field="expected_charge_minor"
+        )
+
+    now = timezone.now()
+    with transaction.atomic():
+        q = _quote(ctx, at=now, seller=seller, **request)
+        if q.collection_mode != CollectionMode.PARTNER_WALLET.value:
+            raise OrderNotAllowed(
+                "This customer pays Workeasy360 directly.", reason="not_partner_wallet"
+            )
+        if q.target.kind != "plan" or q.is_trial:
+            raise OrderNotAllowed(
+                "A plan without a trial is activated from the Platform Wallet.",
+                reason="not_a_plan",
+            )
+        charge = price(q)
+        if charge.amount_minor != expected_charge_minor:
+            raise WalletChargeChanged(
+                "The amount has changed since it was shown. Review it and confirm again.",
+                charge_minor=charge.amount_minor,
+            )
+        line = subscriptions.purchase_plan(
+            ctx,
+            plan_version_id=q.target.plan.id,
+            idempotency_key=f"order:{idempotency_key}"[:128],
+            quantity=q.quantity,
+            with_trial=False,
+            billing_interval=q.billing_interval,
+            collection_mode=CollectionMode.PARTNER_WALLET,
+        )
+        claim = idempotency.claim(
+            organization_id=ctx.organization_id,
+            scope="commercial.order.place",
+            key=idempotency_key,
+            arguments=_fingerprint(request),
+        )
+        if claim.is_replay:  # pragma: no cover - the order lookup above returns first
+            return order_view(Order.objects.get(idempotency_key=idempotency_key))
+        order = _new_order(ctx, q, key=idempotency_key, status=Order.Status.FULFILLED)
+        order.subscription_id = line.subscription_id
+        order.subscription_item_id = line.id
+        order.fulfilled_at = now
+        order.price_snapshot = {
+            **(order.price_snapshot or {}),
+            "partner_wallet": {**charge.detail, "charged_minor": charge.amount_minor},
+        }
+        order.save()
+        entry_id = None
+        if charge.amount_minor > 0:
+            entry = ledger.post(
+                wallet_id,
+                amount=-charge.amount_minor,
+                entry_type=wallets.SUBSCRIPTION,
+                reason=f"Plan activation {order.number}",
+                idempotency_key=f"order:{order.id}",
+                actor_user_id=ctx.user_id,
+                source_type="order",
+                source_id=order.id,
+            )
+            entry_id = str(entry.id)
+            order.price_snapshot["partner_wallet"]["wallet_entry_id"] = entry_id
+            order.save(update_fields=["price_snapshot", "updated_at"])
+        _sync_summary(order)
+        audit.record(
+            ctx,
+            "commercial.order.fulfilled",
+            resource_type="payments.order",
+            resource_id=order.id,
+            changes={
+                "number": order.number,
+                "kind": order.kind,
+                "products": order.product_codes,
+                "trial": False,
+                "paid": True,
+                "paid_by": "partner_wallet",
+                "wallet_entry_id": entry_id,
+            },
+        )
+        idempotency.complete(claim, result_ref=f"payments.order:{order.id}")
+    metrics.increment(
+        "commercial_orders_placed_total", kind="plan", requires_payment="partner_wallet"
     )
     return order_view(order)
 
@@ -963,6 +1235,9 @@ def _new_order(ctx: TenantContext, q: Quote, *, key: str, status: str) -> Any:
         placed_by_user_id=ctx.user_id,
         channel=q.seller.channel,
         partner_id=q.seller.partner_id if q.seller.is_partner else None,
+        coupon_code=q.coupon.code if q.coupon is not None else "",
+        discount_minor=q.discount_minor if q.requires_payment else 0,
+        tax_minor=q.tax_minor if q.requires_payment else 0,
         idempotency_key=key,
     )
 
@@ -977,6 +1252,7 @@ def _setup_fee_line(invoice: Any, plan_name: str, amount_minor: int) -> None:
         return
     InvoiceLine.objects.create(
         invoice=invoice,
+        kind=InvoiceLine.Kind.SETUP_FEE,
         subscription_item_id=None,
         description=f"Set-up fee: {plan_name}"[:255],
         product_code="",
@@ -985,6 +1261,40 @@ def _setup_fee_line(invoice: Any, plan_name: str, amount_minor: int) -> None:
         quantity=1,
         amount_minor=amount_minor,
     )
+
+
+def _tax_line(invoice: Any, tax: Any) -> None:
+    """GST as its own invoice line (ADR-058). Like a set-up fee it names no
+    product, links to no subscription line and earns no commission."""
+    from workeasy360.commercial.payments.models import InvoiceLine
+
+    if tax is None or tax.amount_minor <= 0:
+        return
+    InvoiceLine.objects.create(
+        invoice=invoice,
+        kind=InvoiceLine.Kind.TAX,
+        subscription_item_id=None,
+        description=tax.description[:255],
+        product_code="",
+        plan_code="",
+        bundle_code="",
+        quantity=1,
+        amount_minor=tax.amount_minor,
+    )
+
+
+def _coupon_note(q: Quote, discount_minor: int) -> str:
+    if q.coupon is None or discount_minor <= 0:
+        return ""
+    return f" - coupon {q.coupon.code}"
+
+
+def _release_coupon(order: Any) -> None:
+    """An order that will never be paid gives its coupon use back."""
+    if order.coupon_code:
+        from workeasy360.commercial.pricing import coupons
+
+        coupons.release(order.id)
 
 
 def _place_payable(
@@ -1017,6 +1327,15 @@ def _place_payable(
                 reason="order_pending",
                 order_id=str(pending) if pending else None,
             ) from exc
+        if q.coupon is not None:
+            from workeasy360.commercial.pricing import coupons
+
+            coupons.reserve(
+                q.coupon,
+                organization_id=ctx.organization_id,
+                order_id=order.id,
+                currency=q.currency,
+            )
         running = q.open_subscription
         period_end = (
             running.current_period_end
@@ -1043,33 +1362,35 @@ def _place_payable(
         if q.target.kind == "cart":
             # One invoice line per product: one payment, an itemised invoice.
             for line in q.lines:
+                note = _coupon_note(q, line.discount_minor)
                 InvoiceLine.objects.create(
                     invoice=invoice,
                     subscription_item_id=None,
                     description=f"{line.plan.plan_name} x{line.quantity} "
-                    f"({q.billing_interval.value})"[:255],
+                    f"({q.billing_interval.value}){note}"[:255],
                     product_code=line.plan.product_code,
                     plan_code=line.plan.plan_code,
                     bundle_code="",
                     quantity=line.quantity,
-                    amount_minor=line.amount_due_minor,
+                    amount_minor=line.amount_due_minor - line.discount_minor,
                 )
                 _setup_fee_line(invoice, line.plan.plan_name, line.setup_fee_minor)
         else:
             InvoiceLine.objects.create(
                 invoice=invoice,
                 subscription_item_id=None,
-                description=q.description,
+                description=f"{q.description}{_coupon_note(q, q.discount_minor)}"[:255],
                 product_code=q.target.product_codes[0] if q.target.kind == "plan" else "",
                 plan_code=q.target.plan.plan_code if q.target.kind == "plan" else "",
                 bundle_code=q.target.bundle.bundle_code
                 if q.target.kind == "bundle"
                 else "",
                 quantity=q.quantity,
-                amount_minor=q.amount_due_minor - q.setup_fee_minor,
+                amount_minor=q.charge_minor,
             )
             if q.target.kind == "plan":
                 _setup_fee_line(invoice, q.target.plan.plan_name, q.setup_fee_minor)
+        _tax_line(invoice, q.tax)
         _sync_summary(order)
         audit.record(
             ctx,
@@ -1083,6 +1404,9 @@ def _place_payable(
                 "amount_due_minor": order.amount_due_minor,
                 "currency": order.currency,
                 "prorated": q.prorated,
+                "coupon": order.coupon_code or None,
+                "discount_minor": order.discount_minor,
+                "tax_minor": order.tax_minor,
             },
         )
         idempotency.complete(claim, result_ref=f"payments.order:{order.id}")
@@ -1229,6 +1553,7 @@ def cancel(ctx: TenantContext, order_id: UUID) -> dict[str, Any]:
         order.save(update_fields=["status", "cancelled_at", "version", "updated_at"])
         if invoice is not None and invoice.status == Invoice.Status.OPEN:
             _void(invoice, reason="The order was cancelled before payment.", now=now)
+        _release_coupon(order)
         _sync_summary(order)
         audit.record(
             ctx,
@@ -1241,6 +1566,8 @@ def cancel(ctx: TenantContext, order_id: UUID) -> dict[str, Any]:
 
 
 def _void(invoice: Any, *, reason: str, now: datetime) -> None:
+    from workeasy360.commercial.payments import wallet_orders
+
     invoice.status = invoice.Status.VOID
     invoice.voided_at = now
     invoice.void_reason = reason[:255]
@@ -1248,6 +1575,8 @@ def _void(invoice: Any, *, reason: str, now: datetime) -> None:
     invoice.save(
         update_fields=["status", "voided_at", "void_reason", "version", "updated_at"]
     )
+    # ADR-065: a withdrawn order's wallet reservation is spendable again.
+    wallet_orders.release_for_invoice(invoice, why="invoice_void")
 
 
 def _can_view(ctx: TenantContext) -> None:
@@ -1271,8 +1600,15 @@ def order_view(order: Any) -> dict[str, Any]:
         "quantity": order.quantity,
         "recurring_amount_minor": order.recurring_amount_minor,
         "amount_due_minor": order.amount_due_minor,
+        "coupon_code": order.coupon_code or None,
+        "discount_minor": order.discount_minor,
+        "tax_minor": order.tax_minor,
         "is_trial": order.is_trial,
         "channel": order.channel or "direct",
+        # ADR-063: who paid, never what a partner paid (the customer reads this).
+        "paid_by": "partner_wallet"
+        if "partner_wallet" in (order.price_snapshot or {})
+        else None,
         "requires_payment": order.status == order.Status.PENDING_PAYMENT,
         "invoice_id": str(invoice.id) if invoice is not None else None,
         "invoice_number": invoice.number if invoice is not None else None,
@@ -1387,6 +1723,8 @@ def fulfil(organization_id: UUID, order_id: UUID) -> str:
             return "noop"
         now = timezone.now()
         added: dict[str, Any] = {}
+        if order.kind == Order.Kind.WALLET:
+            return _fulfil_wallet_order(order, organization_id, now)
         try:
             with transaction.atomic():
                 _attach_storefront(order, organization_id)
@@ -1434,6 +1772,7 @@ def fulfil(organization_id: UUID, order_id: UUID) -> str:
             order.save(
                 update_fields=["status", "failure_reason", "version", "updated_at"]
             )
+            _release_coupon(order)
             _sync_summary(order)
             audit.record_system(
                 organization_id,
@@ -1497,6 +1836,30 @@ def fulfil(organization_id: UUID, order_id: UUID) -> str:
     return outcome
 
 
+def _fulfil_wallet_order(order: Any, organization_id: UUID, now: datetime) -> str:
+    """Credit the wallet a paid top-up or credit pack was for. Inside fulfilment's
+    transaction; re-driving it credits nothing, because the ledger's key is the order."""
+    from workeasy360.commercial.payments import wallet_orders
+    from workeasy360.commercial.payments.models import Order
+
+    entry = wallet_orders.credit_for_order(order)
+    order.status = Order.Status.FULFILLED
+    order.fulfilled_at = now
+    order.version += 1
+    order.save(update_fields=["status", "fulfilled_at", "version", "updated_at"])
+    _sync_summary(order)
+    audit.record_system(
+        organization_id,
+        "commercial.order.fulfilled",
+        resource_type="payments.order",
+        resource_id=order.id,
+        changes={"number": order.number, "wallet_entry": str(entry.id), "paid": True},
+        reason="The order's payment was confirmed.",
+    )
+    metrics.increment("commercial_orders_fulfilment_total", outcome="fulfilled")
+    return "fulfilled"
+
+
 def _succeeded_attempt(invoice: Any) -> UUID | None:
     from workeasy360.commercial.payments.models import PaymentAttempt
 
@@ -1540,12 +1903,19 @@ def _link_invoice(
     if by_product:
         for code, item in by_product.items():
             InvoiceLine.objects.filter(
-                invoice=invoice, subscription_item_id__isnull=True, product_code=code
+                invoice=invoice,
+                subscription_item_id__isnull=True,
+                product_code=code,
+                kind=InvoiceLine.Kind.CHARGE,
             ).update(subscription_item_id=item.id)
         return
     if line is not None:
+        # Only charges pay for a subscription line: set-up fees and GST
+        # (ADR-056, ADR-058) stay unlinked, so commission never earns on them.
         unlinked = InvoiceLine.objects.filter(
-            invoice=invoice, subscription_item_id__isnull=True
+            invoice=invoice,
+            subscription_item_id__isnull=True,
+            kind=InvoiceLine.Kind.CHARGE,
         )
         if order.kind == order.Kind.PLAN:
             # A plan order's set-up fee line names no product (ADR-056) and
@@ -1590,6 +1960,7 @@ def process_due(organization_id: UUID, moment: datetime) -> dict[str, int]:
                 order.save(update_fields=["status", "version", "updated_at"])
                 if invoice is not None and invoice.status == Invoice.Status.OPEN:
                     _void(invoice, reason="The order expired before payment.", now=moment)
+                _release_coupon(order)
                 _sync_summary(order)
                 audit.record_system(
                     organization_id,
@@ -1684,18 +2055,27 @@ def on_invoice_voided(invoice: Any, *, at: datetime) -> None:
     order.cancelled_at = at
     order.version += 1
     order.save(update_fields=["status", "cancelled_at", "version", "updated_at"])
+    _release_coupon(order)
     _sync_summary(order)
+
+
+#: The purchase sources an order can have (ADR-053), as the staff list filters them:
+#: ``direct`` (the customer in the Store), ``partner`` (a reseller placing it for
+#: its customer) and ``storefront`` (a white-label partner's branded Store).
+ORDER_CHANNELS: Final = ("direct", "partner", "storefront")
 
 
 def staff_orders(
     ctx: TenantContext,
     *,
     status: str | None = None,
+    channel: str | None = None,
     limit: int = PAGE_SIZE,
     cursor: str | None = None,
 ) -> dict[str, Any]:
     """Every order across customers, newest first (``platform.staff_payment.view``).
-    One query for the page, one for the customers' names."""
+    One query for the page, one for the customers' names. ``channel`` filters by
+    purchase source (2026-11-10: Store orders and partner activations)."""
     from django.db.models import Q
 
     from workeasy360.commercial.payments.models import Order, OrderSummary
@@ -1708,6 +2088,10 @@ def staff_orders(
         if status not in Order.Status.values:
             raise CatalogValidationError("Unknown order status.", field="status")
         rows = rows.filter(status=status)
+    if channel:
+        if channel not in ORDER_CHANNELS:
+            raise CatalogValidationError("Unknown purchase source.", field="channel")
+        rows = rows.filter(channel=channel)
     after = decode_cursor(cursor)
     if after is not None:
         rows = rows.filter(
@@ -1732,6 +2116,9 @@ def staff_orders(
                 "amount_due_minor": row.amount_due_minor,
                 "created_at": row.created_at.isoformat(),
                 "paid_at": row.paid_at.isoformat() if row.paid_at else None,
+                # Purchase source and its reference (the partner that sold it).
+                "channel": row.channel or "direct",
+                "partner_id": str(row.partner_id) if row.partner_id else None,
             }
             for row in page
         ],

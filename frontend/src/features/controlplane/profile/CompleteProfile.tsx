@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { adminApi } from "@/lib/api/controlPlane";
 import { partnerConsoleApi, type CompletionSection } from "@/lib/api/partnerConsole";
@@ -9,13 +8,13 @@ import { can, useAdmin } from "../ControlShell";
 import { TypeBadges } from "../labels";
 import { CompletionMeter, SetupStatusBadge } from "../PartnerConsole";
 import { LoadGate, useLoad } from "../ui";
+import { Page, PageHeader } from "../kit";
 import { IdentityStep } from "../whitelabel/BrandSteps";
 import { DomainStep } from "../whitelabel/DomainStep";
 import { CommunicationStep } from "../whitelabel/PortalSteps";
 import type { Nav } from "../whitelabel/shared";
 import { useWhiteLabelContext } from "../whitelabel/useWhiteLabelContext";
 import styles from "../ControlPlane.module.css";
-import local from "../PartnerConsole.module.css";
 import css from "../WhiteLabelSetup.module.css";
 import mine from "./CompleteProfile.module.css";
 import {
@@ -80,18 +79,15 @@ export function CompleteProfile({ partnerId }: { partnerId: string }) {
 
   if (!manage) {
     return (
-      <div className={styles.stack}>
-        <h1>Complete Your Profile</h1>
+      <Page>
+        <PageHeader title="Complete partner profile" crumbs={[{ label: "All partners", href: "/admin/partners/all" }, { label: "Complete partner profile" }]} />
         <p role="alert">You need the permission to manage partners to set a partner up.</p>
-      </div>
+      </Page>
     );
   }
 
   return (
-    <div className={styles.stack}>
-      <p className={styles.muted}>
-        <Link href={`/admin/partners/${partnerId}`}>Back to the partner</Link>
-      </p>
+    <Page>
       <LoadGate load={load} what="this partner">
         {(partner) => (
           <LoadGate load={summary} what="the partner's profile">
@@ -111,11 +107,21 @@ export function CompleteProfile({ partnerId }: { partnerId: string }) {
               const props: StepProps = { partnerId, partner, summary, rev, bump, nav, summaryData: d };
               return (
                 <>
-                  <div className={local.titleRow}>
-                    <h1>Complete Your Profile: {partner.display_name}</h1>
-                    <SetupStatusBadge value={d.profile_completion.setup_status} />
-                  </div>
-                  <TypeBadges labels={d.experience} />
+                  <PageHeader
+                    crumbs={[
+                      { label: "All partners", href: "/admin/partners/all" },
+                      { label: partner.display_name, href: `/admin/partners/${partnerId}` },
+                      { label: "Complete partner profile" },
+                    ]}
+                    title={`Complete partner profile: ${partner.display_name}`}
+                    subtitle="Fill in each step; the partner can be activated once every required one is done."
+                    badges={
+                      <>
+                        <TypeBadges labels={d.experience} />
+                        <SetupStatusBadge value={d.profile_completion.setup_status} />
+                      </>
+                    }
+                  />
                   <div className={mine.meterRow}>
                     <CompletionMeter value={d.profile_completion} />
                     {!d.profile_completion.complete && (
@@ -137,7 +143,7 @@ export function CompleteProfile({ partnerId }: { partnerId: string }) {
           </LoadGate>
         )}
       </LoadGate>
-    </div>
+    </Page>
   );
 }
 

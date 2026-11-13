@@ -260,6 +260,8 @@ def merchandising_of(row: dict[str, Any] | None, now: datetime) -> dict[str, Any
         "product_type": (row or {}).get("product_type") or "saas",
         "best_for": list((row or {}).get("best_for", [])),
         "integrations": list((row or {}).get("integrations", [])),
+        # ADR-058: the refund promise the product page shows, if any.
+        "refund_days": (row or {}).get("refund_days") or None,
     }
 
 

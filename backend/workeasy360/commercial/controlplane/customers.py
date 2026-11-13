@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db import transaction
+from django.utils import timezone
 
 from workeasy360.commercial.billing.services import billing_account_for
 from workeasy360.commercial.partners import selectors as partner_selectors
@@ -32,7 +33,11 @@ from workeasy360.platform.authz.control_plane import (
     in_scope,
     organization_scope,
 )
-from workeasy360.platform.entitlements.selectors import stored_snapshot
+from workeasy360.platform.entitlements.selectors import (
+    access_sources,
+    main_source,
+    stored_snapshot,
+)
 from workeasy360.platform.entitlements.services import grants as entitlement_grants
 from workeasy360.platform.entitlements.services import seats
 from workeasy360.platform.observability.metrics import metrics
@@ -101,6 +106,22 @@ def directory(
     links = partner_selectors.links_for_organizations(ids)
     for item in page.items:
         oid = UUID(item["organization_id"])
+        if product_code:
+            # Entitlements -> one product's holders: name the real source of that
+            # product's access (subscription, bundle, staff override or product
+            # trial) instead of guessing from the subscription. One small scoped
+            # read per row of this page.
+            source = main_source(access_sources(oid), product_code)
+            item["product_source"] = (
+                {
+                    "kind": source["source_kind"],
+                    "status": source["status"],
+                    "effective_to": source["effective_to"],
+                    "effective_now": source["effective_now"],
+                }
+                if source
+                else None
+            )
         summary = summaries.get(oid)
         item["subscription_status"] = summary.subscription_status if summary else ""
         item["products"] = list(summary.product_codes) if summary else []
@@ -147,6 +168,26 @@ def detail(ctx: TenantContext, organization_id: UUID) -> dict[str, Any]:
         billing = _billing_payload(organization_id) if can_billing else None
         grants = entitlement_grants.live_grants(customer)
         trail = audit_selectors.audit_page(limit=20).items
+    # Product trials are not subscriptions (Phase 11): listed in their own right, so
+    # a customer on a trial never reads "no subscription, no overrides" and nothing
+    # more. Time ends a trial, not the sweeper: one past its end is not in effect
+    # even before the clock job marks its row.
+    now = timezone.now()
+    trials = [
+        {
+            "id": str(t.id),
+            "product_code": t.product_code,
+            "plan_code": t.plan_code,
+            "seats": t.seats,
+            "status": t.status.value,
+            "in_effect": t.is_effective_at(now),
+            "started_at": t.started_at.isoformat(),
+            "ends_at": t.ends_at.isoformat(),
+            "ended_at": t.ended_at.isoformat() if t.ended_at else None,
+        }
+        for t in subscription_selectors.commercial_trials(organization_id)
+    ]
+    sources = access_sources(organization_id)
 
     link = partner_selectors.live_link_for_organization(organization_id)
     partner = (
@@ -165,9 +206,17 @@ def detail(ctx: TenantContext, organization_id: UUID) -> dict[str, Any]:
         "members": members,
         "subscriptions": subscriptions,
         "entitlements": {
-            code: {"status": info.get("status"), "seats": info.get("seats")}
+            code: {
+                "status": info.get("status"),
+                "seats": info.get("seats"),
+                # Where it comes from: subscription, bundle, grant (a staff
+                # override) or trial (a product trial).
+                "source_kind": (main_source(sources, code) or {}).get("source_kind"),
+            }
             for code, info in products.items()
         },
+        "product_trials": trials,
+        "access_sources": sources,
         "licenses": licenses,
         "entitlement_overrides": grants,
         "billing": billing,
@@ -300,3 +349,65 @@ def _change(
 def customer_context(ctx: TenantContext, organization_id: UUID) -> TenantContext:
     """The staff actor re-bound to a customer (404 if there is none)."""
     return context_for_organization(ctx, organization_id)
+
+
+# --- the customer's partner: assign, change, history (2026-11-10) ----------------------
+
+
+def partner_assignment(ctx: TenantContext, organization_id: UUID) -> dict[str, Any]:
+    """The customer's current partner and every relationship it has had, with who
+    started and ended each. Needs the customer view and the partner view."""
+    from workeasy360.platform.identity.selectors import display_names
+
+    authz.require(ctx, VIEW)
+    authz.require(ctx, PARTNER_VIEW)
+    if org_selectors.organization_lifecycle(organization_id) is None:
+        raise CommercialRecordNotFound(
+            "No such customer.", organization_id=str(organization_id)
+        )
+    history = partner_selectors.partner_history_for_organization(organization_id)
+    people = display_names(
+        {UUID(h[k]) for h in history for k in ("created_by_id", "ended_by_id") if h[k]}
+    )
+    for row in history:
+        row["started_by_name"] = people.get(UUID(row.pop("created_by_id") or _NIL), "")
+        ended_by = row.pop("ended_by_id")
+        row["ended_by_name"] = people.get(UUID(ended_by), "") if ended_by else ""
+    current = next((h for h in history if h["status"] != "ended"), None)
+    return {
+        "current": current,
+        "history": history,
+        "may_manage": authz.check(ctx, "platform.staff_partner.manage").allowed,
+    }
+
+
+_NIL = "00000000-0000-0000-0000-000000000000"
+
+
+@in_scope
+def assign_partner(
+    ctx: TenantContext, organization_id: UUID, *, partner_id: Any, reason: Any
+) -> dict[str, Any]:
+    """Assign this customer a partner, or change it (``partners.services``)."""
+    from workeasy360.commercial.partners import services as partner_services
+
+    authz.require(ctx, VIEW)
+    # Refused before anything about the request is judged: read-only staff get a
+    # 403, never a validation message.
+    authz.require(ctx, partner_services.MANAGE)
+    if org_selectors.organization_lifecycle(organization_id) is None:
+        raise CommercialRecordNotFound(
+            "No such customer.", organization_id=str(organization_id)
+        )
+    try:
+        target = UUID(str(partner_id))
+    except (TypeError, ValueError) as exc:
+        raise CatalogValidationError("Choose a partner.", field="partner_id") from exc
+    partner_services.assign_customer_partner(ctx, organization_id, target, reason=reason)
+    return partner_assignment(ctx, organization_id)
+
+
+def assignable_partners(ctx: TenantContext, query: str = "") -> list[dict[str, Any]]:
+    """Active partners that can serve customers, for the picker."""
+    authz.require(ctx, PARTNER_VIEW)
+    return partner_selectors.assignable_partners(query)

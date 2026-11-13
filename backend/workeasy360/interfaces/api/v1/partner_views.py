@@ -72,9 +72,18 @@ def portal_view(request: HttpRequest) -> JsonResponse:
     partner type - so an affiliate sees referral and commission pages and a
     white-label partner adds branding, with no per-type switch anywhere.
     Empty for a user who is not a partner user; that is not an error.
+
+    A session opened by Login as Guest (ADR-062) lists the one partner it is
+    viewing and nothing else - not the staff member's own partners.
     """
+    from workeasy360.interfaces.api.guest_session import guest_session_id
+
     user = authenticated_user(request)
-    partners = partner_selectors.partners_for_user(user.id)
+    partners = (
+        []
+        if guest_session_id(request) is not None
+        else partner_selectors.partners_for_user(user.id)
+    )
     guest_entry = _guest_entry(request, {p["partner_id"] for p in partners})
     if guest_entry is not None:
         partners.append(guest_entry)
@@ -96,16 +105,25 @@ def _guest_entry(request: HttpRequest, listed: set[str]) -> dict[str, Any] | Non
     entry = partner_selectors.guest_portal_entry(ctx) if ctx is not None else None
     if entry is None:
         return None
+    user = request.user
     return {
         **entry,
-        "guest": {"reason": view.reason, "expires_at": view.expires_at.isoformat()},
+        "guest": {
+            **view.as_json(),
+            # Who is looking: the staff member, never the partner (Guest Mode
+            # banner). Their own name and address, nobody else's.
+            "viewer": {"name": user.full_name or "", "email": user.email},
+        },
     }
 
 
 @require_http_methods(["POST"])
 def guest_view_end_view(request: HttpRequest) -> JsonResponse:
-    """ "Exit guest session": ends this sign-in's guest view, if any (always 200)."""
-    return JsonResponse({"ended": end_guest_view(request)})
+    """ "Exit Guest Mode": ends this session's guest view, if any, and says
+    where the Admin is (always 200; ``return_url`` comes from configuration)."""
+    response = JsonResponse(end_guest_view(request))
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 # --- customers ------------------------------------------------------------

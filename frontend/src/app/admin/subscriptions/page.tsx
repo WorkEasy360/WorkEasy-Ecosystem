@@ -1,7 +1,7 @@
 "use client";
 
-import { SubscriptionsScreen } from "@/features/controlplane/AdminCommerce";
+import { BillingSubscriptionsScreen } from "@/features/controlplane/AdminBillingViews";
 
 export default function Page() {
-  return <SubscriptionsScreen />;
+  return <BillingSubscriptionsScreen />;
 }

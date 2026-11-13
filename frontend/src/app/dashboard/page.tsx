@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { getOrganizations } from "@/lib/api/auth";
 import { useSession } from "@/lib/auth/useSession";
 import { usePortals } from "@/lib/portalContext";
+import { portalHref } from "@/lib/portals";
 import { StatusScreen } from "@/components/StatusScreen";
 import { usePortalRouter } from "@/lib/portalRouter";
 
@@ -45,7 +46,14 @@ function DashboardEntry() {
     getOrganizations()
       .then(({ organizations, has_more }) => {
         if (organizations.length === 0 && !has_more) {
-          router.replace(query.session.consoles?.partner && !portals ? "/partner" : "/onboarding");
+          // A partner with no organization has nothing here: its work (a new applicant's
+          // KYC included) is on the partner portal, on its own host in multi-portal mode.
+          if (query.session.consoles?.partner) {
+            if (portals) window.location.assign(portalHref(portals, "partner", "/partner"));
+            else router.replace("/partner");
+          } else {
+            router.replace("/onboarding");
+          }
         } else if (organizations.length === 1 && !has_more) {
           router.replace(`/o/${organizations[0].slug}`);
         } else {

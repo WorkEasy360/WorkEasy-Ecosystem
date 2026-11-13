@@ -50,7 +50,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from workeasy360.contracts.values import json_input
-from workeasy360.interfaces.api.v1 import intelligence_product_views
+from workeasy360.interfaces.api.v1 import intelligence_product_views, usage_product_views
 from workeasy360.platform.ecosystem import (
     authorization,
     chooser,
@@ -197,13 +197,19 @@ def authorize(request: HttpRequest) -> HttpResponse:
                 protocol.UNAUTHORIZED_CLIENT,
                 "This product is not ready for Workeasy360 sign-in.",
             )
-        if parsed.wants_account_confirmation or not decision.silent:
+        product_code = parsed.integration.product_code
+        if parsed.wants_account_confirmation or decision.asks(
+            entered_this_sign_in=sign_in.entered_this_sign_in(request, product_code)
+        ):
             if parsed.prompt_none:
                 raise protocol.OAuthError(
                     protocol.INTERACTION_REQUIRED,
                     "Workeasy360 needs to ask this person how to sign in.",
                 )
             return _park_for_choice(parsed, user.pk)
+        # No record_entry here: a silent code means Automatic, or Ask once
+        # already recorded. The record is written where the account is chosen -
+        # the chooser's answer or a sign-in for the request - both at resume.
         granted = authorization.issue_code(parsed, subject)
     except protocol.OAuthError as exc:
         if exc.error in (protocol.LOGIN_REQUIRED, protocol.ORGANIZATION_REQUIRED):
@@ -356,11 +362,19 @@ def resume(request: HttpRequest) -> HttpResponse:
                     protocol.UNAUTHORIZED_CLIENT,
                     "This product is not ready for Workeasy360 sign-in.",
                 )
-            if not decision.silent:
+            if decision.asks(
+                entered_this_sign_in=sign_in.entered_this_sign_in(
+                    request, pending_request.integration.product_code
+                )
+            ):
                 # Parked as the product sent it: a chosen or implied
                 # organization is this person's, not the request's.
                 return _park_for_choice(pending_request, user.pk)
         granted = authorization.issue_code(pending_request, subject)
+        # Answered on the chooser, or signed in for this very request: either
+        # way this sign-in has now chosen its account for the product, and
+        # Ask once does not ask it again (ADR-066).
+        sign_in.record_entry(request, pending_request.integration.product_code)
     except protocol.OAuthError as exc:
         return _redirect_pending_error(pending_request, exc)
 
@@ -469,6 +483,7 @@ def pending_view(request: HttpRequest) -> JsonResponse:
         return _json_refusal("pending_invalid", 404)
 
     from workeasy360.commercial.catalog import selectors as catalog
+    from workeasy360.platform.administration.site import signup_enabled
     from workeasy360.platform.organizations.selectors import organization_names
 
     shown = catalog.product_presentations([facts.product_code]).get(
@@ -491,6 +506,8 @@ def pending_view(request: HttpRequest) -> JsonResponse:
             "choices": {
                 "workeasy360": True,
                 "product": facts.product_login_available,
+                # "Create New Account" only where registration is open.
+                "create_account": signup_enabled(),
             },
             "remembered": facts.override.value,
         }
@@ -525,11 +542,19 @@ def pending_choose_view(request: HttpRequest) -> JsonResponse:
     if not isinstance(body, dict):
         return _json_refusal("pending_invalid", 400)
 
+    choice = str(body.get("choice") or "")
+    if choice == chooser.Choice.CREATE_ACCOUNT.value:
+        from workeasy360.platform.administration.site import signup_enabled
+
+        if not signup_enabled():
+            # Refused before the request is touched: "Continue" still works.
+            return _json_refusal("signup_closed", 400)
+
     where = connection_facts(request)
     outcome = chooser.answer(
         token=str(body.get("resume") or ""),
         user_id=user.pk,
-        choice=str(body.get("choice") or ""),
+        choice=choice,
         remember=body.get("remember") is True,
         ip_prefix=where["ip_prefix"],
         device_label=where["device_label"],
@@ -544,6 +569,11 @@ def pending_choose_view(request: HttpRequest) -> JsonResponse:
     elif outcome.choice is chooser.Choice.SWITCH_ACCOUNT:
         _sign_out(request)
         target = f"/login?resume={outcome.resume_token}"
+    elif outcome.choice is chooser.Choice.CREATE_ACCOUNT:
+        # Signed out first: the new account must never inherit this session,
+        # and the next product sign-in is then the new person's own.
+        _sign_out(request)
+        target = _signup_destination(outcome.product_code)
     else:
         assert outcome.request is not None
         target = _error_redirect_url(
@@ -556,6 +586,22 @@ def pending_choose_view(request: HttpRequest) -> JsonResponse:
     response = JsonResponse({"redirect_url": target})
     response["Cache-Control"] = "no-store"
     return response
+
+
+def _signup_destination(product_code: str) -> str:
+    """Where "Create New Account" continues (ADR-066): the sign-up page, then
+    the product's Store page - a brand-new account holds no entitlement, so
+    the purchase route is the only way it can reach the product. Built from
+    configuration and the catalog, never from the request. The Store's own
+    host when it has one (its sign-up honours ``next``), otherwise the
+    customer portal's."""
+    from workeasy360.commercial.catalog.selectors import store_page_slug
+
+    base = f"{portal_links.store_url()}/signup"
+    slug = store_page_slug(product_code)
+    if not slug:
+        return base
+    return f"{base}?{urlencode({'next': f'/store/product/{slug}'})}"
 
 
 def _sign_out(request: HttpRequest) -> None:
@@ -1091,4 +1137,5 @@ CREDENTIALED_VIEWS: tuple[Callable[..., Any], ...] = (
     # Phase 8: the product-facing AI, retrieval and analytics endpoints share
     # this trust boundary exactly (intelligence_product_views).
     *intelligence_product_views.CREDENTIALED_VIEWS,
+    *usage_product_views.CREDENTIALED_VIEWS,
 )

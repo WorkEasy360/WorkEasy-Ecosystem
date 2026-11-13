@@ -99,6 +99,9 @@ INTEGRATION_APPS = [
     "workeasy360.integration.events",
     "workeasy360.integration.idempotency",
     "workeasy360.integration.scheduling",
+    # 2026-11-10: no models; registers the socket-owning adapters (the clamd
+    # malware scanner) with the platform below it at start-up.
+    "workeasy360.integration.egress",
     "workeasy360.integration.connectors",
     "workeasy360.integration.webhooks",
     "workeasy360.integration.automation",
@@ -129,6 +132,7 @@ COMMERCIAL_APPS = [
     "workeasy360.commercial.pricing",
     "workeasy360.commercial.billing",
     "workeasy360.commercial.subscriptions",
+    "workeasy360.commercial.wallets",
     "workeasy360.commercial.provisioning",
     # Phase 8 extension. Beside provisioning: invoices, hosted checkout
     # through provider adapters, webhooks, refunds and dunning. Reads
@@ -206,6 +210,9 @@ MIDDLEWARE = [
     # Directly after: a session whose password was chosen by someone else (a
     # temporary one) is served only the calls that let its owner replace it.
     "workeasy360.platform.identity.middleware.PasswordChangeRequiredMiddleware",
+    # ADR-062: a partner-portal session opened by Login as Guest reads only, and
+    # ends the moment its guest view is ended, revoked or expired.
+    "workeasy360.interfaces.api.guest_session.GuestSessionMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "workeasy360.platform.observability.middleware.RequestLogMiddleware",
@@ -373,6 +380,25 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_SAVE_EVERY_REQUEST = False
 SESSION_REFRESH_INTERVAL_S = env.int("W360_SESSION_REFRESH_INTERVAL_S", 60)
 SESSION_ABSOLUTE_TIMEOUT = 60 * 60 * 24 * 30  # 30d hard cap
+# Partner KYC: a draft partner cannot be activated until its application is
+# approved (commercial/partners/kyc.py). Production refuses to start with it off.
+PARTNER_KYC_REQUIRED = env.bool("W360_PARTNER_KYC_REQUIRED", True)
+
+# 2026-11-10: malware scanning of uploaded files. "clamd" is ClamAV's daemon over
+# TCP (INSTREAM); "none" keeps the allowlist check alone, which is enough for
+# images but not for KYC documents. With KYC_MALWARE_SCAN_REQUIRED on, a file of
+# a strict module is never served until a real scanner has said it is clean:
+# with no scanner, or a scanner that gives no verdict, it stays quarantined.
+FILES_MALWARE_SCANNER = env.choice(
+    "W360_FILES_MALWARE_SCANNER", ("none", "clamd"), default="none"
+)
+CLAMD_HOST = env.str("W360_CLAMD_HOST", "clamav")
+CLAMD_PORT = env.int("W360_CLAMD_PORT", 3310)
+CLAMD_TIMEOUT_SECONDS = env.float("W360_CLAMD_TIMEOUT_SECONDS", 30.0)
+KYC_MALWARE_SCAN_REQUIRED = env.bool("W360_KYC_MALWARE_SCAN_REQUIRED", True)
+FILES_STRICT_SCAN_MODULES = ("partner_kyc",)
+# The Admin and Partner sign-ins' "Remember me" idle window. Never past the hard cap above.
+SESSION_REMEMBER_ME_AGE = env.int("W360_SESSION_REMEMBER_ME_S", 60 * 60 * 24 * 7)
 
 # --- CSRF / security -----------------------------------------------------
 
@@ -435,19 +461,29 @@ W360_FRONTEND_URL = env.str("W360_FRONTEND_URL", "http://localhost:3000").rstrip
 # host refuses (interfaces/api/portal_surface.py - a narrowing, only ever a
 # denial). It never decides what anyone may do: StaffGrant, PartnerMember and
 # Membership are checked on every request, whatever the Host.
+_REQUIRED_PORTALS = ("admin", "partner", "app", "auth", "api")
+# ADR-065: the Digital Store's own host (store.workeasy360.com) is optional.
+# Unset, the Store's pages stay on the customer portal exactly as before.
+_OPTIONAL_PORTALS = ("store",)
 W360_PORTAL_ORIGINS: dict[str, str] = {
     name: env.str(f"W360_{name.upper()}_ORIGIN", "").strip().rstrip("/")
-    for name in ("admin", "partner", "app", "auth", "api")
+    for name in (*_REQUIRED_PORTALS, *_OPTIONAL_PORTALS)
 }
-_configured_portals = [name for name, origin in W360_PORTAL_ORIGINS.items() if origin]
+_configured_portals = [name for name in _REQUIRED_PORTALS if W360_PORTAL_ORIGINS[name]]
 # Reported with every other problem by the settings module's require_all().
 env.check(
-    not _configured_portals or len(_configured_portals) == len(W360_PORTAL_ORIGINS),
+    not _configured_portals or len(_configured_portals) == len(_REQUIRED_PORTALS),
     "Set every portal origin (W360_ADMIN_ORIGIN, W360_PARTNER_ORIGIN, "
     "W360_APP_ORIGIN, W360_AUTH_ORIGIN, W360_API_ORIGIN) or none of them; only "
     f"{', '.join(_configured_portals) or 'none'} are set.",
 )
-PORTALS_ENABLED = len(_configured_portals) == len(W360_PORTAL_ORIGINS)
+env.check(
+    not W360_PORTAL_ORIGINS["store"]
+    or len(_configured_portals) == len(_REQUIRED_PORTALS),
+    "W360_STORE_ORIGIN needs the five other portal origins: the Store's own host "
+    "exists only in multi-portal mode.",
+)
+PORTALS_ENABLED = len(_configured_portals) == len(_REQUIRED_PORTALS)
 # Links name their portal through platform/identity/portals.py (auth_url,
 # app_url), read at call time; in single-host mode both are W360_FRONTEND_URL.
 # A hand-off code (auth host -> portal host) lives this long, and is single use.
@@ -842,6 +878,8 @@ ECOSYSTEM_RATE_LIMITS = {
     # the *rate* guard and degrade with the cache (Task 100); spend and
     # concurrency are decided by the database and never degrade open.
     "ai_invoke": (env.int("W360_RL_AI_INVOKE", 1200), 60),
+    # A product reporting billable usage: one event per message or call.
+    "usage_events": (env.int("W360_RL_USAGE_EVENTS", 6000), 60),
     "ai_invoke_org": (env.int("W360_RL_AI_INVOKE_ORG", 300), 60),
     "ai_invoke_skill": (env.int("W360_RL_AI_INVOKE_SKILL", 120), 60),
     # Registering skills and metrics is rare; a loop doing it is a bug.
@@ -893,6 +931,9 @@ AUTH_RATE_LIMITS = {
     # an online guessing budget against a 256-bit code - bounded anyway.
     "handoff_issue": (env.int("W360_RL_HANDOFF_ISSUE", 30), 60),
     "handoff_redeem_ip": (env.int("W360_RL_HANDOFF_REDEEM_IP", 30), 60),
+    # ADR-062: Login as Guest's entry on the partner host - an online guessing
+    # budget against a 256-bit, sixty-second, single-use ticket.
+    "guest_enter_ip": (env.int("W360_RL_GUEST_ENTER_IP", 30), 60),
 }
 
 # Phase 5, Task 11. Deliberately generous: this is abuse protection (a
@@ -942,6 +983,10 @@ CONTROL_PLANE_RATE_LIMITS = {
     # one-shot support form) and payout-detail / withdrawal changes.
     "partner_ticket_user": (env.int("W360_RL_PARTNER_TICKET_USER", 30), 300),
     "partner_ticket_ip": (env.int("W360_RL_PARTNER_TICKET_IP", 100), 300),
+    # ADR-063: opening a Platform Wallet top-up checkout, and paying a customer's
+    # plan from the wallet (each is a payment).
+    "partner_wallet_user": (env.int("W360_RL_PARTNER_WALLET_USER", 30), 300),
+    "partner_wallet_ip": (env.int("W360_RL_PARTNER_WALLET_IP", 100), 300),
     "partner_payout_user": (env.int("W360_RL_PARTNER_PAYOUT_USER", 10), 300),
     "partner_payout_ip": (env.int("W360_RL_PARTNER_PAYOUT_IP", 30), 300),
     # ADR-046: partner API keys. Managing them (create / rotate / revoke) is a
@@ -1359,6 +1404,30 @@ PAYMENT_MAX_REQUEST_BYTES = env.int("W360_PAYMENT_MAX_REQUEST_BYTES", 64 * 1024)
 PAYMENT_MAX_RESPONSE_BYTES = env.int("W360_PAYMENT_MAX_RESPONSE_BYTES", 256 * 1024)
 PAYMENT_WEBHOOK_MAX_BYTES = env.int("W360_PAYMENT_WEBHOOK_MAX_BYTES", 256 * 1024)
 
+# 2026-11-10: strict files (KYC documents) that got no scan verdict are retried.
+CELERY_BEAT_SCHEDULE["files-rescan-quarantined"] = {
+    "task": "platform.files.rescan_quarantined",
+    "schedule": env.float("W360_BEAT_FILES_RESCAN_S", 300.0),
+    "options": {"queue": "default", "expires": 280},
+}
+
+# ADR-062: write down the end of guest views that ran out (they were refused
+# from the moment they expired; this records that they ended).
+CELERY_BEAT_SCHEDULE["partners-close-guest-sessions"] = {
+    "task": "commercial.partners.close_guest_sessions",
+    "schedule": env.float("W360_BEAT_GUEST_SESSIONS_S", 300.0),
+    "options": {"queue": "default", "expires": 280},
+}
+
+CONTROL_PLANE_RATE_LIMITS.update(
+    {
+        # ADR-062: Login as Guest. Each start is an audited impersonation-class
+        # act; a person needs a few a minute at most.
+        "partner_guest_start_user": (env.int("W360_RL_GUEST_START_USER", 10), 60),
+        "partner_guest_start_ip": (env.int("W360_RL_GUEST_START_IP", 30), 60),
+    }
+)
+
 CELERY_BEAT_SCHEDULE["payments-process-due"] = {
     "task": "commercial.payments.process_due",
     "schedule": env.float("W360_BEAT_PAYMENTS_S", 300.0),
@@ -1380,6 +1449,9 @@ PUBLIC_CATALOG_DEFAULT_CURRENCY = env.str("W360_PUBLIC_CATALOG_CURRENCY", "INR")
 #: How long an unpaid order waits for its payment before it expires and its
 #: invoice is voided.
 ORDER_TTL_HOURS = env.int("W360_ORDER_TTL_HOURS", 24)
+#: ADR-058: GST on every INR invoice (orders and renewals), in basis points -
+#: 1800 = 18%. 0 turns GST off. Other currencies carry no tax line.
+GST_RATE_BP = env.int("W360_GST_RATE_BP", 1800)
 
 CONTROL_PLANE_RATE_LIMITS.update(
     {
@@ -1398,8 +1470,23 @@ CONTROL_PLANE_RATE_LIMITS.update(
             env.int("W360_RL_PASSWORD_RESET_CONFIRM_IP", 20),
             60,
         ),
+        # ADR-066: changing the sign-in email. Each request mails the new
+        # address, so per person it is an hour's budget (a signed-in account
+        # must not become a mail cannon); the confirmation link is a public
+        # endpoint, limited on address like the reset link.
+        "email_change_user": (env.int("W360_RL_EMAIL_CHANGE_USER", 5), 3600),
+        "email_change_ip": (env.int("W360_RL_EMAIL_CHANGE_IP", 20), 60),
+        "email_change_account": (env.int("W360_RL_EMAIL_CHANGE_ACCOUNT", 3), 3600),
+        "email_change_confirm_ip": (env.int("W360_RL_EMAIL_CHANGE_CONFIRM_IP", 20), 60),
+        # ADR-066: Switch Account - a sign-out plus a hand-over to the central
+        # sign-in host, so the same budget as other session writes.
+        "switch_account_user": (env.int("W360_RL_SWITCH_ACCOUNT_USER", 20), 60),
+        "switch_account_ip": (env.int("W360_RL_SWITCH_ACCOUNT_IP", 60), 60),
         # The public site: catalog and site configuration.
         "public_catalog_ip": (env.int("W360_RL_PUBLIC_CATALOG_IP", 120), 60),
+        # ADR-058: the Store's coupon "Apply" - tight, so codes cannot be
+        # guessed by trying many.
+        "coupon_check_ip": (env.int("W360_RL_COUPON_CHECK_IP", 20), 600),
         # Placing orders: an owner scripting purchases, or an address doing so.
         "order_place_user": (env.int("W360_RL_ORDER_PLACE_USER", 20), 60),
         "order_place_ip": (env.int("W360_RL_ORDER_PLACE_IP", 60), 60),

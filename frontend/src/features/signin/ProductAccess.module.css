@@ -91,6 +91,62 @@
   overflow-wrap: anywhere;
 }
 
+/* "Currently signed in as" (ADR-066): who Continue would sign in as. */
+.account {
+  margin: 0 0 var(--w360-space-5);
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+  background: var(--w360-neutral-bg);
+}
+
+.accountCaption {
+  margin: 0 0 var(--w360-space-2);
+  color: var(--w360-text-muted);
+  font-size: 13px;
+}
+
+.accountRow {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+  min-width: 0;
+}
+
+.avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  /* White on navy; never white on the green (2.4:1). */
+  background: var(--w360-navy);
+  color: var(--w360-navy-contrast);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.accountText {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.accountName {
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.accountDetail {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
 .choices {
   display: grid;
   gap: var(--w360-space-3);

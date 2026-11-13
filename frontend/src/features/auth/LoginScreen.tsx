@@ -1,12 +1,16 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect } from "react";
 import { Logo } from "@/components/brand/Logo";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { StatusScreen } from "@/components/StatusScreen";
 import { useSession } from "@/lib/auth/useSession";
-import { usePortals } from "@/lib/portalContext";
+import { usePortalRouter } from "@/lib/portalRouter";
+import { PORTAL_TO_MODE, type Portal } from "@/lib/portals";
+import { AdminLoginScreen } from "@/features/auth/AdminLogin";
 import { LoginForm } from "@/features/auth/LoginForm";
-import { PortalHandoff } from "@/features/auth/PortalHandoff";
+import { PartnerLoginScreen } from "@/features/auth/PartnerLogin";
+import { UserLoginScreen } from "@/features/auth/UserLogin";
 import { destinationAfterSignIn, parseMode, type SignInMode } from "@/features/auth/signInMode";
 import { SignInSupport } from "@/features/controlplane/brandDisplay";
 import { useBranding, type HostBrand } from "@/features/controlplane/useBranding";
@@ -45,32 +49,46 @@ export function effectiveMode(params: URLSearchParams): SignInMode | null {
   return parseMode(params.get("mode"));
 }
 
-function AlreadySignedInRedirect() {
-  const router = useRouter();
+/** The portal this sign-in page is served on (multi-portal mode), or
+ * `undefined` in single-host mode. */
+type HostPortal = Portal | undefined;
+
+/**
+ * The mode the page signs in for. ADR-059: on the Admin, Partner and customer
+ * portals the host itself names it - each is its own sign-in page, and the
+ * session it creates is that host's. Elsewhere, what the address names, else
+ * User.
+ */
+export function modeFor(portal: HostPortal, params: URLSearchParams): SignInMode {
+  if (params.get("resume") || brandHostParam(params.get("brand"))) return "user";
+  if (portal && portal !== "auth") return PORTAL_TO_MODE[portal];
+  return effectiveMode(params) ?? "user";
+}
+
+function AlreadySignedInRedirect({ portal }: { portal: HostPortal }) {
+  const router = usePortalRouter();
   const searchParams = useSearchParams();
   const session = useSession();
-
-  const portals = usePortals();
 
   useEffect(() => {
     if (session.status !== "ready" || !session.session.authenticated) return;
     // Already signed in. A resume link still needs completing (a second tab
-    // may have logged in first); otherwise go where the chosen mode leads -
-    // on the central sign-in host (ADR-043) by handing the sign-in to that
-    // portal, which the sign-in card does itself.
+    // may have logged in first); otherwise go where this sign-in page leads.
     const resume = searchParams.get("resume");
     // ADR-044: a product asked for a fresh sign-in (`prompt=login`). The
     // existing session is exactly what it does not want: the form stays, and
     // the server refuses to resume for a session older than the request.
     if (reauthenticating(searchParams)) return;
-    if (portals && !resume) return;
     if (resume) {
       // eslint-disable-next-line @next/next/no-location-assign-relative-destination
       window.location.href = `/api/v1/integrations/oauth/resume?resume=${encodeURIComponent(resume)}`;
-    } else {
-      router.replace(destinationAfterSignIn(effectiveMode(searchParams), searchParams.get("next")));
+    } else if (portal !== "auth") {
+      // Single-host mode: what the address names, as before (no mode lets the
+      // dashboard decide).
+      const mode = portal ? modeFor(portal, searchParams) : effectiveMode(searchParams);
+      router.replace(destinationAfterSignIn(mode, searchParams.get("next")));
     }
-  }, [session, router, searchParams, portals]);
+  }, [session, router, searchParams, portal]);
 
   return null;
 }
@@ -113,24 +131,14 @@ function Heading({ brand }: { brand: HostBrand | null }) {
 }
 
 const SIGN_IN_TITLE: Record<SignInMode, string> = {
-  admin: "Sign in as Administrator",
+  admin: "Admin Login",
   partner: "Sign in as Partner",
   user: "Sign in as User",
 };
 
-function SignInCard() {
+function SignInCard({ portal }: { portal: HostPortal }) {
   const searchParams = useSearchParams();
-  const portals = usePortals();
-  const session = useSession();
-  const [signedInHere, setSignedInHere] = useState(false);
-  const mode = effectiveMode(searchParams) ?? "user";
-  // The central sign-in (ADR-043): once signed in here, hand the sign-in to
-  // the chosen portal. A product sign-in (`resume`) completes here instead.
-  const signedIn = signedInHere || (session.status === "ready" && session.session.authenticated);
-  if (portals && signedIn && !searchParams.get("resume")) {
-    return <PortalHandoff origins={portals} mode={mode} next={searchParams.get("next")} state={searchParams.get("state")} />;
-  }
-  if (portals && session.status === "loading") return <p>Loading…</p>;
+  const mode = modeFor(portal, searchParams);
   // The platform's own sign-in names its portal; a product's or a partner's says "Sign in".
   const platform = !searchParams.get("resume") && !brandHostParam(searchParams.get("brand"));
   return (
@@ -140,27 +148,58 @@ function SignInCard() {
           {reauthenticating(searchParams) ? "Confirm it's you" : platform || mode === "admin" ? SIGN_IN_TITLE[mode] : "Sign in"}
         </h2>
       </div>
-      {mode === "admin" && (
-        <p className={styles.note}>
-          Access to the Admin Console is checked for your account after you sign in.
-        </p>
-      )}
       {reauthenticating(searchParams) && (
         <p className={styles.note}>
           The product you are opening asked Workeasy360 to check it is really you. Enter your Workeasy360 email and password
           again - or sign in as someone else.
         </p>
       )}
-      <LoginForm mode={mode} onSignedIn={portals ? () => setSignedInHere(true) : undefined} />
+      <LoginForm mode={mode} />
     </>
   );
 }
 
-export function LoginScreen() {
+/** The Admin, Partner and customer portals' sign-ins have their own screens
+ * (AdminLogin.tsx, PartnerLogin.tsx, UserLogin.tsx - the owner's reference
+ * images). A product's or a partner's branded sign-in (`?resume=`, `?brand=`)
+ * never does - it is the User mode, on the standard page - and neither does the
+ * central sign-in host, which serves product sign-ins only. */
+function ScreenForMode({ portal }: { portal: HostPortal }) {
+  const searchParams = useSearchParams();
+  const mode = modeFor(portal, searchParams);
+  if (mode === "admin" || mode === "partner") {
+    return (
+      <>
+        <AlreadySignedInRedirect portal={portal} />
+        {mode === "admin" ? <AdminLoginScreen /> : <PartnerLoginScreen />}
+      </>
+    );
+  }
+  const plain = Boolean(searchParams.get("resume")) || Boolean(brandHostParam(searchParams.get("brand"))) || portal === "auth";
+  if (!plain) {
+    return (
+      <>
+        <AlreadySignedInRedirect portal={portal} />
+        <UserLoginScreen />
+      </>
+    );
+  }
+  return <StandardSignIn portal={portal} />;
+}
+
+export function LoginScreen({ portal }: { portal?: Portal } = {}) {
+  return (
+    <Suspense fallback={<StatusScreen>Loading…</StatusScreen>}>
+      <ScreenForMode portal={portal} />
+    </Suspense>
+  );
+}
+
+function StandardSignIn({ portal }: { portal?: Portal }) {
   return (
     <main id="w360-main" className={`w360-container ${styles.main}`}>
       <Suspense fallback={null}>
-        <AlreadySignedInRedirect />
+        <AlreadySignedInRedirect portal={portal} />
       </Suspense>
       <div className={styles.column}>
         <Suspense
@@ -181,7 +220,7 @@ export function LoginScreen() {
                 <Heading brand={brand} />
                 <div className={`w360-card ${styles.card}`}>
                   <Suspense fallback={<p>Loading…</p>}>
-                    <SignInCard />
+                    <SignInCard portal={portal} />
                   </Suspense>
                 </div>
                 {/* Support details when the partner chose to show them, and its website. */}

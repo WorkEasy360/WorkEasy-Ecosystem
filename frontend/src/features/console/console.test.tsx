@@ -8,7 +8,15 @@ import { AdminInsights } from "./DashboardScreen";
 import { MembersScreen } from "./MembersScreen";
 import { InvitationsScreen } from "./InvitationsScreen";
 import { OrganizationScreen } from "./OrganizationScreen";
-import { BillingScreen, PAYMENT_POLL, checkoutNavigation, safeCheckoutUrl } from "./BillingScreen";
+import {
+  BillingAccountPanel,
+  BillingScreen,
+  InvoicesSection,
+  PAYMENT_POLL,
+  checkoutNavigation,
+  purchaseSource,
+  safeCheckoutUrl,
+} from "./BillingScreen";
 import { ExploreScreen } from "./ExploreScreen";
 import { MarkdownLite } from "./MarkdownLite";
 import { MySecurityScreen, describeAccountEvent } from "./MySecurityScreen";
@@ -290,7 +298,11 @@ describe("members", () => {
     mockApi({ [`GET ${ORG}/members`]: [page(MEMBERS)] });
     renderOrg(<MembersScreen />, ["platform.member.view"]);
     await screen.findByRole("table", { name: "Organization members" });
-    expect(screen.queryAllByRole("button", { name: /Suspend|Reactivate|Remove|Sign out|Save role/ })).toEqual([]);
+    expect(screen.queryAllByRole("button", { name: /^(Suspend|Reactivate|Remove|Sign out|Change role|Save role) / })).toEqual([]);
+    // Invite Member is for those who may invite; anyone may read what each role does.
+    expect(screen.queryByRole("button", { name: "Invite Member" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View permissions" }));
+    expect(within(screen.getByRole("dialog", { name: "Roles and permissions" })).getByText(/finance-authorized/)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Invitations" })).not.toBeInTheDocument();
   });
 
@@ -332,12 +344,16 @@ describe("members", () => {
       [`POST ${ORG}/members/m2/role`]: [{ status: 200, body: {} }],
     });
     const { container } = renderOrg(<MembersScreen />, ADMIN);
-    const select = await screen.findByLabelText("Role for Bob Jones");
-    const save = screen.getByRole("button", { name: "Save role for Bob Jones" });
+    // The role is changed in a small popup opened from the member's row.
+    fireEvent.click(await screen.findByRole("button", { name: "Change role for Bob Jones" }));
+    const popup = screen.getByRole("dialog", { name: "Change role for Bob Jones" });
+    const select = within(popup).getByLabelText("Role for Bob Jones");
+    const save = within(popup).getByRole("button", { name: "Save role" });
     expect(save).toBeDisabled();
     fireEvent.change(select, { target: { value: "readonly" } });
     fireEvent.click(save);
     expect(await screen.findByText("Bob Jones is now Read Only.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await expectNoViolations(container);
     const roleCalls = posted(calls, `POST ${ORG}/members/m2/role`);
     expect(roleCalls.map((c) => c.body)).toEqual([{ role: "readonly" }]);
@@ -347,12 +363,11 @@ describe("members", () => {
     const calls = mockApi({ [`GET ${ORG}/members`]: [page([])] });
     renderOrg(<MembersScreen />, ADMIN);
     await screen.findByText("No members yet.");
-    fireEvent.change(screen.getByLabelText("Search by name or email"), { target: { value: "bob" } });
-    const before = calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await waitFor(() => expect(calls.length).toBe(before + 1));
-    expect(calls.at(-1)!.url).toContain("q=bob");
-    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "suspended" } });
+    const search = screen.getByLabelText("Search by name or email");
+    fireEvent.change(search, { target: { value: "bob" } });
+    fireEvent.keyDown(search, { key: "Enter" });
+    await waitFor(() => expect(calls.at(-1)!.url).toContain("q=bob"));
+    fireEvent.click(within(screen.getByRole("group", { name: "Status" })).getByRole("button", { name: /^Suspended/ }));
     await waitFor(() => expect(calls.at(-1)!.url).toContain("status=suspended"));
   });
 });
@@ -387,21 +402,34 @@ const INVITES = [
 ];
 
 describe("invitations", () => {
-  const roleOptions = () =>
-    within(screen.getByLabelText("Role")).getAllByRole("option").map((o) => o.textContent);
+  // The invitation is written in a popup opened from the page header.
+  const openInvite = () => {
+    fireEvent.click(screen.getByRole("button", { name: "+ Invite someone" }));
+    return screen.getByRole("dialog", { name: "Invite someone" });
+  };
+  const roleOptions = (popup: HTMLElement) =>
+    within(within(popup).getByLabelText("Role")).getAllByRole("option").map((o) => o.textContent);
 
   it("offers administrator and billing manager only to someone who may assign roles", async () => {
     mockApi({ [`GET ${ORG}/invitations`]: [page(INVITES)] });
     const { unmount } = renderOrg(<InvitationsScreen />, ["platform.member.invite", "platform.member.view"]);
     await screen.findByRole("table", { name: "Invitations" });
-    expect(roleOptions()).toEqual(["Member", "Read Only"]);
+    expect(roleOptions(openInvite())).toEqual(["Member", "Read Only"]);
     unmount();
 
     mockApi({ [`GET ${ORG}/invitations`]: [page(INVITES)] });
     const { container } = renderOrg(<InvitationsScreen />, ["platform.member.invite", "platform.role.assign"]);
     await screen.findByRole("table", { name: "Invitations" });
-    expect(roleOptions()).toEqual(["Administrator", "Billing Manager", "Member", "Read Only"]);
     await expectNoViolations(container);
+    expect(roleOptions(openInvite())).toEqual(["Administrator", "Billing Manager", "Member", "Read Only"]);
+    await expectNoViolations(document.body);
+  });
+
+  it("offers no invitation to someone who may only view", async () => {
+    mockApi({ [`GET ${ORG}/invitations`]: [page(INVITES)] });
+    renderOrg(<InvitationsScreen />, ["platform.member.view"]);
+    await screen.findByRole("table", { name: "Invitations" });
+    expect(screen.queryByRole("button", { name: "+ Invite someone" })).not.toBeInTheDocument();
   });
 
   it("sends an email and a role, and offers resend and revoke only on open invitations", async () => {
@@ -417,15 +445,21 @@ describe("invitations", () => {
     expect(screen.getByText("Sent 2 times")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resend invitation to old@acme.test" })).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: " x@acme.test " } });
-    fireEvent.change(screen.getByLabelText("Role"), { target: { value: "readonly" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+    const popup = openInvite();
+    const send = within(popup).getByRole("button", { name: "Send invitation" });
+    expect(send).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Email address"), { target: { value: " x@acme.test " } });
+    fireEvent.change(within(popup).getByLabelText("Role"), { target: { value: "readonly" } });
+    fireEvent.click(send);
     expect(await screen.findByText("Invitation sent to x@acme.test.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(posted(calls, `POST ${ORG}/invitations`)[0].body).toEqual({ email: "x@acme.test", role: "readonly" });
 
     fireEvent.click(screen.getByRole("button", { name: "Resend invitation to new@acme.test" }));
     expect(await screen.findByText(/previous link no longer works/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Revoke invitation to new@acme.test" }));
+    expect(posted(calls, `POST ${ORG}/invitations/i1/revoke`)).toHaveLength(0); // nothing before the confirm
+    fireEvent.click(within(screen.getByRole("dialog", { name: /Revoke the invitation/ })).getByRole("button", { name: "Revoke invitation" }));
     expect(await screen.findByText(/was revoked/)).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Show"), { target: { value: "all" } });
@@ -442,14 +476,32 @@ describe("organization profile", () => {
     });
     const { container, reload } = renderOrg(<OrganizationScreen />, ["platform.organization.update"]);
     expect(screen.getByText("/o/acme")).toBeInTheDocument();
-    const save = screen.getByRole("button", { name: "Save name" });
+    // The name is read-only text on the page; it is changed in a popup.
+    expect(screen.queryByLabelText("Organization name")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Rename the organization" }));
+    const popup = screen.getByRole("dialog", { name: "Rename the organization" });
+    expect(within(popup).getByLabelText("Organization name")).toHaveValue("Acme Ltd");
+    const save = within(popup).getByRole("button", { name: "Save name" });
     expect(save).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Organization name"), { target: { value: "Acme Group " } });
+    fireEvent.change(within(popup).getByLabelText("Organization name"), { target: { value: "Acme Group " } });
     fireEvent.click(save);
     expect(await screen.findByText("The organization is now called Acme Group.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(posted(calls, `PATCH ${ORG}/organization`)[0].body).toEqual({ display_name: "Acme Group" });
     expect(reload).toHaveBeenCalled();
     await expectNoViolations(container);
+  });
+
+  it("keeps a refused rename in the popup with the server's reason", async () => {
+    mockApi({ [`PATCH ${ORG}/organization`]: [{ status: 400, body: { code: "invalid", detail: "That name is not allowed." } }] });
+    const { reload } = renderOrg(<OrganizationScreen />, ["platform.organization.update"]);
+    fireEvent.click(screen.getByRole("button", { name: "Rename the organization" }));
+    const popup = screen.getByRole("dialog", { name: "Rename the organization" });
+    fireEvent.change(within(popup).getByLabelText("Organization name"), { target: { value: "Bad" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save name" }));
+    expect(await within(popup).findByRole("alert")).toHaveTextContent("That name is not allowed.");
+    expect(within(popup).getByLabelText("Organization name")).toHaveValue("Bad");
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it("is read-only without the update permission", () => {
@@ -457,6 +509,7 @@ describe("organization profile", () => {
     renderOrg(<OrganizationScreen />, []);
     expect(screen.getByText("Acme Ltd")).toBeInTheDocument();
     expect(screen.queryByLabelText("Organization name")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rename the organization" })).not.toBeInTheDocument();
   });
 });
 
@@ -497,6 +550,20 @@ function attempt(status: string, checkout_url: string | null = null) {
   };
 }
 
+const SUB = {
+  id: "s1",
+  status: "active",
+  currency: "GBP",
+  billing_interval: "monthly",
+  renewal_policy: "auto_renew",
+  current_period_start: "2026-09-01T00:00:00Z",
+  current_period_end: "2026-10-01T00:00:00Z",
+  trial_ends_at: null,
+  cancel_at: null,
+  version: 3,
+  items: [],
+};
+
 function billingRoutes(extra: Record<string, Reply[]> = {}): Record<string, Reply[]> {
   return {
     [`GET ${ORG}/subscriptions`]: [
@@ -531,6 +598,8 @@ function billingRoutes(extra: Record<string, Reply[]> = {}): Record<string, Repl
       },
     ],
     [`GET ${ORG}/billing/invoices`]: [{ status: 200, body: { results: [INVOICE, PAID_INVOICE] } }],
+    [`GET ${ORG}/apps`]: [{ status: 200, body: { apps: [{ product_code: "books", display_name: "EasyBook", state: "active" }] } }],
+    [`GET ${ORG}/trials`]: [{ status: 200, body: { results: [] } }],
     ...extra,
   };
 }
@@ -549,18 +618,69 @@ describe("subscription & billing", () => {
     checkoutNavigation.assign = originalAssign;
   });
 
-  it("shows the subscription, the account and the invoices, with Pay only on an open invoice", async () => {
+  it("shows each product of the subscription with its plan, purchase source and renewal (2026-11-11)", async () => {
     mockApi(billingRoutes());
     const { container } = renderOrg(<BillingScreen />, OWNER_BILLING);
-    await screen.findByRole("table", { name: "Your invoices, newest first" });
-    await screen.findByRole("table", { name: "Products in this subscription" });
-    expect(screen.getByRole("heading", { level: 1, name: "Subscription & billing" })).toBeInTheDocument();
-    expect(screen.getByText("books-pro")).toBeInTheDocument();
+    const table = await screen.findByRole("table", { name: "Products in this subscription" });
+    expect(screen.getByRole("heading", { level: 1, name: "Subscriptions" })).toBeInTheDocument();
+    expect(within(table).getByText("books-pro")).toBeInTheDocument();
     expect(screen.queryByText("old-plan")).not.toBeInTheDocument();
-    expect(screen.getByText("ap@acme.test")).toBeInTheDocument();
+    // The product's name from the directory, and where it was bought.
+    expect(await within(table).findByText("EasyBook")).toBeInTheDocument();
+    expect(within(table).getAllByText("Online (WorkEasy360)").length).toBeGreaterThan(0);
+    expect(within(table).getByText(/^Renews /)).toBeInTheDocument();
+    expect(within(table).getByRole("link", { name: "Change plan: EasyBook" })).toHaveAttribute("href", "/o/acme/store/books");
+    // The billing account and the invoices have their own pages now.
+    expect(screen.queryByText("ap@acme.test")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Your invoices, newest first" })).not.toBeInTheDocument();
+    await expectNoViolations(container);
+  });
+
+  it("lists invoices on Orders & Payments, with Pay only on an open one", async () => {
+    mockApi(billingRoutes());
+    const { container } = renderOrg(<InvoicesSection />, OWNER_BILLING);
+    await screen.findByRole("table", { name: "Your invoices, newest first" });
     expect(screen.getByRole("button", { name: "Pay invoice INV-0001" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pay invoice INV-0000" })).not.toBeInTheDocument();
+    // Status chips filter what is listed.
+    fireEvent.click(within(screen.getByRole("group", { name: "Invoice status" })).getByRole("button", { name: /^Paid/ }));
+    expect(screen.queryByText("INV-0001")).not.toBeInTheDocument();
+    expect(screen.getByText("INV-0000")).toBeInTheDocument();
     await expectNoViolations(container);
+  });
+
+  it("follows the purchase channel: a store-billed subscription is managed in the store, a partner's by the partner", async () => {
+    const base = { status: "active", trial_ends_at: null, cancel_at: null } as const;
+    expect(purchaseSource({ ...SUB, ...base, source: "app_store" }).key).toBe("app_store");
+    expect(purchaseSource({ ...SUB, ...base, source: "play_store" }).label).toBe("Google Play");
+    expect(purchaseSource({ ...SUB, ...base, collection_mode: "partner_wallet" }).key).toBe("partner");
+    expect(purchaseSource({ ...SUB, ...base }, "partner_billed").key).toBe("partner");
+    expect(purchaseSource({ ...SUB, ...base, status: "trialing" }).label).toBe("Free trial");
+    expect(purchaseSource({ ...SUB, ...base }, "automatic").label).toBe("Online (WorkEasy360)");
+
+    const routes = billingRoutes();
+    const store = structuredClone(routes[`GET ${ORG}/subscriptions`][0]) as Reply;
+    (store.body as { results: Record<string, unknown>[] }).results[0].source = "app_store";
+    routes[`GET ${ORG}/subscriptions`] = [store];
+    mockApi(routes);
+    const { unmount } = renderOrg(<BillingScreen />, OWNER_BILLING);
+    expect(await screen.findByRole("link", { name: "Manage in the App Store" })).toHaveAttribute(
+      "href",
+      "https://apps.apple.com/account/subscriptions",
+    );
+    expect(screen.queryByRole("button", { name: "Cancel subscription" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^Change plan/ })).not.toBeInTheDocument();
+    unmount();
+
+    const partnerRoutes = billingRoutes({
+      [`GET ${ORG}/billing-account`]: [
+        { status: 200, body: { billing_account: { id: "b1", currency: "GBP", collection_mode: "partner_wallet", billing_email: "", billing_region: "" } } },
+      ],
+    });
+    mockApi(partnerRoutes);
+    renderOrg(<BillingScreen />, OWNER_BILLING);
+    expect(await screen.findByRole("link", { name: "Ask your partner in Help" })).toHaveAttribute("href", "/o/acme/help");
+    expect(screen.queryByRole("button", { name: "Cancel subscription" })).not.toBeInTheDocument();
   });
 
   it("cancels at the end of the period after a confirm: one key, the shown version, never immediate (Phase 12)", async () => {
@@ -599,10 +719,17 @@ describe("subscription & billing", () => {
 
   it("hides Pay from someone who may view but not pay, and each section from those who may not see it", async () => {
     mockApi(billingRoutes());
-    renderOrg(<BillingScreen />, ["platform.billing.view"]);
+    const { unmount } = renderOrg(<InvoicesSection />, ["platform.billing.view"]);
     await screen.findByRole("table", { name: "Your invoices, newest first" });
     expect(screen.queryByRole("button", { name: /^Pay invoice/ })).not.toBeInTheDocument();
+    // In place of the payment they may not make.
+    expect(screen.getByText("Contact Organization Admin")).toBeInTheDocument();
+    unmount();
+
+    mockApi(billingRoutes());
+    renderOrg(<BillingScreen />, ["platform.billing.view"]);
     expect(screen.queryByRole("heading", { name: "Subscription" })).not.toBeInTheDocument();
+    expect(screen.getByText("Contact Organization Admin")).toBeInTheDocument();
   });
 
   it("pays: one idempotency key, waits for the hosted page, and goes there only when it is HTTPS", async () => {
@@ -615,7 +742,7 @@ describe("subscription & billing", () => {
         ],
       }),
     );
-    renderOrg(<BillingScreen />, OWNER_BILLING);
+    renderOrg(<InvoicesSection />, OWNER_BILLING);
     fireEvent.click(await screen.findByRole("button", { name: "Pay invoice INV-0001" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://pay.example.com/c/abc"));
     const pay = posted(calls, `POST ${ORG}/billing/invoices/inv1/pay`);
@@ -631,7 +758,7 @@ describe("subscription & billing", () => {
         [`POST ${ORG}/billing/invoices/inv1/pay`]: [{ status: 202, body: attempt("awaiting_payment", "http://evil.example/steal") }],
       }),
     );
-    const { container } = renderOrg(<BillingScreen />, OWNER_BILLING);
+    const { container } = renderOrg(<InvoicesSection />, OWNER_BILLING);
     fireEvent.click(await screen.findByRole("button", { name: "Pay invoice INV-0001" }));
     expect(await screen.findByText(/could not be verified/)).toBeInTheDocument();
     expect(assign).not.toHaveBeenCalled();
@@ -644,7 +771,7 @@ describe("subscription & billing", () => {
         [`POST ${ORG}/billing/invoices/inv1/pay`]: [UNAVAILABLE, { status: 202, body: attempt("awaiting_payment", "https://pay.example.com/c/1") }],
       }),
     );
-    renderOrg(<BillingScreen />, OWNER_BILLING);
+    renderOrg(<InvoicesSection />, OWNER_BILLING);
     fireEvent.click(await screen.findByRole("button", { name: "Pay invoice INV-0001" }));
     await screen.findByText("Try again shortly.");
     fireEvent.click(screen.getByRole("button", { name: "Pay invoice INV-0001" }));
@@ -664,7 +791,7 @@ describe("subscription & billing", () => {
         ],
       }),
     );
-    renderOrg(<BillingScreen />, OWNER_BILLING);
+    renderOrg(<InvoicesSection />, OWNER_BILLING);
     fireEvent.click(await screen.findByRole("button", { name: "Pay invoice INV-0001" }));
     expect(await screen.findByText(/couldn't be completed \(checkout unavailable\)/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Pay invoice INV-0001" }));
@@ -694,7 +821,7 @@ describe("subscription & billing", () => {
     const calls = mockApi(billingRoutes());
     renderOrg(<BillingScreen />, OWNER_BILLING);
     expect(await screen.findByText(/Payment cancelled/)).toBeInTheDocument();
-    await screen.findByRole("table", { name: "Your invoices, newest first" });
+    await screen.findByRole("table", { name: "Products in this subscription" });
     expect(calls.some((c) => c.key.includes("/billing/payments/"))).toBe(false);
   });
 
@@ -702,7 +829,7 @@ describe("subscription & billing", () => {
     nav.search = new URLSearchParams("payment=../../admin&outcome=success");
     const calls = mockApi(billingRoutes());
     renderOrg(<BillingScreen />, OWNER_BILLING);
-    await screen.findByRole("table", { name: "Your invoices, newest first" });
+    await screen.findByRole("table", { name: "Products in this subscription" });
     expect(screen.queryByText(/Checking your payment/)).not.toBeInTheDocument();
     expect(calls.some((c) => c.key.includes("/billing/payments/"))).toBe(false);
   });
@@ -715,8 +842,11 @@ describe("subscription & billing", () => {
         [`GET ${ORG}/billing/invoices`]: [{ status: 200, body: { results: [] } }],
       }),
     );
-    const { container } = renderOrg(<BillingScreen />, OWNER_BILLING);
-    const currency = await screen.findByLabelText("Currency");
+    const { container } = renderOrg(<BillingAccountPanel slug="acme" canView canOpen />, OWNER_BILLING);
+    // The account is opened in a popup from the Billing account panel (Billing Profile).
+    fireEvent.click(await screen.findByRole("button", { name: "Open billing account" }));
+    const popup = screen.getByRole("dialog", { name: "Open a billing account" });
+    const currency = within(popup).getByLabelText("Currency");
     expect(within(currency).getAllByRole("option").map((o) => o.textContent)).toEqual([
       "Choose a currency",
       "AED",
@@ -729,14 +859,16 @@ describe("subscription & billing", () => {
       "USD",
     ]);
     await expectNoViolations(container);
-    const open = screen.getByRole("button", { name: "Open billing account" });
+    await expectNoViolations(popup);
+    const open = within(popup).getByRole("button", { name: "Open billing account" });
     expect(open).toBeDisabled();
     fireEvent.change(currency, { target: { value: "JPY" } });
-    fireEvent.change(screen.getByLabelText("Billing email (optional)"), { target: { value: "ap@acme.test" } });
+    fireEvent.change(within(popup).getByLabelText("Billing email (optional)"), { target: { value: "ap@acme.test" } });
     // Phase 9: no region field - collection mode and region are Workeasy360's.
     expect(screen.queryByLabelText("Billing region (optional)")).not.toBeInTheDocument();
     fireEvent.click(open);
     expect(await screen.findByText(/billed in JPY/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(posted(calls, `POST ${ORG}/billing-account`)[0].body).toEqual({
       currency: "JPY",
       billing_email: "ap@acme.test",
@@ -758,13 +890,17 @@ describe("subscription & billing", () => {
         ],
       }),
     );
-    const { container } = renderOrg(<BillingScreen />, ["platform.billing.view"]);
+    const { container } = renderOrg(<InvoicesSection />, ["platform.billing.view"]);
     const toggle = await screen.findByRole("button", { name: "Details of invoice INV-0001" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
     expect(await screen.findByRole("table", { name: "Lines on invoice INV-0001" })).toBeInTheDocument();
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Books Pro × 5")).toBeInTheDocument();
+    // Printable: the browser's own print / save as PDF.
+    const print = vi.spyOn(window, "print").mockImplementation(() => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Print invoice INV-0001" }));
+    expect(print).toHaveBeenCalledTimes(1);
     await expectNoViolations(container);
   });
 });
@@ -1321,9 +1457,12 @@ describe("my security", () => {
     expect(screen.queryByRole("button", { name: /^Sign out Chrome on macOS/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Sign out Firefox on Windows/ })).toBeInTheDocument();
     expect(screen.getByText("All other sessions were signed out")).toBeInTheDocument();
-    expect(screen.getByLabelText("Current password")).toBeInTheDocument();
     expect(screen.getByText(/Changing your password also signs out every other session/)).toBeInTheDocument();
     await expectNoViolations(container);
+    // The password change opens in a popup.
+    expect(screen.queryByLabelText("Current password")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+    expect(within(screen.getByRole("dialog")).getByLabelText("Current password")).toBeInTheDocument();
   });
 
   it("signing a session out ends it at once", async () => {
@@ -1343,6 +1482,8 @@ describe("my security", () => {
     );
     renderOrg(<MySecurityScreen />, []);
     fireEvent.click(await screen.findByRole("button", { name: "Sign out all other sessions" }));
+    expect(posted(calls, "POST /api/v1/auth/sessions/revoke-others")).toHaveLength(0); // nothing before the confirm
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Sign out other sessions" }));
     expect(await screen.findByText("Every other session has been signed out.")).toBeInTheDocument();
     expect(posted(calls, "POST /api/v1/auth/sessions/revoke-others")).toHaveLength(1);
   });
@@ -1376,15 +1517,21 @@ describe("authentication policy", () => {
       [`PUT ${ORG}/security/policy`]: [{ status: 200, body: { ...POLICY, session_max_age_minutes: 480, version: 8 } }],
     });
     const { container } = renderOrg(<AuthenticationPolicyScreen />, ADMIN);
-    await screen.findByLabelText("Session length");
+    // The page shows the settings as text; they are changed in an Edit popup.
+    expect(await screen.findByText("No limit")).toBeInTheDocument();
+    expect(screen.getByText("Platform minimum (12 characters)")).toBeInTheDocument();
     await expectNoViolations(container);
-    fireEvent.change(screen.getByLabelText("Session length"), { target: { value: "480" } });
-    fireEvent.change(screen.getByLabelText("Minimum password length"), { target: { value: "8" } });
-    expect(screen.getByRole("button", { name: "Save authentication settings" })).toBeDisabled();
-    expect(screen.getByText(/Enter a number from 12 to 64/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Minimum password length"), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save authentication settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit authentication settings" }));
+    const popup = screen.getByRole("dialog", { name: "Edit authentication settings" });
+    await expectNoViolations(popup);
+    fireEvent.change(within(popup).getByLabelText("Session length"), { target: { value: "480" } });
+    fireEvent.change(within(popup).getByLabelText("Minimum password length"), { target: { value: "8" } });
+    expect(within(popup).getByRole("button", { name: "Save authentication settings" })).toBeDisabled();
+    expect(within(popup).getByText(/Enter a number from 12 to 64/)).toBeInTheDocument();
+    fireEvent.change(within(popup).getByLabelText("Minimum password length"), { target: { value: "" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save authentication settings" }));
     expect(await screen.findByText("Authentication settings saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(posted(calls, `PUT ${ORG}/security/policy`)[0].body).toEqual({
       session_max_age_minutes: 480,
       password_min_length: null,
@@ -1401,17 +1548,24 @@ describe("authentication policy", () => {
       ],
     });
     const { container } = renderOrg(<AuthenticationPolicyScreen />, ADMIN);
-    fireEvent.click(await screen.findByRole("button", { name: "Save authentication settings" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Someone else changed this policy/);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit authentication settings" }));
+    const popup = screen.getByRole("dialog", { name: "Edit authentication settings" });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save authentication settings" }));
+    // The refusal stays in the popup; the page behind offers to reload.
+    expect(await within(popup).findByRole("alert")).toHaveTextContent(/Someone else changed this policy/);
     expect(screen.getByRole("button", { name: "Reload settings" })).toBeInTheDocument();
+    fireEvent.click(within(popup).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await expectNoViolations(container);
   });
 
   it("is view-only without the update permission", async () => {
     mockApi({ [`GET ${ORG}/security/policy`]: [{ status: 200, body: { ...POLICY, session_max_age_minutes: 90 } }] });
     renderOrg(<AuthenticationPolicyScreen />, ["platform.security.view"]);
-    expect(await screen.findByLabelText("Session length")).toBeDisabled();
-    expect(screen.getByLabelText("Session length")).toHaveValue("90");
+    expect(await screen.findByText("90 minutes")).toBeInTheDocument();
+    expect(screen.getByText(/You can view these settings/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Session length")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit authentication settings" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save authentication settings" })).not.toBeInTheDocument();
   });
 });
@@ -1434,26 +1588,58 @@ describe("network access", () => {
       ],
     });
     const { container } = renderOrg(<NetworkPolicyScreen />, ADMIN);
-    expect(await screen.findByText(/You're connecting from 203.0.113.7/)).toBeInTheDocument();
-    expect(screen.getByText(/server-to-server calls are not affected/)).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("Only allow access from the networks below"));
-    const save = screen.getByRole("button", { name: "Save network access" });
+    // The page shows the allow-list as text; it is changed in an Edit popup.
+    expect(await screen.findByText("203.0.113.7")).toBeInTheDocument();
+    expect(screen.getByText("Off")).toBeInTheDocument();
+    await expectNoViolations(container);
+    fireEvent.click(screen.getByRole("button", { name: "Edit network access" }));
+    const popup = screen.getByRole("dialog", { name: "Edit network access" });
+    expect(within(popup).getByText(/You're connecting from 203.0.113.7/)).toBeInTheDocument();
+    expect(within(popup).getByText(/server-to-server calls are not affected/)).toBeInTheDocument();
+    fireEvent.click(within(popup).getByLabelText("Only allow access from the networks below"));
+    const save = within(popup).getByRole("button", { name: "Save network access" });
     expect(save).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Allowed network 1"), { target: { value: "198.51.100.0/24" } });
+    fireEvent.change(within(popup).getByLabelText("Allowed network 1"), { target: { value: "198.51.100.0/24" } });
     fireEvent.click(save);
-    expect(await screen.findByRole("alert")).toHaveTextContent(/would lock you out/);
-    expect(screen.getByText(/Not saved - this would lock you out/)).toBeInTheDocument();
+    expect(await within(popup).findByRole("alert")).toHaveTextContent(/would lock you out/);
+    expect(within(popup).getByText(/Not saved - this would lock you out/)).toBeInTheDocument();
     expect(posted(calls, `PUT ${ORG}/security/network`)[0].body).toEqual({
       ip_allowlist_enabled: true,
       ip_allowlist: ["198.51.100.0/24"],
       version: 7,
     });
-    await expectNoViolations(container);
+    await expectNoViolations(popup);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add my network (203.0.113.0/24)" }));
-    expect(screen.getByLabelText("Allowed network 2")).toHaveValue("203.0.113.0/24");
-    expect(screen.getByLabelText("Allowed network 2")).toHaveFocus();
+    fireEvent.click(within(popup).getByRole("button", { name: "Add my network (203.0.113.0/24)" }));
+    expect(within(popup).getByLabelText("Allowed network 2")).toHaveValue("203.0.113.0/24");
+    expect(within(popup).getByLabelText("Allowed network 2")).toHaveFocus();
     expect(screen.queryByRole("button", { name: /Add my network/ })).not.toBeInTheDocument();
+  });
+
+  it("saves the allow-list from its popup and closes it", async () => {
+    const calls = mockApi({
+      [`GET ${ORG}/security/network`]: [{ status: 200, body: NETWORK }],
+      [`PUT ${ORG}/security/network`]: [{ status: 200, body: { ...NETWORK, ip_allowlist_enabled: true, ip_allowlist: ["203.0.113.0/24"], version: 8 } }],
+    });
+    renderOrg(<NetworkPolicyScreen />, ADMIN);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit network access" }));
+    const popup = screen.getByRole("dialog", { name: "Edit network access" });
+    fireEvent.click(within(popup).getByLabelText("Only allow access from the networks below"));
+    fireEvent.click(within(popup).getByRole("button", { name: "Add my network (203.0.113.0/24)" }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Save network access" }));
+    expect(await screen.findByText("Network access saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(posted(calls, `PUT ${ORG}/security/network`).map((c) => c.body)).toEqual([
+      { ip_allowlist_enabled: true, ip_allowlist: ["203.0.113.0/24"], version: 7 },
+    ]);
+  });
+
+  it("is view-only without the update permission", async () => {
+    mockApi({ [`GET ${ORG}/security/network`]: [{ status: 200, body: { ...NETWORK, ip_allowlist_enabled: true, ip_allowlist: ["192.0.2.1"] } }] });
+    renderOrg(<NetworkPolicyScreen />, ["platform.security.view"]);
+    expect(await screen.findByText("192.0.2.1")).toBeInTheDocument();
+    expect(screen.getByText("On")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit network access" })).not.toBeInTheDocument();
   });
 
   it("edits the list row by row", async () => {
@@ -1463,12 +1649,14 @@ describe("network access", () => {
       ],
     });
     renderOrg(<NetworkPolicyScreen />, ADMIN);
-    expect(await screen.findByLabelText("Allowed network 2")).toHaveValue("192.0.2.1");
-    fireEvent.click(screen.getByRole("button", { name: "Add a network" }));
-    expect(screen.getByLabelText("Allowed network 3")).toHaveFocus();
-    fireEvent.click(screen.getByRole("button", { name: "Remove allowed network 2" }));
-    expect(screen.getByLabelText("Allowed network 2")).toHaveValue("");
-    expect(screen.queryByLabelText("Allowed network 3")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit network access" }));
+    const popup = screen.getByRole("dialog", { name: "Edit network access" });
+    expect(within(popup).getByLabelText("Allowed network 2")).toHaveValue("192.0.2.1");
+    fireEvent.click(within(popup).getByRole("button", { name: "Add a network" }));
+    expect(within(popup).getByLabelText("Allowed network 3")).toHaveFocus();
+    fireEvent.click(within(popup).getByRole("button", { name: "Remove allowed network 2" }));
+    expect(within(popup).getByLabelText("Allowed network 2")).toHaveValue("");
+    expect(within(popup).queryByLabelText("Allowed network 3")).not.toBeInTheDocument();
   });
 });
 
@@ -1731,43 +1919,139 @@ describe("my apps and product access", () => {
     mockApi({ [`GET ${ORG}/apps`]: [{ status: 200, body: { apps: [app("books", "Books", "active"), app("desk", "Desk", "no_seat")] } }] });
     const { container } = renderOrg(<MyAppsScreen />, []);
     expect(await screen.findByRole("button", { name: "Open Books" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "My products" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "My Products" })).toBeInTheDocument();
+    // Explore Products opens the organization's own Store.
+    expect(screen.getByRole("link", { name: "Explore Products" })).toHaveAttribute("href", "/o/acme/store");
     expect(screen.getByRole("alert")).toHaveTextContent("You don't have a seat for that product yet.");
     await expectNoViolations(container);
   });
 
-  it("lists the rest of the catalog as expired or available, from the server's states (multi-portal brief)", async () => {
-    mockApi({
-      [`GET ${ORG}/apps`]: [{ status: 200, body: { apps: [app("books", "EasyBook", "active")] } }],
-      [`GET ${ORG}/explore`]: [
-        {
-          status: 200,
-          body: explore({
-            products: [
-              exploreProduct("books", "EasyBook", { trial_state: "owned" }),
-              exploreProduct("crm", "Easy CRM", { trial_state: "used", trial_outcome: "expired" }),
-              exploreProduct("desk", "Easy Help Desk", {
-                trial_state: "available",
-                trial: { available: true, duration_days: 7, seat_limit: null, payment_method_required: false, plan_codes: ["desk_starter"] },
-              }),
-              exploreProduct("ops", "Easy Project", { trial_state: "unavailable" }),
-            ],
-          }),
+  const SETUP_RECORD = {
+    id: "su1",
+    product_code: "desk",
+    status: "correction_required",
+    answers: { gst: "OLD" },
+    decision_reason: "That number has a typing mistake.",
+    requirements: [{ key: "gst", label: "GST number", help_text: "", is_required: true }],
+    editable: true,
+  };
+  const productRoutes = (extra: Record<string, Reply[]> = {}) => ({
+    [`GET ${ORG}/apps`]: [
+      {
+        status: 200,
+        body: {
+          apps: [
+            { ...app("books", "EasyBook", "active"), plan: { code: "books_starter", name: "EasyBook Starter" }, renews_at: "2026-12-01T00:00:00Z" },
+            { ...app("desk", "Easy Help Desk", "active"), entitlement_status: "trial", trial: { id: "t1", ends_at: "2026-11-20T00:00:00Z", days_left: 9 } },
+            { ...app("free", "Easy Notes", "active"), plan: { code: "free_basic", name: "Notes Free" } },
+            app("crm", "Easy CRM", "no_entitlement"),
+            app("ops", "Easy Project", "no_entitlement"),
+          ],
         },
-      ],
-    });
-    const { container } = renderOrg(<MyAppsScreen />, []);
-    const section = await screen.findByRole("region", { name: "Other products" });
-    const rows = within(section).getAllByRole("listitem").map((li) => li.textContent);
-    expect(rows).toEqual([
-      "Easy CRMTrial expiredUpgrade / Buy now",
-      "Easy Help DeskAvailableStart 7-Day Free Trial",
-      "Easy ProjectAvailableExplore",
-    ]);
-    // The held product stays in the grid above, not in this list.
-    expect(within(section).queryByText("EasyBook")).not.toBeInTheDocument();
-    for (const link of within(section).getAllByRole("link")) expect(link).toHaveAttribute("href", "/o/acme/explore");
+      },
+    ],
+    [`GET ${ORG}/explore`]: [
+      {
+        status: 200,
+        body: explore({
+          products: [
+            exploreProduct("books", "EasyBook", {
+              trial_state: "owned",
+              features: [{ name: "Invoices", description: "Send GST invoices" }],
+            }),
+            exploreProduct("crm", "Easy CRM", { trial_state: "used", trial_outcome: "expired" }),
+            exploreProduct("ops", "Easy Project", { trial_state: "available" }),
+            exploreProduct("free", "Easy Notes", {
+              trial_state: "owned",
+              plans: [
+                {
+                  ...exploreProduct("free", "Easy Notes").plans[0],
+                  plan_code: "free_basic",
+                  name: "Notes Free",
+                  prices: [{ interval: "monthly", currency: "GBP", model: "flat", amount_minor: 0, from_tiers: false }],
+                },
+              ],
+            }),
+          ],
+        }),
+      },
+    ],
+    [`GET ${ORG}/setup`]: [{ status: 200, body: { results: [SETUP_RECORD] } }],
+    ...extra,
+  });
+  const chipCount = (label: string) =>
+    within(screen.getByRole("group", { name: "Show products" })).getByRole("button", { name: new RegExp(`^${label}`) }).textContent;
+
+  it("lists held, trial, free, expired and pending-setup products with filters from the server's states (2026-11-11)", async () => {
+    mockApi(productRoutes());
+    const { container } = renderOrg(<MyAppsScreen />, ["commercial.subscription.manage", "commercial.subscription.view"]);
+    expect(await screen.findByRole("heading", { name: "EasyBook" })).toBeInTheDocument();
+    // The expired trial is listed (a way to buy it); a product never tried is not.
+    expect(await screen.findByRole("heading", { name: "Easy CRM" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Easy Project" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Upgrade or buy: Easy CRM" })).toHaveAttribute("href", "/o/acme/store/crm");
+    await waitFor(() => expect(chipCount("Pending Setup")).toContain("1"));
+    expect(chipCount("All")).toContain("4");
+    expect(chipCount("Active")).toContain("2");
+    expect(chipCount("Free")).toContain("1");
+    expect(chipCount("Trial")).toContain("1");
+    expect(chipCount("Expired")).toContain("1");
+    expect(screen.getByText("Setup: Please correct this")).toBeInTheDocument();
     await expectNoViolations(container);
+
+    fireEvent.click(within(screen.getByRole("group", { name: "Show products" })).getByRole("button", { name: /^Trial/ }));
+    expect(screen.getByRole("heading", { name: "Easy Help Desk" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "EasyBook" })).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("group", { name: "Show products" })).getByRole("button", { name: /^Free/ }));
+    expect(screen.getByRole("heading", { name: "Easy Notes" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Easy Help Desk" })).not.toBeInTheDocument();
+  });
+
+  it("View Details shows the plan, its features, validity and setup, and offers only supported changes", async () => {
+    mockApi(productRoutes());
+    const { container } = renderOrg(<MyAppsScreen />, ["commercial.subscription.manage", "commercial.subscription.view"]);
+    fireEvent.click(await screen.findByRole("button", { name: "View details: EasyBook" }));
+    const details = screen.getByRole("dialog", { name: "EasyBook" });
+    expect(within(details).getByText("EasyBook Starter")).toBeInTheDocument();
+    expect(await within(details).findByText("Invoices")).toBeInTheDocument();
+    expect(within(details).getByText(/^Renews /)).toBeInTheDocument();
+    expect(within(details).getByText(/needs no details/)).toBeInTheDocument();
+    expect(within(details).getByRole("link", { name: "Change plan" })).toHaveAttribute("href", "/o/acme/store/books");
+    expect(within(details).getByRole("button", { name: "Open EasyBook" })).toBeInTheDocument();
+    await expectNoViolations(document.body);
+    fireEvent.click(within(details).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await expectNoViolations(container);
+  });
+
+  it("pending setup is handled in My Products: ?filter=setup, the reviewer's words, Submit corrections", async () => {
+    nav.search = new URLSearchParams("filter=setup");
+    const calls = mockApi(productRoutes({ [`POST ${ORG}/setup/su1/submit`]: [{ status: 200, body: { results: [] } }] }));
+    renderOrg(<MyAppsScreen />, []);
+    expect(await screen.findByRole("heading", { name: "Easy Help Desk" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "EasyBook" })).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "View details: Easy Help Desk" }));
+    const details = screen.getByRole("dialog", { name: "Easy Help Desk" });
+    expect(within(details).getByText("That number has a typing mistake.")).toBeInTheDocument();
+    fireEvent.click(within(details).getByRole("button", { name: "Correct and send: Easy Help Desk" }));
+    fireEvent.change(screen.getByLabelText("GST number (required)"), { target: { value: "NEW" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(posted(calls, `POST ${ORG}/setup/su1/submit`)[0]?.body).toEqual({ answers: { gst: "NEW" } }));
+  });
+
+  it("?product=<code> opens that product's details on arrival; an unknown code opens nothing", async () => {
+    nav.search = new URLSearchParams("product=desk");
+    mockApi(productRoutes());
+    const { unmount } = renderOrg(<MyAppsScreen />, []);
+    expect(await screen.findByRole("dialog", { name: "Easy Help Desk" })).toBeInTheDocument();
+    expect(screen.getByText(/^Trial ends /)).toBeInTheDocument();
+    unmount();
+
+    nav.search = new URLSearchParams("product=<script>");
+    mockApi(productRoutes());
+    renderOrg(<MyAppsScreen />, []);
+    await screen.findByRole("heading", { name: "EasyBook" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("an unknown launch error code is never echoed", async () => {

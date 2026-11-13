@@ -10,6 +10,8 @@ import { apiFetch } from "./client";
 
 export interface SiteSettings {
   signup_enabled: boolean;
+  /** 2026-11-09: whether the public partner application is open. Absent from an older server. */
+  partner_applications_enabled?: boolean;
   support_email: string;
   sales_email: string;
   catalog_currency: string;
@@ -172,6 +174,10 @@ export type PublicStorePlan = Omit<PublicPlan, "billing_type" | "kind" | "prices
   billing_type: "paid" | "free_trial";
   kind: "standard" | "add_on";
   recommended?: boolean;
+  /** ADR-065: how the plan renews, and what it includes each month (meter -> units). Absent from an older server. */
+  renewal_rule?: "auto_renew" | "manual" | "none";
+  included_usage?: Record<string, number>;
+  sort_order?: number;
   /** ADR-056: a promotional discount's list price and a one-time set-up fee
    * ride on each price row. */
   prices: (PublicPlan["prices"][number] & { list_amount_minor?: number | null; discount_bp?: number; setup_fee_minor?: number | null })[];
@@ -198,6 +204,10 @@ export interface PublicStoreProductPage {
     highlights: string[];
     benefits: string[];
     use_cases: string[];
+    /** ADR-065: what a customer needs before the product works, as the Super Admin wrote it. */
+    setup_requirements?: string[];
+    /** ADR-065: the web application, and the official app-store links the Super Admin entered. */
+    access?: { web: boolean; apps: Partial<Record<"android" | "ios" | "windows" | "macos", string>> };
     tags: string[];
     badges: string[];
     documentation_url: string;
@@ -210,11 +220,27 @@ export interface PublicStoreProductPage {
     video?: PublicStoreVideo | null;
     price: PublicStoreCard["price"];
     yearly_deal: PublicStoreCard["yearly_deal"];
+    /** ADR-058: the refund promise the Super Admin set, in days; absent/null = none. */
+    refund_days?: number | null;
   };
+  /** ADR-058: GST added on top of the prices (INR), or null. Absent from an older server. */
+  tax?: PublicTax | null;
   plans: PublicStorePlan[];
   comparison: { key: string; label: string; description?: string; kind: string; unit: string; values: Record<string, unknown> }[];
   related: { code: string; slug: string; name: string; title: string; summary: string; icon: string; category: string; price: PublicStoreCard["price"] }[];
 }
+
+/** ADR-058: the tax a currency's prices are before (INR: GST 18%). */
+export interface PublicTax {
+  label: string;
+  rate_bp: number;
+  description: string;
+}
+
+/** ADR-058: what a coupon would take off - a preview; the checkout prices it again. */
+export type CouponCheck =
+  | { valid: true; code: string; label: string; discount_minor: number }
+  | { valid: false; reason?: string; message: string };
 
 export interface SignupRequest {
   first_name: string;
@@ -236,6 +262,11 @@ export const publicApi = {
   store: (query: Record<string, string | undefined>) => apiFetch<PublicStorePage>("/api/v1/public/store", { query }),
   storeProduct: (slug: string, currency?: string) =>
     apiFetch<PublicStoreProductPage>(`/api/v1/public/store/products/${encodeURIComponent(slug)}`, { query: { currency } }),
+  /** ADR-058: the product page's coupon "Apply". */
+  storeCoupon: (slug: string, query: { code: string; currency: string; amount_minor: number }) =>
+    apiFetch<CouponCheck>(`/api/v1/public/store/products/${encodeURIComponent(slug)}/coupon`, {
+      query: { code: query.code, currency: query.currency, amount_minor: String(query.amount_minor) },
+    }),
   product: (slug: string, currency?: string) =>
     apiFetch<PublicProductPage>(`/api/v1/public/catalog/products/${encodeURIComponent(slug)}`, {
       query: { currency },
@@ -251,12 +282,15 @@ export const publicApi = {
     }),
   resendVerification: (email: string) => post<{ status: string }>("/api/v1/public/signup/resend", { email }),
   forgotPassword: (email: string) => post<{ status: string }>("/api/v1/public/password/forgot", { email }),
+  /** ADR-066: the emailed change-of-sign-in-email link. */
+  confirmEmailChange: (token: string) => post<{ status: string }>("/api/v1/public/email/confirm", { token }),
   resetPassword: (token: string, password: string) =>
     post<{ status: string }>("/api/v1/public/password/reset", { token, password }),
   /** A partner's referral link: an opaque token for the signup to convert, and
    * (ADR-053) where the link leads - a platform path the server derived. */
-  captureReferral: (code: string) =>
-    post<{ token: string; destination?: string }>("/api/v1/public/referrals", { code }),
+  /** ADR-063: `to` may name a fixed landing ("store"); the server decides the path. */
+  captureReferral: (code: string, to?: string) =>
+    post<{ token: string; destination?: string }>("/api/v1/public/referrals", to ? { code, to } : { code }),
   convertReferral: (token: string, organizationId: string) =>
     post<{ converted: boolean }>("/api/v1/referrals/convert", { token, organization_id: organizationId }),
   /** ADR-054: a published feature or release of a Store product - the page an

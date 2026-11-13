@@ -23,8 +23,66 @@
   color: var(--w360-text);
 }
 
+.medium {
+  width: min(680px, 100%);
+}
+
 .wide {
   width: min(880px, 100%);
+}
+
+/* A popup form's fields, lined up (2026-11-05): two equal columns, one gap,
+   each label above its input, every input as wide as its column. */
+.dialogGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--w360-space-3) var(--w360-space-4);
+  align-items: start;
+}
+
+.dialogStack {
+  display: grid;
+  gap: var(--w360-space-3);
+}
+
+.span {
+  grid-column: 1 / -1;
+}
+
+.dialogGrid > *,
+.dialogStack > * {
+  min-width: 0;
+}
+
+.dialogBody :global(.w360-input),
+.dialogBody select,
+.dialogBody textarea {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.dialogBody fieldset {
+  margin: 0;
+  min-width: 0;
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+}
+
+.dialogIntro {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+.popupMessage {
+  margin-inline-start: var(--w360-space-2);
+  font-size: 14px;
+}
+
+.popupMessage:empty {
+  display: none;
 }
 
 .dialogForm {
@@ -97,6 +155,12 @@
   gap: var(--w360-space-2);
   padding: var(--w360-space-3) var(--w360-space-5) var(--w360-space-4);
   border-top: 1px solid var(--w360-border);
+}
+
+@media (max-width: 600px) {
+  .dialogGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 480px) {

@@ -501,6 +501,10 @@ class CollectionMode(_StrEnum):
     AUTOMATIC = "automatic"
     INVOICE = "invoice"
     PARTNER_BILLED = "partner_billed"
+    #: ADR-063: a reseller's customer whose plans the reseller pays from its
+    #: Platform Wallet, at its approved purchase price. The customer is never
+    #: invoiced; activation, renewal and upgrades debit the partner's wallet.
+    PARTNER_WALLET = "partner_wallet"
 
 
 class ChangeTiming(_StrEnum):
@@ -772,6 +776,11 @@ class SignInPreference(_StrEnum):
     #: Per product only: follow the person's default. Never stored - choosing
     #: it removes the override.
     INHERIT = "inherit"
+    #: Ask the first time a product is opened in each Workeasy360 sign-in -
+    #: "Continue with the same account" or "Use a different account" - then
+    #: open it with no question for the rest of that sign-in (the unified-login
+    #: brief, ADR-066). The default.
+    ASK_ONCE = "ask_once"
     #: Sign in with the existing Workeasy360 session, without asking.
     AUTO_SSO = "auto_sso"
     #: Ask each time: Workeasy360 or the product's own sign-in.

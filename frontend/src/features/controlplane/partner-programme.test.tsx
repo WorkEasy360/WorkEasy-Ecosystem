@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { mockApi, ok, type Call } from "./testSupport";
 import { PartnerProgramme } from "./PartnerProgramme";
@@ -68,14 +68,19 @@ describe("partner margins", () => {
       within(table).getByText("Default for Reseller partners"),
     ).toBeInTheDocument();
     expect(within(table).getByText("20.00%")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Discount off list price (%)"), {
+    // The form opens in a popup (2026-11-05).
+    expect(screen.queryByLabelText("Discount off list price (%)")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "+ Set a margin" }));
+    const popup = screen.getByRole("dialog", { name: "Set a margin" });
+    fireEvent.change(within(popup).getByLabelText("Discount off list price (%)"), {
       target: { value: "12.5" },
     });
-    fireEvent.change(screen.getByLabelText("Product"), {
+    fireEvent.change(within(popup).getByLabelText("Product"), {
       target: { value: "easy_crm" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save margin" }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Save margin" }));
     expect(await screen.findByText(/Margin saved/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(
       (calls.find((c) => c.key === "POST /api/v1/admin/margins") as Call).body,
     ).toEqual({
@@ -90,6 +95,7 @@ describe("partner margins", () => {
     mockApi(routes());
     render(<PartnerProgramme manage manageFees products={PRODUCTS} />);
     await screen.findByRole("table", { name: "Margin rules in force" });
+    fireEvent.click(screen.getByRole("button", { name: "+ Set a margin" }));
     fireEvent.change(screen.getByLabelText("Discount off list price (%)"), {
       target: { value: "150" },
     });
@@ -113,6 +119,8 @@ describe("partner margins", () => {
     expect(
       screen.queryByRole("button", { name: "Save fee" }),
     ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Set a margin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Set a fee" })).not.toBeInTheDocument();
   });
 });
 
@@ -134,6 +142,7 @@ describe("set-up fees", () => {
     const table = await screen.findByRole("table", { name: "Set-up fees" });
     expect(within(table).getByText(/20,000\.00/)).toBeInTheDocument();
     expect(within(table).getByText("No fee")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Set a fee" }));
     fireEvent.change(screen.getByLabelText("Becoming"), {
       target: { value: "white_label" },
     });
@@ -142,6 +151,7 @@ describe("set-up fees", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Save fee" }));
     expect(await screen.findByText("Set-up fee saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
       (
         calls.find(
@@ -175,7 +185,8 @@ describe("Partners → Upgrade Fees (2026-11-03)", () => {
     const table = await screen.findByRole("table", { name: "Set-up fees" });
     expect(within(table).getByText("UPI: pay@workeasy360")).toBeInTheDocument();
     expect(within(table).getByText("No fee")).toBeInTheDocument();
-    expect(screen.getByLabelText("How to pay offline")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Set a fee" }));
+    expect(within(screen.getByRole("dialog", { name: "Set a fee" })).getByLabelText("How to pay offline")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save fee" })).toBeInTheDocument();
   });
 
@@ -190,5 +201,6 @@ describe("Partners → Upgrade Fees (2026-11-03)", () => {
     );
     await screen.findByRole("table", { name: "Set-up fees" });
     expect(screen.queryByRole("button", { name: "Save fee" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Set a fee" })).toBeNull();
   });
 });

@@ -168,7 +168,8 @@ describe("the canonical sign-in page, branded for a partner", () => {
     expect(await screen.findByLabelText("Password")).toBeInTheDocument();
     expect(screen.queryByText("Need help?")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Visit our website" })).not.toBeInTheDocument();
-    expect(screen.getByText("One ecosystem to run your entire business.")).toBeInTheDocument();
+    // The platform's own customer sign-in (2026-11-11): the User Admin Login.
+    expect(screen.getByRole("heading", { name: "User Admin Login" })).toBeInTheDocument();
   });
 
   it("draws hostile words as text", async () => {

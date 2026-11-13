@@ -90,6 +90,8 @@ def env_for(backend: Path, settings: str = "config.settings.migration") -> dict[
         PLATFORM_SUPERADMIN_EMAIL=STAFF,
         PLATFORM_SUPERADMIN_PASSWORD=os.environ["CHECK_PASSWORD"],
         PYTHONUNBUFFERED="1",
+        # These partners stand for ones already active before KYC existed.
+        W360_PARTNER_KYC_REQUIRED="false",
     )
     return env
 

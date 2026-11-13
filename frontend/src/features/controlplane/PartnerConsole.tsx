@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { adminApi } from "@/lib/api/controlPlane";
@@ -13,16 +13,42 @@ import {
   type SetupStatus,
 } from "@/lib/api/partnerConsole";
 import { can, useAdmin } from "./ControlShell";
+import { GUEST_PERMISSION, GUEST_RETURNED, ManageGuestAccess, guestAvailable, guestOutcomeMessage, useGuestLogin } from "./GuestAccess";
 import { ExperienceLabels, PrimaryType, TypeBadges } from "./labels";
-import { LoadGate, MoreButton, Status, Table, autoReason, money, useAction, useLoad, usePaged, when } from "./ui";
-import { NavIcon } from "@/components/sidebar/icons";
+import { LoadGate, Status, autoReason, money, useAction, useLoad, usePaged } from "./ui";
 import { usePortals } from "@/lib/portalContext";
 import { portalHref } from "@/lib/portals";
+import { CATEGORY_PATH, categoryHref, isCategory, lastPartnerList, rememberPartnerList, type PartnerCategory } from "./partnerCategories";
+import {
+  Alert,
+  Avatar,
+  Badge,
+  Button,
+  ButtonLink,
+  DataTable,
+  EmptyState,
+  FilterBar,
+  IdCell,
+  Page,
+  PageHeader,
+  RowMenu,
+  SearchInput,
+  SectionHeader,
+  Select,
+  StatCard,
+  Tooltip,
+  formatDate,
+  kit,
+  useConfirm,
+  type Column,
+  type MenuItem,
+  type StatTone,
+} from "./kit";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
 
 /**
- * The Partners area (ADR-048): the Dashboard and All Partners.
+ * The Partners area (ADR-048): the Partner overview and All partners.
  *
  * Nothing here decides what a partner "is": the type badges come from the
  * server, computed from the capabilities the partner holds, and a partner
@@ -59,17 +85,17 @@ const SETUP_TEXT: Record<SetupStatus, string> = {
   terminated: "Terminated",
 };
 
-const SETUP_BADGE: Partial<Record<SetupStatus, string>> = {
-  setup_required: "w360-badge w360-badge-warning",
-  ready: "w360-badge w360-badge-info",
-};
+const SETUP_TONE = { setup_required: "warning", ready: "info" } as const;
 
 /** A partner's state as the console names it: a draft is "Setup required" until
  * its profile is complete, then "Ready" (for staff to activate). */
 export function SetupStatusBadge({ value }: { value: SetupStatus }) {
-  const badge = SETUP_BADGE[value];
-  if (!badge) return <Status value={value} />;
-  return <span className={badge}>{SETUP_TEXT[value]}</span>;
+  if (value !== "setup_required" && value !== "ready") return <Status value={value} />;
+  return (
+    <Badge tone={SETUP_TONE[value]} dot>
+      {SETUP_TEXT[value]}
+    </Badge>
+  );
 }
 
 /** The profile completion as words first ("35% · Incomplete") with a bar that
@@ -97,15 +123,17 @@ const UPGRADE_TEXT: Record<string, string> = {
 const upgradeText = (status: string): string => UPGRADE_TEXT[status] ?? status.replace(/_/g, " ");
 const upgradeTarget = (key: string): string => (key === "white_label" ? "White-label" : key === "reseller" ? "Reseller" : key);
 
-// --- the dashboard -----------------------------------------------------------------------
+// --- the overview -----------------------------------------------------------------------
 
-/** Where each card's number can be inspected: All Partners, filtered. */
+/** Where each card's number can be inspected: All partners, filtered. */
 const CARD_LINKS: Record<string, string> = {
   total_partners: "/admin/partners/all",
   active_partners: "/admin/partners/all?status=active",
-  resellers: "/admin/partners/all?type=reseller",
-  white_label: "/admin/partners/all?type=white_label",
-  affiliates: "/admin/partners/all?type=affiliate",
+  // ADR-062: each type card opens its own page (Partners → Reseller, White Label,
+  // Affiliate), whose list is exactly what the card counts.
+  resellers: CATEGORY_PATH.reseller,
+  white_label: CATEGORY_PATH.white_label,
+  affiliates: CATEGORY_PATH.affiliate,
   suspended_partners: "/admin/partners/all?status=suspended",
   profiles_incomplete: "/admin/partners/all?profile=incomplete",
 };
@@ -113,300 +141,200 @@ const CARD_LINKS: Record<string, string> = {
 const CARD_NOTES: Record<string, string> = {
   total_partners: "Every partner account, in any state.",
   active_partners: "Partners in the active state.",
-  resellers: "Partners that can sell and manage customers, in any state.",
-  white_label: "Partners that can use their own brand and domain, in any state.",
-  affiliates: "Partners that can refer customers, in any state.",
-  suspended_partners: "Partners paused by Workeasy360.",
-  profiles_incomplete: "Partners, not terminated, whose profile still needs something.",
+  resellers: "Can sell and manage customers.",
+  white_label: "Can use their own brand and domain.",
+  affiliates: "Can refer customers.",
+  suspended_partners: "Partners paused by WorkEasy360.",
+  profiles_incomplete: "Profiles that still need something.",
+};
+
+const CARD_ICONS: Record<string, [string, StatTone]> = {
+  total_partners: ["handshake", "green"],
+  active_partners: ["checkCircle", "green"],
+  resellers: ["store", "blue"],
+  white_label: ["palette", "purple"],
+  affiliates: ["gift", "orange"],
+  suspended_partners: ["pause", "red"],
+  profiles_incomplete: ["alert", "orange"],
 };
 
 function OverviewCardView({ card }: { card: OverviewCard }) {
-  const href = CARD_LINKS[card.key] ?? "/admin/partners/all";
+  const [icon, tone] = CARD_ICONS[card.key] ?? ["handshake", "green"];
   return (
-    <Link href={href} className={`w360-card ${local.card}`} aria-label={`${card.label}: ${card.count}. Open the list.`}>
-      <span className={local.cardLabel}>{card.label}</span>
-      <span className={local.cardCount}>{card.count}</span>
-      <span className={local.cardNote}>{CARD_NOTES[card.key]}</span>
-    </Link>
+    <StatCard
+      href={CARD_LINKS[card.key] ?? "/admin/partners/all"}
+      label={card.label}
+      value={card.count}
+      icon={icon}
+      tone={tone}
+      note={CARD_NOTES[card.key]}
+    />
   );
 }
 
-function AddPartnerButton() {
+/** The Partners area's one way to create a partner (also in the top bar's New menu).
+ * On a type's own page the form opens with that type chosen. */
+export function NewPartnerButton({ category }: { category?: PartnerCategory } = {}) {
   const { permissions } = useAdmin();
   if (!can(permissions, "platform.staff_partner.manage")) return null;
   return (
-    <Link className="w360-btn w360-btn-primary" href="/admin/partners/new">
-      + Add Partner
-    </Link>
+    <ButtonLink variant="primary" icon="plus" href={category ? `/admin/partners/new?type=${category}` : "/admin/partners/new"}>
+      New partner
+    </ButtonLink>
   );
 }
 
-/** Partners → Dashboard: factual counts and the newest partners. */
+/** A partner in a table: avatar, name (its page) and a second line. */
+function PartnerCell({ id, name, sub }: { id: string; name: string; sub?: React.ReactNode }) {
+  return (
+    <span className={kit.person}>
+      <Avatar name={name} />
+      <span className={kit.cellStack}>
+        <Link href={`/admin/partners/${id}`} className={kit.cellLink}>
+          {name}
+        </Link>
+        {sub && <span className={kit.cellSub}>{sub}</span>}
+      </span>
+    </span>
+  );
+}
+
+interface RecentPartner {
+  id: string;
+  display_name: string;
+  created_at: string;
+  experience: { key: string; label: string }[];
+  profile_completion: Pick<ListCompletion, "percent" | "complete" | "setup_status">;
+}
+
+const RECENT_COLUMNS: Column<RecentPartner>[] = [
+  { key: "partner", header: "Partner", render: (p) => <PartnerCell id={p.id} name={p.display_name} />, value: (p) => p.display_name },
+  { key: "type", header: "Type", render: (p) => <TypeBadges labels={p.experience} /> },
+  {
+    key: "profile",
+    header: "Profile",
+    render: (p) => <CompletionMeter value={p.profile_completion} label={`profile of ${p.display_name}`} />,
+    value: (p) => p.profile_completion.percent,
+  },
+  { key: "status", header: "Status", render: (p) => <SetupStatusBadge value={p.profile_completion.setup_status} /> },
+  { key: "created", header: "Created", render: (p) => formatDate(p.created_at), value: (p) => p.created_at },
+];
+
+/** Partners → Partner overview: factual counts and the newest partners. */
 export function PartnersOverview() {
+  const { permissions } = useAdmin();
   const [load] = useLoad(() => partnerConsoleApi.overview(), []);
+  const manage = can(permissions, "platform.staff_partner.manage");
 
   return (
-    <div className={styles.stack}>
-      <div className={local.headerRow}>
-        <h1>Partners</h1>
-        <AddPartnerButton />
-      </div>
-      <p className={styles.lead}>
-        Counts of what exists right now. Revenue, recurring-revenue and growth figures are not shown: they would need currency
-        conversion this platform does not perform.
-      </p>
-      <LoadGate load={load} what="the partner dashboard">
+    <Page>
+      <PageHeader title="Partner overview" subtitle="How many partners there are, by type and state." primary={<NewPartnerButton />} />
+      <LoadGate load={load} what="the partner overview">
         {(d) => (
           <>
             {(d.upgrades_pending ?? 0) > 0 && (
-              <section className={`w360-card ${local.completion}`} aria-label="Upgrade requests">
-                <p className={local.completionTitle}>
-                  {d.upgrades_pending} upgrade {d.upgrades_pending === 1 ? "request is" : "requests are"} waiting for a decision.
-                </p>
-                <p>
-                  <Link className="w360-btn w360-btn-primary" href="/admin/partners/all">
-                    Open All Partners
-                  </Link>{" "}
-                  <span className={styles.muted}>Partners with a request carry an &ldquo;Upgrade&rdquo; badge.</span>
-                </p>
-              </section>
+              <Alert
+                tone="info"
+                title={`${d.upgrades_pending} upgrade ${d.upgrades_pending === 1 ? "request is" : "requests are"} waiting for a decision.`}
+                actions={
+                  <ButtonLink href="/admin/partners/all" size="sm" variant="primary">
+                    Open all partners
+                  </ButtonLink>
+                }
+              >
+                Partners with a request carry an &ldquo;Upgrade&rdquo; badge.
+              </Alert>
             )}
-            <section aria-labelledby="partner-kpis" className={styles.stack}>
+            <section aria-labelledby="partner-kpis">
               <h2 id="partner-kpis" className="w360-visually-hidden">
                 Key figures
               </h2>
-              <div className={local.cards}>
+              <div className={local.statGrid4}>
                 {d.cards.map((card) => (
                   <OverviewCardView key={card.key} card={card} />
                 ))}
               </div>
             </section>
             <section aria-labelledby="recent-partners" className={styles.stack}>
-              <div className={local.headerRow}>
-                <h2 id="recent-partners">Recent partners</h2>
-                <Link href="/admin/partners/all">View all partners</Link>
-              </div>
-              <Table
+              <SectionHeader
+                id="recent-partners"
+                title="Recent partners"
+                description={`As of ${formatDate(d.as_of)}.`}
+                actions={
+                  <ButtonLink href="/admin/partners/all" size="sm">
+                    View all partners
+                  </ButtonLink>
+                }
+              />
+              <DataTable
                 caption="Recent partners"
-                head={["Partner", "Type", "Profile", "Status", "Created"]}
-                isEmpty={d.recent_partners.length === 0}
-                empty="No partners yet. Add the first one with + Add Partner."
-              >
-                {d.recent_partners.map((p) => (
-                  <tr key={p.id}>
-                    <th scope="row">
-                      <Link href={`/admin/partners/${p.id}`}>{p.display_name}</Link>
-                    </th>
-                    <td>
-                      <TypeBadges labels={p.experience} />
-                    </td>
-                    <td>
-                      <CompletionMeter value={p.profile_completion} label={`profile of ${p.display_name}`} />
-                    </td>
-                    <td>
-                      <SetupStatusBadge value={p.profile_completion.setup_status} />
-                    </td>
-                    <td>{when(p.created_at)}</td>
-                  </tr>
-                ))}
-              </Table>
-              <p className={styles.muted}>As of {when(d.as_of)}.</p>
+                columns={RECENT_COLUMNS}
+                rows={d.recent_partners as RecentPartner[]}
+                rowKey={(p) => p.id}
+                rowHref={(p) => `/admin/partners/${p.id}`}
+                pageSize={0}
+                maxHeight={false}
+                empty={
+                  <EmptyState
+                    icon="handshake"
+                    title="No partners yet"
+                    hint="Partners you create appear here."
+                    action={manage ? { label: "New partner", href: "/admin/partners/new" } : undefined}
+                  />
+                }
+              />
             </section>
           </>
         )}
       </LoadGate>
-    </div>
+    </Page>
   );
 }
 
-// --- All Partners ------------------------------------------------------------------------------
+// --- All partners ------------------------------------------------------------------------------
 
 const TYPE_OPTIONS = [
-  { value: "", label: "All Partners" },
+  { value: "", label: "All types" },
   { value: "reseller", label: "Reseller" },
   { value: "white_label", label: "White-label" },
   { value: "affiliate", label: "Affiliate" },
 ];
 const STATUS_OPTIONS = [
-  { value: "", label: "All" },
+  { value: "", label: "All statuses" },
   { value: "active", label: "Active" },
   { value: "suspended", label: "Suspended" },
   { value: "draft", label: "Draft" },
   { value: "terminated", label: "Terminated" },
 ];
 const PROFILE_OPTIONS = [
-  { value: "", label: "All" },
+  { value: "", label: "Any profile" },
   { value: "complete", label: "Complete" },
   { value: "incomplete", label: "Incomplete" },
 ];
 
+const KYC_OPTIONS = [
+  { value: "", label: "Any KYC" },
+  { value: "ready", label: "Approved, not yet active" },
+  { value: "approved", label: "KYC approved" },
+  { value: "not_approved", label: "KYC not approved" },
+  { value: "legacy", label: "Active before KYC" },
+];
+
+/** Can this draft be activated as far as KYC goes? The server checks again. */
+const kycAllowsActivation = (r: ResellerRow) => !r.kyc || !r.kyc.required || r.kyc.status === "approved";
+
 const pick = (raw: string | null, options: { value: string }[]) => (options.some((o) => o.value === raw) ? (raw as string) : "");
 
-/** Partners → All Partners: one table, filtered by the server (search, partner
- * type, status, profile). The filters are kept in the address so a filtered
- * view can be linked to and survives a reload. */
-export function AllPartnersList() {
-  const { permissions } = useAdmin();
-  const params = useSearchParams();
-  const router = useRouter();
-  const pathname = usePathname() ?? "/admin/partners/all";
-  const searchId = useId();
-  const [draft, setDraft] = useState(params.get("q") ?? "");
-  const [filters, setFilters] = useState({
-    q: (params.get("q") ?? "").slice(0, 80),
-    type: pick(params.get("type"), TYPE_OPTIONS),
-    status: pick(params.get("status"), STATUS_OPTIONS),
-    profile: pick(params.get("profile"), PROFILE_OPTIONS),
-  });
-  const manage = can(permissions, "platform.staff_partner.manage");
-  const portals = usePortals();
-  // Add Partner lands here with the new partner's id: the row is marked and
-  // the banner says where its setup continues.
-  const createdParam = params.get("created") ?? "";
-  const [created] = useState(UUID_RE.test(createdParam) ? createdParam : "");
-
-  const paged = usePaged(
-    (cursor) =>
-      partnerConsoleApi.resellers({
-        scope: "all",
-        q: filters.q || undefined,
-        type: filters.type || undefined,
-        status: filters.status || undefined,
-        profile: filters.profile || undefined,
-        cursor,
-      }),
-    [filters.q, filters.type, filters.status, filters.profile],
-  );
-  const { act, busy, feedback } = useAction(() => paged.reload());
-
-  function apply(next: typeof filters) {
-    setFilters(next);
-    const query = new URLSearchParams();
-    for (const [key, value] of Object.entries(next)) if (value) query.set(key, value);
-    const text = query.toString();
-    router.replace(text ? `${pathname}?${text}` : pathname, { scroll: false });
-  }
-
-  const select = (key: "type" | "status" | "profile", label: string, options: { value: string; label: string }[]) => (
-    <div>
-      <label className="w360-label" htmlFor={`${searchId}-${key}`}>
-        {label}
-      </label>
-      <select id={`${searchId}-${key}`} className="w360-input" value={filters[key]} onChange={(e) => apply({ ...filters, [key]: e.target.value })}>
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-
-  return (
-    <div className={styles.stack}>
-      <div className={local.headerRow}>
-        <h1>All Partners</h1>
-        <AddPartnerButton />
-      </div>
-      <form
-        className={local.filters}
-        role="search"
-        aria-label="Filter partners"
-        onSubmit={(e) => {
-          e.preventDefault();
-          apply({ ...filters, q: draft.trim().slice(0, 80) });
-        }}
-      >
-        <div className={local.searchField}>
-          <label className="w360-label" htmlFor={searchId}>
-            Search by partner name or email
-          </label>
-          <input id={searchId} type="search" className="w360-input" value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={80} />
-        </div>
-        {select("type", "Partner type", TYPE_OPTIONS)}
-        {select("status", "Status", STATUS_OPTIONS)}
-        {select("profile", "Profile", PROFILE_OPTIONS)}
-        <button type="submit" className="w360-btn w360-btn-secondary">
-          Search
-        </button>
-      </form>
-      {created && (
-        <div className={local.createdBanner} role="status">
-          <p>
-            <strong>Partner created successfully.</strong> Its profile is incomplete: use{" "}
-            <Link href={`/admin/partners/${created}/profile`}>Complete setup</Link> (the gear in its row) to finish it,
-            then activate it with the switch in its row.
-          </p>
-        </div>
-      )}
-      {feedback}
-
-      {paged.state === "loading" && <p aria-live="polite">Loading partners…</p>}
-      {paged.state === "forbidden" && <p role="alert">You don&apos;t have access to partners.</p>}
-      {paged.state === "error" && <p role="alert">Couldn&apos;t load partners.</p>}
-      {paged.state === "ready" && (
-        <>
-          <Table
-            caption="Partners"
-            head={[
-              "Status",
-              "Action",
-              "Panel",
-              "Partner ID",
-              "Name",
-              "Partner Type",
-              "Email",
-              "Phone",
-              "Country",
-              "Currency",
-              "Wallet",
-              "Last Login",
-              "Joining Date",
-            ]}
-            isEmpty={paged.rows.length === 0}
-            empty="No partners match these filters."
-          >
-            {paged.rows.map((r) => (
-              <PartnerRow
-                key={r.id}
-                row={r}
-                manage={manage}
-                busy={busy}
-                highlighted={r.id === created}
-                onStatus={(target, reason) =>
-                  act(
-                    () => adminApi.setPartnerStatus(r.id, target, reason, r.version),
-                    target === "suspended"
-                      ? `${r.display_name} suspended.`
-                      : r.status === "draft"
-                        ? `${r.display_name} activated.`
-                        : `${r.display_name} reactivated.`,
-                  )
-                }
-                onGuest={(reason) =>
-                  act(async () => {
-                    const view = await adminApi.startGuestView(r.id, reason);
-                    window.location.assign(portalHref(portals, "partner", view.portal_path));
-                  }, `Opening the portal of ${r.display_name} as a guest…`)
-                }
-              />
-            ))}
-          </Table>
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
-        </>
-      )}
-    </div>
-  );
-}
+/** The reason recorded when a partner's status is changed from its row. Nobody
+ * has to type one (the owner's call, 2026-10-27); the server still requires a
+ * reason, so the action says where it came from unless a reason was written. */
+const SWITCH_REASON = {
+  activate: "Activated from All Partners",
+  reactivate: "Reactivated from All Partners",
+  suspend: "Suspended from All Partners",
+};
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** The partner's balance: its commission ledger per currency, as the server
- * summed it (never added across currencies). */
-function wallet(r: ResellerRow) {
-  if (r.commission.length === 0) return money(0, r.payout_currency);
-  return r.commission.map((c) => money(c.balance_minor, c.currency)).join(" · ");
-}
 
 function countryName(code: string): string {
   try {
@@ -416,164 +344,491 @@ function countryName(code: string): string {
   }
 }
 
-/** A value with a copy button, as the list shows a panel link, an id or an email. */
-function Copyable({ value, shown, what }: { value: string; shown?: string; what: string }) {
-  const [copied, setCopied] = useState(false);
+/** The KYC states as the specification names them (ADR-063). */
+function kycTitle(status: string): string {
   return (
-    <span className={local.copyCell}>
-      <span className={local.copyText} title={value}>
-        {shown ?? value}
-      </span>
-      <button
-        type="button"
-        className={local.iconButton}
-        aria-label={copied ? `Copied ${what}` : `Copy ${what}`}
-        title={copied ? "Copied" : "Copy"}
-        onClick={() =>
-          void navigator.clipboard?.writeText(value).then(
-            () => setCopied(true),
-            () => setCopied(false),
-          )
-        }
-      >
-        <NavIcon name="copy" />
-      </button>
-    </span>
+    {
+      draft: "Draft",
+      submitted: "Submitted",
+      under_review: "Under Review",
+      correction_required: "Correction Required",
+      approved: "Approved",
+      rejected: "Rejected",
+    }[status] ?? status
   );
 }
 
-/** The reason recorded when the switch changes a partner's status. The switch
- * asks nothing (the owner's call, 2026-10-27); the server still requires a
- * reason, so the switch states where the action came from, and the audit entry
- * records who and when. */
-const SWITCH_REASON = {
-  activate: "Activated from All Partners",
-  reactivate: "Reactivated from All Partners",
-  suspend: "Suspended from All Partners",
+const KYC_TONE: Record<string, string> = {
+  draft: "tone-neutral",
+  submitted: "tone-warning",
+  under_review: "tone-info",
+  correction_required: "tone-warning",
+  approved: "tone-success",
+  rejected: "tone-danger",
 };
 
-function PartnerRow({
-  row: r,
-  manage,
-  busy,
-  highlighted,
-  onStatus,
-  onGuest,
-}: {
-  row: ResellerRow;
-  manage: boolean;
-  busy: boolean;
-  highlighted: boolean;
-  onStatus: (target: "active" | "suspended", reason: string) => void;
-  onGuest: (reason: string) => void;
-}) {
+/** The KYC status in a few words, for a badge. */
+function kycWords(status: string): string {
+  return (
+    {
+      draft: "not sent",
+      submitted: "submitted",
+      under_review: "under review",
+      correction_required: "correction required",
+      approved: "approved",
+      rejected: "rejected",
+    }[status] ?? status
+  );
+}
+
+type CreatedInvite = { state: "queued" | "deferred" | "not_sent"; local: boolean } | null;
+
+/** What the create answer said about the invitation, carried on the address. */
+function inviteFromParam(raw: string | null, mail: string | null): CreatedInvite {
+  if (raw !== "queued" && raw !== "deferred" && raw !== "not_sent") return null;
+  return { state: raw, local: mail !== "smtp" };
+}
+
+/** After New partner: the partner is a draft, and the invitation is described as
+ * exactly what happened - queued for email, held until activation, not sent, or
+ * written to a development server's log - never as delivered. */
+function CreatedBanner({ partnerId, invite }: { partnerId: string; invite: CreatedInvite }) {
+  const setup = <Link href={`/admin/partners/${partnerId}/profile`}>Complete setup</Link>;
+  const people = <Link href={`/admin/partners/${partnerId}?tab=users`}>the partner&apos;s page</Link>;
+  if (invite?.state === "not_sent") {
+    return (
+      <Alert tone="warning" title="Partner created, but no invitation was sent.">
+        Open {people} and resend the invitation. The partner is a draft with no partner rights.
+      </Alert>
+    );
+  }
+  if (invite?.state === "queued" && invite.local) {
+    return (
+      <Alert tone="warning" title="Partner created. Email is not configured on this server.">
+        The invitation was queued, but this server prints email to its log instead of sending it, so it will not reach the partner&apos;s
+        inbox. The partner is a draft until its KYC is approved and an Admin activates it. {setup}.
+      </Alert>
+    );
+  }
+  if (invite?.state === "queued") {
+    return (
+      <Alert tone="success" title="Partner created. Invitation queued for email.">
+        It has not been confirmed as sent yet: {people} shows when the mail server accepts it, or if it fails. The partner can sign in to send
+        its KYC; it stays a draft until the KYC is approved and an Admin activates it. {setup}.
+      </Alert>
+    );
+  }
+  if (invite?.state === "deferred") {
+    return (
+      <Alert tone="success" title="Partner created.">
+        Its invitation is emailed when the partner is activated (KYC approval is switched off on this server). {setup}.
+      </Alert>
+    );
+  }
+  return (
+    <Alert tone="success" title="Partner created successfully.">
+      It is a draft with no partner rights. {setup}, then activate it from its row menu once its KYC is approved.
+    </Alert>
+  );
+}
+
+const CATEGORY_TITLE: Record<PartnerCategory, string> = {
+  affiliate: "Affiliate partners",
+  reseller: "Reseller partners",
+  white_label: "White Label partners",
+};
+
+const CATEGORY_SUBTITLE: Record<PartnerCategory, string> = {
+  affiliate: "Every partner whose type is Affiliate, with its status.",
+  reseller: "Every partner whose type is Reseller, with its status.",
+  white_label: "Every partner whose type is White-label, with its status.",
+};
+
+const CATEGORY_NOUN: Record<PartnerCategory, string> = {
+  affiliate: "affiliate partners",
+  reseller: "reseller partners",
+  white_label: "white-label partners",
+};
+
+/** Partners → All partners: one table, filtered by the server (search, partner
+ * type, status, profile). The filters are kept in the address so a filtered
+ * view can be linked to and survives a reload. A partner's actions are in its
+ * row's menu; a status change asks to confirm.
+ *
+ * ADR-062: Partners → Affiliate, Reseller and White Label are this same table
+ * with `category` fixed - the server lists only the partners of that type, each
+ * partner under exactly one. "Partner type" moves between those pages (and back
+ * to All partners), so the filter always means the type the Type column shows. */
+export function AllPartnersList({ category }: { category?: PartnerCategory } = {}) {
+  const { permissions } = useAdmin();
+  const params = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname() ?? "/admin/partners/all";
+  // Back from a guest session (`?guest=ended`): this list's own search and
+  // filters, as this tab last showed them - the server keeps only the path.
+  const returned = params.get("guest") === GUEST_RETURNED;
+  const [restored] = useState(() => {
+    if (!returned) return null;
+    const last = lastPartnerList(pathname);
+    return last ? new URLSearchParams(last.split("?")[1] ?? "") : new URLSearchParams();
+  });
+  const source = restored ?? params;
+  const [filters, setFilters] = useState({
+    q: (source.get("q") ?? "").slice(0, 80),
+    type: category ?? "",
+    status: pick(source.get("status"), STATUS_OPTIONS),
+    profile: pick(source.get("profile"), PROFILE_OPTIONS),
+    kyc: pick(source.get("kyc"), KYC_OPTIONS),
+  });
+  useEffect(() => {
+    if (!restored) return;
+    const text = restored.toString();
+    router.replace(text ? `${pathname}?${text}` : pathname, { scroll: false });
+    // Once, on arrival: the address then carries the filters itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // What "Back to Partners" on a partner's page opens.
+  const search = params.toString();
+  useEffect(() => {
+    if (!returned) rememberPartnerList(pathname, search ? `?${search}` : "");
+  }, [pathname, search, returned]);
+  const manage = can(permissions, "platform.staff_partner.manage");
+  const canGuest = can(permissions, GUEST_PERMISSION);
+  const canKyc = can(permissions, "platform.staff_kyc.view");
+  const [guestAccess, setGuestAccess] = useState<ResellerRow | null>(null);
+  // The row whose Login as Guest is being opened (its button shows a spinner).
+  // Login as Guest came back with an outcome (a used or expired link, or refused).
+  const [guestOutcome] = useState(() => guestOutcomeMessage(params.get("guest")));
   const portals = usePortals();
-  const href = `/admin/partners/${r.id}`;
-  const setupHref = `/admin/partners/${r.id}/profile`;
-  const panelPath = `/partner/${r.id}`;
-  const panelUrl = portals ? portalHref(portals, "partner", panelPath) : `${window.location.origin}${panelPath}`;
-  const on = r.status === "active";
-  const draft = r.status === "draft";
-  // The server refuses to activate a partner nobody can act for, so a draft
-  // without an administrator is not offered the switch.
-  const canToggle = manage && (r.status === "active" || r.status === "suspended" || (draft && r.administrator !== null));
-  const toggleNote =
-    r.status === "terminated"
-      ? "A terminated partner cannot be reactivated."
-      : !manage
-        ? "You may not change a partner's status."
-        : draft && r.administrator === null
-          ? "Add an administrator before activating this partner."
-          : on
-            ? "Suspend this partner"
-            : draft
-              ? "Activate this partner"
-              : "Reactivate this partner";
-  const complete = r.profile_completion.complete;
+
+  // An old address (`/admin/partners/all?type=reseller`, a bookmark or the
+  // overview's old link) opens the type's own page, keeping the other filters.
+  // Only there: on New partner, `?type=` chooses the form's type.
+  const legacyType = !category && pathname === "/admin/partners/all" ? params.get("type") : null;
+  useEffect(() => {
+    if (legacyType && isCategory(legacyType)) {
+      router.replace(categoryHref(legacyType, Object.fromEntries(params.entries())));
+    }
+  }, [legacyType, params, router]);
+  const confirm = useConfirm();
+  // New partner lands here with the new partner's id: the banner says where its
+  // setup continues.
+  const createdParam = params.get("created") ?? "";
+  const [created] = useState(UUID_RE.test(createdParam) ? createdParam : "");
+  // How the invitation went, as the create answer said (never claimed when not sent).
+  const [createdInvite] = useState(() => inviteFromParam(params.get("invite"), params.get("mail")));
+
+  const paged = usePaged(
+    (cursor) =>
+      partnerConsoleApi.resellers({
+        scope: "all",
+        q: filters.q || undefined,
+        category: category || undefined,
+        status: filters.status || undefined,
+        profile: filters.profile || undefined,
+        kyc: filters.kyc || undefined,
+        cursor,
+      }),
+    [filters.q, category, filters.status, filters.profile, filters.kyc],
+  );
+  const { act, busy, feedback } = useAction(() => paged.reload());
+
+  function apply(next: typeof filters) {
+    const { type, ...rest } = next;
+    if (type !== (category ?? "")) {
+      // Partner type is the page: Affiliate, Reseller, White Label or All partners.
+      router.push(categoryHref(isCategory(type) ? type : null, rest));
+      return;
+    }
+    setFilters(next);
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(rest)) if (value) query.set(key, value);
+    const text = query.toString();
+    router.replace(text ? `${pathname}?${text}` : pathname, { scroll: false });
+  }
+
+  const panelUrl = (r: ResellerRow) => {
+    const path = `/partner/${r.id}`;
+    return portals ? portalHref(portals, "partner", path) : `${window.location.origin}${path}`;
+  };
+
+  const changeStatus = (r: ResellerRow, target: "active" | "suspended") => {
+    const kind = target === "suspended" ? "suspend" : r.status === "draft" ? "activate" : "reactivate";
+    const verb = kind === "suspend" ? "Suspend" : kind === "activate" ? "Activate" : "Reactivate";
+    const where = "All partners";
+    confirm.ask({
+      title: `${verb} ${r.display_name}?`,
+      message:
+        kind === "suspend"
+          ? "The partner and its people lose access to the partner portal until it is reactivated. Its customers are not touched."
+          : "The partner's administrator can sign in to the partner portal.",
+      confirmLabel: `${verb} partner`,
+      danger: kind === "suspend",
+      reason: true,
+      actionName: verb,
+      where,
+      onConfirm: (reason) => {
+        const text = reason === autoReason(verb, where) ? SWITCH_REASON[kind] : reason;
+        void act(
+          () => adminApi.setPartnerStatus(r.id, target, text, r.version),
+          kind === "suspend" ? `${r.display_name} suspended.` : kind === "activate" ? `${r.display_name} activated.` : `${r.display_name} reactivated.`,
+        );
+      },
+    });
+  };
+
+  // Login as Guest (ADR-062): the server opens a read-only, time-limited view of
+  // exactly this partner and the browser goes to its dashboard. A refusal is
+  // said above the table (the server's own words), and the button is usable again.
+  // ADR-063: Login as Guest asks why first; the dialog opens the session.
+  const guestLogin = useGuestLogin(category ? CATEGORY_TITLE[category] : "All Partners");
+  const guest = (r: ResellerRow) => guestLogin.ask(r.id, r.display_name);
+
+  const rowMenu = (r: ResellerRow): MenuItem[] => {
+    const url = panelUrl(r);
+    return [
+      { label: "View partner", icon: "user", href: `/admin/partners/${r.id}` },
+      { label: r.profile_completion.complete ? "Edit partner" : "Complete setup", icon: "settings", href: `/admin/partners/${r.id}/profile` },
+      // ADR-063: the specification's row actions.
+      { label: "Review KYC", icon: "shield", href: `/admin/partners/applications/${r.id}`, when: canKyc },
+      {
+        label: "Approve / Reject KYC",
+        icon: "check",
+        href: `/admin/partners/applications/${r.id}#decision`,
+        when: canKyc && (r.kyc?.status === "submitted" || r.kyc?.status === "under_review"),
+      },
+      { label: "Manage Permissions", icon: "key", href: `/admin/partners/${r.id}?tab=users` },
+      { label: "View Assigned Customers", icon: "users", href: `/admin/partners/${r.id}?tab=customers` },
+      {
+        label: "View Partner Wallet",
+        icon: "card",
+        href: `/admin/wallets?owner_type=partner&q=${encodeURIComponent(r.display_name)}`,
+      },
+      { label: "View Commission & Payout Records", icon: "currency", href: `/admin/partners/${r.id}?tab=commission` },
+      { label: "Open partner panel", icon: "external", href: url, external: true },
+      { label: "Copy panel link", icon: "copy", onSelect: () => void navigator.clipboard?.writeText(url) },
+      // Login as Guest is beside View in the row itself (2026-11-11), not in here.
+      { label: "Manage Guest Access", icon: "eye", onSelect: () => setGuestAccess(r) },
+      { label: "Suspend", icon: "pause", danger: true, separator: true, when: manage && r.status === "active", onSelect: () => changeStatus(r, "suspended") },
+      { label: "Reactivate", icon: "play", separator: true, when: manage && r.status === "suspended", onSelect: () => changeStatus(r, "active") },
+      {
+        label:
+          r.administrator === null
+            ? "Activate (add an administrator first)"
+            : !kycAllowsActivation(r)
+              ? "Activate (KYC must be approved first)"
+              : "Activate",
+        icon: "play",
+        separator: true,
+        when: manage && r.status === "draft",
+        // The server refuses to activate a partner nobody can act for, or a
+        // draft whose KYC application is not approved.
+        disabled: r.administrator === null || !kycAllowsActivation(r),
+        onSelect: () => changeStatus(r, "active"),
+      },
+    ];
+  };
+
+  // 2026-11-11 (the owner's expected layout): Partner Name, Partner Type, Status,
+  // then View / Actions (View, Login as Guest, the row's menu), then the other
+  // ADR-063 columns - Partner Email, KYC Status, Country, Assigned Customers and
+  // Created Date. No Earnings: they stay on each partner's own page.
+  const columns: Column<ResellerRow>[] = [
+    {
+      key: "partner",
+      header: "Partner Name",
+      value: (r) => r.display_name,
+      render: (r) => <PartnerCell id={r.id} name={r.display_name} sub={<IdCell value={r.id} label={`Copy partner ID of ${r.display_name}`} />} />,
+    },
+    {
+      key: "type",
+      header: "Type / Permissions",
+      value: (r) => r.primary_experience,
+      render: (r) => (
+        <span className={local.badgeWrap}>
+          <PrimaryType value={r.primary_experience} />
+          {r.experience.length > 1 && <span className={styles.muted}>+ {r.experience.filter((e) => e.key !== r.primary_experience).map((e) => e.label).join(", ")}</span>}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Account Status",
+      value: (r) => r.status,
+      render: (r) => (
+        <span className={local.badgeWrap}>
+          <Status value={r.status} />
+          {r.status === "draft" && <SetupStatusBadge value={r.profile_completion.setup_status} />}
+          {r.kyc?.ready_to_activate && <span className={`${kit.badge} ${kit["tone-info"]}`}>Ready to activate</span>}
+          {r.upgrade && (
+            <Link
+              href={`/admin/partners/${r.id}?tab=users`}
+              className={`${kit.badge} ${r.upgrade.status === "pending_approval" ? kit["tone-warning"] : kit["tone-neutral"]}`}
+              aria-label={`Upgrade: ${upgradeText(r.upgrade.status)}, to ${upgradeTarget(r.upgrade.to)} - ${r.display_name}`}
+            >
+              Upgrade: {upgradeText(r.upgrade.status)}
+            </Link>
+          )}
+        </span>
+      ),
+    },
+    {
+      // 2026-11-11 (the owner): View and Login as Guest side by side, early in the
+      // row so both are on screen without scrolling sideways; the other actions
+      // are in the menu beside them. Login as Guest only for staff who may start
+      // a guest view - the server checks again.
+      key: "actions",
+      header: "View / Actions",
+      render: (r) => (
+        <span className={local.rowActions}>
+          <ButtonLink size="sm" variant="secondary" icon="eye" href={`/admin/partners/${r.id}`} aria-label={`View ${r.display_name}`}>
+            View
+          </ButtonLink>
+          {canGuest &&
+            (guestAvailable(r.status) ? (
+              <Button
+                size="sm"
+                variant="primary"
+                icon="login"
+                aria-label={`Login as Guest to ${r.display_name}`}
+                loading={guestLogin.pending === r.id}
+                disabled={busy || guestLogin.dialog !== null}
+                onClick={() => void guest(r)}
+              >
+                Login as Guest
+              </Button>
+            ) : (
+              <Tooltip content="Opens once the partner is active">
+                <Button size="sm" variant="primary" icon="login" aria-label={`Login as Guest to ${r.display_name}`} aria-disabled="true" className={local.unavailable}>
+                  Login as Guest
+                </Button>
+              </Tooltip>
+            ))}
+          <RowMenu label={`Actions for ${r.display_name}`} items={rowMenu(r)} />
+        </span>
+      ),
+    },
+    {
+      key: "email",
+      header: "Partner Email",
+      value: (r) => r.administrator?.email ?? "",
+      render: (r) =>
+        r.administrator?.email ? (
+          <span className={kit.trunc} title={r.administrator.email}>
+            {r.administrator.email}
+          </span>
+        ) : (
+          <span className={styles.muted}>No administrator</span>
+        ),
+    },
+    {
+      key: "kyc",
+      header: "KYC Status",
+      // Never blank, so the column always shows (the table hides an all-empty one).
+      value: (r) => r.kyc?.status ?? "unknown",
+      render: (r) => (
+        <span className={local.badgeLine}>
+          {!r.kyc && <span className={styles.muted}>—</span>}
+          {r.kyc && (
+            <Link
+              href={`/admin/partners/applications/${r.id}`}
+              className={`${kit.badge} ${kit[KYC_TONE[r.kyc.status] ?? "tone-neutral"]}`}
+              aria-label={`KYC ${kycWords(r.kyc.status)} - ${r.display_name}`}
+            >
+              {kycTitle(r.kyc.status)}
+            </Link>
+          )}
+          {r.kyc?.legacy && (
+            <Tooltip content="Active before KYC was required. No KYC approval is on file; the partner policy in Settings decides what it may do.">
+              <span tabIndex={0} className={`${kit.badge} ${kit["tone-neutral"]}`}>
+                Active before KYC
+              </span>
+            </Tooltip>
+          )}
+        </span>
+      ),
+    },
+    {
+      key: "country",
+      header: "Country",
+      // ADR-063: always shown (the table hides a column blank in every row, and
+      // "—" counts as blank); a partner with no country sorts last.
+      value: (r) => r.country || "ZZ",
+      render: (r) => (r.country ? <abbr title={countryName(r.country)}>{r.country}</abbr> : "—"),
+    },
+    {
+      key: "customers",
+      header: "Assigned Customers",
+      value: (r) => r.customers,
+      render: (r) => (
+        <Link href={`/admin/partners/${r.id}?tab=customers`} aria-label={`${r.customers} assigned customers of ${r.display_name}`}>
+          {r.customers}
+        </Link>
+      ),
+    },
+    { key: "joined", header: "Created", value: (r) => r.created_at, render: (r) => formatDate(r.created_at) },
+  ];
+
+  const filtered = Boolean(filters.q || (!category && filters.type) || filters.status || filters.profile || filters.kyc);
+  const select = (key: "type" | "status" | "profile" | "kyc", label: string, options: { value: string; label: string }[]) => (
+    <Select label={label} value={filters[key]} options={options} onChange={(value) => apply({ ...filters, [key]: value })} />
+  );
 
   return (
-    <>
-      <tr className={highlighted ? local.highlightRow : undefined}>
-        <td>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={on}
-            aria-label={`${r.display_name} active`}
-            title={toggleNote}
-            className={local.switch}
-            disabled={!canToggle || busy}
-            onClick={() =>
-              on
-                ? onStatus("suspended", SWITCH_REASON.suspend)
-                : onStatus("active", draft ? SWITCH_REASON.activate : SWITCH_REASON.reactivate)
+    <Page>
+      <PageHeader
+        title={category ? CATEGORY_TITLE[category] : "All partners"}
+        subtitle={category ? CATEGORY_SUBTITLE[category] : "Every partner account, with its type and status."}
+        primary={<NewPartnerButton category={category} />}
+      />
+      {created && <CreatedBanner partnerId={created} invite={createdInvite} />}
+      {guestOutcome && <Alert tone="warning" title={guestOutcome} />}
+      <FilterBar
+        label="Filter partners"
+        onClear={filtered ? () => apply({ q: "", type: category ?? "", status: "", profile: "", kyc: "" }) : undefined}
+      >
+        <SearchInput label="Search by partner name or email" value={filters.q} onSearch={(q) => apply({ ...filters, q: q.slice(0, 80) })} />
+        {select("type", "Partner type", TYPE_OPTIONS)}
+        {select("status", "Status", STATUS_OPTIONS)}
+        {select("profile", "Profile", PROFILE_OPTIONS)}
+        {select("kyc", "KYC", KYC_OPTIONS)}
+      </FilterBar>
+      {feedback}
+      <DataTable
+        caption="Partners"
+        columns={columns}
+        rows={paged.rows}
+        rowKey={(r) => r.id}
+        rowHref={(r) => `/admin/partners/${r.id}`}
+        rowLabel={(r) => r.display_name}
+        loading={paged.state === "loading"}
+        error={paged.state === "forbidden" ? "You don't have access to partners." : paged.state === "error" ? "Couldn't load partners." : null}
+        onLoadMore={paged.more}
+        hasMore={paged.hasMore}
+        empty={
+          <EmptyState
+            icon="search"
+            title={filtered ? "No partners match these filters." : category ? `No ${CATEGORY_NOUN[category]} yet.` : "No partners yet."}
+            hint={filtered ? "Try another search or clear the filters." : "Partners you create appear here."}
+            action={
+              manage && !filtered
+                ? { label: "New partner", href: category ? `/admin/partners/new?type=${category}` : "/admin/partners/new" }
+                : undefined
             }
-          >
-            <span className={local.switchKnob} />
-          </button>
-        </td>
-        <td>
-          <div className={local.iconRow}>
-            <Link
-              href={setupHref}
-              className={local.iconButton}
-              aria-label={`${complete ? "Edit setup of" : "Complete setup of"} ${r.display_name}`}
-              title={complete ? "Edit setup" : "Complete setup"}
-            >
-              <NavIcon name="settings" />
-            </Link>
-            {manage && (
-              <button
-                type="button"
-                className={local.iconButton}
-                aria-label={`Guest login to ${r.display_name}`}
-                title="Guest login (read-only)"
-                disabled={busy}
-                onClick={() => onGuest(autoReason("Guest login", "All Partners"))}
-              >
-                <NavIcon name="login" />
-              </button>
-            )}
-          </div>
-        </td>
-        <td>
-          <Copyable value={panelUrl} what={`panel link of ${r.display_name}`} />
-        </td>
-        <td>
-          <Copyable value={r.id} shown={r.id.slice(0, 8)} what={`partner ID of ${r.display_name}`} />
-        </td>
-        <th scope="row">
-          <Link href={href}>{r.display_name}</Link>
-          <div className={local.nameMeta}>
-            <SetupStatusBadge value={r.profile_completion.setup_status} />
-            {r.upgrade && (
-              <Link
-                href={`${href}?tab=users`}
-                className={`w360-badge ${r.upgrade.status === "pending_approval" ? "w360-badge-warning" : "w360-badge-neutral"}`}
-                aria-label={`Upgrade: ${upgradeText(r.upgrade.status)}, to ${upgradeTarget(r.upgrade.to)} - ${r.display_name}`}
-              >
-                Upgrade: {upgradeText(r.upgrade.status)}
-              </Link>
-            )}
-          </div>
-        </th>
-        <td>
-          <PrimaryType value={r.primary_experience} />
-        </td>
-        <td>
-          {r.administrator?.email ? (
-            <Copyable value={r.administrator.email} what={`email of ${r.display_name}`} />
-          ) : (
-            <span className={styles.muted}>No administrator</span>
-          )}
-        </td>
-        <td>{r.phone ? <Copyable value={r.phone} what={`phone of ${r.display_name}`} /> : <span className={styles.muted}>—</span>}</td>
-        <td>{r.country ? <abbr title={countryName(r.country)}>{r.country}</abbr> : <span className={styles.muted}>—</span>}</td>
-        <td>{r.payout_currency}</td>
-        <td className={styles.num}>{wallet(r)}</td>
-        <td>{r.administrator?.last_login_at ? when(r.administrator.last_login_at) : <span className={styles.muted}>Never</span>}</td>
-        <td>{when(r.created_at)}</td>
-      </tr>
-    </>
+          />
+        }
+      />
+      {confirm.dialog}
+      {guestLogin.dialog}
+      {guestAccess && (
+        <ManageGuestAccess
+          partnerId={guestAccess.id}
+          partnerName={guestAccess.display_name}
+          partnerStatus={guestAccess.status}
+          canGuest={canGuest}
+          onClose={() => setGuestAccess(null)}
+        />
+      )}
+    </Page>
   );
 }

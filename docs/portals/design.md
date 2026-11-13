@@ -28,6 +28,8 @@ Status: design frozen 2026-10-11, before implementation. Builds on ADR-033 (sess
 
 ## 3. Central sign-in and the hand-off
 
+> **Superseded for the portals by ADR-059 (2026-11-06).** The Admin, Partner and customer portals now each serve their own `/login`, `/forgot-password` and `/reset-password` and sign in on their own host. No redirect to `auth.` happens and no hand-off is used. Sign-up, verification and invitations are on `app.`. `auth.` keeps only the product (OIDC) sign-in. The hand-off below still works for a sign-in in flight, but no page starts one.
+
 Cookies stay host-only, so a session set on `auth.` is invisible to `admin.`. Sharing a `Domain=.workeasy360.com` cookie would also expose it to the four product applications on sibling subdomains, which this platform does not control. Instead:
 
 1. A portal host with no session (or a `/login` visit there) redirects to `https://auth.workeasy360.com/login?mode=<admin|partner|user>&next=<path>&state=<s>`. The proxy sets `__Host-w360_portal_state=<s>` (development: `w360_portal_state`) on the portal host: HttpOnly, SameSite=Lax, 10 minutes. `state` is a random binding value, not a credential.

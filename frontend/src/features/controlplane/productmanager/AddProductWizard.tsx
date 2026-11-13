@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { adminApi, type NewProduct, type ProductsConsole } from "@/lib/api/controlPlane";
 import { can, useAdmin } from "../ControlShell";
 import { LoadGate, describeError, useLoad } from "../ui";
+import { PageHeader } from "../kit";
 import { DescriptionField, ErrorSummary, ProgressList, Segmented, SelectField, TextField, useStepRunner, type StepDef } from "../widgets";
 import { IconPicker } from "./IconPicker";
 import { ImagePicker, ScreenshotsField, useDataUrl, type ShotItem } from "./ImagePicker";
@@ -295,12 +296,11 @@ function Wizard({ catalog }: { catalog: ProductsConsole }) {
 
   return (
     <div className={styles.page}>
-      <div>
-        <Link className={styles.back} href="/admin/products">
-          <span aria-hidden="true">←</span> Product Manager
-        </Link>
-        <h1 className={styles.pageTitle}>Add Product</h1>
-      </div>
+      <PageHeader
+        crumbs={[{ label: "Products", href: "/admin/products" }, { label: "New product" }]}
+        title="New product"
+        subtitle="Four steps: identity, store listing, integration and availability."
+      />
 
       <div className={styles.wizard}>
         <ol className={styles.steps} aria-label="Steps">
@@ -496,7 +496,7 @@ function Wizard({ catalog }: { catalog: ProductsConsole }) {
                 ]}
                 value={d.sso}
                 onChange={(v) => set("sso", v)}
-                hint={d.sso === "yes" ? "Integration type: OIDC (Workeasy360 sign-in)." : "Integration type: External (the product's own sign-in)."}
+                hint={d.sso === "yes" ? "Integration type: OIDC (WorkEasy360 sign-in)." : "Integration type: External (the product's own sign-in)."}
               />
               {d.sso === "yes" ? (
                 <TextField
@@ -505,7 +505,7 @@ function Wizard({ catalog }: { catalog: ProductsConsole }) {
                   placeholder="https://crm.workeasy360.com/api/auth/callback"
                   value={d.redirectUri}
                   error={errors.redirectUri}
-                  hint="The exact address Workeasy360 sign-in returns to."
+                  hint="The exact address WorkEasy360 sign-in returns to."
                   onChange={(v) => set("redirectUri", v)}
                 />
               ) : (

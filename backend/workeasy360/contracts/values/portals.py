@@ -16,18 +16,31 @@ from __future__ import annotations
 from typing import Final
 from urllib.parse import urlsplit
 
-#: The four browser portals, plus the API host (no UI).
+#: The browser portals, plus the API host (no UI).
 ADMIN: Final = "admin"
 PARTNER: Final = "partner"
 APP: Final = "app"
 AUTH: Final = "auth"
 API: Final = "api"
+#: 2026-11-12 (ADR-065): the Digital Store's own host (store.workeasy360.com).
+#: Optional: with no ``W360_STORE_ORIGIN`` the Store stays on the customer
+#: portal, exactly as before. A customer-facing portal like ``app``: the same
+#: accounts, its own host-only session, the customer API.
+STORE: Final = "store"
 
-WEB_PORTALS: Final = (ADMIN, PARTNER, APP, AUTH)
+WEB_PORTALS: Final = (ADMIN, PARTNER, APP, AUTH, STORE)
 ALL_PORTALS: Final = (*WEB_PORTALS, API)
+#: The portals every multi-portal deployment must configure; the rest are optional.
+REQUIRED_PORTALS: Final = (ADMIN, PARTNER, APP, AUTH, API)
+OPTIONAL_PORTALS: Final = (STORE,)
 
 #: Portals a sign-in hands off to. ``auth`` is where the sign-in happens.
 DESTINATIONS: Final = (ADMIN, PARTNER, APP)
+
+#: Portals that serve their own account pages (ADR-059 sign-in, sign-up,
+#: verification, password reset), so an emailed link opens where it was asked
+#: for. The Store signs its customers in on its own host (ADR-065).
+ACCOUNT_PORTALS: Final = (ADMIN, PARTNER, APP, STORE)
 
 #: The sign-in page's navigation intent (``?mode=``) -> the portal it aims at.
 #: Intent only: the hand-off still checks the account may enter that portal,
@@ -35,7 +48,12 @@ DESTINATIONS: Final = (ADMIN, PARTNER, APP)
 MODE_TO_PORTAL: Final = {"admin": ADMIN, "partner": PARTNER, "user": APP}
 
 #: Where each destination opens when no (valid) page was asked for.
-PORTAL_ROOT: Final = {ADMIN: "/admin", PARTNER: "/partner", APP: "/dashboard"}
+PORTAL_ROOT: Final = {
+    ADMIN: "/admin",
+    PARTNER: "/partner",
+    APP: "/dashboard",
+    STORE: "/store",
+}
 
 #: The return-URL allowlist: the page paths a hand-off may land on, per
 #: portal. A path matches a prefix when it equals it or continues with ``/``.
@@ -52,6 +70,8 @@ PORTAL_PATH_PREFIXES: Final = {
         # ADR-053: a partner's branded Store, where a buyer returns after sign-in.
         "/store",
     ),
+    # ADR-065: the Store's own host serves only the Store's pages.
+    STORE: ("/store",),
 }
 
 #: The longest ``next`` accepted. Anything longer is ignored, not truncated.

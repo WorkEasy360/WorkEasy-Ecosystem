@@ -264,16 +264,34 @@ export interface StaffOrderRow {
   amount_due_minor: number;
   created_at: string;
   paid_at: string | null;
+  /** Purchase source (ADR-053): direct (the Store), partner (a reseller placed it) or storefront. */
+  channel?: "direct" | "partner" | "storefront" | string;
+  /** Source reference: the partner that sold it, if any. */
+  partner_id?: string | null;
+  partner_name?: string;
 }
 
 export interface PlatformSettings {
   signup_enabled: boolean;
+  partner_applications_enabled: boolean;
   support_email: string;
   sales_email: string;
   catalog_currency: string;
   public_catalog_currency: string;
   default_currency: string;
   currencies: string[];
+  company_name: string;
+  company_legal_name: string;
+  company_address: string;
+  company_tax_id: string;
+  /** Basis points; null means the deployment's default applies. */
+  tax_rate_bp: number | null;
+  default_tax_rate_bp: number;
+  notifications_email: string;
+  /** ADR-063: what a partner active before KYC existed may do. */
+  partner_legacy_kyc_policy: "allow" | "restrict";
+  /** ADR-063: whether a suspended partner keeps accruing commission. */
+  partner_suspended_commission_policy: "accrue" | "stop";
   version: number;
 }
 
@@ -499,16 +517,25 @@ export const adminConsoleApi = {
       { method: "POST" },
     ),
   // Phase 9: orders, platform settings, staff roles, billing terms
-  orders: (opts: { status?: string; cursor?: string; limit?: number } = {}) =>
+  orders: (opts: { status?: string; channel?: string; cursor?: string; limit?: number } = {}) =>
     apiFetch<Page<StaffOrderRow>>("/api/v1/admin/orders", {
-      query: { status: opts.status, cursor: opts.cursor, limit: opts.limit },
+      query: { status: opts.status, channel: opts.channel, cursor: opts.cursor, limit: opts.limit },
     }),
   settings: () => apiFetch<PlatformSettings>("/api/v1/admin/settings"),
   saveSettings: (body: {
     signup_enabled: boolean;
+    partner_applications_enabled: boolean;
+    partner_legacy_kyc_policy?: "allow" | "restrict";
+    partner_suspended_commission_policy?: "accrue" | "stop";
     support_email: string;
     sales_email: string;
     public_catalog_currency: string;
+    company_name: string;
+    company_legal_name: string;
+    company_address: string;
+    company_tax_id: string;
+    tax_rate_bp: number | null;
+    notifications_email: string;
     version: number;
   }) => apiFetch<PlatformSettings>("/api/v1/admin/settings", { method: "PUT", body: json(body) }),
   roles: () => apiFetch<{ results: StaffRoleRow[] }>("/api/v1/admin/security/roles"),

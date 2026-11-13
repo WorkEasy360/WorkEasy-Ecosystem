@@ -195,6 +195,13 @@ def test_the_partner_models_are_the_frozen_set():
         "PartnerCannedResponse",
         "PartnerPayoutMethod",
         "PartnerWithdrawalRequest",
+        # The Admin Panel programme (ADR-060): KYC is a record beside the partner's status,
+        # with its own requirements, documents, decisions and access log.
+        "KycRequirement",
+        "PartnerKyc",
+        "PartnerKycDocument",
+        "PartnerKycDecision",
+        "PartnerKycDocumentAccess",
         # ADR-054: which products a partner may promote (a permission, not a
         # kind of partner; tests/affiliate_products pins it).
         "PartnerPromotionGrant",
@@ -204,6 +211,9 @@ def test_the_partner_models_are_the_frozen_set():
         # ADR-056: Super Admin's bounds on a selling partner's own price - a
         # boundary, never a price (tests/store_upgrade pins what it allows).
         "SellingPriceRange",
+        # ADR-062: a staff member's guest view of one partner - a record of
+        # who looked and why, not a kind of partner (tests/guest_login pins it).
+        "PartnerGuestSession",
     }
 
 
@@ -240,6 +250,9 @@ def test_the_commission_and_pricing_models_are_the_frozen_set():
         "PlanPrice",
         "PriceTier",
         "ContractPrice",
+        # ADR-058: Super Admin coupons and their uses (a control-plane table).
+        "Coupon",
+        "CouponRedemption",
     }
 
 
@@ -468,4 +481,11 @@ def test_phase_10_leaves_the_legacy_catalog_alone():
         # 2026-11-04 marketplace: four presentation columns with database
         # defaults (product type, best for, integrations, Best Seller).
         "0010_marketplace_filters.py",
+        # ADR-058: one nullable presentation column (Product.refund_days).
+        "0011_product_refund_days.py",
+        "0012_app_links_and_plan_rules.py",
+        # ADR-065: one presentation column with a database default
+        # (Product.setup_requirements) - no catalog row is rewritten
+        # (tests/store_domain).
+        "0013_product_setup_requirements.py",
     ]

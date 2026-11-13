@@ -162,6 +162,9 @@ export interface ResellerRow {
   /** The workspace this partner's portal opens first: derived from its grants
    * and the stored preference. A landing, never an authority. */
   primary_experience: string | null;
+  /** The one category it is listed under (ADR-062): `primary_experience`, or for a
+   * partner whose grants earn none yet (a new draft) the type it was created as. */
+  category?: string | null;
   capability_count: number;
   capabilities: string[];
   administrator: ListAdministrator | null;
@@ -176,9 +179,22 @@ export interface ResellerRow {
   payouts: ResellerPayouts;
   referrals: ResellerReferrals;
   profile_completion: ListCompletion;
+  /** KYC beside the status, never instead of it (ADR-060). */
+  kyc?: PartnerKycStanding;
   /** The open upgrade request, if any: a badge, never an authority (ADR-049). */
   upgrade?: UpgradeBadge | null;
   last_activity_at: string;
+}
+
+/** Where a partner's KYC stands, as the server judged it. `legacy`: active or
+ * suspended with no approved application (activated before KYC was required).
+ * `ready_to_activate`: a draft whose application is approved. `required`: the
+ * server refuses activation without an approved application. */
+export interface PartnerKycStanding {
+  status: string;
+  legacy: boolean;
+  ready_to_activate: boolean;
+  required: boolean;
 }
 
 // --- recent activity (Partner Control Center) ---------------------------------------------
@@ -291,10 +307,15 @@ export interface ResellerFilters {
   product?: string;
   capability?: string;
   scope?: string;
-  /** All Partners' "Partner type": a label, i.e. a filter over the grants. */
+  /** A label, i.e. a filter over the grants (a partner holding several is in each). */
   type?: string;
+  /** Partners → Affiliate, Reseller, White Label (ADR-062): the one type a partner
+   * is listed under - the type its row shows. The server filters. */
+  category?: string;
   /** "complete" or "incomplete". */
   profile?: string;
+  /** "legacy", "ready", "approved" or "not_approved". */
+  kyc?: string;
   cursor?: string;
 }
 
@@ -565,7 +586,9 @@ export interface ResellerDraftBody {
 // --- Add Partner with a login (ADR-047) ----------------------------------------------------------------
 
 export type ExperienceKey = "reseller" | "white_label" | "affiliate";
-export type AdministratorMode = "create" | "link_existing";
+/** `invite` (2026-11-07): a new account with no password, emailed a link to
+ * set one when the partner is activated. */
+export type AdministratorMode = "create" | "invite" | "link_existing";
 
 /** The administrator as typed on the form. `password` and `password_confirm`
  * exist only on the credentials check and on the create request: they are
@@ -575,15 +598,25 @@ export interface OnboardingAdministratorInput {
   mode: AdministratorMode;
   password?: string;
   password_confirm?: string;
+  /** With a password set by staff: the person must choose their own at first sign-in. */
+  require_password_change?: boolean;
 }
 
 /** The Add Partner form (ADR-048): only what the account needs. Everything else
  * is set afterwards in the partner's Complete Your Profile. */
 export interface OnboardingBody {
   experience: ExperienceKey;
+  /** ADR-063: base permissions granted explicitly beside the type (White Label sells nothing alone). */
+  also?: ExperienceKey[];
   partner: {
     display_name: string;
     country?: string;
+    /** Optional: a contact address other than the Partner Email (the login). */
+    contact_email?: string;
+    /** Optional mobile number. */
+    phone?: string;
+    /** The Admin confirmed this is a different partner from a live one with the same name. */
+    allow_same_name?: boolean;
   };
   administrator: OnboardingAdministratorInput;
 }
@@ -601,6 +634,8 @@ export interface PasswordPolicy {
 export interface CreatedAdministrator {
   email: string;
   account_created: boolean;
+  /** The administrator will be emailed a link to set a password. */
+  invited?: boolean;
 }
 
 /** The answer to creating a partner: ids and facts, never a password. */
@@ -615,6 +650,29 @@ export interface CreatedPartner {
   capabilities: string[];
   /** The preferred currency it starts with (from the country, if given). */
   payout_currency: string;
+  /** Where the invitation stands right after creation; null when nobody was invited. */
+  invitation?: CreatedInvitation | null;
+  contact_email?: string;
+  phone?: string;
+}
+
+/** `queued`: handed to the mail queue, not yet sent. `deferred`: emailed when the
+ * partner is activated. `not_sent`: nothing was queued. `delivery_mode` is `smtp`
+ * when mail leaves the server; anything else (`console`, `memory`...) means a
+ * development or test server where nothing reaches a real inbox. */
+export interface CreatedInvitation {
+  state: "queued" | "deferred" | "not_sent";
+  delivery_mode: string;
+}
+
+/** Where one member's setup email stands, from its delivery record. `sent` means
+ * the mail server accepted it; nothing here knows it reached the inbox. */
+export interface InvitationDelivery {
+  state: "queued" | "sent" | "retrying" | "failed" | "suppressed";
+  queued_at: string;
+  sent_at: string | null;
+  attempts: number;
+  delivery_mode: string;
 }
 
 export type ExperienceAction = "grant" | "retire" | "transition" | "default";
@@ -1054,6 +1112,8 @@ export interface UpgradeDecisionBody {
   note?: string;
   products?: string[];
   commercial_reference?: string;
+  /** ADR-063: base permissions granted explicitly beside the new type. */
+  also?: string[];
 }
 
 export interface UpgradeQueueItem extends UpgradeRequestRow {

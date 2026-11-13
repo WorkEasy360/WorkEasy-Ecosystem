@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useId, useState } from "react";
 import { LoadGate, Status, Table, money, useAction, useLoad, when } from "@/features/controlplane/ui";
+import { FormPopup } from "@/features/controlplane/Modal";
 import { partnerApi } from "@/lib/api/controlPlane";
 import {
   panelApi,
@@ -254,9 +255,10 @@ export function ConversionTable({
 
 // --- referral links ------------------------------------------------------------------------------------------------------
 
+const OWN_CODE = /^[A-Za-z0-9]{4,16}$/;
+
 function CreateLinkForm({ d, onCreated }: { d: AffiliateOverview; onCreated: () => void }) {
   const { id } = usePanel();
-  const { act, busy, feedback } = useAction(onCreated);
   const formId = useId();
   const [product, setProduct] = useState("");
   const [plan, setPlan] = useState("");
@@ -265,29 +267,32 @@ function CreateLinkForm({ d, onCreated }: { d: AffiliateOverview; onCreated: () 
   const products = d.products ?? [];
   const chosen = products.find((p) => p.code === product);
   const campaigns = (d.campaign_list ?? []).filter((c) => c.status === "active");
+  const codeOk = code === "" || OWN_CODE.test(code);
   return (
-    <form
-      className={styles.panel}
-      onSubmit={(e) => {
-        e.preventDefault();
-        void act(async () => {
+    <div className={styles.actions}>
+      <FormPopup
+        label="+ Create a referral link"
+        title="Create a referral link"
+        intro="Choose the product the link opens. A campaign groups your links for tracking; it never changes who earns commission or how much."
+        submitLabel="Generate link"
+        canSubmit={codeOk}
+        onOpen={() => {
+          setProduct("");
+          setPlan("");
+          setCampaign("");
+          setCode("");
+        }}
+        onSubmit={async () => {
           await panelApi.createTrackingLink(id, {
             product_code: product || undefined,
             plan_code: plan || undefined,
             campaign_id: campaign || undefined,
             code: code.trim() || undefined,
           });
-          setCode("");
-        }, "Referral link created.");
-      }}
-    >
-      <h2>Create a referral link</h2>
-      <p className={styles.muted}>
-        Choose the product the link opens. A campaign groups your links for tracking; it never changes who earns
-        commission or how much.
-      </p>
-      {feedback}
-      <div className={styles.formGrid}>
+          return "Referral link created.";
+        }}
+        onDone={onCreated}
+      >
         <div>
           <label className="w360-label" htmlFor={`${formId}-product`}>
             Product
@@ -344,21 +349,17 @@ function CreateLinkForm({ d, onCreated }: { d: AffiliateOverview; onCreated: () 
             className="w360-input"
             maxLength={16}
             pattern="[A-Za-z0-9]{4,16}"
+            aria-invalid={!codeOk || undefined}
             aria-describedby={`${formId}-code-help`}
             value={code}
             onChange={(e) => setCode(e.target.value.toUpperCase())}
           />
-          <span id={`${formId}-code-help`} className={styles.muted}>
+          <p id={`${formId}-code-help`} className="w360-hint">
             4 to 16 letters and digits, e.g. AMAN360. Leave empty for a generated code.
-          </span>
+          </p>
         </div>
-      </div>
-      <div>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-          Generate link
-        </button>
-      </div>
-    </form>
+      </FormPopup>
+    </div>
   );
 }
 
@@ -496,7 +497,6 @@ export function ReferralLinks() {
 export function ReferralCodes() {
   const { can, active } = usePanel();
   const { id, load, reload } = useOverview();
-  const { act, busy, feedback } = useAction(reload);
   const codeId = useId();
   const [code, setCode] = useState("");
   const create = can("referral.create") && active;
@@ -505,44 +505,44 @@ export function ReferralCodes() {
       <PageHeader
         title="Referral Codes"
         lead="The short code that identifies you. A visitor who uses your link or your code is credited to you."
+        actions={
+          create && (
+            <FormPopup
+              label="+ Create your own code"
+              title="Create your own code"
+              size="sm"
+              submitLabel="Create code"
+              canSubmit={OWN_CODE.test(code.trim())}
+              onOpen={() => setCode("")}
+              onSubmit={async () => {
+                await panelApi.createTrackingLink(id, { code: code.trim() });
+                return "Referral code created.";
+              }}
+              onDone={reload}
+            >
+              <div>
+                <label className="w360-label" htmlFor={codeId}>
+                  Code
+                </label>
+                <input
+                  id={codeId}
+                  className="w360-input"
+                  required
+                  minLength={4}
+                  maxLength={16}
+                  pattern="[A-Za-z0-9]{4,16}"
+                  aria-describedby={`${codeId}-help`}
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.toUpperCase())}
+                />
+                <p id={`${codeId}-help`} className="w360-hint">
+                  4 to 16 letters and digits with at least one letter, e.g. AMAN360. Codes are unique across Workeasy360.
+                </p>
+              </div>
+            </FormPopup>
+          )
+        }
       />
-      {feedback}
-      {create && (
-        <form
-          className={styles.panel}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(async () => {
-              await panelApi.createTrackingLink(id, { code: code.trim() });
-              setCode("");
-            }, "Referral code created.");
-          }}
-        >
-          <h2>Create your own code</h2>
-          <label className="w360-label" htmlFor={codeId}>
-            Code
-          </label>
-          <div className={styles.linkRow}>
-            <input
-              id={codeId}
-              className="w360-input"
-              required
-              minLength={4}
-              maxLength={16}
-              pattern="[A-Za-z0-9]{4,16}"
-              aria-describedby={`${codeId}-help`}
-              value={code}
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-            />
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || code.trim().length < 4}>
-              Create code
-            </button>
-          </div>
-          <p id={`${codeId}-help`} className={styles.muted}>
-            4 to 16 letters and digits with at least one letter, e.g. AMAN360. Codes are unique across Workeasy360.
-          </p>
-        </form>
-      )}
       <LoadGate load={load} what="your codes">
         {(d) => (
           <>
@@ -593,38 +593,39 @@ export function Campaigns() {
         lead="Group your links by where you share them and compare how each campaign does."
         actions={controls.node}
       />
-      {feedback}
       {manage && (
-        <form
-          className={styles.panel}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void act(async () => {
+        <div className={styles.actions}>
+          <FormPopup
+            label="+ Start a campaign"
+            title="Start a campaign"
+            size="sm"
+            submitLabel="Create campaign"
+            canSubmit={Boolean(name.trim())}
+            onOpen={() => setName("")}
+            onSubmit={async () => {
               await panelApi.createCampaign(id, name.trim());
-              setName("");
-            }, `Campaign "${name.trim()}" created. Choose it when you create a link.`);
-          }}
-        >
-          <h2>Start a campaign</h2>
-          <label className="w360-label" htmlFor={nameId}>
-            Campaign name
-          </label>
-          <div className={styles.linkRow}>
-            <input
-              id={nameId}
-              className="w360-input"
-              required
-              maxLength={64}
-              placeholder="CRM October Campaign"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !name.trim()}>
-              Create campaign
-            </button>
-          </div>
-        </form>
+              return `Campaign "${name.trim()}" created. Choose it when you create a link.`;
+            }}
+            onDone={reload}
+          >
+            <div>
+              <label className="w360-label" htmlFor={nameId}>
+                Campaign name
+              </label>
+              <input
+                id={nameId}
+                className="w360-input"
+                required
+                maxLength={64}
+                placeholder="CRM October Campaign"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+          </FormPopup>
+        </div>
       )}
+      {feedback}
       <LoadGate load={load} what="your campaigns">
         {(d) => {
           const stats = new Map(d.campaigns.map((c) => [c.campaign_id ?? `label:${c.campaign}`, c]));

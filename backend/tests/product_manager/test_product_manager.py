@@ -46,9 +46,22 @@ def _action(client, product_id, action):
 
 
 def _ready(client, product_id):
-    """Give a wizard-made product the one thing it lacks to publish: a logo."""
+    """Give a wizard-made product the two things it lacks to publish: a logo and
+    an active plan (a plan is required since 2026-11-10)."""
     response = upload(client, product_id, png(256, 256))
     assert response.status_code == 201, response.content
+    _active_plan(product_id)
+
+
+def _active_plan(product_id):
+    from workeasy360.commercial.catalog.models import Plan
+    from workeasy360.contracts.enums import CatalogStatus
+
+    Plan.objects.get_or_create(
+        product_id=product_id,
+        code=f"standard-{str(product_id)[:8]}",
+        defaults={"name": "Standard", "status": CatalogStatus.AVAILABLE.value},
+    )
 
 
 def _store_codes():
@@ -110,7 +123,8 @@ def test_a_draft_needs_only_a_name_and_a_slug(manager):
     assert product["status"] == "draft" and product["integration"] is None
     assert product["channels"]["trial"] is None
     missing = {i["key"] for i in product["readiness"] if not i["ok"]}
-    assert missing == {"category", "tagline", "logo", "application_url", "launch_url"}
+    # One launch destination and an active plan (2026-11-10), not two URLs.
+    assert missing == {"category", "tagline", "logo", "launch", "plans"}
 
 
 def test_product_sso_switched_off_registers_a_launch_url_without_a_callback(manager):
@@ -534,9 +548,26 @@ def test_publishing_is_refused_until_the_checklist_is_met(manager):
     product = _create(manager)
     refused = _action(manager, product["id"], "publish")
     assert refused.status_code == 400
-    assert refused.json()["missing"] == ["Logo"]
+    assert refused.json()["missing"] == ["Logo", "At least one active plan"]
     detail = _detail(manager, product["id"])
     assert detail["listing"] == "hidden" and detail["status"] == "draft"
+
+
+def test_making_a_listed_product_available_is_checked_like_publishing(manager):
+    """2026-11-10: a product is created listed, so the old status command put a
+    product with no plans in the store (the duplicate "crm"). It is refused now;
+    the same product, ready, passes."""
+    from workeasy360.commercial.catalog.models import Product
+
+    product = _create(manager)
+    Product.objects.filter(id=product["id"]).update(listing="listed")
+    url = f"/api/v1/admin/catalog/products/{product['id']}/status"
+    refused = post(manager, url, {"status": "available"})
+    assert refused.status_code == 400, refused.content
+    assert Product.objects.get(id=product["id"]).status == "draft"
+    _ready(manager, product["id"])
+    ok = post(manager, url, {"status": "available"})
+    assert ok.status_code == 200, ok.content
 
 
 def test_publishing_through_an_edit_is_checked_the_same_way(manager):

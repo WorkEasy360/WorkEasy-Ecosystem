@@ -115,12 +115,41 @@ MIN_REASON: Final = 10
 MAX_REASON: Final = 200
 
 
+#: ADR-065: the Digital Store's own pages live beside the partners' branded
+#: Stores (``/store/<code>``), and a page always wins over a partner - so no
+#: partner may take one of these as its code.
+RESERVED_CODES: Final = frozenset(
+    {
+        "account",
+        "buy",
+        "categories",
+        "checkout",
+        "help",
+        "orders",
+        "partners",
+        "payment",
+        "policies",
+        "policy",
+        "product",
+        "products",
+        "recharge",
+        "search",
+        "store",
+    }
+)
+
+
 def validate_partner_code(value: object) -> str:
     text = str(value or "").strip().lower()
     if not _CODE_RE.match(text):
         raise PartnerValidationError(
             "code must be 3-48 characters: lower-case letters, digits and "
             "hyphens, starting with a letter.",
+            field="code",
+        )
+    if text in RESERVED_CODES:
+        raise PartnerValidationError(
+            "That code is the address of a Store page. Choose another.",
             field="code",
         )
     return text

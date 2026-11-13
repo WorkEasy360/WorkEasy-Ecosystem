@@ -98,7 +98,8 @@ def test_one_authentication_backend_and_one_login_route():
 
 
 def test_the_login_endpoint_reads_only_an_email_and_a_password():
-    """Nothing a browser sends at sign-in can name a mode, a role or a console."""
+    """Nothing a browser sends at sign-in can name a mode, a role or a console. Remember Me
+    (ADR-060) says how long the session lasts, never who it is for."""
     source = (PACKAGE / "interfaces" / "api" / "v1" / "auth_views.py").read_text(
         encoding="utf-8"
     )
@@ -117,7 +118,7 @@ def test_the_login_endpoint_reads_only_an_email_and_a_password():
         and node.args
         and isinstance(node.args[0], ast.Constant)
     }
-    assert keys == {"email", "password"}, keys
+    assert keys == {"email", "password", "remember"}, keys
     assert "request.GET" not in ast.get_source_segment(source, login)
     assert "COOKIES" not in ast.get_source_segment(source, login)
 
@@ -170,7 +171,11 @@ def test_no_new_tables_for_partners_staff_or_identity():
         # 2026-11-03) - tests/partner_upgrade/test_upgrade_payment pins them.
         # 0016 adds the helpdesk, payout-details and withdrawal tables
         # (ADR-057) - tests/partner_dashboard pins what they do.
-        "commercial/partners": "0016_helpdesk_payout_method_withdrawals.py",
+        # 0017 adds the KYC tables and 0018 a ticket's assignee and resolution (ADR-060);
+        # tests/admin_panel pins what they do. 0019 adds the guest-session record
+        # (Login as Guest, ADR-062) - a staff member's read-only view of one
+        # partner, not a kind of partner; tests/guest_login pins what it does.
+        "commercial/partners": "0019_guest_sessions.py",
         # 0004 adds one column to the rule table (recurring, ADR-052); 0005 the
         # margin rule, campaigns and the funnel/ledger columns (ADR-053); 0006
         # the referral policy, link kinds, the trial step and the payment
@@ -178,8 +183,15 @@ def test_no_new_tables_for_partners_staff_or_identity():
         # tests/affiliate_products pin what they do. 0007 adds the rule's plan,
         # fixed amount and recurring duration (ADR-056) - tests/store_upgrade.
         "commercial/commissions": "0007_rule_plan_fixed_duration.py",
-        "platform/authz": "0009_billing_manage_not_dangerous.py",
-        "platform/identity": "0008_password_change_required.py",
+        # 0010 adds no table and no column: it grants the Admin Panel's six new
+        # staff permissions to each security administrator, so the live Admin
+        # keeps the whole role after an upgrade (ADR-060 decision 13);
+        # tests/admin_panel/test_upgrade_grants.py pins what it does. 0011 does the
+        # same for Login as Guest's permission (ADR-062); tests/guest_login.
+        "platform/authz": "0011_partner_guest_permission.py",
+        # 0009 adds the change-of-sign-in-email link (ADR-066) - tests/unified_login
+        # pins what it does.
+        "platform/identity": "0009_email_change.py",
     }
     for app, newest in expected.items():
         found = sorted(p.name for p in (PACKAGE / app / "migrations").glob("0*.py"))[-1]
@@ -214,7 +226,8 @@ def test_the_login_request_sends_only_an_email_and_a_password():
     source = _read("lib/api/auth.ts")
     body = re.search(r"export function login\(.*?\n\}", source, re.S)
     assert body, "login() not found"
-    assert "JSON.stringify({ email, password })" in body.group(0)
+    assert "JSON.stringify({ email, password, ...options })" in body.group(0)
+    assert "options: { remember?: boolean }" in body.group(0)
     assert "mode" not in body.group(0) and "role" not in body.group(0)
 
 

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
@@ -254,8 +254,23 @@ def set_partner_status(
     act, which the permission resolver reads from that status.
     """
     authz.require(ctx, MANAGE)
-    why = clean_reason(reason)
+    return _set_partner_status(
+        ctx,
+        partner_id,
+        target=target,
+        why=clean_reason(reason),
+        expected_version=expected_version,
+    )
 
+
+def _set_partner_status(
+    ctx: TenantContext,
+    partner_id: UUID,
+    *,
+    target: PartnerStatus,
+    why: str,
+    expected_version: int | None,
+) -> Any:
     with transaction.atomic():
         partner = _lock_partner(partner_id, expected_version=expected_version)
         current = partner.status_enum
@@ -263,6 +278,10 @@ def set_partner_status(
         if current is target:
             return partner
 
+        if target is PartnerStatus.ACTIVE and current is PartnerStatus.DRAFT:
+            from workeasy360.commercial.partners.kyc import assert_may_activate
+
+            assert_may_activate(partner.id)
         if target is PartnerStatus.ACTIVE and not _has_admin_member(partner.id):
             raise PartnerValidationError(
                 "Add at least one administrator before activating the partner: "
@@ -1188,7 +1207,7 @@ def send_member_password_reset(
             UserStatus.PENDING.value,
         )
         if usable:
-            self_service.request_password_reset(address)
+            self_service.request_password_reset(address, portal="partner")
         audit.record(
             ctx,
             "partner.member_password_reset_sent",
@@ -1223,6 +1242,15 @@ _ROLE_NAMES = {
 }
 
 
+def send_setup_link_now(partner: Any, member: Any) -> bool:
+    """Email a member their setup link now rather than at activation, and record it."""
+    sent = _send_setup_link(partner, member, member.user_id)
+    if sent:
+        member.invitation_sent_at = timezone.now()
+        member.save(update_fields=["invitation_sent_at"])
+    return sent
+
+
 def _send_setup_link(partner: Any, member: Any, user_id: UUID) -> bool:
     """Email the one-time password-setup link to a member with no password.
 
@@ -1255,7 +1283,12 @@ def _send_setup_link(partner: Any, member: Any, user_id: UUID) -> bool:
             "expires_in": f"{days} day" + ("" if days == 1 else "s"),
         },
         sealed_context={
-            "setup_url": f"{portal_links.auth_url()}/reset-password#token={token}"
+            "setup_url": (
+                # The partner portal's own Accept Invitation page (2026-11-10);
+                # the token is the same single-use reset token.
+                f"{portal_links.account_url('partner')}"
+                f"/partner/accept-invitation#token={token}"
+            )
         },
         idempotency_key=(
             f"partner-member:{member.id}:setup:"
@@ -1850,3 +1883,70 @@ def parse_currency(value: Any, *, field: str = "payout_currency") -> CurrencyCod
             f"{field} must be one of {sorted(c.value for c in CurrencyCode)}.",
             field=field,
         ) from exc
+
+
+# --- staff: assign or change a customer's partner (2026-11-10) ------------------------
+
+#: A partner may be assigned a customer only when it can serve customers: an active
+#: partner holding one of these (the reseller and white-label bundles do; an
+#: affiliate earns through referrals and is never a customer's partner).
+CUSTOMER_SERVING_CAPABILITIES: Final = frozenset(
+    {capabilities.CUSTOMER_MANAGE, capabilities.CUSTOMER_PROVISION}
+)
+
+
+@in_scope
+def assign_customer_partner(
+    ctx: TenantContext, organization_id: UUID, partner_id: UUID, *, reason: Any
+) -> Any:
+    """Make ``partner_id`` this customer's partner: assign one where there is none,
+    or change it, ending the current relationship and starting the new one in one
+    transaction. Audited on both sides.
+
+    Historical commissions are never rewritten: an accrual names the partner of
+    the relationship live at the moment of the sale (``selectors.link_at``), so a
+    sale before the change stays with the old partner and one after it goes to the
+    new one. Eligibility: the partner must be active and able to serve customers.
+    """
+    from workeasy360.commercial.partners.models import PartnerOrganizationLink
+
+    authz.require(ctx, MANAGE)
+    why = clean_reason(reason)
+    held = selectors.active_capabilities(partner_id)
+    if not held & CUSTOMER_SERVING_CAPABILITIES:
+        raise PartnerValidationError(
+            "That partner cannot serve customers: assign a reseller or white-label "
+            "partner. An affiliate earns through referrals instead.",
+            field="partner_id",
+        )
+    with transaction.atomic():
+        current = (
+            PartnerOrganizationLink.objects.select_for_update()
+            .filter(organization_id=organization_id)
+            .exclude(status=PartnerLinkStatus.ENDED.value)
+            .first()
+        )
+        if current is not None and current.partner_id == partner_id:
+            raise PartnerValidationError(
+                "That partner is already this customer's partner.", field="partner_id"
+            )
+        if current is not None:
+            _end_link_row(ctx, current, reason_code="partner_changed_by_staff")
+            audit.record(
+                ctx,
+                "partner.link_ended",
+                resource_type="partners.link",
+                resource_id=current.id,
+                changes={
+                    "partner_id": str(current.partner_id),
+                    "replaced_by": str(partner_id),
+                },
+                reason=why,
+            )
+        link = link_customer(ctx, partner_id, organization_id, reason=why)
+    metrics.increment(
+        PARTNER_OPERATIONS,
+        operation="customer_partner_changed" if current else "customer_partner_assigned",
+        outcome="ok",
+    )
+    return link

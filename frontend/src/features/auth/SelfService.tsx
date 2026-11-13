@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
+import { Logo } from "@/components/brand/Logo";
 import { useSearchParams } from "next/navigation";
 import { ApiError } from "@/lib/api/client";
 import { publicApi } from "@/lib/api/public";
@@ -9,7 +10,11 @@ import { useSession } from "@/lib/auth/useSession";
 import { takeFragmentToken } from "@/lib/auth/fragmentToken";
 import { rememberIntent, useSiteSettings } from "@/features/site/SiteShell";
 import styles from "@/features/site/Site.module.css";
+import { AdminAuthFrame } from "./AdminLogin";
+import { PARTNER_SIGN_IN, PartnerAuthFrame } from "./PartnerLogin";
+import { UserAuthFrame } from "./UserLogin";
 import { usePortalRouter } from "@/lib/portalRouter";
+import { takeStoreReturn } from "@/features/store/storeReturn";
 
 /**
  * Self-service accounts (Phase 9): sign up, confirm the address, recover a
@@ -74,10 +79,7 @@ export function AuthFrame({ title, children }: { title: string; children: React.
       <div className={styles.authColumn}>
         <div className={styles.authHeading}>
           <Link href="/" className={styles.logo} aria-label="Workeasy360 home">
-            <span className={styles.logoMark} aria-hidden="true">
-              W
-            </span>
-            Workeasy360
+            <Logo size="lg" />
           </Link>
           <h1 className={styles.authTitle}>{title}</h1>
         </div>
@@ -140,9 +142,14 @@ export function SignupScreen() {
   }, [params]);
 
   return (
-    <AuthFrame title={sent ? "Check your email" : "Create your account"}>
+    // 2026-11-11: the customer portal's own frame, as its sign-in ("Create
+    // Organization Account" there leads here).
+    <UserAuthFrame
+      title={sent ? "Check your email" : "Create Organization Account"}
+      description={sent ? undefined : "Create your WorkEasy360 account. Your organization is set up when you confirm your email."}
+    >
       <SignupForm onSent={() => setSent(true)} signInHref="/login" />
-    </AuthFrame>
+    </UserAuthFrame>
   );
 }
 
@@ -187,7 +194,7 @@ export function SignupForm({ onSent, signInHref }: { onSent?: () => void; signIn
       {site && !site.signup_enabled ? (
         <p role="status">Signing up is closed at the moment. Please try again later.</p>
       ) : (
-        <form onSubmit={submit} noValidate aria-describedby={problems.length ? errorId : undefined}>
+        <form method="post" onSubmit={submit} noValidate aria-describedby={problems.length ? errorId : undefined}>
           <div className={styles.formRow}>
             <Field label="First name" autoComplete="given-name" required maxLength={100} value={form.first_name} onChange={set("first_name")} />
             <Field label="Last name" autoComplete="family-name" required maxLength={100} value={form.last_name} onChange={set("last_name")} />
@@ -272,7 +279,9 @@ async function finishSignIn(router: ReturnType<typeof usePortalRouter>, organiza
   if (organizationId) {
     await publicApi.convertReferral(referral ?? "", organizationId).catch(() => undefined);
   }
-  router.replace("/dashboard");
+  // ADR-065: a sign-up started in the Store goes back to the Store page it left
+  // (its checkout, with what was chosen) - a Store path only (storeReturn.ts).
+  router.replace(takeStoreReturn() ?? "/dashboard");
 }
 
 export function VerifyEmailScreen() {
@@ -322,7 +331,7 @@ export function VerifyEmailScreen() {
 
   return (
     <AuthFrame title="Confirm your email">
-      <form onSubmit={submit} noValidate aria-describedby={problems.length ? errorId : undefined}>
+      <form method="post" onSubmit={submit} noValidate aria-describedby={problems.length ? errorId : undefined}>
         <p>Enter the password you chose when you signed up to confirm your address and sign in.</p>
         <Field label="Password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
         <Problems id={errorId} problems={problems} />
@@ -339,7 +348,14 @@ export function VerifyEmailScreen() {
 
 // --- forgot / reset ---------------------------------------------------------------------------
 
-export function ForgotPasswordScreen() {
+/** `admin` / `partner` / `user`: the frame of that portal's sign-in, on that portal. */
+export function ForgotPasswordScreen({
+  admin = false,
+  partner = false,
+  user = false,
+}: { admin?: boolean; partner?: boolean; user?: boolean } = {}) {
+  const Frame = admin ? AdminAuthFrame : partner ? PartnerAuthFrame : user ? UserAuthFrame : AuthFrame;
+  const signIn = partner ? PARTNER_SIGN_IN : "/login";
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "busy" | "sent">("idle");
   const [problems, setProblems] = useState<string[]>([]);
@@ -347,21 +363,21 @@ export function ForgotPasswordScreen() {
 
   if (state === "sent") {
     return (
-      <AuthFrame title="Check your email">
+      <Frame title="Check your email">
         <p role="status">
           If an account uses <strong>{email}</strong>, a link to reset its password is on its way. It works once, for 60
           minutes.
         </p>
         <p className={styles.below}>
-          <Link href="/login">Back to sign in</Link>
+          <Link href={signIn}>Back to sign in</Link>
         </p>
-      </AuthFrame>
+      </Frame>
     );
   }
 
   return (
-    <AuthFrame title="Reset your password">
-      <form
+    <Frame title="Reset your password">
+      <form method="post"
         noValidate
         aria-describedby={problems.length ? errorId : undefined}
         onSubmit={(e) => {
@@ -384,13 +400,26 @@ export function ForgotPasswordScreen() {
         </button>
       </form>
       <p className={styles.below}>
-        <Link href="/login">Back to sign in</Link>
+        <Link href={signIn}>Back to sign in</Link>
       </p>
-    </AuthFrame>
+    </Frame>
   );
 }
 
-export function ResetPasswordScreen() {
+/** `admin` / `partner`: the frame of that portal's sign-in, on that portal. A
+ * partner's invitation is always the Partner portal's. */
+export function ResetPasswordScreen({
+  admin = false,
+  partner = false,
+  invitation = false,
+  user = false,
+}: { admin?: boolean; partner?: boolean; invitation?: boolean; user?: boolean } = {}) {
+  const Frame = admin ? AdminAuthFrame : partner || invitation ? PartnerAuthFrame : user ? UserAuthFrame : AuthFrame;
+  const signIn = partner || invitation ? PARTNER_SIGN_IN : "/login";
+  const forgot = partner || invitation ? "/forgot-password?mode=partner" : "/forgot-password";
+  // A partner's invitation (2026-11-10) uses the same one-time link, worded for a
+  // person choosing their first password rather than replacing one.
+  const title = invitation ? "Accept your invitation" : "Choose a new password";
   const token = useFragmentToken();
   const errorId = useId();
   const [password, setPassword] = useState("");
@@ -400,35 +429,46 @@ export function ResetPasswordScreen() {
 
   if (token === null) {
     return (
-      <AuthFrame title="Choose a new password">
+      <Frame title={title}>
         <p aria-live="polite">Loading…</p>
-      </AuthFrame>
+      </Frame>
     );
   }
   if (state === "done") {
-    return (
-      <AuthFrame title="Password changed">
-        <p role="status">Your password was changed and every session was signed out.</p>
-        <Link href="/login" className={`w360-btn w360-btn-primary ${styles.fullWidth}`}>
+    return invitation ? (
+      <Frame title="Your password is set">
+        <p role="status">
+          Sign in to the partner portal to complete your KYC application. Your partner account becomes active once the application is approved
+          and an Admin activates it.
+        </p>
+        <Link href={signIn} className={`w360-btn w360-btn-primary ${styles.fullWidth}`}>
           Sign in
         </Link>
-      </AuthFrame>
+      </Frame>
+    ) : (
+      <Frame title="Password changed">
+        <p role="status">Your password was changed and every session was signed out.</p>
+        <Link href={signIn} className={`w360-btn w360-btn-primary ${styles.fullWidth}`}>
+          Sign in
+        </Link>
+      </Frame>
     );
   }
   if (token === "") {
     return (
-      <AuthFrame title="Choose a new password">
-        <p role="alert">This link is not valid. Ask for a new one.</p>
+      <Frame title={title}>
+        <p role="alert">{invitation ? "This invitation link is not valid. Ask the Workeasy360 team to send a new one." : "This link is not valid. Ask for a new one."}</p>
         <p className={styles.below}>
-          <Link href="/forgot-password">Reset your password</Link>
+          <Link href={forgot}>Reset your password</Link>
         </p>
-      </AuthFrame>
+      </Frame>
     );
   }
 
   return (
-    <AuthFrame title="Choose a new password">
-      <form
+    <Frame title={title}>
+      {invitation && <p className={styles.below}>Choose the password you will use to sign in to the Workeasy360 partner portal.</p>}
+      <form method="post"
         noValidate
         aria-describedby={problems.length ? errorId : undefined}
         onSubmit={(e) => {
@@ -444,7 +484,11 @@ export function ResetPasswordScreen() {
             (err) => {
               setProblems(
                 err instanceof ApiError && err.code === "link_invalid"
-                  ? ["This link is not valid or has expired. Ask for a new one."]
+                  ? [
+                      invitation
+                        ? "This invitation link is not valid or has expired. Ask the Workeasy360 team to send a new one."
+                        : "This link is not valid or has expired. Ask for a new one.",
+                    ]
                   : problemsOf(err),
               );
               setState("idle");
@@ -452,13 +496,98 @@ export function ResetPasswordScreen() {
           );
         }}
       >
-        <Field label="New password" type="password" autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} hint="At least 12 characters." />
-        <Field label="Repeat the new password" type="password" autoComplete="new-password" required value={again} onChange={(e) => setAgain(e.target.value)} />
+        <Field
+          label={invitation ? "Password" : "New password"}
+          type="password"
+          autoComplete="new-password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          hint="At least 12 characters."
+        />
+        <Field
+          label={invitation ? "Repeat the password" : "Repeat the new password"}
+          type="password"
+          autoComplete="new-password"
+          required
+          value={again}
+          onChange={(e) => setAgain(e.target.value)}
+        />
         <Problems id={errorId} problems={problems} />
         <button type="submit" className={`w360-btn w360-btn-primary ${styles.fullWidth}`} disabled={state === "busy" || !password}>
-          Change password
+          {invitation ? "Set password" : "Change password"}
         </button>
       </form>
-    </AuthFrame>
+    </Frame>
+  );
+}
+
+/**
+ * The emailed change-of-sign-in-email link (ADR-066), `/confirm-email#token=`.
+ * A button, not an automatic call: a mail scanner that opens the link changes
+ * nothing. The link alone is enough (the password was asked for when the
+ * change was requested), so it works in whichever browser the mail is read in.
+ */
+export function ConfirmEmailScreen({ admin = false, partner = false, user = false }: { admin?: boolean; partner?: boolean; user?: boolean } = {}) {
+  const Frame = admin ? AdminAuthFrame : partner ? PartnerAuthFrame : user ? UserAuthFrame : AuthFrame;
+  const signIn = partner ? PARTNER_SIGN_IN : "/login";
+  const token = useFragmentToken();
+  const errorId = useId();
+  const [problems, setProblems] = useState<string[]>([]);
+  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+  const title = "Confirm your new sign-in email";
+
+  if (token === null) {
+    return (
+      <Frame title={title}>
+        <p aria-live="polite">Loading…</p>
+      </Frame>
+    );
+  }
+  if (state === "done") {
+    return (
+      <Frame title="Sign-in email changed">
+        <p role="status">From now on, sign in to WorkEasy360 with your new address. Your account, organizations and products are unchanged.</p>
+        <Link href={signIn} className={`w360-btn w360-btn-primary ${styles.fullWidth}`}>
+          Continue
+        </Link>
+      </Frame>
+    );
+  }
+  if (token === "") {
+    return (
+      <Frame title={title}>
+        <p role="alert">This link is not valid. Ask for a new one from Account &amp; Security.</p>
+      </Frame>
+    );
+  }
+  return (
+    <Frame title={title}>
+      <p className={styles.below}>Use this address to sign in to WorkEasy360 from now on. Your password and everything in your account stay the same.</p>
+      <Problems id={errorId} problems={problems} />
+      <button
+        type="button"
+        className={`w360-btn w360-btn-primary ${styles.fullWidth}`}
+        aria-describedby={problems.length ? errorId : undefined}
+        disabled={state === "busy"}
+        onClick={() => {
+          setState("busy");
+          setProblems([]);
+          publicApi.confirmEmailChange(token).then(
+            () => setState("done"),
+            (err) => {
+              setProblems(
+                err instanceof ApiError && err.code === "link_invalid"
+                  ? ["This link is not valid, has expired, or the address is now used by another account. Ask for a new one."]
+                  : problemsOf(err),
+              );
+              setState("idle");
+            },
+          );
+        }}
+      >
+        {state === "busy" ? "Confirming…" : "Confirm new email"}
+      </button>
+    </Frame>
   );
 }

@@ -45,4 +45,9 @@ LOG_LEVEL = env.choice(
 # Email is printed rather than sent. Nothing leaves the machine.
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
+# No ClamAV runs on a development machine by default, so KYC documents are served
+# on the allowlist check and every screen says they were not scanned. Set
+# W360_KYC_MALWARE_SCAN_REQUIRED=true (with a clamd) to try the production rule.
+KYC_MALWARE_SCAN_REQUIRED = env.bool("W360_KYC_MALWARE_SCAN_REQUIRED", False)
+
 env.require_all(context="development configuration")
