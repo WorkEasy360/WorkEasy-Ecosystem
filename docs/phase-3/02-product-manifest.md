@@ -141,6 +141,16 @@ They were kept rather than dropped because removing a field from a versioned
 external contract and adding it back is a version bump for every product;
 adding an unused validated field is not.
 
+## 5a. `2026-11-15`: `backchannel_logout_uri` (ADR-067)
+
+Optional. Where the platform POSTs a Back-Channel Logout 1.0 logout token
+when a sign-in that opened the product ends ([04 section 3.3](04-oidc-contract.md)).
+Validated like a redirect URI (https, no query, no fragment, no wildcard, no
+credentials, no internal host) **and** it must share its origin with one of
+the registered `redirect_uris` - a product can only receive logout tokens on
+a host it already receives codes on. Refused for `local_only`. The version is
+a superset of `2026-10-12`; the console stamps it only when the field is set.
+
 ## 6. Versioning
 
 `SUPPORTED_MANIFEST_VERSIONS` is a frozenset, currently holding one value. A
