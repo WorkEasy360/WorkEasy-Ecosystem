@@ -364,9 +364,13 @@ export interface ConsoleIntegration {
   scopes: string[];
   token_endpoint_auth_method: string;
   sso_state: "enabled" | "integration_required" | "disabled";
+  /** ADR-067: where the product receives back-channel logout tokens, or ""
+   * when none is registered. Absent from a server that predates it. */
+  backchannel_logout_uri?: string;
 }
 
-/** The console fields an integration may be registered with or changed to. */
+/** The console fields an integration may be registered with or changed to.
+ * `backchannel_logout_uri: ""` removes the back-channel logout URL. */
 export type IntegrationChanges = Partial<
   Pick<
     ConsoleIntegration,
@@ -379,8 +383,84 @@ export type IntegrationChanges = Partial<
     | "login_url"
     | "post_logout_redirect_uris"
     | "scopes"
+    | "backchannel_logout_uri"
   >
 >;
+
+// --- single sign-on: back-channel logout, domains, readiness (ADR-067, ADR-068) ----
+
+export type BackchannelDeliveryStatus = "pending" | "delivered" | "failed" | "dead";
+
+/** One back-channel logout delivery. `outcome` is a category (`http_503`,
+ * `connect_timeout`, `rejected_<reason>`) - never a response body or a token. */
+export interface BackchannelDelivery {
+  status: BackchannelDeliveryStatus;
+  reason: string;
+  /** "session": one sign-in ended; "everywhere": "sign out everywhere". */
+  scope: "session" | "everywhere";
+  created_at: string;
+  finished_at: string | null;
+  attempts: number;
+  outcome: string;
+}
+
+/** How a product's back-channel logout deliveries went over the last
+ * `window_hours`; `retry` covers every delivery still owed. */
+export interface BackchannelSummary {
+  backchannel_logout_uri: string;
+  enabled: boolean;
+  window_hours: number;
+  /** Per status over the window; may be `{}`. */
+  counts: Partial<Record<BackchannelDeliveryStatus, number>>;
+  last_problem: string;
+  last_delivery: BackchannelDelivery | null;
+  last_error: BackchannelDelivery | null;
+  retry: {
+    pending: number;
+    retrying: number;
+    next_attempt_at: string | null;
+    max_attempts: number;
+    attempt_limit: number;
+  };
+}
+
+/** One hostname a product's registration uses (or used), and whether control
+ * of it is proven. `record_value` is "" until a proof has been asked for. */
+export interface ProductDomain {
+  hostname: string;
+  in_use: boolean;
+  status: "pending" | "verified" | "lapsed" | "missing";
+  method: "dns_txt" | "pre_existing" | "loopback" | "attested" | "";
+  record_name: string;
+  record_type: "TXT";
+  record_value: string;
+  requested_at: string | null;
+  verified_at: string | null;
+  last_checked_at: string | null;
+  last_outcome: string;
+}
+
+export interface ProductDomains {
+  domains: ProductDomain[];
+  /** In-use hostnames that are not verified: activation waits for them. */
+  unverified: string[];
+  all_verified: boolean;
+}
+
+export type DomainVerifyOutcome = "verified" | "still_verified" | "record_not_found" | "lookup_failed" | "control_lost" | "superseded";
+
+export interface SsoReadinessCheck {
+  key: string;
+  label: string;
+  /** `action` stops sign-in working; `warning` works with a gap; `info` is context. */
+  state: "ok" | "action" | "warning" | "info";
+  detail: string;
+}
+
+export interface SsoReadiness {
+  verdict: "ready" | "attention" | "not_ready";
+  checks: SsoReadinessCheck[];
+}
 
 /** A product credential by its public reference (ADR-044) - a secret is
  * never stored, so it can never be listed. */
@@ -593,7 +673,14 @@ export interface NewProduct {
   reseller_enabled?: boolean;
   affiliate_enabled?: boolean;
   white_label_enabled?: boolean;
-  integration?: { launch_url: string; sso_enabled: boolean; redirect_uri?: string; health_url?: string } | null;
+  /** `backchannel_logout_uri` only with SSO on, on the callback URL's origin (ADR-067). */
+  integration?: {
+    launch_url: string;
+    sso_enabled: boolean;
+    redirect_uri?: string;
+    health_url?: string;
+    backchannel_logout_uri?: string;
+  } | null;
   trial?: { enabled: boolean; duration_days: number } | null;
 }
 
@@ -742,6 +829,22 @@ export const adminApi = {
     apiFetch<{ status: string; detail: string }>(`${admin}/products/${productCode}/integration/health-check`, {
       method: "POST",
     }),
+  /** ADR-067: whether back-channel logout is on and how the last day's deliveries went. */
+  integrationBackchannel: (productCode: string) =>
+    apiFetch<BackchannelSummary>(`${admin}/products/${productCode}/integration/backchannel`),
+  /** ADR-068: every hostname the registration uses and whether control of it is proven. */
+  integrationDomains: (productCode: string) => apiFetch<ProductDomains>(`${admin}/products/${productCode}/integration/domains`),
+  /** Ask for a TXT value to publish for `hostname` (a new one, or to replace a carried-over proof). */
+  requestIntegrationDomain: (productCode: string, hostname: string) =>
+    apiFetch<ProductDomains>(`${admin}/products/${productCode}/integration/domains`, { method: "POST", body: json({ hostname }) }),
+  /** Look for the TXT record of `hostname` now (rate-limited: 429). */
+  verifyIntegrationDomain: (productCode: string, hostname: string) =>
+    apiFetch<ProductDomains & { outcome: DomainVerifyOutcome }>(`${admin}/products/${productCode}/integration/domains/verify`, {
+      method: "POST",
+      body: json({ hostname }),
+    }),
+  /** Whether people can sign in to the product through WorkEasy360, and what is missing. */
+  integrationReadiness: (productCode: string) => apiFetch<SsoReadiness>(`${admin}/products/${productCode}/integration/readiness`),
 
   partners: (q: { status?: string; q?: string; cursor?: string; limit?: number }) =>
     apiFetch<Page<PartnerSummary>>(`${admin}/partners`, { query: q }),

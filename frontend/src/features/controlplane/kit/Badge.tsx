@@ -24,6 +24,7 @@ const TONE: Record<string, Tone> = {
   public: "success",
   healthy: "success",
   resolved: "success",
+  delivered: "success",
   closed: "neutral",
   trialing: "info",
   trial: "info",
@@ -55,6 +56,8 @@ const TONE: Record<string, Tone> = {
   past_due: "warning",
   degraded: "warning",
   half_open: "warning",
+  attention: "warning",
+  missing: "warning",
   not_available: "neutral",
   draft: "neutral",
   ready: "neutral",
@@ -71,6 +74,9 @@ const TONE: Record<string, Tone> = {
   rejected: "danger",
   failed: "danger",
   terminated: "danger",
+  dead: "danger",
+  lapsed: "danger",
+  not_ready: "danger",
   cancelled: "danger",
   canceled: "danger",
   disabled: "danger",
@@ -97,6 +103,9 @@ const LABEL: Record<string, string> = {
   in_progress: "In progress",
   half_open: "Recovering",
   disabled: "Deactivated",
+  dead: "Gave up",
+  attention: "Needs attention",
+  not_ready: "Not ready",
 };
 
 export function toneOf(status: string | null | undefined): Tone {

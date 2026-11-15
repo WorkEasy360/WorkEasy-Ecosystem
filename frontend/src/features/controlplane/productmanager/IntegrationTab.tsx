@@ -7,13 +7,23 @@ import { FormPopup } from "../Modal";
 import { ReasonAction, Status, when } from "../ui";
 import { TextField } from "../widgets";
 import { AppLinksPanel } from "./AppLinksPanel";
-import { INTEGRATION_BADGE, INTEGRATION_LABEL, integrationState, looksLikeHttps } from "./model";
+import { INTEGRATION_BADGE, INTEGRATION_LABEL, domainBlockOf, integrationState, looksLikeHttps, type DomainBlock } from "./model";
+import { BackchannelCard, DomainsCard, SsoReadinessCard, useSsoState } from "./SsoSettings";
 import cp from "../ControlPlane.module.css";
 import styles from "./ProductManager.module.css";
 
 type Act = (action: () => Promise<unknown>, success: string) => Promise<void>;
 
 type LaunchSettings = Pick<ConsoleIntegration, "display_name" | "launch_url" | "health_url" | "contact_email">;
+
+/** Hands a refusal to `onRefused` (which looks for an unproven hostname) and
+ * re-throws it, so the form or the page still shows the server's message. */
+const passOn =
+  (onRefused?: (err: unknown) => void) =>
+  (err: unknown): never => {
+    onRefused?.(err);
+    throw err;
+  };
 
 const settingsOf = (integration: ConsoleIntegration): LaunchSettings => ({
   display_name: integration.display_name,
@@ -31,11 +41,13 @@ function IntegrationEditor({
   integration,
   busy,
   onDone,
+  onRefused,
 }: {
   code: string;
   integration: ConsoleIntegration;
   busy: boolean;
   onDone: () => void;
+  onRefused?: (err: unknown) => void;
 }) {
   const [draft, setDraft] = useState<LaunchSettings>(() => settingsOf(integration));
   const ids = { name: useId(), launch: useId(), health: useId(), contact: useId() };
@@ -60,7 +72,7 @@ function IntegrationEditor({
       canSubmit={ready}
       onOpen={() => setDraft(settingsOf(integration))}
       onSubmit={async () => {
-        await adminApi.updateIntegration(code, draft);
+        await adminApi.updateIntegration(code, draft).catch(passOn(onRefused));
         return "Integration updated.";
       }}
       onDone={onDone}
@@ -98,7 +110,9 @@ function IntegrationEditor({
 
 /** The product's integration: status, single sign-on, health and launch URL,
  * with suspend/resume, a health check and its sign-in set-up and credentials
- * folded away. Never a secret: credentials are listed by public reference. */
+ * folded away. Never a secret: credentials are listed by public reference.
+ * `onRefused` hears every refused activation, resume and edit (an unproven
+ * hostname is pointed out beside the Domains section). */
 export function IntegrationPanel({
   code,
   name,
@@ -107,6 +121,7 @@ export function IntegrationPanel({
   manage,
   act,
   reload,
+  onRefused,
 }: {
   code: string;
   name: string;
@@ -115,9 +130,12 @@ export function IntegrationPanel({
   manage: boolean;
   act: Act;
   reload: () => void;
+  onRefused?: (err: unknown) => void;
 }) {
   const [editingAuth, setEditingAuth] = useState(false);
   const [health, setHealth] = useState<string | null>(null);
+  const activate = (success: string) =>
+    act(() => adminApi.setIntegrationStatus(code, "active", "").catch(passOn(onRefused)), success);
 
   if (!integration) {
     return (
@@ -163,12 +181,12 @@ export function IntegrationPanel({
                 type="button"
                 className="w360-btn w360-btn-secondary"
                 disabled={busy}
-                onClick={() => act(() => adminApi.setIntegrationStatus(code, "active", ""), "Integration resumed.")}
+                onClick={() => void activate("Integration resumed.")}
               >
                 Resume
               </button>
             )}
-            <IntegrationEditor code={code} integration={integration} busy={busy} onDone={reload} />
+            <IntegrationEditor code={code} integration={integration} busy={busy} onDone={reload} onRefused={onRefused} />
           </div>
         )}
       </div>
@@ -219,14 +237,16 @@ export function IntegrationPanel({
                   type="button"
                   className="w360-btn w360-btn-secondary"
                   disabled={busy}
-                  onClick={() => act(() => adminApi.setIntegrationStatus(code, "active", ""), "Integration activated.")}
+                  onClick={() => void activate("Integration activated.")}
                 >
                   Activate
                 </button>
               )}
             </div>
           )}
-          {editingAuth && <AuthenticationEditor code={code} integration={integration} busy={busy} act={act} onDone={() => setEditingAuth(false)} />}
+          {editingAuth && (
+            <AuthenticationEditor code={code} integration={integration} busy={busy} act={act} onDone={() => setEditingAuth(false)} onRefused={onRefused} />
+          )}
           <CredentialsPanel code={code} manage={manage} busy={busy} act={act} />
         </div>
       </details>
@@ -235,7 +255,8 @@ export function IntegrationPanel({
 }
 
 /** Integration tab: the product's application URL (a catalog field) and its
- * registry integration (launch URL, SSO, health, credentials). */
+ * registry integration (launch URL, SSO, health, credentials), with its
+ * single sign-on readiness, domains and back-channel logout (ADR-067/068). */
 export function IntegrationTab({
   product: p,
   canSeeIntegrations,
@@ -256,6 +277,25 @@ export function IntegrationTab({
   const [appUrl, setAppUrl] = useState(p.application_url);
   const appUrlProblem = appUrl.trim() && !looksLikeHttps(appUrl.trim()) ? "The application URL must be an https:// address." : undefined;
   const state = integrationState(p.integration, p.launch_url);
+  const sso = useSsoState(p.code, p.integration, canSeeIntegrations);
+  const [block, setBlock] = useState<DomainBlock | null>(null);
+  const onRefused = (err: unknown) => {
+    const found = domainBlockOf(err);
+    if (found) setBlock(found);
+  };
+  // Anything done to the integration can change its readiness and domains. A
+  // refusal is shown until the next action or save (which sets it again if it
+  // is refused for the same reason).
+  const ssoAct: Act = async (action, success) => {
+    setBlock(null);
+    await act(action, success);
+    sso.refresh();
+  };
+  const ssoReload = () => {
+    setBlock(null);
+    reload();
+    sso.refresh();
+  };
   return (
     <div className={styles.page}>
       <section className={styles.card} aria-labelledby="integration-summary">
@@ -310,9 +350,32 @@ export function IntegrationTab({
       </section>
       <AppLinksPanel product={p} manage={manageCatalog} busy={busy} reload={reload} />
       {canSeeIntegrations ? (
-        <section className={styles.card} aria-label="Launch, sign-in and credentials">
-          <IntegrationPanel code={p.code} name={p.name} integration={p.integration} busy={busy} manage={manageIntegration} act={act} reload={reload} />
-        </section>
+        <>
+          {p.integration && <SsoReadinessCard load={sso.readiness} onRefresh={sso.refresh} />}
+          <section className={styles.card} aria-label="Launch, sign-in and credentials">
+            <IntegrationPanel
+              code={p.code}
+              name={p.name}
+              integration={p.integration}
+              busy={busy}
+              manage={manageIntegration}
+              act={ssoAct}
+              reload={ssoReload}
+              onRefused={onRefused}
+            />
+          </section>
+          {p.integration && (
+            <>
+              <DomainsCard code={p.code} load={sso.domains} manage={manageIntegration} block={block} onAnswer={sso.setDomains} />
+              <BackchannelCard
+                key={p.integration.backchannel_logout_uri ?? ""}
+                code={p.code}
+                integration={p.integration}
+                manage={manageIntegration}
+              />
+            </>
+          )}
+        </>
       ) : (
         <p className={styles.muted}>Integration details need the integration view permission.</p>
       )}

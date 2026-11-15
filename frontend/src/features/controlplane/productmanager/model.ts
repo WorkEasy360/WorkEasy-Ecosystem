@@ -105,6 +105,69 @@ export function looksLikeHttps(value: string): boolean {
   }
 }
 
+// --- single sign-on (ADR-067, ADR-068) -----------------------------------------------
+
+const originOf = (value: string): string | null => {
+  try {
+    return new URL(value.trim()).origin;
+  } catch {
+    return null;
+  }
+};
+
+/** Why a back-channel logout URL would be refused, or `undefined` ("" is no
+ * URL). The registry's rules, repeated to spare a round trip: https, no query,
+ * fragment, wildcard or credentials, and the same origin as one of the
+ * product's sign-in callback (redirect) URIs. The server checks it again. */
+export function backchannelUriProblem(value: string, callbacks: string[]): string | undefined {
+  const raw = value.trim();
+  if (!raw) return undefined;
+  if (raw.includes("*")) return "Wildcards are not accepted.";
+  if (raw.includes("\\")) return "A backslash is not accepted in the address.";
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return "Enter a full https:// address.";
+  }
+  if (url.protocol !== "https:" || !url.hostname) return "Use an https:// address.";
+  if (url.username || url.password) return "Remove the user name and password from the address.";
+  if (raw.includes("?")) return "Remove the query string (from ?).";
+  if (raw.includes("#")) return "Remove the fragment (from #).";
+  const origins = callbacks.map(originOf).filter((o): o is string => !!o);
+  if (origins.length === 0) return "Add the sign-in callback URL first; the back-channel logout URL must share its origin.";
+  if (!origins.includes(url.origin)) return `Use the same origin (scheme, host and port) as a sign-in callback URL (${origins.join(" or ")}).`;
+  return undefined;
+}
+
+/** Why a typed hostname cannot be asked about, or `undefined`. Only the
+ * shape: a bare name such as app.example.com (the server canonicalizes it and
+ * decides the rest). */
+export function hostnameProblem(value: string): string | undefined {
+  const raw = value.trim();
+  if (!raw) return "Enter a hostname.";
+  if (/[\s/:?#@*\\]/.test(raw)) return "Enter the hostname only, such as app.example.com - no https://, port, path or wildcard.";
+  if (!raw.includes(".") && raw.toLowerCase() !== "localhost") return "Enter a full hostname, such as app.example.com.";
+  return undefined;
+}
+
+/** A refusal because a hostname's control is not proven yet (HTTP 409
+ * `product_domain_unverified`, ADR-068): the server's message and every
+ * hostname it names. */
+export interface DomainBlock {
+  detail: string;
+  hostnames: string[];
+}
+
+/** The {@link DomainBlock} in an API error, or `null` for any other error. */
+export function domainBlockOf(err: unknown): DomainBlock | null {
+  if (!(err instanceof ApiError) || err.status !== 409 || err.code !== "product_domain_unverified") return null;
+  const body = (err.body ?? {}) as { detail?: unknown; hostnames?: unknown };
+  const hostnames = Array.isArray(body.hostnames) ? body.hostnames.filter((h): h is string => typeof h === "string" && h !== "") : [];
+  const detail = typeof body.detail === "string" && body.detail ? body.detail : "Prove control of the product's domains first.";
+  return { detail, hostnames };
+}
+
 // --- images -----------------------------------------------------------------------
 
 export type MediaKind = "logo" | "banner" | "screenshot";

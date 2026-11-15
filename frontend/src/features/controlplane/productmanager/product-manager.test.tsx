@@ -421,6 +421,60 @@ describe("Add Product wizard", () => {
     });
   });
 
+  it("the Integration step takes an optional back-channel logout URL on the callback's origin, and says hostnames are proven before activation", async () => {
+    const calls = mockApi({
+      [`GET ${ADMIN}/products/console`]: [ok(CATALOG)],
+      [`POST ${ADMIN}/products`]: [{ status: 201, body: { product: { ...DRAFT, id: "new3" } } }],
+    });
+    const { container } = renderAs(MANAGE, <AddProductWizard />);
+    await fillIdentity();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    expect(await screen.findByRole("heading", { name: "3. Integration" })).toBeInTheDocument();
+    expect(screen.getByText(/control of every hostname it uses .* must be proven with a DNS TXT record/)).toBeInTheDocument();
+
+    // Only with single sign-on on.
+    fireEvent.click(within(screen.getByRole("group", { name: "SSO enabled" })).getByLabelText("No"));
+    expect(screen.queryByLabelText("Back-channel logout URL (optional)")).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("group", { name: "SSO enabled" })).getByLabelText("Yes"));
+
+    fireEvent.change(screen.getByLabelText(/^Application URL/), { target: { value: "https://ledger.workeasy360.com" } });
+    fireEvent.change(screen.getByLabelText(/^Launch URL/), { target: { value: "https://ledger.workeasy360.com/" } });
+    fireEvent.change(screen.getByLabelText("Sign-in callback URL"), { target: { value: "https://ledger.workeasy360.com/api/auth/callback" } });
+    fireEvent.change(screen.getByLabelText("Back-channel logout URL (optional)"), { target: { value: "https://hooks.example.com/logout" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText(/^Back-channel logout URL: Use the same origin/, { selector: "li" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "3. Integration" })).toBeInTheDocument();
+    await expectNoViolations(container);
+
+    fireEvent.change(screen.getByLabelText("Back-channel logout URL (optional)"), {
+      target: { value: "https://ledger.workeasy360.com/api/auth/backchannel-logout" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByRole("heading", { name: "4. Availability" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/products/new3?saved=draft"));
+    expect((calls.find((c) => c.key === `POST ${ADMIN}/products`)!.body as { integration: unknown }).integration).toEqual({
+      launch_url: "https://ledger.workeasy360.com/",
+      sso_enabled: true,
+      redirect_uri: "https://ledger.workeasy360.com/api/auth/callback",
+      backchannel_logout_uri: "https://ledger.workeasy360.com/api/auth/backchannel-logout",
+    });
+  });
+
+  it("the back-channel logout URL is checked like the registry checks it, and never sent without single sign-on", () => {
+    const ctx = { strict: true, hasLogo: true, takenSlugs: new Set<string>(), takenCodes: new Set<string>() };
+    const step = { ...EMPTY_DRAFT, applicationUrl: "https://x.workeasy360.com", launchUrl: "https://x.workeasy360.com/", redirectUri: "https://x.workeasy360.com/cb" };
+    expect(validateStep(2, { ...step, backchannelUri: "https://x.workeasy360.com/bc" }, ctx)).toEqual({});
+    expect(validateStep(2, { ...step, backchannelUri: "http://x.workeasy360.com/bc" }, ctx).backchannelUri).toMatch(/https/);
+    expect(validateStep(2, { ...step, backchannelUri: "https://x.workeasy360.com/bc?x=1" }, ctx).backchannelUri).toMatch(/query/);
+    expect(validateStep(2, { ...step, redirectUri: "", backchannelUri: "https://x.workeasy360.com/bc" }, ctx).backchannelUri).toMatch(/callback URL first/);
+    expect(validateStep(2, { ...step, sso: "no", backchannelUri: "nonsense" }, ctx).backchannelUri).toBeUndefined();
+    expect(toRequest({ ...step, name: "X", slug: "x", backchannelUri: " https://x.workeasy360.com/bc " }).integration?.backchannel_logout_uri).toBe("https://x.workeasy360.com/bc");
+    expect(toRequest({ ...step, name: "X", slug: "x", sso: "no", backchannelUri: "https://x.workeasy360.com/bc" }).integration?.backchannel_logout_uri).toBeUndefined();
+    expect(toRequest({ ...step, name: "X", slug: "x" }).integration?.backchannel_logout_uri).toBeUndefined();
+  });
+
   it("reads an image's size from its bytes, as the server does", async () => {
     expect(await imageSize(pngFile(640, 400))).toEqual({ width: 640, height: 400 });
     expect(await imageSize(new File(["GIF89a"], "x.gif"))).toBeNull();

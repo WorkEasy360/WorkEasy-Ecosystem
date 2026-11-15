@@ -10,7 +10,7 @@ import { PageHeader } from "../kit";
 import { DescriptionField, ErrorSummary, ProgressList, Segmented, SelectField, TextField, useStepRunner, type StepDef } from "../widgets";
 import { IconPicker } from "./IconPicker";
 import { ImagePicker, ScreenshotsField, useDataUrl, type ShotItem } from "./ImagePicker";
-import { SLUG_PATTERN, codeFrom, looksLikeHttps, slugFrom } from "./model";
+import { SLUG_PATTERN, backchannelUriProblem, codeFrom, looksLikeHttps, slugFrom } from "./model";
 import { StorePreview, type ListingPreview } from "./StorePreview";
 import styles from "./ProductManager.module.css";
 
@@ -43,6 +43,8 @@ export interface WizardDraft {
   launchUrl: string;
   sso: "yes" | "no";
   redirectUri: string;
+  /** ADR-067: optional, with SSO on only; same origin as the callback URL. */
+  backchannelUri: string;
   healthUrl: string;
   customer: Allowed;
   reseller: Allowed;
@@ -69,6 +71,7 @@ export const EMPTY_DRAFT: WizardDraft = {
   launchUrl: "",
   sso: "yes",
   redirectUri: "",
+  backchannelUri: "",
   healthUrl: "",
   customer: "allowed",
   reseller: "allowed",
@@ -115,6 +118,10 @@ export function validateStep(
     url("launchUrl", "launch URL", ctx.strict);
     url("healthUrl", "health check URL", false);
     if (d.sso === "yes" && d.launchUrl.trim()) url("redirectUri", "sign-in callback URL", true);
+    if (d.sso === "yes" && d.backchannelUri.trim()) {
+      const problem = backchannelUriProblem(d.backchannelUri, d.redirectUri.trim() ? [d.redirectUri] : []);
+      if (problem) e.backchannelUri = `Back-channel logout URL: ${problem}`;
+    }
   }
   if (step === 3 && d.trial === "enabled") {
     const days = Number(d.trialDays);
@@ -149,6 +156,7 @@ export function toRequest(d: WizardDraft): NewProduct {
           sso_enabled: d.sso === "yes",
           redirect_uri: d.sso === "yes" ? d.redirectUri.trim() : undefined,
           health_url: d.healthUrl.trim() || undefined,
+          backchannel_logout_uri: (d.sso === "yes" && d.backchannelUri.trim()) || undefined,
         }
       : null,
     trial: d.trial === "enabled" ? { enabled: true, duration_days: Number(d.trialDays) } : null,
@@ -511,6 +519,17 @@ function Wizard({ catalog }: { catalog: ProductsConsole }) {
               ) : (
                 <span />
               )}
+              {d.sso === "yes" && (
+                <TextField
+                  label="Back-channel logout URL (optional)"
+                  type="url"
+                  placeholder="https://crm.workeasy360.com/api/auth/backchannel-logout"
+                  value={d.backchannelUri}
+                  error={errors.backchannelUri}
+                  hint="Where WorkEasy360 sends a logout token when someone signs out, so the product's own session ends too. Same origin as the sign-in callback URL."
+                  onChange={(v) => set("backchannelUri", v)}
+                />
+              )}
               <TextField
                 label="Health check URL (optional)"
                 type="url"
@@ -526,6 +545,11 @@ function Wizard({ catalog }: { catalog: ProductsConsole }) {
                 </p>
                 <p className="w360-hint">Registered as a draft when you save. Credentials are added on the product&apos;s Integration tab, never here.</p>
               </div>
+              <p className={`${styles.note} ${styles.full}`}>
+                Before the integration can be activated, control of every hostname it uses (launch, callback, health and back-channel
+                logout URLs) must be proven with a DNS TXT record. The records to publish are listed under Domains on the product&apos;s
+                Integration tab after you save.
+              </p>
             </div>
           )}
 

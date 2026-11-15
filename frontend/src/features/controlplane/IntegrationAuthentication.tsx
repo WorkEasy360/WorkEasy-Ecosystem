@@ -9,6 +9,7 @@ import {
   type IssuedConsoleCredential,
 } from "@/lib/api/controlPlane";
 import { FormDialog, FormPopup, dialog } from "./Modal";
+import { backchannelUriProblem } from "./productmanager/model";
 import { ReasonAction, Status, when } from "./ui";
 import { TextField } from "./widgets";
 import styles from "./ControlPlane.module.css";
@@ -77,6 +78,10 @@ export function AuthenticationFacts({ integration }: { integration: ConsoleInteg
         </dd>
       </div>
       <div>
+        <dt>Back-channel logout URL</dt>
+        <dd className={styles.mono}>{integration.backchannel_logout_uri || "None (a sign-out reaches the product at its next entitlement check)"}</dd>
+      </div>
+      <div>
         <dt>Product sign-in page</dt>
         <dd className={styles.mono}>{integration.login_url || "None"}</dd>
       </div>
@@ -97,7 +102,9 @@ function SignInFields({
   draft: SignInDraft;
   setDraft: (update: (d: SignInDraft) => SignInDraft) => void;
 }) {
-  const ids = { mode: useId(), login: useId(), redirects: useId(), logout: useId() };
+  const ids = { mode: useId(), login: useId(), redirects: useId(), logout: useId(), backchannel: useId(), backchannelHint: useId(), backchannelError: useId() };
+  const localOnly = draft.sign_in_mode === "local_only";
+  const backchannelProblem = localOnly ? undefined : backchannelUriProblem(draft.backchannel_logout_uri, lines(draft.redirect_uris));
   return (
     <>
       <div className={styles.field}>
@@ -155,6 +162,32 @@ function SignInFields({
           onChange={(e) => setDraft((d) => ({ ...d, post_logout_redirect_uris: e.target.value }))}
         />
       </div>
+      <div className={`${styles.field} ${dialog.span}`}>
+        <label className="w360-label" htmlFor={ids.backchannel}>
+          Back-channel logout URL (https, optional)
+        </label>
+        <input
+          id={ids.backchannel}
+          className="w360-input"
+          type="url"
+          placeholder="https://"
+          disabled={localOnly}
+          value={localOnly ? "" : draft.backchannel_logout_uri}
+          aria-invalid={backchannelProblem ? true : undefined}
+          aria-describedby={backchannelProblem ? `${ids.backchannelHint} ${ids.backchannelError}` : ids.backchannelHint}
+          onChange={(e) => setDraft((d) => ({ ...d, backchannel_logout_uri: e.target.value }))}
+        />
+        <p id={ids.backchannelHint} className="w360-hint">
+          {localOnly
+            ? "Not used with local sign-in only: no URL is kept when you save."
+            : "Where WorkEasy360 sends a logout token when someone signs out, so the product's own session ends too. Same origin as a redirect URI; no query or fragment."}
+        </p>
+        {backchannelProblem && (
+          <p id={ids.backchannelError} className="w360-error-text">
+            {backchannelProblem}
+          </p>
+        )}
+      </div>
       <fieldset className={`${styles.field} ${dialog.span}`}>
         <legend className="w360-label">Scopes (openid is always included)</legend>
         <div className={styles.row}>
@@ -185,44 +218,60 @@ interface SignInDraft {
   redirect_uris: string;
   post_logout_redirect_uris: string;
   scopes: string[];
+  backchannel_logout_uri: string;
 }
 
-function toChanges(draft: SignInDraft): IntegrationChanges {
-  return {
+/** The request for the sign-in fields. The back-channel logout URL is sent
+ * only when it differs from `savedBackchannel` (what is registered now): ""
+ * removes it, and local sign-in only never keeps one. */
+function toChanges(draft: SignInDraft, savedBackchannel = ""): IntegrationChanges {
+  const changes: IntegrationChanges = {
     sign_in_mode: draft.sign_in_mode,
     login_url: draft.login_url.trim(),
     redirect_uris: lines(draft.redirect_uris),
     post_logout_redirect_uris: lines(draft.post_logout_redirect_uris),
     scopes: ["openid", ...draft.scopes.filter((s) => s !== "openid")],
   };
+  const backchannel = draft.sign_in_mode === "local_only" ? "" : draft.backchannel_logout_uri.trim();
+  if (backchannel !== savedBackchannel) changes.backchannel_logout_uri = backchannel;
+  return changes;
 }
 
-/** What the sign-in fields need before a save: the redirect URIs, and the
- * product's own sign-in page for Optional SSO (the server checks the rest). */
+/** What the sign-in fields need before a save: the redirect URIs, the
+ * product's own sign-in page for Optional SSO, and a back-channel logout URL
+ * the registry would accept (the server checks everything again). */
 const signInReady = (draft: SignInDraft) =>
-  lines(draft.redirect_uris).length > 0 && (draft.sign_in_mode !== "sso_optional" || Boolean(draft.login_url.trim()));
+  lines(draft.redirect_uris).length > 0 &&
+  (draft.sign_in_mode !== "sso_optional" || Boolean(draft.login_url.trim())) &&
+  (draft.sign_in_mode === "local_only" || !backchannelUriProblem(draft.backchannel_logout_uri, lines(draft.redirect_uris)));
 
 /** The sign-in settings, in a popup the caller opens (Edit authentication) and
- * `onDone` closes. A refusal stays in the popup; a save is announced through
- * the caller's `act`, which also reloads the product. */
+ * `onDone` closes. A refusal stays in the popup (and is handed to `onRefused`,
+ * so a hostname whose control is not proven can be pointed out beside the
+ * Domains section); a save is announced through the caller's `act`, which also
+ * reloads the product. */
 export function AuthenticationEditor({
   code,
   integration,
   act,
   onDone,
+  onRefused,
 }: {
   code: string;
   integration: ConsoleIntegration;
   busy?: boolean;
   act: Act;
   onDone: () => void;
+  onRefused?: (err: unknown) => void;
 }) {
+  const saved = integration.backchannel_logout_uri ?? "";
   const [draft, setDraftState] = useState<SignInDraft>({
     sign_in_mode: integration.sign_in_mode,
     login_url: integration.login_url,
     redirect_uris: integration.redirect_uris.join("\n"),
     post_logout_redirect_uris: integration.post_logout_redirect_uris.join("\n"),
     scopes: integration.scopes.filter((s) => s !== "openid"),
+    backchannel_logout_uri: saved,
   });
   const setDraft = (update: (d: SignInDraft) => SignInDraft) => setDraftState(update);
   return (
@@ -231,7 +280,12 @@ export function AuthenticationEditor({
       submitLabel="Save authentication settings"
       canSubmit={signInReady(draft)}
       onSubmit={async () => {
-        await adminApi.updateIntegration(code, toChanges(draft));
+        try {
+          await adminApi.updateIntegration(code, toChanges(draft, saved));
+        } catch (err) {
+          onRefused?.(err);
+          throw err;
+        }
       }}
       onDone={() => void act(async () => {}, "Authentication settings saved.")}
       onClose={onDone}
@@ -247,6 +301,7 @@ const NEW_DRAFT: SignInDraft = {
   redirect_uris: "",
   post_logout_redirect_uris: "",
   scopes: ["email", "profile", "organization"],
+  backchannel_logout_uri: "",
 };
 
 /** "Add product -> Integration": register the integration of a catalog
