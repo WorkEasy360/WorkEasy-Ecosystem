@@ -57,7 +57,7 @@ _CREATE_FIELDS = frozenset(
     }
 )
 _INTEGRATION_FIELDS = frozenset(
-    {"launch_url", "sso_enabled", "redirect_uri", "health_url"}
+    {"launch_url", "sso_enabled", "redirect_uri", "health_url", "backchannel_logout_uri"}
 )
 _TRIAL_FIELDS = frozenset({"enabled", "duration_days"})
 
@@ -104,6 +104,11 @@ def _integration_spec(raw: Any, *, name: str) -> dict[str, Any] | None:
     }
     if redirect:
         spec["redirect_uris"] = [redirect]
+    # ADR-067: a product built on the workeasy360-sso connector receives
+    # back-channel logout; validated by the registry like every other URL.
+    backchannel = str(raw.get("backchannel_logout_uri") or "").strip()
+    if backchannel:
+        spec["backchannel_logout_uri"] = backchannel
     return spec
 
 

@@ -210,7 +210,9 @@ def authorize(request: HttpRequest) -> HttpResponse:
         # No record_entry here: a silent code means Automatic, or Ask once
         # already recorded. The record is written where the account is chosen -
         # the chooser's answer or a sign-in for the request - both at resume.
-        granted = authorization.issue_code(parsed, subject)
+        granted = authorization.issue_code(
+            parsed, subject, sign_in_id=_sign_in_id(request)
+        )
     except protocol.OAuthError as exc:
         if exc.error in (protocol.LOGIN_REQUIRED, protocol.ORGANIZATION_REQUIRED):
             if parsed.prompt_none:
@@ -370,7 +372,9 @@ def resume(request: HttpRequest) -> HttpResponse:
                 # Parked as the product sent it: a chosen or implied
                 # organization is this person's, not the request's.
                 return _park_for_choice(pending_request, user.pk)
-        granted = authorization.issue_code(pending_request, subject)
+        granted = authorization.issue_code(
+            pending_request, subject, sign_in_id=_sign_in_id(request)
+        )
         # Answered on the chooser, or signed in for this very request: either
         # way this sign-in has now chosen its account for the product, and
         # Ask once does not ask it again (ADR-066).
@@ -741,7 +745,26 @@ def token(request: HttpRequest) -> JsonResponse:
     return response
 
 
+def _sign_in_id(request: HttpRequest) -> Any:
+    """The browser's Workeasy360 sign-in (ADR-043), from its own session only.
+
+    Becomes the ID token's ``sid`` for a product that takes back-channel
+    logout (ADR-067). Nothing in the authorization request can set it.
+    """
+    import uuid as _uuid
+
+    from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
+
+    raw = getattr(request, "session", {}).get(SESSION_SIGN_IN_ID_KEY)
+    try:
+        return _uuid.UUID(str(raw)) if raw else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _token_response(redeemed: Any) -> dict[str, Any]:
+    from workeasy360.platform.ecosystem import backchannel
+
     subject = tokens.TokenSubject(
         user_id=redeemed.user_id,
         organization_id=redeemed.organization_id,
@@ -750,6 +773,7 @@ def _token_response(redeemed: Any) -> dict[str, Any]:
         scope=" ".join(redeemed.scope),
         nonce=redeemed.nonce,
         auth_time=redeemed.auth_time,
+        sid=backchannel.sid_for(redeemed.integration, redeemed.sign_in_id),
     )
     id_token = tokens.issue_id_token(
         subject,
@@ -759,6 +783,13 @@ def _token_response(redeemed: Any) -> dict[str, Any]:
         },
     )
     access_token = tokens.issue_access_token(subject)
+    # Remembered only for products that take back-channel logout: who must be
+    # told when this sign-in ends (ADR-067).
+    backchannel.record_product_sign_in(
+        integration=redeemed.integration,
+        user_id=redeemed.user_id,
+        sign_in_id=redeemed.sign_in_id,
+    )
     return {
         "access_token": access_token.value,
         "token_type": "Bearer",

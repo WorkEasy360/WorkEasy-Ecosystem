@@ -149,6 +149,25 @@ def integration_for_product(
     return _integration_dto(row) if row is not None else None
 
 
+def backchannel_delivery_summary(ctx: TenantContext, *, client_id: str) -> dict[str, Any]:
+    """Back-channel logout deliveries for one integration over the last day
+    (ADR-067): counts per status and the last problem category. Staff-only,
+    authorized like every integration read here."""
+    from workeasy360.platform.ecosystem import backchannel
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    authz.require(ctx, "platform.integration.view")
+    authz.require_platform_staff(
+        ctx,
+        operation="ecosystem.integration.get",
+        permission="platform.integration.view",
+    )
+    row = ProductIntegration.objects.filter(client_id=client_id).first()
+    if row is None:
+        return {"enabled": False, "window_hours": 24, "counts": {}, "last_problem": ""}
+    return backchannel.delivery_summary(row)
+
+
 def credentials(ctx: TenantContext, *, client_id: str) -> list[CredentialDTO]:
     """Credential metadata for one integration.
 

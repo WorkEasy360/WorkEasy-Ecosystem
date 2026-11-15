@@ -942,7 +942,12 @@ def facts_from_record(raw: Any) -> SessionFacts | None:
     )
 
 
-def issue_code(request: AuthorizationRequest, subject: ResolvedSubject) -> GrantedCode:
+def issue_code(
+    request: AuthorizationRequest,
+    subject: ResolvedSubject,
+    *,
+    sign_in_id: UUID | None = None,
+) -> GrantedCode:
     """Mint a single-use code bound to everything verified above.
 
     The plaintext code is returned to the caller and never stored; only its
@@ -966,6 +971,10 @@ def issue_code(request: AuthorizationRequest, subject: ResolvedSubject) -> Grant
         code_challenge_method=request.code_challenge_method,
         nonce=request.nonce,
         session_facts=facts_record(subject.facts),
+        # The authorizing browser's sign-in (ADR-067). Read by the interface
+        # from the session, never from the request: a product cannot choose
+        # which sign-in its sessions are bound to.
+        sign_in_id=sign_in_id,
         expires_at=timezone.now() + timezone.timedelta(seconds=ttl),
     )
 
@@ -999,6 +1008,8 @@ class RedeemedCode:
     nonce: str
     #: ``auth_time`` for the ID token: when the authorizing session signed in.
     auth_time: int | None = None
+    #: The authorizing sign-in (ADR-067), when the code recorded one.
+    sign_in_id: UUID | None = None
 
 
 def redeem_code(
@@ -1103,6 +1114,7 @@ def redeem_code(
             if facts is not None and facts.authenticated_at is not None
             else None
         ),
+        sign_in_id=row.sign_in_id,
     )
 
 
