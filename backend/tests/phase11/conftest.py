@@ -147,6 +147,11 @@ def register_bare(platform_admin, in_tenant, product_code, *, activate=True, **m
             ctx, manifest=manifest_for(product_code, **manifest)
         )
         if activate:
+            # ADR-068: as the operator's register_products does, a fixture that
+            # activates vouches for its own test hostnames.
+            from workeasy360.platform.ecosystem import domains
+
+            domains.attest_domains(ctx, integration, reason="test fixture")
             services.transition(ctx, client_id=integration.client_id, to_status="active")
     return integration
 

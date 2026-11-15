@@ -13,7 +13,7 @@ from typing import Any
 
 from django.http import HttpRequest, JsonResponse
 
-from workeasy360.commercial.controlplane import products, store
+from workeasy360.commercial.controlplane import product_domains, products, store
 from workeasy360.contracts.errors import ManifestRejected
 from workeasy360.contracts.values import json_input
 from workeasy360.contracts.values.tenant import TenantContext
@@ -162,6 +162,50 @@ def integration_backchannel_view(
             **summary,
         }
     )
+
+
+@staff_view(["GET", "POST"])
+def integration_domains_view(
+    request: HttpRequest, ctx: TenantContext, product_code: str
+) -> JsonResponse:
+    """The hostnames a product's registration uses and whether control of
+    each is proven (ADR-068). POST ``{"hostname"}`` asks for a proof to
+    publish - before pointing a live product at a new hostname."""
+    if request.method == "POST":
+        body = _body(request)
+        return JsonResponse(
+            product_domains.request_domain(
+                ctx, product_code=product_code, hostname=str(body.get("hostname", ""))
+            )
+        )
+    return JsonResponse(product_domains.list_domains(ctx, product_code=product_code))
+
+
+@staff_view(["POST"])
+def integration_domain_verify_view(
+    request: HttpRequest, ctx: TenantContext, product_code: str
+) -> JsonResponse:
+    """Look for the TXT record of ``{"hostname"}`` now. Rate-limited: each call
+    is a DNS lookup the platform makes."""
+    blocked = limited(request, "product_domain_verify", user=request.user)
+    if blocked is not None:
+        return blocked
+    body = _body(request)
+    return JsonResponse(
+        product_domains.verify_domain(
+            ctx, product_code=product_code, hostname=str(body.get("hostname", ""))
+        )
+    )
+
+
+@staff_view(["GET"])
+def integration_readiness_view(
+    request: HttpRequest, ctx: TenantContext, product_code: str
+) -> JsonResponse:
+    """Whether people can sign in to this product through Workeasy360 and what
+    is missing (registration, callback, credential, domains, status,
+    back-channel logout, health). Stored facts only; asks no product."""
+    return JsonResponse(product_domains.sso_readiness(ctx, product_code=product_code))
 
 
 @staff_view(["POST"])

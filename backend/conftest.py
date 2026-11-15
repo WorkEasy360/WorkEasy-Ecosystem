@@ -1026,6 +1026,13 @@ def register_product(db, platform_admin, catalog, in_tenant):
         with in_tenant(ctx):
             integration = services.register_integration(ctx, manifest=payload)
             if activate:
+                # ADR-068: activation needs every hostname proven. A fixture
+                # that activates vouches for its own test hostnames exactly as
+                # the operator's register_products command does; the gate
+                # itself is exercised in tests/phase11/test_product_domains.py.
+                from workeasy360.platform.ecosystem import domains
+
+                domains.attest_domains(ctx, integration, reason="test fixture")
                 services.transition(
                     ctx, client_id=integration.client_id, to_status="active"
                 )

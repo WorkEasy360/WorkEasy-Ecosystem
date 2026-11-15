@@ -53,7 +53,8 @@ def test_connecting_sets_the_manifest_registers_the_key_and_activates(
 
     actor = _actor(staff_factory)
     call_command("register_products", actor=actor, stdout=StringIO())
-    printed = _connect(actor, tmp_path)
+    # ADR-068: first-party hosts the operator controls are attested explicitly.
+    printed = _connect(actor, tmp_path, attest_domains=True)
 
     integration = ProductIntegration.objects.get(product_code="easybook")
     assert integration.status == "active"
@@ -233,3 +234,36 @@ def test_sso_optional_without_its_sign_in_page_is_refused_before_anything_change
     with pytest.raises(CommandError, match="manifest was refused"):
         _connect(actor, tmp_path, sign_in_mode="sso_optional")
     assert not IntegrationCredential.objects.exists()
+
+
+def test_without_a_proof_a_draft_stays_a_draft_and_the_records_are_printed(
+    staff_factory, tmp_path
+):
+    """ADR-068: the command never activates a product on a hostname nobody
+    proved; it registers the key and says exactly what to publish."""
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    actor = _actor(staff_factory)
+    call_command("register_products", actor=actor, stdout=StringIO())
+    printed = _connect(actor, tmp_path)
+
+    integration = ProductIntegration.objects.get(product_code="easybook")
+    assert integration.status == "draft"
+    assert integration.credentials.count() == 1
+    assert "Not activated" in printed
+    assert "_w360-product-verify.book.workeasy360.com  TXT" in printed
+
+
+def test_a_live_product_cannot_be_reconnected_to_an_unproven_host(
+    staff_factory, tmp_path
+):
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    actor = _actor(staff_factory)
+    call_command("register_products", actor=actor, stdout=StringIO())
+    _connect(actor, tmp_path, attest_domains=True)
+    with pytest.raises(CommandError, match="not proven"):
+        _connect(actor, tmp_path, redirect_uris=["https://attacker.example.net/callback"])
+    integration = ProductIntegration.objects.get(product_code="easybook")
+    assert integration.manifest["redirect_uris"] == [REDIRECT]
+    assert integration.credentials.count() == 1

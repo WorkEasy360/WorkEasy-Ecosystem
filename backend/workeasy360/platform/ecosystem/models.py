@@ -820,3 +820,93 @@ class BackchannelLogout(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"logout for {self.integration_id} ({self.status})"
+
+
+class ProductDomainStatus(StrEnum):
+    #: A proof was asked for and has not been seen yet.
+    PENDING = "pending"
+    #: Control was proven (or carried over from before verification existed).
+    VERIFIED = "verified"
+    #: Was verified; the proof has been missing on repeated re-checks.
+    LAPSED = "lapsed"
+
+
+class ProductDomainMethod(StrEnum):
+    #: A TXT record at ``_w360-product-verify.<hostname>`` carried the token.
+    DNS_TXT = "dns_txt"
+    #: Registered before ownership verification existed (ADR-068); the
+    #: migration that introduced verification carried it over as proven.
+    PRE_EXISTING = "pre_existing"
+    #: A loopback host, accepted only where plaintext loopback URLs are
+    #: (development and tests, ``OIDC_ALLOW_INSECURE_REDIRECT_URIS``).
+    LOOPBACK = "loopback"
+    #: Vouched for by an operator running ``register_products
+    #: --activate-integrations`` on the platform host, for the first-party
+    #: hostnames declared in this repository. Shell access to the platform is a
+    #: stronger credential than a DNS record; no API can attest.
+    ATTESTED = "attested"
+
+
+class ProductDomain(models.Model):
+    """A hostname a product's registration sends browsers or tokens to, and
+    whether the product's owner has proven control of it (ADR-068).
+
+    Every URL in a manifest - redirect, sign-out return, launch, login, health
+    and back-channel logout - names a hostname. A registration may *name* any
+    public https hostname, but an integration cannot become active, and an
+    active one cannot be pointed at a new hostname, until each hostname it
+    uses is ``verified`` here. A typo, a social-engineered change, or a name
+    the registrant does not control therefore never receives an authorization
+    code, a logout token or a signed-out browser.
+
+    One row per (integration, hostname): two products on one host each prove
+    control for themselves. No organization column - an integration is
+    platform-level, like :class:`ProductIntegration`.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    integration = models.ForeignKey(
+        ProductIntegration, on_delete=models.CASCADE, related_name="domains"
+    )
+    #: Canonical: lower-case, IDNA (punycode), no trailing dot.
+    hostname = models.CharField(max_length=253)
+    status = models.CharField(
+        max_length=16,
+        choices=_choices(ProductDomainStatus),
+        default=ProductDomainStatus.PENDING.value,
+    )
+    method = models.CharField(
+        max_length=16, choices=_choices(ProductDomainMethod), blank=True, default=""
+    )
+    #: The value the TXT record must carry. Public by design (it is published
+    #: in DNS); kept after verification so re-checks can look for it. Empty
+    #: for a carried-over or loopback domain until a proof is asked for.
+    token = models.CharField(max_length=64, blank=True, default="")
+    requested_at = models.DateTimeField(default=timezone.now)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    last_checked_at = models.DateTimeField(null=True, blank=True)
+    #: ``verified``, ``record_not_found``, ``lookup_failed``, ``control_lost``.
+    last_outcome = models.CharField(max_length=32, blank=True, default="")
+    check_count = models.PositiveIntegerField(default=0)
+    missed_checks = models.PositiveSmallIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ecosystem_product_domain"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["integration", "hostname"], name="uq_product_domain"
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["status", "last_checked_at"], name="ix_product_domain_check"
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.hostname} ({self.status})"
+
+    @property
+    def status_enum(self) -> ProductDomainStatus:
+        return ProductDomainStatus(self.status)
