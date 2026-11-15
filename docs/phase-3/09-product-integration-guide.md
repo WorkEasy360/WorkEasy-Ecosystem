@@ -66,6 +66,23 @@ their organization and your product code, which is enough for most products.
 releases `organization_name`, a display label for a tenant you provision on a
 first sign-in. Never key on it.
 
+**Prove you own your hostnames (ADR-068).** Every hostname in your manifest
+(redirect URIs, sign-out returns, launch, login, health and back-channel logout
+URLs) must be proven before your integration can be activated, and before a
+live integration can be pointed at a new hostname. For each hostname, publish
+the TXT record Super Admin shows under Products -> Integration -> Domains:
+
+```
+_w360-product-verify.crm.example.com.  TXT  "w360-product-verify=<the value shown>"
+```
+
+then choose **Verify**. The value is per product, so another product's record
+proves nothing. Keep the record published: proven hostnames are re-checked
+every six hours, and one missing on three consecutive checks is marked lapsed
+(your product keeps working, but cannot be reactivated or re-pointed at that
+hostname until the record is back). Loopback hosts in local development need
+no record.
+
 **The operator's step.** A platform operator finishes a registration with one
 command. It replaces the redirect URIs and scopes, registers your **public**
 key as a `private_key_jwt` credential, activates the integration and prints
@@ -77,13 +94,18 @@ manage.py connect_product_sso --actor <staff email> --product <code> \
     --public-key-file <your public key PEM>
 ```
 
+It activates the integration only once every hostname is proven; otherwise it
+registers the key, leaves the integration in draft and prints the TXT records
+to publish. For first-party hosts the operator controls, `--attest-domains`
+vouches for them instead (audited).
+
 Running it again with a new key adds a credential and keeps the old one, so you
 can rotate. Revoke the old credential once you no longer use it.
 
 The same can be done in the Super Admin console (Products -> Authentication,
 ADR-044): register the integration, set the sign-in mode and URIs, add your
-public key (or have a client secret generated - shown once, never again), and
-activate. A product added this way needs no code change in Workeasy360.
+public key (or have a client secret generated - shown once, never again), prove
+your domains, and activate. A product added this way needs no code change in Workeasy360.
 
 ## 3. Discover everything else
 
