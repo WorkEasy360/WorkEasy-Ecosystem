@@ -116,6 +116,21 @@ def test_the_backchannel_uri_is_validated(changes, message):
         parse_manifest(payload, allow_insecure_urls=True)
 
 
+def test_an_explicit_default_port_is_the_same_origin():
+    """RFC 6454: ``https://host:443`` and ``https://host`` are one origin."""
+    from workeasy360.contracts.values.manifest import parse_manifest
+
+    payload = manifest_for(
+        "crm",
+        origin="https://crm.example.com",
+        manifest_version="2026-11-15",
+        sign_in_mode="sso_only",
+        backchannel_logout_uri="https://crm.example.com:443/auth/backchannel-logout",
+    )
+    manifest = parse_manifest(payload, allow_insecure_urls=False)
+    assert manifest.backchannel_logout_uri.endswith("/auth/backchannel-logout")
+
+
 def test_older_manifests_are_unchanged():
     from workeasy360.contracts.values.manifest import parse_manifest
 
@@ -423,6 +438,47 @@ def test_operators_and_the_person_can_see_what_is_outstanding(queued, product_an
     assert pending[0]["product_code"] == "crm" and pending[0]["status"] == "pending"
     summary = backchannel.delivery_summary(queued["crm"]["integration"])
     assert summary["enabled"] is True and summary["counts"]["pending"] == 1
+
+
+def test_staff_see_the_last_delivery_the_last_error_and_the_retry_state(
+    queued, product_answers
+):
+    """What the Super Admin console shows: categories and times, never a body."""
+    from django.utils import timezone
+
+    from workeasy360.integration.backchannel import delivery
+    from workeasy360.platform.ecosystem import backchannel
+    from workeasy360.platform.ecosystem.models import BackchannelLogout
+
+    integration = queued["crm"]["integration"]
+    summary = backchannel.delivery_summary(integration)
+    assert summary["last_delivery"]["status"] == "pending"
+    assert summary["last_delivery"]["scope"] == "session"
+    assert summary["last_error"] is None
+    assert summary["retry"]["pending"] == 1 and summary["retry"]["retrying"] == 0
+    assert summary["retry"]["attempt_limit"] == backchannel.MAX_ATTEMPTS
+
+    product_answers["behaviour"]["status"] = 503
+    delivery.deliver_due()
+    summary = backchannel.delivery_summary(integration)
+    assert summary["last_error"]["outcome"] == "http_503"
+    assert summary["retry"]["retrying"] == 1 and summary["retry"]["max_attempts"] == 1
+    assert summary["retry"]["next_attempt_at"] is not None
+
+    product_answers["behaviour"]["status"] = 200
+    BackchannelLogout.objects.update(next_attempt_at=timezone.now())
+    delivery.deliver_due()
+    summary = backchannel.delivery_summary(integration)
+    assert summary["last_delivery"]["status"] == "delivered"
+    assert summary["last_delivery"]["attempts"] == 2
+    assert summary["retry"] == {
+        "pending": 0,
+        "retrying": 0,
+        "next_attempt_at": None,
+        "max_attempts": 0,
+        "attempt_limit": backchannel.MAX_ATTEMPTS,
+    }
+    assert summary["last_error"] is None  # the earlier 503 was retried to success
 
 
 def test_queueing_happens_in_the_callers_transaction(two_devices):

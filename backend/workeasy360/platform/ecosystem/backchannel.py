@@ -32,6 +32,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db import transaction
+from django.db.models import Count, Max, Min, Q
 from django.utils import timezone
 
 from workeasy360.platform.ecosystem.models import (
@@ -317,7 +318,20 @@ def _finish(
 
 
 def delivery_summary(integration: Any, *, since_hours: int = 24) -> dict[str, Any]:
-    """Counts per status over the window, and the last non-success outcome."""
+    """What operators see for one product (ADR-067; Super Admin):
+
+    - ``counts`` per status over the window, and ``last_problem`` (the newest
+      non-success outcome - kept for existing readers);
+    - ``last_delivery``: the newest delivery of any status;
+    - ``last_error``: the newest delivery that did not succeed, with its
+      outcome category;
+    - ``retry``: every delivery still owed (not only this window's - a retry
+      schedule outlives the window), how many are past their first attempt,
+      and when the next attempt is due.
+
+    Categories only (``http_503``, ``connect_timeout``); never a response
+    body or an address.
+    """
     since = timezone.now() - timedelta(hours=since_hours)
     rows = BackchannelLogout.objects.filter(
         integration=integration, created_at__gte=since
@@ -325,18 +339,53 @@ def delivery_summary(integration: Any, *, since_hours: int = 24) -> dict[str, An
     counts = {s.value: 0 for s in BackchannelLogoutStatus}
     for status in rows.values_list("status", flat=True):
         counts[status] = counts.get(status, 0) + 1
-    last_problem = (
+    problems = (
         rows.exclude(status=BackchannelLogoutStatus.DELIVERED.value)
         .exclude(last_outcome="")
         .order_by("-created_at")
-        .values_list("last_outcome", flat=True)
-        .first()
+    )
+    last_problem = problems.values_list("last_outcome", flat=True).first()
+    owed = BackchannelLogout.objects.filter(
+        integration=integration, status=BackchannelLogoutStatus.PENDING.value
+    )
+    retry = owed.aggregate(
+        pending=Count("id"),
+        retrying=Count("id", filter=Q(attempts__gt=0)),
+        next_attempt_at=Min("next_attempt_at"),
+        max_attempts=Max("attempts"),
     )
     return {
         "enabled": takes_backchannel_logout(integration),
         "window_hours": since_hours,
         "counts": counts,
         "last_problem": last_problem or "",
+        "last_delivery": _delivery_json(rows.order_by("-created_at").first()),
+        "last_error": _delivery_json(problems.first()),
+        "retry": {
+            "pending": retry["pending"] or 0,
+            "retrying": retry["retrying"] or 0,
+            "next_attempt_at": _iso(retry["next_attempt_at"]),
+            "max_attempts": retry["max_attempts"] or 0,
+            "attempt_limit": len(RETRY_DELAYS_S),
+        },
+    }
+
+
+def _iso(value: Any) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _delivery_json(row: Any) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {
+        "status": row.status,
+        "reason": row.reason,
+        "scope": "session" if row.sign_in_id else "everywhere",
+        "created_at": _iso(row.created_at),
+        "finished_at": _iso(row.finished_at),
+        "attempts": row.attempts,
+        "outcome": row.last_outcome,
     }
 
 

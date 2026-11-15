@@ -638,9 +638,16 @@ def _validate_backchannel_logout(
     return uri
 
 
+_DEFAULT_PORTS = {"https": 443, "http": 80}
+
+
 def _origin(url: str) -> tuple[str, str, int | None]:
+    """(scheme, host, port) with the scheme's default port made explicit, so
+    ``https://a.example:443/x`` and ``https://a.example/y`` are one origin, as
+    RFC 6454 and every browser say."""
     parts = urlsplit(url)
-    return (parts.scheme, (parts.hostname or "").lower(), parts.port)
+    port = parts.port or _DEFAULT_PORTS.get(parts.scheme)
+    return (parts.scheme, (parts.hostname or "").lower(), port)
 
 
 def _as_str(value: Any, field: str) -> str:
