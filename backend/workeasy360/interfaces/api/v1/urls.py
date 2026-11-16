@@ -1352,6 +1352,28 @@ _admin = [
         admin_product_manager_views.create_view,
         name="admin-product-create",
     ),
+    # ADR-068: the one-page Product Publisher - before the generic
+    # admin/products/<id>/<action> route below.
+    path(
+        "admin/products/publisher",
+        admin_product_manager_views.publisher_view,
+        name="admin-product-publisher",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/publisher",
+        admin_product_manager_views.publisher_product_view,
+        name="admin-product-publisher-product",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/publisher/publish",
+        admin_product_manager_views.publisher_publish_view,
+        name="admin-product-publisher-publish",
+    ),
+    path(
+        "admin/products/<uuid:product_id>/store-preview",
+        admin_product_manager_views.store_preview_view,
+        name="admin-product-store-preview",
+    ),
     path(
         "admin/products/<uuid:product_id>",
         admin_product_manager_views.detail_view,

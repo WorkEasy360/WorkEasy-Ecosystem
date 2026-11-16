@@ -488,4 +488,9 @@ def test_phase_10_leaves_the_legacy_catalog_alone():
         # (Product.setup_requirements) - no catalog row is rewritten
         # (tests/store_domain).
         "0013_product_setup_requirements.py",
+        # ADR-068: two presentation columns with database defaults
+        # (Product.video_title, video_description) and the video thumbnail's
+        # media kind (a choices change, no SQL) - no catalog row is rewritten
+        # (tests/product_publisher).
+        "0014_product_video_details.py",
     ]

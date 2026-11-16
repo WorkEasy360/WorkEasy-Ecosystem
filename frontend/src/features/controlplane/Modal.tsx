@@ -9,9 +9,12 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), selec
 
 const noSubscription = () => () => {};
 
-/** sm: a short form in one column; md: a form in two columns; lg: content or a long form. */
-export type DialogSize = "sm" | "md" | "lg";
-const SIZE_CLASS: Record<DialogSize, string> = { sm: "", md: styles.medium, lg: styles.wide };
+/** sm: a short form in one column; md: a form in two columns; lg: content or a
+ * long form; xl (2026-11-16): a whole page in a popup - a sheet with its title
+ * fixed at the top, its own scrolling body and its actions fixed at the bottom
+ * (the Product Publisher), full screen on a phone. */
+export type DialogSize = "sm" | "md" | "lg" | "xl";
+const SIZE_CLASS: Record<DialogSize, string> = { sm: "", md: styles.medium, lg: styles.wide, xl: styles.sheet };
 
 /** A modal dialog, drawn on the page's body (above the console's bars): focus
  * moves into it (the first field), stays inside it while it is open, Escape
@@ -24,6 +27,7 @@ export function Modal({
   children,
   wide = false,
   size,
+  closing = false,
 }: {
   labelledBy: string;
   onClose: () => void;
@@ -31,6 +35,9 @@ export function Modal({
   /** A wider card, for content rather than a short form (the store preview). Same as size="lg". */
   wide?: boolean;
   size?: DialogSize;
+  /** 2026-11-16: the popup is on its way out - it fades and sinks for the
+   * caller's short exit before the caller removes it (`useClosing`). */
+  closing?: boolean;
 }) {
   const box = useRef<HTMLDivElement | null>(null);
   const close = useRef(onClose);
@@ -75,20 +82,48 @@ export function Modal({
   }, [inBrowser]);
 
   if (!inBrowser) return null;
+  const sized = size ?? (wide ? "lg" : "sm");
   return createPortal(
-    <div className={styles.backdrop}>
+    <div className={`${styles.backdrop} ${sized === "xl" ? styles.sheetBackdrop : ""} ${closing ? styles.leaving : ""}`.trim()} data-closing={closing || undefined}>
       <div
         ref={box}
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledBy}
-        className={`${styles.dialog} ${SIZE_CLASS[size ?? (wide ? "lg" : "sm")]}`.trim()}
+        className={`${styles.dialog} ${SIZE_CLASS[sized]}`.trim()}
       >
         {children}
       </div>
     </div>,
     document.body,
   );
+}
+
+/** How long a popup's exit lasts (Modal.module.css `.leaving`). */
+export const EXIT_MS = 160;
+
+/**
+ * A popup that leaves smoothly (2026-11-16, the owner: popups that open and
+ * close "very smoothly"): `close()` marks it closing - the Modal fades and
+ * sinks - and calls `onClosed` once the exit has played. With reduced motion
+ * asked for, or without timers (tests), it closes at once.
+ */
+export function useClosing(onClosed: () => void): { closing: boolean; close: () => void } {
+  const [closing, setClosing] = useState(false);
+  const done = useRef(onClosed);
+  useEffect(() => {
+    done.current = onClosed;
+  }, [onClosed]);
+  const close = () => {
+    const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduced || closing) {
+      done.current();
+      return;
+    }
+    setClosing(true);
+    window.setTimeout(() => done.current(), EXIT_MS);
+  };
+  return { closing, close };
 }
 
 /** The dialog's title and its close button (Escape closes it too). */

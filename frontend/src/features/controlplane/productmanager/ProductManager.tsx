@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { adminApi, productMediaUrl, type ConsoleProduct, type ProductsConsole } from "@/lib/api/controlPlane";
 import { can, useAdmin } from "../ControlShell";
 import { LoadGate, useAction, useLoad } from "../ui";
 import {
   Badge,
-  ButtonLink,
+  Button,
   DataTable,
   EmptyState,
   FilterBar,
@@ -28,6 +29,7 @@ import {
 import { STATUS_LABEL, VISIBILITY_LABEL, trialLabel, visibilityOf, type ManagerStatus, type Visibility } from "./model";
 import { ProductMark } from "./ProductMark";
 import { StorePreview, type ListingPreview } from "./StorePreview";
+import { ProductPublisher } from "./publisher/ProductPublisher";
 import styles from "./ProductManager.module.css";
 
 /**
@@ -98,10 +100,19 @@ export function VisibilityBadge({ visibility }: { visibility: Visibility }) {
   );
 }
 
-export function ProductManager() {
+/** ADR-068: `openNew` - `/admin/products/new` opens the list with the
+ * one-page Product Publisher already open. */
+export function ProductManager({ openNew = false }: { openNew?: boolean } = {}) {
   const { permissions } = useAdmin();
   const manage = can(permissions, "platform.staff_catalog.manage");
+  const router = useRouter();
   const [load, reload] = useLoad(() => adminApi.productsConsole(), []);
+  // The publisher: `{ id: null }` adds a product, `{ id }` edits one.
+  const [publishing, setPublishing] = useState<{ id: string | null } | null>(openNew && manage ? { id: null } : null);
+  const takenSlugs = useMemo(
+    () => new Set(load.status === "ready" ? load.data.products.flatMap((p) => [p.slug, p.code.replace(/_/g, "-")]) : []),
+    [load],
+  );
   const { act, busy, feedback } = useAction(reload);
   const confirm = useConfirm();
   const [q, setQ] = useState("");
@@ -156,7 +167,7 @@ export function ProductManager() {
     const archived = p.manager_status === "archived";
     return [
       { label: "Manage", icon: "settings", href: `/admin/products/${p.id}` },
-      { label: "Edit listing", icon: "edit", href: `/admin/products/${p.id}?tab=listing`, when: manage },
+      { label: "Edit in Publisher", icon: "edit", onSelect: () => setPublishing({ id: p.id }), when: manage },
       { label: "Preview listing", icon: "eye", onSelect: () => setPreview(p) },
       {
         label: "Publish",
@@ -199,9 +210,9 @@ export function ProductManager() {
         info="Status (draft, active, archived) and store visibility (published, hidden) are separate facts. Neither gives access: a customer uses a product only through a trial or a purchase."
         primary={
           manage ? (
-            <ButtonLink variant="primary" icon="plus" href="/admin/products/new">
-              New product
-            </ButtonLink>
+            <Button variant="primary" icon="plus" onClick={() => setPublishing({ id: null })}>
+              Add Product
+            </Button>
           ) : undefined
         }
       />
@@ -210,6 +221,17 @@ export function ProductManager() {
         {(d: ProductsConsole) => catalog(d)}
       </LoadGate>
       {preview && <StorePreview listing={listingOf(preview)} onClose={() => setPreview(null)} />}
+      {publishing && (
+        <ProductPublisher
+          productId={publishing.id}
+          takenSlugs={takenSlugs}
+          onSaved={() => reload()}
+          onClose={() => {
+            setPublishing(null);
+            if (openNew) router.replace("/admin/products");
+          }}
+        />
+      )}
       {confirm.dialog}
     </Page>
   );
@@ -296,7 +318,7 @@ export function ProductManager() {
                 icon="box"
                 title="No products yet"
                 hint="Add the first product to the central catalog."
-                action={manage ? { label: "New product", href: "/admin/products/new" } : undefined}
+                action={manage ? { label: "Add Product", href: "/admin/products/new" } : undefined}
               />
             ) : (
               <EmptyState icon="search" title="No product matches these filters" hint="Change or clear the filters to see more." />

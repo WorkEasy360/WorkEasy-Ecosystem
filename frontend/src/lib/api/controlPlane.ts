@@ -18,6 +18,7 @@
 
 import { apiFetch, apiUpload } from "./client";
 import type { InvitationDelivery } from "./partnerConsole";
+import type { PublicStoreProductPage } from "./public";
 
 export interface Page<T> {
   results: T[];
@@ -410,7 +411,7 @@ export interface IssuedConsoleCredential {
  * {@link productMediaUrl}; a file id never reaches the browser. */
 export interface ProductMediaRow {
   id: string;
-  kind: "logo" | "banner" | "screenshot" | "video";
+  kind: "logo" | "banner" | "screenshot" | "video" | "video_poster";
   width: number;
   height: number;
   content_type: string;
@@ -575,6 +576,72 @@ export interface ManagedProduct {
   can_see_activity: boolean;
 }
 
+/** ADR-068: a direct price book a Publisher plan can be priced in. */
+export interface PublisherPriceBook {
+  id: string;
+  code: string;
+  name: string;
+  currency: string;
+  region: string;
+}
+
+/** ADR-068: one of the product's standard plans as the Publisher edits it -
+ * the same plan record Products & Pricing > Plans shows. */
+export interface PublisherPlanRow {
+  id: string;
+  code: string;
+  name: string;
+  caption: string;
+  description: string;
+  status: string;
+  visible: boolean;
+  recommended: boolean;
+  billing_type: string;
+  free: boolean;
+  price_book_id: string | null;
+  currency: string | null;
+  /** Billing period -> amount in minor units, current direct prices. */
+  prices: Partial<Record<"monthly" | "quarterly" | "semi_annual" | "annual", number>>;
+  per_user: boolean;
+  setup_fee_minor: number;
+  discount_bp: number;
+  included_seats: number;
+  max_seats: number | null;
+  trial_days: number;
+  version: number | null;
+  published: boolean;
+  features: Record<string, unknown>;
+}
+
+/** ADR-068: what an empty Add Product page needs. */
+export interface PublisherBootstrap {
+  categories: string[];
+  books: PublisherPriceBook[];
+  intervals: ("monthly" | "quarterly" | "semi_annual" | "annual")[];
+  max_plans: number;
+  can_manage: { catalog: boolean; pricing: boolean; integration: boolean };
+}
+
+/** ADR-068: one product as the Publisher edits it. */
+export interface PublisherState extends PublisherBootstrap, ManagedProduct {
+  listing: {
+    description: string;
+    video_url: string;
+    video_title: string;
+    video_description: string;
+    highlights: string[];
+    store_title: string;
+    store_summary: string;
+    application_url: string;
+    documentation_url: string;
+    support_url: string;
+    marketing_url: string;
+  };
+  video: { id: string; content_type: string; size_bytes: number } | null;
+  plans: PublisherPlanRow[];
+  add_on_count: number;
+}
+
 /** What the Add Product wizard sends. `code` is derived from the slug by the server. */
 export interface NewProduct {
   name: string;
@@ -697,6 +764,16 @@ export const adminApi = {
   createManagedProduct: (body: NewProduct) =>
     apiFetch<ManagedProduct>(`${admin}/products`, { method: "POST", body: json(body) }),
   managedProduct: (id: string) => apiFetch<ManagedProduct>(`${admin}/products/${id}`),
+  /** ADR-068: the one-page Product Publisher - product, listing and plans saved together. */
+  publisherBootstrap: () => apiFetch<PublisherBootstrap>(`${admin}/products/publisher`),
+  publisherState: (id: string) => apiFetch<PublisherState>(`${admin}/products/${id}/publisher`),
+  createFromPublisher: (body: Record<string, unknown>) =>
+    apiFetch<PublisherState>(`${admin}/products/publisher`, { method: "POST", body: json(body) }),
+  saveFromPublisher: (id: string, body: Record<string, unknown>) =>
+    apiFetch<PublisherState>(`${admin}/products/${id}/publisher`, { method: "PUT", body: json(body) }),
+  publishFromPublisher: (id: string) => apiFetch<PublisherState>(`${admin}/products/${id}/publisher/publish`, { method: "POST" }),
+  /** The Store product page as it will look once published - a draft too (staff only). */
+  storePreview: (id: string) => apiFetch<PublicStoreProductPage & { preview: true }>(`${admin}/products/${id}/store-preview`),
   productLifecycle: (id: string, action: "publish" | "unpublish" | "archive" | "restore") =>
     apiFetch<ManagedProduct>(`${admin}/products/${id}/${action}`, { method: "POST" }),
   deleteProduct: (id: string) => apiFetch<{ deleted: boolean; code: string }>(`${admin}/products/${id}`, { method: "DELETE" }),

@@ -136,6 +136,12 @@ class Product(models.Model):
     #: The product page's video: a YouTube or Vimeo link in its canonical watch
     #: form (``domain.validate_video_url``); empty = no video.
     video_url = models.CharField(max_length=200, blank=True, default="", db_default="")
+    #: ADR-068: the demo's title and short description on the Store page
+    #: (plain text); empty shows nothing.
+    video_title = models.CharField(max_length=120, blank=True, default="", db_default="")
+    video_description = models.CharField(
+        max_length=500, blank=True, default="", db_default=""
+    )
     #: Hand-set store badges. ``badge_new`` shows "New" whatever the launch date.
     featured = models.BooleanField(default=False, db_default=False)
     popular = models.BooleanField(default=False, db_default=False)

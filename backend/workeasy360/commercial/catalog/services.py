@@ -260,6 +260,8 @@ EDITABLE_PRODUCT_FIELDS = (
     "subcategory",
     "tags",
     "video_url",
+    "video_title",
+    "video_description",
     "product_type",
     "best_for",
     "integrations",
@@ -332,6 +334,14 @@ def _clean_product_changes(changes: dict[str, Any]) -> dict[str, Any]:
         clean["tags"] = validate_tags(changes["tags"])
     if "video_url" in changes:
         clean["video_url"] = validate_video_url(changes["video_url"])
+    if "video_title" in changes:
+        clean["video_title"] = validate_store_text(
+            changes["video_title"], field="video_title", maximum=120
+        )
+    if "video_description" in changes:
+        clean["video_description"] = validate_store_text(
+            changes["video_description"], field="video_description", maximum=500
+        )
     if "product_type" in changes:
         clean["product_type"] = validate_product_type(changes["product_type"])
     if "best_for" in changes:

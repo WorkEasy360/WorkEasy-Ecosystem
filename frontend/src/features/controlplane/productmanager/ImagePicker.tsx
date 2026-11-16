@@ -124,7 +124,7 @@ export function ImagePicker({
   busy = false,
 }: {
   label: string;
-  kind: "logo" | "banner";
+  kind: "logo" | "banner" | "video_poster";
   required?: boolean;
   file: File | null;
   currentUrl?: string | null;

@@ -18,7 +18,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from workeasy360.commercial.catalog import selectors as catalog_selectors
 from workeasy360.commercial.catalog import services as catalog_services
 from workeasy360.commercial.catalog.domain import MAX_VIDEO_BYTES
-from workeasy360.commercial.controlplane import product_manager
+from workeasy360.commercial.controlplane import product_manager, product_publisher
 from workeasy360.contracts.enums import ProductMediaKind
 from workeasy360.contracts.errors import CatalogValidationError
 from workeasy360.contracts.values.tenant import TenantContext
@@ -60,6 +60,43 @@ def create_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     """The Add Product wizard: a draft, hidden product with its integration
     and trial, in one transaction."""
     return JsonResponse(product_manager.create(ctx, _body(request)), status=201)
+
+
+@staff_view(["GET", "POST"])
+def publisher_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """ADR-068, the one-page Product Publisher: what an empty page needs (GET),
+    or a new product with its plans, in one transaction (POST)."""
+    if request.method == "POST":
+        return JsonResponse(product_publisher.save(ctx, None, _body(request)), status=201)
+    return JsonResponse(product_publisher.bootstrap(ctx))
+
+
+@staff_view(["GET", "PUT"])
+def publisher_product_view(
+    request: HttpRequest, ctx: TenantContext, product_id: UUID
+) -> JsonResponse:
+    """One product as the Publisher edits it (GET), or saved from it (PUT)."""
+    if request.method == "PUT":
+        return JsonResponse(product_publisher.save(ctx, product_id, _body(request)))
+    return JsonResponse(product_publisher.state(ctx, product_id))
+
+
+@staff_view(["POST"])
+def publisher_publish_view(
+    request: HttpRequest, ctx: TenantContext, product_id: UUID
+) -> JsonResponse:
+    """Publish to the Store: the visible, priced plans and the product, through
+    the catalog's publish checklist, in one transaction."""
+    return JsonResponse(product_publisher.publish(ctx, product_id))
+
+
+@staff_view(["GET"])
+def store_preview_view(
+    request: HttpRequest, ctx: TenantContext, product_id: UUID
+) -> JsonResponse:
+    """The Store product page as it will look once published - a draft too -
+    for staff only; nothing is made public."""
+    return JsonResponse(product_publisher.preview(ctx, product_id))
 
 
 @staff_view(["GET", "DELETE"])

@@ -158,7 +158,7 @@ export interface PublicStoreImage {
 /** A product page's video (2026-11-04). `embed_url` is the server's fixed
  * player address (YouTube's no-cookie host or Vimeo's player), never the link
  * an admin typed; the CSP's `frame-src` names exactly those two origins. */
-export type PublicStoreVideo =
+export type PublicStoreVideo = (
   | {
       provider: "youtube" | "vimeo";
       id: string;
@@ -167,7 +167,14 @@ export type PublicStoreVideo =
     }
   /** A video uploaded from the admin's computer: same-origin, played by the
    * browser's own player (`url` answers Range requests). */
-  | { provider: "upload"; id: string; url: string; content_type: string };
+  | { provider: "upload"; id: string; url: string; content_type: string }
+) & {
+  /** 2026-11-16 (the Product Publisher): the demo's heading and a sentence
+   * about it, and a poster picture (a same-origin URL). Absent from an older server. */
+  title?: string;
+  description?: string;
+  poster?: string | null;
+};
 
 /** A plan as the public Store's comparison shows it. */
 export type PublicStorePlan = Omit<PublicPlan, "billing_type" | "kind" | "prices"> & {

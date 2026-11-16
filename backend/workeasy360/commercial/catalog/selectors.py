@@ -404,6 +404,8 @@ def merchandising(product: Any) -> dict[str, Any]:
         "use_cases": list(product.use_cases or []),
         "setup_requirements": list(product.setup_requirements or []),
         "video_url": product.video_url,
+        "video_title": product.video_title,
+        "video_description": product.video_description,
         "featured": product.featured,
         "popular": product.popular,
         "badge_new": product.badge_new,
@@ -464,7 +466,7 @@ def media_rows(product_ids: list[Any]) -> dict[str, list[dict[str, Any]]]:
     out: dict[str, list[dict[str, Any]]] = {str(i): [] for i in product_ids}
     if not product_ids:
         return out
-    order = {"logo": 0, "banner": 1, "screenshot": 2}
+    order = {"logo": 0, "banner": 1, "screenshot": 2, "video_poster": 3}
     rows = sorted(
         ProductMedia.objects.filter(product_id__in=product_ids).exclude(
             kind=ProductMediaKind.VIDEO.value
@@ -698,6 +700,7 @@ def public_media_file_id(slug: str, media_id: Any) -> Any | None:
                 ProductMediaKind.LOGO.value,
                 ProductMediaKind.BANNER.value,
                 ProductMediaKind.SCREENSHOT.value,
+                ProductMediaKind.VIDEO_POSTER.value,
             ],
             product__slug=str(slug),
             product__status=ProductStatus.AVAILABLE.value,
