@@ -2,6 +2,22 @@
 
 Brief: "WorkEasy360 - Complete Product Creation & Digital Store Redesign" (owner, 16 Nov 2026), plus the owner's note: "all form should be open as pop up and very smoothly so that user experience is premium". Decision record: ADR-068.
 
+**State on 2026-11-16:**
+
+- Committed `4fff4ae` + `fe495b7`, pushed (PR #3).
+- **Live:** release `2026.11.16-a3f1485`, then `2026.11.16-fe495b7`.
+  - Backup `20261116T144947Z` was taken before the first.
+  - `catalog.0014` applied, 0 unapplied, api healthy, 0 error lines.
+  - The live Store product page and its API answer, with GST from the engine.
+- **Rollback:**
+  1. `DELETE FROM catalog_product_media WHERE kind = 'video_poster'` (only if any were uploaded);
+  2. set `W360_RELEASE` to `2026.11.13-b57ad44`;
+  3. point `current` at that release;
+  4. `w360 up -d api worker-critical web`.
+
+  `catalog.0014`'s columns can stay.
+- **Owner's first local try** (Save Draft said "Fix the highlighted fields" with nothing highlighted) is fixed in `fe495b7`. The problem was inside the closed Advanced settings. The page now names the fields and opens the part they are in.
+
 ## 1. What existed (audit, before any change)
 
 - **Super Admin > Products & Pricing > Product Catalog > Add Product** was a four-step wizard (Identity, Store Listing, Integration, Availability) on its own page (`/admin/products/new`). It had no plans, prices, video or merchandising. It saved nothing until Save Draft or Publish, then made one request per step.

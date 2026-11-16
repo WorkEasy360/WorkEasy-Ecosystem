@@ -2,7 +2,12 @@
 
 Brief: "WorkEasy360 - Rename Existing Auth Service to Accounts Portal" (owner, 16 Nov 2026). Decision record: ADR-067. Operator runbook: `deploy/single-host/README.md`, section "Accounts".
 
-**State on 2026-11-16:** built and tested locally on `feat/partner-admin-panel` (based on `769476a`). It is **not committed, not deployed**, and **no DNS was changed**. `accounts.workeasy360.com` does not resolve yet (NXDOMAIN): the owner must add its Cloudflare record before stage a.
+**State on 2026-11-16:**
+
+- Committed `71e9afa` (+ `61d4130`, a test-only change), pushed to `feat/partner-admin-panel` (PR #3).
+- The code is live in production since 16 November: release `2026.11.16-a3f1485` (backup `20261116T144947Z`), then `2026.11.16-fe495b7`.
+- It is live at **stage off**, so nothing changed for anyone. Verified from outside: the discovery issuer is still `https://auth.workeasy360.com`, the key is unchanged, and the auth-host sign-in is titled "Sign in - WorkEasy360 Accounts".
+- **No DNS was changed.** `accounts.workeasy360.com` does not resolve yet (NXDOMAIN): the owner adds its Cloudflare record, then stage a (runbook: `deploy/single-host/README.md`, "Accounts").
 
 Owner's scope decision (16 Nov): **rename + rebrand**. Everything the auth host does moves to `accounts.`. Customer login, sign-up, password reset and the account pages stay on `app.` (ADR-059 unchanged; no cross-host hand-off).
 

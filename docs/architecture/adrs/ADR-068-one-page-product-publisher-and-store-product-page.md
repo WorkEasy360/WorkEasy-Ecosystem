@@ -1,6 +1,6 @@
 # ADR-068: The one-page Product Publisher (a popup, plans inline) and the Store product page redesign
 
-Date: 2026-11-16. Status: accepted; built on `feat/partner-admin-panel`. Replaces the four-step Add Product wizard of ADR-051. Builds on ADR-056 (one catalog, price and commercial engine), ADR-058 (GST from the tax engine), ADR-065 (the Digital Store's own host) and the 2026-11-05 decision that every form opens in a popup.
+Date: 2026-11-16. Status: accepted; committed `4fff4ae` + `fe495b7` on `feat/partner-admin-panel`, pushed (PR #3). Live since 16 November 2026: release `2026.11.16-a3f1485` (`catalog.0014` applied), then `2026.11.16-fe495b7` (the field-naming fix, frontend only). Replaces the four-step Add Product wizard of ADR-051. Builds on ADR-056 (one catalog, price and commercial engine), ADR-058 (GST from the tax engine), ADR-065 (the Digital Store's own host) and the 2026-11-05 decision that every form opens in a popup.
 
 ## Context
 

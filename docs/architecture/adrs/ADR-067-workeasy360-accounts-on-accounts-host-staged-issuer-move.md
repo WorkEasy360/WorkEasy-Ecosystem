@@ -1,6 +1,6 @@
 # ADR-067: WorkEasy360 Accounts - the central sign-in moves to accounts.workeasy360.com, its issuer moves in stages, and auth.workeasy360.com stays reachable while products move
 
-Date: 2026-11-16. Status: accepted; built on `feat/partner-admin-panel`, not yet committed or deployed. Amends ADR-043 (the central sign-in's host and the issuer rule) and ADR-044 (where the OIDC browser endpoints live). Keeps ADR-059 unchanged: the Admin, Partner, customer and Store portals still sign their people in on their own hosts.
+Date: 2026-11-16. Status: accepted; committed `71e9afa` (+ `61d4130`) on `feat/partner-admin-panel`, pushed (PR #3). The code went live on 16 November 2026 as release `2026.11.16-a3f1485`, then `2026.11.16-fe495b7`, at **stage off**: nothing changed for anyone, because `accounts.workeasy360.com` has no DNS record yet. The move starts with `make_env.py accounts --stage a` once the owner adds the record. Amends ADR-043 (the central sign-in's host and the issuer rule) and ADR-044 (where the OIDC browser endpoints live). Keeps ADR-059 unchanged: the Admin, Partner, customer and Store portals still sign their people in on their own hosts.
 
 ## Context
 
