@@ -283,3 +283,48 @@ def update_lifecycle_view(
     updates.require_update_of(product_id, update_id)
     row = service(ctx, update_id=update_id)
     return JsonResponse({"id": str(row.id), "status": row.status})
+
+
+# --- the Super Admin's product categories (2026-11-16) ----------------------
+
+
+@staff_view(["GET", "POST"])
+def categories_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """The category list with each one's product count (GET), or add one (POST)."""
+    from workeasy360.commercial.catalog import categories
+
+    if request.method == "POST":
+        row = categories.create_category(ctx, name=_body(request).get("name"))
+        return JsonResponse(row, status=201)
+    return JsonResponse(categories.list_categories(ctx))
+
+
+@staff_view(["PATCH", "DELETE"])
+def category_view(
+    request: HttpRequest, ctx: TenantContext, category_id: UUID
+) -> JsonResponse:
+    """Rename a category and its products (PATCH), or delete it (DELETE),
+    moving its products to ``?move_to=<another category's id>``."""
+    from workeasy360.commercial.catalog import categories
+
+    if request.method == "DELETE":
+        return JsonResponse(
+            categories.delete_category(
+                ctx, category_id=category_id, move_to=request.GET.get("move_to")
+            )
+        )
+    return JsonResponse(
+        categories.rename_category(
+            ctx, category_id=category_id, name=_body(request).get("name")
+        )
+    )
+
+
+@staff_view(["POST"])
+def categories_order_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """Put the list in the order given (every category's id, once)."""
+    from workeasy360.commercial.catalog import categories
+
+    return JsonResponse(
+        categories.reorder_categories(ctx, order=_body(request).get("order"))
+    )

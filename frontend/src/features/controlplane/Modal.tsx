@@ -9,6 +9,11 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), selec
 
 const noSubscription = () => () => {};
 
+/** The open popups, oldest first (2026-11-16): a popup opened from another
+ * (Manage categories over the Product Publisher) is the only one Escape and
+ * Tab act on, so Escape closes just the top one. */
+const openDialogs: object[] = [];
+
 /** sm: a short form in one column; md: a form in two columns; lg: content or a
  * long form; xl (2026-11-16): a whole page in a popup - a sheet with its title
  * fixed at the top, its own scrolling body and its actions fixed at the bottom
@@ -54,7 +59,10 @@ export function Modal({
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     box.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
+    const token = {};
+    openDialogs.push(token);
     const onKey = (e: KeyboardEvent) => {
+      if (openDialogs[openDialogs.length - 1] !== token) return;
       if (e.key === "Escape") {
         e.preventDefault();
         close.current();
@@ -76,6 +84,7 @@ export function Modal({
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
+      openDialogs.splice(openDialogs.indexOf(token), 1);
       document.body.style.overflow = overflow;
       before?.focus();
     };

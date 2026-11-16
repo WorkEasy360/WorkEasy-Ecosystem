@@ -89,3 +89,21 @@ Brief: "WorkEasy360 - Complete Product Creation & Digital Store Redesign" (owner
 - **Feature entitlements, included usage, renewal and change rules, and partner terms** stay in Products & Pricing > Plans. The publisher links there and does not duplicate them. A brand-new product has no feature rows, because no UI creates Feature rows (unchanged).
 - **The Store page's trust row** names platform facts only (one WorkEasy360 account, subscriptions in My Account, server-verified checkout). There are no ratings or reviews because none exist.
 - **Live plans:** production has eight sample plans, named "Sample plan" with codes `<product>_sample_<tier>`, added on 2026-11-12. They show in the publisher like any other plan. Retire them in Plans before setting real prices.
+
+## 6. Customisable categories (2026-11-16, follow-up)
+
+The owner asked: "also make category customisable". See ADR-068, Addendum.
+
+- **Product category** in the Publisher and the Listing tab offers the Super Admin's own list, plus **+ New category…** to type a new one.
+- **Manage categories** (under the field, and the **Categories** button on the Products page) is a popup to:
+  - add a category;
+  - rename one (its products follow);
+  - move one up or down;
+  - delete one (a category in use first moves its products to another).
+- The list starts with the old nine defaults, then every category already in use (`catalog.0015`).
+
+| Run | Result |
+|---|---|
+| New `backend/tests/product_categories` | 12 / 12. Covered: add, and every category field offers it; case-insensitive duplicates, empty, blank and over-long names refused; the 60-category limit; rename carries the products (case-only rename allowed, clash refused); a delete in use needs a destination and a refused delete changes nothing; reorder needs every id once; unlisted in-use categories are still offered; the view grant to read, the manage grant to change, customers refused; the migration's seed (idempotent) |
+| Frontend `categories.test.tsx` | 9 / 9. Covered: + New category adds and selects, and Enter never submits the form; an existing name is chosen without a second request; the server's refusal is shown; read-only without the grant; a rename in Manage categories updates the open form; Escape closes only the top popup; add, reorder and delete with a destination; axe; Products > Categories reloads the filter |
+| Frontend vitest, full | 1,736 / 1,736 |

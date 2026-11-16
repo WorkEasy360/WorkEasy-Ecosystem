@@ -721,20 +721,6 @@ def validate_marketing_url(raw: Any) -> str:
 
 # --- ADR-051: the Product Manager -----------------------------------------------
 
-#: The categories the Product Manager offers. Configuration, not logic: a
-#: category is display text that nothing branches on, and a product may keep
-#: any other plain-text category it already has (``validate_category``).
-PRODUCT_CATEGORIES: Final[tuple[str, ...]] = (
-    "Sales",
-    "Finance",
-    "Project Management",
-    "Customer Support",
-    "Marketing",
-    "Communication",
-    "AI",
-    "HR",
-    "Other",
-)
 MAX_STORE_TITLE: Final = 128
 MAX_STORE_SUMMARY: Final = 200
 

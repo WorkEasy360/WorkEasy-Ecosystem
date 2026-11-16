@@ -427,10 +427,10 @@ def bootstrap(ctx: TenantContext) -> dict[str, Any]:
     """What an empty Add Product page needs: categories, the price books a plan
     can be priced in, the billing periods, and what this person may do."""
     authz.require(ctx, CATALOG_VIEW)
-    from workeasy360.commercial.catalog.domain import PRODUCT_CATEGORIES
+    from workeasy360.commercial.catalog import categories
 
     return {
-        "categories": list(PRODUCT_CATEGORIES),
+        "categories": categories.options(),
         "books": _books(),
         "intervals": list(INTERVALS),
         "max_plans": MAX_PLANS,

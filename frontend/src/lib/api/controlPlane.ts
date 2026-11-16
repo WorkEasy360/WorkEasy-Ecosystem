@@ -491,6 +491,22 @@ export interface ConsoleProduct {
   integration: ConsoleIntegration | null;
 }
 
+/** 2026-11-16: one category on the Super Admin's own list. */
+export interface ProductCategoryRow {
+  id: string;
+  name: string;
+  /** How many products are in it (archived ones included). */
+  products: number;
+}
+
+/** The category list, with any category a product carries that is not on it. */
+export interface ProductCategoryList {
+  categories: ProductCategoryRow[];
+  unlisted: { name: string; products: number }[];
+  max_categories: number;
+  can_manage: boolean;
+}
+
 export interface ProductsConsole {
   products: ConsoleProduct[];
   can_see_integrations: boolean;
@@ -764,6 +780,17 @@ export const adminApi = {
   createManagedProduct: (body: NewProduct) =>
     apiFetch<ManagedProduct>(`${admin}/products`, { method: "POST", body: json(body) }),
   managedProduct: (id: string) => apiFetch<ManagedProduct>(`${admin}/products/${id}`),
+  /** 2026-11-16: the Super Admin's product categories - add, rename, order, delete. */
+  productCategories: () => apiFetch<ProductCategoryList>(`${admin}/products/categories`),
+  createProductCategory: (name: string) =>
+    apiFetch<ProductCategoryRow>(`${admin}/products/categories`, { method: "POST", body: json({ name }) }),
+  renameProductCategory: (id: string, name: string) =>
+    apiFetch<ProductCategoryRow>(`${admin}/products/categories/${id}`, { method: "PATCH", body: json({ name }) }),
+  /** Products in it move to `moveTo` (another category's id); without one, a category in use is refused. */
+  deleteProductCategory: (id: string, moveTo?: string) =>
+    apiFetch<ProductCategoryList>(`${admin}/products/categories/${id}`, { method: "DELETE", query: { move_to: moveTo } }),
+  reorderProductCategories: (order: string[]) =>
+    apiFetch<ProductCategoryList>(`${admin}/products/categories/order`, { method: "POST", body: json({ order }) }),
   /** ADR-068: the one-page Product Publisher - product, listing and plans saved together. */
   publisherBootstrap: () => apiFetch<PublisherBootstrap>(`${admin}/products/publisher`),
   publisherState: (id: string) => apiFetch<PublisherState>(`${admin}/products/${id}/publisher`),

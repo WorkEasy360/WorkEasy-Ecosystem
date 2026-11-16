@@ -104,11 +104,14 @@ def created(staff, book, **product):
 
 
 def test_bootstrap_lists_the_direct_books_and_what_this_person_may_do(staff, book):
+    # The category field offers the Super Admin's own list (tests/product_categories).
+    added = call(staff, "post", f"{API}/categories", {"name": "Field Service"})
+    assert added.status_code == 201, added.content
     boot = staff.get(f"{API}/publisher").json()
     assert book in [b["id"] for b in boot["books"]]
     assert boot["intervals"] == ["monthly", "quarterly", "semi_annual", "annual"]
     assert boot["can_manage"] == {"catalog": True, "pricing": True, "integration": True}
-    assert "Customer Support" in boot["categories"]
+    assert "Field Service" in boot["categories"]
 
 
 def test_one_request_saves_the_product_and_its_plans_as_the_plans_sections_records(

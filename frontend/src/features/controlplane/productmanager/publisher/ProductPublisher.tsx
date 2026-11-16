@@ -6,6 +6,7 @@ import { ApiError } from "@/lib/api/client";
 import { DescriptionField } from "@/features/controlplane/widgets";
 import { Modal, useClosing } from "@/features/controlplane/Modal";
 import { describeError } from "@/features/controlplane/ui";
+import { CategoryField } from "../CategoryField";
 import { ImagePicker } from "../ImagePicker";
 import { VideoPicker } from "../VideoPicker";
 import { looksLikeVideo } from "../model";
@@ -508,21 +509,17 @@ function BasicSection({
           />
         </Field>
         <Field label="Product category" htmlFor={f("category")} error={problems.category}>
-          <select
+          {/* 2026-11-16: the Super Admin's own list - choose one, add one, or manage them. */}
+          <CategoryField
             id={f("category")}
-            className="w360-input"
             value={draft.category}
+            options={boot.categories}
+            canManage={boot.can_manage.catalog}
             disabled={busy}
-            aria-invalid={problems.category ? true : undefined}
-            onChange={(e) => edit({ category: e.target.value })}
-          >
-            <option value="">Choose a category</option>
-            {[...new Set([...boot.categories, ...(draft.category ? [draft.category] : [])])].map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
+            invalid={Boolean(problems.category)}
+            describedBy={problems.category ? `${f("category")}-error` : undefined}
+            onChange={(category) => edit({ category })}
+          />
         </Field>
         <Field label="Short description" htmlFor={f("tagline")} required wide error={problems.tagline} hint={`${draft.tagline.length}/${LIMITS.tagline} - shown on Store cards and at the top of the product page.`}>
           <input

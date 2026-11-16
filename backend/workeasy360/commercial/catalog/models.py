@@ -27,6 +27,7 @@ import uuid
 from typing import Any
 
 from django.db import models
+from django.db.models.functions import Lower
 
 from workeasy360.contracts.enums import (
     BundleKind,
@@ -211,6 +212,35 @@ class Product(models.Model):
         from workeasy360.commercial.catalog.domain import public_availability
 
         return public_availability(self.status_enum, ProductListing(self.listing))
+
+
+class ProductCategory(models.Model):
+    """One category the Super Admin offers products in (2026-11-16): the list
+    behind the Product category field, which staff add to, rename, reorder and
+    delete (``catalog.categories``).
+
+    Presentation only, like ``Product.category`` itself: nothing branches on a
+    category. A product still carries its category as text, so the Store, its
+    filters and every existing reader are unchanged; renaming a category here
+    renames it on its products in the same transaction.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=64)
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "catalog_product_category"
+        ordering = ["sort_order", "name"]
+        constraints = [
+            # "Sales" and "sales" are one category.
+            models.UniqueConstraint(Lower("name"), name="uq_product_category_name"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return self.name
 
 
 class ProductTrialConfig(models.Model):

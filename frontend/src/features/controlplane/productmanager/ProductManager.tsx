@@ -27,6 +27,7 @@ import {
   type Tone,
 } from "../kit";
 import { STATUS_LABEL, VISIBILITY_LABEL, trialLabel, visibilityOf, type ManagerStatus, type Visibility } from "./model";
+import { CategoryManager } from "./CategoryManager";
 import { ProductMark } from "./ProductMark";
 import { StorePreview, type ListingPreview } from "./StorePreview";
 import { ProductPublisher } from "./publisher/ProductPublisher";
@@ -120,6 +121,9 @@ export function ProductManager({ openNew = false }: { openNew?: boolean } = {}) 
   const [visibility, setVisibility] = useState<VisibilityFilter>("all");
   const [category, setCategory] = useState("all");
   const [preview, setPreview] = useState<ConsoleProduct | null>(null);
+  // 2026-11-16: the category list, managed in a popup; the page reloads after.
+  const [managingCategories, setManagingCategories] = useState(false);
+  const [categoriesChanged, setCategoriesChanged] = useState(false);
 
   const columns: Column<ConsoleProduct>[] = [
     {
@@ -215,6 +219,11 @@ export function ProductManager({ openNew = false }: { openNew?: boolean } = {}) 
             </Button>
           ) : undefined
         }
+        actions={
+          <Button icon="tag" onClick={() => setManagingCategories(true)}>
+            Categories
+          </Button>
+        }
       />
       {feedback}
       <LoadGate load={load} what="products">
@@ -229,6 +238,19 @@ export function ProductManager({ openNew = false }: { openNew?: boolean } = {}) 
           onClose={() => {
             setPublishing(null);
             if (openNew) router.replace("/admin/products");
+          }}
+        />
+      )}
+      {managingCategories && (
+        <CategoryManager
+          onChanged={() => setCategoriesChanged(true)}
+          onClose={() => {
+            setManagingCategories(false);
+            if (categoriesChanged) {
+              setCategoriesChanged(false);
+              setCategory("all");
+              reload();
+            }
           }}
         />
       )}

@@ -65,3 +65,24 @@ The audit (`docs/product-publisher/status.md`, section 1) found:
 - **One-time prices are not offered.** The checkout sells subscriptions only and refuses a one-time price (`payments.orders`). Offering it would publish a price nobody can buy.
 - A plan's highlights are stored as its description, a bullet list, and shown on its Store card.
 - Rollback: the previous release ignores the two new columns (they have database defaults). Its enum does not know `video_poster`, and its media lists include every kind except video, so **delete those rows first**: `DELETE FROM catalog_product_media WHERE kind = 'video_poster'`. Their files stay in storage. Then switch the release. No database restore is needed.
+
+## Addendum (2026-11-16): customisable product categories
+
+The owner asked: "also make category customisable". Until now the Product category field offered a fixed list in code (`domain.PRODUCT_CATEGORIES`) plus any category a product already carried.
+
+- **One list, kept by staff.** A new table, `catalog.ProductCategory` (migration `catalog.0015`), holds the categories offered, in order. One name per category, whatever its case, at most 64 characters, at most 60 categories. The migration seeds it from the old fixed list, then every category a product already carries, so nothing disappears from the field.
+- **A product still carries its category as text** (`Product.category`). The Store, its filters and every existing reader are unchanged.
+  - **Renaming** a category renames it on every product in it, in the same transaction, and refreshes the public catalog.
+  - **Deleting** one that products use needs another category to move them to. Without one, the delete is refused and nothing changes.
+  - A category a product carries that is not on the list (set before the list existed) is still offered, so editing that product never loses it.
+- **Services** in `catalog/categories.py`: list, create, rename, delete, reorder. Each change needs `commercial.catalog.manage` held through a staff grant, and is audited as `commercial.product_category.*`. Reading needs `platform.staff_catalog.view`.
+- **Routes:**
+  - `GET|POST admin/products/categories`
+  - `PATCH|DELETE admin/products/categories/<id>` (DELETE takes `?move_to=<id>`)
+  - `POST admin/products/categories/order`
+- **The UI:**
+  - `CategoryField`, in the Publisher and in the Listing tab, offers the list and **+ New category…** (type a name; Enter adds it and never submits the form around it).
+  - **Manage categories** opens `CategoryManager`, a popup to add, rename, move up or down, and delete with a destination.
+  - The Products page has a **Categories** button that opens the same popup and reloads the page's filter after a change.
+  - `Modal` now keeps a stack, so a popup opened from another one is the only one Escape and Tab act on.
+- **Rollback:** the previous release never reads the table, so switching back needs nothing else. The table can stay.
