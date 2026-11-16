@@ -60,8 +60,16 @@ def resolve(host: str) -> tuple[bool, str]:
     return True, ", ".join(addresses)
 
 
+def _context() -> ssl.SSLContext:
+    """Full verification and the hostname check (the defaults), and nothing
+    older than TLS 1.2 - a host that only speaks TLS 1.0/1.1 fails the check."""
+    context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
 def tls(host: str) -> tuple[bool, str]:
-    context = ssl.create_default_context()  # verification and hostname check on
+    context = _context()  # verification and hostname check on
     try:
         with socket.create_connection((host, 443), timeout=TIMEOUT) as raw:
             with context.wrap_socket(raw, server_hostname=host) as conn:
@@ -87,7 +95,7 @@ def request(scheme: str, host: str, path: str = "/") -> tuple[int, dict[str, str
     connection_class = (
         http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
     )
-    kwargs = {"context": ssl.create_default_context()} if scheme == "https" else {}
+    kwargs = {"context": _context()} if scheme == "https" else {}
     conn = connection_class(host, timeout=TIMEOUT, **kwargs)
     try:
         conn.request("GET", path, headers={"User-Agent": "workeasy360-portal-check/1"})

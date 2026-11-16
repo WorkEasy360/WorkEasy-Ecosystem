@@ -161,8 +161,9 @@ def test_a_new_deployment_is_rendered_with_accounts(tmp_path):
     values = _read(tmp_path / "env" / "production.env")
     assert values["W360_AUTH_ORIGIN"] == ACCOUNTS
     assert values["W360_OIDC_ISSUER"] == ACCOUNTS
-    assert "accounts.workeasy360.com" in values["W360_ALLOWED_HOSTS"].split(",")
-    assert "auth.workeasy360.com" not in values["W360_ALLOWED_HOSTS"]
+    hosts = set(values["W360_ALLOWED_HOSTS"].split(","))
+    assert "accounts.workeasy360.com" in hosts
+    assert "auth.workeasy360.com" not in hosts
     assert ACCOUNTS in values["W360_CSRF_TRUSTED_ORIGINS"].split(",")
 
 

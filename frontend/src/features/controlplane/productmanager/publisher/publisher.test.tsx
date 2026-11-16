@@ -189,7 +189,7 @@ describe("Product Publisher", () => {
     const dialog = await screen.findByRole("dialog", { name: "Add Product" });
     expect(within(dialog).getByText("Create your product, configure pricing, and publish it to the Digital Store.")).toBeInTheDocument();
     for (const name of ["Basic information", "Product details & media", "Plans & pricing", "Advanced settings"]) {
-      expect(within(dialog).getByRole("heading", { name: new RegExp(name.replace("&", "&")) })).toBeInTheDocument();
+      expect(within(dialog).getByRole("heading", { name: (accessible) => accessible.includes(name) })).toBeInTheDocument();
     }
     for (const action of ["Cancel", "Save Draft", "Preview", "Publish to Store"]) {
       expect(within(dialog).getByRole("button", { name: action })).toBeInTheDocument();
