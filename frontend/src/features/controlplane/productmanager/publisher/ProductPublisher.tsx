@@ -20,6 +20,8 @@ import {
   emptySlot,
   fieldKey,
   fromState,
+  hiddenParts,
+  problemLabels,
   toRequest,
   type ImageSlot,
   type Problems,
@@ -65,6 +67,8 @@ export function ProductPublisher({
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof adminApi.storePreview>> | null>(null);
   const [dirty, setDirty] = useState(false);
+  // The two closed parts of the page, opened when a problem is inside them.
+  const [open, setOpen] = useState({ advanced: false, details: false });
   const [confirmLeave, setConfirmLeave] = useState(false);
   const body = useRef<HTMLDivElement | null>(null);
   const inFlight = useRef(false);
@@ -121,15 +125,32 @@ export function ProductPublisher({
     else box.scrollTop = Math.max(0, top);
   }
 
+  /** Show every problem: open the closed part it is in, then scroll to and
+   * focus the first one that can be seen. */
   function focusFirstProblem(found: Problems) {
-    const first = Object.keys(found)[0];
-    if (!first) return;
-    window.requestAnimationFrame(() => {
-      const target = body.current?.querySelector<HTMLElement>('[aria-invalid="true"], [role="alert"]');
-      if (!target) return;
-      scrollBodyTo(target, 120);
-      target.focus({ preventScroll: true });
-    });
+    if (Object.keys(found).length === 0) return;
+    const parts = hiddenParts(found);
+    if (parts.advanced || parts.details) setOpen((o) => ({ advanced: o.advanced || parts.advanced, details: o.details || parts.details }));
+    if (parts.planIndexes.length) {
+      setDraft((d) => (d ? { ...d, plans: d.plans.map((p, i) => (parts.planIndexes.includes(i) ? { ...p, advancedOpen: true } : p)) } : d));
+    }
+    // After the parts above have opened (next frames).
+    window.setTimeout(() => {
+      const visible = [...(body.current?.querySelectorAll<HTMLElement>('[aria-invalid="true"], [role="alert"]') ?? [])].find(
+        (el) => el.getClientRects().length > 0,
+      );
+      if (!visible) return;
+      scrollBodyTo(visible, 120);
+      visible.focus({ preventScroll: true });
+    }, 60);
+  }
+
+  function problemMessage(found: Problems, action: Action, plans: PublisherDraft["plans"]): string {
+    const labels = problemLabels(found, plans);
+    const verb = action === "publish" ? "publish" : "save";
+    if (labels.length === 0) return `Fix the highlighted fields to ${verb}.`;
+    const shown = labels.slice(0, 4).join(", ") + (labels.length > 4 ? ` and ${labels.length - 4} more` : "");
+    return `To ${verb}, fix: ${shown}.`;
   }
 
   function jump(event: React.MouseEvent<HTMLAnchorElement>, id: string) {
@@ -161,7 +182,7 @@ export function ProductPublisher({
     setProblems(found);
     setMessage(null);
     if (Object.keys(found).length > 0) {
-      setMessage({ kind: "error", text: action === "publish" ? "Fix the highlighted fields to publish." : "Fix the highlighted fields to save." });
+      setMessage({ kind: "error", text: problemMessage(found, action, draft.plans) });
       focusFirstProblem(found);
       return;
     }
@@ -258,9 +279,15 @@ export function ProductPublisher({
         setProblems(next);
         focusFirstProblem(next);
       }
+      const where = field ? problemLabels({ [field]: text }, draft.plans)[0] : null;
       setMessage({
         kind: "error",
-        text: pid && pid !== draft.productId ? `The product was saved as a draft, but a later step failed: ${text}` : text,
+        text:
+          pid && pid !== draft.productId
+            ? `The product was saved as a draft, but a later step failed: ${text}`
+            : where
+              ? `${where}: ${text}`
+              : text,
       });
       if (pid) {
         // Keep the page in step with what the server now holds.
@@ -325,7 +352,15 @@ export function ProductPublisher({
                 </p>
               )}
               <BasicSection draft={draft} boot={boot} problems={problems} busy={busy !== null} edit={edit} productId={productId} />
-              <DetailsSection draft={draft} problems={problems} busy={busy !== null} edit={edit} productId={productId} />
+              <DetailsSection
+                draft={draft}
+                problems={problems}
+                busy={busy !== null}
+                edit={edit}
+                productId={productId}
+                open={open.details}
+                onOpen={(details) => setOpen((o) => ({ ...o, details }))}
+              />
               <section id="publisher-plans" className={styles.section} aria-labelledby="publisher-plans-title">
                 <h3 id="publisher-plans-title" className={styles.sectionTitle} tabIndex={-1}>
                   <span className={styles.sectionNumber}>3</span> Plans &amp; pricing
@@ -345,7 +380,14 @@ export function ProductPublisher({
                   onChange={(plans) => edit({ plans })}
                 />
               </section>
-              <AdvancedSection draft={draft} problems={problems} busy={busy !== null} edit={edit} />
+              <AdvancedSection
+                draft={draft}
+                problems={problems}
+                busy={busy !== null}
+                edit={edit}
+                open={open.advanced}
+                onOpen={(advanced) => setOpen((o) => ({ ...o, advanced }))}
+              />
             </>
           )}
         </div>
@@ -445,7 +487,13 @@ function BasicSection({
         <span className={styles.sectionNumber}>1</span> Basic information
       </h3>
       <div className={styles.grid}>
-        <Field label="Product name" htmlFor={f("name")} required error={problems.name} hint={slug ? `Store address: /store/product/${slug}` : undefined}>
+        <Field
+          label="Product name"
+          htmlFor={f("name")}
+          required
+          error={problems.name ?? (problems.slug && !draft.slugTouched ? `${problems.slug.replace(/ Change it in Advanced settings\.$/, "")} Change the name, or the store address under Advanced settings.` : undefined)}
+          hint={slug ? `Store address: /store/product/${slug}` : undefined}
+        >
           <input
             id={f("name")}
             className="w360-input"
@@ -454,8 +502,8 @@ function BasicSection({
             required
             placeholder="e.g. Acme Desk"
             disabled={busy}
-            aria-invalid={problems.name ? true : undefined}
-            aria-describedby={described(f("name"), Boolean(slug), problems.name)}
+            aria-invalid={problems.name || (problems.slug && !draft.slugTouched) ? true : undefined}
+            aria-describedby={described(f("name"), Boolean(slug), problems.name ?? problems.slug)}
             onChange={(e) => edit({ name: e.target.value })}
           />
         </Field>
@@ -529,12 +577,16 @@ function DetailsSection({
   busy,
   edit,
   productId,
+  open,
+  onOpen,
 }: {
   draft: PublisherDraft;
   problems: Problems;
   busy: boolean;
   edit: (patch: Partial<PublisherDraft>) => void;
   productId: string | null;
+  open: boolean;
+  onOpen: (open: boolean) => void;
 }) {
   const id = useId();
   const f = (name: string) => `${id}-${name}`;
@@ -659,7 +711,7 @@ function DetailsSection({
         </button>
       </fieldset>
 
-      <details className={styles.advanced}>
+      <details className={styles.advanced} open={open} onToggle={(e) => onOpen((e.currentTarget as HTMLDetailsElement).open)}>
         <summary>Advanced details</summary>
         <div className={styles.grid}>
           <div className={`${styles.field} ${styles.span2}`}>
@@ -697,13 +749,27 @@ function DetailsSection({
   );
 }
 
-function AdvancedSection({ draft, problems, busy, edit }: { draft: PublisherDraft; problems: Problems; busy: boolean; edit: (patch: Partial<PublisherDraft>) => void }) {
+function AdvancedSection({
+  draft,
+  problems,
+  busy,
+  edit,
+  open,
+  onOpen,
+}: {
+  draft: PublisherDraft;
+  problems: Problems;
+  busy: boolean;
+  edit: (patch: Partial<PublisherDraft>) => void;
+  open: boolean;
+  onOpen: (open: boolean) => void;
+}) {
   const id = useId();
   const f = (name: string) => `${id}-${name}`;
   const channel = (key: keyof PublisherDraft["channels"], on: boolean) => edit({ channels: { ...draft.channels, [key]: on } });
   return (
     <section id="publisher-advanced" className={styles.section} aria-labelledby={f("title")}>
-      <details className={`${styles.advanced} ${styles.advancedSection}`}>
+      <details className={`${styles.advanced} ${styles.advancedSection}`} open={open} onToggle={(e) => onOpen((e.currentTarget as HTMLDetailsElement).open)}>
         <summary>
           <h3 id={f("title")} className={styles.sectionTitleInline}>
             Advanced settings

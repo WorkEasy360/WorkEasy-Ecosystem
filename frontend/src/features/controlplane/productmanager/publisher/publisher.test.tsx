@@ -207,7 +207,7 @@ describe("Product Publisher", () => {
     const calls = mockApi({ [`GET ${ADMIN}/products/publisher`]: [ok(BOOT)] });
     renderPublisher();
     fireEvent.click(await screen.findByRole("button", { name: "Publish to Store" }));
-    expect(await screen.findByText("Fix the highlighted fields to publish.")).toBeInTheDocument();
+    expect(await screen.findByText(/^To publish, fix: Product name, Short description, .* and \d+ more\.$/)).toBeInTheDocument();
     expect(screen.getByLabelText(/^Product name/)).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByLabelText(/^Short description/)).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByText("Add the product logo.")).toBeInTheDocument();
@@ -274,6 +274,23 @@ describe("Product Publisher", () => {
     expect(calls.some((c) => c.key.endsWith("/publish"))).toBe(false);
     const put = calls.find((c) => c.key === `PUT ${ADMIN}/products/p1/publisher`)!;
     expect((put.body as { plans: { id: string | null }[] }).plans[0].id).toBe("plan-1");
+  });
+
+  it("a problem in a closed part says which field, opens that part and shows on the product name", async () => {
+    const calls = mockApi({ [`GET ${ADMIN}/products/publisher`]: [ok(BOOT)] });
+    renderPublisher();
+    // "Taken Name" makes the store address taken-name, which another product holds.
+    fireEvent.change(await screen.findByLabelText(/^Product name/), { target: { value: "Taken Name" } });
+    fireEvent.change(within(planCards()[0]).getByLabelText(/^Monthly price/), { target: { value: "499" } });
+    fireEvent.change(within(planCards()[0]).getByLabelText("Seat limit"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
+    expect(await screen.findByText("To save, fix: Store address, Starter seat limit.")).toBeInTheDocument();
+    // The address is the name's: the name says so, and Advanced settings opened.
+    expect(screen.getByLabelText(/^Product name/)).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText(/Change the name, or the store address under Advanced settings\./)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Advanced settings" }).closest("details")).toHaveAttribute("open");
+    expect(within(planCards()[0]).getByText("Advanced plan settings").closest("details")).toHaveAttribute("open");
+    expect(calls.filter((c) => c.key.startsWith("POST"))).toHaveLength(0);
   });
 
   it("a server refusal lands on its field, inside the right plan card", async () => {

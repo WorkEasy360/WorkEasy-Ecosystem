@@ -289,7 +289,10 @@ export function check(draft: PublisherDraft, books: PriceBook[], { publish, take
   if (!name) out.name = "Enter the product name.";
   else if (name.length > LIMITS.name) out.name = `The name is at most ${LIMITS.name} characters.`;
   const slug = effectiveSlug(draft);
-  if (!slug || !SLUG_PATTERN.test(slug)) out.slug = "Use lowercase letters, numbers and single hyphens, starting with a letter.";
+  // An empty name already says what is missing; the address it makes is not a second problem.
+  if (!slug) {
+    if (draft.slugTouched || draft.slugLocked) out.slug = "Enter the store address.";
+  } else if (!SLUG_PATTERN.test(slug)) out.slug = "Use lowercase letters, numbers and single hyphens, starting with a letter.";
   else if (!draft.productId && takenSlugs.has(slug)) out.slug = "Another product already uses this address. Change it in Advanced Settings.";
   if (!draft.tagline.trim()) {
     if (publish) out.tagline = "Enter a short description.";
@@ -533,4 +536,78 @@ export function fromState(state: PublisherState, mediaUrl: (mediaId: string) => 
     trialDays: String(p.channels?.trial?.duration_days ?? 14),
     plans: plans.length ? plans : [blankPlan(books[0]?.id ?? "", "Starter")],
   };
+}
+
+/** The page's name for each field, for the message that says what to fix. */
+const FIELD_LABEL: Record<string, string> = {
+  name: "Product name",
+  slug: "Store address",
+  category: "Product category",
+  tagline: "Short description",
+  applicationUrl: "Application URL",
+  logo: "Product logo",
+  description: "Full description",
+  features: "Key features",
+  videoUrl: "Video link",
+  videoTitle: "Video title",
+  videoDescription: "Video description",
+  marketingUrl: "Learn more URL",
+  documentationUrl: "Documentation URL",
+  supportUrl: "Support URL",
+  storeTitle: "Store title",
+  storeSummary: "Store summary",
+  launchUrl: "Launch URL",
+  redirectUri: "Sign-in callback URL",
+  healthUrl: "Health check URL",
+  trialDays: "Trial length",
+  plans: "Plans",
+};
+const PLAN_FIELD_LABEL: Record<string, string> = {
+  name: "name",
+  caption: "short description",
+  highlights: "highlights",
+  bookId: "currency",
+  prices: "billing periods",
+  seats: "included seats",
+  maxSeats: "seat limit",
+  trialDays: "trial days",
+  setupFee: "set-up fee",
+  discount: "discount",
+};
+
+/** "Product name, Plan 2 price" - what the problems are, in page order. */
+export function problemLabels(problems: Problems, plans: PlanDraft[]): string[] {
+  const out: string[] = [];
+  for (const key of Object.keys(problems)) {
+    const plan = /^plans\.(\d+)\.([a-zA-Z]+)/.exec(key);
+    let label: string;
+    if (plan) {
+      const n = Number(plan[1]);
+      const what = plan[2] === "prices" && key.split(".").length > 3 ? "price" : (PLAN_FIELD_LABEL[plan[2]] ?? plan[2]);
+      label = `${plans[n]?.name.trim() || `Plan ${n + 1}`} ${what}`;
+    } else {
+      label = FIELD_LABEL[key.split(".")[0]] ?? key;
+    }
+    if (!out.includes(label)) out.push(label);
+  }
+  return out;
+}
+
+/** The fields kept under Advanced settings and Advanced details (closed until
+ * opened), and each plan's Advanced plan settings: a problem there opens them. */
+const ADVANCED_KEYS = new Set(["slug", "launchUrl", "redirectUri", "healthUrl", "trialDays"]);
+const DETAIL_KEYS = new Set(["marketingUrl", "documentationUrl", "supportUrl", "storeTitle", "storeSummary"]);
+const PLAN_ADVANCED_FIELDS = new Set(["seats", "maxSeats", "trialDays", "setupFee", "discount"]);
+
+export function hiddenParts(problems: Problems): { advanced: boolean; details: boolean; planIndexes: number[] } {
+  const keys = Object.keys(problems);
+  const planIndexes = [
+    ...new Set(
+      keys.flatMap((key) => {
+        const plan = /^plans\.(\d+)\.([a-zA-Z]+)/.exec(key);
+        return plan && PLAN_ADVANCED_FIELDS.has(plan[2]) ? [Number(plan[1])] : [];
+      }),
+    ),
+  ];
+  return { advanced: keys.some((k) => ADVANCED_KEYS.has(k)), details: keys.some((k) => DETAIL_KEYS.has(k)), planIndexes };
 }
