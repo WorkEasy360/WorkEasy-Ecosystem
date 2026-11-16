@@ -20,10 +20,14 @@ from tests.accounts_portal.conftest import (
     API,
     AUTH,
     Browser,
+    challenge_of,
     host,
     sign_in_to_product,
 )
 from tests.factories.reference_product_client import IntegrationError
+
+#: An S256 code challenge (RFC 7636), computed - its value is irrelevant here.
+CHALLENGE = challenge_of("v" * 43)
 
 pytestmark = pytest.mark.django_db
 
@@ -256,7 +260,7 @@ def test_stage_b_an_unregistered_redirect_uri_is_rendered_never_followed(
             "scope": "openid",
             "state": "s",
             "nonce": "n",
-            "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            "code_challenge": CHALLENGE,
             "code_challenge_method": "S256",
         }
     )

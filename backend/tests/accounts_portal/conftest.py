@@ -212,3 +212,12 @@ def sign_in_to_product(rp, browser: Browser, organization_id: str) -> dict[str, 
         "start": start,
         "trail": list(browser.trail),
     }
+
+
+def challenge_of(verifier: str) -> str:
+    """RFC 7636 S256: BASE64URL(SHA256(verifier)), unpadded."""
+    import base64
+    import hashlib
+
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")

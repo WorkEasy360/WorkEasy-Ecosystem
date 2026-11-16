@@ -13,7 +13,10 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from django.test import Client
 
-from tests.accounts_portal.conftest import ACCOUNTS, AUTH, host
+from tests.accounts_portal.conftest import ACCOUNTS, AUTH, challenge_of, host
+
+#: An S256 code challenge (RFC 7636), computed - its value is irrelevant here.
+CHALLENGE = challenge_of("v" * 43)
 
 pytestmark = pytest.mark.django_db
 
@@ -139,7 +142,7 @@ def test_a_session_on_the_previous_name_is_never_used(
             "scope": "openid",
             "state": "s",
             "nonce": "n",
-            "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            "code_challenge": CHALLENGE,
             "code_challenge_method": "S256",
         },
         HTTP_HOST=LEGACY,
@@ -239,7 +242,7 @@ def test_a_signed_out_product_sign_in_parks_on_accounts(
             "scope": "openid",
             "state": "s",
             "nonce": "n",
-            "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            "code_challenge": CHALLENGE,
             "code_challenge_method": "S256",
             "organization": org["organization_id"],
         },
