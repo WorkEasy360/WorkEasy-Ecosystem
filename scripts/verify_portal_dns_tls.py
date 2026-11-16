@@ -1,8 +1,11 @@
 """Check the five portal hosts as the internet sees them (ADR-043, brief Part 10).
 
     python scripts/verify_portal_dns_tls.py [--json report.json] [--domain workeasy360.com]
+                                            [--previous-name auth | --previous-name ""]
 
-For each of admin., partner., app., auth. and api.<domain>:
+For each of admin., partner., app., accounts. and api.<domain> - and, while
+products move to WorkEasy360 Accounts (ADR-067), the central sign-in's previous
+name auth.<domain> (``--previous-name ""`` once it is retired):
 
 - DNS: the name resolves (A or AAAA), and to what;
 - TLS: an https connection with **full certificate verification** (the
@@ -31,13 +34,17 @@ import ssl
 import sys
 from urllib.parse import urlsplit
 
-PORTALS = ("admin", "partner", "app", "auth", "api")
+#: ADR-067: the central sign-in is WorkEasy360 Accounts (accounts.<domain>).
+PORTALS = ("admin", "partner", "app", "accounts", "api")
 #: What each host is expected to answer at its root (after redirects within
-#: the platform): a path prefix the portal serves.
+#: the platform): a path prefix the portal serves. The sign-in's root sends a
+#: visitor to the customer portal's sign-in; its previous name forwards every
+#: browser to accounts., which does the same.
 EXPECT = {
     "admin": ("/admin", "/login", "/auth/"),
     "partner": ("/partner", "/login", "/auth/"),
     "app": ("/",),
+    "accounts": ("/login",),
     "auth": ("/login",),
     "api": ("/",),
 }
@@ -102,10 +109,12 @@ def http_redirect(host: str) -> tuple[bool, str]:
     return False, f"plain http answered {status} {location or '(no Location)'}"
 
 
-def https_answer(host: str, domain: str, portal: str) -> tuple[bool, str, bool, str]:
+def https_answer(
+    host: str, domain: str, portal: str, names: tuple[str, ...] = PORTALS
+) -> tuple[bool, str, bool, str]:
     """(answer ok, detail, hsts ok, hsts detail) - following redirects that
     stay on the platform's own hosts, at most five."""
-    platform_hosts = {f"{p}.{domain}" for p in PORTALS}
+    platform_hosts = {f"{p}.{domain}" for p in names}
     current_host, path = host, "/"
     hsts = ""
     for _ in range(6):
@@ -148,9 +157,10 @@ def https_answer(host: str, domain: str, portal: str) -> tuple[bool, str, bool, 
     return answer_ok, f"{status} at {final}", hsts_ok, hsts or "(none)"
 
 
-def check(domain: str) -> list[dict[str, object]]:
+def check(domain: str, previous_name: str = "auth") -> list[dict[str, object]]:
     rows = []
-    for portal in PORTALS:
+    names = PORTALS + ((previous_name,) if previous_name else ())
+    for portal in names:
         host = f"{portal}.{domain}"
         row: dict[str, object] = {"portal": portal, "host": host}
         ok, detail = resolve(host)
@@ -165,7 +175,7 @@ def check(domain: str) -> list[dict[str, object]]:
         ok, detail = http_redirect(host)
         row["http_redirect"] = {"ok": ok, "detail": detail}
         if row["tls"]["ok"]:  # type: ignore[index]
-            answer_ok, answer, hsts_ok, hsts = https_answer(host, domain, portal)
+            answer_ok, answer, hsts_ok, hsts = https_answer(host, domain, portal, names)
         else:
             answer_ok, answer, hsts_ok, hsts = (
                 False,
@@ -183,9 +193,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--domain", default="workeasy360.com")
     parser.add_argument("--json", help="also write the report here")
+    parser.add_argument(
+        "--previous-name",
+        default="auth",
+        help='the sign-in\'s previous name, checked while kept (ADR-067); "" once retired',
+    )
     args = parser.parse_args()
 
-    rows = check(args.domain)
+    rows = check(args.domain, args.previous_name)
     checks = ("dns", "tls", "http_redirect", "answer", "hsts")
     failed = 0
     for row in rows:

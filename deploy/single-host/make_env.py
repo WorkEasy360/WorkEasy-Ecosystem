@@ -4,6 +4,13 @@
     sudo python3 make_env.py set W360_EMAIL_HOST_PASSWORD --env /opt/workeasy360/env/production.env
     sudo python3 make_env.py enable-store --env /opt/workeasy360/env/production.env
     sudo python3 make_env.py disable-store --env /opt/workeasy360/env/production.env
+    sudo python3 make_env.py accounts --stage a --env /opt/workeasy360/env/production.env
+
+``accounts`` (ADR-067) moves the central sign-in to WorkEasy360 Accounts,
+``accounts.<domain>``, in stages ``a``-``e`` (``off`` is the state before the
+move): its origin, its previous name ``auth.<domain>``, the issuer, the issuer
+honoured during the move, and the host and CSRF lists - all together. Each stage
+is a complete state, so ``--stage`` of an earlier stage is the rollback.
 
 ``enable-store`` (ADR-065) gives the Digital Store its own host,
 ``store.<domain>``: its origin, the edge's site for it, and the host and CSRF
@@ -58,7 +65,8 @@ def render(out: Path, release: str, domain: str, smtp_user: str) -> None:
         if f.exists():
             raise SystemExit(f"{f} exists - refusing to replace live secrets.")
 
-    hosts = {name: f"{name}.{domain}" for name in PORTALS}
+    # ADR-067: the central sign-in's own name is WorkEasy360 Accounts.
+    hosts = {name: f"{'accounts' if name == 'auth' else name}.{domain}" for name in PORTALS}
     app_pw, mig_pw, redis_pw, rabbit_pw = token(24), token(24), token(24), token(24)
     s3_access, s3_secret = "w360" + secrets.token_hex(8), token(32)
     values = {
@@ -233,6 +241,68 @@ def store(env_file: Path, *, on: bool) -> None:
     )
 
 
+#: ADR-067: WorkEasy360 Accounts. Each stage is a complete state, never a step,
+#: so going back is running the earlier stage again. Per stage: which name the
+#: central sign-in serves its pages and session on, whether its previous name
+#: stays reachable, the canonical issuer, and the other issuer honoured on its
+#: own host during the move (deploy/single-host/README.md "Accounts").
+ACCOUNTS_STAGES: dict[str, tuple[str, bool, str, str | None]] = {
+    "off": ("auth", False, "auth", None),  # before the move: as it always was
+    "a": ("accounts", True, "auth", None),  # the new name serves; tokens unchanged
+    "b": ("accounts", True, "auth", "accounts"),  # products may move, one by one
+    "c": ("accounts", True, "accounts", "auth"),  # accounts canonical; old still honoured
+    "d": ("accounts", True, "accounts", None),  # window closed; browsers still forwarded
+    "e": ("accounts", False, "accounts", None),  # previous name retired
+}
+
+
+def accounts(env_file: Path, *, stage: str) -> None:
+    """ADR-067: put the central sign-in's names and issuers in ``stage``, every
+    value at once - the API refuses to start on any mix of two stages."""
+    values = _read(env_file)
+    app = values.get("W360_APP_ORIGIN", "")
+    if not app.startswith("https://app."):
+        raise SystemExit("W360_APP_ORIGIN is not https://app.<domain> - nothing changed.")
+    domain = app.removeprefix("https://app.")
+    origin = {name: f"https://{name}.{domain}" for name in ("auth", "accounts")}
+    current, keep_previous, issuer, transition = ACCOUNTS_STAGES[stage]
+    previous = origin["auth"] if keep_previous else None
+    sign_in_hosts = {o.removeprefix("https://") for o in origin.values()}
+    hosts = [
+        h
+        for h in values.get("W360_ALLOWED_HOSTS", "").split(",")
+        if h and h not in sign_in_hosts
+    ]
+    hosts.append(origin[current].removeprefix("https://"))
+    if previous:
+        hosts.append(previous.removeprefix("https://"))
+    csrf = [
+        o
+        for o in values.get("W360_CSRF_TRUSTED_ORIGINS", "").split(",")
+        if o and o not in origin.values()
+    ]
+    # The previous name never serves a page, so it is never trusted for a write.
+    csrf.append(origin[current])
+    _write_values(
+        env_file,
+        {
+            "W360_AUTH_ORIGIN": origin[current],
+            "W360_AUTH_LEGACY_ORIGIN": previous,
+            "W360_AUTH_LEGACY_EDGE": "on" if previous else None,
+            "W360_OIDC_ISSUER": origin[issuer],
+            "W360_OIDC_TRANSITION_ISSUERS": origin[transition] if transition else None,
+            "W360_ALLOWED_HOSTS": ",".join(hosts),
+            "W360_CSRF_TRUSTED_ORIGINS": ",".join(csrf),
+        },
+    )
+    print(
+        f"Accounts stage {stage} in {env_file}: sign-in on {origin[current]}"
+        f"{', previous name ' + previous + ' kept' if previous else ''}; issuer {origin[issuer]}"
+        f"{', also ' + origin[transition] + ' on its own host' if transition else ''}."
+        " Recreate edge first when a name is new to it, then api, worker-critical and web."
+    )
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -246,11 +316,16 @@ def main() -> None:
     s.add_argument("--env", type=Path, required=True)
     for cmd in ("enable-store", "disable-store"):
         sub.add_parser(cmd).add_argument("--env", type=Path, required=True)
+    acc = sub.add_parser("accounts")
+    acc.add_argument("--env", type=Path, required=True)
+    acc.add_argument("--stage", choices=tuple(ACCOUNTS_STAGES), required=True)
     a = p.parse_args()
     if a.cmd == "render":
         render(a.out.resolve(), a.release, a.domain, a.smtp_user)
     elif a.cmd in ("enable-store", "disable-store"):
         store(a.env.resolve(), on=a.cmd == "enable-store")
+    elif a.cmd == "accounts":
+        accounts(a.env.resolve(), stage=a.stage)
     else:
         set_value(a.env.resolve(), a.name)
 

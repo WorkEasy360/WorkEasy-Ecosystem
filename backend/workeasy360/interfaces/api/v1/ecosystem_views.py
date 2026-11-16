@@ -734,6 +734,13 @@ def token(request: HttpRequest) -> JsonResponse:
         )
 
     metrics.increment("ecosystem_tokens_issued_total")
+    # ADR-067: which issuer answered, per product - what an operator reads
+    # before closing the migration window (no product left on the old name).
+    logger.info(
+        "ecosystem.token.issued",
+        product_code=client.integration.product_code,
+        issuer=tokens.issuer(),
+    )
     response = JsonResponse(payload)
     # RFC 6749 section 5.1: token responses must not be cached anywhere.
     response["Cache-Control"] = "no-store"

@@ -202,6 +202,10 @@ MIDDLEWARE = [
     # API prefix on another portal's host is a 404 (ADR-043). A narrowing
     # only - it never lets anything through that would otherwise be refused.
     "workeasy360.interfaces.api.portal_surface.PortalSurfaceMiddleware",
+    # ADR-067: while products move to WorkEasy360 Accounts, a request is
+    # answered as whichever of the platform's own configured issuers its host
+    # is (a no-op outside that window). After host validation, like the above.
+    "workeasy360.interfaces.api.portal_surface.IssuerMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     # Immediately after: every view downstream must see a revoked session as
@@ -484,6 +488,20 @@ env.check(
     "exists only in multi-portal mode.",
 )
 PORTALS_ENABLED = len(_configured_portals) == len(_REQUIRED_PORTALS)
+# ADR-067: WorkEasy360 Accounts. The central sign-in now lives on
+# W360_AUTH_ORIGIN = https://accounts.workeasy360.com; its previous name,
+# https://auth.workeasy360.com, stays reachable while products move. On that
+# host the server-to-server OIDC endpoints (discovery, key set, token,
+# userinfo, entitlements, events, intelligence) answer exactly as before, and
+# every browser request is sent to the same address on W360_AUTH_ORIGIN - no
+# session is ever read there (interfaces/api/portal_surface.py). Unset: no
+# previous name (before the move, and once it is retired).
+W360_AUTH_LEGACY_ORIGIN = env.str("W360_AUTH_LEGACY_ORIGIN", "").strip().rstrip("/")
+env.check(
+    not W360_AUTH_LEGACY_ORIGIN or PORTALS_ENABLED,
+    "W360_AUTH_LEGACY_ORIGIN needs the five portal origins: the sign-in's previous "
+    "host exists only in multi-portal mode.",
+)
 # Links name their portal through platform/identity/portals.py (auth_url,
 # app_url), read at call time; in single-host mode both are W360_FRONTEND_URL.
 # A hand-off code (auth host -> portal host) lives this long, and is single use.
@@ -759,6 +777,34 @@ ENTITLEMENT_P95_BUDGET_MS = env.float("W360_ENTITLEMENT_P95_BUDGET_MS", 5.0)
 # request Host header, which is client-supplied and therefore never truthful
 # (TB-1).
 OIDC_ISSUER = env.str("W360_OIDC_ISSUER", "http://localhost:8000")
+
+# ADR-067: while products move from the central sign-in's previous name
+# (auth.workeasy360.com) to WorkEasy360 Accounts (accounts.workeasy360.com),
+# the OTHER of those two origins may issue tokens too - on its own host only.
+# A product that discovers the platform at one origin keeps receiving that
+# origin as `iss`, so no product is ever handed an issuer it does not trust,
+# and each one moves by changing its own configuration. Never a pattern and
+# never derived from a request: each entry must be W360_AUTH_ORIGIN or
+# W360_AUTH_LEGACY_ORIGIN (checked below), and the list is empty outside the
+# migration window. platform/ecosystem/tokens.py explains the rule.
+OIDC_TRANSITION_ISSUERS = [
+    issuer.strip().rstrip("/")
+    for issuer in env.list("W360_OIDC_TRANSITION_ISSUERS", [])
+    if issuer.strip()
+]
+_AUTH_HOST_ORIGINS = {
+    o for o in (W360_PORTAL_ORIGINS["auth"], W360_AUTH_LEGACY_ORIGIN) if o
+}
+env.check(
+    all(
+        issuer in _AUTH_HOST_ORIGINS and issuer != OIDC_ISSUER.rstrip("/")
+        for issuer in OIDC_TRANSITION_ISSUERS
+    )
+    and len(set(OIDC_TRANSITION_ISSUERS)) == len(OIDC_TRANSITION_ISSUERS),
+    "Every W360_OIDC_TRANSITION_ISSUERS entry must be W360_AUTH_ORIGIN or "
+    "W360_AUTH_LEGACY_ORIGIN, once, and not W360_OIDC_ISSUER itself: an issuer "
+    "is only ever one of the platform's own two sign-in origins.",
+)
 
 # Token lifetimes. The security/availability trade-off is stated in full in
 # docs/phase-3/09-product-integration-guide.md section 6: signatures are

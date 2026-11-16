@@ -2,6 +2,8 @@
 
 Status: design frozen 2026-10-11, before implementation. Builds on ADR-033 (session registry), ADR-038 (four products and per-product trials), ADR-039 (white-label domains keep sign-in canonical) and ADR-041 (sign-in modes). The decision record is ADR-043.
 
+> **Since then.** ADR-059 (2026-11-06) moved every portal's own sign-in onto its own host and left the central sign-in with the product sign-in only. ADR-067 (2026-11-16) renamed the central sign-in **WorkEasy360 Accounts**, on `accounts.workeasy360.com` (`W360_AUTH_ORIGIN`). `auth.workeasy360.com` is kept as its previous name while products move: there, products are served and browsers are forwarded to `accounts.` (`docs/accounts-portal/status.md`). The table below is the 2026-10-11 design, kept as it was written.
+
 ## 1. What already exists (reused, not rebuilt)
 
 - **One Next.js app and one Django API.** The browser calls `/api/*` on its own origin, and Next rewrites that to Django server-side. Session and CSRF cookies are therefore **host-only** cookies on whatever host the browser is on. There is no credentialed CORS anywhere.

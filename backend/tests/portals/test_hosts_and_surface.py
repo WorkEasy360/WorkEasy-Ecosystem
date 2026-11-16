@@ -153,7 +153,9 @@ def test_no_view_derives_tenant_or_authority_from_the_host():
     """The only code that reads the Host header is the surface narrowing and
     the hand-off redemption's binding check - both of which can only refuse -
     and (ADR-059) the choice of which portal's reset page an emailed link
-    opens, a link target that grants nothing."""
+    opens, a link target that grants nothing. ADR-067 adds no new reader: the
+    choice between the platform's own configured issuers during the move to
+    WorkEasy360 Accounts lives in the surface module too, and grants nothing."""
     import re
     from pathlib import Path
 

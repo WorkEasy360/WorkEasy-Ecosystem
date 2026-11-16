@@ -2,8 +2,17 @@ import { headers } from "next/headers";
 import { BrandedLanding } from "@/features/auth/BrandedLanding";
 import { signInHandoffUrl } from "@/features/auth/handoff";
 import { LoginScreen } from "@/features/auth/LoginScreen";
+import { accountsTitle } from "@/features/signin/AccountsBrand";
 import { StoreSignInScreen } from "@/features/store/StoreAuth";
 import { portalForHost, readPortalOrigins } from "@/lib/portals";
+
+/** ADR-067: on WorkEasy360 Accounts (the central sign-in host) the page is named
+ * for it; every other host keeps the app's default title. */
+export async function generateMetadata() {
+  const origins = readPortalOrigins(process.env);
+  if (!origins || portalForHost((await headers()).get("host") ?? "", origins) !== "auth") return {};
+  return { title: accountsTitle("Sign in") };
+}
 
 /**
  * Where a person signs in - and, on a partner's custom domain, where they are
