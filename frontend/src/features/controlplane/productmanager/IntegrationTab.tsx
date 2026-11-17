@@ -256,7 +256,7 @@ export function IntegrationPanel({
 
 /** Integration tab: the product's application URL (a catalog field) and its
  * registry integration (launch URL, SSO, health, credentials), with its
- * single sign-on readiness, domains and back-channel logout (ADR-067/068). */
+ * single sign-on readiness, domains and back-channel logout (ADR-069/068). */
 export function IntegrationTab({
   product: p,
   canSeeIntegrations,

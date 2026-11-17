@@ -127,7 +127,7 @@ class Command(BaseCommand):
             "--attest-domains",
             action="store_true",
             help=(
-                "ADR-068: vouch, as the operator on the platform host, for every "
+                "ADR-070: vouch, as the operator on the platform host, for every "
                 "hostname of this registration - only for first-party hosts you "
                 "control. Audited. Without it a draft stays a draft until its "
                 "domains are proven (TXT records, Super Admin -> Domains)."
@@ -196,7 +196,7 @@ class Command(BaseCommand):
                     )
                     status = "active"
                 except ProductDomainUnverified as exc:
-                    # ADR-068: never activated on a hostname nobody proved.
+                    # ADR-070: never activated on a hostname nobody proved.
                     unproven = list(exc.context.get("hostnames", []))
                     status = "draft"
             else:

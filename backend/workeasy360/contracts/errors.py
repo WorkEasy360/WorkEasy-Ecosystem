@@ -541,7 +541,7 @@ class ManifestRejected(ProductIntegrationError):
 
 class ProductDomainUnverified(ProductIntegrationError):
     """A registration would send browsers or tokens to a hostname whose
-    control the product's owner has not proven (ADR-068).
+    control the product's owner has not proven (ADR-070).
 
     409, like the rest of this family: the manifest is well-formed; what is
     missing is durable state - a verified domain. ``hostnames`` names every

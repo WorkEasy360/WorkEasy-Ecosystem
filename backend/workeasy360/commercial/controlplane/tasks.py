@@ -1,4 +1,4 @@
-"""Scheduled Super Admin work: re-verifying product domain ownership (ADR-068)."""
+"""Scheduled Super Admin work: re-verifying product domain ownership (ADR-070)."""
 
 from __future__ import annotations
 

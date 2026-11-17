@@ -22,7 +22,7 @@ const ADMIN = "/api/v1/admin";
 const MANAGE = ["platform.staff_catalog.manage", "platform.staff_integration.manage"];
 const DETAIL = `GET ${ADMIN}/products/id-future_product`;
 /** The single sign-on reads the Integration tab makes when it opens a
- * registered integration (ADR-067/068); covered in productmanager/sso-settings.test.tsx. */
+ * registered integration (ADR-069/068); covered in productmanager/sso-settings.test.tsx. */
 const SSO_READS = {
   [`GET ${ADMIN}/products/future_product/integration/readiness`]: [ok({ verdict: "ready", checks: [] })],
   [`GET ${ADMIN}/products/future_product/integration/domains`]: [ok({ domains: [], unverified: [], all_verified: true })],

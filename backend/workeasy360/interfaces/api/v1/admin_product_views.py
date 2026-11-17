@@ -169,7 +169,7 @@ def integration_domains_view(
     request: HttpRequest, ctx: TenantContext, product_code: str
 ) -> JsonResponse:
     """The hostnames a product's registration uses and whether control of
-    each is proven (ADR-068). POST ``{"hostname"}`` asks for a proof to
+    each is proven (ADR-070). POST ``{"hostname"}`` asks for a proof to
     publish - before pointing a live product at a new hostname."""
     if request.method == "POST":
         body = _body(request)

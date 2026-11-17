@@ -1,7 +1,7 @@
 # Migrations `ecosystem.0007` and `ecosystem.0008`: what they do, and how to apply and undo them
 
-- `0007_backchannel_logout` is in PR #4 (ADR-067, back-channel logout).
-- `0008_product_domains` is in the stacked domain-verification PR (ADR-068).
+- `0007_backchannel_logout` is in PR #4 (ADR-069, back-channel logout).
+- `0008_product_domains` is in the stacked domain-verification PR (ADR-070).
 - **Neither is applied in production.** Both were applied and tested only on the isolated development stack and the CI and test databases.
 - Order: `0006_sign_in_ask_once` (live), then `0007`, then `0008`. `0008` depends on `0007`.
 
@@ -19,7 +19,7 @@
   - Nothing is delivered until a product registers a `backchannel_logout_uri`.
 - **Reverse:** `migrate ecosystem 0006` drops both tables and the column.
   - The only data lost is delivery history and sign-in-to-product records, neither of which existed before.
-  - The code of a release without ADR-067 never reads them.
+  - The code of a release without ADR-069 never reads them.
 
 ## `ecosystem.0008_product_domains`
 
@@ -36,7 +36,7 @@
 
 **Data touched:** inserts into the new table only. No existing row of any table is updated.
 
-**Reverse:** `migrate ecosystem 0007` drops the table, and the carry-over goes with it. The code of a release without ADR-068 never reads it.
+**Reverse:** `migrate ecosystem 0007` drops the table, and the carry-over goes with it. The code of a release without ADR-070 never reads it.
 
 ## Applying (production runbook)
 

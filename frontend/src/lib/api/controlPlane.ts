@@ -365,7 +365,7 @@ export interface ConsoleIntegration {
   scopes: string[];
   token_endpoint_auth_method: string;
   sso_state: "enabled" | "integration_required" | "disabled";
-  /** ADR-067: where the product receives back-channel logout tokens, or ""
+  /** ADR-069: where the product receives back-channel logout tokens, or ""
    * when none is registered. Absent from a server that predates it. */
   backchannel_logout_uri?: string;
 }
@@ -388,7 +388,7 @@ export type IntegrationChanges = Partial<
   >
 >;
 
-// --- single sign-on: back-channel logout, domains, readiness (ADR-067, ADR-068) ----
+// --- single sign-on: back-channel logout, domains, readiness (ADR-069, ADR-070) ----
 
 export type BackchannelDeliveryStatus = "pending" | "delivered" | "failed" | "dead";
 
@@ -756,7 +756,7 @@ export interface NewProduct {
   reseller_enabled?: boolean;
   affiliate_enabled?: boolean;
   white_label_enabled?: boolean;
-  /** `backchannel_logout_uri` only with SSO on, on the callback URL's origin (ADR-067). */
+  /** `backchannel_logout_uri` only with SSO on, on the callback URL's origin (ADR-069). */
   integration?: {
     launch_url: string;
     sso_enabled: boolean;
@@ -933,10 +933,10 @@ export const adminApi = {
     apiFetch<{ status: string; detail: string }>(`${admin}/products/${productCode}/integration/health-check`, {
       method: "POST",
     }),
-  /** ADR-067: whether back-channel logout is on and how the last day's deliveries went. */
+  /** ADR-069: whether back-channel logout is on and how the last day's deliveries went. */
   integrationBackchannel: (productCode: string) =>
     apiFetch<BackchannelSummary>(`${admin}/products/${productCode}/integration/backchannel`),
-  /** ADR-068: every hostname the registration uses and whether control of it is proven. */
+  /** ADR-070: every hostname the registration uses and whether control of it is proven. */
   integrationDomains: (productCode: string) => apiFetch<ProductDomains>(`${admin}/products/${productCode}/integration/domains`),
   /** Ask for a TXT value to publish for `hostname` (a new one, or to replace a carried-over proof). */
   requestIntegrationDomain: (productCode: string, hostname: string) =>

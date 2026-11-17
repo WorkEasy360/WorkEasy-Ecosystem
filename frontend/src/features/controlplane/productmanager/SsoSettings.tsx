@@ -43,7 +43,7 @@ import styles from "./ProductManager.module.css";
 
 /**
  * Super Admin -> Products -> a product -> Integration: single sign-on
- * (ADR-067, ADR-068). Whether people can sign in through WorkEasy360 and what
+ * (ADR-069, ADR-070). Whether people can sign in through WorkEasy360 and what
  * is missing; which hostnames the registration uses and whether control of
  * each is proven (with the DNS record to publish); and where back-channel
  * logout tokens go and how their delivery went.

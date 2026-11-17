@@ -1169,7 +1169,7 @@
   color: var(--w360-text-muted);
 }
 
-/* --- single sign-on: readiness, domains, back-channel logout (ADR-067, ADR-068) ---- */
+/* --- single sign-on: readiness, domains, back-channel logout (ADR-069, ADR-070) ---- */
 
 .verdict {
   margin: 0;

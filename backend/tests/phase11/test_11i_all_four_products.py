@@ -123,7 +123,7 @@ def four_products(staff_factory):
             integration = ecosystem_services.register_integration(
                 ctx, manifest=manifest_for(code, origin=f"https://{code}.example.com")
             )
-            # ADR-068: the operator vouches for first-party hostnames.
+            # ADR-070: the operator vouches for first-party hostnames.
             from workeasy360.platform.ecosystem import domains
 
             domains.attest_domains(ctx, integration, reason="test fixture")

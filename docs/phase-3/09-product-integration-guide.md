@@ -66,7 +66,7 @@ their organization and your product code, which is enough for most products.
 releases `organization_name`, a display label for a tenant you provision on a
 first sign-in. Never key on it.
 
-**Prove you own your hostnames (ADR-068).** Every hostname in your manifest
+**Prove you own your hostnames (ADR-070).** Every hostname in your manifest
 (redirect URIs, sign-out returns, launch, login, health and back-channel logout
 URLs) must be proven before your integration can be activated, and before a
 live integration can be pointed at a new hostname. For each hostname, publish

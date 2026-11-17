@@ -53,7 +53,7 @@ def test_connecting_sets_the_manifest_registers_the_key_and_activates(
 
     actor = _actor(staff_factory)
     call_command("register_products", actor=actor, stdout=StringIO())
-    # ADR-068: first-party hosts the operator controls are attested explicitly.
+    # ADR-070: first-party hosts the operator controls are attested explicitly.
     printed = _connect(actor, tmp_path, attest_domains=True)
 
     integration = ProductIntegration.objects.get(product_code="easybook")
@@ -239,7 +239,7 @@ def test_sso_optional_without_its_sign_in_page_is_refused_before_anything_change
 def test_without_a_proof_a_draft_stays_a_draft_and_the_records_are_printed(
     staff_factory, tmp_path
 ):
-    """ADR-068: the command never activates a product on a hostname nobody
+    """ADR-070: the command never activates a product on a hostname nobody
     proved; it registers the key and says exactly what to publish."""
     from workeasy360.platform.ecosystem.models import ProductIntegration
 

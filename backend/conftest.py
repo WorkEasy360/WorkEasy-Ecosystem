@@ -1026,7 +1026,7 @@ def register_product(db, platform_admin, catalog, in_tenant):
         with in_tenant(ctx):
             integration = services.register_integration(ctx, manifest=payload)
             if activate:
-                # ADR-068: activation needs every hostname proven. A fixture
+                # ADR-070: activation needs every hostname proven. A fixture
                 # that activates vouches for its own test hostnames exactly as
                 # the operator's register_products command does; the gate
                 # itself is exercised in tests/phase11/test_product_domains.py.

@@ -681,7 +681,7 @@ def _edit(client, code, body, method="patch"):
 
 def test_a_launch_address_can_be_changed_and_is_audited(live, staff_login):
     client, _ = staff_login(*CATALOG_STAFF, "platform.staff_integration.manage")
-    # ADR-068: a live product may not be pointed at an unproven hostname...
+    # ADR-070: a live product may not be pointed at an unproven hostname...
     refused = _edit(client, "crm", {"launch_url": "https://new.crm.example.com/open"})
     assert refused.status_code == 409, refused.content
     assert refused.json()["hostnames"] == ["new.crm.example.com"]

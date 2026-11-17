@@ -1,4 +1,4 @@
-"""Product domain ownership (ADR-068) and the Super Admin SSO readiness view.
+"""Product domain ownership (ADR-070) and the Super Admin SSO readiness view.
 
 Against the real services, the real database and the real API; only the DNS
 resolver is a test double (the same port partner custom domains use).
@@ -261,7 +261,7 @@ def test_a_live_product_cannot_be_pointed_at_an_unproven_hostname(staff, live, c
 
 
 def test_an_attacker_backchannel_uri_is_refused_twice_over(staff, live):
-    """Same-origin with a redirect URI (ADR-067) already refuses a foreign
+    """Same-origin with a redirect URI (ADR-069) already refuses a foreign
     back-channel URI; adding the foreign callback first is refused here."""
     from workeasy360.contracts.errors import ManifestRejected, ProductDomainUnverified
 

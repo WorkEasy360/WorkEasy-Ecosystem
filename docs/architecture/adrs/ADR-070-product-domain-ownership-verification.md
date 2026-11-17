@@ -1,8 +1,9 @@
-# ADR-068: Product domain ownership verification before a product can receive sign-ins
+# ADR-070: Product domain ownership verification before a product can receive sign-ins
 
 - Status: proposed (2026-11-16). On branch `feat/product-domain-verification`; not deployed.
+- Numbering: drafted as ADR-068. Renumbered ADR-070 on 2026-11-17: ADR-067 (Accounts host) and ADR-068 (Product Publisher) are live, and back-channel logout became ADR-069.
 - Context: the owner's instruction "Implement appropriate domain ownership and redirect URI verification for new product registration. Ensure a new product cannot register attacker-controlled callback or logout endpoints. Preserve automatic product onboarding through the existing Super Admin APIs."
-- Builds on: ADR-018 (OIDC for products), ADR-044 (universal sign-in), ADR-067 (back-channel logout). Reuses the DNS proof mechanism of partner custom domains (Phase 7, `commercial/partners/domains.py`).
+- Builds on: ADR-018 (OIDC for products), ADR-044 (universal sign-in), ADR-069 (back-channel logout). Reuses the DNS proof mechanism of partner custom domains (Phase 7, `commercial/partners/domains.py`).
 
 ## Context
 

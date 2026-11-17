@@ -846,7 +846,7 @@ class ProductDomainStatus(StrEnum):
 class ProductDomainMethod(StrEnum):
     #: A TXT record at ``_w360-product-verify.<hostname>`` carried the token.
     DNS_TXT = "dns_txt"
-    #: Registered before ownership verification existed (ADR-068); the
+    #: Registered before ownership verification existed (ADR-070); the
     #: migration that introduced verification carried it over as proven.
     PRE_EXISTING = "pre_existing"
     #: A loopback host, accepted only where plaintext loopback URLs are
@@ -861,7 +861,7 @@ class ProductDomainMethod(StrEnum):
 
 class ProductDomain(models.Model):
     """A hostname a product's registration sends browsers or tokens to, and
-    whether the product's owner has proven control of it (ADR-068).
+    whether the product's owner has proven control of it (ADR-070).
 
     Every URL in a manifest - redirect, sign-out return, launch, login, health
     and back-channel logout - names a hostname. A registration may *name* any

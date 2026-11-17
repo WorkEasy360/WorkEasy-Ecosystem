@@ -105,7 +105,7 @@ export function looksLikeHttps(value: string): boolean {
   }
 }
 
-// --- single sign-on (ADR-067, ADR-068) -----------------------------------------------
+// --- single sign-on (ADR-069, ADR-070) -----------------------------------------------
 
 const originOf = (value: string): string | null => {
   try {
@@ -152,7 +152,7 @@ export function hostnameProblem(value: string): string | undefined {
 }
 
 /** A refusal because a hostname's control is not proven yet (HTTP 409
- * `product_domain_unverified`, ADR-068): the server's message and every
+ * `product_domain_unverified`, ADR-070): the server's message and every
  * hostname it names. */
 export interface DomainBlock {
   detail: string;

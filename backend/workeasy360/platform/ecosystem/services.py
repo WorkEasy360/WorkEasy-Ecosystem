@@ -156,7 +156,7 @@ def register_integration(ctx: TenantContext, *, manifest: Any) -> Any:
                 product_code=str(parsed.product_code),
             ) from None
 
-        # ADR-068: a draft may name any valid hostname; each gains a proof to
+        # ADR-070: a draft may name any valid hostname; each gains a proof to
         # publish, and activation requires them all.
         domains.ensure_domains(integration, domains.hostnames_of(parsed))
 
@@ -227,7 +227,7 @@ def update_manifest(ctx: TenantContext, *, client_id: str, manifest: Any) -> Any
             IntegrationStatus.ACTIVE,
             IntegrationStatus.SUSPENDED,
         ):
-            # ADR-068: hostnames it already used are not re-litigated by an
+            # ADR-070: hostnames it already used are not re-litigated by an
             # unrelated edit; a hostname it did not use must be proven first.
             added = sorted(set(after) - set(domains.hostnames_of(previous)))
             domains.require_verified(
@@ -319,7 +319,7 @@ def transition(
             )
 
         if target is IntegrationStatus.ACTIVE:
-            # ADR-068: nothing is sent to a hostname nobody has proven.
+            # ADR-070: nothing is sent to a hostname nobody has proven.
             domains.require_verified(
                 integration,
                 domains.hostnames_of(integration.manifest or {}),

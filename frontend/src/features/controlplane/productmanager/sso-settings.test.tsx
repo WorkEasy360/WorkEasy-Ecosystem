@@ -10,7 +10,7 @@ import { AdminContextForTest, expectNoViolations, mockApi, ok } from "../testSup
 
 /**
  * Super Admin -> Products -> a product -> Integration -> single sign-on
- * (ADR-067, ADR-068): the readiness verdict and its checks, the hostnames whose
+ * (ADR-069, ADR-070): the readiness verdict and its checks, the hostnames whose
  * control must be proven (with the TXT record to publish, Verify and Add
  * hostname for managers only), the back-channel logout URL (edited with the
  * registry's rules) and its delivery status, loaded on demand. A refusal

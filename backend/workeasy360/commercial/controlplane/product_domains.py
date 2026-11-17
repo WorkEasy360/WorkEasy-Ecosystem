@@ -1,5 +1,5 @@
 """Super Admin: proving a product's domains, and whether a product is ready for
-Workeasy360 sign-in (ADR-068, ADR-067).
+Workeasy360 sign-in (ADR-070, ADR-069).
 
 The DNS lookup is external I/O, so it happens **here**, outside any database
 transaction, through the same resolver port partner custom domains use

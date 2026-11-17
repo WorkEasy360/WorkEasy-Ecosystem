@@ -1,4 +1,4 @@
-"""Product domain ownership (ADR-068): which hostnames a registration uses,
+"""Product domain ownership (ADR-070): which hostnames a registration uses,
 and whether its owner has proven control of each.
 
 A manifest may *name* any public https hostname - ``contracts.values.manifest``

@@ -356,7 +356,7 @@ class Command(BaseCommand):
             status = integration.status
             self._say(code, f"integration exists ({status}) - left unchanged")
         if activate and status == "draft" and not dry:
-            # ADR-068: activation needs every hostname proven. These are the
+            # ADR-070: activation needs every hostname proven. These are the
             # first-party hostnames declared in this file; the operator
             # running the command on the platform host vouches for them.
             attested = product_domains.attest_domains(
