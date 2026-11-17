@@ -260,6 +260,86 @@ def test_a_live_product_cannot_be_pointed_at_an_unproven_hostname(staff, live, c
     assert "evil.example.net" not in _rows(live)
 
 
+#: URLs that look like the proven ``crm.example.com`` but would send a browser,
+#: or the platform's own outbound call, somewhere else. Each must be refused -
+#: by the manifest validator or by the ownership gate - and change nothing.
+DECEPTIVE_URLS = [
+    "https://crm.example.com.evil.example.net/cb",  # proven name as a prefix
+    "https://evilcrm.example.com/cb",  # proven name as a suffix
+    "https://crm.example.com@evil.example.net/cb",  # userinfo
+    "https://evil.example.net\\@crm.example.com/cb",  # parser differential
+    "https://evil.example.net\\crm.example.com/cb",  # backslash as a separator
+    "https://evil.example.net%2F@crm.example.com/cb",  # encoded separator
+    "https://evil.example.net#@crm.example.com/cb",  # fragment trick
+    "https://evil.example.net?@crm.example.com/cb",  # query trick
+    "https://\u0441rm.example.com/cb",  # Cyrillic look-alike of "c"
+    "http://crm.example.com/cb",  # downgrade
+    "javascript://crm.example.com/%0aalert(1)",  # another scheme
+    "https://crm.example.com/cb#frag",
+    "https:///crm.example.com/cb",
+    "//crm.example.com/cb",
+]
+
+
+@pytest.mark.parametrize("url", DECEPTIVE_URLS)
+@pytest.mark.parametrize("field", ["redirect_uris", "post_logout_redirect_uris"])
+def test_a_deceptive_url_never_borrows_a_proven_hostname(staff, live, field, url):
+    from workeasy360.contracts.errors import ManifestRejected, ProductDomainUnverified
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    before = ProductIntegration.objects.get(pk=live["integration"].pk).manifest
+    changes = {field: [f"{ORIGIN}/auth/callback", url]}
+    if field == "post_logout_redirect_uris":
+        changes = {field: [url]}
+    with pytest.raises((ManifestRejected, ProductDomainUnverified)):
+        _edit(staff, live, **changes)
+    assert ProductIntegration.objects.get(pk=live["integration"].pk).manifest == before
+    # Nothing was proven on the strength of the look-alike.
+    assert set(_rows(live)) == {"crm.example.com"}
+
+
+@pytest.mark.parametrize("url", DECEPTIVE_URLS)
+def test_a_deceptive_backchannel_uri_is_refused(staff, live, url):
+    from workeasy360.contracts.errors import ManifestRejected, ProductDomainUnverified
+
+    with pytest.raises((ManifestRejected, ProductDomainUnverified)):
+        _edit(staff, live, manifest_version="2026-11-15", backchannel_logout_uri=url)
+
+
+@pytest.mark.parametrize(
+    ("raw", "canonical"),
+    [
+        ("CRM.Example.COM.", "crm.example.com"),
+        ("  crm.example.com  ", "crm.example.com"),
+        ("\u0441rm.example.com", "xn--rm-nmc.example.com"),  # never crm.example.com
+        ("crm..example.com", ""),
+        ("", ""),
+    ],
+)
+def test_two_spellings_of_one_name_compare_equal_and_look_alikes_do_not(raw, canonical):
+    from workeasy360.platform.ecosystem import domains
+
+    assert domains.canonical_hostname(raw) == canonical
+
+
+def test_the_hostnames_of_a_manifest_are_what_a_browser_would_reach():
+    from workeasy360.platform.ecosystem import domains
+
+    manifest = {
+        "launch_url": "https://CRM.example.com./",
+        "redirect_uris": [
+            "https://crm.example.com.evil.example.net/cb",
+            "https://user@login.example.com/cb",
+        ],
+        "post_logout_redirect_uris": ["https://crm.example.com:8443/bye"],
+    }
+    assert domains.hostnames_of(manifest) == [
+        "crm.example.com",
+        "crm.example.com.evil.example.net",
+        "login.example.com",
+    ]
+
+
 def test_an_attacker_backchannel_uri_is_refused_twice_over(staff, live):
     """Same-origin with a redirect URI (ADR-069) already refuses a foreign
     back-channel URI; adding the foreign callback first is refused here."""
@@ -439,12 +519,29 @@ def test_staff_list_request_and_verify_through_the_api(staff_login, dns, draft):
 
     requested = _post(client, DOMAINS, {"hostname": "app.example.org"})
     assert requested.status_code == 200
-    assert "app.example.org" in {d["hostname"] for d in requested.json()["domains"]}
+    # The exact set of hostnames, compared as a set: never a substring test.
+    hostnames = {d["hostname"] for d in requested.json()["domains"]}
+    assert hostnames == {"crm.example.com", "app.example.org"}
 
 
 @pytest.mark.parametrize(
     "hostname",
-    ["", "a/b", "evil.example.com/path", "203.0.113.7", "localhost", "-x.example"],
+    [
+        "",
+        "a/b",
+        "evil.example.com/path",
+        "203.0.113.7",
+        "localhost",
+        "-x.example",
+        "https://crm.example.com",
+        "crm.example.com:443",
+        "user@crm.example.com",
+        "*.example.com",
+        "crm..example.com",
+        "evil.example.net\\crm.example.com",
+        "[::1]",
+        "crm.example.com/",
+    ],
 )
 def test_a_request_for_something_that_is_not_a_hostname_is_bad_input(
     staff_login, draft, hostname
