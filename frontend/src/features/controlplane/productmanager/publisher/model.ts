@@ -9,7 +9,7 @@
 
 import { toBasisPoints, toMajor, toMinor, formatBasisPoints } from "@/features/controlplane/amounts";
 import type { PublisherBootstrap, PublisherPlanRow, PublisherPriceBook, PublisherState } from "@/lib/api/controlPlane";
-import { looksLikeHttps, looksLikeVideo, slugFrom, SLUG_PATTERN } from "../model";
+import { backchannelUriProblem, looksLikeHttps, looksLikeVideo, slugFrom, SLUG_PATTERN } from "../model";
 
 /** The billing periods a plan can be priced for (the server's `INTERVALS`). */
 export const PERIODS = ["monthly", "quarterly", "semi_annual", "annual"] as const;
@@ -217,6 +217,8 @@ export interface PublisherDraft {
   launchUrl: string;
   ssoEnabled: boolean;
   redirectUri: string;
+  /** ADR-069: optional, with single sign-on only; same origin as the callback URL. */
+  backchannelUri: string;
   healthUrl: string;
   /** The product already has an integration: launch and sign-in are edited on its Integration tab. */
   hasIntegration: boolean;
@@ -259,6 +261,7 @@ export function blankDraft(bookId: string): PublisherDraft {
     launchUrl: "",
     ssoEnabled: false,
     redirectUri: "",
+    backchannelUri: "",
     healthUrl: "",
     hasIntegration: false,
     // New products start safe: on the customer Store only once published;
@@ -323,6 +326,12 @@ export function check(draft: PublisherDraft, books: PriceBook[], { publish, take
     if (value.trim() && !looksLikeHttps(value.trim())) out[key] = "Enter an https:// address.";
   }
   if (draft.ssoEnabled && draft.launchUrl.trim() && !draft.redirectUri.trim() && !draft.hasIntegration) out.redirectUri = "With sign-in through WorkEasy360 on, enter the product's sign-in callback URL.";
+  if (draft.ssoEnabled && draft.launchUrl.trim() && draft.backchannelUri.trim() && !draft.hasIntegration) {
+    // The registry's own rule (manifest backchannel_logout_uri): https, no
+    // query or fragment, and the origin of a registered callback URL.
+    const problem = backchannelUriProblem(draft.backchannelUri, draft.redirectUri.trim() ? [draft.redirectUri] : []);
+    if (problem) out.backchannelUri = problem;
+  }
   if (draft.trialEnabled) {
     const days = Number(draft.trialDays);
     if (!Number.isInteger(days) || days < 1 || days > 365) out.trialDays = "A trial lasts 1 to 365 days.";
@@ -404,6 +413,7 @@ export function toRequest(draft: PublisherDraft, books: PriceBook[]): Record<str
       sso_enabled: draft.ssoEnabled,
       redirect_uri: draft.redirectUri.trim(),
       health_url: draft.healthUrl.trim(),
+      ...(draft.ssoEnabled && draft.backchannelUri.trim() ? { backchannel_logout_uri: draft.backchannelUri.trim() } : {}),
     };
   }
   body.trial = { enabled: draft.trialEnabled, duration_days: draft.trialEnabled ? Number(draft.trialDays) : 14 };
@@ -458,6 +468,7 @@ export function fieldKey(field: string | undefined | null): string | null {
     store_title: "storeTitle",
     store_summary: "storeSummary",
     redirect_uri: "redirectUri",
+    backchannel_logout_uri: "backchannelUri",
     launch_url: "launchUrl",
     health_url: "healthUrl",
     highlights: "features",
@@ -524,6 +535,7 @@ export function fromState(state: PublisherState, mediaUrl: (mediaId: string) => 
     launchUrl: p.launch_url ?? "",
     ssoEnabled: p.integration?.sign_in_mode === "sso_only",
     redirectUri: "",
+    backchannelUri: "",
     healthUrl: "",
     hasIntegration: Boolean(p.integration),
     channels: {
@@ -558,6 +570,7 @@ const FIELD_LABEL: Record<string, string> = {
   storeSummary: "Store summary",
   launchUrl: "Launch URL",
   redirectUri: "Sign-in callback URL",
+  backchannelUri: "Back-channel logout URL",
   healthUrl: "Health check URL",
   trialDays: "Trial length",
   plans: "Plans",
@@ -595,7 +608,7 @@ export function problemLabels(problems: Problems, plans: PlanDraft[]): string[] 
 
 /** The fields kept under Advanced settings and Advanced details (closed until
  * opened), and each plan's Advanced plan settings: a problem there opens them. */
-const ADVANCED_KEYS = new Set(["slug", "launchUrl", "redirectUri", "healthUrl", "trialDays"]);
+const ADVANCED_KEYS = new Set(["slug", "launchUrl", "redirectUri", "backchannelUri", "healthUrl", "trialDays"]);
 const DETAIL_KEYS = new Set(["marketingUrl", "documentationUrl", "supportUrl", "storeTitle", "storeSummary"]);
 const PLAN_ADVANCED_FIELDS = new Set(["seats", "maxSeats", "trialDays", "setupFee", "discount"]);
 
