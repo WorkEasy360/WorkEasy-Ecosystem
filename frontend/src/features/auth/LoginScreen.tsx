@@ -9,6 +9,7 @@ import { usePortalRouter } from "@/lib/portalRouter";
 import { PORTAL_TO_MODE, type Portal } from "@/lib/portals";
 import { AdminLoginScreen } from "@/features/auth/AdminLogin";
 import { LoginForm } from "@/features/auth/LoginForm";
+import { continueFromAccounts } from "@/features/auth/accountsSignIn";
 import { PartnerLoginScreen } from "@/features/auth/PartnerLogin";
 import { UserLoginScreen } from "@/features/auth/UserLogin";
 import { destinationAfterSignIn, parseMode, type SignInMode } from "@/features/auth/signInMode";
@@ -83,7 +84,11 @@ function AlreadySignedInRedirect({ portal }: { portal: HostPortal }) {
     if (resume) {
       // eslint-disable-next-line @next/next/no-location-assign-relative-destination
       window.location.href = `/api/v1/integrations/oauth/resume?resume=${encodeURIComponent(resume)}`;
-    } else if (portal !== "auth") {
+    } else if (portal === "auth") {
+      // ADR-071: already signed in to WorkEasy360 Accounts - hand the sign-in to
+      // the customer portal that asked (no second password), or the account page.
+      void continueFromAccounts(searchParams);
+    } else {
       // Single-host mode: what the address names, as before (no mode lets the
       // dashboard decide).
       const mode = portal ? modeFor(portal, searchParams) : effectiveMode(searchParams);
@@ -157,7 +162,10 @@ function SignInCard({ portal }: { portal: HostPortal }) {
           again - or sign in as someone else.
         </p>
       )}
-      <LoginForm mode={mode} />
+      <LoginForm
+        mode={mode}
+        onSignedIn={portal === "auth" && !searchParams.get("resume") ? () => void continueFromAccounts(searchParams) : undefined}
+      />
     </>
   );
 }

@@ -18,7 +18,13 @@
  * Optional: its origin is `""` when `W360_STORE_ORIGIN` is not set, and then its
  * pages are the customer portal's, exactly as before. */
 export type Portal = "admin" | "partner" | "app" | "auth" | "store";
-export type PortalOrigins = Record<Portal, string>;
+export type PortalOrigins = Record<Portal, string> & {
+  /** ADR-071 (`W360_ACCOUNTS_IDENTITY=on`): WorkEasy360 Accounts (the `auth`
+   * host) hosts the customer portal's identity pages - sign-in, sign-up, email
+   * verification, password reset - and the customer portal signs in through
+   * it. Off or absent: ADR-059 exactly. */
+  readonly accountsIdentity?: boolean;
+};
 /** Where a sign-in is headed - the sign-in page's `?mode=` (and the Store's own host). */
 export type Destination = Exclude<Portal, "auth">;
 
@@ -71,6 +77,8 @@ const PAGE_OWNERS: readonly (readonly [string, Portal])[] = [
   ["/switch-account", "auth"],
   // ADR-066: the change-of-sign-in-email link (each portal's, like a reset link).
   ["/confirm-email", "app"],
+  // ADR-071: the person's own account page - WorkEasy360 Accounts'.
+  ["/account", "auth"],
   ["/dashboard", "app"],
   // The Store (ADR-052) - on its own host since ADR-065 (store.workeasy360.com);
   // without one, on the customer portal (see ownerFor).
@@ -105,6 +113,11 @@ const ALSO_ON: Record<string, readonly Portal[]> = {
   "/billing/test-checkout": ["store"],
 };
 
+/** ADR-071: the customer portal's identity pages, which WorkEasy360 Accounts
+ * owns instead while `accountsIdentity` is on. The Admin and Partner portals
+ * (and the Store) keep serving their own through {@link ALSO_ON}. */
+const IDENTITY_PAGES: readonly string[] = ["/login", "/signup", "/r", "/verify-email", "/forgot-password", "/reset-password", "/confirm-email"];
+
 const matches = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
 
 /** `scheme://host[:port]`, lower-cased, of a bare origin; `null` otherwise. */
@@ -132,7 +145,12 @@ export function readPortalOrigins(env: Record<string, string | undefined>): Port
     auth: parseOrigin(env.W360_AUTH_ORIGIN),
   };
   if (!Object.values(origins).every(Boolean)) return null;
-  return { ...(origins as Omit<PortalOrigins, "store">), store: parseOrigin(env.W360_STORE_ORIGIN) ?? "" };
+  return {
+    ...(origins as Record<Exclude<Portal, "store">, string>),
+    store: parseOrigin(env.W360_STORE_ORIGIN) ?? "",
+    // Present only when on, so "off" is exactly the ADR-059 configuration.
+    ...(/^(1|on|true|yes)$/i.test((env.W360_ACCOUNTS_IDENTITY ?? "").trim()) ? { accountsIdentity: true } : {}),
+  };
 }
 
 const hostOf = (origin: string) => (origin ? new URL(origin).host.toLowerCase() : "");
@@ -149,6 +167,7 @@ export function portalForHost(host: string | null | undefined, origins: PortalOr
  * `origins`, the Store's pages belong to the customer portal while the Store
  * has no host of its own (ADR-065). */
 export function pageOwner(pathname: string, origins?: PortalOrigins | null): Portal | null {
+  if (origins?.accountsIdentity && IDENTITY_PAGES.some((prefix) => matches(pathname, prefix))) return "auth";
   const owner = PAGE_OWNERS.find(([prefix]) => matches(pathname, prefix))?.[1] ?? null;
   return owner === "store" && origins && !origins.store ? "app" : owner;
 }
