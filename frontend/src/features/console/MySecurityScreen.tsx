@@ -1,8 +1,8 @@
 "use client";
 
-import { useId } from "react";
+import { useId, useState } from "react";
 import Link from "next/link";
-import { accountApi, type AccountEvent, type SessionRow } from "@/lib/api/console";
+import { accountApi, type AccountEvent, type SessionRow, type SignOutEverywhere } from "@/lib/api/console";
 import { LoadGate, Table, useAction, useLoad, when } from "@/features/controlplane/ui";
 import { Badge, Button, Page, useConfirm } from "@/features/controlplane/kit";
 import cp from "@/features/controlplane/ControlPlane.module.css";
@@ -77,6 +77,22 @@ export function MySecurityScreen() {
   };
   const { act, busy, feedback } = useAction(refresh);
   const noteId = useId();
+  const everywhereNoteId = useId();
+  const [everywhere, setEverywhere] = useState<SignOutEverywhere | null>(null);
+  const [ending, setEnding] = useState(false);
+  const [everywhereError, setEverywhereError] = useState<string | null>(null);
+  async function signOutEverywhere() {
+    setEnding(true);
+    setEverywhereError(null);
+    try {
+      // No refresh afterwards: this session has ended too.
+      setEverywhere(await accountApi.signOutEverywhere());
+    } catch {
+      setEverywhereError("Could not sign out everywhere. Nothing was changed; try again.");
+    } finally {
+      setEnding(false);
+    }
+  }
   const session = useSession();
   const email = session.status === "ready" ? session.session.email : "";
 
@@ -146,6 +162,42 @@ export function MySecurityScreen() {
         </LoadGate>
       </Panel>
 
+      <Panel title="Sign out everywhere">
+        {everywhere ? (
+          <EverywhereResult result={everywhere} />
+        ) : (
+          <>
+            <p id={everywhereNoteId} className={cp.muted}>
+              Ends every WorkEasy360 session of this account, this device included, and tells each product you are signed in to
+              that supports it to end its own sessions. Use it if a device was lost or someone else may know your password. You
+              will need to sign in again.
+            </p>
+            {everywhereError && <p role="alert">{everywhereError}</p>}
+            <div>
+              <Button
+                variant="danger"
+                icon="logout"
+                aria-describedby={everywhereNoteId}
+                loading={ending}
+                disabled={busy}
+                onClick={() =>
+                  confirm.ask({
+                    title: "Sign out everywhere?",
+                    message:
+                      "Every browser and device is signed out of WorkEasy360 at once, this one included, and every product that supports it is told to sign you out too.",
+                    confirmLabel: "Sign out everywhere",
+                    danger: true,
+                    onConfirm: () => void signOutEverywhere(),
+                  })
+                }
+              >
+                Sign out everywhere
+              </Button>
+            </div>
+          </>
+        )}
+      </Panel>
+
       <Panel title="Recent security activity">
         <LoadGate load={activity} what="your recent activity">
           {(d) => (
@@ -186,6 +238,39 @@ export function MySecurityScreen() {
         </Panel>
       )}
     </Page>
+  );
+}
+
+const PRODUCT_OUTCOME: Record<SignOutEverywhere["products"][number]["status"], string> = {
+  delivered: "signed out",
+  pending: "still being told - its session ends at its next check at the latest",
+  failed: "could not be told - its session ends at its next check at the latest",
+};
+
+/** What really happened, product by product: never a completion that was not confirmed. */
+function EverywhereResult({ result }: { result: SignOutEverywhere }) {
+  const n = result.workeasy360.sessions_ended;
+  let summary = " Not every product has confirmed it yet:";
+  if (result.products.length === 0) summary = " No product needed to be told.";
+  else if (result.complete) summary = " Every product you were signed in to confirmed it.";
+  return (
+    <div role="status">
+      <p>
+        You are signed out of WorkEasy360 everywhere ({n} {n === 1 ? "session" : "sessions"} ended).{summary}
+      </p>
+      {result.products.length > 0 && (
+        <ul>
+          {result.products.map((p) => (
+            <li key={p.product_code}>
+              <strong>{p.name || p.product_code}</strong>: {PRODUCT_OUTCOME[p.status]}
+            </li>
+          ))}
+        </ul>
+      )}
+      <a className="w360-btn w360-btn-primary" href="/login">
+        Sign in again
+      </a>
+    </div>
   );
 }
 

@@ -1488,6 +1488,46 @@ describe("my security", () => {
     expect(posted(calls, "POST /api/v1/auth/sessions/revoke-others")).toHaveLength(1);
   });
 
+  it("signs out everywhere, this device and the products included, and says what each product confirmed", async () => {
+    const calls = mockApi(
+      securityRoutes({
+        "POST /api/v1/auth/sessions/sign-out-everywhere": [
+          {
+            status: 200,
+            body: {
+              ok: true,
+              workeasy360: { sessions_ended: 2 },
+              products: [
+                { product_code: "easy_crm", name: "Easy CRM", status: "delivered" },
+                { product_code: "easybook", name: "EasyBook", status: "pending" },
+              ],
+              complete: false,
+            },
+          },
+        ],
+      }),
+    );
+    const { container } = renderOrg(<MySecurityScreen />, []);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out everywhere" }));
+    expect(posted(calls, "POST /api/v1/auth/sessions/sign-out-everywhere")).toHaveLength(0); // nothing before the confirm
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Sign out everywhere" }));
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("You are signed out of WorkEasy360 everywhere (2 sessions ended). Not every product has confirmed it yet");
+    expect(screen.getByText("Easy CRM").closest("li")).toHaveTextContent("Easy CRM: signed out");
+    expect(screen.getByText("EasyBook").closest("li")).toHaveTextContent(/still being told/);
+    expect(screen.getByRole("link", { name: "Sign in again" })).toHaveAttribute("href", "/login");
+    expect(posted(calls, "POST /api/v1/auth/sessions/sign-out-everywhere")).toHaveLength(1);
+    await expectNoViolations(container);
+  });
+
+  it("a failed sign-out everywhere says nothing changed", async () => {
+    mockApi(securityRoutes({ "POST /api/v1/auth/sessions/sign-out-everywhere": [{ status: 503, body: {} }] }));
+    renderOrg(<MySecurityScreen />, []);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out everywhere" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Sign out everywhere" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not sign out everywhere. Nothing was changed");
+  });
+
   it("describes every account event kind", () => {
     expect(describeAccountEvent({ kind: "sign_in_failed", reason: "account_locked" })).toBe("Failed sign-in attempt (account locked)");
     expect(describeAccountEvent({ kind: "password_changed", reason: "" })).toBe("Password changed");
