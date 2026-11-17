@@ -475,9 +475,13 @@ def test_a_video_is_never_taken_as_an_image(manager):
 
 
 def test_screenshots_append_reorder_caption_delete_and_are_capped(manager):
+    from workeasy360.commercial.catalog.domain import MAX_SCREENSHOTS
+
+    # ADR-068: up to ten screenshots (the owner's brief; it was eight).
+    assert MAX_SCREENSHOTS == 10
     product = _create(manager)
     ids = []
-    for n in range(8):
+    for n in range(MAX_SCREENSHOTS):
         response = upload(
             manager, product["id"], png(640, 400), kind="screenshot", caption=f"Shot{n}"
         )
@@ -503,7 +507,9 @@ def test_screenshots_append_reorder_caption_delete_and_are_capped(manager):
     )
     assert (
         post(
-            manager, f"{API}/{product['id']}/media/reorder", {"order": [ids[0]] * 8}
+            manager,
+            f"{API}/{product['id']}/media/reorder",
+            {"order": [ids[0]] * MAX_SCREENSHOTS},
         ).status_code
         == 400
     )
@@ -521,7 +527,7 @@ def test_screenshots_append_reorder_caption_delete_and_are_capped(manager):
                 if m["kind"] == "screenshot"
             ]
         )
-        == 7
+        == MAX_SCREENSHOTS - 1
     )
 
 

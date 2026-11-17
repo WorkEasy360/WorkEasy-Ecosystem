@@ -13,6 +13,7 @@ import { PartnerLoginScreen } from "@/features/auth/PartnerLogin";
 import { UserLoginScreen } from "@/features/auth/UserLogin";
 import { destinationAfterSignIn, parseMode, type SignInMode } from "@/features/auth/signInMode";
 import { SignInSupport } from "@/features/controlplane/brandDisplay";
+import { ACCOUNTS_NAME } from "@/features/signin/AccountsBrand";
 import { useBranding, type HostBrand } from "@/features/controlplane/useBranding";
 import brandStyles from "@/features/controlplane/ControlPlane.module.css";
 import styles from "./LoginScreen.module.css";
@@ -105,7 +106,7 @@ function BrandScope({ children }: { children: (brand: HostBrand | null) => React
   return <>{children(brand)}</>;
 }
 
-function Heading({ brand }: { brand: HostBrand | null }) {
+function Heading({ brand, portal }: { brand: HostBrand | null; portal: HostPortal }) {
   const searchParams = useSearchParams();
   // The partner's own welcome message replaces the platform's tagline when it
   // chose to show one on the sign-in page; otherwise the tagline stays.
@@ -113,6 +114,8 @@ function Heading({ brand }: { brand: HostBrand | null }) {
   // The WorkEasy360 logo on the platform's own sign-in only. A partner-branded
   // sign-in never shows it - not even while that partner's brand is loading.
   const platform = !brand && !brandHostParam(searchParams.get("brand"));
+  // ADR-067: the central sign-in host is WorkEasy360 Accounts.
+  const title = brand?.brand_name ?? (platform && portal === "auth" ? ACCOUNTS_NAME : "Workeasy360");
   return (
     <div className={styles.heading}>
       {platform && (
@@ -124,7 +127,7 @@ function Heading({ brand }: { brand: HostBrand | null }) {
         // eslint-disable-next-line @next/next/no-img-element -- same-origin, scanned PNG/JPEG
         <img src={brand.logo_url} alt="" className={brandStyles.logo} />
       )}
-      <h1 className={styles.title}>{brand?.brand_name ?? "Workeasy360"}</h1>
+      <h1 className={styles.title}>{title}</h1>
       {welcome ? <p className={styles.tagline}>{welcome}</p> : <p className={styles.tagline}>One ecosystem to run your entire business.</p>}
     </div>
   );
@@ -217,7 +220,7 @@ function StandardSignIn({ portal }: { portal?: Portal }) {
           <BrandScope>
             {(brand) => (
               <>
-                <Heading brand={brand} />
+                <Heading brand={brand} portal={portal} />
                 <div className={`w360-card ${styles.card}`}>
                   <Suspense fallback={<p>Loading…</p>}>
                     <SignInCard portal={portal} />

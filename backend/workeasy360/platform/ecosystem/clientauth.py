@@ -251,15 +251,19 @@ def _authenticate_private_key_jwt(assertion: str) -> AuthenticatedClient:
     return AuthenticatedClient(integration=credential.integration, credential=credential)
 
 
-def _assertion_audience() -> str:
+def _assertion_audience() -> list[str]:
     """What a client assertion must name as its audience.
 
     The token endpoint's URL, per RFC 7523 section 3. Derived from the
-    configured issuer so it cannot be influenced by a request header.
+    configured issuers so it cannot be influenced by a request header: the
+    token endpoint under each issuer this platform may name (ADR-067 - one
+    while no move is under way; the central sign-in's current and previous
+    origins while products move). Every one is this platform's own token
+    endpoint, so an assertion made for any other service is still refused.
     """
-    from workeasy360.platform.ecosystem import discovery
+    from workeasy360.platform.ecosystem import discovery, tokens
 
-    return discovery.endpoint("token")
+    return [f"{issuer}{discovery.PATHS['token']}" for issuer in tokens.issuers()]
 
 
 def _reject_replayed_assertion(claims: dict[str, Any]) -> None:

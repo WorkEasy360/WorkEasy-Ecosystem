@@ -26,6 +26,7 @@ from config.settings.base import (
     S3_BUCKET,
     S3_ENDPOINT_URL,
     SESSION_REFRESH_INTERVAL_S,
+    W360_AUTH_LEGACY_ORIGIN,
     W360_PORTAL_ORIGINS,
     env,
 )
@@ -287,10 +288,30 @@ env.check(
     "Every portal origin must be a different host: the host decides which "
     "experience is shown, and sessions are scoped per host.",
 )
+# ADR-067: the central sign-in's previous name, while products move to
+# WorkEasy360 Accounts. A bare https origin on a host of its own, reachable
+# (ALLOWED_HOSTS) but never trusted for a browser write (CSRF, below): no page
+# is served there and no session is read there.
+_LEGACY_AUTH_ORIGIN = W360_AUTH_LEGACY_ORIGIN
 env.check(
-    {_host_of(o).split(":")[0] for o in _PORTAL_ORIGINS.values()} == set(ALLOWED_HOSTS),
+    not _LEGACY_AUTH_ORIGIN
+    or (
+        (p := _parse_origin(_LEGACY_AUTH_ORIGIN)) is not None
+        and p[0] == "https"
+        and _host_of(_LEGACY_AUTH_ORIGIN)
+        not in {_host_of(o) for o in _PORTAL_ORIGINS.values()}
+    ),
+    "W360_AUTH_LEGACY_ORIGIN must be a bare https origin (https://host, no path) on a "
+    "host no portal uses: it is the sign-in's previous name, kept for the move.",
+)
+_ALLOWED_HOST_SET = {_host_of(o).split(":")[0] for o in _PORTAL_ORIGINS.values()}
+if _LEGACY_AUTH_ORIGIN:
+    _ALLOWED_HOST_SET.add(_host_of(_LEGACY_AUTH_ORIGIN).split(":")[0])
+env.check(
+    _ALLOWED_HOST_SET == set(ALLOWED_HOSTS),
     "W360_ALLOWED_HOSTS must be exactly the five portal hosts (admin, partner, app, "
-    "auth, api), plus store when W360_STORE_ORIGIN is set: no other name may reach "
+    "auth, api), plus store when W360_STORE_ORIGIN is set, plus the sign-in's "
+    "previous host when W360_AUTH_LEGACY_ORIGIN is set: no other name may reach "
     "the application.",
 )
 env.check(
@@ -310,9 +331,19 @@ env.check(
     "the API server-to-server (ADR-043).",
 )
 env.check(
-    OIDC_ISSUER == _PORTAL_ORIGINS.get("auth"),
-    "W360_OIDC_ISSUER must be W360_AUTH_ORIGIN: the authorization endpoint needs the "
-    "central sign-in session, which lives on that host only.",
+    not _LEGACY_AUTH_ORIGIN or _LEGACY_AUTH_ORIGIN not in CSRF_TRUSTED_ORIGINS,
+    "W360_CSRF_TRUSTED_ORIGINS must not list W360_AUTH_LEGACY_ORIGIN: the sign-in's "
+    "previous host serves no page, so no browser write may come from it.",
+)
+# ADR-067: the issuer is one of the central sign-in's two origins - its current
+# one (WorkEasy360 Accounts) or, until every product has moved, its previous
+# name. Either way the authorization endpoint ends up on the current host,
+# where the sign-in session lives (the previous host forwards browsers there).
+env.check(
+    OIDC_ISSUER in {_PORTAL_ORIGINS.get("auth"), _LEGACY_AUTH_ORIGIN or None},
+    "W360_OIDC_ISSUER must be W360_AUTH_ORIGIN (or, while products move to it, "
+    "W360_AUTH_LEGACY_ORIGIN): the authorization endpoint needs the central sign-in "
+    "session, which lives on that host only.",
 )
 env.check(
     W360_FRONTEND_URL == _PORTAL_ORIGINS.get("app"),

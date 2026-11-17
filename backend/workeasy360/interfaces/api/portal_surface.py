@@ -22,9 +22,24 @@ from collections.abc import Callable
 from typing import Final
 
 from django.conf import settings
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 
 from workeasy360.contracts.values import portals
+from workeasy360.platform.observability.metrics import metrics
+
+
+def _count_legacy(request: HttpRequest, answer: HttpResponse | None) -> None:
+    """ADR-067: what still reaches the previous sign-in host - the number an
+    operator watches fall to zero before retiring the name. Never the path or
+    the query: a resume token or a code may be in it."""
+    if answer is None:
+        kind = "served"
+    elif answer.status_code == 302:
+        kind = "forwarded"
+    else:
+        kind = "refused"
+    metrics.increment("accounts_legacy_host_requests_total", kind=kind)
+
 
 #: Staff control-plane administration that predates ``/api/v1/admin/`` and
 #: lives under the tenant path shape (catalog/pricing administration and the
@@ -133,6 +148,87 @@ def _account_pass_from_store(
     )
 
 
+#: ADR-067: on the central sign-in's previous name (``W360_AUTH_LEGACY_ORIGIN``,
+#: auth.workeasy360.com), kept while products move to WorkEasy360 Accounts, the
+#: browser endpoints a product sends a person to - authorization, the parked
+#: request's resume, RP-initiated sign-out - are sent to the same address on the
+#: current host, where the sign-in session lives. So is every page.
+LEGACY_BROWSER_PATHS: Final = frozenset(
+    {
+        "/api/v1/integrations/oauth/authorize",
+        "/api/v1/integrations/oauth/resume",
+        "/api/v1/integrations/oauth/logout",
+    }
+)
+#: The issuer's two public documents, answered on the previous host as before.
+OIDC_DOCUMENT_PATHS: Final = frozenset(
+    {"/.well-known/openid-configuration", "/.well-known/jwks.json"}
+)
+#: Everything a product reaches through discovery that is not a browser
+#: endpoint lives here - token, userinfo, access verification, events, usage,
+#: intelligence - and every one of them authenticates by client credential or
+#: bearer token, never by session cookie
+#: (``test_credentialed_endpoints_ignore_session_authentication``).
+PRODUCT_API_PREFIX: Final = "/api/v1/integrations/"
+_FORWARDED_METHODS: Final = frozenset({"GET", "HEAD"})
+
+
+def legacy_auth_answer(request: HttpRequest, current_origin: str) -> HttpResponse | None:
+    """What the central sign-in's previous host answers (ADR-067), or ``None``
+    to serve the request unchanged.
+
+    - The two documents and the server-to-server product API under
+      ``/api/v1/integrations/``: as before, unchanged (``None``) - except the
+      endpoints some portal owns (the access chooser's, sign-out's), 404.
+    - A navigation - a browser OIDC endpoint or a page: the same path and
+      query on the current host (302, temporary, so a rollback is never stuck
+      in a browser's cache). Built from configuration: the request supplies
+      only the path, never the destination's origin.
+    - Anything else - the rest of the API, a write to a page or to a browser
+      endpoint: 404.
+
+    So no session is ever read or set here: a person signs in, chooses and
+    signs out on WorkEasy360 Accounts only, whichever name a product used.
+    """
+    path = request.path
+    browser = path in LEGACY_BROWSER_PATHS or (
+        path.endswith("/") and path[:-1] in LEGACY_BROWSER_PATHS
+    )
+    if path in OIDC_DOCUMENT_PATHS:
+        return None
+    if browser or not path.startswith("/api/"):
+        if request.method in _FORWARDED_METHODS:
+            return HttpResponseRedirect(f"{current_origin}{request.get_full_path()}")
+        return JsonResponse({"code": "not_found"}, status=404)
+    if path.startswith(PRODUCT_API_PREFIX) and allowed_portals(path) is None:
+        return None
+    return JsonResponse({"code": "not_found"}, status=404)
+
+
+class IssuerMiddleware:
+    """ADR-067: answer each request as whichever of the platform's own
+    configured issuers its host *is* - while products move from the central
+    sign-in's previous name to WorkEasy360 Accounts, a product that discovered
+    the platform at one origin keeps getting that origin as ``iss``. A choice
+    between our own issuers only (``tokens.issuer_for_host``: any other host
+    gets the canonical one), and it grants nothing - like every other Host
+    rule in this module. A no-op unless ``W360_OIDC_TRANSITION_ISSUERS`` is
+    set. After host validation, so the host is one ``ALLOWED_HOSTS`` admits."""
+
+    def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
+        from workeasy360.platform.ecosystem import tokens
+
+        self.get_response = get_response
+        self._tokens = tokens
+
+    def __call__(self, request: HttpRequest) -> HttpResponse:
+        if not getattr(settings, "OIDC_TRANSITION_ISSUERS", None):
+            return self.get_response(request)
+        chosen = self._tokens.issuer_for_host(request.get_host())
+        with self._tokens.answering_as(chosen):
+            return self.get_response(request)
+
+
 class PortalSurfaceMiddleware:
     """Refuse (404) a portal-owned API prefix on any other host, and (403) a
     write to a web portal that names another origin.
@@ -153,7 +249,13 @@ class PortalSurfaceMiddleware:
     def __call__(self, request: HttpRequest) -> HttpResponse:
         if getattr(settings, "PORTALS_ENABLED", False):
             origins = settings.W360_PORTAL_ORIGINS
-            portal = portals.portal_for_host(request.get_host(), origins)
+            host = request.get_host()
+            legacy = getattr(settings, "W360_AUTH_LEGACY_ORIGIN", "")
+            if legacy and portals.host_of(legacy) == host.strip().lower().rstrip("."):
+                answer = legacy_auth_answer(request, origins[portals.AUTH].rstrip("/"))
+                _count_legacy(request, answer)
+                return answer if answer is not None else self.get_response(request)
+            portal = portals.portal_for_host(host, origins)
             wanted = allowed_portals(request.path)
             if wanted is not None and portal not in wanted:
                 return JsonResponse({"code": "not_found"}, status=404)

@@ -261,6 +261,8 @@ class ProductMediaKind(_StrEnum):
     BANNER = "banner"
     SCREENSHOT = "screenshot"
     VIDEO = "video"
+    #: ADR-068: the product demo's thumbnail - an image, one per product.
+    VIDEO_POSTER = "video_poster"
 
 
 class ProductUpdateKind(_StrEnum):

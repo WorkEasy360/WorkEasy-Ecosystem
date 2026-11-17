@@ -386,9 +386,15 @@ def customer_product(
     }
 
 
-def _video_of(slug: str, row: dict[str, Any] | None) -> dict[str, Any] | None:
+def _video_of(
+    slug: str,
+    row: dict[str, Any] | None,
+    *,
+    video_url: Callable[[str, dict[str, Any]], str] | None = None,
+) -> dict[str, Any] | None:
     """A product page's video: its uploaded file when it has one, else its
-    YouTube or Vimeo link, else nothing."""
+    YouTube or Vimeo link, else nothing. ``video_url`` addresses an uploaded
+    file (the public route by default; the staff preview passes its own)."""
     if row is None:
         return None
     uploaded = catalog.product_videos([row["id"]]).get(str(row["id"]))
@@ -396,10 +402,23 @@ def _video_of(slug: str, row: dict[str, Any] | None) -> dict[str, Any] | None:
         return {
             "provider": "upload",
             "id": uploaded["id"],
-            "url": catalog.video_url(slug, uploaded),
+            "url": (video_url or catalog.video_url)(slug, uploaded),
             "content_type": uploaded["content_type"],
         }
     return catalog.video_embed(row.get("video_url", ""))
+
+
+def _video_extras(row: dict[str, Any] | None, poster_url: str | None) -> dict[str, Any]:
+    """ADR-068: the demo's title, description and thumbnail - each only when
+    set, so a video with none keeps exactly the shape it always had."""
+    out: dict[str, Any] = {}
+    if row and row.get("video_title"):
+        out["title"] = row["video_title"]
+    if row and row.get("video_description"):
+        out["description"] = row["video_description"]
+    if poster_url:
+        out["poster"] = poster_url
+    return out
 
 
 #: The app stores a product page names (ADR-065), in the order it shows them.
@@ -436,10 +455,15 @@ def _product_page(
     *,
     status_of: Callable[[dict[str, Any]], str],
     held: dict[str, Any],
+    media_url: Callable[[str, Any], str] | None = None,
+    video_url: Callable[[str, dict[str, Any]], str] | None = None,
 ) -> dict[str, Any] | None:
     """One product's Store page from a customer-facing listing: content,
     screenshots, plan comparison and related products, plus ``held`` (what an
-    organization holds of it, or nothing for a visitor)."""
+    organization holds of it, or nothing for a visitor). ``media_url`` and
+    ``video_url`` address its files - the public routes by default; the staff
+    preview (ADR-068) passes the staff ones, so nothing is made public."""
+    address = media_url or catalog.media_url
     now = timezone.now()
     product = next((p for p in products if p["code"] == product_code), None)
     if product is None:
@@ -451,7 +475,7 @@ def _product_page(
 
     def image(m: dict[str, Any]) -> dict[str, Any]:
         return {
-            "url": catalog.media_url(product["slug"], m["id"]),
+            "url": address(product["slug"], m["id"]),
             "caption": m["caption"],
             "width": m["width"],
             "height": m["height"],
@@ -508,7 +532,18 @@ def _product_page(
             "use_cases": (row or {}).get("use_cases", []),
             "setup_requirements": (row or {}).get("setup_requirements", []),
             "access": _access_of(row),
-            "video": _video_of(product["slug"], row if on_sale else None),
+            "video": _with_extras(
+                _video_of(product["slug"], row if on_sale else None, video_url=video_url),
+                row,
+                next(
+                    (
+                        address(product["slug"], m["id"])
+                        for m in media
+                        if m["kind"] == "video_poster"
+                    ),
+                    None,
+                ),
+            ),
             "documentation_url": (row or {}).get("documentation_url", ""),
             "support_url": (row or {}).get("support_url", ""),
             **store.merchandising_of(row, now),
@@ -524,6 +559,12 @@ def _product_page(
         "comparison": _comparison(plans, features) if plans else [],
         "related": related,
     }
+
+
+def _with_extras(
+    video: dict[str, Any] | None, row: dict[str, Any] | None, poster_url: str | None
+) -> dict[str, Any] | None:
+    return None if video is None else {**video, **_video_extras(row, poster_url)}
 
 
 def my_holding(product_code: str) -> Any:
