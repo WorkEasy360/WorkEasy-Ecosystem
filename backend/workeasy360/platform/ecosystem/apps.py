@@ -27,7 +27,7 @@ class EcosystemConfig(AppConfig):
         # (contracts/ports/signing.py).
         register_signing_key_provider(keys.EnvSigningKeyProvider())
 
-        # ADR-067: identity reports ended sign-ins through this port; the
+        # ADR-069: identity reports ended sign-ins through this port; the
         # recorder turns them into back-channel logout deliveries inside
         # identity's own transaction.
         from workeasy360.contracts.ports.sign_ins import register_sign_ins_ended_listener

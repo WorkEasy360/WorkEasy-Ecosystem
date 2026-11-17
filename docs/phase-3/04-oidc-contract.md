@@ -121,7 +121,7 @@ be registered for your client **exactly** (`post_logout_redirect_uris` in the
 manifest), with `state` appended. Anything unregistered is refused, never
 followed.
 
-### 3.3 Back-channel logout (ADR-067)
+### 3.3 Back-channel logout (ADR-069)
 
 A product that registers `backchannel_logout_uri` (manifest `2026-11-15`) is
 told when a Workeasy360 sign-in it was opened from ends - sign-out, an

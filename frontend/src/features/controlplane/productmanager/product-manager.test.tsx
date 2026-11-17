@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { ProductManager } from "./ProductManager";
-import { AddProductWizard, toRequest, validateStep, EMPTY_DRAFT } from "./AddProductWizard";
 import { ProductDetail } from "./ProductDetail";
 import { imageSize } from "./model";
 import { AdminContextForTest, expectNoViolations, mockApi, ok } from "../testSupport";
@@ -163,7 +162,7 @@ describe("Product Manager list", () => {
     const { container } = renderAs(MANAGE, <ProductManager />);
     expect(await screen.findByRole("heading", { level: 1, name: "Products" })).toBeInTheDocument();
     expect(screen.getByText("Manage WorkEasy360 products and their store availability.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "New product" })).toHaveAttribute("href", "/admin/products/new");
+    expect(screen.getByRole("button", { name: "Add Product" })).toBeInTheDocument();
     const summary = screen.getByRole("group", { name: "Catalog summary" });
     expect(within(summary).getByText("Published").nextElementSibling).toBeTruthy();
     const row = screen.getByRole("link", { name: "Easy Sample" }).closest("tr") as HTMLElement;
@@ -248,233 +247,16 @@ describe("Product Manager list", () => {
     mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
     renderAs(VIEW, <ProductManager />);
     await screen.findByRole("link", { name: "Easy Sample" });
-    expect(screen.queryByRole("link", { name: "New product" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Product" })).not.toBeInTheDocument();
     const menu = rowMenu("Draft Tool");
     expect(within(menu).queryByRole("menuitem", { name: "Publish" })).not.toBeInTheDocument();
     expect(within(menu).queryByRole("menuitem", { name: "Archive" })).not.toBeInTheDocument();
-    expect(within(menu).queryByRole("menuitem", { name: "Edit listing" })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Edit in Publisher" })).not.toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Manage" })).toHaveAttribute("href", "/admin/products/p2");
   });
 });
 
-// --- the wizard -------------------------------------------------------------------------
-
-async function fillIdentity(name = "New Ledger") {
-  fireEvent.change(await screen.findByLabelText(/^Product name/), { target: { value: name } });
-  fireEvent.change(screen.getByLabelText(/^Category/), { target: { value: "Finance" } });
-  fireEvent.change(screen.getByLabelText(/^Short description/), { target: { value: "Books that balance." } });
-  fireEvent.change(screen.getByLabelText("Product logo"), { target: { files: [pngFile(256, 256)] } });
-  expect(await screen.findByText("logo.png")).toBeInTheDocument();
-}
-
-describe("Add Product wizard", () => {
-  it("has four steps and checks step 1 before moving on", async () => {
-    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
-    const { container } = renderAs(MANAGE, <AddProductWizard />);
-    const steps = await screen.findByRole("list", { name: "Steps" });
-    expect(within(steps).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-      "1Step 1: Identity",
-      "2Step 2: Store Listing",
-      "3Step 3: Integration",
-      "4Step 4: Availability",
-    ]);
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    const alert = (await screen.findByText(/^Fix these/)).closest("[role=alert]") as HTMLElement;
-    expect(alert).toHaveTextContent("Enter the product name.");
-    expect(alert).toHaveTextContent("Choose a category.");
-    expect(alert).toHaveTextContent("Add the product logo.");
-    await expectNoViolations(container);
-  });
-
-  it("suggests the slug from the name, shows the permanent code and refuses a slug in use", async () => {
-    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
-    renderAs(MANAGE, <AddProductWizard />);
-    fireEvent.change(await screen.findByLabelText(/^Product name/), { target: { value: "Draft Tool" } });
-    expect(screen.getByLabelText(/^Product slug/)).toHaveValue("draft-tool");
-    expect(screen.getByText("draft_tool")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText("This slug is already used by another product.", { selector: "li" })).toBeInTheDocument();
-  });
-
-  it("refuses an SVG or a too-small logo before uploading anything", async () => {
-    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
-    renderAs(MANAGE, <AddProductWizard />);
-    const input = await screen.findByLabelText("Product logo");
-    fireEvent.change(input, { target: { files: [new File(["<svg/>"], "x.svg", { type: "image/svg+xml" })] } });
-    expect(await screen.findByText(/SVG and other formats are not accepted/)).toBeInTheDocument();
-    fireEvent.change(input, { target: { files: [pngFile(16, 16, "tiny.png")] } });
-    expect(await screen.findByText(/16×16 px; it must be from 64×64/)).toBeInTheDocument();
-    expect(uploads).toEqual([]);
-  });
-
-  it("creates, uploads with progress and publishes - sending exactly the fields chosen", async () => {
-    const calls = mockApi({
-      [`GET ${ADMIN}/products/console`]: [ok(CATALOG)],
-      [`POST ${ADMIN}/products`]: [{ status: 201, body: { product: { ...DRAFT, id: "new1" } } }],
-      [`POST ${ADMIN}/products/new1/publish`]: [ok({})],
-    });
-    renderAs(MANAGE, <AddProductWizard />);
-    await fillIdentity();
-    fireEvent.click(screen.getByLabelText("Icon: wallet"));
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-
-    expect(await screen.findByRole("heading", { name: "2. Store Listing" })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Short store description"), { target: { value: "Ledgers for small teams." } });
-    fireEvent.change(screen.getByLabelText("Add screenshots"), { target: { files: [pngFile(1280, 720, "board.png")] } });
-    fireEvent.change(await screen.findByLabelText("Caption for screenshot 1 (optional)"), { target: { value: "The board" } });
-    fireEvent.change(screen.getByLabelText("Support URL"), { target: { value: "https://support.workeasy360.com/ledger" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-
-    expect(await screen.findByRole("heading", { name: "3. Integration" })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/^Launch URL/), { target: { value: "javascript:alert(1)" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText("The launch URL must be an https:// address.", { selector: "li" })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/^Application URL/), { target: { value: "https://ledger.workeasy360.com" } });
-    fireEvent.change(screen.getByLabelText(/^Launch URL/), { target: { value: "https://ledger.workeasy360.com/" } });
-    fireEvent.change(screen.getByLabelText("Sign-in callback URL"), { target: { value: "https://ledger.workeasy360.com/api/auth/callback" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-
-    expect(await screen.findByRole("heading", { name: "4. Availability" })).toBeInTheDocument();
-    expect(screen.getByText("Plans/Pricing required before final Store sale activation.")).toBeInTheDocument();
-    const affiliate = screen.getByRole("group", { name: "Affiliate" });
-    fireEvent.click(within(affiliate).getByLabelText("Not allowed"));
-    fireEvent.click(within(screen.getByRole("group", { name: "Free trial" })).getByLabelText("Enabled"));
-    fireEvent.change(screen.getByLabelText("Trial duration (days)"), { target: { value: "7" } });
-    fireEvent.click(screen.getByRole("button", { name: "Publish Product" }));
-
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/products/new1?saved=published"));
-    const create = calls.find((c) => c.key === `POST ${ADMIN}/products`)!;
-    expect(create.body).toEqual({
-      name: "New Ledger",
-      slug: "new-ledger",
-      category: "Finance",
-      tagline: "Books that balance.",
-      icon: "wallet",
-      store_title: "",
-      store_summary: "Ledgers for small teams.",
-      description: "",
-      marketing_url: "",
-      documentation_url: "",
-      support_url: "https://support.workeasy360.com/ledger",
-      application_url: "https://ledger.workeasy360.com",
-      customer_store_enabled: true,
-      reseller_enabled: true,
-      affiliate_enabled: false,
-      white_label_enabled: true,
-      integration: {
-        launch_url: "https://ledger.workeasy360.com/",
-        sso_enabled: true,
-        redirect_uri: "https://ledger.workeasy360.com/api/auth/callback",
-      },
-      trial: { enabled: true, duration_days: 7 },
-    });
-    expect(JSON.stringify(create.body)).not.toMatch(/secret|code"/);
-    expect(uploads.map((u) => u.url)).toEqual([
-      `${ADMIN}/products/new1/media?kind=logo`,
-      `${ADMIN}/products/new1/media?kind=screenshot&caption=The+board`,
-    ]);
-    expect(uploads.every((u) => u.type === "image/png" && u.progress)).toBe(true);
-    expect(calls.some((c) => c.key === `POST ${ADMIN}/products/new1/publish`)).toBe(true);
-  });
-
-  it("Save Draft needs only a name and a slug, and never publishes", async () => {
-    const calls = mockApi({
-      [`GET ${ADMIN}/products/console`]: [ok(CATALOG)],
-      [`POST ${ADMIN}/products`]: [{ status: 201, body: { product: { ...DRAFT, id: "new2" } } }],
-    });
-    renderAs(MANAGE, <AddProductWizard />);
-    fireEvent.change(await screen.findByLabelText(/^Product name/), { target: { value: "Scratch Pad" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/products/new2?saved=draft"));
-    expect(calls.find((c) => c.key === `POST ${ADMIN}/products`)!.body).toMatchObject({ name: "Scratch Pad", slug: "scratch-pad", integration: null, trial: null });
-    expect(calls.some((c) => c.key.endsWith("/publish"))).toBe(false);
-  });
-
-  it("a server refusal is shown and nothing claims success", async () => {
-    mockApi({
-      [`GET ${ADMIN}/products/console`]: [ok(CATALOG)],
-      [`POST ${ADMIN}/products`]: [{ status: 400, body: { code: "catalog_validation", detail: "support_url: the address must be publicly routable" } }],
-    });
-    renderAs(MANAGE, <AddProductWizard />);
-    fireEvent.change(await screen.findByLabelText(/^Product name/), { target: { value: "Scratch Pad" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
-    expect(await screen.findByText(/publicly routable/, { selector: "p" })).toBeInTheDocument();
-    expect(push).not.toHaveBeenCalled();
-  });
-
-  it("is not offered without the catalog management permission", async () => {
-    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
-    renderAs(VIEW, <AddProductWizard />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("needs the catalog management permission");
-  });
-
-  it("the step rules and the request are pure functions of the fields", () => {
-    const taken = { takenSlugs: new Set(["easy-sample"]), takenCodes: new Set(["easy_sample"]) };
-    expect(validateStep(0, { ...EMPTY_DRAFT, name: "A", slug: "a" }, { strict: false, hasLogo: false, ...taken })).toEqual({});
-    expect(Object.keys(validateStep(0, { ...EMPTY_DRAFT, name: "A", slug: "a" }, { strict: true, hasLogo: false, ...taken }))).toEqual(["category", "tagline", "logo"]);
-    expect(validateStep(3, { ...EMPTY_DRAFT, trial: "enabled", trialDays: "0" }, { strict: true, hasLogo: true, ...taken }).trialDays).toBeTruthy();
-    expect(toRequest({ ...EMPTY_DRAFT, name: " X ", slug: "x", launchUrl: "https://x.workeasy360.com/", sso: "no" }).integration).toEqual({
-      launch_url: "https://x.workeasy360.com/",
-      sso_enabled: false,
-      redirect_uri: undefined,
-      health_url: undefined,
-    });
-  });
-
-  it("the Integration step takes an optional back-channel logout URL on the callback's origin, and says hostnames are proven before activation", async () => {
-    const calls = mockApi({
-      [`GET ${ADMIN}/products/console`]: [ok(CATALOG)],
-      [`POST ${ADMIN}/products`]: [{ status: 201, body: { product: { ...DRAFT, id: "new3" } } }],
-    });
-    const { container } = renderAs(MANAGE, <AddProductWizard />);
-    await fillIdentity();
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
-    expect(await screen.findByRole("heading", { name: "3. Integration" })).toBeInTheDocument();
-    expect(screen.getByText(/control of every hostname it uses .* must be proven with a DNS TXT record/)).toBeInTheDocument();
-
-    // Only with single sign-on on.
-    fireEvent.click(within(screen.getByRole("group", { name: "SSO enabled" })).getByLabelText("No"));
-    expect(screen.queryByLabelText("Back-channel logout URL (optional)")).not.toBeInTheDocument();
-    fireEvent.click(within(screen.getByRole("group", { name: "SSO enabled" })).getByLabelText("Yes"));
-
-    fireEvent.change(screen.getByLabelText(/^Application URL/), { target: { value: "https://ledger.workeasy360.com" } });
-    fireEvent.change(screen.getByLabelText(/^Launch URL/), { target: { value: "https://ledger.workeasy360.com/" } });
-    fireEvent.change(screen.getByLabelText("Sign-in callback URL"), { target: { value: "https://ledger.workeasy360.com/api/auth/callback" } });
-    fireEvent.change(screen.getByLabelText("Back-channel logout URL (optional)"), { target: { value: "https://hooks.example.com/logout" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText(/^Back-channel logout URL: Use the same origin/, { selector: "li" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "3. Integration" })).toBeInTheDocument();
-    await expectNoViolations(container);
-
-    fireEvent.change(screen.getByLabelText("Back-channel logout URL (optional)"), {
-      target: { value: "https://ledger.workeasy360.com/api/auth/backchannel-logout" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByRole("heading", { name: "4. Availability" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/products/new3?saved=draft"));
-    expect((calls.find((c) => c.key === `POST ${ADMIN}/products`)!.body as { integration: unknown }).integration).toEqual({
-      launch_url: "https://ledger.workeasy360.com/",
-      sso_enabled: true,
-      redirect_uri: "https://ledger.workeasy360.com/api/auth/callback",
-      backchannel_logout_uri: "https://ledger.workeasy360.com/api/auth/backchannel-logout",
-    });
-  });
-
-  it("the back-channel logout URL is checked like the registry checks it, and never sent without single sign-on", () => {
-    const ctx = { strict: true, hasLogo: true, takenSlugs: new Set<string>(), takenCodes: new Set<string>() };
-    const step = { ...EMPTY_DRAFT, applicationUrl: "https://x.workeasy360.com", launchUrl: "https://x.workeasy360.com/", redirectUri: "https://x.workeasy360.com/cb" };
-    expect(validateStep(2, { ...step, backchannelUri: "https://x.workeasy360.com/bc" }, ctx)).toEqual({});
-    expect(validateStep(2, { ...step, backchannelUri: "http://x.workeasy360.com/bc" }, ctx).backchannelUri).toMatch(/https/);
-    expect(validateStep(2, { ...step, backchannelUri: "https://x.workeasy360.com/bc?x=1" }, ctx).backchannelUri).toMatch(/query/);
-    expect(validateStep(2, { ...step, redirectUri: "", backchannelUri: "https://x.workeasy360.com/bc" }, ctx).backchannelUri).toMatch(/callback URL first/);
-    expect(validateStep(2, { ...step, sso: "no", backchannelUri: "nonsense" }, ctx).backchannelUri).toBeUndefined();
-    expect(toRequest({ ...step, name: "X", slug: "x", backchannelUri: " https://x.workeasy360.com/bc " }).integration?.backchannel_logout_uri).toBe("https://x.workeasy360.com/bc");
-    expect(toRequest({ ...step, name: "X", slug: "x", sso: "no", backchannelUri: "https://x.workeasy360.com/bc" }).integration?.backchannel_logout_uri).toBeUndefined();
-    expect(toRequest({ ...step, name: "X", slug: "x" }).integration?.backchannel_logout_uri).toBeUndefined();
-  });
-
+describe("Product images", () => {
   it("reads an image's size from its bytes, as the server does", async () => {
     expect(await imageSize(pngFile(640, 400))).toEqual({ width: 640, height: 400 });
     expect(await imageSize(new File(["GIF89a"], "x.gif"))).toBeNull();

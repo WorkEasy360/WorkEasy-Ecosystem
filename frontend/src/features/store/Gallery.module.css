@@ -1,4 +1,5 @@
-/* The product page's video and pictures (moved from storefront/PublicStore.module.css, ADR-065). */
+/* The product page's pictures and demo video (moved from storefront/PublicStore.module.css,
+ * ADR-065; the gallery's Previous / Next, swipe and full-screen entry 2026-11-16). */
 
 .gallery {
   display: grid;
@@ -7,6 +8,7 @@
 }
 
 .stage {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -21,6 +23,24 @@
   background: var(--w360-surface);
   border: 1px solid var(--w360-border);
   box-shadow: 0 12px 32px rgba(22, 29, 36, 0.08);
+  /* A sideways swipe is the gallery's; an up-and-down one still scrolls the page. */
+  touch-action: pan-y;
+}
+
+/* The picture on the stage opens it full screen. */
+.stageButton {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.stageButton:focus-visible {
+  outline: 3px solid var(--w360-focus-ring);
+  outline-offset: -3px;
 }
 
 .stageFilled .stageImage {
@@ -32,10 +52,97 @@
   object-position: center;
   border-radius: 0;
   box-shadow: none;
+  animation: stageIn 0.25s ease;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+@keyframes stageIn {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.expand {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(4, 31, 32, 0.62);
+  color: #ffffff;
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.stageButton:hover .expand,
+.stageButton:focus-visible .expand {
+  opacity: 1;
+}
+
+.stageNav {
+  position: absolute;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-top: -22px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--w360-text);
+  box-shadow: 0 6px 18px rgba(4, 31, 32, 0.22);
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.stageNav:hover {
+  background: #ffffff;
+  transform: scale(1.06);
+}
+
+.stageNav:focus-visible {
+  outline: 3px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+.stagePrev {
+  left: 12px;
+}
+
+.stageNext {
+  right: 12px;
+}
+
+.stageCount {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(4, 31, 32, 0.7);
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  pointer-events: none;
 }
 
 .stageVideo {
+  aspect-ratio: 16 / 9;
+  padding: 0;
   background: #0d1b16;
+  box-shadow: 0 12px 32px rgba(22, 29, 36, 0.1);
 }
 
 .player {
@@ -127,40 +234,11 @@
   transform: scale(1.06);
 }
 
-.thumbVideo {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  border-radius: 6px;
-}
-
-.thumbVideo img {
-  position: absolute;
-  inset: 0;
-  filter: brightness(0.6);
-}
-
-.thumbVideo .playMark {
-  position: relative;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
 .stageCaption {
   margin: calc(-1 * var(--w360-space-1)) 0 0;
   font-size: 14px;
   text-align: center;
   color: var(--w360-text-secondary);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .poster img,
-  .playMark {
-    transition: none;
-  }
 }
 
 .stageImage {
@@ -215,7 +293,7 @@
 
 .thumbs {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
   gap: var(--w360-space-3);
   margin: 0;
   padding: 0;
@@ -226,12 +304,13 @@
   display: block;
   width: 100%;
   aspect-ratio: 16 / 10;
-  padding: 4px;
+  padding: 3px;
   overflow: hidden;
   background: var(--w360-surface);
   border: 2px solid var(--w360-border);
   border-radius: 10px;
   cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .thumb img {
@@ -248,11 +327,42 @@
 }
 
 .thumb[aria-pressed="true"] {
-  border-color: var(--w360-accent);
-  box-shadow: 0 0 0 2px var(--w360-brand-soft);
+  border-color: var(--w360-admin-action);
+  box-shadow: 0 0 0 2px var(--w360-admin-accent-soft);
 }
 
 .thumb:focus-visible {
   outline: 2px solid var(--w360-focus-ring);
   outline-offset: 2px;
+}
+
+@media (max-width: 520px) {
+  .stageNav {
+    width: 38px;
+    height: 38px;
+    margin-top: -19px;
+  }
+  .stagePrev {
+    left: 8px;
+  }
+  .stageNext {
+    right: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .poster img,
+  .playMark,
+  .expand,
+  .stageNav,
+  .thumb {
+    transition: none;
+  }
+  .stageFilled .stageImage {
+    animation: none;
+  }
+  .poster:hover .playMark,
+  .stageNav:hover {
+    transform: none;
+  }
 }

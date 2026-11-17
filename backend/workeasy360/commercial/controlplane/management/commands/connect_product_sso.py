@@ -202,6 +202,14 @@ class Command(BaseCommand):
             else:
                 status = integration.status
             issuer = discovery.document()["issuer"]
+            # ADR-067: a product connected while products move to WorkEasy360
+            # Accounts is given that name at once, whenever it is already one
+            # of the configured issuers - so it never has to move itself.
+            from workeasy360.platform.ecosystem import tokens
+            from workeasy360.platform.identity import portals as portal_links
+
+            if portal_links.auth_url() in tokens.issuers():
+                issuer = portal_links.auth_url()
 
         self.stdout.write(
             f"{product}: redirect URIs and scopes updated, credential registered, integration {status}"

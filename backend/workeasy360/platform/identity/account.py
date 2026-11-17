@@ -159,7 +159,7 @@ def revoke_session(
         ).delete()
         if not deleted:
             raise SessionNotFound("No such session.")
-        # ADR-067: the products that sign-in opened are told, in this commit.
+        # ADR-069: the products that sign-in opened are told, in this commit.
         notify_sign_ins_ended(
             user_id=user_id, sign_in_ids=sign_in_ids, reason=REASON_SESSION_REVOKED
         )
@@ -225,7 +225,7 @@ def sign_out_everywhere(user_id: Any) -> int:
         user = User.objects.select_for_update().get(pk=user_id)
         user.revoke_sessions()
         deleted, _ = UserSession.objects.filter(user_id=user_id).delete()
-        # ADR-067: every product the person is signed in to, from any device.
+        # ADR-069: every product the person is signed in to, from any device.
         notify_sign_ins_ended(
             user_id=user_id, everywhere=True, reason=REASON_SIGNED_OUT_EVERYWHERE
         )
@@ -310,7 +310,7 @@ def change_password(
         # Every other session dies now; the caller's own is re-issued by the
         # view (update_session_auth_hash rotates its key).
         UserSession.objects.filter(user_id=user_id).delete()
-        # ADR-067: a new password ends every product session too, this
+        # ADR-069: a new password ends every product session too, this
         # browser's included - SSO signs this person straight back in.
         notify_sign_ins_ended(
             user_id=user_id, everywhere=True, reason=REASON_PASSWORD_CHANGED

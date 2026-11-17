@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/sidebar/icons";
 import { publicApi, type PublicStoreProductPage, type PublicTax } from "@/lib/api/public";
@@ -9,7 +9,8 @@ import { LoadGate, useLoad } from "@/features/controlplane/ui";
 import { MarkdownLite } from "@/features/console/MarkdownLite";
 import { comparisonCell } from "@/features/storefront/PlanComparison";
 import { shelfPrice, taxNote } from "@/features/storefront/StoreBrowser";
-import { Gallery } from "./Gallery";
+import { DemoVideo, Gallery } from "./Gallery";
+import { Lightbox } from "./Lightbox";
 import { ProductCard, ProductTile, freeOffers, tileIcon } from "./ProductCard";
 import { checkoutHref, trialHref } from "./checkoutLinks";
 import { storePaths } from "./links";
@@ -17,16 +18,21 @@ import styles from "./StorePages.module.css";
 import shell from "./Store.module.css";
 
 /**
- * One product of the Store (`/store/product/<slug>`): Overview (what it is, its
- * features, pictures, setup requirements and how to reach it), Plans & Pricing
- * (every plan for each billing period, the renewal, seats, included usage, the
- * usage rates beyond it), App Availability (the web app and the official
- * app-store links only), and the plan box - Buy Now, Start Free Plan, Start Trial.
+ * One product of the Store (`/store/product/<slug>`, redesigned 2026-11-16):
+ * the hero (logo, name, what it is, category, availability, what is free, its
+ * key highlights), the pictures (full screen on a click), and the sections the
+ * sticky "On this page" bar names - Overview, Features, Screenshots, Demo,
+ * Plans & Pricing (every plan for each billing period, the renewal, seats,
+ * included usage, the usage rates beyond it) and App Availability (only what
+ * the Super Admin configured) - beside the plan box: Buy Now, Start Free Plan,
+ * Start Trial.
  *
  * Every plan, price, allowance and link is the server's. The box's total is an
  * estimate from those prices; the checkout asks the server for the real quote,
  * and Buy Now hands it only identifiers (plan, period, seats). A Coming Soon
- * product shows everything and sells nothing.
+ * product shows everything and sells nothing. `preview` (the Super Admin's
+ * Product Publisher) draws the same page with nothing to buy and nothing that
+ * leaves it.
  */
 
 type Data = PublicStoreProductPage;
@@ -46,12 +52,23 @@ export const METER_LABEL: Record<string, string> = {
   webhook: "Webhook deliveries",
 };
 
-const APP_LABEL: Record<string, { label: string; icon: string }> = {
+/** The app stores a product may be listed in, in the order they are shown. */
+const APP_ORDER = ["android", "ios", "windows", "macos"] as const;
+const APP_LABEL: Record<(typeof APP_ORDER)[number], { label: string; icon: string }> = {
   android: { label: "Android", icon: "phone" },
   ios: { label: "iOS (iPhone & iPad)", icon: "phone" },
-  windows: { label: "Windows", icon: "monitor" },
-  macos: { label: "macOS", icon: "monitor" },
+  windows: { label: "Desktop (Windows)", icon: "monitor" },
+  macos: { label: "Desktop (macOS)", icon: "monitor" },
 };
+
+/** What is true of every purchase on the Store - the platform's own facts, no figures. */
+const TRUST: { icon: string; text: string }[] = [
+  { icon: "user", text: "One WorkEasy360 account for every product" },
+  { icon: "apps", text: "Manage subscriptions in My Account" },
+  { icon: "shield", text: "Secure checkout" },
+];
+
+const PREVIEW_NOTE = "Preview - purchasing opens once the product is published";
 
 /** ADR-058: the GST the checkout will add on `taxable` - the server's rule
  * (rate, whole rupees, half up). An estimate; the checkout's quote is the amount. */
@@ -78,6 +95,40 @@ export function rateText(rate: StoreRate): string {
   return `${shelfPrice(rate.unit_amount, rate.currency)} ${per}`;
 }
 
+/** Smooth scrolling, unless the visitor asked for less motion. */
+function scrollBehavior(): ScrollBehavior {
+  return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+}
+
+/** Which of these sections the visitor is reading: the first one inside the band
+ * under the sticky bars. Without IntersectionObserver (an old browser, jsdom) no
+ * section is marked and the links still work. */
+function useCurrentSection(ids: string[]): string | null {
+  const [current, setCurrent] = useState<string | null>(null);
+  const key = ids.join(" ");
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.IntersectionObserver !== "function") return;
+    const order = key.split(" ");
+    const inside = new Map<string, boolean>();
+    const observer = new window.IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) inside.set(entry.target.id, entry.isIntersecting);
+        const first = order.find((id) => inside.get(id));
+        if (first) setCurrent(first);
+        // Above every section (the top of the page): the first one.
+        else if ((document.getElementById(order[0])?.getBoundingClientRect().top ?? -1) > 0) setCurrent(order[0]);
+      },
+      { rootMargin: "-150px 0px -55% 0px" },
+    );
+    for (const id of order) {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, [key]);
+  return current;
+}
+
 function Ticks({ id, title, items }: { id?: string; title: string; items: string[] | undefined }) {
   if (!items || items.length === 0) return null;
   return (
@@ -95,10 +146,46 @@ function Ticks({ id, title, items }: { id?: string; title: string; items: string
   );
 }
 
-function PlanBox({ data, period, setPeriod, planId, setPlanId }: { data: Data; period: string; setPeriod: (p: string) => void; planId: string | null; setPlanId: (id: string) => void }) {
+/** A purchase action: a link to the checkout - or, in a preview, the same-looking
+ * button that does nothing. */
+function Action({ preview, href, primary = false, children }: { preview: boolean; href: string; primary?: boolean; children: ReactNode }) {
+  const className = `${primary ? shell.primary : shell.secondary} ${styles.wide}`;
+  if (preview) {
+    return (
+      <button type="button" className={className} disabled aria-disabled="true">
+        {children}
+      </button>
+    );
+  }
+  return (
+    <Link href={href} className={className}>
+      {children}
+    </Link>
+  );
+}
+
+function PlanBox({
+  data,
+  period,
+  setPeriod,
+  planId,
+  setPlanId,
+  preview,
+  focusSignal,
+}: {
+  data: Data;
+  period: string;
+  setPeriod: (p: string) => void;
+  planId: string | null;
+  setPlanId: (id: string) => void;
+  preview: boolean;
+  /** Bumped by a plan card's Select Plan: the box comes into view, focus on the chosen plan. */
+  focusSignal: number;
+}) {
   const p = data.product;
   const soon = p.status === "coming_soon";
   const ids = { plans: useId(), qty: useId() };
+  const box = useRef<HTMLElement | null>(null);
   const buyable = data.plans.filter((x) => x.kind === "standard" && x.billing_type !== "free_trial");
   const periods = [...new Set(buyable.flatMap((x) => x.prices.filter((r) => r.amount_minor !== null).map((r) => r.interval)))].filter((i) => i !== "one_time");
   const inPeriod = buyable.filter((x) => priceOf(x, period, data.currency));
@@ -113,9 +200,16 @@ function PlanBox({ data, period, setPeriod, planId, setPlanId }: { data: Data; p
   const trialPlan = !soon && p.trial.available ? data.plans.find((x) => p.trial.plan_codes.includes(x.plan_code)) : undefined;
   const free = price && price.amount_minor === 0;
 
+  useEffect(() => {
+    const el = box.current;
+    if (!focusSignal || !el) return;
+    el.scrollIntoView?.({ behavior: scrollBehavior(), block: "start" });
+    el.querySelector<HTMLInputElement>('input[type="radio"]:checked')?.focus({ preventScroll: true });
+  }, [focusSignal]);
+
   if (soon) {
     return (
-      <aside className={`${shell.card} ${styles.planBox}`} aria-label={`Buy ${p.title}`}>
+      <aside ref={box} className={`${shell.card} ${styles.planBox}`} aria-label={`Buy ${p.title}`}>
         <p className={styles.boxStatus}>
           <span className={`${shell.chip} ${shell.chipSoon}`}>Coming Soon</span>
         </p>
@@ -126,28 +220,41 @@ function PlanBox({ data, period, setPeriod, planId, setPlanId }: { data: Data; p
   }
 
   return (
-    <aside className={`${shell.card} ${styles.planBox}`} aria-label={`Buy ${p.title}`}>
-      {price ? (
-        <p className={styles.boxBig}>
-          {shelfPrice(price.amount_minor, price.currency)}
-          <span className={styles.boxPer}>
-            {perSeat ? "/user" : ""}/{PER[period] ?? period}
-          </span>{" "}
-          <span className={styles.boxTax}>{taxNote(price.currency)}</span>
-        </p>
-      ) : trialPlan ? (
-        <p className={styles.boxBig}>Free trial</p>
-      ) : (
-        <p className={styles.boxBig}>Pricing on request</p>
-      )}
-      {price && price.list_amount_minor != null && price.list_amount_minor > price.amount_minor && (
-        <p className={styles.boxHint}>
-          <s>
-            {shelfPrice(price.list_amount_minor, price.currency)}/{PER[period]}
-          </s>{" "}
-          - {Math.round((price.discount_bp ?? 0) / 100)}% off
-        </p>
-      )}
+    <aside ref={box} className={`${shell.card} ${styles.planBox}`} aria-label={`Buy ${p.title}`}>
+      <div className={styles.boxPrice}>
+        {price && plan && (
+          <p className={styles.boxKicker}>
+            {plan.name} · {PERIOD_LABEL[period] ?? period}
+          </p>
+        )}
+        {price ? (
+          <p className={styles.boxBig}>
+            {free ? (
+              "Free"
+            ) : (
+              <>
+                {shelfPrice(price.amount_minor, price.currency)}
+                <span className={styles.boxPer}>
+                  {perSeat ? "/user" : ""}/{PER[period] ?? period}
+                </span>{" "}
+                <span className={styles.boxTax}>{taxNote(price.currency)}</span>
+              </>
+            )}
+          </p>
+        ) : trialPlan ? (
+          <p className={styles.boxBig}>Free trial</p>
+        ) : (
+          <p className={styles.boxBig}>Pricing on request</p>
+        )}
+        {price && price.list_amount_minor != null && price.list_amount_minor > price.amount_minor && (
+          <p className={styles.boxHint}>
+            <s>
+              {shelfPrice(price.list_amount_minor, price.currency)}/{PER[period]}
+            </s>{" "}
+            <span className={styles.boxSave}>{Math.round((price.discount_bp ?? 0) / 100)}% off</span>
+          </p>
+        )}
+      </div>
 
       {periods.length > 1 && (
         <div className={styles.periods} role="group" aria-label="Billing period">
@@ -237,37 +344,47 @@ function PlanBox({ data, period, setPeriod, planId, setPlanId }: { data: Data; p
 
       <div className={styles.boxActions}>
         {plan && price && !free && (
-          <Link href={checkoutHref({ plan: plan.plan_version_id, interval: period, quantity: seats })} className={`${shell.primary} ${styles.wide}`}>
+          <Action preview={preview} primary href={checkoutHref({ plan: plan.plan_version_id, interval: period, quantity: seats })}>
             <Icon name="lock" size={18} /> Buy Now
-          </Link>
+          </Action>
         )}
         {plan && free && (
-          <Link href={checkoutHref({ plan: plan.plan_version_id, interval: period })} className={`${shell.primary} ${styles.wide}`}>
+          <Action preview={preview} primary href={checkoutHref({ plan: plan.plan_version_id, interval: period })}>
             Start Free Plan
-          </Link>
+          </Action>
         )}
         {trialPlan && (
-          <Link href={trialHref(p.code, trialPlan.plan_code)} className={`${shell.secondary} ${styles.wide}`}>
+          <Action preview={preview} href={trialHref(p.code, trialPlan.plan_code)}>
             Start {p.trial.duration_days ? `${p.trial.duration_days}-day ` : ""}Free Trial
-          </Link>
+          </Action>
         )}
         {!price && !trialPlan && (
-          <Link href={`${storePaths.help}#contact`} className={`${shell.secondary} ${styles.wide}`}>
+          <Action preview={preview} href={`${storePaths.help}#contact`}>
             Contact sales
-          </Link>
+          </Action>
         )}
       </div>
+      {preview && <p className={styles.previewNote}>{PREVIEW_NOTE}</p>}
       <p className={styles.boxHint}>One product, one plan and one organization per order. The checkout confirms the final amount before you pay.</p>
+      <ul className={styles.trustRow} aria-label="Buying on the WorkEasy360 Store">
+        {TRUST.map((t) => (
+          <li key={t.text}>
+            <Icon name={t.icon} size={16} />
+            <span>{t.text}</span>
+          </li>
+        ))}
+      </ul>
     </aside>
   );
 }
 
-function PlansSection({ data, period, onSelect }: { data: Data; period: string; onSelect: (planId: string, period: string) => void }) {
+function PlansSection({ data, period, preview, onSelect }: { data: Data; period: string; preview: boolean; onSelect: (planId: string, period: string) => void }) {
   const [rates, setRates] = useState<StoreRate[]>([]);
   const currency = data.currency ?? "";
   useEffect(() => {
     let live = true;
-    if (!currency) return;
+    // A preview asks nothing of the Store host: its rates are the live page's business.
+    if (!currency || preview) return;
     storeHostApi.recharge(currency).then(
       (r) => live && setRates(r.rates),
       () => undefined,
@@ -275,7 +392,7 @@ function PlansSection({ data, period, onSelect }: { data: Data; period: string; 
     return () => {
       live = false;
     };
-  }, [currency]);
+  }, [currency, preview]);
   const standard = data.plans.filter((x) => x.kind === "standard");
   const addOns = data.plans.filter((x) => x.kind === "add_on");
   if (data.product.status === "coming_soon") return null;
@@ -325,6 +442,7 @@ function PlansSection({ data, period, onSelect }: { data: Data; period: string; 
                     "Not offered for this period"
                   )}
                 </p>
+                {plan.description?.trim() && <MarkdownLite text={plan.description} headingLevel={4} className={styles.planDescription} />}
                 <dl className={styles.planFacts}>
                   <div>
                     <dt>Validity</dt>
@@ -374,7 +492,7 @@ function PlansSection({ data, period, onSelect }: { data: Data; period: string; 
                   </ul>
                 )}
                 {plan.billing_type !== "free_trial" && price && (
-                  <button type="button" className={shell.secondary} onClick={() => onSelect(plan.plan_version_id, interval)}>
+                  <button type="button" className={plan.recommended ? shell.primary : shell.secondary} onClick={() => onSelect(plan.plan_version_id, interval)}>
                     Select Plan
                   </button>
                 )}
@@ -417,36 +535,52 @@ function PlansSection({ data, period, onSelect }: { data: Data; period: string; 
   );
 }
 
+/** How the product is reached: the web application when it has one, and each
+ * official app-store link the Super Admin entered (https only) - nothing else. */
 function Availability({ data }: { data: Data }) {
   const access = data.product.access;
-  const apps = Object.entries(access?.apps ?? {}).filter(([, url]) => typeof url === "string" && url.startsWith("https://"));
+  const links = access?.apps ?? {};
+  const apps = APP_ORDER.flatMap((platform) => {
+    const url = links[platform];
+    return typeof url === "string" && url.startsWith("https://") ? [{ platform, url }] : [];
+  });
+  const web = access?.web === true;
   return (
     <section id="apps" className={styles.detailSection} aria-labelledby="apps-title">
       <h2 id="apps-title" className={shell.sectionTitle}>
         App Availability
       </h2>
-      <ul className={styles.appList}>
-        <li className={shell.card}>
-          <Icon name="browser" size={26} />
-          <span>
-            <strong>Web application</strong>
-            <span>{access?.web ? "Opens from My Products after purchase, in any modern browser." : "Not available on the web yet."}</span>
-          </span>
-        </li>
-        {apps.map(([platform, url]) => (
-          <li key={platform} className={shell.card}>
-            <Icon name={APP_LABEL[platform]?.icon ?? "device"} size={26} />
-            <span>
-              <strong>{APP_LABEL[platform]?.label ?? platform}</strong>
-              <a href={url} rel="noopener noreferrer" target="_blank">
-                Get the official app <Icon name="external" size={14} />
-              </a>
-            </span>
-          </li>
-        ))}
-      </ul>
-      {apps.length === 0 && <p className={styles.boxHint}>No mobile or desktop app is listed for {data.product.title}.</p>}
-      <p className={styles.boxHint}>Subscriptions are bought here on the web; an app opens what your organization already holds.</p>
+      {web || apps.length > 0 ? (
+        <ul className={styles.appList}>
+          {web && (
+            <li className={shell.card}>
+              <span className={styles.appIcon}>
+                <Icon name="browser" size={24} />
+              </span>
+              <span className={styles.appText}>
+                <strong>Web application</strong>
+                <span>Opens from My Products after purchase, in any modern browser.</span>
+              </span>
+            </li>
+          )}
+          {apps.map(({ platform, url }) => (
+            <li key={platform} className={shell.card}>
+              <span className={styles.appIcon}>
+                <Icon name={APP_LABEL[platform].icon} size={24} />
+              </span>
+              <span className={styles.appText}>
+                <strong>{APP_LABEL[platform].label}</strong>
+                <a href={url} rel="noopener noreferrer" target="_blank">
+                  Get the official app <Icon name="external" size={14} />
+                </a>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className={styles.boxHint}>How to reach {data.product.title} - on the web or in an app - is listed here once it is available.</p>
+      )}
+      {apps.length > 0 && <p className={styles.boxHint}>Subscriptions are bought here on the web; an app opens what your organization already holds.</p>}
     </section>
   );
 }
@@ -456,13 +590,18 @@ export function ProductDetailsScreen({ slug }: { slug: string }) {
   return (
     <div className={shell.container}>
       <LoadGate load={load} what="this product">
-        {(data: Data) => <ProductPage data={data} />}
+        {(data: Data) => <StoreProductPage data={data} />}
       </LoadGate>
     </div>
   );
 }
 
-function ProductPage({ data }: { data: Data }) {
+/** The product page itself - the Store's (`ProductDetailsScreen`), or the Super
+ * Admin's preview of it (`preview`): the same page, but nothing to buy (the
+ * buttons are drawn, disabled), no related products, inert breadcrumbs, the
+ * tab's title left alone and no request of its own. */
+export function StoreProductPage({ data, preview: previewProp = false }: { data: PublicStoreProductPage & { preview?: boolean }; preview?: boolean }) {
+  const preview = previewProp || data.preview === true;
   const p = data.product;
   const soon = p.status === "coming_soon";
   const buyable = data.plans.filter((x) => x.kind === "standard" && x.billing_type !== "free_trial");
@@ -476,36 +615,55 @@ function ProductPage({ data }: { data: Data }) {
     (p.price && periods.includes(p.price.interval) ? p.price.interval : (periods[0] ?? "monthly"));
   const [period, setPeriod] = useState(start);
   const [planId, setPlanId] = useState<string | null>(null);
-  const images = [...(p.banner ? [p.banner] : []), ...p.screenshots];
+  const [focusBox, setFocusBox] = useState(0);
+  const [viewing, setViewing] = useState<number | null>(null);
+  const screenshots = p.screenshots ?? [];
+  const images = [...(p.banner ? [p.banner] : []), ...screenshots];
+  const video = p.video ?? null;
+  const highlights = p.highlights ?? [];
   const offers = freeOffers({ plans: data.plans as never, trial: p.trial, status: p.status });
+  const about = p.description?.trim() ? p.description : "";
+  // The demo has its own section; the gallery is pictures only. With neither, the
+  // product's mark stands in - never an invented picture.
+  const showGallery = images.length > 0 || !video;
+
+  const sections = [
+    { id: "overview", label: "Overview" },
+    ...(highlights.length > 0 ? [{ id: "features", label: "Features" }] : []),
+    ...(screenshots.length > 0 ? [{ id: "screenshots", label: "Screenshots" }] : []),
+    ...(video ? [{ id: "demo", label: "Demo" }] : []),
+    ...(!soon ? [{ id: "plans", label: "Plans & Pricing" }] : []),
+    { id: "apps", label: "App Availability" },
+  ];
+  const current = useCurrentSection(sections.map((s) => s.id));
 
   useEffect(() => {
-    document.title = `${p.title} - WorkEasy360 Store`;
-  }, [p.title]);
+    if (!preview) document.title = `${p.title} - WorkEasy360 Store`;
+  }, [p.title, preview]);
+
+  // In a preview the page sits inside the Super Admin's console: its section links
+  // scroll the preview and leave the console's address alone.
+  const jump = (e: MouseEvent<HTMLAnchorElement>, id: string) => {
+    if (!preview) return;
+    e.preventDefault();
+    document.getElementById(id)?.scrollIntoView?.({ behavior: scrollBehavior(), block: "start" });
+  };
 
   return (
-    <>
+    <div className={styles.productPage} data-preview={preview || undefined}>
       <nav aria-label="Breadcrumb" className={shell.crumbs}>
         <ol>
-          <li>
-            <Link href={storePaths.home}>Store</Link>
-          </li>
-          <li>
-            <Link href={storePaths.products}>Products</Link>
-          </li>
-          {p.category && (
-            <li>
-              <Link href={`${storePaths.products}?category=${encodeURIComponent(p.category)}`}>{p.category}</Link>
-            </li>
-          )}
+          <li>{preview ? <span>Store</span> : <Link href={storePaths.home}>Store</Link>}</li>
+          <li>{preview ? <span>Products</span> : <Link href={storePaths.products}>Products</Link>}</li>
           <li aria-current="page">{p.title}</li>
         </ol>
       </nav>
+
       <header className={styles.detailHead}>
         <ProductTile code={p.code} logo={p.logo?.url ?? null} icon={tileIcon(p)} size={72} />
-        <div>
+        <div className={styles.detailHeadText}>
           <h1 className={shell.pageTitle}>{p.title}</h1>
-          <p className={shell.pageLead}>{p.summary || p.tagline}</p>
+          {(p.summary || p.tagline) && <p className={shell.pageLead}>{p.summary || p.tagline}</p>}
           <ul className={shell.chips} aria-label={`About ${p.title}`}>
             {p.category && <li className={`${shell.chip} ${shell.chipQuiet}`}>{p.category}</li>}
             <li className={`${shell.chip} ${soon ? shell.chipSoon : ""}`}>{soon ? "Coming Soon" : "Available"}</li>
@@ -516,25 +674,98 @@ function ProductPage({ data }: { data: Data }) {
             ))}
             {p.refund_days ? <li className={`${shell.chip} ${shell.chipQuiet}`}>{p.refund_days}-day refund window</li> : null}
           </ul>
+          {highlights.length > 0 && (
+            <ul className={styles.heroHighlights} aria-label="Key highlights">
+              {highlights.slice(0, 4).map((h) => (
+                <li key={h}>
+                  <Icon name="check" size={16} />
+                  <span>{h}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </header>
+
       <nav className={styles.detailTabs} aria-label="On this page">
-        <a href="#overview">Overview</a>
-        {!soon && <a href="#plans">Plans &amp; Pricing</a>}
-        <a href="#apps">App Availability</a>
+        {sections.map((s) => (
+          <a key={s.id} href={`#${s.id}`} aria-current={current === s.id ? "location" : undefined} onClick={(e) => jump(e, s.id)}>
+            {s.label}
+          </a>
+        ))}
       </nav>
-      <div className={styles.detailLayout}>
+
+      <div className={`${styles.detailLayout} ${showGallery ? "" : styles.detailLayoutBare}`}>
+        {showGallery && (
+          <div className={styles.detailMedia}>
+            <Gallery title={p.title} icon={p.icon} logo={p.logo?.url ?? null} images={images} code={p.code} onOpen={setViewing} />
+          </div>
+        )}
+        <PlanBox data={data} period={period} setPeriod={setPeriod} planId={planId} setPlanId={setPlanId} preview={preview} focusSignal={focusBox} />
         <div className={styles.detailMain}>
           <section id="overview" className={styles.detailSection} aria-labelledby="overview-title">
             <h2 id="overview-title" className={shell.sectionTitle}>
               Overview
             </h2>
-            <Gallery title={p.title} icon={p.icon} logo={p.logo?.url ?? null} images={images} video={p.video ?? null} code={p.code} />
-            <div className={styles.about}>{p.description ? <MarkdownLite text={p.description} /> : <p>{p.summary || p.tagline}</p>}</div>
+            <div className={styles.about}>{about ? <MarkdownLite text={about} headingLevel={3} /> : <p>{p.summary || p.tagline}</p>}</div>
           </section>
-          <Ticks title="Main features" items={p.highlights} />
+
+          {highlights.length > 0 && (
+            <section id="features" className={styles.detailSection} aria-labelledby="features-title">
+              <h2 id="features-title" className={shell.sectionTitle}>
+                Features
+              </h2>
+              <ul className={styles.featureGrid}>
+                {highlights.map((h) => (
+                  <li key={h} className={styles.featureCard}>
+                    <span className={styles.featureCheck}>
+                      <Icon name="check" size={16} />
+                    </span>
+                    <span>{h}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <Ticks title="Benefits" items={p.benefits} />
           <Ticks title="Use cases" items={p.use_cases} />
+
+          {screenshots.length > 0 && (
+            <section id="screenshots" className={styles.detailSection} aria-labelledby="screenshots-title">
+              <h2 id="screenshots-title" className={shell.sectionTitle}>
+                Screenshots
+              </h2>
+              <ul className={styles.shotGrid}>
+                {screenshots.map((shot, i) => (
+                  <li key={`${shot.url}-${i}`}>
+                    <button type="button" className={styles.shot} onClick={() => setViewing(i + (p.banner ? 1 : 0))}>
+                      <span className={styles.shotFrame}>
+                        {/* eslint-disable-next-line @next/next/no-img-element -- a same-origin listing image */}
+                        <img src={shot.url} alt="" loading="lazy" draggable={false} />
+                      </span>
+                      <span className={styles.shotCaption}>
+                        <span className="w360-visually-hidden">View full screen:</span> {shot.caption || `Screenshot ${i + 1}`}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {video && (
+            <section id="demo" className={styles.detailSection} aria-labelledby="demo-title">
+              <h2 id="demo-title" className={shell.sectionTitle}>
+                Product demo
+              </h2>
+              {video.title && <h3 className={styles.demoTitle}>{video.title}</h3>}
+              {video.description && <p className={styles.demoLead}>{video.description}</p>}
+              <div className={styles.demoPlayer}>
+                <DemoVideo title={p.title} video={video} fallbackPoster={images[0]?.url ?? null} code={p.code} />
+              </div>
+            </section>
+          )}
+
           <Ticks id="setup" title="Setup requirements" items={p.setup_requirements} />
           {(p.documentation_url || p.support_url) && (
             <p className={styles.docLinks}>
@@ -551,19 +782,20 @@ function ProductPage({ data }: { data: Data }) {
             </p>
           )}
         </div>
-        <PlanBox data={data} period={period} setPeriod={setPeriod} planId={planId} setPlanId={setPlanId} />
       </div>
+
       <PlansSection
         data={data}
         period={period}
+        preview={preview}
         onSelect={(id, interval) => {
           setPeriod(interval);
           setPlanId(id);
-          window.scrollTo({ top: 0, behavior: "smooth" });
+          setFocusBox((n) => n + 1);
         }}
       />
       <Availability data={data} />
-      {data.related.length > 0 && (
+      {!preview && data.related.length > 0 && (
         <section className={styles.detailSection} aria-labelledby="related-title">
           <h2 id="related-title" className={shell.sectionTitle}>
             Related products
@@ -595,6 +827,7 @@ function ProductPage({ data }: { data: Data }) {
           </ul>
         </section>
       )}
-    </>
+      {viewing !== null && images.length > 0 && <Lightbox title={p.title} images={images} start={viewing} onClose={() => setViewing(null)} />}
+    </div>
   );
 }

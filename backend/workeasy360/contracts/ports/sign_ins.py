@@ -2,7 +2,7 @@
 
 ``platform/identity`` ends sessions; ``platform/ecosystem`` knows which
 products were signed in to from each of them and owes those products an
-OpenID Connect Back-Channel Logout (ADR-067). Identity must not import the
+OpenID Connect Back-Channel Logout (ADR-069). Identity must not import the
 ecosystem, so - exactly like :mod:`workeasy360.contracts.ports.events` - a
 narrow protocol is declared here, implemented by the ecosystem and registered
 at app-ready. No import edge is created.

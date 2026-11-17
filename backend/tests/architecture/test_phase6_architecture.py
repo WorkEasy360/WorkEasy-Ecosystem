@@ -102,7 +102,7 @@ def test_only_the_delivery_pipeline_can_send():
     workflow to hand off - the result is either recorded now or the next
     sweep tries again.
 
-    ADR-067 adds ``integration/backchannel/delivery.py``: an OpenID Connect
+    ADR-069 adds ``integration/backchannel/delivery.py``: an OpenID Connect
     Back-Channel Logout POST to a *registered* product's
     ``backchannel_logout_uri`` - which the manifest requires to share its
     origin with one of that product's redirect URIs - carrying a logout token

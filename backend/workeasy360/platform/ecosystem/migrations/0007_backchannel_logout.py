@@ -18,6 +18,13 @@ class Migration(migrations.Migration):
             name="sign_in_id",
             field=models.UUIDField(blank=True, null=True),
         ),
+        # ADR-069 with ADR-067: the issuer a logout token is signed as.
+        # db_default: the previous release can still insert a registration.
+        migrations.AddField(
+            model_name="productintegration",
+            name="last_token_issuer",
+            field=models.CharField(blank=True, db_default="", default="", max_length=255),
+        ),
         migrations.CreateModel(
             name="BackchannelLogout",
             fields=[

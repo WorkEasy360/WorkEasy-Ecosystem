@@ -28,6 +28,7 @@ import { trialLabel, visibilityOf } from "./model";
 import { ManagerStatusBadge, VisibilityBadge, listingOf } from "./ProductManager";
 import { ProductMark } from "./ProductMark";
 import { StorePreview } from "./StorePreview";
+import { ProductPublisher } from "./publisher/ProductPublisher";
 import { UpdatesTab } from "./UpdatesTab";
 import styles from "./ProductManager.module.css";
 
@@ -181,6 +182,8 @@ export function ProductDetail({ productId }: { productId: string }) {
   const initial = params.get("tab");
   const [tab, setTab] = useState<TabKey>(TABS.includes(initial as TabKey) ? (initial as TabKey) : "overview");
   const [previewing, setPreviewing] = useState(false);
+  // ADR-068: the one-page Product Publisher, over this page.
+  const [publishing, setPublishing] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const saved = SAVED[params.get("saved") ?? ""];
 
@@ -213,6 +216,11 @@ export function ProductDetail({ productId }: { productId: string }) {
                 meta={[<code key="slug" className={styles.code}>{p.slug}</code>, p.category || null, `Updated ${formatDate(p.updated_at)}`].filter(Boolean)}
                 actions={
                   <>
+                    {manageCatalog && p.manager_status !== "archived" && (
+                      <Button icon="edit" onClick={() => setPublishing(true)}>
+                        Edit in Publisher
+                      </Button>
+                    )}
                     <Button icon="eye" onClick={() => setPreviewing(true)}>
                       Preview listing
                     </Button>
@@ -284,6 +292,9 @@ export function ProductDetail({ productId }: { productId: string }) {
                 {tab === "activity" && data.can_see_activity && <ActivityPanel productId={p.id} />}
               </Tabs>
               {previewing && <StorePreview listing={listingOf(p)} onClose={() => setPreviewing(false)} />}
+              {publishing && (
+                <ProductPublisher productId={p.id} takenSlugs={new Set<string>()} onSaved={() => reload()} onClose={() => setPublishing(false)} />
+              )}
             </>
           );
         }}

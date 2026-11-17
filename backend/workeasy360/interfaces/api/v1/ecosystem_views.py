@@ -738,6 +738,13 @@ def token(request: HttpRequest) -> JsonResponse:
         )
 
     metrics.increment("ecosystem_tokens_issued_total")
+    # ADR-067: which issuer answered, per product - what an operator reads
+    # before closing the migration window (no product left on the old name).
+    logger.info(
+        "ecosystem.token.issued",
+        product_code=client.integration.product_code,
+        issuer=tokens.issuer(),
+    )
     response = JsonResponse(payload)
     # RFC 6749 section 5.1: token responses must not be cached anywhere.
     response["Cache-Control"] = "no-store"
@@ -749,7 +756,7 @@ def _sign_in_id(request: HttpRequest) -> Any:
     """The browser's Workeasy360 sign-in (ADR-043), from its own session only.
 
     Becomes the ID token's ``sid`` for a product that takes back-channel
-    logout (ADR-067). Nothing in the authorization request can set it.
+    logout (ADR-069). Nothing in the authorization request can set it.
     """
     import uuid as _uuid
 
@@ -784,7 +791,7 @@ def _token_response(redeemed: Any) -> dict[str, Any]:
     )
     access_token = tokens.issue_access_token(subject)
     # Remembered only for products that take back-channel logout: who must be
-    # told when this sign-in ends (ADR-067).
+    # told when this sign-in ends (ADR-069).
     backchannel.record_product_sign_in(
         integration=redeemed.integration,
         user_id=redeemed.user_id,

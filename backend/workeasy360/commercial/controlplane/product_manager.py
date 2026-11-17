@@ -104,7 +104,7 @@ def _integration_spec(raw: Any, *, name: str) -> dict[str, Any] | None:
     }
     if redirect:
         spec["redirect_uris"] = [redirect]
-    # ADR-067: a product built on the workeasy360-sso connector receives
+    # ADR-069: a product built on the workeasy360-sso connector receives
     # back-channel logout; validated by the registry like every other URL.
     backchannel = str(raw.get("backchannel_logout_uri") or "").strip()
     if backchannel:

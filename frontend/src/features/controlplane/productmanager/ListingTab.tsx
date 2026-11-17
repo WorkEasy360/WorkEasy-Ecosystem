@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { adminApi, productMediaUrl, type ConsoleProduct, type ProductChanges } from "@/lib/api/controlPlane";
 import { dialog, FormPopup } from "../Modal";
 import { describeError } from "../ui";
-import { DescriptionField, SelectField, TextField } from "../widgets";
+import { DescriptionField, RequiredMark, TextField } from "../widgets";
+import { CategoryField } from "./CategoryField";
+import cp from "../ControlPlane.module.css";
 import { IconPicker } from "./IconPicker";
 import { ImagePicker, ScreenshotsField, type ShotItem } from "./ImagePicker";
 import { VideoPicker } from "./VideoPicker";
@@ -53,6 +55,7 @@ function excerpt(text: string, max = 180): string {
  * edit (validated and audited by the server). */
 function ListingForm({ product: p, categories, busy, reload }: { product: ConsoleProduct; categories: string[]; busy: boolean; reload: () => void }) {
   const [draft, setDraft] = useState<Record<TextKey, string>>(() => textOf(p));
+  const categoryId = useId();
   const errors = problemsOf(draft);
   const slugLocked = p.activated_at !== null;
   const set = (key: TextKey) => (value: string) => setDraft((d) => ({ ...d, [key]: value }));
@@ -105,13 +108,14 @@ function ListingForm({ product: p, categories, busy, reload }: { product: Consol
               hint={slugLocked ? "Fixed: this product has been on sale, and links use it." : `Product code: ${p.code} (permanent).`}
               onChange={(v) => set("slug")(v.toLowerCase())}
             />
-            <SelectField
-              label="Category"
-              showRequired
-              value={draft.category}
-              options={[{ value: "", label: "Choose a category" }, ...options.map((c) => ({ value: c, label: c }))]}
-              onChange={set("category")}
-            />
+            {/* 2026-11-16: the Super Admin's own list - choose one, add one, or manage them. */}
+            <div className={cp.field}>
+              <label className="w360-label" htmlFor={categoryId}>
+                Category
+                <RequiredMark />
+              </label>
+              <CategoryField id={categoryId} value={draft.category} options={options} canManage disabled={busy} onChange={set("category")} />
+            </div>
             <TextField label="Short description" showRequired maxLength={160} value={draft.tagline} hint={`${draft.tagline.length}/160`} onChange={set("tagline")} />
             <TextField label="Store title" maxLength={128} placeholder={draft.name} value={draft.store_title} hint="Leave empty to use the product name." onChange={set("store_title")} />
             <TextField

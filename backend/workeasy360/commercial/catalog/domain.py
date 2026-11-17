@@ -721,20 +721,6 @@ def validate_marketing_url(raw: Any) -> str:
 
 # --- ADR-051: the Product Manager -----------------------------------------------
 
-#: The categories the Product Manager offers. Configuration, not logic: a
-#: category is display text that nothing branches on, and a product may keep
-#: any other plain-text category it already has (``validate_category``).
-PRODUCT_CATEGORIES: Final[tuple[str, ...]] = (
-    "Sales",
-    "Finance",
-    "Project Management",
-    "Customer Support",
-    "Marketing",
-    "Communication",
-    "AI",
-    "HR",
-    "Other",
-)
 MAX_STORE_TITLE: Final = 128
 MAX_STORE_SUMMARY: Final = 200
 
@@ -775,7 +761,8 @@ MANAGER_STATUS: Final[dict[ProductStatus, str]] = {
 #: Store-listing images: PNG or JPEG only (SVG can carry script; WebP and GIF
 #: cannot be verified by signature here), bounded in bytes and in pixels.
 MEDIA_CONTENT_TYPES: Final = frozenset({"image/png", "image/jpeg"})
-MAX_SCREENSHOTS: Final = 8
+#: ADR-068: up to ten (it was eight).
+MAX_SCREENSHOTS: Final = 10
 MAX_MEDIA_CAPTION: Final = 140
 
 
@@ -792,7 +779,11 @@ MEDIA_RULES: Final[dict[ProductMediaKind, MediaRule]] = {
     ProductMediaKind.LOGO: MediaRule(512 * 1024, 64, 64, 2048, 2048),
     ProductMediaKind.BANNER: MediaRule(2 * 1024 * 1024, 600, 150, 4096, 4096),
     ProductMediaKind.SCREENSHOT: MediaRule(2 * 1024 * 1024, 320, 200, 4096, 4096),
+    # ADR-068: the demo video's thumbnail, 16:9 at its smallest.
+    ProductMediaKind.VIDEO_POSTER: MediaRule(2 * 1024 * 1024, 320, 180, 4096, 4096),
 }
+MAX_VIDEO_TITLE: Final = 120
+MAX_VIDEO_DESCRIPTION: Final = 500
 
 
 def image_dimensions(data: bytes) -> tuple[int, int] | None:

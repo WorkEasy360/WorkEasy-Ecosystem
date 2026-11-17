@@ -1,1 +1,1 @@
-"""Delivering OpenID Connect Back-Channel Logout tokens to products (ADR-067)."""
+"""Delivering OpenID Connect Back-Channel Logout tokens to products (ADR-069)."""

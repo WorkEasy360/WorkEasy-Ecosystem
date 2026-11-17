@@ -9,6 +9,7 @@ import { ApiError } from "@/lib/api/client";
 import { answerPendingAccess, getPendingAccess, type AccessChoice, type PendingAccess } from "@/lib/api/signIn";
 import { usePortals } from "@/lib/portalContext";
 import { portalHref } from "@/lib/portals";
+import { AccountsBrand } from "./AccountsBrand";
 import styles from "./ProductAccess.module.css";
 
 type Load = { status: "loading" } | { status: "invalid" } | { status: "error" } | { status: "ready"; access: PendingAccess };
@@ -119,6 +120,7 @@ export function ProductAccessChooser() {
   return (
     <main id="w360-main" className={styles.main}>
       <div className={styles.column}>
+        <AccountsBrand />
         <section className={`w360-card ${styles.card}`} aria-labelledby={headingId}>
           <div className={styles.header}>
             <span className={styles.glyph} aria-hidden="true">

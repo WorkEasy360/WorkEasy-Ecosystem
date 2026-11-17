@@ -28,8 +28,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from workeasy360.commercial.catalog import categories as catalog_categories
 from workeasy360.commercial.catalog import selectors as catalog_selectors
-from workeasy360.commercial.catalog.domain import PRODUCT_CATEGORIES
 from workeasy360.commercial.commissions import selectors as commission_selectors
 from workeasy360.commercial.controlplane import catalog as plan_builder
 from workeasy360.commercial.partners import console_reads as partner_reads
@@ -67,7 +67,7 @@ EDITABLE_INTEGRATION_FIELDS = (
     "login_url",
     "post_logout_redirect_uris",
     "scopes",
-    # ADR-067: where the product receives back-channel logout tokens.
+    # ADR-069: where the product receives back-channel logout tokens.
     "backchannel_logout_uri",
 )
 #: Optional in the manifest: an empty value removes the key.
@@ -80,7 +80,7 @@ def _manifest_version_for(manifest: dict[str, Any]) -> str:
     """The version a console write stamps. Each is a superset of the one
     before; ``2026-11-15`` only when the manifest uses its one new field, so
     an integration that does not take back-channel logout reads exactly as
-    it did (ADR-067)."""
+    it did (ADR-069)."""
     if manifest.get("backchannel_logout_uri"):
         return BACKCHANNEL_MANIFEST_VERSION
     return MANIFEST_VERSION
@@ -270,16 +270,12 @@ def console(ctx: TenantContext) -> dict[str, Any]:
                 "integration": _integration_json(link) if link is not None else None,
             }
         )
-    in_use = {p["category"] for p in products if p["category"]}
     return {
         "products": products,
         "can_see_integrations": may_see_integrations,
-        # Offered in the Product Manager; a category a product already has
-        # stays selectable even when it is not one of the defaults.
-        "categories": [
-            *PRODUCT_CATEGORIES,
-            *sorted(in_use - set(PRODUCT_CATEGORIES)),
-        ],
+        # The Super Admin's own category list (catalog.categories); a category
+        # a product already has stays selectable even when it is not on it.
+        "categories": catalog_categories.options(),
     }
 
 

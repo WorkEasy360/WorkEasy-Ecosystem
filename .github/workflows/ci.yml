@@ -445,6 +445,17 @@ jobs:
             -e W360_EDGE_UPSTREAM_HOST=api.example.net \
             -e W360_STORE_EDGE=on -e W360_STORE_ORIGIN=https://store.example.net \
             -v "$PWD/deploy/edge/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          # ADR-067: WorkEasy360 Accounts with the sign-in's previous name kept.
+          docker run --rm -e W360_TLS_ISSUER=internal \
+            -e W360_ADMIN_ORIGIN=https://admin.example.net \
+            -e W360_PARTNER_ORIGIN=https://partner.example.net \
+            -e W360_APP_ORIGIN=https://app.example.net \
+            -e W360_AUTH_ORIGIN=https://accounts.example.net \
+            -e W360_API_ORIGIN=https://api.example.net \
+            -e W360_EDGE_UPSTREAM_HOST=api.example.net \
+            -e W360_STORE_EDGE=on -e W360_STORE_ORIGIN=https://store.example.net \
+            -e W360_AUTH_LEGACY_EDGE=on -e W360_AUTH_LEGACY_ORIGIN=https://auth.example.net \
+            -v "$PWD/deploy/edge/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           docker run --rm --entrypoint promtool -v "$PWD/deploy/observability:/w:ro"             prom/prometheus:v3.5.0 check rules /w/alerts.yml
 
   gate:

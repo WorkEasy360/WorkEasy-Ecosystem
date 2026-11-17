@@ -2,7 +2,10 @@
 #
 # TLS termination, HTTP->HTTPS, HSTS, and routing (ADR-043, docs/portals/design.md):
 #   admin. partner. app.   /api/*  -> api:8000 (Django)      everything else -> web:3000 (Next.js)
-#   auth.                   the same, plus the OIDC discovery document and key set
+#   accounts.               WorkEasy360 Accounts (W360_AUTH_ORIGIN, ADR-067): the same,
+#                           plus the OIDC discovery document and key set
+#   auth.                   its previous name, while products move (W360_AUTH_LEGACY_EDGE):
+#                           everything -> api:8000, which forwards browsers to accounts.
 #   api.                    /api/* only - no web UI
 #   partner domains         the branded landing only (D-035 decision B, ADR-039)
 #
@@ -31,6 +34,9 @@
 #                                DNS would only retry its certificate.
 #   W360_STORE_ORIGIN            the Store's https origin (https://store.workeasy360.com),
 #                                read when W360_STORE_EDGE is on
+#   W360_AUTH_LEGACY_EDGE        on | off (default): the sign-in's previous name (ADR-067)
+#   W360_AUTH_LEGACY_ORIGIN      that name's https origin (https://auth.workeasy360.com),
+#                                read when W360_AUTH_LEGACY_EDGE is on
 #   W360_EDGE_UPSTREAM_HOST      the API's host name (the host of W360_API_ORIGIN): the Host
 #                                Django sees for the edge's own requests
 #   W360_TLS_ISSUER              acme (default: Let's Encrypt/ZeroSSL) | internal (staging)
@@ -162,7 +168,8 @@ http://127.0.0.1:8081 {
 
 import store_{$W360_STORE_EDGE:off}
 
-# The central sign-in. It is also the OIDC issuer (W360_OIDC_ISSUER): the
+# WorkEasy360 Accounts, the central sign-in (ADR-067: accounts.workeasy360.com).
+# It is also the OIDC issuer (W360_OIDC_ISSUER) once products have moved: the
 # authorization endpoint needs this host's session, and products fetch the
 # discovery document and the key set from the issuer's root. Found by the
 # staging key-rotation rehearsal: routed to the frontend, no product could
@@ -186,6 +193,29 @@ import store_{$W360_STORE_EDGE:off}
 		}
 	}
 }
+
+# The central sign-in's previous name (ADR-067: auth.workeasy360.com), only while
+# products move to WorkEasy360 Accounts. Everything goes to Django, which decides
+# it (interfaces/api/portal_surface.py, tested there): the discovery document, the
+# key set and every server-to-server endpoint answer as before; a browser - the
+# authorization request, sign-out, any page - is sent to the same address on
+# W360_AUTH_ORIGIN. The web app is never reached on this name, so no page and no
+# session ever exist here.
+(auth_legacy_off) {
+}
+
+(auth_legacy_on) {
+	{$W360_AUTH_LEGACY_ORIGIN} {
+		import platform_site
+		handle {
+			reverse_proxy api:8000 {
+				import upstream
+			}
+		}
+	}
+}
+
+import auth_legacy_{$W360_AUTH_LEGACY_EDGE:off}
 
 # The API host: products and providers, server to server. No web UI, and the
 # portals' own API prefixes are refused here by Django (404).

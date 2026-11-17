@@ -140,7 +140,7 @@ def integration_status_view(
 def integration_backchannel_view(
     request: HttpRequest, ctx: TenantContext, product_code: str
 ) -> JsonResponse:
-    """Back-channel logout for one product (ADR-067): whether it is on, and
+    """Back-channel logout for one product (ADR-069): whether it is on, and
     how the last day's deliveries went - delivered, pending, refused, dead -
     with the last problem category. Never a token, never a response body."""
     with acting_scope(ctx):

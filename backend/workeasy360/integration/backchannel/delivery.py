@@ -1,4 +1,4 @@
-"""POSTing logout tokens to products' ``backchannel_logout_uri`` (ADR-067).
+"""POSTing logout tokens to products' ``backchannel_logout_uri`` (ADR-069).
 
 OpenID Connect Back-Channel Logout 1.0 section 2.5: an
 ``application/x-www-form-urlencoded`` POST of ``logout_token``. The product

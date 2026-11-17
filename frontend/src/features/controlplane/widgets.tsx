@@ -384,10 +384,16 @@ export function DescriptionField({
   }
 
   function bullet() {
+    linePrefix("- ");
+  }
+
+  /** Put `prefix` at the start of the caret's line (2026-11-16: headings and
+   * numbered lists, beside bullets). */
+  function linePrefix(prefix: string) {
     const [start] = selection();
     const lineStart = value.lastIndexOf("\n", start - 1) + 1;
-    caret.current = [start + 2, start + 2];
-    onChange(`${value.slice(0, lineStart)}- ${value.slice(lineStart)}`);
+    caret.current = [start + prefix.length, start + prefix.length];
+    onChange(`${value.slice(0, lineStart)}${prefix}${value.slice(lineStart)}`);
   }
 
   const describedBy = [hintId, error ? errorId : ""].filter(Boolean).join(" ");
@@ -397,6 +403,9 @@ export function DescriptionField({
         {label}
       </label>
       <div className={styles.toolbar} role="group" aria-label={`Formatting for ${label}`}>
+        <button type="button" className={styles.toolButton} onClick={() => linePrefix("## ")}>
+          Heading
+        </button>
         <button type="button" className={styles.toolButton} onClick={() => wrap("**", "**", "bold text")}>
           Bold
         </button>
@@ -405,6 +414,9 @@ export function DescriptionField({
         </button>
         <button type="button" className={styles.toolButton} onClick={bullet}>
           List item
+        </button>
+        <button type="button" className={styles.toolButton} onClick={() => linePrefix("1. ")}>
+          Numbered item
         </button>
         <button type="button" className={styles.toolButton} onClick={() => wrap("[", "](https://)", "link text")}>
           Link
@@ -421,7 +433,7 @@ export function DescriptionField({
         onChange={(e) => onChange(e.target.value)}
       />
       <p id={hintId} className="w360-hint">
-        Supports **bold**, *italic*, “- ” list items and [links](https://example.com). {value.length}/{maxLength}
+        Supports “## ” headings, **bold**, *italic*, “- ” and “1. ” list items and [links](https://example.com). {value.length}/{maxLength}
       </p>
       {error && (
         <p id={errorId} className="w360-error-text">
@@ -471,6 +483,7 @@ export function MarkdownPreview({ text }: { text: string }) {
   const blocks: React.ReactNode[] = [];
   let paragraph: string[] = [];
   let items: string[] = [];
+  let ordered = false;
   const flushParagraph = () => {
     if (paragraph.length === 0) return;
     const lines = paragraph;
@@ -488,21 +501,26 @@ export function MarkdownPreview({ text }: { text: string }) {
   };
   const flushList = () => {
     if (items.length === 0) return;
-    const entries = items;
-    blocks.push(
-      <ul key={blocks.length}>
-        {entries.map((entry, i) => (
-          <li key={i}>{renderInline(entry)}</li>
-        ))}
-      </ul>,
-    );
+    const entries = items.map((entry, i) => <li key={i}>{renderInline(entry)}</li>);
+    // 2026-11-16: "1. " lines are a numbered list, as the Store renders them.
+    blocks.push(ordered ? <ol key={blocks.length}>{entries}</ol> : <ul key={blocks.length}>{entries}</ul>);
     items = [];
   };
   for (const line of text.split(/\r?\n/)) {
     const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
-    if (bullet) {
+    const numbered = /^\s*\d{1,3}[.)]\s+(.*)$/.exec(line);
+    // "## " / "### " headings (2026-11-16), drawn as the Store draws them.
+    const heading = /^\s*(#{2,3})\s+(.+)$/.exec(line);
+    if (heading) {
       flushParagraph();
-      items.push(bullet[1]);
+      flushList();
+      const Tag = heading[1].length === 2 ? "h3" : "h4";
+      blocks.push(<Tag key={blocks.length}>{renderInline(heading[2].trim())}</Tag>);
+    } else if (bullet || numbered) {
+      flushParagraph();
+      if (items.length && ordered !== Boolean(numbered)) flushList();
+      ordered = Boolean(numbered);
+      items.push((bullet ?? numbered)![1]);
     } else if (!line.trim()) {
       flushParagraph();
       flushList();

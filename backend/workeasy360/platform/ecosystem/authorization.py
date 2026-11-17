@@ -971,7 +971,7 @@ def issue_code(
         code_challenge_method=request.code_challenge_method,
         nonce=request.nonce,
         session_facts=facts_record(subject.facts),
-        # The authorizing browser's sign-in (ADR-067). Read by the interface
+        # The authorizing browser's sign-in (ADR-069). Read by the interface
         # from the session, never from the request: a product cannot choose
         # which sign-in its sessions are bound to.
         sign_in_id=sign_in_id,
@@ -1008,7 +1008,7 @@ class RedeemedCode:
     nonce: str
     #: ``auth_time`` for the ID token: when the authorizing session signed in.
     auth_time: int | None = None
-    #: The authorizing sign-in (ADR-067), when the code recorded one.
+    #: The authorizing sign-in (ADR-069), when the code recorded one.
     sign_in_id: UUID | None = None
 
 

@@ -27,11 +27,30 @@ def origin(portal: str) -> str:
 
 
 def auth_url() -> str:
-    """The central sign-in host: only the product sign-in (OIDC) pages live
-    there now - the login and organization-choice redirects, the access
-    chooser and the product sign-out. Account links use :func:`account_url`
-    (ADR-059)."""
+    """WorkEasy360 Accounts, the central sign-in host (ADR-067: its own name
+    is ``accounts.workeasy360.com``): only the product sign-in (OIDC) pages
+    live there - the login and organization-choice redirects, the access
+    chooser, Switch Account and the product sign-out. Account links use
+    :func:`account_url` (ADR-059)."""
     return origin(portals.AUTH)
+
+
+def legacy_auth_origin() -> str:
+    """The central sign-in's previous origin (ADR-067:
+    ``https://auth.workeasy360.com``), kept reachable while products move to
+    WorkEasy360 Accounts; ``""`` when there is none. Only in multi-portal
+    mode."""
+    if not enabled():
+        return ""
+    return str(getattr(settings, "W360_AUTH_LEGACY_ORIGIN", "") or "").rstrip("/")
+
+
+def is_legacy_auth_host(host: str) -> bool:
+    """Whether ``host`` (a request's ``Host``, port included when not the
+    default) is the central sign-in's previous name."""
+    legacy = legacy_auth_origin()
+    wanted = (host or "").strip().lower().rstrip(".")
+    return bool(legacy and wanted and portals.host_of(legacy) == wanted)
 
 
 def account_url(portal: str | None = None) -> str:
@@ -87,5 +106,7 @@ def platform_hosts() -> set[str]:
         portals.host_of(o) for o in getattr(settings, "W360_PORTAL_ORIGINS", {}).values()
     }
     hosts.add(portals.host_of(settings.W360_FRONTEND_URL))
+    # ADR-067: the sign-in's previous name is still the platform's own host.
+    hosts.add(portals.host_of(legacy_auth_origin()))
     hosts.discard("")
     return hosts

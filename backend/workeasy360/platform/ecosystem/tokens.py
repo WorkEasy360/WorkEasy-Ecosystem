@@ -33,6 +33,9 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -53,7 +56,7 @@ logger = get_logger(__name__)
 #: assertions, which grants whatever the identity grants. One claim closes it.
 TYPE_ID_TOKEN = "id_token"  # noqa: S105 - a claim value, not a credential
 TYPE_ACCESS_TOKEN = "access_token"  # noqa: S105 - a claim value, not a credential
-#: OpenID Connect Back-Channel Logout 1.0 (ADR-067). Carried in the ``typ``
+#: OpenID Connect Back-Channel Logout 1.0 (ADR-069). Carried in the ``typ``
 #: claim like the other two, *and* as the JOSE header ``typ`` the spec names
 #: (``logout+jwt``), so neither an ID token nor an access token can ever be
 #: accepted as a logout instruction, nor a logout token as an identity.
@@ -105,20 +108,82 @@ class TokenSubject:
     #: that it got one, instead of trusting the round trip (ADR-044).
     auth_time: int | None = None
     #: The Workeasy360 sign-in that authorized, as the OIDC ``sid`` claim -
-    #: set only for an integration that takes back-channel logout (ADR-067),
+    #: set only for an integration that takes back-channel logout (ADR-069),
     #: so every other product's ID token is unchanged.
     sid: str = ""
+
+
+#: ADR-067: the configured issuer chosen for the request being served, set by
+#: :func:`answering_as` and empty everywhere else (a task, a command).
+_REQUEST_ISSUER: ContextVar[str] = ContextVar("w360_request_issuer", default="")
+
+
+def canonical_issuer() -> str:
+    """``W360_OIDC_ISSUER``: the issuer wherever no other configured issuer
+    applies."""
+    return str(settings.OIDC_ISSUER).rstrip("/")
+
+
+def issuers() -> tuple[str, ...]:
+    """Every issuer this platform may name: the canonical one first, then the
+    migration window's (``W360_OIDC_TRANSITION_ISSUERS``, ADR-067) - each of
+    them one of the central sign-in's own two origins, checked at start-up."""
+    found = [canonical_issuer()]
+    for extra in getattr(settings, "OIDC_TRANSITION_ISSUERS", ()) or ():
+        value = str(extra).rstrip("/")
+        if value and value not in found:
+            found.append(value)
+    return tuple(found)
+
+
+def issuer_for_host(host: str) -> str:
+    """The issuer a request to ``host`` is answered as: the configured issuer
+    whose origin *is* that host, otherwise the canonical one."""
+    from workeasy360.contracts.values.portals import host_of
+
+    wanted = (host or "").strip().lower().rstrip(".")
+    for candidate in issuers()[1:]:
+        if wanted and host_of(candidate) == wanted:
+            return candidate
+    return canonical_issuer()
 
 
 def issuer() -> str:
     """The ``iss`` value.
 
-    From settings, never from the request. Deriving the issuer from the
+    From configuration, never from the request. Deriving the issuer from the
     ``Host`` header would let anyone who can reach the platform with a forged
     Host mint tokens claiming to come from a different issuer - and TB-1 says
     client headers are never truthful.
+
+    ADR-067 narrows that, and only that far: while products move from the
+    central sign-in's previous name to WorkEasy360 Accounts, the Host may
+    *choose between* the platform's own configured issuers - never name one.
+    A product that discovers the platform at ``https://auth.workeasy360.com``
+    is answered as that issuer and one that discovers it at
+    ``https://accounts.workeasy360.com`` as that one, so no product is ever
+    handed an ``iss`` it was not configured to trust. A forged Host can only
+    select another of our own issuers, with the same keys, for a request its
+    sender already holds the credentials for; any other host gets the
+    canonical issuer. With no transition issuers configured this is exactly
+    ``W360_OIDC_ISSUER``, as before.
     """
-    return str(settings.OIDC_ISSUER).rstrip("/")
+    return _REQUEST_ISSUER.get() or canonical_issuer()
+
+
+@contextmanager
+def answering_as(chosen: str) -> Iterator[None]:
+    """Mint, describe and verify as ``chosen`` inside the block - one of
+    :func:`issuers`, never anything else (ADR-067). Entered per request by
+    ``interfaces.api.portal_surface.IssuerMiddleware``, the one place that
+    reads the Host to choose it."""
+    if chosen not in issuers():
+        raise ValueError("Not one of this platform's configured issuers.")
+    token = _REQUEST_ISSUER.set(chosen)
+    try:
+        yield
+    finally:
+        _REQUEST_ISSUER.reset(token)
 
 
 def issue_id_token(
@@ -159,17 +224,35 @@ def issue_id_token(
     return _sign(claims, ttl=ttl)
 
 
-def issue_logout_token(*, client_id: str, user_id: UUID, sid: str = "") -> IssuedToken:
-    """A Back-Channel Logout 1.0 logout token for one product (ADR-067).
+def logout_token_issuer(as_issuer: str = "") -> str:
+    """The ``iss`` of a logout token: ``as_issuer`` - the issuer the product
+    last redeemed a code under - while it is still one of :func:`issuers`,
+    otherwise the canonical issuer (ADR-067 with ADR-069).
+
+    A logout token is minted by a worker, where no request chose an issuer, so
+    :func:`issuer` would always be the canonical one; during the move a product
+    still configured with the other name would refuse it and keep its session.
+    Never a name outside the closed list: one that has been retired is
+    replaced by the canonical issuer, exactly as discovery would answer.
+    """
+    chosen = (as_issuer or "").rstrip("/")
+    return chosen if chosen and chosen in issuers() else canonical_issuer()
+
+
+def issue_logout_token(
+    *, client_id: str, user_id: UUID, sid: str = "", as_issuer: str = ""
+) -> IssuedToken:
+    """A Back-Channel Logout 1.0 logout token for one product (ADR-069).
 
     ``sub`` always (the person), ``sid`` when one sign-in ended rather than all
     of them. ``events`` names the back-channel-logout event; there is no
     ``nonce`` (section 2.4: its absence is what keeps an ID token from being
     replayed as a logout token). Signed by the active key, like every token.
+    ``iss`` is :func:`logout_token_issuer` of ``as_issuer``.
     """
     now = int(time.time())
     claims: dict[str, Any] = {
-        "iss": issuer(),
+        "iss": logout_token_issuer(as_issuer),
         "sub": str(user_id),
         "aud": client_id,
         "iat": now,
@@ -241,7 +324,10 @@ def verify(
         # "none" and HMAC confusion unreachable.
         algorithms=[key.algorithm],
         audience=audience,
-        issuer=issuer(),
+        # One of the platform's own configured issuers (ADR-067): the token
+        # was signed with one of our keys either way, and a token minted on
+        # the previous sign-in host stays valid on the current one.
+        issuer=list(issuers()),
         leeway=leeway if leeway is not None else int(settings.OIDC_CLOCK_SKEW_S),
         options={
             "require": list(REQUIRED_ON_VERIFY),
