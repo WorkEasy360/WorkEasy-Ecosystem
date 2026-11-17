@@ -504,6 +504,18 @@ env.check(
     "W360_AUTH_LEGACY_ORIGIN needs the five portal origins: the sign-in's previous "
     "host exists only in multi-portal mode.",
 )
+# ADR-071: WorkEasy360 Accounts (W360_AUTH_ORIGIN) is where a person's identity
+# lives - sign-in, sign-up, email verification, password reset, the account
+# page. On, the customer portal (app.) signs in through Accounts (the ADR-043
+# hand-off) and every emailed identity link names Accounts. Off, ADR-059 exactly:
+# the customer portal signs in and up on its own host. The frontend reads the
+# same variable. The Admin and Partner portals keep their own sign-in either way.
+W360_ACCOUNTS_IDENTITY = env.bool("W360_ACCOUNTS_IDENTITY", False)
+env.check(
+    not W360_ACCOUNTS_IDENTITY or PORTALS_ENABLED,
+    "W360_ACCOUNTS_IDENTITY needs the five portal origins: WorkEasy360 Accounts "
+    "exists only in multi-portal mode.",
+)
 # Links name their portal through platform/identity/portals.py (auth_url,
 # app_url), read at call time; in single-host mode both are W360_FRONTEND_URL.
 # A hand-off code (auth host -> portal host) lives this long, and is single use.
