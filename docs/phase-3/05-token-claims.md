@@ -36,7 +36,7 @@ discovery document, so this file cannot drift from what is actually minted.
 | `jti` | Unique per token | Detect a replay within the lifetime |
 | `typ` | `id_token` | Refuse an access token presented as an identity assertion — both verify against the same key with the same audience |
 | `nonce` | Echoed from the request | Detect a token replayed from another session |
-| `sid` | The Workeasy360 sign-in (ADR-043 `sign_in_id`) that authorized. **Only** for an integration that registered `backchannel_logout_uri` (ADR-067) | Map a back-channel logout token naming this `sid` to exactly the sessions this sign-in opened |
+| `sid` | The Workeasy360 sign-in (ADR-043 `sign_in_id`) that authorized. **Only** for an integration that registered `backchannel_logout_uri` (ADR-069) | Map a back-channel logout token naming this `sid` to exactly the sessions this sign-in opened |
 | `auth_time` | When the person last entered their credentials at Workeasy360 (seconds since the epoch), present whenever the session's authentication time is known (ADR-044) | After `prompt=login`, check it is no older than your request - a round trip on a still-open session proves nothing. Base "recently authenticated" on it, not on when your callback ran |
 
 `iat`, `nbf` and `exp` come from **one** clock reading. Three calls to

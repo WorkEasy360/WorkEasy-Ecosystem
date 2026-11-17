@@ -166,7 +166,7 @@ def sessions_revoke_others_view(request: HttpRequest) -> JsonResponse:
 
 #: How long "sign out everywhere" waits for products to confirm before it
 #: answers. Workeasy360's own sessions end before this; the wait is only so
-#: the answer can say which products have already confirmed (ADR-067).
+#: the answer can say which products have already confirmed (ADR-069).
 SIGN_OUT_EVERYWHERE_WAIT_S = 4.0
 
 
@@ -174,7 +174,7 @@ SIGN_OUT_EVERYWHERE_WAIT_S = 4.0
 @never_cache
 def sign_out_everywhere_view(request: HttpRequest) -> JsonResponse:
     """End every Workeasy360 session of this person - this one included - and
-    every product session that takes back-channel logout (ADR-067).
+    every product session that takes back-channel logout (ADR-069).
 
     The answer reports what is true, not what was hoped: ``workeasy360`` is
     the number of platform sessions ended (synchronous, done), and

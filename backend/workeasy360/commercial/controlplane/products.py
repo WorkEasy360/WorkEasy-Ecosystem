@@ -67,7 +67,7 @@ EDITABLE_INTEGRATION_FIELDS = (
     "login_url",
     "post_logout_redirect_uris",
     "scopes",
-    # ADR-067: where the product receives back-channel logout tokens.
+    # ADR-069: where the product receives back-channel logout tokens.
     "backchannel_logout_uri",
 )
 #: Optional in the manifest: an empty value removes the key.
@@ -80,7 +80,7 @@ def _manifest_version_for(manifest: dict[str, Any]) -> str:
     """The version a console write stamps. Each is a superset of the one
     before; ``2026-11-15`` only when the manifest uses its one new field, so
     an integration that does not take back-channel logout reads exactly as
-    it did (ADR-067)."""
+    it did (ADR-069)."""
     if manifest.get("backchannel_logout_uri"):
         return BACKCHANNEL_MANIFEST_VERSION
     return MANIFEST_VERSION

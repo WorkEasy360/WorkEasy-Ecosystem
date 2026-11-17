@@ -54,7 +54,7 @@ from workeasy360.contracts.values.identifiers import ProductCode
 #: preference chooses between the doors these declare and can open no other.
 MANIFEST_VERSION: Final = "2026-10-12"
 
-#: ``2026-11-15`` (back-channel logout, ADR-067) adds one optional field,
+#: ``2026-11-15`` (back-channel logout, ADR-069) adds one optional field,
 #: ``backchannel_logout_uri``: where the platform POSTs an OpenID Connect
 #: Back-Channel Logout 1.0 logout token when a person's Workeasy360 sign-in
 #: ends, so "sign out" and "sign out everywhere" reach the product's own
@@ -257,7 +257,7 @@ class ProductManifest:
     #: sends a person who prefers the product's sign-in - never anywhere else.
     login_url: str = ""
     #: Where the platform delivers back-channel logout tokens (manifest
-    #: ``2026-11-15``, ADR-067), or ``""`` when the product takes none.
+    #: ``2026-11-15``, ADR-069), or ``""`` when the product takes none.
     backchannel_logout_uri: str = ""
 
     @property
@@ -596,7 +596,7 @@ def _validate_backchannel_logout(
     sign_in_mode: ProductSignInMode,
     allow_insecure: bool,
 ) -> str:
-    """``backchannel_logout_uri`` (manifest ``2026-11-15``, ADR-067).
+    """``backchannel_logout_uri`` (manifest ``2026-11-15``, ADR-069).
 
     The one URL in a manifest that the *platform's server* - not a browser -
     sends something to, so it passes the redirect-URI gate (https, no query,

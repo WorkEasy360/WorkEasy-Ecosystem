@@ -1,4 +1,4 @@
-# ADR-067: Product back-channel logout, one reusable Django connector, and no second identity provider
+# ADR-069: Product back-channel logout, one reusable Django connector, and no second identity provider
 
 - Status: proposed (2026-11-15). On branch `feat/sso-connector-backchannel-logout`; not deployed.
 - Context: the brief "WORKEASY360 - COMPLETE UNIFIED SSO & AUTOMATIC PRODUCT ONBOARDING" (15 November 2026), and the owner's follow-up "UNIVERSAL PRODUCT-INDEPENDENT SSO REQUIREMENT".

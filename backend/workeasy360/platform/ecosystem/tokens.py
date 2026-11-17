@@ -56,7 +56,7 @@ logger = get_logger(__name__)
 #: assertions, which grants whatever the identity grants. One claim closes it.
 TYPE_ID_TOKEN = "id_token"  # noqa: S105 - a claim value, not a credential
 TYPE_ACCESS_TOKEN = "access_token"  # noqa: S105 - a claim value, not a credential
-#: OpenID Connect Back-Channel Logout 1.0 (ADR-067). Carried in the ``typ``
+#: OpenID Connect Back-Channel Logout 1.0 (ADR-069). Carried in the ``typ``
 #: claim like the other two, *and* as the JOSE header ``typ`` the spec names
 #: (``logout+jwt``), so neither an ID token nor an access token can ever be
 #: accepted as a logout instruction, nor a logout token as an identity.
@@ -108,7 +108,7 @@ class TokenSubject:
     #: that it got one, instead of trusting the round trip (ADR-044).
     auth_time: int | None = None
     #: The Workeasy360 sign-in that authorized, as the OIDC ``sid`` claim -
-    #: set only for an integration that takes back-channel logout (ADR-067),
+    #: set only for an integration that takes back-channel logout (ADR-069),
     #: so every other product's ID token is unchanged.
     sid: str = ""
 
@@ -225,7 +225,7 @@ def issue_id_token(
 
 
 def issue_logout_token(*, client_id: str, user_id: UUID, sid: str = "") -> IssuedToken:
-    """A Back-Channel Logout 1.0 logout token for one product (ADR-067).
+    """A Back-Channel Logout 1.0 logout token for one product (ADR-069).
 
     ``sub`` always (the person), ``sid`` when one sign-in ended rather than all
     of them. ``events`` names the back-channel-logout event; there is no

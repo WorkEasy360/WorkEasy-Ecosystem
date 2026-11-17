@@ -110,7 +110,7 @@ INTEGRATION_APPS = [
     # above egress (its only way out) and beside the rest: nothing imports it
     # and it changes no access decision.
     "workeasy360.integration.health",
-    # ADR-067: OpenID Connect Back-Channel Logout delivery to products.
+    # ADR-069: OpenID Connect Back-Channel Logout delivery to products.
     "workeasy360.integration.backchannel",
 ]
 
@@ -709,7 +709,7 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": env.float("W360_BEAT_PRODUCT_HEALTH_S", 300.0),
         "options": {"queue": "heavy", "expires": 240},
     },
-    # ADR-067. The sign-out kick usually delivers first; this is the guarantee
+    # ADR-069. The sign-out kick usually delivers first; this is the guarantee
     # (and the retry clock). Short, because a person is waiting on a sign-out.
     "backchannel-logout-deliver": {
         "task": "integration.backchannel.deliver_due",

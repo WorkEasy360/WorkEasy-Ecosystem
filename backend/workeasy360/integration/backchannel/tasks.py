@@ -1,4 +1,4 @@
-"""Back-channel logout delivery (ADR-067).
+"""Back-channel logout delivery (ADR-069).
 
 ``deliver_due`` runs on a short beat *and* is kicked by name right after a
 sign-out commits, so a product normally hears within a second; the beat is

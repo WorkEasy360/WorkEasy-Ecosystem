@@ -1,5 +1,5 @@
 """OpenID Connect Back-Channel Logout 1.0: who must be told, and the record of
-telling them (ADR-067).
+telling them (ADR-069).
 
 Before this, signing out of Workeasy360 ended Workeasy360's own sessions and
 nothing else: a product kept serving until its next entitlement re-check, up
@@ -318,7 +318,7 @@ def _finish(
 
 
 def delivery_summary(integration: Any, *, since_hours: int = 24) -> dict[str, Any]:
-    """What operators see for one product (ADR-067; Super Admin):
+    """What operators see for one product (ADR-069; Super Admin):
 
     - ``counts`` per status over the window, and ``last_problem`` (the newest
       non-success outcome - kept for existing readers);

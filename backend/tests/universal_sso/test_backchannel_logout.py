@@ -1,4 +1,4 @@
-"""OpenID Connect Back-Channel Logout 1.0 for products (ADR-067).
+"""OpenID Connect Back-Channel Logout 1.0 for products (ADR-069).
 
 What is proven here, against the real services and the real database:
 

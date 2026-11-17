@@ -515,7 +515,7 @@ class AuthorizationCode(models.Model):
     #: The Workeasy360 sign-in (``identity.UserSession.sign_in_id``, ADR-043)
     #: that authorized this code. Carried to the token endpoint, where it
     #: becomes the ID token's ``sid`` for a product that takes back-channel
-    #: logout and is recorded as a ``ProductSignIn`` (ADR-067). Nullable: a
+    #: logout and is recorded as a ``ProductSignIn`` (ADR-069). Nullable: a
     #: code minted by the previous release, or by a session that predates
     #: sign-in ids, simply has no ``sid``.
     sign_in_id = models.UUIDField(null=True, blank=True)
@@ -720,7 +720,7 @@ class UserSignInPreference(models.Model):
         return f"{self.product_code or '*'}={self.mode} for {self.user_id}"
 
 
-# --- back-channel logout (ADR-067) ---------------------------------------------
+# --- back-channel logout (ADR-069) ---------------------------------------------
 
 
 class ProductSignIn(models.Model):
