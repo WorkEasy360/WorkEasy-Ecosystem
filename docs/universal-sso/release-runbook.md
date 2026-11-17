@@ -1,38 +1,54 @@
-# Release runbook: back-channel logout (ADR-069), domain ownership (ADR-070), and the move to WorkEasy360 Accounts (ADR-067)
+# Release runbook: WorkEasy360 Accounts on accounts.workeasy360.com (ADR-067, ADR-069, ADR-070, ADR-071)
 
 Written for: the operator of the single production host, and the owner who approves each step.
 
-**Nothing in this runbook has been run in production.** Every step needs the owner's explicit approval: merges, deploys, DNS, stage changes and product releases. Each step is reversible on its own, and the rollback is given with it.
+**Nothing in this runbook has been run in production.** Every step below needs the owner's explicit approval before it is run: merges, deploys, DNS, stage changes, the identity cutover and product releases. Each step is reversible on its own, and its rollback is given with it.
 
-What is already live (16 November): ADR-067 at **stage off** (release `2026.11.16-fe495b7`), so `auth.workeasy360.com` is the sign-in and the issuer. `accounts.workeasy360.com` does not resolve yet.
+**Live today (16 November):** ADR-067 at **stage off** (release `2026.11.16-fe495b7`). `auth.workeasy360.com` is the sign-in and the issuer. `accounts.workeasy360.com` does not resolve (NXDOMAIN on 17 November). The other portal records are Cloudflare-proxied.
+
+## The target
+
+| Host | Role |
+|---|---|
+| `https://accounts.workeasy360.com` | **WorkEasy360 Accounts.** Sign-in, sign-up, email verification, password reset, the account page (security, sessions and devices, sign out everywhere, product sign-in preferences), the product sign-in and chooser (OIDC), Switch Account, organization choice, product sign-out. The **OIDC issuer**. |
+| `https://app.workeasy360.com` | **User Admin.** Organizations, members, product access, subscriptions, business settings. Signs in through Accounts. |
+| `https://auth.workeasy360.com` | **Previous name**, while products move: discovery, keys and the server-to-server APIs. Browsers are forwarded to Accounts. Retired at stage e. |
+| `admin.`, `partner.`, `store.` | Unchanged; they keep their own sign-in. |
+
+There is one identity provider, one database and one user UUID (`sub`) per person.
 
 ## Order, and why
 
-| # | Step | Depends on | Who |
+| # | Step | Depends on | Approves |
 |---|---|---|---|
-| 0 | Merge PR #3 into `main` | review | owner |
-| 1 | Merge PR #4 (ADR-069), then PR #5 (ADR-070) into `main` | review; CI green | owner |
-| 2 | Platform release from `main`: migrations `ecosystem.0007`/`0008`, api, workers, beat | 1 | operator |
-| 3 | DNS record `accounts` | - (can be done any time) | owner |
-| 4 | Accounts **stage a**, then **stage b** | 2 (for back-channel to name the right issuer), 3 | operator |
-| 5 | Easy CRM release: connector + `WORKEASY360_ISSUER=https://accounts.workeasy360.com` + identity move | 4 (stage b) | owner / CRM pipeline |
-| 6 | Register Easy CRM's back-channel URL in Super Admin | 2, 5 | Super Admin |
-| 7 | **Stage c**, later **d**, later **e** | every product moved; 30 days of no `auth.` tokens | operator |
+| 0 | Merge #6 (next 16.4.6) into `feat/partner-admin-panel`, then #3 into `main` | review, CI | owner |
+| 1 | Merge #4 (ADR-069), #5 (ADR-070) and #7 (ADR-071) into `main`, in that order | review, CI | owner |
+| 2 | **Platform release** from `main`, with `W360_ACCOUNTS_IDENTITY=off`: migrations `ecosystem.0007` and `0008`, then api, workers, beat, web | 1 | owner, then operator |
+| 3 | **Cloudflare:** add `accounts` | none (any time) | owner |
+| 4 | **Stage a, then stage b** | 2, 3 | operator |
+| 5 | **Identity cutover:** `W360_ACCOUNTS_IDENTITY=on` | 4, and the checks in step 5 on staging or a canary | owner, then operator |
+| 6 | **Easy CRM** release with `WORKEASY360_ISSUER=https://accounts.workeasy360.com` and its identity move | 4 (stage b) | owner |
+| 7 | Register Easy CRM's back-channel URL in Super Admin | 2, 6 | Super Admin |
+| 8 | **Stage c**, later **d**, later **e** | every product moved; 30 days of no `auth.` tokens | owner, then operator |
 
-Step 2 comes before step 4 because, from stage b, two issuers are honoured. A release without ADR-069's addendum would sign every logout token as the canonical issuer, and a product on the other name would refuse it. Steps 2 and 4 may share one maintenance window.
+Why this order:
 
-## Step 2 - platform release (PR #4 + PR #5)
+- **Step 2 before step 4.** From stage b two issuers are honoured. Only a release with ADR-069's addendum signs each logout token as the issuer its product trusts.
+- **Step 5 after step 4.** User Admin's sign-in needs `accounts.` to serve.
+- **Steps 2 and 4** may share a maintenance window.
 
-Before you start:
+## Step 2: platform release (#3 + #6, #4, #5, #7), identity switch off
 
-- `main` contains #3, #4 and #5, and its CI is green.
-- Run `pip-audit` and Trivy; both are clean in CI.
+Prerequisites:
+
+- `main` contains #3 (with #6), #4, #5 and #7, and its CI is green.
 - The images are built and loaded under a new tag `<tag>` (`deploy/single-host/README.md`, "Release and rollback").
+- `W360_ACCOUNTS_IDENTITY` is absent or `off` in the env file. Off is ADR-059 exactly.
 
 ```sh
 sudo /opt/workeasy360/bin/w360-backup                                    # database backup first
 E=/opt/workeasy360/env/production.env
-sudo cp -p $E $E.before-adr069-$(date -u +%Y%m%dT%H%M%SZ)
+sudo cp -p $E $E.before-release-$(date -u +%Y%m%dT%H%M%SZ)
 # unpack the release's deploy/ (git -c core.autocrlf=false archive) into /opt/workeasy360/releases/<tag>
 sudo python3 /opt/workeasy360/releases/<tag>/deploy/single-host/make_env.py set W360_RELEASE --env $E   # value: <tag>
 sudo ln -sfn /opt/workeasy360/releases/<tag> /opt/workeasy360/current
@@ -51,71 +67,137 @@ sudo /opt/workeasy360/bin/w360 logs --tail 50 beat | grep -E "backchannel-logout
 Then, in Super Admin, open Products, pick a product, and check its Integration tab:
 
 - **SSO readiness** says what is missing, if anything.
-- **Domains** lists every hostname. Existing ones are carried over as `pre_existing`, verified.
-- **Back-channel logout** shows "not registered".
+- **Domains** lists every hostname: existing ones are `pre_existing` and verified.
+- **Back-channel logout** says "not registered".
 
-**Rollback.** Put `W360_RELEASE` and `current` back to the previous release and run `w360 up -d`. The new tables and columns are unused by the old code, so they stay. Undo the schema only if you must (`docs/universal-sso/migrations-ecosystem-0007-0008.md`, "Rolling back"): stop the workers and beat, then `migrate ecosystem 0006_sign_in_ask_once` with the new release, then redeploy the old one. No user, organization, credential or product data changes in either direction.
+What people see: nothing changes. The sign-in is still on `auth.` and `app.`.
 
-## Steps 3 and 4 - DNS, then stages a and b
+**Rollback:**
 
-The full procedure is `deploy/single-host/README.md`, section "Accounts". In short:
+1. Put `W360_RELEASE` and `current` back to the previous release, then `w360 up -d`. The new tables and columns stay, unused by the old code.
+2. Undo the schema only if you must: stop the workers and beat, then `migrate ecosystem 0006_sign_in_ask_once` with the new release, then redeploy the old one (`docs/universal-sso/migrations-ecosystem-0007-0008.md`).
+
+Rehearsed 17 November on a populated scratch database: down to 0006, up, up again. Users, organizations, integrations, credentials and signing keys were unchanged throughout (7/7).
+
+## Step 3: Cloudflare DNS (owner)
+
+In the `workeasy360.com` zone, add **`accounts`**: the same type and content as the existing `auth` record, **Proxied** (orange cloud), TTL Auto. The other portal records are proxied today.
+
+- Keep `auth` exactly as it is until stage e.
+- Leave the zone's SSL mode as it is (Full (strict)).
+- Check: `nslookup accounts.workeasy360.com 1.1.1.1` returns Cloudflare addresses (`2606:4700:…` / `104.21.…` / `172.67.…`).
+
+Nothing serves `accounts.` until stage a: before then, the edge does not know the name.
+
+## Step 4: stages a and b, exactly
 
 ```sh
-nslookup accounts.workeasy360.com                        # must resolve first (owner: Cloudflare record `accounts`)
 E=/opt/workeasy360/env/production.env
 sudo cp -p $E $E.before-accounts-$(date -u +%Y%m%dT%H%M%SZ)
-sudo python3 /opt/workeasy360/current/deploy/single-host/make_env.py accounts --stage b --env $E
+sudo python3 /opt/workeasy360/current/deploy/single-host/make_env.py accounts --stage a --env $E     # later: --stage b
 sudo /opt/workeasy360/bin/w360 run --rm --no-deps -T api python manage.py check </dev/null
 sudo /opt/workeasy360/bin/w360 run --rm --no-deps -T edge caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null
-sudo /opt/workeasy360/bin/w360 up -d --no-deps edge
+sudo /opt/workeasy360/bin/w360 up -d --no-deps edge          # first: Caddy obtains the certificate for accounts.
 sudo /opt/workeasy360/bin/w360 up -d api worker-critical web
-python scripts/verify_portal_dns_tls.py                   # every check PASS, both names
-curl -s https://accounts.workeasy360.com/.well-known/openid-configuration | grep '"issuer"'   # accounts. at stage b
-curl -s https://auth.workeasy360.com/.well-known/openid-configuration | grep '"issuer"'       # still auth.
-curl -sI "https://auth.workeasy360.com/login?resume=x" | grep -i '^location'                  # https://accounts.workeasy360.com/login?resume=x
+python scripts/verify_portal_dns_tls.py                       # every check PASS for both names
 ```
 
-What people see: they sign in once more on `accounts.`, because sessions are per host. Products on `auth.` notice nothing.
+### Stage a: `accounts.` serves; every token stays `iss = https://auth.workeasy360.com`
 
-**Rollback:** `--stage off` and the same three commands. Do this only while no product is configured with `accounts.`; otherwise go back to b at most.
+| Area | Behaviour |
+|---|---|
+| **Existing clients** (products configured with `WORKEASY360_ISSUER=https://auth.workeasy360.com`) | Nothing to change. Discovery on `auth.` still names `auth.` as the issuer and lists `auth.` endpoints, with the same keys. Their token, userinfo, entitlement and server-to-server calls keep going to `auth.` and are answered there. |
+| **The browser** | The authorization request to `auth./…/oauth/authorize` gets a **302** to the same path and query on `accounts.`, which completes it and returns to the product's callback with the code. One extra hop; no new password if Accounts is signed in. |
+| **Issuer validation** | Unchanged: the ID token's `iss` is `auth.`, as the products expect. Discovery read on `accounts.` is refused for a product: `accounts.` is not yet an issuer, so a misconfigured product fails closed, never half-works. |
+| **Sessions** | The central sign-in session now lives on `accounts.` (host-only `__Host-w360_session`). An old `auth.` session is never read again, so people **sign in once more** the first time a product sends them there. Product sessions are untouched. User Admin keeps its own sign-in (switch off). |
+| **Logout** | Product sign-out (RP-initiated) goes `auth./…/oauth/logout` → 302 → `accounts.`, which confirms. Back-channel logout tokens name `auth.` (the issuer the product redeemed under). "Sign out everywhere" on Account & Security works as before. |
+| **Rollback** | `--stage off` and the same commands. No product notices. |
 
-## Step 5 - Easy CRM
+### Stage b: both names are issuers, each on its own host
 
-Branch `feat/workeasy360-sso-connector` (Easy CRM repository), merged to `main`. Its own procedure is `docs/workeasy360-sso.md`, "Moving to WorkEasy360 Accounts" and "Rolling out the connector release". In order:
+| Area | Behaviour |
+|---|---|
+| **Existing clients on `auth.`** | Exactly as stage a. Tokens say `iss = auth.`, which they verify. |
+| **Clients moved to `accounts.`** (one at a time, each in its own release with its identity move) | Discovery on `accounts.` names `accounts.`, with `accounts.` endpoints and the **same keys**. Tokens issued there say `iss = accounts.`, the same `sub`. |
+| **Issuer validation** | Strict on both sides: each product verifies exactly its own configured issuer, and a token from one name is refused by a product configured with the other. The platform accepts client assertions only for its own two token endpoints. Verified in a real browser: one product on each name, both signed in. |
+| **Sessions** | One central session on `accounts.` serves products on either name. Codes issued before the switch remain redeemable, and the `iss` is chosen where the code is redeemed. |
+| **Logout** | Each logout token is signed as the issuer that product **last redeemed a code under** (ADR-069 addendum), so a product on `auth.` and a product on `accounts.` are both signed out by "sign out everywhere" and by Switch Account. Verified in a real browser: delivered, `http_200`, each under its own issuer. |
+| **Rollback** | Back to a, but only while no product is configured with `accounts.`. Otherwise that product fails closed until it is configured back. |
+
+## Step 5: identity cutover (ADR-071): `W360_ACCOUNTS_IDENTITY=on`
+
+**Before:** stage a or b is live, and the following checks pass in the real-browser run (`Accounts/e2e/run_browser.py`, stage b) or on a staging copy:
+
+- sign-up and email verification on Accounts;
+- password recovery on Accounts;
+- User Admin signing in through Accounts (the hand-off), and its automatic retry;
+- the account page;
+- sign-out on Accounts ending User Admin's session;
+- `app.`'s old identity addresses moving to Accounts.
+
+```sh
+E=/opt/workeasy360/env/production.env
+sudo cp -p $E $E.before-identity-$(date -u +%Y%m%dT%H%M%SZ)
+sudo python3 /opt/workeasy360/current/deploy/single-host/make_env.py set W360_ACCOUNTS_IDENTITY --env $E   # type: on
+sudo /opt/workeasy360/bin/w360 up -d api worker-critical web          # api and web read the same switch
+```
+
+Then from outside:
+
+```sh
+curl -sI https://app.workeasy360.com/dashboard | grep -i '^location'      # https://accounts.workeasy360.com/login?mode=user&...&state=...
+curl -sI https://app.workeasy360.com/signup | grep -i '^location'         # https://accounts.workeasy360.com/signup
+curl -sI https://accounts.workeasy360.com/ | grep -i '^location'          # https://accounts.workeasy360.com/account
+```
+
+Finally, sign in once from a clean browser: User Admin, then Accounts, then the password, then back in User Admin.
+
+What changes for people:
+
+- User Admin's sign-in, sign-up and password reset are on Accounts. A User Admin already signed in stays signed in.
+- New verification and reset emails link to Accounts. Links sent earlier still work: `app.`'s old addresses move to Accounts with the token fragment kept.
+
+**Rollback:** set it to `off` and run the same `up -d`. That is ADR-059 exactly. Links emailed while it was on still work, because Accounts' identity pages then move them back to `app.` with the fragment kept.
+
+## Step 6: Easy CRM (WorkEasy360/AI-CRM#19)
 
 1. Read SSM `/keel/production/WORKEASY360_ISSUER`. On 16 November CRM answered `sso_error=unavailable`, consistent with `app.` being stored there.
-2. Set it to `https://accounts.workeasy360.com`. The platform must be at stage b.
-3. Deploy CRM through its pipeline. On the host, after `migrate` and before traffic:
+2. At stage b, set it to `https://accounts.workeasy360.com`.
+3. Deploy through CRM's pipeline. After `migrate`, before traffic:
    ```sh
    python manage.py move_workeasy360_issuer --from <the old value>            # dry run: expect identities=0 if no sign-in ever completed
    python manage.py move_workeasy360_issuer --from <the old value> --apply    # only if it reports identities to move
    python manage.py w360sso_check                                            # READY
    ```
-4. Do one real sign-in and one sign-out.
+4. Do one sign-in and one sign-out.
 
-**Rollback:** put the old SSM value back and run `move_workeasy360_issuer --from https://accounts.workeasy360.com --apply`. Then redeploy the previous image (`f5c9254`). No migration needs reversing.
+**Rollback:** put the old SSM value back, run `move_workeasy360_issuer --from https://accounts.workeasy360.com --apply`, then redeploy `f5c9254`.
 
-## Step 6 - Easy CRM's back-channel URL
+## Step 7: Easy CRM's back-channel URL
 
-Go to Super Admin, then Products, then Easy CRM, then Integration, then Authentication. Set **Back-channel logout URL** to `https://crm.workeasy360.com/api/auth/workeasy360/backchannel-logout`; its hostname is already proven (carried over). Then sign out of WorkEasy360 on one device: that device's CRM session ends, and Integration, then Back-channel logout, shows one **Delivered**.
+Go to Super Admin, then Products, then Easy CRM, then Integration, then Authentication. Set the back-channel logout URL to `https://crm.workeasy360.com/api/auth/workeasy360/backchannel-logout`; its hostname is carried over as proven.
 
-**Rollback:** clear the URL. Nothing more is sent.
+Then sign out of WorkEasy360 on one device. The CRM session ends, and Integration, then Back-channel logout shows **Delivered 1**.
 
-## Step 7 - stages c, d, e
+**Rollback:** clear the URL.
 
-| Stage | When |
-|---|---|
-| c | When the products that matter are on `accounts.` |
-| d | When no `ecosystem.token.issued` naming `https://auth.workeasy360.com` has been logged for 30 days (`w360 logs api \| grep ecosystem.token.issued \| grep auth.workeasy360.com`, appended weekly to a file, because the container keeps only 5 x 50 MB of logs). A product still on `auth.` then fails closed. |
-| e | When `accounts_legacy_host_requests_total` stays flat. Delete the `auth` DNS record at the same time. |
+## Step 8: stages c, d, e
 
-Each is the stage 4 command with `--stage c|d|e`.
+| Stage | When | What it does |
+|---|---|---|
+| c | The products that matter are on `accounts.` | Canonical issuer `accounts.`. `auth.` is still honoured on its own host. |
+| d | No `ecosystem.token.issued` naming `https://auth.workeasy360.com` for 30 days (`w360 logs api \| grep ecosystem.token.issued \| grep auth.workeasy360.com`, appended weekly to a file; the container keeps 5 x 50 MB) | `auth.` is no longer an issuer. A product still on it fails closed at discovery. Browsers are still forwarded. |
+| e | `accounts_legacy_host_requests_total` flat, and every product on `accounts.` | `auth.` is retired. **Delete the `auth` DNS record at the same time.** |
 
-## Smoke tests after each step
+Each uses the stage command above with `--stage c|d|e`.
 
-- A product sign-in from a clean browser lands on `accounts.workeasy360.com` (from stage a), and returns to the product signed in.
-- "Use another account" shows the chooser. Continue keeps the person; Switch signs in someone else, and the first person's product session ends (back-channel products).
-- Account & Security, then **Sign out everywhere**, reports each back-channel product as signed out.
-- Super Admin, then Products, then Integration: readiness is ready, domains are verified, deliveries are delivered.
+## Global logout: what is and is not covered
 
-The same journeys run in Chrome, against a local copy of this release behind the production edge at stage b, in `Accounts/e2e/run_browser.py` (outside this repository). Its last report is recorded in `Accounts/README.md`.
+| Product | Signed out by Accounts sign-out, Switch Account, "sign out everywhere" | Evidence |
+|---|---|---|
+| WorkEasy360 portals (User Admin, Accounts) | Yes. Sessions end directly; User Admin's handed-over session shares the Accounts sign-in. | real browser, 17 Nov |
+| Template products, the `workeasy360-sso` connector | Yes, by back-channel, under either issuer | real browser and live E2E, 17 Nov |
+| Easy CRM (connector, AI-CRM#19) | Yes, by back-channel, **once deployed and its URL registered** | live E2E (CRM backend), 17 Nov |
+| EasyBook, Easy Project, Easy Help Desk | **Not yet.** Back-channel work is on their branches, unreviewed and undeployed; until then their sessions end at their entitlement re-check | see the final status report |
+
+**Global logout is not complete for the whole ecosystem** until every participating product has its receiver deployed, registered and tested.
