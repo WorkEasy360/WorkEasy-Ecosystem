@@ -102,7 +102,7 @@ export function ProductAccessChooser() {
     return (
       <StatusScreen role="alert">
         <div>
-          <p>Workeasy360 could not be reached right now.</p>
+          <p>WorkEasy360 could not be reached right now.</p>
           <button type="button" className="w360-btn w360-btn-secondary" onClick={() => window.location.reload()}>
             Retry
           </button>

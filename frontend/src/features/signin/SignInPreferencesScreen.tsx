@@ -20,7 +20,7 @@ import styles from "./SignInPreferences.module.css";
 type Load = { status: "loading" } | { status: "error"; signedOut: boolean } | { status: "ready"; data: SignInPreferences };
 
 /**
- * Settings -> Sign-in preferences (ADR-044): how Workeasy360 signs this person
+ * Settings -> Sign-in preferences (ADR-044): how WorkEasy360 signs this person
  * in to its products. Their own setting, in every organization - never an
  * organization's, never visible to an administrator.
  *
@@ -104,7 +104,7 @@ export function SignInPreferencesScreen() {
     setMessage(null);
     try {
       apply(await resetSignInPreferences());
-      setMessage({ tone: "ok", text: "Reset. Workeasy360 will sign you in to every product automatically." });
+      setMessage({ tone: "ok", text: "Reset. WorkEasy360 will sign you in to every product automatically." });
     } catch {
       setMessage({ tone: "error", text: "Couldn't reset your sign-in preferences. Try again in a moment." });
     } finally {
@@ -118,18 +118,18 @@ export function SignInPreferencesScreen() {
     <div className={styles.stack}>
       <PageHeader
         title="Sign-in preferences"
-        lead="Choose how Workeasy360 signs you in to its products. This is your own setting, in every organization. You can change it anytime."
+        lead="Choose how WorkEasy360 signs you in to its products. This is your own setting, in every organization. You can change it anytime."
       />
-      <Panel title="Workeasy360 product sign-in">
+      <Panel title="WorkEasy360 product sign-in">
         <p>
           <span className={styles.productName}>Your default for every product:</span> {savedDefault}
         </p>
-        <p className={styles.muted}>Products added to Workeasy360 later use this setting too, unless you choose otherwise for them.</p>
+        <p className={styles.muted}>Products added to WorkEasy360 later use this setting too, unless you choose otherwise for them.</p>
       </Panel>
 
       <Panel title="Product overrides">
         {data.products.length === 0 ? (
-          <p>No products are connected to Workeasy360 sign-in yet.</p>
+          <p>No products are connected to WorkEasy360 sign-in yet.</p>
         ) : (
           <ul className={styles.products}>
             {data.products.map((product) => (
@@ -170,14 +170,14 @@ export function SignInPreferencesScreen() {
                 />
               ))}
             </div>
-            <p id={noteId} className={styles.muted}>Products added to Workeasy360 later use this setting too, unless you choose otherwise for them below.</p>
+            <p id={noteId} className={styles.muted}>Products added to WorkEasy360 later use this setting too, unless you choose otherwise for them below.</p>
           </fieldset>
           {data.products.length > 0 && (
             <fieldset className={styles.fieldset}>
               <legend className={styles.legend}>Product overrides</legend>
               <p className={styles.muted}>
                 Choose differently for one product. &ldquo;Use my default&rdquo; follows the setting above. A product that cannot sign you in with
-                Workeasy360 has nothing to choose.
+                WorkEasy360 has nothing to choose.
               </p>
               <ul className={styles.products}>
                 {data.products.map((product) => (
