@@ -10,6 +10,7 @@
 | Operation | SQL | Lock and cost |
 |---|---|---|
 | `AddField AuthorizationCode.sign_in_id` | `ALTER TABLE ecosystem_authorization_code ADD COLUMN sign_in_id uuid NULL` | Nullable with no default, so it is a catalog-only change in PostgreSQL 11+ and no rows are rewritten. Takes a brief `ACCESS EXCLUSIVE` lock on a table of short-lived codes. |
+| `AddField ProductIntegration.last_token_issuer` (ADR-069 addendum, 2026-11-17) | `ALTER TABLE ecosystem_product_integration ADD COLUMN last_token_issuer varchar(255) DEFAULT '' NOT NULL` | A constant default, so PostgreSQL 11+ stores it in the catalog and rewrites no row. Brief `ACCESS EXCLUSIVE` lock on a table of a handful of rows. The database default stays, so the previous release can still insert a registration while both run. |
 | `CreateModel BackchannelLogout` | `CREATE TABLE ecosystem_backchannel_logout`, plus FK to `ecosystem_product_integration` and indexes `ix_bcl_due` and `ix_bcl_user` | New, empty table. Creating the FK takes a short `SHARE ROW EXCLUSIVE` lock on `ecosystem_product_integration` (four rows). |
 | `CreateModel ProductSignIn` | `CREATE TABLE ecosystem_product_sign_in`, plus FK, the partial unique index `uq_psi_live_per_sign_in` (`WHERE ended_at IS NULL`), and `ix_psi_user_live` and `ix_psi_sign_in` | New, empty table. Same short FK lock. |
 
@@ -17,7 +18,7 @@
 - **Behaviour on deploy:**
   - Codes issued before the deploy have `sign_in_id = NULL`, so they record no `ProductSignIn`. Such a session gets no back-channel logout; its product's entitlement re-check still ends it, as it does today.
   - Nothing is delivered until a product registers a `backchannel_logout_uri`.
-- **Reverse:** `migrate ecosystem 0006` drops both tables and the column.
+- **Reverse:** `migrate ecosystem 0006` drops both tables and the two columns.
   - The only data lost is delivery history and sign-in-to-product records, neither of which existed before.
   - The code of a release without ADR-069 never reads them.
 
