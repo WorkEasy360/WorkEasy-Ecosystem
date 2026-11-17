@@ -39,6 +39,7 @@ from workeasy360.platform.ecosystem.models import (
     BackchannelLogout,
     BackchannelLogoutStatus,
     IntegrationStatus,
+    ProductIntegration,
     ProductSignIn,
 )
 from workeasy360.platform.observability.logging import get_logger
@@ -77,9 +78,21 @@ def sid_for(integration: Any, sign_in_id: UUID | None) -> str:
 def record_product_sign_in(
     *, integration: Any, user_id: UUID, sign_in_id: UUID | None
 ) -> None:
-    """Remember that this sign-in opened this product. Idempotent per sign-in."""
+    """Remember that this sign-in opened this product. Idempotent per sign-in.
+
+    Also remembers the issuer the product redeemed this code under (ADR-067):
+    it is the one the product is configured with, so it is the one its logout
+    tokens must name. A conditional update - no write, and no row lock, unless
+    the product moved to the other sign-in name.
+    """
     if not takes_backchannel_logout(integration):
         return
+    from workeasy360.platform.ecosystem import tokens
+
+    redeemed_under = tokens.issuer()
+    ProductIntegration.objects.filter(pk=integration.pk).exclude(
+        last_token_issuer=redeemed_under
+    ).update(last_token_issuer=redeemed_under)
     now = timezone.now()
     with transaction.atomic():
         updated = ProductSignIn.objects.filter(
@@ -210,6 +223,9 @@ class DueDelivery:
     user_id: UUID
     sid: str
     attempt: int
+    #: The issuer the product last redeemed under (ADR-067); the token names
+    #: it while it is still configured, else the canonical issuer.
+    issuer: str = ""
 
 
 def claim_due(*, limit: int = 50) -> list[DueDelivery]:
@@ -259,6 +275,7 @@ def claim_due(*, limit: int = 50) -> list[DueDelivery]:
                     user_id=row.user_id,
                     sid=str(row.sign_in_id) if row.sign_in_id else "",
                     attempt=row.attempts,
+                    issuer=row.integration.last_token_issuer,
                 )
             )
     return claimed
@@ -269,7 +286,10 @@ def logout_token_for(delivery: DueDelivery) -> str:
     from workeasy360.platform.ecosystem import tokens
 
     return tokens.issue_logout_token(
-        client_id=delivery.client_id, user_id=delivery.user_id, sid=delivery.sid
+        client_id=delivery.client_id,
+        user_id=delivery.user_id,
+        sid=delivery.sid,
+        as_issuer=delivery.issuer,
     ).value
 
 

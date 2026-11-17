@@ -224,17 +224,35 @@ def issue_id_token(
     return _sign(claims, ttl=ttl)
 
 
-def issue_logout_token(*, client_id: str, user_id: UUID, sid: str = "") -> IssuedToken:
+def logout_token_issuer(as_issuer: str = "") -> str:
+    """The ``iss`` of a logout token: ``as_issuer`` - the issuer the product
+    last redeemed a code under - while it is still one of :func:`issuers`,
+    otherwise the canonical issuer (ADR-067 with ADR-069).
+
+    A logout token is minted by a worker, where no request chose an issuer, so
+    :func:`issuer` would always be the canonical one; during the move a product
+    still configured with the other name would refuse it and keep its session.
+    Never a name outside the closed list: one that has been retired is
+    replaced by the canonical issuer, exactly as discovery would answer.
+    """
+    chosen = (as_issuer or "").rstrip("/")
+    return chosen if chosen and chosen in issuers() else canonical_issuer()
+
+
+def issue_logout_token(
+    *, client_id: str, user_id: UUID, sid: str = "", as_issuer: str = ""
+) -> IssuedToken:
     """A Back-Channel Logout 1.0 logout token for one product (ADR-069).
 
     ``sub`` always (the person), ``sid`` when one sign-in ended rather than all
     of them. ``events`` names the back-channel-logout event; there is no
     ``nonce`` (section 2.4: its absence is what keeps an ID token from being
     replayed as a logout token). Signed by the active key, like every token.
+    ``iss`` is :func:`logout_token_issuer` of ``as_issuer``.
     """
     now = int(time.time())
     claims: dict[str, Any] = {
-        "iss": issuer(),
+        "iss": logout_token_issuer(as_issuer),
         "sub": str(user_id),
         "aud": client_id,
         "iat": now,

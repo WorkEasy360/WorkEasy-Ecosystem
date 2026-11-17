@@ -230,6 +230,18 @@ class ProductIntegration(models.Model):
     #: response body, a header or an address.
     health_detail = models.CharField(max_length=64, blank=True, default="")
 
+    #: ADR-069 with ADR-067: the issuer this product last redeemed a code
+    #: under - which is the issuer it is configured with, because it reaches
+    #: the token endpoint through its own issuer's discovery document. A
+    #: logout token is signed as this issuer while it is still one of the
+    #: platform's configured issuers, so a product that trusts only one of the
+    #: two sign-in names during the move is never sent one naming the other.
+    #: Written only when it changes; never an access decision. ``db_default``
+    #: so code without this field can still insert a registration mid-deploy.
+    last_token_issuer = models.CharField(
+        max_length=255, blank=True, default="", db_default=""
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

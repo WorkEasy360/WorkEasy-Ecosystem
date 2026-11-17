@@ -1,6 +1,7 @@
 # ADR-069: Product back-channel logout, one reusable Django connector, and no second identity provider
 
 - Status: proposed (2026-11-15). On branch `feat/sso-connector-backchannel-logout`; not deployed.
+- Numbering: drafted as ADR-067. Renumbered ADR-069 on 2026-11-17, because ADR-067 (WorkEasy360 Accounts on `accounts.workeasy360.com`) and ADR-068 (Product Publisher) were committed to `feat/partner-admin-panel` first and are live.
 - Context: the brief "WORKEASY360 - COMPLETE UNIFIED SSO & AUTOMATIC PRODUCT ONBOARDING" (15 November 2026), and the owner's follow-up "UNIVERSAL PRODUCT-INDEPENDENT SSO REQUIREMENT".
 - Builds on: ADR-018 (OIDC for products), ADR-043 (hosts and sign-ins), ADR-044 (universal sign-in), ADR-066 (switch account).
 - Amends: ADR-044's consequence "Signing out of Workeasy360 does not end product sessions (no product implements front- or back-channel logout)", and its rejection of "front- or back-channel logout without a product contract". There is now a product contract, and a connector that implements it.
@@ -17,7 +18,7 @@ The brief also asked for things the platform did not have:
 
 ## Decision
 
-1. **No second identity provider.** `auth.workeasy360.com` stays the one provider. The issuer, `sub`, organization ids and the product contract are unchanged. A rename or new host would need a migration ADR of its own.
+1. **No second identity provider.** The existing platform stays the one provider. `sub`, organization ids and the product contract are unchanged. Its move from `auth.` to `accounts.workeasy360.com` is ADR-067's staged issuer move of that same provider, not a second one.
 2. **Back-channel logout follows OpenID Connect Back-Channel Logout 1.0, and products opt in.**
    - **Manifest.** Manifest `2026-11-15` adds `backchannel_logout_uri`. It is validated like a redirect URI, and it must be on the same origin as one of the product's registered redirect URIs, so a manifest cannot point the platform's outbound calls at a third party. `local_only` products cannot set it. `MANIFEST_VERSION` stays `2026-10-12`; a console write stamps `2026-11-15` only when the field is used.
    - **ID token.** The ID token carries `sid` (the ADR-043 `sign_in_id`) **only** for an integration that registered the URI. Every other product's token is unchanged. Discovery advertises `backchannel_logout_supported` and `backchannel_logout_session_supported`.
@@ -56,3 +57,12 @@ The brief also asked for things the platform did not have:
 - **Delivering from `platform/ecosystem`:** that module is forbidden outbound HTTP.
 - **Always issuing `sid`:** it would change the claim set of products that never asked.
 - **A shared parent-domain cookie:** rejected again, for the reasons in ADR-043.
+
+## Addendum (2026-11-17): logout tokens during the move to `accounts.` (ADR-067)
+
+ADR-067 answers each request as the issuer of the host it arrived on (a closed list of at most two). A logout token is minted by a worker, where no request chose an issuer, so it would always have named the canonical issuer. During stages b and c a product still configured with the other name must refuse such a token, and its session would survive "sign out everywhere".
+
+- `ProductIntegration.last_token_issuer` records the issuer under which the product last redeemed a code. That is its configured issuer, because the product reaches the token endpoint through its own issuer's discovery document. The field is written by a conditional update only when it changes, and added in `ecosystem.0007` with a database default.
+- `tokens.logout_token_issuer()` signs the logout token as that issuer while it is still one of the configured issuers. Otherwise (never recorded, or retired at stage d/e) it uses the canonical issuer. No name outside the closed list is ever minted.
+- It is chosen at each delivery attempt, so a retry after a product's own move names its new issuer.
+- Tests: `backend/tests/accounts_portal/test_backchannel_issuer.py`. Every stage and configured name is covered, a product that moves, and a retired issuer. Each token is verified the way a product verifies one, and is refused by a product configured with the other name.
