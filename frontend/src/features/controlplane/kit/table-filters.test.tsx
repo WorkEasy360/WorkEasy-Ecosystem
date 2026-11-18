@@ -274,7 +274,9 @@ describe("DateRangeFilter", () => {
     expect(isDay("2026-11-18")).toBe(true);
     expect(isDay("2026-02-30")).toBe(false);
     expect(isDay("18/11/2026")).toBe(false);
-    expect(dayLabel("2026-11-01")).toMatch(/1.*Nov.*2026/);
+    // The console's one date format, whatever the browser's language (CI runs en-US).
+    expect(dayLabel("2026-11-01")).toBe("1 Nov 2026");
+    expect(dayLabel("2026-09-30")).toBe("30 Sep 2026");
     expect(rangeLabel({ from: "", to: "" })).toBe("Any time");
     expect(rangeLabel({ from: "2026-11-01", to: "" })).toMatch(/^From /);
     expect(rangeLabel({ from: "", to: "2026-11-01" })).toMatch(/^Until /);

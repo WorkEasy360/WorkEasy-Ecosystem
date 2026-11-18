@@ -31,10 +31,14 @@ export function utcDay(daysBefore = 0, now: Date = new Date()): Day {
   return new Date(now.getTime() - daysBefore * 86_400_000).toISOString().slice(0, 10);
 }
 
-/** "18 Nov 2026" for a `YYYY-MM-DD` day, without a time zone shifting it a day. */
+/** The console's one way to write a date ("18 Nov 2026", as `formatDate`), read in
+ * UTC so the time zone never shifts a day - whatever the browser's language. */
+const DAY_FORMAT = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+/** "18 Nov 2026" for a `YYYY-MM-DD` day. */
 export function dayLabel(day: Day): string {
   if (!isDay(day)) return day;
-  return new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return DAY_FORMAT.format(new Date(`${day}T00:00:00Z`)).replace("Sept", "Sep");
 }
 
 /** "1 Nov 2026 – 18 Nov 2026", "From 1 Nov 2026", "Until 18 Nov 2026", or "Any time". */
