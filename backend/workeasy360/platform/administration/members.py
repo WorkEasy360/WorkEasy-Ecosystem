@@ -99,6 +99,11 @@ def suspend(ctx: TenantContext, membership_id: UUID) -> dict[str, Any]:
     """Suspend: the member keeps their account and history but cannot open the
     organization, and their seats are released for someone else.
     ``platform.member.update``."""
+    from workeasy360.contracts.ports.sign_ins import (
+        REASON_MEMBERSHIP_SUSPENDED,
+        notify_access_ended,
+    )
+    from workeasy360.platform.entitlements.selectors import products_reachable_by_member
     from workeasy360.platform.entitlements.services import seats
     from workeasy360.platform.organizations.selectors import member
     from workeasy360.platform.organizations.services import set_member_status
@@ -112,8 +117,18 @@ def suspend(ctx: TenantContext, membership_id: UUID) -> dict[str, Any]:
             target=MembershipStatus.SUSPENDED,
             actor_membership_id=ctx.membership_id,
         )
+        # ADR-073: what they could open here, read while their seats say so.
+        reachable = products_reachable_by_member(
+            ctx.organization_id, suspended.membership_id
+        )
         released = seats.release_all_seats(
             ctx.organization_id, membership_id=suspended.membership_id
+        )
+        # ADR-073: those products are owed a back-channel logout, in this commit.
+        notify_access_ended(
+            user_ids=(suspended.user_id,),
+            product_codes=reachable,
+            reason=REASON_MEMBERSHIP_SUSPENDED,
         )
         audit.record(
             ctx,

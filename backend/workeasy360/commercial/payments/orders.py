@@ -1721,6 +1721,7 @@ def fulfil(organization_id: UUID, order_id: UUID) -> str:
         invoice, order = _locked(order_id)
         if order is None or order.status != Order.Status.PAID:
             return "noop"
+        buyer, bought = order.placed_by_user_id, list(order.product_codes or [])
         now = timezone.now()
         added: dict[str, Any] = {}
         if order.kind == Order.Kind.WALLET:
@@ -1823,6 +1824,9 @@ def fulfil(organization_id: UUID, order_id: UUID) -> str:
             outcome = "fulfilled"
     if outcome == "fulfilled":
         notify_commercial_change(organization_id)
+        # ADR-073 (G2): after provisioning has granted the seats (the listener
+        # is synchronous), so "Open" works for the person who paid.
+        seat_the_buyer(organization_id, user_id=buyer, product_codes=bought)
     elif refund_attempt is not None:
         from workeasy360.commercial.payments.refunds import refund_automatically
 
@@ -1858,6 +1862,107 @@ def _fulfil_wallet_order(order: Any, organization_id: UUID, now: datetime) -> st
     )
     metrics.increment("commercial_orders_fulfilment_total", outcome="fulfilled")
     return "fulfilled"
+
+
+#: ADR-073 (G2): what seating the buyer did, by outcome - ``assigned``,
+#: ``already_seated``, ``pool_full``, ``not_a_member``, ``failed``.
+BUYER_SEATS = "commercial_order_buyer_seats_total"
+
+
+def seat_the_buyer(
+    organization_id: UUID, *, user_id: UUID | None, product_codes: list[str]
+) -> list[str]:
+    """Give the member who placed a paid order a seat in each **per-seat**
+    product it bought, as a trial seats its starter (``trials._seat_the_starter``),
+    so the buyer can open what they paid for without first assigning
+    themselves a seat (ADR-073, G2). Returns the products a seat was assigned in.
+
+    Runs after the order's transaction has committed and provisioning has
+    granted the capacity. Each guarantee is the existing one, not a new one:
+
+    - **never beyond the pool** - ``seats.assign_seat`` locks every grant in the
+      pool and counts under the lock; a full pool leaves the order fulfilled and
+      the seat for an administrator to assign;
+    - **idempotent** - a seat the member already holds is kept, and
+      ``assign_seat`` returns an existing assignment rather than taking a second;
+    - **only a current member** - the membership is read and held
+      ``FOR NO KEY UPDATE`` (``active_membership_exists(lock=True)``), so a
+      removal waits for this transaction and then releases what it wrote.
+
+    Best effort, like the trial's: a failure is logged and counted, never
+    raised - the payment has been taken and the order is fulfilled either way.
+    """
+    from workeasy360.contracts.enums import LicensingMode, MembershipStatus
+    from workeasy360.contracts.errors import SeatLimitReached
+    from workeasy360.contracts.ports.catalog import get_product_directory
+    from workeasy360.contracts.values.identifiers import ProductCode
+    from workeasy360.integration.scheduling.services import routing_context
+    from workeasy360.platform.entitlements.services import seats
+    from workeasy360.platform.organizations import selectors as org_selectors
+    from workeasy360.platform.tenancy.context import tenant_context
+    from workeasy360.platform.tenancy.db import organization_db_scope
+
+    if user_id is None or not product_codes:
+        return []
+    directory = get_product_directory()
+    per_seat: list[str] = []
+    for code in dict.fromkeys(product_codes):
+        try:
+            descriptor = directory.get(ProductCode(code))
+        except ValueError:
+            continue
+        if descriptor is not None and descriptor.licensing_mode == LicensingMode.PER_SEAT:
+            per_seat.append(code)
+    ctx = routing_context(organization_id)
+    if not per_seat or ctx is None:
+        return []
+    assigned: list[str] = []
+    try:
+        with tenant_context(ctx), organization_db_scope(organization_id):
+            member = org_selectors.membership_for_user(ctx, user_id)
+            if (
+                member is None
+                or member["status"] != MembershipStatus.ACTIVE.value
+                or not org_selectors.active_membership_exists(
+                    ctx, member["id"], lock=True
+                )
+            ):
+                metrics.increment(BUYER_SEATS, outcome="not_a_member")
+                return []
+            membership_id = member["id"]
+            for code in per_seat:
+                if membership_id in seats.held_by(organization_id, pool_key=code):
+                    metrics.increment(BUYER_SEATS, outcome="already_seated")
+                    continue
+                try:
+                    assignment = seats.assign_seat(
+                        organization_id,
+                        pool_key=code,
+                        membership_id=membership_id,
+                        assigned_by_membership_id=None,
+                    )
+                except SeatLimitReached:
+                    metrics.increment(BUYER_SEATS, outcome="pool_full")
+                    continue
+                audit.record_system(
+                    organization_id,
+                    "commercial.order.buyer_seat_assigned",
+                    resource_type="SeatAssignment",
+                    resource_id=str(assignment.id),
+                    changes={"product_code": code, "membership_id": str(membership_id)},
+                    reason="The member who paid for the product holds one of its seats.",
+                )
+                metrics.increment(BUYER_SEATS, outcome="assigned")
+                assigned.append(code)
+    except Exception as exc:
+        metrics.increment(BUYER_SEATS, outcome="failed")
+        logger.error(
+            "payments.order.buyer_seat_failed",
+            organization_id=str(organization_id),
+            error_type=type(exc).__name__,
+        )
+        return []
+    return assigned
 
 
 def _succeeded_attempt(invoice: Any) -> UUID | None:

@@ -59,6 +59,8 @@ export interface ProductRow {
   trial: boolean;
   free: boolean;
   expired: boolean;
+  /** ADR-073: an expired **paid** product (the directory's `lapsed`), not a trial. */
+  lapsed: boolean;
   pendingSetup: boolean;
 }
 
@@ -89,7 +91,9 @@ export function productRows(
     const e = byCode.get(app.product_code) ?? null;
     const record = setupBy.get(app.product_code) ?? null;
     const held = HELD.has(app.state);
-    const expired = !held && e?.trial_state === "used" && e.trial_outcome === "expired";
+    // ADR-073: a paid product that ended is Expired too - with its own words.
+    const lapsed = !held && Boolean(app.lapsed);
+    const expired = lapsed || (!held && e?.trial_state === "used" && e.trial_outcome === "expired");
     const pendingSetup = Boolean(record && setupOpen(record));
     // Associated: held, a trial that ran out, or a setup in progress.
     if (!held && !expired && !pendingSetup) continue;
@@ -102,6 +106,7 @@ export function productRows(
       trial,
       free: held && !trial && freePlan(e, app.plan?.code),
       expired,
+      lapsed,
       pendingSetup,
     });
   }
@@ -225,6 +230,7 @@ export function MyProductsScreen({ banner }: { banner?: React.ReactNode }) {
                       manageHref={row.held ? manage : undefined}
                       seatsHref={seatsHref}
                       expired={row.expired}
+                      lapsed={row.lapsed}
                       exploreHref={`${store}/${encodeURIComponent(row.app.product_code)}`}
                       setup={
                         row.setup && setupOpen(row.setup)
@@ -293,7 +299,7 @@ function ProductDetails({
 }) {
   const titleId = useId();
   const { app, explore } = row;
-  const plan = explore?.plans.find((p) => p.plan_code === app.plan?.code) ?? null;
+  const plan = explore?.plans.find((p) => p.plan_code === (app.plan?.code ?? app.lapsed?.plan?.code)) ?? null;
   const features = explore?.features ?? [];
   const storeHref = `/o/${slug}/store/${encodeURIComponent(app.product_code)}`;
   const overdue = app.entitlement_status === "past_due" || app.entitlement_status === "grace";
@@ -303,9 +309,11 @@ function ProductDetails({
       ? `Ends ${formatDate(app.cancel_at)} - won't renew`
       : app.renews_at
         ? `Renews ${formatDate(app.renews_at)}`
-        : row.expired && explore?.trial_ends_at
-          ? `Trial ended ${formatDate(explore.trial_ends_at)}`
-          : null;
+        : row.lapsed && app.lapsed
+          ? `Ended ${formatDate(app.lapsed.ended_at)}`
+          : row.expired && explore?.trial_ends_at
+            ? `Trial ended ${formatDate(explore.trial_ends_at)}`
+            : null;
 
   return (
     <Modal labelledBy={titleId} onClose={onClose} size="lg">
@@ -319,13 +327,16 @@ function ProductDetails({
               {
                 label: "Activation status",
                 value: row.expired ? (
-                  <StatusBadge value="expired" label="Trial expired" />
+                  <StatusBadge value="expired" label={row.lapsed ? "Expired" : "Trial expired"} />
                 ) : app.entitlement_status ? (
                   <StatusBadge value={app.entitlement_status} label={ACTIVATION_WORDS[app.entitlement_status] ?? undefined} />
                 ) : null,
               },
               { label: "Your access", value: ACCESS_WORDS[app.state] },
-              { label: "Plan", value: app.plan?.name ?? (canSeePlans ? null : "Visible to billing managers") },
+              {
+                label: "Plan",
+                value: app.plan?.name ?? app.lapsed?.plan?.name ?? (canSeePlans ? null : "Visible to billing managers"),
+              },
               { label: "Validity", value: validity },
               {
                 label: "Seats",
@@ -377,7 +388,7 @@ function ProductDetails({
         )}
         {canBuy && (row.held || row.expired) && (
           <Link className="w360-btn w360-btn-secondary" href={storeHref}>
-            {row.expired ? "Upgrade / Buy now" : "Change plan"}
+            {row.lapsed ? "Renew / Buy again" : row.expired ? "Upgrade / Buy now" : "Change plan"}
           </Link>
         )}
         {app.state === "active" && <LaunchButton orgSlug={slug} productCode={app.product_code} productName={app.display_name} />}

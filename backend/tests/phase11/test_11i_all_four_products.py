@@ -181,12 +181,29 @@ def test_catalog_trial_buy_entitlement_and_launch(code, four_products, shop_for,
     assert started.status_code == 201, (code, started.content)
     assert decision_for_organization(shop["id"], code).status.value == "trial"
 
-    # seat: a holding grants no launch by itself - the owner still needs a
-    # seat assignment, exactly as any other product's owner does.
+    # seat: the person who started the trial already holds one of its seats
+    # (ADR-073: and the person who pays holds one too - nobody has to assign
+    # it). Assigning it again is idempotent and takes no second seat.
     seated = shop["client"].post(
         url(shop["slug"], f"apps/{code}/seats/{shop['membership'].id}")
     )
     assert seated.status_code in (200, 201), (code, seated.content)
+    from workeasy360.platform.entitlements.services import seats as seat_services
+    from workeasy360.platform.tenancy.db import organization_db_scope
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    def holders():
+        with (
+            unscoped_access(reason="Test reads seat holders", module="tests"),
+            organization_db_scope(shop["id"]),
+        ):
+            from workeasy360.integration.scheduling.services import routing_context
+            from workeasy360.platform.tenancy.context import tenant_context
+
+            with tenant_context(routing_context(shop["id"])):
+                return seat_services.held_by(shop["id"], pool_key=code)
+
+    assert holders() == {shop["membership"].id}
 
     # buy: converts the trial through the ordinary pay-first order, no
     # second entitlement writer, no duplicate.
@@ -199,6 +216,8 @@ def test_catalog_trial_buy_entitlement_and_launch(code, four_products, shop_for,
     assert order["status"] == "fulfilled", (code, order)
     decision = decision_for_organization(shop["id"], code)
     assert decision.allowed and decision.status.value == "active"
+    # The buyer keeps their one seat through the conversion - never a second.
+    assert holders() == {shop["membership"].id}
 
     # My Products: the app directory reports it as active and launchable.
     directory = shop["client"].get(url(shop["slug"], "apps")).json()["apps"]

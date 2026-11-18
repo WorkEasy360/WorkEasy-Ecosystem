@@ -8,6 +8,9 @@ import { isState } from "@/lib/portals";
  *   binding value `state`): hand the sign-in to it - a one-time code in the
  *   URL fragment of its `/auth/continue` (ADR-043), redeemed there for its own
  *   host-only session. The page it opens is decided by the server from `next`.
+ * - ADR-073: the Store did (`mode=store` with the Store's binding value): the
+ *   same hand-off, to the Store's own `/auth/continue` - so the Store and every
+ *   product opened afterwards share this one sign-in.
  * - Otherwise this was a sign-in to Accounts itself: its own account page, or
  *   the Accounts page `next` names.
  */
@@ -22,15 +25,21 @@ export function handsOffToApp(params: URLSearchParams): boolean {
   return isState(params.get("state")) && (mode === null || mode === "user");
 }
 
+/** ADR-073: the Store asked for this sign-in, with its binding value. */
+export function handsOffToStore(params: URLSearchParams): boolean {
+  return isState(params.get("state")) && params.get("mode") === "store";
+}
+
 export async function continueFromAccounts(params: URLSearchParams, go: (url: string) => void = (u) => window.location.replace(u)): Promise<void> {
-  if (handsOffToApp(params)) {
+  const mode = handsOffToApp(params) ? "user" : handsOffToStore(params) ? "store" : null;
+  if (mode) {
     try {
-      const { redirect_url } = await issueHandoff("user", params.get("next"), params.get("state") as string);
+      const { redirect_url } = await issueHandoff(mode, params.get("next"), params.get("state") as string);
       go(redirect_url);
       return;
     } catch {
       // The binding value was refused (expired, malformed): the account page;
-      // the customer portal starts a fresh sign-in the next time it is opened.
+      // the portal starts a fresh sign-in the next time it is opened.
     }
   }
   go(accountsPage(params.get("next")));
