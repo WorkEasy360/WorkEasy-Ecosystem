@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { contentSecurityPolicy, formTargetsFor, routePortalRequest } from "./proxy";
-import { pageOwner, readPortalOrigins, servesPage, type PortalOrigins } from "./lib/portals";
+import { pageOwner, readPortalOrigins, servesPage, storeSignInUrl, type PortalOrigins } from "./lib/portals";
+import { continueFromAccounts, handsOffToApp, handsOffToStore } from "./features/auth/accountsSignIn";
+import { mockApi, ok } from "./features/controlplane/testSupport";
 import { checkoutFrom, checkoutHref, trialHref } from "./features/store/checkoutLinks";
 import { rememberStoreReturn, safeStorePath, takeStoreReturn } from "./features/store/storeReturn";
 import { myAccountLinks } from "./features/store/links";
@@ -80,6 +82,96 @@ describe("routing on the Store's host", () => {
 
   it("serves the development test provider's page, where a Store payment returns", () => {
     expect(route(WITH, host, "/billing/test-checkout", true)).toEqual({ kind: "serve" });
+  });
+});
+
+/**
+ * ADR-073: while WorkEasy360 Accounts hosts identity (ADR-071), the Store signs in
+ * and up through Accounts - the customer portal's hand-off, bound to the Store's
+ * own host - so a Store sign-in also signs Accounts in, and the first product
+ * opened after buying asks for no password. Off (production today): unchanged.
+ */
+describe("the Store signing in through WorkEasy360 Accounts (ADR-073)", () => {
+  const ON: PortalOrigins = { ...WITH, auth: "https://accounts.workeasy360.com", accountsIdentity: true };
+  const STATE = "s".repeat(43);
+  const host = "store.workeasy360.com";
+  const at = (origins: PortalOrigins, where: string, path: string, hasSession = false) => {
+    const [pathname, search = ""] = path.split("?");
+    return routePortalRequest({ origins, host: where, pathname, search: search ? `?${search}` : "", hasSession, newState: () => STATE });
+  };
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("sends the Store's sign-in to Accounts, bound to the Store's host and back to the Store page", () => {
+    expect(at(ON, host, "/login?next=%2Fstore%2Fcheckout%3Fplan%3Dx")).toEqual({
+      kind: "redirect",
+      location: `https://accounts.workeasy360.com/login?mode=store&next=%2Fstore%2Fcheckout%3Fplan%3Dx&state=${STATE}`,
+      bind: STATE,
+    });
+    expect(at(ON, host, "/login?mode=user")).toEqual({
+      kind: "redirect",
+      location: `https://accounts.workeasy360.com/login?mode=store&state=${STATE}`,
+      bind: STATE,
+    });
+    // `next` is only ever a Store page.
+    for (const bad of ["https%3A%2F%2Fevil.example", "%2Fo%2Facme%2Fbilling", "%2F%2Fevil.example"]) {
+      expect(at(ON, host, `/login?next=${bad}`)).toEqual({
+        kind: "redirect",
+        location: `https://accounts.workeasy360.com/login?mode=store&state=${STATE}`,
+        bind: STATE,
+      });
+    }
+    expect(storeSignInUrl(ON, "/store", STATE)).toBe(`https://accounts.workeasy360.com/login?mode=store&state=${STATE}`);
+    // The hand-off lands on the Store's own continue page, which needs no session.
+    expect(at(ON, host, "/auth/continue")).toEqual({ kind: "serve" });
+    // Accounts serves the sign-in it was sent to, and a product sign-in is unchanged.
+    expect(at(ON, "accounts.workeasy360.com", `/login?mode=store&state=${STATE}`)).toEqual({ kind: "serve" });
+    expect(at(ON, host, "/login?resume=abc")).toEqual({
+      kind: "redirect",
+      location: "https://accounts.workeasy360.com/login?resume=abc",
+    });
+  });
+
+  it("moves the Store's sign-up, verification and reset pages to Accounts, address and fragment kept", () => {
+    expect(at(ON, host, "/signup?next=%2Fstore%2Fcheckout&ref=ABCD")).toEqual({
+      kind: "redirect",
+      location: "https://accounts.workeasy360.com/signup?next=%2Fstore%2Fcheckout&ref=ABCD",
+    });
+    for (const path of ["/verify-email", "/forgot-password", "/reset-password", "/confirm-email", "/r/ABCD1234"]) {
+      expect(at(ON, host, path), path).toEqual({ kind: "redirect", location: `https://accounts.workeasy360.com${path}` });
+    }
+    expect(servesPage("store", "/signup", ON)).toBe(false);
+  });
+
+  it("keeps the Store itself: its pages, its checkout and the test provider's page", () => {
+    for (const path of ["/", "/store", "/store/checkout?plan=x", "/store/product/easy-crm"]) {
+      expect(at(ON, host, path), path).toEqual({ kind: "serve" });
+    }
+    expect(at(ON, host, "/billing/test-checkout", true)).toEqual({ kind: "serve" });
+    expect(at(ON, host, "/login?mode=partner")).toEqual({ kind: "redirect", location: `${FIVE.partner}/login` });
+  });
+
+  it("is off without Accounts identity, or without a Store host of its own", () => {
+    const off: PortalOrigins = { ...WITH };
+    for (const path of ["/login", "/login?next=%2Fstore%2Fcheckout", "/signup", "/verify-email"]) {
+      expect(at(off, host, path), path).toEqual({ kind: "serve" });
+    }
+    expect(servesPage("store", "/signup", off)).toBe(true);
+  });
+
+  it("hands an Accounts sign-in to the Store only with the Store's binding value", async () => {
+    expect(handsOffToStore(new URLSearchParams({ mode: "store", state: STATE }))).toBe(true);
+    expect(handsOffToStore(new URLSearchParams({ mode: "store" }))).toBe(false);
+    expect(handsOffToStore(new URLSearchParams({ mode: "user", state: STATE }))).toBe(false);
+    expect(handsOffToApp(new URLSearchParams({ mode: "store", state: STATE }))).toBe(false);
+
+    const calls = mockApi({
+      "POST /api/v1/auth/handoff": [ok({ redirect_url: "https://store.workeasy360.com/auth/continue#code=abc" })],
+    });
+    const go = vi.fn();
+    await continueFromAccounts(new URLSearchParams({ mode: "store", state: STATE, next: "/store/checkout?plan=x" }), go);
+    expect(calls[0].body).toEqual({ mode: "store", next: "/store/checkout?plan=x", state: STATE });
+    expect(go).toHaveBeenLastCalledWith("https://store.workeasy360.com/auth/continue#code=abc");
   });
 });
 

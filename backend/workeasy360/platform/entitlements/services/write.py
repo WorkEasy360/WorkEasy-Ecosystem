@@ -15,6 +15,7 @@ applies a computed result idempotently.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -89,7 +90,11 @@ class ComputedEntitlements:
     computation_id: UUID = field(default_factory=uuid.uuid4)
 
 
-def apply_entitlements(computed: ComputedEntitlements) -> int:
+def apply_entitlements(
+    computed: ComputedEntitlements,
+    *,
+    on_products_lost: Callable[[list[str]], None] | None = None,
+) -> int:
     """Write a computed state idempotently. Returns the new snapshot version.
 
     Idempotent and diff-based: re-running with the same input produces the
@@ -98,6 +103,13 @@ def apply_entitlements(computed: ComputedEntitlements) -> int:
 
     Runs in one transaction with the snapshot rewrite, so a reader never sees
     entitlement rows and a snapshot that disagree.
+
+    ``on_products_lost`` (ADR-073) is called, inside that same transaction and
+    under the organization's lock, with the products the stored snapshot held
+    (any status but expired) and this state no longer does - so what their loss
+    owes (back-channel logouts) commits with the loss itself. Not called when
+    nothing was lost: the comparison is against the snapshot row this function
+    reads anyway, so it costs no query.
     """
     from workeasy360.platform.entitlements.models import (
         Entitlement,
@@ -235,7 +247,7 @@ def apply_entitlements(computed: ComputedEntitlements) -> int:
 
         _apply_seat_grants(org_id, computed)
 
-        version = _rewrite_snapshot(org_id, computed, now)
+        version = _rewrite_snapshot(org_id, computed, now, on_products_lost)
 
     _invalidate_cache(org_id, version)
 
@@ -374,7 +386,12 @@ def _pair_filter(first: str, second: str, pairs: set[tuple[str, str]]) -> Any:
     return combined
 
 
-def _rewrite_snapshot(org_id: UUID, computed: ComputedEntitlements, now: Any) -> int:
+def _rewrite_snapshot(
+    org_id: UUID,
+    computed: ComputedEntitlements,
+    now: Any,
+    on_products_lost: Callable[[list[str]], None] | None = None,
+) -> int:
     """Materialise the resolved answer into one row.
 
     Resolution is "most generous wins": a boolean is True if any source grants
@@ -413,13 +430,34 @@ def _rewrite_snapshot(org_id: UUID, computed: ComputedEntitlements, now: Any) ->
     snapshot = EntitlementSnapshot.unscoped.filter(organization_id=org_id).first()
     if snapshot is None:
         snapshot = EntitlementSnapshot(organization_id=org_id, version=0)
+    lost = _lost_products(snapshot.products or {}, products)
 
     snapshot.version += 1
     snapshot.products = products
     snapshot.features = features
     snapshot.computed_at = now
     snapshot.save()
+    if lost and on_products_lost is not None:
+        on_products_lost(lost)
     return snapshot.version
+
+
+def _holds(entry: Any) -> bool:
+    try:
+        return EntitlementStatus(entry.get("status", "")).allows_read
+    except (AttributeError, ValueError):
+        return False
+
+
+def _lost_products(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    """Products ``before`` held (any status that still opens the product, whether
+    or not its end has passed by the clock - the sweep is what records it) and
+    ``after`` does not. Pure."""
+    return sorted(
+        str(code)
+        for code, entry in before.items()
+        if _holds(entry) and not _holds(after.get(code))
+    )
 
 
 def _advisory_lock(org_id: UUID) -> None:

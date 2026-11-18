@@ -7,6 +7,8 @@ import { Icon } from "@/components/sidebar/icons";
 import { login } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
 import { publicApi } from "@/lib/api/public";
+import { usePortals } from "@/lib/portalContext";
+import { storeSignsInThroughAccounts } from "@/lib/portals";
 import { fieldProblem } from "@/features/auth/AdminLogin";
 import { loginErrorMessage } from "@/features/auth/LoginForm";
 import { REFERRAL_TOKEN, SignupForm } from "@/features/auth/SelfService";
@@ -23,9 +25,46 @@ import shell from "./Store.module.css";
  * host - so the session, the referral the visitor followed and the purchase they
  * chose all stay in one place. The forms sit in the checkout's first step and on
  * the Store's own `/login` and `/signup` pages.
+ *
+ * ADR-073: while WorkEasy360 Accounts hosts identity (ADR-071), the Store signs in
+ * and up **through Accounts** instead - the forms become one button each, to the
+ * Store's own `/login` (the proxy's hand-off) or `/signup` (Accounts' page), and
+ * the buyer comes back to the same Store page. Accounts is then signed in too, so
+ * the first product opened after buying asks for no password.
  */
 
+/** Full navigations to the Store's own `/login` and `/signup`, which the proxy
+ * answers (a seam for tests, as `checkoutNavigation` is for the payment page). */
+export const storeNavigation = { assign: (url: string) => window.location.assign(url) };
+
+/** The Store page this is, to come back to after signing in or up on Accounts. */
+function hereInTheStore(): string {
+  return `${window.location.pathname}${window.location.search}`;
+}
+
+/** ADR-073: sign in on WorkEasy360 Accounts and come back to this Store page. */
+export function AccountsSignInButton({ next, compact = false }: { next?: string; compact?: boolean }) {
+  return (
+    <div className={`${styles.authForm} ${compact ? styles.authCompact : ""}`}>
+      <p>Sign in with your WorkEasy360 account. You come straight back here, signed in.</p>
+      <button
+        type="button"
+        className={`${shell.primary} ${styles.wide}`}
+        onClick={() => storeNavigation.assign(`/login?next=${encodeURIComponent(next ?? hereInTheStore())}`)}
+      >
+        <Icon name="login" size={18} /> Sign in with WorkEasy360 Accounts
+      </button>
+    </div>
+  );
+}
+
 export function StoreSignInForm({ onSignedIn, compact = false }: { onSignedIn: () => void; compact?: boolean }) {
+  const origins = usePortals();
+  if (storeSignsInThroughAccounts(origins)) return <AccountsSignInButton compact={compact} />;
+  return <StoreOwnSignInForm onSignedIn={onSignedIn} compact={compact} />;
+}
+
+function StoreOwnSignInForm({ onSignedIn, compact = false }: { onSignedIn: () => void; compact?: boolean }) {
   const emailId = useId();
   const passwordId = useId();
   const errorId = useId();
@@ -123,10 +162,33 @@ export function StoreSignInForm({ onSignedIn, compact = false }: { onSignedIn: (
 /** Create an account: the platform's own sign-up form. The emailed link opens on
  * this host and brings the buyer back to `returnPath` (a Store page) once verified. */
 export function StoreSignUpForm({ returnPath, onSent }: { returnPath: string; onSent?: () => void }) {
+  const origins = usePortals();
+  if (storeSignsInThroughAccounts(origins)) return <AccountsSignUpButton returnPath={returnPath} />;
+  return <StoreOwnSignUpForm returnPath={returnPath} onSent={onSent} />;
+}
+
+function StoreOwnSignUpForm({ returnPath, onSent }: { returnPath: string; onSent?: () => void }) {
   useEffect(() => {
     rememberStoreReturn(returnPath);
   }, [returnPath]);
   return <SignupForm signInHref={`/login?next=${encodeURIComponent(returnPath)}`} onSent={onSent} />;
+}
+
+/** ADR-073: create the account on WorkEasy360 Accounts; the confirmation link
+ * brings the buyer back to `returnPath`, signed in to the Store and Accounts. */
+function AccountsSignUpButton({ returnPath }: { returnPath: string }) {
+  return (
+    <div className={styles.authForm}>
+      <p>Create your WorkEasy360 account. Once you confirm your email you come back to this checkout, with your plan still chosen.</p>
+      <button
+        type="button"
+        className={`${shell.primary} ${styles.wide}`}
+        onClick={() => storeNavigation.assign(`/signup?next=${encodeURIComponent(returnPath)}`)}
+      >
+        <Icon name="userPlus" size={18} /> Create an account on WorkEasy360 Accounts
+      </button>
+    </div>
+  );
 }
 
 function SignInPage() {

@@ -172,10 +172,21 @@ export function pageOwner(pathname: string, origins?: PortalOrigins | null): Por
   return owner === "store" && origins && !origins.store ? "app" : owner;
 }
 
+/** ADR-073: the Store has its own host and WorkEasy360 Accounts hosts identity
+ * (`accountsIdentity`) - then the Store signs in and up through Accounts: its
+ * `/login` is the proxy's hand-off, and its other identity pages move there with
+ * the customer portal's. */
+export function storeSignsInThroughAccounts(origins?: PortalOrigins | null): boolean {
+  return Boolean(origins?.accountsIdentity && origins.store);
+}
+
 /** Whether `portal` serves `pathname`. */
 export function servesPage(portal: Portal, pathname: string, origins?: PortalOrigins | null): boolean {
   const owner = pageOwner(pathname, origins);
   if (owner === null || owner === portal) return true;
+  if (portal === "store" && storeSignsInThroughAccounts(origins) && IDENTITY_PAGES.some((prefix) => matches(pathname, prefix))) {
+    return false;
+  }
   return Object.entries(ALSO_ON).some(([prefix, also]) => matches(pathname, prefix) && also.includes(portal));
 }
 
@@ -213,6 +224,17 @@ export function signInUrl(origins: PortalOrigins, portal: Exclude<Destination, "
   const params = new URLSearchParams({ mode: PORTAL_TO_MODE[portal] });
   const page = safeNext(portal, next);
   if (page !== PORTAL_ROOT[portal]) params.set("next", page);
+  params.set("state", state);
+  return `${origins.auth}/login?${params.toString()}`;
+}
+
+/** ADR-073: WorkEasy360 Accounts' sign-in for the Store - the customer portal's
+ * hand-off with `mode=store` and the Store's binding value, landing on the
+ * Store's own `/auth/continue`. `next` is kept only when it is a Store page. */
+export function storeSignInUrl(origins: PortalOrigins, next: string | null, state: string): string {
+  const params = new URLSearchParams({ mode: "store" });
+  const page = safeNext("store", next);
+  if (page !== PORTAL_ROOT.store) params.set("next", page);
   params.set("state", state);
   return `${origins.auth}/login?${params.toString()}`;
 }

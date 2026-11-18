@@ -26,6 +26,7 @@ halfway; a diff-from-truth model converges from all three.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -290,7 +291,11 @@ def reconcile(organization_id: UUID, *, at: datetime | None = None) -> int:
     it invalidates caches without requiring a diff to decide whether to.
     """
     computed, state = _compute(organization_id, at)
-    version = apply_entitlements(computed)
+    # ADR-073: the logouts a lost product owes are queued inside the entitlement
+    # write's own transaction (the ADR-069 outbox), never one without the other.
+    version = apply_entitlements(
+        computed, on_products_lost=_access_ended_owed(organization_id)
+    )
     _write_summary(organization_id, computed, state, version)
     logger.info(
         "provisioning.reconciled",
@@ -323,7 +328,9 @@ def reconcile_and_report_drift(
         sorted(_differing_keys(before.get("features", {}), expected["features"]))
     )
 
-    version = apply_entitlements(computed)
+    version = apply_entitlements(
+        computed, on_products_lost=_access_ended_owed(organization_id)
+    )
     _write_summary(organization_id, computed, state, version)
     report = DriftReport(
         organization_id=organization_id,
@@ -383,6 +390,66 @@ def _write_summary(
         metrics.increment(SUMMARY_FAILURES)
         logger.error(
             "provisioning.summary.failed",
+            organization_id=str(organization_id),
+            error_type=type(exc).__name__,
+        )
+
+
+#: ADR-073: back-channel logouts owed because an entitlement ended, by outcome.
+ACCESS_ENDED = "provisioning_access_ended_total"
+
+
+def _access_ended_owed(organization_id: UUID) -> Callable[[list[str]], None]:
+    """The ``on_products_lost`` callback for one organization's entitlement write."""
+
+    def owe(lost: list[str]) -> None:
+        _owe_access_ended(organization_id, lost)
+
+    return owe
+
+
+def _owe_access_ended(organization_id: UUID, lost: list[str]) -> None:
+    """ADR-073 (G10): this pass ended the organization's entitlement to these
+    products - expiry, cancellation, a line ended, a trial over, a grant revoked.
+    Queue an ADR-069 back-channel logout to each for every person who could open
+    it through this organization, inside the entitlement write's transaction.
+
+    Never fails the reconciliation: losing the logouts only means the product
+    finds out at its next entitlement re-check, as before; failing here would
+    leave the access itself in place, which is worse. Its own savepoint keeps a
+    database error from poisoning the entitlement write.
+    """
+    from django.db import transaction
+
+    from workeasy360.contracts.ports.sign_ins import (
+        REASON_ENTITLEMENT_ENDED,
+        notify_access_ended,
+    )
+    from workeasy360.integration.scheduling.services import routing_context
+    from workeasy360.platform.entitlements.selectors import users_with_product_access
+    from workeasy360.platform.tenancy.context import tenant_context
+    from workeasy360.platform.tenancy.db import organization_db_scope
+
+    try:
+        ctx = routing_context(organization_id)
+        if ctx is None:
+            return
+        with (
+            tenant_context(ctx),
+            organization_db_scope(organization_id),
+            transaction.atomic(),
+        ):
+            for code, people in users_with_product_access(ctx, lost).items():
+                notify_access_ended(
+                    user_ids=sorted(people, key=str),
+                    product_codes=(code,),
+                    reason=REASON_ENTITLEMENT_ENDED,
+                )
+        metrics.increment(ACCESS_ENDED, outcome="recorded")
+    except Exception as exc:
+        metrics.increment(ACCESS_ENDED, outcome="failed")
+        logger.error(
+            "provisioning.access_ended.failed",
             organization_id=str(organization_id),
             error_type=type(exc).__name__,
         )

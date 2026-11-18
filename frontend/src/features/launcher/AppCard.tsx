@@ -111,6 +111,7 @@ export function AppCard({
   onDetails,
   setup,
   expired = false,
+  lapsed = false,
   exploreHref,
 }: {
   orgSlug: string;
@@ -126,12 +127,18 @@ export function AppCard({
   setup?: { label: string; tone: string } | null;
   /** The organization's trial of it ran out (Explore's state): "Trial expired" and a way to buy. */
   expired?: boolean;
+  /** ADR-073: the organization paid for it and its access has ended: "Expired" and
+   * a way to renew - never "Explore", as if it had never been held. */
+  lapsed?: boolean;
   /** Where a product the organization does not hold is bought (default: Explore). */
   exploreHref?: string;
 }) {
-  const copy = expired
-    ? { badge: "Trial expired", tone: "w360-badge-warning", hint: "Your free trial has ended. Upgrade or buy to keep using it." }
-    : STATE_COPY[app.state];
+  const copy = lapsed
+    ? { badge: "Expired", tone: "w360-badge-warning", hint: "Your subscription to it has ended. Renew it or buy it again to keep using it." }
+    : expired
+      ? { badge: "Trial expired", tone: "w360-badge-warning", hint: "Your free trial has ended. Upgrade or buy to keep using it." }
+      : STATE_COPY[app.state];
+  const ended = lapsed || expired;
   const status = statusBadge(app.entitlement_status);
   const assignsSeats = app.state === "no_seat" && Boolean(seatsHref);
   const hint = assignsSeats ? SELF_ASSIGN_HINT : (copy.hint ?? status?.hint);
@@ -215,11 +222,11 @@ export function AppCard({
         )}
         {app.state === "no_entitlement" && (
           <Link
-            className={expired ? "w360-btn w360-btn-primary" : "w360-btn w360-btn-secondary"}
+            className={ended ? "w360-btn w360-btn-primary" : "w360-btn w360-btn-secondary"}
             href={exploreHref ?? `/o/${orgSlug}/explore`}
-            aria-label={expired ? `Upgrade or buy: ${app.display_name}` : undefined}
+            aria-label={lapsed ? `Renew or buy again: ${app.display_name}` : expired ? `Upgrade or buy: ${app.display_name}` : undefined}
           >
-            {expired ? "Upgrade / Buy now" : "Explore products"}
+            {lapsed ? "Renew / Buy again" : expired ? "Upgrade / Buy now" : "Explore products"}
           </Link>
         )}
         {manageHref && app.state !== "no_entitlement" && app.state !== "product_unavailable" && (
