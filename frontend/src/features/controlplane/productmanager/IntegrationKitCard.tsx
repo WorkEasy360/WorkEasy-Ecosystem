@@ -87,7 +87,7 @@ export function IntegrationKitCard({ code }: { code: string }) {
               <h4>
                 {file.path} <span className={styles.muted}>{file.purpose}</span>
               </h4>
-              <pre className={styles.url} tabIndex={0}>
+              <pre className={styles.kitFile} tabIndex={0} aria-label={`${file.path} contents`}>
                 {file.content}
               </pre>
               <div className={styles.toolbar}>
