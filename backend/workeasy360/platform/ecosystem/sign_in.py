@@ -150,13 +150,11 @@ def product_sign_in(
     return found
 
 
-def decision_at_authorize(
-    user_id: Any, integration: Any
-) -> tuple[SignInDecision, ProductDoors]:
-    """The decision for the authorization endpoint, which already holds the
-    integration row (and has checked it is ``active``). Two small queries:
-    whether a usable credential exists, and the person's two relevant rows."""
-    from workeasy360.platform.ecosystem.models import UserSignInPreference
+def doors_at_authorize(integration: Any) -> ProductDoors:
+    """Which ways in this product offers right now - whether a usable
+    credential exists - without reading anyone's preference. For a question
+    asked before the access checks can run (a product's "Use another account"
+    with no organization yet: ``ecosystem_views.authorize``)."""
     from workeasy360.platform.ecosystem.selectors import _with_sso
 
     has_credential = bool(
@@ -164,11 +162,22 @@ def decision_at_authorize(
         .values_list("has_usable_credential", flat=True)
         .first()
     )
-    offered = doors(
+    return doors(
         integration.manifest_obj,
         status=integration.status,
         has_usable_credential=has_credential,
     )
+
+
+def decision_at_authorize(
+    user_id: Any, integration: Any
+) -> tuple[SignInDecision, ProductDoors]:
+    """The decision for the authorization endpoint, which already holds the
+    integration row (and has checked it is ``active``). Two small queries:
+    whether a usable credential exists, and the person's two relevant rows."""
+    from workeasy360.platform.ecosystem.models import UserSignInPreference
+
+    offered = doors_at_authorize(integration)
     default: SignInPreference | None = None
     override: SignInPreference | None = None
     for code, mode in UserSignInPreference.objects.filter(

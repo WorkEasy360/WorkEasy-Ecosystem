@@ -177,6 +177,24 @@ def authorize(request: HttpRequest) -> HttpResponse:
         organization_id = authorization.organization_for(
             user_id=user.pk, named=parsed.organization_id
         )
+        if (
+            organization_id is None
+            and parsed.wants_account_confirmation
+            and not parsed.prompt_none
+        ):
+            # The product asked which account ("Use another account") and
+            # nothing names an organization - this person has several, or
+            # none. Which account comes first: the organization is then asked
+            # of whoever answers, at resume and bound to them, and every
+            # refusal is delivered there. Asking the organization first lost
+            # the account question (resume applied only the preference).
+            # Readiness only: the preference is read after every access check.
+            if not sign_in.doors_at_authorize(parsed.integration).sso_available:
+                raise protocol.OAuthError(
+                    protocol.UNAUTHORIZED_CLIENT,
+                    "This product is not ready for Workeasy360 sign-in.",
+                )
+            return _park_for_choice(parsed, user.pk)
         subject = authorization.resolve_subject(
             user_id=user.pk,
             organization_id=organization_id,
@@ -332,7 +350,18 @@ def resume(request: HttpRequest) -> HttpResponse:
             # token rather than fail to the product - the user is signed in
             # and the only missing piece is which organization, which the
             # platform's own chooser is what asks (Task 5).
-            requeued = authorization.create_pending(pending_request)
+            #
+            # A person who has already said which account - at the access
+            # chooser, or by signing in for this very request - is asked the
+            # organization only: the new token is bound to them, so nobody
+            # else can resume it and their resume asks nothing more. Unbound,
+            # "Ask me each time" sent them round both choosers for ever.
+            answered = parked.user_id is not None or not parked.signed_in_before_parking(
+                _session_authenticated_at(request)
+            )
+            requeued = authorization.create_pending(
+                pending_request, user_id=user.pk if answered else None
+            )
             return HttpResponseRedirect(
                 f"{portal_links.auth_url()}/organizations/select?resume={requeued.token}"
             )
@@ -364,7 +393,9 @@ def resume(request: HttpRequest) -> HttpResponse:
                     protocol.UNAUTHORIZED_CLIENT,
                     "This product is not ready for Workeasy360 sign-in.",
                 )
-            if decision.asks(
+            # A product that asked to confirm the account is asked here too,
+            # as at ``authorize`` - not only the person's preference.
+            if pending_request.wants_account_confirmation or decision.asks(
                 entered_this_sign_in=sign_in.entered_this_sign_in(
                     request, pending_request.integration.product_code
                 )
