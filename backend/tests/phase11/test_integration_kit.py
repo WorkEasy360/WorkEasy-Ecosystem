@@ -17,7 +17,7 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 
-from tests.phase11.conftest import CATALOG_STAFF
+from tests.phase11.conftest import CATALOG_STAFF, audit_of
 from tests.phase11.test_product_domains import (  # noqa: F401 - fixtures
     ORIGIN,
     READINESS,
@@ -39,7 +39,11 @@ def _kit(client, framework: str):
 
 
 @pytest.mark.parametrize("framework", FRAMEWORKS)
-def test_a_kit_carries_the_registration_and_no_secret(staff_login, draft, framework):
+def test_a_kit_carries_the_registration_and_no_secret(
+    staff_login,
+    draft,  # noqa: F811
+    framework,
+):
     client, _ = staff_login(*CATALOG_STAFF, "platform.staff_integration.view")
     response = _kit(client, framework)
     assert response.status_code == 200, response.content
@@ -60,7 +64,10 @@ def test_a_kit_carries_the_registration_and_no_secret(staff_login, draft, framew
     )
 
 
-def test_the_django_kit_pins_the_private_connector_by_commit(staff_login, draft):
+def test_the_django_kit_pins_the_private_connector_by_commit(
+    staff_login,
+    draft,  # noqa: F811
+):
     from workeasy360.commercial.controlplane import integration_kit
 
     client, _ = staff_login(*CATALOG_STAFF, "platform.staff_integration.view")
@@ -73,23 +80,38 @@ def test_the_django_kit_pins_the_private_connector_by_commit(staff_login, draft)
     assert ".whl" not in requirements  # never a vendored wheel
 
 
-def test_a_kit_names_what_the_registration_still_lacks(staff_login, draft):
+def test_a_kit_names_what_the_registration_still_lacks(
+    staff_login,
+    draft,  # noqa: F811
+):
     client, _ = staff_login(*CATALOG_STAFF, "platform.staff_integration.view")
     kit = _kit(client, "node").json()
     assert any("back-channel" in item for item in kit["missing"])
 
 
-def test_each_generation_is_audited_without_the_kit(staff_login, draft):
-    from workeasy360.platform.audit.models import AuditEvent
-
+def test_each_generation_is_audited_without_the_kit(
+    staff_login,
+    draft,  # noqa: F811
+):
     client, _ = staff_login(*CATALOG_STAFF, "platform.staff_integration.view")
     _kit(client, "spring")
-    event = AuditEvent.objects.filter(action="ecosystem.integration.kit_generated").get()
-    assert event.resource_id == draft["client_id"]
-    assert event.changes == {"product_code": "crm", "framework": "spring"}
+    rows = [
+        r
+        for r in audit_of(draft["client_id"], "action", "changes")
+        if r["action"] == "ecosystem.integration.kit_generated"
+    ]
+    assert rows == [
+        {
+            "action": "ecosystem.integration.kit_generated",
+            "changes": {"product_code": "crm", "framework": "spring"},
+        }
+    ]
 
 
-def test_an_unknown_framework_and_an_unregistered_product_are_refused(staff_login, draft):
+def test_an_unknown_framework_and_an_unregistered_product_are_refused(
+    staff_login,
+    draft,  # noqa: F811
+):
     client, _ = staff_login(*CATALOG_STAFF, "platform.staff_integration.view")
     assert _kit(client, "cobol").status_code in (400, 422)
     missing = client.get(
@@ -98,7 +120,10 @@ def test_an_unknown_framework_and_an_unregistered_product_are_refused(staff_logi
     assert missing.status_code in (400, 404, 422)
 
 
-def test_only_integration_viewers_get_a_kit(staff_login, draft):
+def test_only_integration_viewers_get_a_kit(
+    staff_login,
+    draft,  # noqa: F811
+):
     client, _ = staff_login(*CATALOG_STAFF)
     assert _kit(client, "django").status_code == 403
 
@@ -128,7 +153,8 @@ def _row(registration):
 
 
 def test_every_redemption_records_issuer_and_hour_even_without_backchannel(
-    live, django_assert_num_queries
+    live,  # noqa: F811
+    django_assert_num_queries,
 ):
     import uuid
 
@@ -166,7 +192,9 @@ def _states(body):
 
 
 def test_readiness_warns_until_a_sign_in_and_a_logout_are_proven(
-    staff_login, staff, live
+    staff_login,
+    staff,  # noqa: F811
+    live,  # noqa: F811
 ):
     from workeasy360.platform.ecosystem.models import (
         BackchannelLogout,
@@ -213,19 +241,19 @@ def test_readiness_warns_until_a_sign_in_and_a_logout_are_proven(
 def _checklist(**overrides):
     from workeasy360.commercial.catalog.domain import ProductStatus, publish_checklist
 
-    kwargs = dict(
-        name="CRM",
-        slug="crm",
-        category="sales",
-        tagline="t",
-        has_logo=True,
-        application_url="https://crm.example.com",
-        launch_url="",
-        status=ProductStatus.DRAFT,
-        return_destinations=True,
-        has_active_plan=True,
-        channel_open=True,
-    )
+    kwargs = {
+        "name": "CRM",
+        "slug": "crm",
+        "category": "sales",
+        "tagline": "t",
+        "has_logo": True,
+        "application_url": "https://crm.example.com",
+        "launch_url": "",
+        "status": ProductStatus.DRAFT,
+        "return_destinations": True,
+        "has_active_plan": True,
+        "channel_open": True,
+    }
     kwargs.update(overrides)
     return {item["key"]: item["ok"] for item in publish_checklist(**kwargs)}
 
@@ -237,7 +265,9 @@ def test_a_workeasy360_sign_in_product_publishes_only_after_a_completed_sign_in(
     assert _checklist(sign_in_verified=None)["sign_in_verified"] is True
 
 
-def test_the_publish_checklist_reads_the_recorded_sign_in(live):
+def test_the_publish_checklist_reads_the_recorded_sign_in(
+    live,  # noqa: F811
+):
     from workeasy360.platform.ecosystem import selectors
     from workeasy360.platform.ecosystem.models import ProductIntegration
 
