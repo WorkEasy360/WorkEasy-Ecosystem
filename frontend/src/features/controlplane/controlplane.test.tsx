@@ -546,7 +546,7 @@ describe("the partner shell", () => {
     expect(banner).toHaveTextContent("Read only");
     expect(banner).toHaveTextContent("Nothing can be changed here, and every page you open is recorded.");
     await expectNoViolations(container);
-    fireEvent.click(within(banner).getByRole("button", { name: "Return to Super Admin" }));
+    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Session" }));
     // No way back named: the partner's own page in the Admin.
     await waitFor(() => expect(assign).toHaveBeenCalledWith(`/admin/partners/${PARTNER}`));
     expect(calls.some((c) => c.key === "POST /api/v1/partner/guest-view/end")).toBe(true);
@@ -920,7 +920,7 @@ describe("hostile text is rendered as text (XSS)", () => {
       </AdminContextForTest>,
     );
     const table = await screen.findByRole("table", { name: "Partners" });
-    expect(within(table).getAllByText(EVIL).length).toBeGreaterThan(0);
+    expect((await within(table).findAllByText(EVIL)).length).toBeGreaterThan(0);
     expectInert(container);
   });
 

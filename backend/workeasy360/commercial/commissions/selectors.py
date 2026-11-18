@@ -82,12 +82,16 @@ def accruals_page(
     unpaid: bool = False,
     limit: int = 25,
     cursor: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> Page:
     """A bounded page of ledger rows, newest first. Never an export.
 
     ``unpaid`` keeps only the entries that are in no live payout - not yet
     claimed by one, or released from a cancelled one (Phase 10: the Partners
-    overview's "pending commissions" card lands here).
+    overview's "pending commissions" card lands here). ``start``/``end`` keep
+    the entries whose event (the sale, the reversal, the adjustment) is in
+    ``[start, end)``; the cursor pages within them.
     """
     from django.db.models import Exists, OuterRef
 
@@ -101,6 +105,10 @@ def accruals_page(
         queryset = queryset.filter(partner_id=partner_id)
     if kind:
         queryset = queryset.filter(kind=kind)
+    if start is not None:
+        queryset = queryset.filter(event_at__gte=start)
+    if end is not None:
+        queryset = queryset.filter(event_at__lt=end)
     if unpaid:
         queryset = queryset.filter(
             ~Exists(
@@ -539,13 +547,21 @@ def payouts_page(
     status: str | None = None,
     limit: int = 25,
     cursor: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> Page:
+    """A bounded page of payouts, newest first; ``start``/``end`` keep those
+    prepared (created) in ``[start, end)``."""
     from workeasy360.commercial.commissions.models import Payout
 
     limit = _limit(limit)
     queryset = Payout.objects.order_by("-created_at", "-id")
     if partner_id is not None:
         queryset = queryset.filter(partner_id=partner_id)
+    if start is not None:
+        queryset = queryset.filter(created_at__gte=start)
+    if end is not None:
+        queryset = queryset.filter(created_at__lt=end)
     if for_partner:
         # A partner does not see a payout still being prepared or one that was
         # cancelled before it meant anything.

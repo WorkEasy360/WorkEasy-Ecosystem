@@ -75,6 +75,16 @@ SEGMENTS = (
 )
 
 
+def _members_of(org_ids: Any) -> Any:
+    """The people in these organizations, as a lazy subquery of user ids (the
+    access-directory projection; never evaluated into a list)."""
+    from workeasy360.platform.organizations.models import UserOrganizationAccess
+
+    return UserOrganizationAccess.objects.filter(organization_id__in=org_ids).values(
+        "user_id"
+    )
+
+
 def _segment_filter(
     segment: str | None, *, customer_orgs: Any, trial_orgs: Any, now: Any
 ) -> Any:
@@ -89,13 +99,6 @@ def _segment_filter(
     - suspended: temporarily locked out (failed sign-ins or codes)
     - deactivated: disabled by Workeasy360 staff
     """
-    from workeasy360.platform.organizations.models import UserOrganizationAccess
-
-    def members_of(org_ids: Any) -> Any:
-        return UserOrganizationAccess.objects.filter(organization_id__in=org_ids).values(
-            "user_id"
-        )
-
     active = Q(status=UserStatus.ACTIVE.value)
     if segment is None:
         return Q()
@@ -110,17 +113,19 @@ def _segment_filter(
     if customer_orgs is None or trial_orgs is None:
         raise ValueError("Lifecycle segments need the organizations' access classes.")
     if segment == "customers":
-        return active & Q(id__in=members_of(customer_orgs))
+        return active & Q(id__in=_members_of(customer_orgs))
     if segment == "free":
-        return active & ~Q(id__in=members_of(customer_orgs))
+        return active & ~Q(id__in=_members_of(customer_orgs))
     if segment == "trial":
         return (
             active
-            & Q(id__in=members_of(trial_orgs))
-            & ~Q(id__in=members_of(customer_orgs))
+            & Q(id__in=_members_of(trial_orgs))
+            & ~Q(id__in=_members_of(customer_orgs))
         )
     return (
-        active & ~Q(id__in=members_of(customer_orgs)) & ~Q(id__in=members_of(trial_orgs))
+        active
+        & ~Q(id__in=_members_of(customer_orgs))
+        & ~Q(id__in=_members_of(trial_orgs))
     )
 
 
@@ -134,7 +139,16 @@ def directory(
     segment: str | None = None,
     customer_orgs: Any = None,
     trial_orgs: Any = None,
+    product_orgs: Any = None,
+    created_from: Any = None,
+    created_before: Any = None,
 ) -> dict[str, Any]:
+    """One page of accounts, newest first. ``product_orgs`` is a lazy subquery of
+    organization ids the caller composed (organizations holding a product: this
+    module cannot see commercial state); it keeps the people in one of them.
+    ``created_from``/``created_before`` keep the accounts created in that window
+    (end exclusive). Every filter is one SQL statement, and the cursor pages
+    within it."""
     from datetime import datetime
 
     from django.utils import timezone
@@ -157,6 +171,12 @@ def directory(
         .filter(segment_q)
         .order_by("-created_at", "-id")
     )
+    if product_orgs is not None:
+        rows = rows.filter(id__in=_members_of(product_orgs))
+    if created_from is not None:
+        rows = rows.filter(created_at__gte=created_from)
+    if created_before is not None:
+        rows = rows.filter(created_at__lt=created_before)
     if search:
         term = search.strip()[:100]
         rows = rows.filter(Q(email__icontains=term) | Q(full_name__icontains=term))

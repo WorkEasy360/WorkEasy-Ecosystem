@@ -29,7 +29,11 @@ import {
   formatDateTime,
   formatRelative,
   sentence,
+  useConfirm,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
+  type FilterSpec,
   type Tone,
 } from "./kit";
 import { iconLabel, popupButton } from "./kit/PopupLabel";
@@ -125,12 +129,20 @@ export function PaymentsScreen() {
   );
 }
 
+/** The event log is loaded in one request, so its two filters narrow the rows on
+ * screen; they are kept in the address (admin-ux phase 3) so the view survives a
+ * reload. Their values are whatever the providers report, so any short text is
+ * accepted - one no event has simply matches nothing. */
+const EVENT_FILTERS = { provider: { maxLength: 32 }, outcome: { maxLength: 40 } } satisfies FilterSpec;
+
+/** The values seen in the events, with the one chosen (it may match none now). */
+const choices = (seen: string[], chosen: string) => [...new Set([...seen, ...(chosen ? [chosen] : [])])].sort();
+
 function EventLog({ events }: { events: PaymentEventRow[] }) {
-  const [provider, setProvider] = useState("all");
-  const [outcome, setOutcome] = useState("all");
-  const providers = [...new Set(events.map((e) => e.provider))].sort();
-  const outcomes = [...new Set(events.map((e) => e.outcome))].sort();
-  const rows = events.filter((e) => (provider === "all" || e.provider === provider) && (outcome === "all" || e.outcome === outcome));
+  const { values: f, set, reset } = useUrlFilters(EVENT_FILTERS);
+  const providers = choices(events.map((e) => e.provider), f.provider);
+  const outcomes = choices(events.map((e) => e.outcome), f.outcome);
+  const rows = events.filter((e) => (!f.provider || e.provider === f.provider) && (!f.outcome || e.outcome === f.outcome));
   const columns: Column<PaymentEventRow>[] = [
     {
       key: "received",
@@ -138,11 +150,12 @@ function EventLog({ events }: { events: PaymentEventRow[] }) {
       value: (e) => e.received_at,
       render: (e) => <time dateTime={e.received_at} title={exactTime(e.received_at)}>{formatDateTime(e.received_at)}</time>,
     },
-    { key: "provider", header: "Provider", value: (e) => e.provider, render: (e) => <code className={pay.mono}>{e.provider}</code> },
+    { key: "provider", header: "Provider", priority: "medium", value: (e) => e.provider, render: (e) => <code className={pay.mono}>{e.provider}</code> },
     { key: "event", header: "Event", value: (e) => e.kind, render: (e) => sentence(e.kind) },
     {
       key: "outcome",
       header: "Outcome",
+      priority: "essential",
       value: (e) => e.outcome,
       render: (e) => (
         <Badge tone={OUTCOME_TONE[e.outcome] ?? "neutral"} dot>
@@ -157,36 +170,36 @@ function EventLog({ events }: { events: PaymentEventRow[] }) {
       value: (e) => e.amount_minor,
       render: (e) => (e.amount_minor !== null && e.currency ? money(e.amount_minor, e.currency) : "—"),
     },
-    { key: "org", header: "Organization", value: (e) => e.organization_id, render: (e) => <IdCell value={e.organization_id} label="Copy organization ID" /> },
+    {
+      key: "org",
+      header: "Organization",
+      priority: "low",
+      value: (e) => e.organization_id,
+      render: (e) => <IdCell value={e.organization_id} label="Copy organization ID" />,
+    },
   ];
-  const filtered = provider !== "all" || outcome !== "all";
+  const active: ActiveFilter[] = [
+    ...(f.provider ? [{ key: "provider", label: "Provider", value: f.provider, onRemove: () => set({ provider: "" }) }] : []),
+    ...(f.outcome ? [{ key: "outcome", label: "Outcome", value: sentence(f.outcome), onRemove: () => set({ outcome: "" }) }] : []),
+  ];
+  const filtered = active.length > 0;
   return (
     <>
-      {events.length > 0 && (
-        <FilterBar
-          label="Filter payment events"
-          onClear={
-            filtered
-              ? () => {
-                  setProvider("all");
-                  setOutcome("all");
-                }
-              : undefined
-          }
-        >
+      {(events.length > 0 || filtered) && (
+        <FilterBar label="Filter payment events" onClear={filtered ? reset : undefined} active={active}>
           <Select
             label="Provider"
             prefix="Provider:"
-            value={provider}
-            onChange={setProvider}
-            options={[{ value: "all", label: "All" }, ...providers.map((p) => ({ value: p, label: p }))]}
+            value={f.provider}
+            onChange={(provider) => set({ provider })}
+            options={[{ value: "", label: "All" }, ...providers.map((p) => ({ value: p, label: p }))]}
           />
           <Select
             label="Outcome"
             prefix="Outcome:"
-            value={outcome}
-            onChange={setOutcome}
-            options={[{ value: "all", label: "All" }, ...outcomes.map((o) => ({ value: o, label: sentence(o) }))]}
+            value={f.outcome}
+            onChange={(outcome) => set({ outcome })}
+            options={[{ value: "", label: "All" }, ...outcomes.map((o) => ({ value: o, label: sentence(o) }))]}
           />
         </FilterBar>
       )}
@@ -195,12 +208,13 @@ function EventLog({ events }: { events: PaymentEventRow[] }) {
         columns={columns}
         rows={rows}
         rowKey={(e) => e.id}
+        rowLabel={(e) => `${sentence(e.kind)} from ${e.provider}`}
         hideEmptyColumns={false}
         empty={
           events.length === 0 ? (
             <EmptyState icon="receipt" title="No payment events yet" hint="Events appear here when a provider calls its webhook." />
           ) : (
-            <EmptyState icon="search" title="No event matches these filters" />
+            <EmptyState icon="search" title="No event matches these filters" hint="Try another provider or outcome, or reset the filters." />
           )
         }
       />
@@ -238,12 +252,25 @@ function ProviderCard({
   busy: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const confirm = useConfirm();
   const ready = p.credential_configured && p.webhook_secret_configured;
   const enabled = p.status === "enabled";
+  const toggle = () =>
+    act(
+      () => adminConsoleApi.updatePaymentProvider(p.key, { status: enabled ? "disabled" : "enabled", version: p.version }),
+      `${p.display_name} is now ${enabled ? "disabled" : "enabled"}.`,
+    );
+  const nextMode = p.mode === "live" ? "test" : "live";
+  const switchMode = () =>
+    act(
+      () => adminConsoleApi.updatePaymentProvider(p.key, { mode: nextMode, version: p.version }),
+      `${p.display_name} is now in ${nextMode} mode.`,
+    );
   const last = events.filter((e) => e.provider === p.key).map((e) => e.received_at).sort().at(-1);
   const titleId = `provider-${p.key}`;
   return (
     <section className={pay.card} aria-labelledby={titleId}>
+      {confirm.dialog}
       <div className={pay.cardHead}>
         <Avatar name={adapterLabel(p.adapter)} />
         <div className={pay.cardTitle}>
@@ -304,23 +331,36 @@ function ProviderCard({
             aria-label={`${enabled ? "Disable" : "Enable"} ${p.display_name}`}
             disabled={busy || (!enabled && !ready)}
             onClick={() =>
-              act(
-                () => adminConsoleApi.updatePaymentProvider(p.key, { status: enabled ? "disabled" : "enabled", version: p.version }),
-                `${p.display_name} is now ${enabled ? "disabled" : "enabled"}.`,
-              )
+              // Disabling stops customers paying through it: say so first (admin-ux
+              // phase 3). Enabling a ready provider runs at once.
+              enabled
+                ? confirm.ask({
+                    title: `Disable ${p.display_name}?`,
+                    message: `Checkout stops offering ${p.display_name} until it is enabled again. Payments already made are not touched.`,
+                    confirmLabel: "Disable provider",
+                    danger: true,
+                    onConfirm: () => void toggle(),
+                  })
+                : void toggle()
             }
           >
             {enabled ? "Disable" : "Enable"}
           </Button>
           <Button
             size="sm"
-            aria-label={`Switch to ${p.mode === "live" ? "test" : "live"} mode: ${p.display_name}`}
+            aria-label={`Switch to ${nextMode} mode: ${p.display_name}`}
             disabled={busy}
             onClick={() =>
-              act(
-                () => adminConsoleApi.updatePaymentProvider(p.key, { mode: p.mode === "live" ? "test" : "live", version: p.version }),
-                `${p.display_name} is now in ${p.mode === "live" ? "test" : "live"} mode.`,
-              )
+              confirm.ask({
+                title: `Switch ${p.display_name} to ${nextMode} mode?`,
+                message:
+                  nextMode === "live"
+                    ? `Payments through ${p.display_name} will charge real money, with the live credentials.`
+                    : `Payments through ${p.display_name} stop charging real money: checkout uses the test credentials until it is switched back.`,
+                confirmLabel: `Switch to ${nextMode}`,
+                danger: nextMode === "test",
+                onConfirm: () => void switchMode(),
+              })
             }
           >
             Switch to {p.mode === "live" ? "test" : "live"}

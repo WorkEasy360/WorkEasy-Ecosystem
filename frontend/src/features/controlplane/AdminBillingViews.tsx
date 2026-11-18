@@ -26,6 +26,7 @@ import {
   Button,
   ButtonLink,
   DataTable,
+  DateRangeFilter,
   EMPTY,
   EmptyState,
   FilterBar,
@@ -39,19 +40,24 @@ import {
   StatusBadge,
   StatusChips,
   Trunc,
+  droppedMessage,
   formatDate,
   formatDateTime,
   formatMoney,
   formatNumber,
   kit,
   productName,
+  rangeLabel,
   sentence,
   useConfirm,
   useToast,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
+  type FilterSpec,
   type Tone,
 } from "./kit";
-import { LoadGate, describeError, useAction, useLoad, usePaged } from "./ui";
+import { LoadGate, describeError, pagedTable, useAction, useLoad, usePaged, type Paged } from "./ui";
 import local from "./AdminBillingViews.module.css";
 
 /**
@@ -60,39 +66,50 @@ import local from "./AdminBillingViews.module.css";
  * customers and partners. Every filter goes to the server and every change is
  * authorized again by it. Money is integer minor units per currency, never added
  * across currencies.
+ *
+ * Admin-ux phase 3 (2026-11-18): each list keeps its filters in its address (a
+ * filtered view survives a reload and comes back with Back), lists them as
+ * removable tags, filters by date at the server, and puts each row's actions in
+ * one Actions column at the end.
  */
 
 // --- shared pieces -----------------------------------------------------------------------
 
-type Paged<R> = ReturnType<typeof usePaged<R>>;
-
-/** A server-paged list. A page that fails after rows are on screen keeps them and says so. */
+/** A server-paged list: its rows, the error with "Try again", and "Load more" with
+ * its own spinner and its own error (the rows already shown stay). */
 function PagedTable<R>({
   paged,
   what,
   ...table
-}: { paged: Paged<R>; what: string } & Omit<React.ComponentProps<typeof DataTable<R>>, "rows" | "loading" | "error" | "onLoadMore" | "hasMore">) {
-  const hasRows = paged.rows.length > 0;
-  const failed =
-    paged.state === "forbidden"
-      ? `You don't have access to ${what}.`
-      : paged.state === "error"
-        ? `Couldn't load ${what}. Reload the page to try again.`
-        : null;
-  return (
-    <>
-      {failed && hasRows && <Alert tone="danger">{`Couldn't load more ${what}. Try Load more again.`}</Alert>}
-      <DataTable<R>
-        {...table}
-        rows={paged.rows}
-        loading={paged.state === "loading"}
-        error={failed}
-        onLoadMore={hasRows ? () => void paged.more() : undefined}
-        hasMore={paged.hasMore}
-      />
-    </>
-  );
+}: { paged: Paged<R>; what: string } & Omit<
+  React.ComponentProps<typeof DataTable<R>>,
+  "rows" | "loading" | "error" | "onRetry" | "onLoadMore" | "hasMore" | "loadingMore" | "moreError"
+>) {
+  return <DataTable<R> {...table} {...pagedTable(paged, what)} />;
 }
+
+type Option = { value: string; label: string };
+
+/** An option's words ("Past due"), for its filter tag. */
+const labelOf = (options: Option[], value: string) => options.find((o) => o.value === value)?.label ?? sentence(value);
+
+/** One applied filter as a removable tag; nothing while it is not set. */
+const tag = (key: string, label: string, value: string, onRemove: () => void): ActiveFilter[] =>
+  value ? [{ key, label, value, onRemove }] : [];
+
+/** A search, as its tag shows it. */
+const searched = (q: string) => (q ? `“${q}”` : "");
+
+/** A date range, as its tag shows it ("1 Nov 2026 – 18 Nov 2026"). */
+const ranged = (range: { from: string; to: string }) => (range.from || range.to ? rangeLabel(range) : "");
+
+/** Filters the address named that this list does not know were left out: say so. */
+function DroppedFilters({ dropped }: { dropped: string[] }) {
+  const message = droppedMessage(dropped);
+  return message ? <Alert tone="warning" title={message} /> : null;
+}
+
+const DATES = { from: { date: true }, to: { date: true } } satisfies FilterSpec;
 
 const customerHref = (id: string) => `/admin/customers/${id}`;
 
@@ -123,6 +140,18 @@ function PartnerLink({ id, name }: { id: string | undefined; name?: string }) {
   );
 }
 
+/** A partner in words, for a row's accessible name: its name, or the start of its id. */
+const partnerWords = (id: string | undefined, name?: string) => name || (id ? `partner ${id.slice(0, 8)}` : "a partner");
+
+/** "Open billing": the customer's billing, where a payment or refund is resolved. */
+function OpenBilling({ id, name }: { id: string; name: string }) {
+  return (
+    <ButtonLink size="sm" icon="card" href={`${customerHref(id)}?tab=billing#billing-h`} aria-label={`Open billing for ${name || "this customer"}`}>
+      Open billing
+    </ButtonLink>
+  );
+}
+
 const moneyColumn = <R,>(key: string, header: string, minor: (row: R) => number | null, currency: (row: R) => string): Column<R> => ({
   key,
   header,
@@ -149,28 +178,43 @@ const INVOICE_CHIPS = [
   { value: "void", label: "Void" },
 ];
 
+const INVOICE_FILTERS = {
+  status: { options: INVOICE_CHIPS.map((c) => c.value) },
+  q: { maxLength: 40 },
+  ...DATES,
+} satisfies FilterSpec;
+
 const INVOICE_COLUMNS: Column<InvoiceRow>[] = [
   { key: "number", header: "Number", value: (i) => i.number, render: (i) => i.number },
   { key: "customer", header: "Customer", value: (i) => i.organization_name, render: (i) => <CustomerLink id={i.organization_id} name={i.organization_name} /> },
-  { key: "issued", header: "Issued", value: (i) => i.issued_at, render: (i) => <DateText iso={i.issued_at} /> },
-  { key: "status", header: "Status", value: (i) => i.status, render: (i) => <StatusBadge value={i.status} /> },
+  { key: "issued", header: "Issued", priority: "medium", value: (i) => i.issued_at, render: (i) => <DateText iso={i.issued_at} /> },
+  { key: "status", header: "Status", priority: "essential", value: (i) => i.status, render: (i) => <StatusBadge value={i.status} /> },
   moneyColumn<InvoiceRow>("total", "Total", (i) => i.total_minor, (i) => i.currency),
-  moneyOrDash<InvoiceRow>("paid", "Paid", (i) => i.amount_paid_minor, (i) => i.currency),
-  moneyOrDash<InvoiceRow>("refunded", "Refunded", (i) => i.amount_refunded_minor, (i) => i.currency),
-  { key: "due", header: "Due", value: (i) => i.due_at, render: (i) => <DateText iso={i.due_at} /> },
+  { ...moneyOrDash<InvoiceRow>("paid", "Paid", (i) => i.amount_paid_minor, (i) => i.currency), priority: "medium" },
+  { ...moneyOrDash<InvoiceRow>("refunded", "Refunded", (i) => i.amount_refunded_minor, (i) => i.currency), priority: "low" },
+  { key: "due", header: "Due", priority: "low", value: (i) => i.due_at, render: (i) => <DateText iso={i.due_at} /> },
 ];
 
-/** `initialQuery`: an invoice number from the address (the global search). */
-export function InvoicesScreen({ initialQuery = "" }: { initialQuery?: string } = {}) {
-  const [status, setStatus] = useState("");
-  const [query, setQuery] = useState(initialQuery);
-  const paged = usePaged((cursor) => billingApi.invoices({ status: status || undefined, q: query || undefined, cursor }), [status, query]);
+export function InvoicesScreen() {
+  const { values: f, set, reset, dropped } = useUrlFilters(INVOICE_FILTERS);
+  const paged = usePaged(
+    (cursor) =>
+      billingApi.invoices({ status: f.status || undefined, q: f.q || undefined, from: f.from || undefined, to: f.to || undefined, cursor }),
+    [f.status, f.q, f.from, f.to],
+  );
+  const active = [
+    ...tag("status", "Status", f.status && labelOf(INVOICE_CHIPS, f.status), () => set({ status: "" })),
+    ...tag("q", "Search", searched(f.q), () => set({ q: "" })),
+    ...tag("issued", "Issued", ranged(f), () => set({ from: "", to: "" })),
+  ];
   return (
     <Page>
       <PageHeader title="Invoices" subtitle="Every invoice across customers, newest first. Open a customer to mark one paid, void it or refund it." />
-      <StatusChips label="Invoice status" value={status} onChange={setStatus} chips={INVOICE_CHIPS} />
-      <FilterBar onClear={query ? () => setQuery("") : undefined}>
-        <SearchInput label="Search by invoice number" value={query} onSearch={setQuery} maxLength={40} />
+      <DroppedFilters dropped={dropped} />
+      <StatusChips label="Invoice status" value={f.status} onChange={(status) => set({ status })} chips={INVOICE_CHIPS} />
+      <FilterBar label="Filter invoices" onClear={active.length > 0 ? reset : undefined} active={active}>
+        <SearchInput label="Search by invoice number" value={f.q} onSearch={(q) => set({ q })} maxLength={40} />
+        <DateRangeFilter label="Issued" value={{ from: f.from, to: f.to }} onApply={(range) => set(range)} />
       </FilterBar>
       <PagedTable
         paged={paged}
@@ -179,11 +223,12 @@ export function InvoicesScreen({ initialQuery = "" }: { initialQuery?: string } 
         columns={INVOICE_COLUMNS}
         rowKey={(i) => i.invoice_id}
         rowHref={(i) => customerHref(i.organization_id)}
+        rowLabel={(i) => i.number}
         empty={
           <EmptyState
             icon="receipt"
             title="No invoices"
-            hint={status || query ? "Try another status or clear the search." : "Invoices appear here when customers are billed."}
+            hint={active.length > 0 ? "Try another status or clear the filters." : "Invoices appear here when customers are billed."}
           />
         }
       />
@@ -199,24 +244,16 @@ const STUCK_SHOWN = 100;
 const FAILED_COLUMNS: Column<PaymentRow>[] = [
   { key: "customer", header: "Customer", value: (p) => p.organization_name, render: (p) => <CustomerLink id={p.organization_id} name={p.organization_name} /> },
   { key: "invoice", header: "Invoice", value: (p) => p.invoice_number, render: (p) => <InvoiceLink number={p.invoice_number} /> },
-  { key: "provider", header: "Provider", value: (p) => p.provider, render: (p) => sentence(p.provider) },
+  { key: "provider", header: "Provider", priority: "low", value: (p) => p.provider, render: (p) => sentence(p.provider) },
   moneyColumn<PaymentRow>("amount", "Amount", (p) => p.amount_minor, (p) => p.currency),
   {
     key: "failure",
     header: "Failure code",
+    priority: "essential",
     value: (p) => p.failure_code,
     render: (p) => (p.failure_code ? <KeyText>{p.failure_code}</KeyText> : EMPTY),
   },
-  { key: "when", header: "When", value: (p) => p.completed_at ?? p.created_at, render: (p) => formatDateTime(p.completed_at ?? p.created_at) },
-  {
-    key: "resolve",
-    header: "Resolve",
-    render: (p) => (
-      <ButtonLink size="sm" href={`${customerHref(p.organization_id)}?tab=billing#billing-h`} aria-label={`Open billing for ${p.organization_name || "this customer"}`}>
-        Open billing
-      </ButtonLink>
-    ),
-  },
+  { key: "when", header: "When", priority: "medium", value: (p) => p.completed_at ?? p.created_at, render: (p) => formatDateTime(p.completed_at ?? p.created_at) },
 ];
 
 const RETRY_SAID: Record<string, { tone: "success" | "info" | "error"; text: (number: string) => string }> = {
@@ -262,35 +299,30 @@ export function FailedAndStuckScreen() {
       render: (o) => <Stack main={o.number} sub={o.description ? <Trunc max="md">{o.description}</Trunc> : undefined} />,
     },
     moneyColumn<StuckOrderRow>("amount", "Amount", (o) => o.amount_due_minor, (o) => o.currency),
-    { key: "paid", header: "Paid", value: (o) => o.paid_at, render: (o) => formatDateTime(o.paid_at) },
+    { key: "paid", header: "Paid", priority: "medium", value: (o) => o.paid_at, render: (o) => formatDateTime(o.paid_at) },
     {
       key: "state",
       header: "Where it stands",
+      priority: "essential",
       wrap: true,
       value: (o) => o.status,
       render: () => <Stack main={<Badge tone="warning">Paid</Badge>} sub="Payment received, but the subscription or wallet credit has not started." />,
     },
-    ...(manage
-      ? [
-          {
-            key: "retry",
-            header: "Retry",
-            render: (o: StuckOrderRow) => (
-              <Button
-                size="sm"
-                icon="refresh"
-                loading={retrying === o.order_id}
-                disabled={retrying !== null}
-                aria-label={`Retry activation for order ${o.number}`}
-                onClick={() => void retry(o)}
-              >
-                Retry activation
-              </Button>
-            ),
-          },
-        ]
-      : []),
   ];
+
+  // Retry activation, for staff who may manage payments: the row's one action.
+  const retryAction = (o: StuckOrderRow) => (
+    <Button
+      size="sm"
+      icon="refresh"
+      loading={retrying === o.order_id}
+      disabled={retrying !== null}
+      aria-label={`Retry activation for order ${o.number}`}
+      onClick={() => void retry(o)}
+    >
+      Retry activation
+    </Button>
+  );
 
   return (
     <Page>
@@ -306,6 +338,8 @@ export function FailedAndStuckScreen() {
           caption="Failed payments"
           columns={FAILED_COLUMNS}
           rowKey={(p) => p.attempt_id}
+          rowLabel={(p) => [p.organization_name, p.invoice_number].filter(Boolean).join(", ")}
+          actions={(p) => <OpenBilling id={p.organization_id} name={p.organization_name} />}
           empty={<EmptyState icon="checkCircle" title="No failed payments are waiting" hint="Nothing needs anyone's attention here." />}
         />
       </TableSection>
@@ -318,6 +352,8 @@ export function FailedAndStuckScreen() {
                 columns={stuckColumns}
                 rows={results}
                 rowKey={(o) => o.order_id}
+                rowLabel={(o) => `order ${o.number}`}
+                actions={manage ? retryAction : undefined}
                 pageSize={0}
                 maxHeight={false}
                 empty={<EmptyState icon="checkCircle" title="No paid orders are waiting for activation" hint="Nothing needs anyone's attention here." />}
@@ -334,6 +370,8 @@ export function FailedAndStuckScreen() {
           caption="Refunds that need attention"
           columns={REFUND_COLUMNS}
           rowKey={(r) => r.refund_id}
+          rowLabel={(r) => [r.organization_name, r.invoice_number].filter(Boolean).join(", ")}
+          actions={(r) => <OpenBilling id={r.organization_id} name={r.organization_name} />}
           empty={<EmptyState icon="checkCircle" title="No refunds need attention" hint="Nothing needs anyone's attention here." />}
         />
       </TableSection>
@@ -352,6 +390,11 @@ const REFUND_CHIPS = [
   { value: "failed", label: "Failed" },
   { value: "needs_review", label: "Needs review" },
 ];
+
+const REFUND_FILTERS = {
+  status: { options: REFUND_CHIPS.map((c) => c.value) },
+  ...DATES,
+} satisfies FilterSpec;
 
 const REVIEW_HINT = "Confirm in the provider's dashboard";
 
@@ -373,20 +416,27 @@ function RefundStatus({ refund }: { refund: RefundRow }) {
 
 const REFUND_COLUMNS: Column<RefundRow>[] = [
   { key: "customer", header: "Customer", value: (r) => r.organization_name, render: (r) => <CustomerLink id={r.organization_id} name={r.organization_name} /> },
-  { key: "invoice", header: "Invoice", value: (r) => r.invoice_number, render: (r) => <InvoiceLink number={r.invoice_number} /> },
-  { key: "provider", header: "Provider", value: (r) => r.provider, render: (r) => sentence(r.provider) },
+  { key: "invoice", header: "Invoice", priority: "medium", value: (r) => r.invoice_number, render: (r) => <InvoiceLink number={r.invoice_number} /> },
+  { key: "provider", header: "Provider", priority: "low", value: (r) => r.provider, render: (r) => sentence(r.provider) },
   moneyColumn<RefundRow>("amount", "Amount", (r) => r.amount_minor, (r) => r.currency),
-  moneyColumn<RefundRow>("original", "Original payment", (r) => r.original_amount_minor, (r) => r.currency),
-  { key: "reason", header: "Reason", value: (r) => r.reason, render: (r) => <Trunc max="md">{r.reason}</Trunc> },
-  { key: "status", header: "Status", value: (r) => r.status, render: (r) => <RefundStatus refund={r} /> },
-  { key: "note", header: "Credit note", value: (r) => r.credit_note, render: (r) => r.credit_note || EMPTY },
-  { key: "created", header: "Created", value: (r) => r.created_at, render: (r) => <DateText iso={r.created_at} /> },
+  { ...moneyColumn<RefundRow>("original", "Original payment", (r) => r.original_amount_minor, (r) => r.currency), priority: "low" },
+  { key: "reason", header: "Reason", priority: "low", value: (r) => r.reason, render: (r) => <Trunc max="md">{r.reason}</Trunc> },
+  { key: "status", header: "Status", priority: "essential", value: (r) => r.status, render: (r) => <RefundStatus refund={r} /> },
+  { key: "note", header: "Credit note", priority: "medium", value: (r) => r.credit_note, render: (r) => r.credit_note || EMPTY },
+  { key: "created", header: "Created", priority: "medium", value: (r) => r.created_at, render: (r) => <DateText iso={r.created_at} /> },
 ];
 
 export function RefundsScreen() {
-  const [status, setStatus] = useState("");
-  const paged = usePaged((cursor) => billingApi.refunds({ status: status || undefined, cursor }), [status]);
+  const { values: f, set, reset, dropped } = useUrlFilters(REFUND_FILTERS);
+  const paged = usePaged(
+    (cursor) => billingApi.refunds({ status: f.status || undefined, from: f.from || undefined, to: f.to || undefined, cursor }),
+    [f.status, f.from, f.to],
+  );
   const toReview = paged.rows.some((r) => r.status === "needs_review");
+  const active = [
+    ...tag("status", "Status", f.status && labelOf(REFUND_CHIPS, f.status), () => set({ status: "" })),
+    ...tag("requested", "Requested", ranged(f), () => set({ from: "", to: "" })),
+  ];
   return (
     <Page>
       <PageHeader
@@ -394,7 +444,11 @@ export function RefundsScreen() {
         subtitle="Refunds across customers, each with the payment and invoice it answers."
         info="Needs review means nobody can tell whether the provider returned the money. It is never sent again automatically, because that could return it twice. Confirm it in the provider's dashboard."
       />
-      <StatusChips label="Refund status" value={status} onChange={setStatus} chips={REFUND_CHIPS} />
+      <DroppedFilters dropped={dropped} />
+      <StatusChips label="Refund status" value={f.status} onChange={(status) => set({ status })} chips={REFUND_CHIPS} />
+      <FilterBar label="Filter refunds" onClear={active.length > 0 ? reset : undefined} active={active}>
+        <DateRangeFilter label="Requested" value={{ from: f.from, to: f.to }} onApply={(range) => set(range)} />
+      </FilterBar>
       {toReview && (
         <Alert tone="warning" title="Refunds below need review">
           We can&apos;t tell whether the provider returned this money, and it won&apos;t be sent again automatically because that could return it twice. Confirm each one in the provider&apos;s dashboard.
@@ -407,11 +461,12 @@ export function RefundsScreen() {
         columns={REFUND_COLUMNS}
         rowKey={(r) => r.refund_id}
         rowHref={(r) => customerHref(r.organization_id)}
+        rowLabel={(r) => [r.organization_name, r.invoice_number].filter(Boolean).join(", ")}
         empty={
           <EmptyState
             icon="receipt"
-            title={status === "needs_review" ? "No refunds need review" : "No refunds"}
-            hint={status ? "Try another status." : "Refunds appear here when staff refund a payment from a customer's billing."}
+            title={f.status === "needs_review" ? "No refunds need review" : "No refunds"}
+            hint={active.length > 0 ? "Try another status or clear the filters." : "Refunds appear here when staff refund a payment from a customer's billing."}
           />
         }
       />
@@ -421,24 +476,35 @@ export function RefundsScreen() {
 
 // --- credit notes --------------------------------------------------------------------------
 
+const CREDIT_NOTE_FILTERS = { q: { maxLength: 40 }, ...DATES } satisfies FilterSpec;
+
 const CREDIT_NOTE_COLUMNS: Column<CreditNoteRow>[] = [
   { key: "number", header: "Number", value: (n) => n.number, render: (n) => n.number },
   { key: "customer", header: "Customer", value: (n) => n.organization_name, render: (n) => <CustomerLink id={n.organization_id} name={n.organization_name} /> },
-  { key: "invoice", header: "Invoice", value: (n) => n.invoice_number, render: (n) => <InvoiceLink number={n.invoice_number} /> },
-  { key: "refund", header: "Refund ID", render: (n) => <IdCell value={n.refund_id} label="Copy refund ID" /> },
+  { key: "invoice", header: "Invoice", priority: "medium", value: (n) => n.invoice_number, render: (n) => <InvoiceLink number={n.invoice_number} /> },
+  { key: "refund", header: "Refund ID", priority: "low", render: (n) => <IdCell value={n.refund_id} label="Copy refund ID" /> },
   moneyColumn<CreditNoteRow>("amount", "Amount", (n) => n.amount_minor, (n) => n.currency),
-  { key: "reason", header: "Reason", value: (n) => n.reason, render: (n) => <Trunc max="md">{n.reason}</Trunc> },
-  { key: "issued", header: "Issued", value: (n) => n.issued_at, render: (n) => <DateText iso={n.issued_at} /> },
+  { key: "reason", header: "Reason", priority: "low", value: (n) => n.reason, render: (n) => <Trunc max="md">{n.reason}</Trunc> },
+  { key: "issued", header: "Issued", priority: "medium", value: (n) => n.issued_at, render: (n) => <DateText iso={n.issued_at} /> },
 ];
 
 export function CreditNotesScreen() {
-  const [query, setQuery] = useState("");
-  const paged = usePaged((cursor) => billingApi.creditNotes({ q: query || undefined, cursor }), [query]);
+  const { values: f, set, reset, dropped } = useUrlFilters(CREDIT_NOTE_FILTERS);
+  const paged = usePaged(
+    (cursor) => billingApi.creditNotes({ q: f.q || undefined, from: f.from || undefined, to: f.to || undefined, cursor }),
+    [f.q, f.from, f.to],
+  );
+  const active = [
+    ...tag("q", "Search", searched(f.q), () => set({ q: "" })),
+    ...tag("issued", "Issued", ranged(f), () => set({ from: "", to: "" })),
+  ];
   return (
     <Page>
       <PageHeader title="Credit notes" subtitle="The credit note issued for each confirmed refund, newest first." />
-      <FilterBar onClear={query ? () => setQuery("") : undefined}>
-        <SearchInput label="Search by credit note or invoice number" value={query} onSearch={setQuery} maxLength={40} />
+      <DroppedFilters dropped={dropped} />
+      <FilterBar label="Filter credit notes" onClear={active.length > 0 ? reset : undefined} active={active}>
+        <SearchInput label="Search by credit note or invoice number" value={f.q} onSearch={(q) => set({ q })} maxLength={40} />
+        <DateRangeFilter label="Issued" value={{ from: f.from, to: f.to }} onApply={(range) => set(range)} />
       </FilterBar>
       <PagedTable
         paged={paged}
@@ -447,7 +513,14 @@ export function CreditNotesScreen() {
         columns={CREDIT_NOTE_COLUMNS}
         rowKey={(n) => n.id}
         rowHref={(n) => customerHref(n.organization_id)}
-        empty={<EmptyState icon="receipt" title="No credit notes" hint={query ? "Try another number or clear the search." : "A credit note is issued when a refund is confirmed."} />}
+        rowLabel={(n) => n.number}
+        empty={
+          <EmptyState
+            icon="receipt"
+            title="No credit notes"
+            hint={active.length > 0 ? "Try another number or clear the filters." : "A credit note is issued when a refund is confirmed."}
+          />
+        }
       />
     </Page>
   );
@@ -473,6 +546,16 @@ const RENEWING = [
   { value: "90", label: "90 days" },
 ];
 
+/** The product is any catalog code: the catalog may be out of this person's reach,
+ * so the code is not checked against it (an unknown one simply matches nothing). */
+const SUBSCRIPTION_FILTERS = {
+  status: { options: SUBSCRIPTION_CHIPS.map((c) => c.value) },
+  product: { maxLength: 64 },
+  renewing: { options: RENEWING.map((r) => r.value) },
+  q: {},
+  ...DATES,
+} satisfies FilterSpec;
+
 /** A line is a product and plan, or a bundle; its quantity is seats. */
 function SubscriptionLines({ lines, names }: { lines: SubscriptionLine[]; names: Record<string, string> }) {
   if (lines.length === 0) return <>{EMPTY}</>;
@@ -493,29 +576,28 @@ function SubscriptionLines({ lines, names }: { lines: SubscriptionLine[]; names:
 }
 
 export function BillingSubscriptionsScreen() {
-  const [status, setStatus] = useState("");
-  const [product, setProduct] = useState("");
-  const [renewing, setRenewing] = useState("");
-  const [query, setQuery] = useState("");
+  const { values: f, set, reset, dropped } = useUrlFilters(SUBSCRIPTION_FILTERS);
   const [counts, setCounts] = useState<Record<string, number> | null>(null);
   // The catalog needs its own grant: without it the list still works, unfiltered by product.
   const [products] = useLoad(() => adminApi.products(), []);
   const catalog = products.status === "ready" ? products.data.results : [];
-  const names = Object.fromEntries(catalog.map((p) => [p.code, productName(p.name)]));
+  const names: Record<string, string> = Object.fromEntries(catalog.map((p) => [p.code, productName(p.name)]));
 
   const paged = usePaged(
     async (cursor) => {
       const page = await billingApi.subscriptions({
-        status: status || undefined,
-        product: product || undefined,
-        renewing: renewing ? Number(renewing) : undefined,
-        q: query || undefined,
+        status: f.status || undefined,
+        product: f.product || undefined,
+        renewing: f.renewing ? Number(f.renewing) : undefined,
+        q: f.q || undefined,
+        from: f.from || undefined,
+        to: f.to || undefined,
         cursor,
       });
       setCounts(page.counts);
       return page;
     },
-    [status, product, renewing, query],
+    [f.status, f.product, f.renewing, f.q, f.from, f.to],
   );
 
   const columns: Column<SubscriptionRow>[] = [
@@ -527,18 +609,37 @@ export function BillingSubscriptionsScreen() {
       value: (s) => s.lines.map((l) => l.product_code || l.bundle_code),
       render: (s) => <SubscriptionLines lines={s.lines} names={names} />,
     },
-    { key: "status", header: "Status", value: (s) => s.status, render: (s) => <StatusBadge value={s.status} /> },
-    { key: "billing", header: "Billing", value: (s) => s.billing_interval, render: (s) => INTERVAL_LABELS[s.billing_interval] ?? sentence(s.billing_interval) },
-    { key: "renewal", header: "Renewal policy", value: (s) => s.renewal_policy, render: (s) => sentence(s.renewal_policy) },
-    { key: "period", header: "Period end", value: (s) => s.current_period_end, render: (s) => <DateText iso={s.current_period_end} /> },
-    { key: "cancel", header: "Cancel at", value: (s) => s.cancel_at, render: (s) => <DateText iso={s.cancel_at} /> },
+    { key: "status", header: "Status", priority: "essential", value: (s) => s.status, render: (s) => <StatusBadge value={s.status} /> },
+    {
+      key: "billing",
+      header: "Billing",
+      priority: "medium",
+      value: (s) => s.billing_interval,
+      render: (s) => INTERVAL_LABELS[s.billing_interval] ?? sentence(s.billing_interval),
+    },
+    { key: "renewal", header: "Renewal policy", priority: "low", value: (s) => s.renewal_policy, render: (s) => sentence(s.renewal_policy) },
+    { key: "period", header: "Period end", priority: "medium", value: (s) => s.current_period_end, render: (s) => <DateText iso={s.current_period_end} /> },
+    { key: "cancel", header: "Cancel at", priority: "low", value: (s) => s.cancel_at, render: (s) => <DateText iso={s.cancel_at} /> },
   ];
 
   const chips = SUBSCRIPTION_CHIPS.map((chip) => ({
     ...chip,
     count: counts ? (chip.value ? (counts[chip.value] ?? 0) : Object.values(counts).reduce((sum, n) => sum + n, 0)) : undefined,
   }));
-  const filtered = Boolean(product || renewing || query);
+  const productOptions: Option[] = [
+    { value: "", label: "All" },
+    ...catalog.map((p) => ({ value: p.code, label: productName(p.name) })),
+    // A product from the address the catalog does not list: shown as it is, so the
+    // control says what the list is filtered by.
+    ...(f.product && !catalog.some((p) => p.code === f.product) ? [{ value: f.product, label: f.product }] : []),
+  ];
+  const active = [
+    ...tag("status", "Status", f.status && labelOf(SUBSCRIPTION_CHIPS, f.status), () => set({ status: "" })),
+    ...tag("product", "Product", f.product && (names[f.product] ?? f.product), () => set({ product: "" })),
+    ...tag("renewing", "Renewing within", f.renewing && labelOf(RENEWING, f.renewing), () => set({ renewing: "" })),
+    ...tag("q", "Search", searched(f.q), () => set({ q: "" })),
+    ...tag("created", "Created", ranged(f), () => set({ from: "", to: "" })),
+  ];
 
   return (
     <Page>
@@ -553,29 +654,13 @@ export function BillingSubscriptionsScreen() {
         free product trial is its own record, not a subscription, so it is not counted here. Customers on a product trial appear under{" "}
         <Link href="/admin/users?segment=trial">Customers &gt; Users</Link> and on each customer&apos;s page, under Product trials.
       </p>
-      <StatusChips label="Subscription status" value={status} onChange={setStatus} chips={chips} />
-      <FilterBar
-        onClear={
-          filtered
-            ? () => {
-                setProduct("");
-                setRenewing("");
-                setQuery("");
-              }
-            : undefined
-        }
-      >
-        <SearchInput label="Search customers" value={query} onSearch={setQuery} />
-        {catalog.length > 0 && (
-          <Select
-            label="Product"
-            prefix="Product:"
-            value={product}
-            onChange={setProduct}
-            options={[{ value: "", label: "All" }, ...catalog.map((p) => ({ value: p.code, label: productName(p.name) }))]}
-          />
-        )}
-        <Select label="Renewing within" prefix="Renewing within:" value={renewing} onChange={setRenewing} options={RENEWING} />
+      <DroppedFilters dropped={dropped} />
+      <StatusChips label="Subscription status" value={f.status} onChange={(status) => set({ status })} chips={chips} />
+      <FilterBar label="Filter subscriptions" onClear={active.length > 0 ? reset : undefined} active={active}>
+        <SearchInput label="Search customers" value={f.q} onSearch={(q) => set({ q })} maxLength={80} />
+        {catalog.length > 0 && <Select label="Product" prefix="Product:" value={f.product} onChange={(product) => set({ product })} options={productOptions} />}
+        <Select label="Renewing within" prefix="Renewing within:" value={f.renewing} onChange={(renewing) => set({ renewing })} options={RENEWING} />
+        <DateRangeFilter label="Created" value={{ from: f.from, to: f.to }} onApply={(range) => set(range)} />
       </FilterBar>
       <PagedTable
         paged={paged}
@@ -584,11 +669,12 @@ export function BillingSubscriptionsScreen() {
         columns={columns}
         rowKey={(s) => s.subscription_id}
         rowHref={(s) => customerHref(s.organization_id)}
+        rowLabel={(s) => s.organization_name}
         empty={
           <EmptyState
             icon="card"
             title="No subscriptions"
-            hint={status || filtered ? "Try another status or clear the filters." : "Subscriptions appear here when customers buy or start a trial."}
+            hint={active.length > 0 ? "Try another status or clear the filters." : "Subscriptions appear here when customers buy or start a trial."}
           />
         }
       />
@@ -621,6 +707,12 @@ const ENTRY_CHIPS = [
   { value: "", label: "All entries" },
   { value: "1", label: "Not in a payout" },
 ];
+
+/** One partner (`?partner=`) is read by the route page; these are the list's own. */
+const ENTRY_FILTERS = {
+  unpaid: { options: ENTRY_CHIPS.map((c) => c.value) },
+  ...DATES,
+} satisfies FilterSpec;
 
 const KIND_TONE: Record<string, Tone> = { accrual: "success", reversal: "warning", adjustment: "info" };
 
@@ -658,10 +750,17 @@ export function CommissionEntriesScreen({ partnerId = "" }: { partnerId?: string
   const manage = can(permissions, "platform.staff_commission.manage");
   const { ask, dialog: confirm } = useConfirm();
   const partner = PARTNER_ID.test(partnerId) ? partnerId : "";
-  const [unpaid, setUnpaid] = useState("");
+  const { values: f, set, reset, dropped } = useUrlFilters(ENTRY_FILTERS);
   const paged = usePaged<LedgerRow>(
-    (cursor) => adminApi.accruals({ partner_id: partner || undefined, unpaid: unpaid || undefined, cursor }),
-    [partner, unpaid],
+    (cursor) =>
+      adminApi.accruals({
+        partner_id: partner || undefined,
+        unpaid: f.unpaid || undefined,
+        from: f.from || undefined,
+        to: f.to || undefined,
+        cursor,
+      }),
+    [partner, f.unpaid, f.from, f.to],
   );
 
   const reverse = (entry: LedgerRow) => {
@@ -702,16 +801,18 @@ export function CommissionEntriesScreen({ partnerId = "" }: { partnerId?: string
     {
       key: "customer",
       header: "Customer",
+      priority: "medium",
       value: (e) => e.organization_name,
       render: (e) => (e.organization_id ? <CustomerLink id={e.organization_id} name={e.organization_name ?? ""} /> : EMPTY),
     },
     {
       key: "kind",
       header: "Kind",
+      priority: "essential",
       value: (e) => e.kind,
       render: (e) => <Stack main={<Badge tone={KIND_TONE[e.kind] ?? "neutral"}>{sentence(e.kind)}</Badge>} sub={e.reason_code ? sentence(e.reason_code) : undefined} />,
     },
-    { key: "earning", header: "Earning", value: (e) => e.earning, render: (e) => sentence(e.earning) },
+    { key: "earning", header: "Earning", priority: "low", value: (e) => e.earning, render: (e) => sentence(e.earning) },
     {
       key: "amount",
       header: "Amount",
@@ -724,24 +825,28 @@ export function CommissionEntriesScreen({ partnerId = "" }: { partnerId?: string
         />
       ),
     },
-    { key: "clears", header: "Clears at", value: (e) => e.clears_at, render: (e) => formatDateTime(e.clears_at) },
-    { key: "reverses", header: "Reverses", value: (e) => e.reverses, render: (e) => <IdCell value={e.reverses} label="Copy the ID of the entry it reverses" /> },
-    ...(manage
-      ? [
-          {
-            key: "action",
-            header: "Action",
-            render: (e: LedgerRow) =>
-              reversibleMinor(e) > 0 ? (
-                <Button size="sm" aria-label={`Reverse ${formatMoney(reversibleMinor(e), e.currency)} earned ${formatDate(e.event_at)}`} onClick={() => reverse(e)}>
-                  Reverse
-                </Button>
-              ) : (
-                EMPTY
-              ),
-          },
-        ]
-      : []),
+    { key: "clears", header: "Clears at", priority: "medium", value: (e) => e.clears_at, render: (e) => formatDateTime(e.clears_at) },
+    {
+      key: "reverses",
+      header: "Reverses",
+      priority: "low",
+      value: (e) => e.reverses,
+      render: (e) => <IdCell value={e.reverses} label="Copy the ID of the entry it reverses" />,
+    },
+  ];
+
+  // Reverse, for staff who may manage commission, on an earning with something
+  // left to reverse; it asks to confirm first.
+  const reverseAction = (e: LedgerRow) =>
+    reversibleMinor(e) > 0 ? (
+      <Button size="sm" icon="history" aria-label={`Reverse ${formatMoney(reversibleMinor(e), e.currency)} earned ${formatDate(e.event_at)}`} onClick={() => reverse(e)}>
+        Reverse
+      </Button>
+    ) : null;
+
+  const active = [
+    ...tag("unpaid", "Payout state", f.unpaid && labelOf(ENTRY_CHIPS, f.unpaid), () => set({ unpaid: "" })),
+    ...tag("earned", "Earned", ranged(f), () => set({ from: "", to: "" })),
   ];
 
   return (
@@ -759,18 +864,24 @@ export function CommissionEntriesScreen({ partnerId = "" }: { partnerId?: string
           </ButtonLink>
         </p>
       )}
-      <StatusChips label="Payout state" value={unpaid} onChange={setUnpaid} chips={ENTRY_CHIPS} />
+      <DroppedFilters dropped={dropped} />
+      <StatusChips label="Payout state" value={f.unpaid} onChange={(unpaid) => set({ unpaid })} chips={ENTRY_CHIPS} />
+      <FilterBar label="Filter commission entries" onClear={active.length > 0 ? reset : undefined} active={active}>
+        <DateRangeFilter label="Earned" value={{ from: f.from, to: f.to }} onApply={(range) => set(range)} />
+      </FilterBar>
       <PagedTable
         paged={paged}
         what="commission entries"
         caption="Commission entries"
         columns={columns}
         rowKey={(e) => e.id}
+        rowLabel={(e) => `${sentence(e.kind)} of ${formatMoney(e.amount_minor, e.currency)}, ${formatDate(e.event_at)}`}
+        actions={manage ? reverseAction : undefined}
         empty={
           <EmptyState
             icon="receipt"
-            title={unpaid ? "Every entry is in a payout" : "No commission entries"}
-            hint={unpaid ? undefined : "Entries appear here when a partner's sale earns commission."}
+            title={f.unpaid ? "Every entry is in a payout" : "No commission entries"}
+            hint={f.from || f.to ? "Try other dates or clear the filters." : f.unpaid ? undefined : "Entries appear here when a partner's sale earns commission."}
           />
         }
       />
@@ -793,37 +904,48 @@ const PAYOUT_CHIPS = [
   { value: "cancelled", label: "Cancelled" },
 ];
 
+const PAYOUT_FILTERS = {
+  status: { options: PAYOUT_CHIPS.map((c) => c.value) },
+  ...DATES,
+} satisfies FilterSpec;
+
+// A date with no time: read as local midnight, so it never shows the day before.
+const periodEnd = (p: PayoutListRow) => formatDate(`${p.period_end}T00:00:00`);
+
+/** A payout in words, for its row's buttons: whose it is and its period. */
+const payoutName = (p: PayoutListRow) => `${partnerWords(p.partner_id, p.partner_name)}, period ending ${periodEnd(p)}`;
+
 export function PayoutsScreen() {
   const { permissions } = useAdmin();
   const manage = can(permissions, "platform.staff_payout.manage");
   const approve = can(permissions, "platform.staff_payout.approve");
-  const [status, setStatus] = useState("");
-  const paged = usePaged<PayoutListRow>((cursor) => adminApi.payouts({ status: status || undefined, cursor }), [status]);
+  const { values: f, set, reset, dropped } = useUrlFilters(PAYOUT_FILTERS);
+  const paged = usePaged<PayoutListRow>(
+    (cursor) => adminApi.payouts({ status: f.status || undefined, from: f.from || undefined, to: f.to || undefined, cursor }),
+    [f.status, f.from, f.to],
+  );
   const { act, busy, feedback } = useAction(paged.reload);
 
   const columns: Column<PayoutListRow>[] = [
     { key: "partner", header: "Partner", value: (p) => p.partner_name || p.partner_id, render: (p) => <PartnerLink id={p.partner_id} name={p.partner_name} /> },
-    // A date with no time: read as local midnight, so it never shows the day before.
-    { key: "period", header: "Period end", value: (p) => p.period_end, render: (p) => formatDate(`${p.period_end}T00:00:00`) },
-    { key: "status", header: "Status", value: (p) => p.status, render: (p) => <StatusBadge value={p.status} /> },
-    moneyColumn<PayoutListRow>("gross", "Gross", (p) => p.gross_minor, (p) => p.currency),
-    moneyColumn<PayoutListRow>("adjustments", "Adjustments", (p) => p.adjustments_minor, (p) => p.currency),
+    { key: "period", header: "Period end", value: (p) => p.period_end, render: periodEnd },
+    { key: "status", header: "Status", priority: "essential", value: (p) => p.status, render: (p) => <StatusBadge value={p.status} /> },
+    { ...moneyColumn<PayoutListRow>("gross", "Gross", (p) => p.gross_minor, (p) => p.currency), priority: "low" },
+    { ...moneyColumn<PayoutListRow>("adjustments", "Adjustments", (p) => p.adjustments_minor, (p) => p.currency), priority: "low" },
     moneyColumn<PayoutListRow>("payable", "Payable", (p) => p.payable_minor, (p) => p.currency),
-    { key: "entries", header: "Entries", align: "right", value: (p) => p.line_count, render: (p) => formatNumber(p.line_count) },
-    { key: "reference", header: "Transfer reference", value: (p) => p.paid_reference, render: (p) => <Trunc max="sm">{p.paid_reference}</Trunc> },
-    ...(manage || approve
-      ? [
-          {
-            key: "actions",
-            header: "Actions",
-            render: (p: PayoutListRow) => (
-              <div className={local.rowActions}>
-                <PayoutActions payout={p} manage={manage} approve={approve} busy={busy} act={act} />
-              </div>
-            ),
-          },
-        ]
-      : []),
+    { key: "entries", header: "Entries", align: "right", priority: "medium", value: (p) => p.line_count, render: (p) => formatNumber(p.line_count) },
+    {
+      key: "reference",
+      header: "Transfer reference",
+      priority: "medium",
+      value: (p) => p.paid_reference,
+      render: (p) => <Trunc max="sm">{p.paid_reference}</Trunc>,
+    },
+  ];
+
+  const active = [
+    ...tag("status", "Status", f.status && labelOf(PAYOUT_CHIPS, f.status), () => set({ status: "" })),
+    ...tag("created", "Created", ranged(f), () => set({ from: "", to: "" })),
   ];
 
   return (
@@ -835,18 +957,30 @@ export function PayoutsScreen() {
         actions={manage ? <ButtonLink href="/admin/partners/withdrawals">Withdrawal requests</ButtonLink> : undefined}
       />
       {feedback}
-      <StatusChips label="Payout status" value={status} onChange={setStatus} chips={PAYOUT_CHIPS} />
+      <DroppedFilters dropped={dropped} />
+      <StatusChips label="Payout status" value={f.status} onChange={(status) => set({ status })} chips={PAYOUT_CHIPS} />
+      <FilterBar label="Filter payouts" onClear={active.length > 0 ? reset : undefined} active={active}>
+        <DateRangeFilter label="Created" value={{ from: f.from, to: f.to }} onApply={(range) => set(range)} />
+      </FilterBar>
       <PagedTable
         paged={paged}
         what="payouts"
         caption="Payouts"
         columns={columns}
         rowKey={(p) => p.id}
+        rowLabel={payoutName}
+        // The payout's lifecycle (Mark ready, Approve, Record as paid, Cancel payout),
+        // each for the grant that allows it; Cancel payout asks to confirm.
+        actions={
+          manage || approve
+            ? (p) => <PayoutActions payout={p} name={payoutName(p)} manage={manage} approve={approve} busy={busy} act={act} />
+            : undefined
+        }
         empty={
           <EmptyState
             icon="wallet"
             title="No payouts"
-            hint={status ? "Try another status." : "A payout appears here once someone prepares one from a partner's Payouts tab."}
+            hint={active.length > 0 ? "Try another status or clear the filters." : "A payout appears here once someone prepares one from a partner's Payouts tab."}
           />
         }
       />

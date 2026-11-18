@@ -202,6 +202,88 @@ describe("the ticket list", () => {
     asStaff([VIEW], <TicketsScreen />);
     expect(await screen.findByRole("alert")).toHaveTextContent("The desk could not be read.");
   });
+
+  it("offers Try again when the list fails", async () => {
+    const calls = mockApi({ [TICKETS]: [{ status: 500, body: { detail: "The desk could not be read." } }, ok(QUEUE)] });
+    asStaff([VIEW], <TicketsScreen />);
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("table", { name: /^Tickets/ })).toHaveTextContent("Invoice is wrong");
+    expect(urlsOf(calls, TICKETS)).toHaveLength(2);
+  });
+
+  it("keeps every filter in the address, sends the Opened days, and lists them as removable tags (admin-ux phase 3)", async () => {
+    const calls = mockApi({ [TICKETS]: [ok(QUEUE)] });
+    asStaff([VIEW], <TicketsScreen />);
+    await screen.findByRole("table", { name: /^Tickets/ });
+    fireEvent.click(screen.getByRole("button", { name: /^Waiting/ }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/tickets?status=waiting", { scroll: false });
+    choose("Assigned", "Unassigned");
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/tickets?status=waiting&assigned=none", { scroll: false });
+    await screen.findByRole("table", { name: /^Tickets/ });
+    fireEvent.click(screen.getByRole("button", { name: /^Opened: Any time/ }));
+    const panel = screen.getByRole("dialog", { name: "Opened between" });
+    fireEvent.change(within(panel).getByLabelText("From"), { target: { value: "2026-11-01" } });
+    fireEvent.change(within(panel).getByLabelText("To"), { target: { value: "2026-11-08" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(urlsOf(calls, TICKETS).at(-1)).toContain("from=2026-11-01"));
+    const sent = new URL(urlsOf(calls, TICKETS).at(-1)!, "https://x.invalid").searchParams;
+    expect(Object.fromEntries(sent)).toEqual({ status: "waiting", assigned: "none", from: "2026-11-01", to: "2026-11-08", limit: "25", offset: "0" });
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/tickets?status=waiting&assigned=none&from=2026-11-01&to=2026-11-08", { scroll: false });
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((t) => t.textContent)).toEqual(["Assigned: Unassigned", expect.stringMatching(/^Opened: .*1.*Nov.*2026.*8.*Nov.*2026$/)]);
+    fireEvent.click(within(tags).getByRole("button", { name: /^Remove filter Opened/ }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/tickets?status=waiting&assigned=none", { scroll: false });
+    await waitFor(() => expect(urlsOf(calls, TICKETS).at(-1)).not.toContain("from="));
+    // Reset filters keeps the status chip: it is the list, not a filter on it.
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/tickets?status=waiting", { scroll: false });
+  });
+
+  it("reads every filter back from the address, drops what it does not know, and starts on the first page", async () => {
+    nav.query = "status=resolved&audience=customer&assigned=me&q=invoice&from=2026-11-01&to=2026-11-05";
+    let calls = mockApi({ [TICKETS]: [ok(QUEUE)] });
+    const view = asStaff([VIEW], <TicketsScreen />);
+    await screen.findByRole("table", { name: /^Tickets/ });
+    const first = new URL(urlsOf(calls, TICKETS)[0], "https://x.invalid").searchParams;
+    expect(Object.fromEntries(first)).toEqual({
+      audience: "customer",
+      status: "resolved",
+      assigned: "me",
+      q: "invoice",
+      from: "2026-11-01",
+      to: "2026-11-05",
+      limit: "25",
+      offset: "0",
+    });
+    expect(screen.getByRole("button", { name: /^Resolved/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /^Opened: .*Nov.*2026/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("Search subject, partner or #number")).toHaveValue("invoice");
+    view.unmount();
+
+    nav.query = "status=lost&assigned=bob&from=2026-11-09&to=2026-11-01";
+    calls = mockApi({ [TICKETS]: [ok(QUEUE)] });
+    asStaff([VIEW], <TicketsScreen />);
+    await screen.findByRole("table", { name: /^Tickets/ });
+    expect(urlsOf(calls, TICKETS)[0]).toBe("/api/v1/admin/tickets?status=open&limit=25&offset=0");
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("sorts on its columns' values over the rows shown", async () => {
+    mockApi({ [TICKETS]: [ok(QUEUE)] });
+    asStaff([VIEW], <TicketsScreen />);
+    const table = await screen.findByRole("table", { name: /^Tickets/ });
+    const subjects = () => within(table).getAllByRole("row").slice(1).map((r) => (r.textContent?.includes("Invoice") ? "Invoice" : "Payout"));
+    expect(subjects()).toEqual(["Invoice", "Payout"]);
+    // By urgency, not by name: normal before urgent going up.
+    fireEvent.click(within(table).getByRole("button", { name: "Priority" }));
+    expect(subjects()).toEqual(["Payout", "Invoice"]);
+    fireEvent.click(within(table).getByRole("button", { name: "Reference" }));
+    expect(subjects()).toEqual(["Payout", "Invoice"]);
+    for (const name of ["Subject", "Who asked", "Category", "Status", "Assignee", "Updated"]) {
+      expect(within(table).getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
 });
 
 const MESSAGES = [
@@ -418,8 +500,13 @@ describe("help content", () => {
     expect(await screen.findByText(/Readers can see it now/)).toBeInTheDocument();
     expect(bodyOf(calls, `POST ${HELP}/a1/status`)).toEqual({ status: "published" });
 
+    // Unpublishing takes it from readers: asked first (admin-ux phase 3), nothing sent until confirmed.
     fireEvent.click(screen.getByRole("button", { name: "Actions for Setting up" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Unpublish to draft" }));
+    const unpublish = screen.getByRole("dialog", { name: 'Unpublish "Setting up"?' });
+    expect(within(unpublish).getByText(/Readers stop seeing it at once/)).toBeInTheDocument();
+    expect(calls.some((c) => c.key === `POST ${HELP}/a2/status`)).toBe(false);
+    fireEvent.click(within(unpublish).getByRole("button", { name: "Unpublish" }));
     await waitFor(() => expect(bodyOf(calls, `POST ${HELP}/a2/status`)).toEqual({ status: "draft" }));
     await screen.findByText(/Readers no longer see it/);
 
@@ -461,5 +548,64 @@ describe("help content", () => {
     mockApi({ [`GET ${HELP}`]: [{ status: 500, body: { detail: "The library could not be read." } }] });
     asStaff([VIEW], <HelpContentScreen />);
     expect(await screen.findByRole("alert")).toHaveTextContent("The library could not be read.");
+  });
+
+  it("offers Try again when the list fails", async () => {
+    const calls = mockApi({ [`GET ${HELP}`]: [{ status: 500, body: { detail: "The library could not be read." } }, ok({ results: [ARTICLE] })] });
+    asStaff([VIEW], <HelpContentScreen />);
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("How do I reset?")).toBeInTheDocument();
+    expect(urlsOf(calls, `GET ${HELP}`)).toHaveLength(2);
+  });
+
+  it("keeps its status, kind and search in the address, with the kind and search as removable tags (admin-ux phase 3)", async () => {
+    const calls = mockApi({ [`GET ${HELP}`]: [ok({ results: [ARTICLE, PUBLISHED] })] });
+    asStaff([VIEW], <HelpContentScreen />);
+    await screen.findByRole("table", { name: "Help articles" });
+    fireEvent.click(screen.getByRole("button", { name: "Published" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/tickets?status=published", { scroll: false });
+    choose("Kind", "Store policy");
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/tickets?status=published&kind=policy", { scroll: false });
+    fireEvent.change(screen.getByLabelText("Search title or text"), { target: { value: "refund" } });
+    await waitFor(() => expect(urlsOf(calls, `GET ${HELP}`).at(-1)).toContain("q=refund"));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/tickets?status=published&kind=policy&q=refund", { scroll: false });
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((t) => t.textContent)).toEqual(["Search: “refund”", "Kind: Store policy"]);
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Kind: Store policy" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/tickets?status=published&q=refund", { scroll: false });
+    // Reset filters keeps the status chip: it is the list, not a filter on it.
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/tickets?status=published", { scroll: false });
+  });
+
+  it("reads its filters back from the address and drops a kind it does not know", async () => {
+    nav.query = "status=archived&kind=faq&q=reset";
+    let calls = mockApi({ [`GET ${HELP}`]: [ok({ results: [ARTICLE] })] });
+    const view = asStaff([VIEW], <HelpContentScreen />);
+    await screen.findByRole("table", { name: "Help articles" });
+    const first = new URL(urlsOf(calls, `GET ${HELP}`)[0], "https://x.invalid");
+    expect(Object.fromEntries(first.searchParams)).toEqual({ kind: "faq", status: "archived", q: "reset" });
+    expect(screen.getByRole("button", { name: "Archived" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("combobox", { name: "Kind" })).toHaveTextContent("FAQ");
+    view.unmount();
+
+    nav.query = "kind=poem";
+    calls = mockApi({ [`GET ${HELP}`]: [ok({ results: [ARTICLE] })] });
+    asStaff([VIEW], <HelpContentScreen />);
+    await screen.findByRole("table", { name: "Help articles" });
+    expect(urlsOf(calls, `GET ${HELP}`)[0]).not.toContain("kind=");
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("does not unpublish when the confirmation is cancelled", async () => {
+    const calls = mockApi({ [`GET ${HELP}`]: [ok({ results: [PUBLISHED] })] });
+    asStaff([VIEW, MANAGE], <HelpContentScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for Setting up" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Unpublish to draft" }));
+    const ask = screen.getByRole("dialog", { name: 'Unpublish "Setting up"?' });
+    fireEvent.click(within(ask).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(calls.some((c) => c.key.startsWith("POST "))).toBe(false);
   });
 });

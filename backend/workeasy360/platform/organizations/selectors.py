@@ -359,6 +359,8 @@ def organizations_directory_page(
     cursor: str | None = None,
     only: Any = None,
     exclude: Any = None,
+    created_from: Any = None,
+    created_before: Any = None,
 ) -> Page:
     """The staff customer directory: every customer, bounded, newest first.
 
@@ -367,6 +369,9 @@ def organizations_directory_page(
     owner flag without a tenant scope). Never a query per row. The platform
     organization is excluded by id. Owner is shown as an address only - the
     directory is a staff surface, and staff hold ``platform.staff_customer.view``.
+
+    ``created_from``/``created_before`` (plain datetimes, end exclusive) keep the
+    organizations created in that window; the cursor pages within it.
     """
     from django.db.models import Q
 
@@ -384,6 +389,10 @@ def organizations_directory_page(
     )
     if status:
         queryset = queryset.filter(status=status)
+    if created_from is not None:
+        queryset = queryset.filter(created_at__gte=created_from)
+    if created_before is not None:
+        queryset = queryset.filter(created_at__lt=created_before)
     if only is not None:
         # Phase 9: a caller-composed subquery of organization ids (the staff
         # Subscriptions and Entitlements views filter on commercial state this

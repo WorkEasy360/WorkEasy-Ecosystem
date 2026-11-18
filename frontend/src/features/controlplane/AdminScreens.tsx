@@ -10,18 +10,18 @@ import { accessApi } from "@/lib/api/adminPanel";
 import { can, useAdmin } from "./ControlShell";
 import { CustomerBilling } from "./AdminBilling";
 import { ROLES, StaffRolesPanel, TableSection, sourceLabel } from "./AdminCommerce";
-import { DateRange } from "./AdminListParts";
 import { DateText } from "./AdminUsers";
 import { AssignPlanPopup, AssignmentHistoryCard, CustomerMembersCard, NewCustomerPopup, PartnerAssignmentCard } from "./CustomerExtras";
 import { FormPopup } from "./Modal";
 import { TextField } from "./widgets";
-import { LoadGate, ReasonAction, autoReason, useAction, useLoad, usePaged } from "./ui";
+import { LoadGate, ReasonAction, autoReason, pagedTable, useAction, useLoad, usePaged } from "./ui";
 import {
   Alert,
   Badge,
   Button,
   Card,
   DataTable,
+  DateRangeFilter,
   DescriptionList,
   EmptyState,
   FilterBar,
@@ -38,12 +38,16 @@ import {
   Tabs,
   Trunc,
   EMPTY,
+  droppedMessage,
   eventLabel,
   formatDate,
   formatDateTime,
   productName,
+  rangeLabel,
   sentence,
   useConfirm,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
   type MenuItem,
   type StateTab,
@@ -67,11 +71,37 @@ const CUSTOMER_STATUS = [
   { value: "suspended", label: "Suspended" },
 ];
 
+/** An option's words, for an active-filter tag. */
+const labelOf = (options: { value: string; label: string }[], value: string) => options.find((o) => o.value === value)?.label ?? value;
+
+/** The directory's filters, kept in its address (2026-11-18, admin-ux phase 3). */
+const CUSTOMER_FILTERS = {
+  q: {},
+  status: { options: CUSTOMER_STATUS.map((s) => s.value) },
+  from: { date: true },
+  to: { date: true },
+};
+
+/**
+ * Customers (2026-11-18, admin-ux phase 3): the server filters by search, status and
+ * the days a customer was created (`from`/`to`); the filters are kept in the address,
+ * so a filtered view survives a reload and Back from a customer.
+ */
 export function Customers() {
   const { permissions } = useAdmin();
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
-  const paged = usePaged((cursor) => adminApi.customers({ q: query || undefined, status: status || undefined, cursor }), [query, status]);
+  const filters = useUrlFilters(CUSTOMER_FILTERS);
+  const { q: query, status, from, to } = filters.values;
+  const paged = usePaged(
+    (cursor) => adminApi.customers({ q: query || undefined, status: status || undefined, from: from || undefined, to: to || undefined, cursor }),
+    [query, status, from, to],
+  );
+  const dropped = droppedMessage(filters.dropped);
+  const active: ActiveFilter[] = [
+    ...(query ? [{ key: "q", label: "Search", value: `“${query}”`, onRemove: () => filters.set({ q: "" }) }] : []),
+    ...(status ? [{ key: "status", label: "Status", value: labelOf(CUSTOMER_STATUS, status), onRemove: () => filters.set({ status: "" }) }] : []),
+    ...(from || to ? [{ key: "created", label: "Created", value: rangeLabel({ from, to }), onRemove: () => filters.set({ from: "", to: "" }) }] : []),
+  ];
+  const filtered = active.length > 0;
 
   const columns: Column<CustomerRow>[] = [
     {
@@ -89,17 +119,30 @@ export function Customers() {
         />
       ),
     },
-    { key: "status", header: "Status", value: (c) => c.status, render: (c) => <StatusBadge value={c.status} /> },
-    { key: "subscription", header: "Subscription", value: (c) => c.subscription_status, render: (c) => <StatusBadge value={c.subscription_status} /> },
-    { key: "products", header: "Products", value: (c) => c.products, render: (c) => <Trunc>{c.products.map(productName).join(", ")}</Trunc> },
-    { key: "seats", header: "Seats", align: "right", value: (c) => c.seat_capacity, render: (c) => c.seat_capacity ?? EMPTY },
+    { key: "status", header: "Status", priority: "essential", value: (c) => c.status, render: (c) => <StatusBadge value={c.status} /> },
+    {
+      key: "subscription",
+      header: "Subscription",
+      priority: "high",
+      value: (c) => c.subscription_status,
+      render: (c) => <StatusBadge value={c.subscription_status} />,
+    },
+    {
+      key: "products",
+      header: "Products",
+      priority: "medium",
+      value: (c) => c.products,
+      render: (c) => <Trunc>{c.products.map(productName).join(", ")}</Trunc>,
+    },
+    { key: "seats", header: "Seats", align: "right", priority: "low", value: (c) => c.seat_capacity, render: (c) => c.seat_capacity ?? EMPTY },
     {
       key: "partner",
       header: "Partner",
+      priority: "medium",
       value: (c) => c.partner?.partner_name ?? "Direct",
       render: (c) => (c.partner ? <Stack main={<Trunc>{c.partner.partner_name}</Trunc>} sub={sentence(c.partner.link_status)} /> : "Direct"),
     },
-    { key: "created", header: "Created", value: (c) => c.created_at, render: (c) => <DateText iso={c.created_at} /> },
+    { key: "created", header: "Created", priority: "low", value: (c) => c.created_at, render: (c) => <DateText iso={c.created_at} /> },
   ];
 
   return (
@@ -110,36 +153,20 @@ export function Customers() {
         info="Subscription, products and seats reflect the last reconciliation."
         primary={can(permissions, "platform.staff_customer.manage") ? <NewCustomerPopup onCreated={paged.reload} /> : undefined}
       />
-      <FilterBar
-        onClear={
-          query || status
-            ? () => {
-                setQuery("");
-                setStatus("");
-              }
-            : undefined
-        }
-      >
-        <SearchInput label="Search by name or slug" value={query} onSearch={setQuery} />
-        <Select label="Status" prefix="Status:" value={status} onChange={setStatus} options={CUSTOMER_STATUS} />
+      {dropped && <Alert tone="warning" title={dropped} />}
+      <FilterBar label="Filter customers" onClear={filtered ? filters.reset : undefined} active={active}>
+        <SearchInput label="Search by name or slug" value={query} onSearch={(q) => filters.set({ q })} />
+        <Select label="Status" prefix="Status:" value={status} onChange={(next) => filters.set({ status: next })} options={CUSTOMER_STATUS} />
+        <DateRangeFilter label="Created" value={{ from, to }} onApply={(range) => filters.set(range)} />
       </FilterBar>
       <DataTable
         caption="Customer organizations"
         columns={columns}
-        rows={paged.rows}
+        {...pagedTable(paged, "customers")}
         rowKey={(c) => c.organization_id}
         rowHref={(c) => `/admin/customers/${c.organization_id}`}
-        loading={paged.state === "loading"}
-        error={
-          paged.state === "forbidden"
-            ? "You don't have access to the customer directory."
-            : paged.state === "error"
-              ? "Couldn't load customers."
-              : null
-        }
-        onLoadMore={() => void paged.more()}
-        hasMore={paged.hasMore}
-        empty={<EmptyState icon="building" title="No customers match." hint={query || status ? "Try another search or clear the filters." : undefined} />}
+        rowLabel={(c) => c.display_name}
+        empty={<EmptyState icon="building" title="No customers match." hint={filtered ? "Try another search or clear the filters." : undefined} />}
       />
     </Page>
   );
@@ -792,10 +819,11 @@ const AUDIT_COLUMNS: Column<AuditRow>[] = [
     value: (a) => a.action,
     render: (a) => <Stack main={eventLabel(a.action)} sub={<KeyText>{a.action}</KeyText>} />,
   },
-  { key: "actor", header: "By", value: (a) => a.actor_kind, render: (a) => sentence(a.actor_kind) },
+  { key: "actor", header: "By", priority: "medium", value: (a) => a.actor_kind, render: (a) => sentence(a.actor_kind) },
   {
     key: "outcome",
     header: "Outcome",
+    priority: "essential",
     value: (a) => a.outcome,
     render: (a) => (a.outcome ? <StatusBadge value={a.outcome === "success" ? "succeeded" : a.outcome} label={sentence(a.outcome)} /> : EMPTY),
   },
@@ -814,12 +842,22 @@ const AUDIT_AREAS = [
 
 const PERSON_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** What the audit endpoint filters by, kept in the address (2026-11-18, admin-ux
+ * phase 3): an action prefix typed (`action`) or chosen (`area`), a person's ID
+ * (`person`) and the days (`from`/`to`). */
+const AUDIT_FILTERS = {
+  action: {},
+  area: { options: AUDIT_AREAS.map((a) => a.value) },
+  person: { maxLength: 36 },
+  from: { date: true },
+  to: { date: true },
+};
+
 export function AuditScreen() {
-  const [prefix, setPrefix] = useState("");
-  const [area, setArea] = useState("");
-  const [actorId, setActorId] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const filters = useUrlFilters(AUDIT_FILTERS);
+  const { action: prefix, area, person: actorId, from, to } = filters.values;
+  // "By" and "Resource" are not filters the audit endpoint has: they narrow the
+  // entries loaded so far, and are said to do so (kept out of the address).
   const [actor, setActor] = useState("");
   const [resource, setResource] = useState("");
   const action = prefix || area;
@@ -845,25 +883,34 @@ export function AuditScreen() {
     {
       key: "resource",
       header: "Resource",
+      priority: "medium",
       value: (a) => a.resource_type,
       render: (a) => (a.resource_type ? <Stack main={eventLabel(a.resource_type)} sub={<IdCell value={a.resource_id} label="Copy resource ID" />} /> : EMPTY),
     },
-    { key: "reason", header: "Reason", value: (a) => a.reason, render: (a) => <Trunc max="lg">{a.reason}</Trunc> },
+    { key: "reason", header: "Reason", priority: "low", value: (a) => a.reason, render: (a) => <Trunc max="lg">{a.reason}</Trunc> },
     AUDIT_COLUMNS[3],
   ];
-  const filtered = Boolean(prefix || area || actorId || from || to || actor || resource);
+  const dropped = droppedMessage(filters.dropped);
+  const active: ActiveFilter[] = [
+    ...(prefix ? [{ key: "action", label: "Action", value: `“${prefix}”`, onRemove: () => filters.set({ action: "" }) }] : []),
+    ...(area ? [{ key: "area", label: "Area", value: labelOf(AUDIT_AREAS, area), onRemove: () => filters.set({ area: "" }) }] : []),
+    ...(actorId ? [{ key: "person", label: "Person's ID", value: actorId, onRemove: () => filters.set({ person: "" }) }] : []),
+    ...(from || to ? [{ key: "date", label: "Date", value: rangeLabel({ from, to }), onRemove: () => filters.set({ from: "", to: "" }) }] : []),
+    ...(actor ? [{ key: "by", label: "By", value: sentence(actor), onRemove: () => setActor("") }] : []),
+    ...(resource ? [{ key: "resource", label: "Resource", value: eventLabel(resource), onRemove: () => setResource("") }] : []),
+  ];
+  const filtered = active.length > 0;
   return (
     <Page>
       <PageHeader title="Audit log" subtitle="Every staff action in the admin console, newest first." />
+      {dropped && <Alert tone="warning" title={dropped} />}
       <FilterBar
+        label="Filter the audit log"
+        active={active}
         onClear={
           filtered
             ? () => {
-                setPrefix("");
-                setArea("");
-                setActorId("");
-                setFrom("");
-                setTo("");
+                filters.reset();
                 setActor("");
                 setResource("");
               }
@@ -885,8 +932,13 @@ export function AuditScreen() {
           </Button>
         }
       >
-        <SearchInput label="Filter by action (e.g. payout., partner.)" value={prefix} onSearch={setPrefix} placeholder="Action, e.g. partner." />
-        <Select label="Area" prefix="Area:" value={area} onChange={setArea} options={AUDIT_AREAS} />
+        <SearchInput
+          label="Filter by action (e.g. payout., partner.)"
+          value={prefix}
+          onSearch={(text) => filters.set({ action: text })}
+          placeholder="Action, e.g. partner."
+        />
+        <Select label="Area" prefix="Area:" value={area} onChange={(next) => filters.set({ area: next })} options={AUDIT_AREAS} />
         <Select label="By" prefix="By:" value={actor} onChange={setActor} options={[{ value: "", label: "Anyone" }, ...actors.map((a) => ({ value: a, label: sentence(a) }))]} />
         <Select
           label="Resource"
@@ -895,23 +947,31 @@ export function AuditScreen() {
           onChange={setResource}
           options={[{ value: "", label: "Any" }, ...resources.map((r) => ({ value: r, label: eventLabel(r) }))]}
         />
-        <SearchInput label="Filter by the person's ID" value={actorId} onSearch={setActorId} placeholder="Person's ID" maxLength={36} />
-        <DateRange from={from} to={to} onFrom={setFrom} onTo={setTo} />
+        <SearchInput
+          label="Filter by the person's ID"
+          value={actorId}
+          onSearch={(text) => filters.set({ person: text })}
+          placeholder="Person's ID"
+          maxLength={36}
+        />
+        <DateRangeFilter label="Date" value={{ from, to }} onApply={(range) => filters.set(range)} />
       </FilterBar>
       {!actorValid && (
         <p className="w360-error-text" role="alert">
           Enter the person&apos;s whole ID, as shown on their user page.
         </p>
       )}
+      {(actor || resource) && paged.hasMore && (
+        <p className={local.note} role="status">
+          By and Resource narrow only the entries loaded so far. Load more to look further back.
+        </p>
+      )}
       <DataTable
         caption="Audit entries"
         columns={columns}
+        {...pagedTable(paged, "audit entries")}
         rows={rows}
         rowKey={(a) => a.id}
-        loading={paged.state === "loading"}
-        error={paged.state === "forbidden" ? "You don't have access to the audit trail." : paged.state === "error" ? "Couldn't load the audit trail." : null}
-        onLoadMore={() => void paged.more()}
-        hasMore={paged.hasMore}
         empty={<EmptyState icon="audit" title="No audit entries" hint={filtered ? "Try other filters." : undefined} />}
       />
     </Page>

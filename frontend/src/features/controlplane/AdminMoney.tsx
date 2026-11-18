@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { adminApi, type PayoutRow } from "@/lib/api/controlPlane";
 import { FormPopup } from "./Modal";
-import { ReasonAction, Status, money } from "./ui";
+import { Button, useConfirm } from "./kit";
+import { iconLabel, popupButton } from "./kit/PopupLabel";
+import { Status, autoReason, money } from "./ui";
 import { TextField } from "./widgets";
 import styles from "./ControlPlane.module.css";
 
@@ -18,28 +20,65 @@ interface PayoutControlsProps {
   approve: boolean;
   busy: boolean;
   act: (action: () => Promise<unknown>, success: string) => Promise<void>;
+  /** The payout in words ("Northwind, period ending 30 Sep 2026"): a list across
+   * partners names it in each button's accessible name, so every row's buttons
+   * can be told apart (admin-ux phase 3). Without it the buttons say only what they do. */
+  name?: string;
 }
 
 /** A payout's lifecycle controls (approver is never the preparer, and every step
  * is enforced by the server). One set, used by a partner's own Payouts tab and by
- * the Payouts list across partners, rather than a second copy of them. */
-export function PayoutActions({ payout: p, manage, approve, busy, act }: PayoutControlsProps) {
+ * the Payouts list across partners (its Actions column), rather than a second copy
+ * of them. Cancel payout asks to confirm, with an optional reason. */
+export function PayoutActions({ payout: p, manage, approve, busy, act, name }: PayoutControlsProps) {
   const version = p.version ?? 0;
   const [reference, setReference] = useState("");
+  const confirm = useConfirm();
+  const named = (label: string) => (name ? `${label}: ${name}` : undefined);
+
+  const cancel = () =>
+    confirm.ask({
+      title: "Cancel payout?",
+      message: "Its entries become payable again. No money moves.",
+      confirmLabel: "Confirm cancel payout",
+      danger: true,
+      reason: true,
+      groupLabel: "Confirm Cancel payout",
+      actionName: "Cancel payout",
+      onConfirm: (r) => act(() => adminApi.payoutAction(p.id, "cancel", version, { reason: r }), "Payout cancelled; its entries are payable again."),
+    });
+
   return (
     <>
       {manage && p.status === "draft" && (
-        <button type="button" className="w360-btn w360-btn-secondary" disabled={busy} onClick={() => act(() => adminApi.payoutAction(p.id, "ready", version, {}), "Marked ready for approval.")}>
+        <Button
+          size="sm"
+          icon="check"
+          aria-label={named("Mark ready")}
+          disabled={busy}
+          onClick={() => act(() => adminApi.payoutAction(p.id, "ready", version, {}), "Marked ready for approval.")}
+        >
           Mark ready
-        </button>
+        </Button>
       )}
       {approve && p.status === "ready" && (
-        <ReasonAction label="Approve" busy={busy} onConfirm={(r) => act(() => adminApi.payoutAction(p.id, "approve", version, { reason: r }), "Payout approved. No payment was made.")} />
+        <Button
+          size="sm"
+          icon="checkCircle"
+          aria-label={named("Approve")}
+          disabled={busy}
+          onClick={() =>
+            act(() => adminApi.payoutAction(p.id, "approve", version, { reason: autoReason("Approve") }), "Payout approved. No payment was made.")
+          }
+        >
+          Approve
+        </Button>
       )}
       {manage && p.status === "approved" && (
         <FormPopup
-          label="Record as paid"
-          buttonAriaLabel={`Record the payout for ${p.period_end} as paid`}
+          label={iconLabel("Record as paid", "receipt")}
+          buttonClassName={popupButton("secondary", "sm")}
+          buttonAriaLabel={named("Record as paid") ?? `Record the payout for ${p.period_end} as paid`}
           title="Record a payout as paid"
           intro={`${money(p.payable_minor, p.currency)} for the period ending ${p.period_end}. Record the transfer made outside WorkEasy360.`}
           size="sm"
@@ -58,14 +97,11 @@ export function PayoutActions({ payout: p, manage, approve, busy, act }: PayoutC
         </FormPopup>
       )}
       {manage && p.status !== "paid" && p.status !== "cancelled" && (
-        <ReasonAction
-          label="Cancel payout"
-          danger
-          busy={busy}
-          message="Its entries become payable again. No money moves."
-          onConfirm={(r) => act(() => adminApi.payoutAction(p.id, "cancel", version, { reason: r }), "Payout cancelled; its entries are payable again.")}
-        />
+        <Button size="sm" variant="danger" icon="ban" aria-label={named("Cancel payout")} disabled={busy} onClick={cancel}>
+          Cancel payout
+        </Button>
       )}
+      {confirm.dialog}
     </>
   );
 }

@@ -16,8 +16,12 @@ import { AdminContextForTest, expectNoViolations, mockApi, ok } from "../testSup
 
 let query = "";
 const push = vi.fn();
+// The list keeps its filters in the address (admin-ux phase 3): `replace` writes it.
+const replace = vi.fn((href: string) => {
+  query = href.split("?")[1] ?? "";
+});
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push, replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push, replace, refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(query),
   usePathname: () => "/admin/products",
 }));
@@ -133,6 +137,7 @@ class FakeXHR {
 beforeEach(() => {
   query = "";
   push.mockReset();
+  replace.mockClear();
   uploads.length = 0;
   vi.stubGlobal("XMLHttpRequest", FakeXHR);
 });
@@ -212,8 +217,73 @@ describe("Product Manager list", () => {
     choose("Store visibility", "All");
     choose("Category", "Other");
     expect(screen.getByText("No product matches these filters")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
     expect(screen.getByRole("link", { name: "Easy Sample" })).toBeInTheDocument();
+  });
+
+  it("keeps the filters in the address, so they come back after opening a product", async () => {
+    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
+    const first = renderAs(MANAGE, <ProductManager />);
+    await screen.findByRole("link", { name: "Easy Sample" });
+    choose("Status", "Draft");
+    expect(replace).toHaveBeenLastCalledWith("/admin/products?status=draft", { scroll: false });
+    choose("Category", "Finance");
+    expect(replace).toHaveBeenLastCalledWith("/admin/products?status=draft&category=Finance", { scroll: false });
+    first.unmount();
+
+    // Back from a product: the address brings them back.
+    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
+    renderAs(MANAGE, <ProductManager />);
+    expect(await screen.findByRole("link", { name: "Draft Tool" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Easy Sample" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent("Draft");
+    expect(screen.getByRole("combobox", { name: "Category" })).toHaveTextContent("Finance");
+  });
+
+  it("lists the applied filters as tags; removing one shows the products it hid", async () => {
+    query = "q=easy&visibility=published";
+    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
+    renderAs(MANAGE, <ProductManager />);
+    await screen.findByRole("link", { name: "Easy Sample" });
+    expect(screen.queryByRole("link", { name: "Draft Tool" })).not.toBeInTheDocument();
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Search: “easy”", "Store visibility: Published"]);
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Search: “easy”" }));
+    expect(replace).toHaveBeenLastCalledWith("/admin/products?visibility=published", { scroll: false });
+    fireEvent.click(screen.getByRole("button", { name: "Remove filter Store visibility: Published" }));
+    expect(await screen.findByRole("link", { name: "Draft Tool" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Active filters" })).not.toBeInTheDocument();
+  });
+
+  it("leaves out a filter value the list does not offer, and says so", async () => {
+    query = "status=bogus&visibility=everywhere";
+    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
+    renderAs(MANAGE, <ProductManager />);
+    await screen.findByRole("link", { name: "Easy Sample" });
+    expect(screen.getByRole("link", { name: "Draft Tool" })).toBeInTheDocument();
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Active filters" })).not.toBeInTheDocument();
+  });
+
+  it("offers Try again when the catalog could not be loaded", async () => {
+    const calls = mockApi({ [`GET ${ADMIN}/products/console`]: [{ status: 500, body: { detail: "The catalog is unavailable." } }, ok(CATALOG)] });
+    renderAs(MANAGE, <ProductManager />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The catalog is unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("link", { name: "Easy Sample" })).toBeInTheDocument();
+    expect(calls.filter((c) => c.key === `GET ${ADMIN}/products/console`)).toHaveLength(2);
+  });
+
+  it("asks before unpublishing, and sends nothing on Cancel", async () => {
+    const calls = mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)], [`POST ${ADMIN}/products/p1/unpublish`]: [ok({})] });
+    renderAs(MANAGE, <ProductManager />);
+    await screen.findByRole("link", { name: "Easy Sample" });
+    fireEvent.click(within(rowMenu("Easy Sample")).getByRole("menuitem", { name: "Unpublish" }));
+    const confirm = screen.getByRole("dialog", { name: "Unpublish Easy Sample?" });
+    expect(within(confirm).getByText(/hidden from the store at once/)).toBeInTheDocument();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(calls.some((c) => c.key === `POST ${ADMIN}/products/p1/unpublish`)).toBe(false);
   });
 
   it("publishes, unpublishes and archives (after a confirmation) through the server, and previews a listing", async () => {
@@ -228,7 +298,11 @@ describe("Product Manager list", () => {
     fireEvent.click(within(rowMenu("Draft Tool")).getByRole("menuitem", { name: "Publish" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${ADMIN}/products/p2/publish`)).toBe(true));
     fireEvent.click(within(rowMenu("Easy Sample")).getByRole("menuitem", { name: "Unpublish" }));
+    const unpublish = screen.getByRole("dialog", { name: "Unpublish Easy Sample?" });
+    expect(calls.some((c) => c.key === `POST ${ADMIN}/products/p1/unpublish`)).toBe(false);
+    fireEvent.click(within(unpublish).getByRole("button", { name: "Unpublish" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${ADMIN}/products/p1/unpublish`)).toBe(true));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     fireEvent.click(within(rowMenu("Draft Tool")).getByRole("menuitem", { name: "Archive" }));
     const confirm = screen.getByRole("dialog", { name: "Archive Draft Tool?" });
     expect(calls.some((c) => c.key === `POST ${ADMIN}/products/p2/archive`)).toBe(false);

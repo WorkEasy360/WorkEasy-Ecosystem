@@ -10,9 +10,13 @@ export type { MenuItem } from "./Menu";
 export { Select } from "./Select";
 export type { SelectOption } from "./Select";
 export { FilterBar, SearchInput, StatusChips, useDebounced } from "./FilterBar";
-export type { Chip } from "./FilterBar";
+export type { Chip, ActiveFilter } from "./FilterBar";
+export { DateRangeFilter, dayLabel, isDay, rangeLabel, rangeProblem, utcDay } from "./DateRangeFilter";
+export type { Day, DayRange } from "./DateRangeFilter";
+export { useUrlFilters, droppedMessage } from "./urlFilters";
+export type { FilterRule, FilterSpec, FilterValues } from "./urlFilters";
 export { DataTable } from "./DataTable";
-export type { Column } from "./DataTable";
+export type { Column, ColumnPriority } from "./DataTable";
 export {
   Page,
   PageHeader,

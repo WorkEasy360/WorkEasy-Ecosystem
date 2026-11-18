@@ -121,6 +121,87 @@ describe("a new customer", () => {
   });
 });
 
+const ROW = {
+  organization_id: ORG,
+  slug: "acme-ltd",
+  display_name: "Acme Ltd",
+  status: "active",
+  created_at: T,
+  owner_email: "asha@acme.example",
+  subscription_status: "active",
+  products: ["easy_crm"],
+  seat_capacity: 5,
+  summary_as_of: T,
+  partner: null,
+};
+const ROWS = ok({ results: [ROW], next_cursor: null, has_more: false });
+const sentOf = (calls: Call[], i: number) => Object.fromEntries(new URL(calls.filter((c) => c.key === `GET ${LIST}`).at(i)!.url, "https://x.invalid").searchParams);
+
+describe("the customer directory (admin-ux phase 3)", () => {
+  it("keeps search, status and the created days in the address, sends them to the server and lists them as removable tags", async () => {
+    const calls = mockApi({ [`GET ${LIST}`]: [ROWS] });
+    open(VIEW, <Customers />);
+    await screen.findByRole("table", { name: "Customer organizations" });
+    fireEvent.click(screen.getByRole("combobox", { name: "Status" }));
+    fireEvent.click(screen.getByRole("option", { name: "Suspended" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/customers?status=suspended", { scroll: false });
+    await waitFor(() => expect(sentOf(calls, -1)).toEqual({ status: "suspended" }));
+    fireEvent.change(screen.getByLabelText("Search by name or slug"), { target: { value: "acme" } });
+    await waitFor(() => expect(sentOf(calls, -1)).toEqual({ q: "acme", status: "suspended" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Created: Any time/ }));
+    const panel = screen.getByRole("dialog", { name: "Created between" });
+    fireEvent.change(within(panel).getByLabelText("From"), { target: { value: "2026-11-01" } });
+    fireEvent.change(within(panel).getByLabelText("To"), { target: { value: "2026-11-10" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(sentOf(calls, -1)).toEqual({ q: "acme", status: "suspended", from: "2026-11-01", to: "2026-11-10" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/customers?q=acme&status=suspended&from=2026-11-01&to=2026-11-10", { scroll: false });
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((t) => t.textContent)).toEqual([
+      "Search: “acme”",
+      "Status: Suspended",
+      expect.stringMatching(/^Created: .*1.*Nov.*2026.*10.*Nov.*2026$/),
+    ]);
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Status: Suspended" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/customers?q=acme&from=2026-11-01&to=2026-11-10", { scroll: false });
+    await waitFor(() => expect(sentOf(calls, -1)).toEqual({ q: "acme", from: "2026-11-01", to: "2026-11-10" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/customers", { scroll: false });
+  });
+
+  it("reads its filters back from the address, and drops what it does not know", async () => {
+    nav.query = "q=acme&status=active&from=2026-11-01&to=2026-11-10";
+    let calls = mockApi({ [`GET ${LIST}`]: [ROWS] });
+    const view = open(VIEW, <Customers />);
+    await screen.findByRole("table", { name: "Customer organizations" });
+    expect(sentOf(calls, 0)).toEqual({ q: "acme", status: "active", from: "2026-11-01", to: "2026-11-10" });
+    expect(screen.getByLabelText("Search by name or slug")).toHaveValue("acme");
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent("Active");
+    expect(screen.getByRole("button", { name: /^Created: .*Nov.*2026/ })).toBeInTheDocument();
+    view.unmount();
+
+    nav.query = "status=closed&from=2026-11-10&to=2026-11-01";
+    calls = mockApi({ [`GET ${LIST}`]: [ROWS] });
+    open(VIEW, <Customers />);
+    await screen.findByRole("table", { name: "Customer organizations" });
+    expect(sentOf(calls, 0)).toEqual({});
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("offers Try again when the directory cannot be read, and folds secondary columns first", async () => {
+    const calls = mockApi({ [`GET ${LIST}`]: [{ status: 500, body: {} }, ROWS] });
+    open(VIEW, <Customers />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load customers.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    const table = await screen.findByRole("table", { name: "Customer organizations" });
+    expect(calls.filter((c) => c.key === `GET ${LIST}`)).toHaveLength(2);
+    // A narrow table keeps the name and the status; the rest opens under "Show details".
+    fireEvent.click(within(table).getByRole("button", { name: "Show details of Acme Ltd" }));
+    const toggle = within(table).getByRole("button", { name: "Hide details of Acme Ltd" });
+    const details = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    expect(within(details).getAllByRole("term").map((t) => t.textContent)).toEqual(["Subscription", "Products", "Seats", "Partner", "Created"]);
+  });
+});
+
 const DETAIL = {
   organization: { id: ORG, display_name: "Acme Ltd", slug: "acme-ltd", status: "active", created_at: T, suspension_reason: "" },
   members: { owner: 1 },

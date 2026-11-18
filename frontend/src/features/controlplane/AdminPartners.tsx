@@ -193,7 +193,12 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
                           icon="login"
                           loading={guestLogin.pending === p.id}
                           disabled={busy || guestLogin.dialog !== null}
-                          onClick={() => guestLogin.ask(p.id, p.display_name)}
+                          onClick={() =>
+                            guestLogin.ask(p.id, p.display_name, {
+                              type: (p.experience ?? []).find((e) => e.key === p.landing)?.label ?? p.experience?.[0]?.label,
+                              status: p.status,
+                            })
+                          }
                         >
                           Login as Guest
                         </Button>

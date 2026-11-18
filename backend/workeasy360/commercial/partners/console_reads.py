@@ -341,6 +341,8 @@ def partner_rows(
     page_size: int,
     extra: Any = None,
     category: str | None = None,
+    created_from: datetime | None = None,
+    created_before: datetime | None = None,
 ) -> tuple[list[Any], bool]:
     """One page of partner rows, newest first, and whether there is another.
 
@@ -349,8 +351,9 @@ def partner_rows(
     partners listed under one type (``category_q``). ``query`` matches the partner's name,
     code or legal name, or an email it is reached at - its contact, its business
     email or an active member's sign-in address. ``extra`` is one more filter
-    expression the caller built (the profile-completion filter). Filters compose
-    as ``AND``.
+    expression the caller built (the profile-completion filter).
+    ``created_from``/``created_before`` keep the partners created in that window
+    (end exclusive). Filters compose as ``AND``; the cursor pages within them.
     """
     from workeasy360.commercial.partners.models import (
         PartnerAccount,
@@ -366,6 +369,10 @@ def partner_rows(
         queryset = queryset.filter(category_q(now, category))
     if status:
         queryset = queryset.filter(status=status)
+    if created_from is not None:
+        queryset = queryset.filter(created_at__gte=created_from)
+    if created_before is not None:
+        queryset = queryset.filter(created_at__lt=created_before)
     if query:
         queryset = queryset.filter(
             Q(display_name__icontains=query)

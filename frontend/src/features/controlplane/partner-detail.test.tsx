@@ -395,7 +395,7 @@ describe("the header", () => {
     expect(guest).toHaveAttribute("aria-disabled", "true");
     expect(guest).toHaveAccessibleDescription("Opens once the partner is active");
     fireEvent.click(guest);
-    expect(screen.queryByRole("dialog", { name: /^Login as Guest · / })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /^Login as Guest to / })).not.toBeInTheDocument();
     expect(calls.some((c) => c.key.endsWith("/guest-view"))).toBe(false);
   });
 
@@ -413,7 +413,7 @@ describe("the header", () => {
     await screen.findByRole("button", { name: "Suspend" });
     fireEvent.click(screen.getByRole("button", { name: "Login as Guest" }));
     // ADR-063: the Admin says why first.
-    const dialog = await screen.findByRole("dialog", { name: /^Login as Guest · / });
+    const dialog = await screen.findByRole("dialog", { name: /^Login as Guest to / });
     fireEvent.click(within(dialog).getByRole("button", { name: "Start guest session" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/partner/reseller/dashboard"));
     expect(calls.find((c) => c.key === `POST /api/v1/admin/partners/${ID}/guest-view`)!.body).toEqual({

@@ -30,7 +30,8 @@ export function describeError(err: unknown): string {
 export type Load<T> =
   | { status: "loading" }
   | { status: "forbidden" }
-  | { status: "error"; message: string }
+  /** `retry` (from useLoad) asks again; LoadGate offers it as "Try again". */
+  | { status: "error"; message: string; retry?: () => void }
   | { status: "ready"; data: T };
 
 /** A stable string for a dependency list, used to tell "the inputs changed"
@@ -64,7 +65,10 @@ export function useLoad<T>(fetcher: () => Promise<T>, deps: unknown[]): [Load<T>
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stamp, tick]);
 
-  return [state.stamp === stamp ? state.load : { status: "loading" }, () => setTick((n) => n + 1)];
+  const reload = () => setTick((n) => n + 1);
+  const load: Load<T> = state.stamp === stamp ? state.load : { status: "loading" };
+  // An error carries its own retry, so every LoadGate can offer "Try again".
+  return [load.status === "error" ? { ...load, retry: reload } : load, reload];
 }
 
 export function LoadGate<T>({
@@ -87,7 +91,18 @@ export function LoadGate<T>({
   if (load.status === "error") {
     return (
       <div role="alert">
-        <EmptyState icon="alert" title={load.message} compact />
+        <EmptyState
+          icon="alert"
+          title={load.message}
+          compact
+          action={
+            load.retry ? (
+              <Button size="sm" icon="refresh" onClick={load.retry}>
+                Try again
+              </Button>
+            ) : undefined
+          }
+        />
       </div>
     );
   }
@@ -343,18 +358,26 @@ export function usePaged<T>(
   }, [stamp, tick]);
 
   const current = data && data.stamp === stamp ? data : null;
+  // The next page on its way (one at a time), and whether the last try failed.
+  // A failed next page keeps the rows already shown (2026-11-18, admin-ux phase 3).
+  const [moreState, setMoreState] = useState<{ stamp: string; next: string; status: "loading" | "error" } | null>(null);
+  const loadingMore = moreState !== null && moreState.stamp === stamp && moreState.status === "loading";
+  const moreError = moreState !== null && moreState.stamp === stamp && moreState.status === "error" && moreState.next === current?.next;
 
   async function more() {
-    if (!current?.next) return;
+    const next = current?.next;
+    if (!next || loadingMore) return;
+    setMoreState({ stamp, next, status: "loading" });
     try {
-      const page = await fetchPage(current.next);
+      const page = await fetchPage(next);
       setData((d) =>
-        d && d.stamp === stamp
+        d && d.stamp === stamp && d.next === next
           ? { ...d, state: "ready", rows: [...d.rows, ...page.results], next: page.has_more ? page.next_cursor : null }
           : d,
       );
+      setMoreState(null);
     } catch {
-      setData((d) => (d ? { ...d, state: "error" } : d));
+      setMoreState((m) => (m && m.stamp === stamp && m.next === next ? { ...m, status: "error" } : m));
     }
   }
 
@@ -362,16 +385,59 @@ export function usePaged<T>(
     rows: current?.rows ?? [],
     hasMore: current?.next != null,
     more,
+    loadingMore,
+    moreError,
     state: (current ? current.state : "loading") as "loading" | "ready" | "error" | "forbidden",
-    reload: () => setTick((n) => n + 1),
+    reload: () => {
+      setMoreState(null);
+      setTick((n) => n + 1);
+    },
   };
 }
 
-export function MoreButton({ hasMore, onMore }: { hasMore: boolean; onMore: () => void }) {
+export type Paged<T> = ReturnType<typeof usePaged<T>>;
+
+/** A server-paged list's DataTable props: rows, loading, the error with "Try
+ * again", "Load more" with its spinner and its own error. `what` names the
+ * rows in the messages ("partners"). */
+export function pagedTable<T>(paged: Paged<T>, what: string) {
+  return {
+    rows: paged.rows,
+    loading: paged.state === "loading",
+    error:
+      paged.state === "forbidden" ? `You don't have access to ${what}.` : paged.state === "error" ? `Couldn't load ${what}.` : null,
+    onRetry: paged.state === "error" ? paged.reload : undefined,
+    onLoadMore: paged.more,
+    hasMore: paged.hasMore,
+    loadingMore: paged.loadingMore,
+    moreError: paged.moreError ? `Couldn't load more ${what}.` : null,
+  };
+}
+
+export function MoreButton({
+  hasMore,
+  onMore,
+  loading = false,
+  failed = false,
+}: {
+  hasMore: boolean;
+  onMore: () => void;
+  /** The next page is on its way. */
+  loading?: boolean;
+  /** The last try failed: the rows shown stay, and the button tries again. */
+  failed?: boolean;
+}) {
   if (!hasMore) return null;
   return (
-    <Button size="sm" onClick={onMore}>
-      Load more
-    </Button>
+    <span className={kit.moreRow}>
+      {failed && (
+        <span role="alert" className={kit.footError}>
+          Couldn&apos;t load more.
+        </span>
+      )}
+      <Button size="sm" loading={loading} onClick={onMore}>
+        {failed ? "Try again" : "Load more"}
+      </Button>
+    </span>
   );
 }

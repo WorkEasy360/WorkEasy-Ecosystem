@@ -2072,14 +2072,25 @@ def staff_orders(
     channel: str | None = None,
     limit: int = PAGE_SIZE,
     cursor: str | None = None,
+    search: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> dict[str, Any]:
     """Every order across customers, newest first (``platform.staff_payment.view``).
     One query for the page, one for the customers' names. ``channel`` filters by
-    purchase source (2026-11-10: Store orders and partner activations)."""
+    purchase source (2026-11-10: Store orders and partner activations).
+
+    Admin UX Phase 3: ``search`` matches the order number or the customer's name (a
+    subquery of the organizations whose name matches, composed into the same
+    statement); ``start``/``end`` keep the orders placed in ``[start, end)``. Every
+    filter composes, and the cursor pages within them."""
     from django.db.models import Q
 
     from workeasy360.commercial.payments.models import Order, OrderSummary
-    from workeasy360.platform.organizations.selectors import organization_names
+    from workeasy360.platform.organizations.selectors import (
+        organization_ids_matching,
+        organization_names,
+    )
 
     authz.require(ctx, STAFF_VIEW)
     limit = max(1, min(int(limit or PAGE_SIZE), MAX_PAGE))
@@ -2092,6 +2103,16 @@ def staff_orders(
         if channel not in ORDER_CHANNELS:
             raise CatalogValidationError("Unknown purchase source.", field="channel")
         rows = rows.filter(channel=channel)
+    term = (search or "").strip()[:40]
+    if term:
+        rows = rows.filter(
+            Q(number__icontains=term)
+            | Q(organization_id__in=organization_ids_matching(term))
+        )
+    if start is not None:
+        rows = rows.filter(created_at__gte=start)
+    if end is not None:
+        rows = rows.filter(created_at__lt=end)
     after = decode_cursor(cursor)
     if after is not None:
         rows = rows.filter(

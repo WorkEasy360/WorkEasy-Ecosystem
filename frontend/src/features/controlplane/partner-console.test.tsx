@@ -7,6 +7,7 @@ import { PartnerCenterLayout } from "./PartnerCenter";
 import { allPartnersHref } from "./oldPartnerRoutes";
 import { CENTER_ITEMS, centerItems, isCurrent } from "./partnerCenterNav";
 import { AdminContextForTest, SIGNED_IN, expectNoViolations, mockApi, ok, type Reply } from "./testSupport";
+import { ToastProvider } from "./kit";
 import { PortalsProvider } from "@/lib/portalContext";
 
 /**
@@ -295,7 +296,7 @@ function followRouter() {
 /** Open a row's "⋯" menu and return it. */
 /** ADR-063: Login as Guest asks for the reason first; choose one and start. */
 async function confirmGuest(name: string, opts: { reason?: string; details?: string } = {}) {
-  const dialog = await screen.findByRole("dialog", { name: `Login as Guest · ${name}` });
+  const dialog = await screen.findByRole("dialog", { name: `Login as Guest to ${name}?` });
   if (opts.reason) fireEvent.change(within(dialog).getByLabelText("Reason"), { target: { value: opts.reason } });
   if (opts.details) fireEvent.change(within(dialog).getByLabelText("Details (optional)"), { target: { value: opts.details } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Start guest session" }));
@@ -342,12 +343,12 @@ describe("All partners", () => {
       "Partner Name",
       "Type / Permissions",
       "Account Status",
-      "View / Actions",
       "Partner Email",
       "KYC Status",
       "Country",
       "Assigned Customers",
       "Created",
+      "Actions",
     ]);
     const acme = within(table).getByRole("row", { name: /Acme Partners/ });
     expect(within(acme).getByRole("link", { name: "Acme Partners" })).toHaveAttribute("href", "/admin/partners/p1");
@@ -356,7 +357,7 @@ describe("All partners", () => {
     expect(acme).toHaveTextContent("GB");
     // Earnings are no longer in this list (2026-11-10): they stay on the partner's page.
     expect(acme).not.toHaveTextContent("35.54");
-    // 2026-11-11: View and Login as Guest side by side, right after the status.
+    // View and Login as Guest side by side, in the Actions column (admin-ux phase 3).
     expect(within(acme).getByRole("link", { name: "View Acme Partners" })).toHaveAttribute("href", "/admin/partners/p1");
     expect(within(acme).getByRole("button", { name: "Login as Guest to Acme Partners" })).toHaveTextContent(/^Login as Guest$/);
     expect(acme).toHaveTextContent("Active");
@@ -373,8 +374,8 @@ describe("All partners", () => {
     await expectNoViolations(container);
 
     const menu = openRowMenu("Acme Partners");
+    // View is the row's own button, so the menu starts with Edit (admin-ux phase 3).
     expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
-      "View partner",
       "Edit partner",
       "Review KYC",
       "Manage Permissions",
@@ -541,7 +542,7 @@ describe("All partners", () => {
       search: "?type=reseller&q=acme&status=active",
     });
     first.unmount();
-    // Back from Return to Super Admin: the server keeps only the path, so the
+    // Back from Exit Guest Session: the server keeps only the path, so the
     // marked address brings the type, search and filters back from this tab.
     query = "guest=ended";
     const calls = mockApi(listRoutes([row()]));
@@ -640,7 +641,7 @@ describe("All partners", () => {
     await expectNoViolations(dialog);
   });
 
-  it("puts View and Login as Guest side by side in every row, right after the status", async () => {
+  it("puts View and Login as Guest side by side in every row, in the Actions column at the end", async () => {
     mockApi(
       listRoutes([
         row(),
@@ -653,12 +654,13 @@ describe("All partners", () => {
     const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
     expect(headers).not.toContain("Earnings");
     expect(headers).not.toContain("Guest Login");
-    // Fourth, after Name, Type and Status - never at the far end of the row.
-    expect(headers.indexOf("View / Actions")).toBe(3);
-    expect(headers.indexOf("View / Actions")).toBe(headers.indexOf("Account Status") + 1);
+    // One Actions column, last (admin-ux phase 3): it is held at the right edge
+    // while the table scrolls, so the buttons are always in view.
+    expect(headers.at(-1)).toBe("Actions");
+    expect(headers.filter((h) => h === "Actions")).toHaveLength(1);
     for (const name of ["Acme Partners", "Second Co", "Draft Co"]) {
       const r = within(table).getByRole("row", { name: new RegExp(name) });
-      const cell = within(r).getAllByRole("cell")[2];
+      const cell = within(r).getAllByRole("cell").at(-1)!;
       // View, then Login as Guest immediately after it, then the row's other actions.
       const controls = [...cell.querySelectorAll("a, button")].map((el) => el.getAttribute("aria-label") ?? el.textContent);
       expect(controls).toEqual([`View ${name}`, `Login as Guest to ${name}`, `Actions for ${name}`]);
@@ -675,7 +677,7 @@ describe("All partners", () => {
     expect(draft).toHaveAttribute("aria-disabled", "true");
     expect(draft).toHaveAccessibleDescription("Opens once the partner is active");
     fireEvent.click(draft);
-    expect(screen.queryByRole("dialog", { name: /^Login as Guest · / })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /^Login as Guest to / })).not.toBeInTheDocument();
     // No money in the list at all.
     expect(table).not.toHaveTextContent("₹");
     expect(table).not.toHaveTextContent("£");
@@ -690,8 +692,9 @@ describe("All partners", () => {
       const view = renderList([VIEW, MANAGE, GUEST]);
       const table = await screen.findByRole("table", { name: "Partners" });
       const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
-      expect(headers.slice(0, 4)).toEqual(["Partner Name", "Type / Permissions", "Account Status", "View / Actions"]);
-      const cell = within(within(table).getByRole("row", { name: /Acme Partners/ })).getAllByRole("cell")[2];
+      expect(headers.slice(0, 3)).toEqual(["Partner Name", "Type / Permissions", "Account Status"]);
+      expect(headers.at(-1)).toBe("Actions");
+      const cell = within(within(table).getByRole("row", { name: /Acme Partners/ })).getAllByRole("cell").at(-1)!;
       expect(within(cell).getByRole("link", { name: "View Acme Partners" })).toBeInTheDocument();
       expect(within(cell).getByRole("button", { name: "Login as Guest to Acme Partners" })).toBeEnabled();
       view.unmount();
@@ -736,7 +739,7 @@ describe("All partners", () => {
     fireEvent.click(button);
     await confirmGuest("Acme Partners");
     expect(await screen.findByText("Insufficient permission: platform.staff_partner.guest")).toBeInTheDocument();
-    fireEvent.click(within(screen.getByRole("dialog", { name: "Login as Guest · Acme Partners" })).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Login as Guest to Acme Partners?" })).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(button).toBeEnabled());
   });
 
@@ -747,7 +750,7 @@ describe("All partners", () => {
     const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
     expect(headers).not.toContain("Guest Login");
     expect(headers).not.toContain("Earnings");
-    expect(headers).toContain("View / Actions");
+    expect(headers).toContain("Actions");
     expect(within(table).getByRole("link", { name: "View Acme Partners" })).toBeInTheDocument();
     expect(within(table).queryByRole("button", { name: /Login as Guest/ })).not.toBeInTheDocument();
   });
@@ -795,9 +798,96 @@ describe("All partners", () => {
     chip("Affiliate");
     expect(push).toHaveBeenLastCalledWith("/admin/partners/all?type=affiliate&q=owner%40acme&status=suspended&profile=incomplete", { scroll: false });
     await waitFor(() => expect(calls.at(-1)!.url).toContain("category=affiliate"));
-    // Clear filters keeps the chosen type: it is the list, not a filter on it.
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    // The applied filters are listed as tags (admin-ux phase 3), each removable.
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((t) => t.textContent)).toEqual([
+      "Search: \u201cowner@acme\u201d",
+      "Account status: Suspended",
+      "Profile: Incomplete",
+    ]);
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Profile: Incomplete" }));
+    expect(replace).toHaveBeenLastCalledWith("/admin/partners/all?type=affiliate&q=owner%40acme&status=suspended", { scroll: false });
+    // Reset filters keeps the chosen type: it is the list, not a filter on it.
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
     expect(replace).toHaveBeenLastCalledWith("/admin/partners/all?type=affiliate", { scroll: false });
+  });
+
+  it("filters by the created date on the server, keeps the range in the address and lists it as a tag (admin-ux phase 3)", async () => {
+    pathname = "/admin/partners/all";
+    query = "type=reseller";
+    followRouter();
+    const calls = mockApi(listRoutes([row()]));
+    renderList();
+    await screen.findByRole("table", { name: "Partners" });
+    fireEvent.click(screen.getByRole("button", { name: /Created: Any time/ }));
+    const panel = screen.getByRole("dialog", { name: "Created between" });
+    fireEvent.change(within(panel).getByLabelText("From"), { target: { value: "2026-11-01" } });
+    fireEvent.change(within(panel).getByLabelText("To"), { target: { value: "2026-11-10" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(calls.at(-1)!.url).toContain("from=2026-11-01"));
+    const url = new URL(calls.at(-1)!.url, "http://x");
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({ category: "reseller", from: "2026-11-01", to: "2026-11-10" });
+    expect(replace).toHaveBeenLastCalledWith("/admin/partners/all?type=reseller&from=2026-11-01&to=2026-11-10", { scroll: false });
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getByRole("listitem")).toHaveTextContent(/^Created: .*1.*Nov.*2026.*10.*Nov.*2026$/);
+    fireEvent.click(within(tags).getByRole("button", { name: /^Remove filter Created/ }));
+    expect(replace).toHaveBeenLastCalledWith("/admin/partners/all?type=reseller", { scroll: false });
+  });
+
+  it("reads a created range back from the address, and ignores one that is not a real range", async () => {
+    pathname = "/admin/partners/all";
+    query = "from=2026-11-01&to=2026-11-10";
+    let calls = mockApi(listRoutes([row()]));
+    let view = renderList();
+    await screen.findByRole("table", { name: "Partners" });
+    expect(new URL(calls[0].url, "http://x").searchParams.get("from")).toBe("2026-11-01");
+    expect(screen.getByRole("button", { name: /^Created: .*Nov.*2026/ })).toBeInTheDocument();
+    view.unmount();
+    // A range that ends before it starts, or a day that does not exist, is never sent.
+    for (const bad of ["from=2026-11-10&to=2026-11-01", "from=2026-02-30", "to=yesterday"]) {
+      query = bad;
+      calls = mockApi(listRoutes([row()]));
+      view = renderList();
+      await screen.findByRole("table", { name: "Partners" });
+      const sent = new URL(calls[0].url, "http://x").searchParams;
+      expect(sent.get("from")).toBeNull();
+      expect(sent.get("to")).toBeNull();
+      expect(screen.getByRole("button", { name: /Created: Any time/ })).toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
+  it("asks to confirm a guest session, saying what it opens, for how long and the way back (Decision A)", async () => {
+    mockApi(listRoutes([row({ category: "reseller" })]));
+    renderList();
+    fireEvent.click(await screen.findByRole("button", { name: "Login as Guest to Acme Partners" }));
+    const dialog = await screen.findByRole("dialog", { name: "Login as Guest to Acme Partners?" });
+    expect(dialog).toHaveTextContent("read-only");
+    expect(dialog).toHaveTextContent("30 minutes");
+    expect(dialog).toHaveTextContent("You stay signed in here as yourself (no partner password is used)");
+    expect(dialog).toHaveTextContent("Exit Guest Session in the banner ends it and brings you back");
+    expect(dialog).toHaveTextContent("Partner type: Reseller · Account status: Active");
+    expect(dialog).not.toHaveTextContent(/password:/i);
+    await expectNoViolations(dialog);
+    // Nothing starts until it is confirmed: Cancel closes it and no session is asked for.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("says why Login as Guest is not available for a draft, and starts nothing", async () => {
+    const calls = mockApi(listRoutes([row({ id: "p3", display_name: "Draft Co", status: "draft" })]));
+    render(
+      <ToastProvider>
+        <AdminContextForTest permissions={[VIEW, MANAGE, GUEST, KYC]}>
+          <AllPartnersList />
+        </AdminContextForTest>
+      </ToastProvider>,
+    );
+    const button = await screen.findByRole("button", { name: "Login as Guest to Draft Co" });
+    fireEvent.click(button);
+    expect(await screen.findByText(/Login as Guest is not available for Draft Co yet: it is a draft/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.some((c) => c.key.includes("guest"))).toBe(false);
   });
 
   it("lists one type when its chip is chosen - the server filters", async () => {
@@ -812,12 +902,12 @@ describe("All partners", () => {
       "Partner Name",
       "Type / Permissions",
       "Account Status",
-      "View / Actions",
       "Partner Email",
       "KYC Status",
       "Country",
       "Assigned Customers",
       "Created",
+      "Actions",
     ]);
     const url = new URL(calls[0].url, "http://x");
     expect(url.searchParams.get("category")).toBe("reseller");
@@ -961,7 +1051,6 @@ describe("All partners", () => {
     await screen.findByRole("table", { name: "Partners" });
     const menu = openRowMenu("Acme Partners");
     expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
-      "View partner",
       "Edit partner",
       "Manage Permissions",
       "View Assigned Customers",

@@ -17,6 +17,7 @@
  */
 
 import { apiFetch, apiUpload } from "./client";
+import type { DayRangeQuery } from "./types";
 import type { InvitationDelivery } from "./partnerConsole";
 import type { PublicStoreProductPage } from "./public";
 
@@ -725,7 +726,7 @@ export const adminApi = {
     subscription?: string;
     access?: string;
     product?: string;
-  }) => apiFetch<Page<CustomerRow>>(`${admin}/customers`, { query: q }),
+  } & DayRangeQuery) => apiFetch<Page<CustomerRow>>(`${admin}/customers`, { query: q }),
   customer: (id: string) => apiFetch<CustomerDetail>(`${admin}/customers/${id}`),
   suspendCustomer: (id: string, reason: string) =>
     apiFetch(`${admin}/customers/${id}/suspend`, { method: "POST", body: json({ reason }) }),
@@ -918,11 +919,11 @@ export const adminApi = {
   }) => apiFetch(`${admin}/commission/rules`, { method: "POST", body: json(body) }),
   commissionTerms: () => apiFetch<CommissionTerms>(`${admin}/commission/terms`),
   /** `unpaid: "1"` keeps only entries that are in no live payout. */
-  accruals: (q: { partner_id?: string; cursor?: string; unpaid?: string }) =>
+  accruals: (q: { partner_id?: string; cursor?: string; unpaid?: string } & DayRangeQuery) =>
     apiFetch<Page<AccrualRow>>(`${admin}/commission/accruals`, { query: q }),
   reconcileCommissions: () => apiFetch<Reconciliation>(`${admin}/commission/reconcile`),
 
-  payouts: (q: { status?: string; cursor?: string; partner_id?: string }) =>
+  payouts: (q: { status?: string; cursor?: string; partner_id?: string } & DayRangeQuery) =>
     apiFetch<Page<PayoutRow>>(`${admin}/payouts`, { query: q }),
   preparePayout: (partnerId: string, periodEnd: string) =>
     apiFetch<PayoutRow>(`${admin}/payouts`, {

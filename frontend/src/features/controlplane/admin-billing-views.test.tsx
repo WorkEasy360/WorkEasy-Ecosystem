@@ -14,8 +14,8 @@ import {
   PayoutsScreen,
   RefundsScreen,
 } from "./AdminBillingViews";
-import { ToastProvider } from "./kit";
-import { AdminContextForTest, expectNoViolations, mockApi, ok, type Reply } from "./testSupport";
+import { ToastProvider, droppedMessage, rangeLabel } from "./kit";
+import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call, type Reply } from "./testSupport";
 
 /**
  * Billing & Subscriptions (2026-11-09): invoices, failed and stuck payments, refunds,
@@ -35,6 +35,11 @@ vi.mock("next/navigation", () => ({
 beforeEach(() => {
   vi.restoreAllMocks();
   nav.router.push.mockReset();
+  nav.router.replace.mockReset();
+  // The address follows the list's filters, as the real router does (admin-ux phase 3).
+  nav.router.replace.mockImplementation((href: string) => {
+    query = href.split("?")[1] ?? "";
+  });
   query = "";
 });
 
@@ -62,6 +67,18 @@ function mount(permissions: string[], ui: React.ReactNode) {
 }
 
 const rowOf = (table: HTMLElement, name: RegExp) => within(table).getByRole("row", { name });
+
+/** A table's column headings, in order. */
+const headersOf = (table: HTMLElement) => within(table).getAllByRole("columnheader").map((h) => h.textContent);
+
+/** A row's last cell: the Actions column (admin-ux phase 3). */
+const actionsOf = (row: HTMLElement) => within(row).getAllByRole("cell").at(-1)!;
+
+/** One request's query, as a plain object. */
+const paramsOf = (call: Call) => Object.fromEntries(new URL(call.url, "http://x").searchParams);
+
+/** The applied filters, as their tags read. */
+const tagsOf = () => within(screen.getByRole("list", { name: "Active filters" })).getAllByRole("listitem").map((t) => t.textContent);
 
 // --- invoices ----------------------------------------------------------------------------
 
@@ -157,10 +174,123 @@ describe("Invoices", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load more invoices.");
     expect(screen.getByRole("row", { name: /INV-0001/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    // The button below the rows now says what it does: it tries that page again.
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await screen.findByRole("row", { name: /INV-0002/ });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
+
+  it("offers Try again when the list can't be loaded, and loads it on the next try", async () => {
+    const calls = mockApi({ "GET /api/v1/admin/invoices": [BROKEN, page([INVOICE])] });
+    mount([PAYMENT_VIEW], <InvoicesScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load invoices.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("row", { name: /INV-0001/ })).toBeInTheDocument();
+    expect(calls).toHaveLength(2);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("reads every filter back from the address, sends it to the server and lists it as a removable tag", async () => {
+    query = "status=paid&q=INV-9&from=2026-11-01&to=2026-11-10";
+    const calls = mockApi({ "GET /api/v1/admin/invoices": [page([INVOICE])] });
+    mount([PAYMENT_VIEW], <InvoicesScreen />);
+    await screen.findByRole("row", { name: /INV-0001/ });
+    expect(paramsOf(calls[0])).toEqual({ status: "paid", q: "INV-9", from: "2026-11-01", to: "2026-11-10" });
+    expect(within(screen.getByRole("group", { name: "Invoice status" })).getByRole("button", { name: "Paid" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Search by invoice number")).toHaveValue("INV-9");
+    const issued = rangeLabel({ from: "2026-11-01", to: "2026-11-10" });
+    expect(screen.getByRole("button", { name: `Issued: ${issued}` })).toBeInTheDocument();
+    expect(tagsOf()).toEqual(["Status: Paid", "Search: “INV-9”", `Issued: ${issued}`]);
+
+    // One tag removed: the address and the request lose that filter only.
+    fireEvent.click(screen.getByRole("button", { name: "Remove filter Search: “INV-9”" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin?status=paid&from=2026-11-01&to=2026-11-10", { scroll: false });
+    await waitFor(() => expect(paramsOf(calls.at(-1)!)).toEqual({ status: "paid", from: "2026-11-01", to: "2026-11-10" }));
+
+    // Reset filters clears them all, and the list starts again unfiltered.
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin", { scroll: false });
+    await waitFor(() => expect(paramsOf(calls.at(-1)!)).toEqual({}));
+    expect(screen.queryByRole("list", { name: "Active filters" })).not.toBeInTheDocument();
+  });
+
+  it("writes a chosen status and an applied date range into the address and sends the dates as from and to", async () => {
+    const calls = mockApi({ "GET /api/v1/admin/invoices": [page([INVOICE])] });
+    mount([PAYMENT_VIEW], <InvoicesScreen />);
+    await screen.findByRole("row", { name: /INV-0001/ });
+    fireEvent.click(within(screen.getByRole("group", { name: "Invoice status" })).getByRole("button", { name: "Void" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin?status=void", { scroll: false });
+
+    fireEvent.click(screen.getByRole("button", { name: "Issued: Any time" }));
+    const panel = screen.getByRole("dialog", { name: "Issued between" });
+    fireEvent.change(within(panel).getByLabelText("From"), { target: { value: "2026-10-01" } });
+    fireEvent.change(within(panel).getByLabelText("To"), { target: { value: "2026-10-31" } });
+    // Nothing is sent before Apply.
+    expect(calls.some((c) => c.url.includes("from="))).toBe(false);
+    fireEvent.click(within(panel).getByRole("button", { name: "Apply" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin?status=void&from=2026-10-01&to=2026-10-31", { scroll: false });
+    await waitFor(() => expect(paramsOf(calls.at(-1)!)).toEqual({ status: "void", from: "2026-10-01", to: "2026-10-31" }));
+  });
+
+  it("leaves out a filter the address names that the list does not know, and says so", async () => {
+    query = "status=overdue&q=INV-1&from=2026-02-30";
+    const calls = mockApi({ "GET /api/v1/admin/invoices": [page([INVOICE])] });
+    mount([PAYMENT_VIEW], <InvoicesScreen />);
+    await screen.findByRole("row", { name: /INV-0001/ });
+    expect(paramsOf(calls[0])).toEqual({ q: "INV-1" });
+    expect(screen.getByRole("alert")).toHaveTextContent(droppedMessage(["status"])!);
+    expect(within(screen.getByRole("group", { name: "Invoice status" })).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("drops a range whose start is after its end, rather than sending it", async () => {
+    query = "from=2026-11-10&to=2026-11-01";
+    const calls = mockApi({ "GET /api/v1/admin/invoices": [page([INVOICE])] });
+    mount([PAYMENT_VIEW], <InvoicesScreen />);
+    await screen.findByRole("row", { name: /INV-0001/ });
+    expect(paramsOf(calls[0])).toEqual({});
+    expect(screen.getByRole("alert")).toHaveTextContent(droppedMessage(["from", "to"])!);
+  });
+});
+
+// --- dates and tags on every list ------------------------------------------------------------
+
+describe("the date filter of each list (admin-ux phase 3)", () => {
+  const ALL = [PAYMENT_VIEW, CUSTOMER_VIEW, COMMISSION_VIEW];
+  const cases: { name: string; label: string; route: string; ui: () => React.ReactNode; extra?: () => Record<string, Reply[]> }[] = [
+    { name: "Invoices", label: "Issued", route: "GET /api/v1/admin/invoices", ui: () => <InvoicesScreen /> },
+    { name: "Refunds", label: "Requested", route: "GET /api/v1/admin/refunds", ui: () => <RefundsScreen /> },
+    { name: "Credit notes", label: "Issued", route: "GET /api/v1/admin/credit-notes", ui: () => <CreditNotesScreen /> },
+    {
+      name: "Subscriptions",
+      label: "Created",
+      route: "GET /api/v1/admin/subscriptions",
+      ui: () => <BillingSubscriptionsScreen />,
+      extra: () => ({ "GET /api/v1/admin/catalog/products": [PRODUCTS] }),
+    },
+    { name: "Commission entries", label: "Earned", route: "GET /api/v1/admin/commission/accruals", ui: () => <CommissionEntriesScreen /> },
+    { name: "Payouts", label: "Created", route: "GET /api/v1/admin/payouts", ui: () => <PayoutsScreen /> },
+  ];
+
+  for (const c of cases) {
+    it(`${c.name}: reads "${c.label}" from the address, sends it as from and to, and removes it from its tag`, async () => {
+      query = "from=2026-11-01&to=2026-11-10";
+      const calls = mockApi({ [c.route]: [page([], { counts: {} })], ...c.extra?.() });
+      mount(ALL, c.ui());
+      await waitFor(() => expect(calls.some((x) => x.key === c.route)).toBe(true));
+      const first = calls.find((x) => x.key === c.route)!;
+      expect(paramsOf(first)).toMatchObject({ from: "2026-11-01", to: "2026-11-10" });
+      const range = rangeLabel({ from: "2026-11-01", to: "2026-11-10" });
+      expect(await screen.findByRole("button", { name: `${c.label}: ${range}` })).toBeInTheDocument();
+      expect(tagsOf()).toEqual([`${c.label}: ${range}`]);
+      fireEvent.click(screen.getByRole("button", { name: `Remove filter ${c.label}: ${range}` }));
+      expect(nav.router.replace).toHaveBeenLastCalledWith("/admin", { scroll: false });
+      await waitFor(() => {
+        const last = calls.filter((x) => x.key === c.route).at(-1)!;
+        expect(paramsOf(last).from).toBeUndefined();
+        expect(paramsOf(last).to).toBeUndefined();
+      });
+    });
+  }
 });
 
 // --- failed and stuck ----------------------------------------------------------------------
@@ -211,7 +341,10 @@ describe("Failed & stuck", () => {
     expect(row).toHaveTextContent("Razorpay");
     expect(row).toHaveTextContent("₹500.00");
     expect(row).toHaveTextContent("card_declined");
-    expect(within(row).getByRole("link", { name: "Open billing for Acme Ltd" })).toHaveAttribute("href", "/admin/customers/o1?tab=billing#billing-h");
+    // Open billing is the row's action, in the Actions column at the end (admin-ux phase 3).
+    expect(headersOf(table).at(-1)).toBe("Actions");
+    expect(headersOf(table)).not.toContain("Resolve");
+    expect(within(actionsOf(row)).getByRole("link", { name: "Open billing for Acme Ltd" })).toHaveAttribute("href", "/admin/customers/o1?tab=billing#billing-h");
     expect(calls.find((c) => c.key === "GET /api/v1/admin/payments/all")!.url).toContain("failed=1");
     expect(screen.getByRole("button", { name: "About this page" })).toBeInTheDocument();
     expect(screen.getByText(/A failure later paid by a retry leaves this list/)).toBeInTheDocument();
@@ -248,9 +381,14 @@ describe("Failed & stuck", () => {
     );
     mount([PAYMENT_VIEW, PAYMENT_MANAGE], <FailedAndStuckScreen />);
     const orders = await screen.findByRole("table", { name: "Paid orders not activated" });
-    expect(within(rowOf(orders, /Beta Co/)).getByRole("button", { name: "Retry activation for order ORD-1" })).toBeInTheDocument();
+    expect(headersOf(orders).at(-1)).toBe("Actions");
+    expect(headersOf(orders)).not.toContain("Retry");
+    expect(within(actionsOf(rowOf(orders, /Beta Co/))).getByRole("button", { name: "Retry activation for order ORD-1" })).toBeInTheDocument();
     const refunds = await screen.findByRole("table", { name: "Refunds that need attention" });
-    expect(await within(refunds).findByRole("row", { name: /Gamma Co/ })).toHaveTextContent("INV-0009");
+    const refund = await within(refunds).findByRole("row", { name: /Gamma Co/ });
+    expect(refund).toHaveTextContent("INV-0009");
+    expect(headersOf(refunds).at(-1)).toBe("Actions");
+    expect(within(actionsOf(refund)).getByRole("link", { name: "Open billing for Gamma Co" })).toHaveAttribute("href", "/admin/customers/o3?tab=billing#billing-h");
     expect(calls.find((c) => c.key === "GET /api/v1/admin/refunds")!.url).toContain("waiting=1");
   });
 
@@ -296,6 +434,21 @@ describe("Failed & stuck", () => {
     const table = await screen.findByRole("table", { name: "Paid orders not activated" });
     expect(rowOf(table, /Beta Co/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Retry activation/ })).not.toBeInTheDocument();
+    expect(headersOf(table)).not.toContain("Actions");
+  });
+
+  it("offers Try again on a list that can't be loaded, and loads it on the next try", async () => {
+    mockApi({
+      "GET /api/v1/admin/payments/all": [BROKEN, page([FAILED_PAYMENT])],
+      "GET /api/v1/admin/orders/stuck": [BROKEN, ok({ results: [PAID_ORDER] })],
+      "GET /api/v1/admin/refunds": [page([])],
+    });
+    mount([PAYMENT_VIEW], <FailedAndStuckScreen />);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(2));
+    for (const button of screen.getAllByRole("button", { name: "Try again" })) fireEvent.click(button);
+    expect(await within(await screen.findByRole("table", { name: "Failed payments" })).findByRole("row", { name: /Acme Ltd/ })).toBeInTheDocument();
+    expect(await within(await screen.findByRole("table", { name: "Paid orders not activated" })).findByRole("row", { name: /Beta Co/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
 
   it("says nothing is waiting when both lists are empty", async () => {
@@ -531,13 +684,38 @@ describe("Subscriptions", () => {
     fireEvent.change(screen.getByLabelText("Search customers"), { target: { value: "acme" } });
     await waitFor(() => expect(calls.some((c) => c.url.includes("q=acme"))).toBe(true));
 
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    // Every filter is in the address and listed as a tag (admin-ux phase 3).
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin?status=trialing&product=easy_crm&renewing=30&q=acme", { scroll: false });
+    expect(tagsOf()).toEqual(["Status: Trial", "Product: Easy CRM", "Renewing within: 30 days", "Search: “acme”"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin", { scroll: false });
     await waitFor(() => {
       const last = calls[calls.length - 1].url;
       expect(last).not.toContain("q=");
       expect(last).not.toContain("product=");
       expect(last).not.toContain("renewing=");
     });
+  });
+
+  it("reads its filters back from the address, the product named as the catalog names it", async () => {
+    query = "status=past_due&product=easy_crm&renewing=7&q=beta";
+    const calls = mockApi({
+      "GET /api/v1/admin/subscriptions": [page([SUBSCRIPTION], { counts: COUNTS })],
+      "GET /api/v1/admin/catalog/products": [PRODUCTS],
+    });
+    mount([CUSTOMER_VIEW], <BillingSubscriptionsScreen />);
+    await screen.findByRole("row", { name: /Acme Ltd/ });
+    expect(paramsOf(calls.find((c) => c.key === "GET /api/v1/admin/subscriptions")!)).toEqual({
+      status: "past_due",
+      product: "easy_crm",
+      renewing: "7",
+      q: "beta",
+    });
+    expect(await screen.findByRole("combobox", { name: "Product" })).toHaveTextContent("Easy CRM");
+    expect(screen.getByRole("combobox", { name: "Renewing within" })).toHaveTextContent("7 days");
+    expect(screen.getByRole("button", { name: "Past due 2" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(tagsOf()).toEqual(["Status: Past due", "Product: Easy CRM", "Renewing within: 7 days", "Search: “beta”"]));
   });
 
   it("still lists subscriptions when the catalog is out of this person's reach", async () => {
@@ -645,6 +823,18 @@ describe("Commission entries", () => {
     expect(screen.getByRole("link", { name: "Show every partner" })).toHaveAttribute("href", "/admin/commissions");
     fireEvent.click(screen.getByRole("button", { name: "Not in a payout" }));
     await waitFor(() => expect(calls.some((c) => c.url.includes("unpaid=1") && c.url.includes(`partner_id=${PARTNER}`))).toBe(true));
+    // The chip is kept in the address beside the partner (admin-ux phase 3).
+    expect(nav.router.replace).toHaveBeenLastCalledWith(`/admin?partner=${PARTNER}&unpaid=1`, { scroll: false });
+    expect(tagsOf()).toEqual(["Payout state: Not in a payout"]);
+  });
+
+  it("reads the payout state back from the address", async () => {
+    query = "unpaid=1";
+    const calls = mockApi({ "GET /api/v1/admin/commission/accruals": [page([ACCRUAL])] });
+    mount([COMMISSION_VIEW], <CommissionsPage />);
+    await screen.findByRole("row", { name: /Acme Ltd/ });
+    expect(paramsOf(calls[0])).toEqual({ unpaid: "1" });
+    expect(screen.getByRole("button", { name: "Not in a payout" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("ignores a partner value that is not an id, rather than failing", async () => {
@@ -719,15 +909,19 @@ describe("Commission entries", () => {
     mockApi({ "GET /api/v1/admin/commission/accruals": [page(rows)] });
     const { unmount } = mount([COMMISSION_VIEW, COMMISSION_MANAGE], <CommissionEntriesScreen />);
     const table = await screen.findByRole("table", { name: "Commission entries" });
-    expect(within(rowOf(table, /Acme Ltd/)).getByRole("button", { name: /^Reverse / })).toBeInTheDocument();
+    // Reverse is the row's action, in the Actions column at the end (admin-ux phase 3).
+    expect(headersOf(table).at(-1)).toBe("Actions");
+    expect(headersOf(table)).not.toContain("Action");
+    expect(within(actionsOf(rowOf(table, /Acme Ltd/))).getByRole("button", { name: /^Reverse / })).toBeInTheDocument();
     expect(within(rowOf(table, /Beta Co/)).queryByRole("button", { name: /^Reverse / })).not.toBeInTheDocument();
     expect(within(rowOf(table, /Gamma Co/)).queryByRole("button", { name: /^Reverse / })).not.toBeInTheDocument();
     unmount();
 
     mockApi({ "GET /api/v1/admin/commission/accruals": [page(rows)] });
     mount([COMMISSION_VIEW], <CommissionEntriesScreen />);
-    await screen.findByRole("table", { name: "Commission entries" });
+    const viewOnly = await screen.findByRole("table", { name: "Commission entries" });
     expect(screen.queryByRole("button", { name: /^Reverse / })).not.toBeInTheDocument();
+    expect(headersOf(viewOnly)).not.toContain("Actions");
   });
 
   it("says so when there are none, and when they can't be loaded", async () => {
@@ -760,6 +954,8 @@ const PAYOUT = {
   paid_reference: "",
 };
 const PAYOUTS = "GET /api/v1/admin/payouts";
+/** How a payout's buttons name it: its partner (by id when unnamed) and its period. */
+const NAMED = "partner 0b8f6a52, period ending 30 Sep 2026";
 
 describe("Payouts", () => {
   it("is what the route shows, not a redirect: real rows, and a status chip for each state", async () => {
@@ -774,6 +970,13 @@ describe("Payouts", () => {
     expect(row).toHaveTextContent("-₹50.00");
     expect(row).toHaveTextContent("₹950.00");
     expect(screen.getByRole("link", { name: "Withdrawal requests" })).toHaveAttribute("href", "/admin/partners/withdrawals");
+    // The payout's controls are in the Actions column at the end, each naming the
+    // payout it acts on (admin-ux phase 3).
+    expect(headersOf(table).at(-1)).toBe("Actions");
+    expect(headersOf(table).filter((h) => h === "Actions")).toHaveLength(1);
+    const controls = [...actionsOf(row).querySelectorAll("a, button")].map((el) => el.getAttribute("aria-label") ?? el.textContent);
+    expect(controls).toEqual([`Mark ready: ${NAMED}`, `Cancel payout: ${NAMED}`]);
+    expect(within(actionsOf(row)).getByRole("button", { name: `Mark ready: ${NAMED}` })).toHaveTextContent(/^Mark ready$/);
     await expectNoViolations(container);
     for (const [label, value] of [
       ["Ready", "ready"],
@@ -793,7 +996,7 @@ describe("Payouts", () => {
       "POST /api/v1/admin/payouts/po1/ready": [ok({ ...PAYOUT, status: "ready", version: 4 })],
     });
     mount([COMMISSION_VIEW, PAYOUT_MANAGE], <PayoutsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: "Mark ready" }));
+    fireEvent.click(await screen.findByRole("button", { name: `Mark ready: ${NAMED}` }));
     expect(await screen.findByText("Marked ready for approval.")).toBeInTheDocument();
     expect(calls.find((c) => c.key === "POST /api/v1/admin/payouts/po1/ready")!.body).toEqual({ expected_version: 3 });
     await waitFor(() => expect(screen.getByRole("row", { name: /30 Sep 2026/ })).toHaveTextContent("Ready"));
@@ -806,7 +1009,7 @@ describe("Payouts", () => {
       "POST /api/v1/admin/payouts/po1/paid": [ok({ ...approved, status: "paid" })],
     });
     mount([COMMISSION_VIEW, PAYOUT_MANAGE], <PayoutsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: "Record the payout for 2026-09-30 as paid" }));
+    fireEvent.click(await screen.findByRole("button", { name: `Record as paid: ${NAMED}` }));
     const popup = screen.getByRole("dialog", { name: "Record a payout as paid" });
     fireEvent.change(within(popup).getByLabelText(/Transfer reference/), { target: { value: " NEFT-77 " } });
     fireEvent.click(within(popup).getByRole("button", { name: "Record as paid" }));
@@ -820,9 +1023,12 @@ describe("Payouts", () => {
       "POST /api/v1/admin/payouts/po1/cancel": [ok({ ...PAYOUT, status: "cancelled" })],
     });
     mount([COMMISSION_VIEW, PAYOUT_MANAGE], <PayoutsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: "Cancel payout" }));
+    fireEvent.click(await screen.findByRole("button", { name: `Cancel payout: ${NAMED}` }));
+    // The dialog says what will happen before anything is sent.
+    const dialog = screen.getByRole("dialog", { name: "Cancel payout?" });
+    expect(dialog).toHaveTextContent("Its entries become payable again. No money moves.");
     expect(calls.some((c) => c.key === "POST /api/v1/admin/payouts/po1/cancel")).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Confirm cancel payout" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm cancel payout" }));
     expect(await screen.findByText("Payout cancelled; its entries are payable again.")).toBeInTheDocument();
     expect(calls.find((c) => c.key === "POST /api/v1/admin/payouts/po1/cancel")!.body).toEqual({
       expected_version: 3,
@@ -837,8 +1043,23 @@ describe("Payouts", () => {
       "POST /api/v1/admin/payouts/po1/approve": [{ status: 409, body: { detail: "The person who prepared a payout cannot approve it." } }],
     });
     mount([COMMISSION_VIEW, PAYOUT_APPROVE], <PayoutsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    fireEvent.click(await screen.findByRole("button", { name: `Approve: ${NAMED}` }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The person who prepared a payout cannot approve it.");
+  });
+
+  it("approves with the recorded reason and the version it read", async () => {
+    const ready = { ...PAYOUT, status: "ready" };
+    const calls = mockApi({
+      [PAYOUTS]: [page([ready])],
+      "POST /api/v1/admin/payouts/po1/approve": [ok({ ...ready, status: "approved" })],
+    });
+    mount([COMMISSION_VIEW, PAYOUT_APPROVE], <PayoutsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: `Approve: ${NAMED}` }));
+    expect(await screen.findByText("Payout approved. No payment was made.")).toBeInTheDocument();
+    expect(calls.find((c) => c.key === "POST /api/v1/admin/payouts/po1/approve")!.body).toEqual({
+      expected_version: 3,
+      reason: "Approve - Admin console",
+    });
   });
 
   it("offers each action only to the grant that allows it", async () => {
@@ -846,23 +1067,33 @@ describe("Payouts", () => {
     mockApi({ [PAYOUTS]: [page([ready])] });
     const first = mount([COMMISSION_VIEW, PAYOUT_MANAGE], <PayoutsScreen />);
     await screen.findByRole("row", { name: /30 Sep 2026/ });
-    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Cancel payout" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Approve:/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `Cancel payout: ${NAMED}` })).toBeInTheDocument();
     first.unmount();
 
     mockApi({ [PAYOUTS]: [page([ready])] });
     const second = mount([COMMISSION_VIEW, PAYOUT_APPROVE], <PayoutsScreen />);
-    expect(await screen.findByRole("button", { name: "Approve" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Cancel payout" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: `Approve: ${NAMED}` })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Cancel payout:/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Withdrawal requests" })).not.toBeInTheDocument();
     second.unmount();
 
     mockApi({ [PAYOUTS]: [page([ready])] });
     mount([COMMISSION_VIEW], <PayoutsScreen />);
     await screen.findByRole("row", { name: /30 Sep 2026/ });
-    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Cancel payout" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Approve:/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Cancel payout:/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Actions" })).not.toBeInTheDocument();
+  });
+
+  it("names a payout by its partner when the server sends the name, and keeps the status in the address", async () => {
+    const calls = mockApi({ [PAYOUTS]: [page([{ ...PAYOUT, partner_name: "Northwind" }])] });
+    mount([COMMISSION_VIEW, PAYOUT_MANAGE], <PayoutsScreen />);
+    expect(await screen.findByRole("button", { name: "Mark ready: Northwind, period ending 30 Sep 2026" })).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("group", { name: "Payout status" })).getByRole("button", { name: "Approved" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin?status=approved", { scroll: false });
+    await waitFor(() => expect(paramsOf(calls.at(-1)!)).toEqual({ status: "approved" }));
+    expect(tagsOf()).toEqual(["Status: Approved"]);
   });
 
   it("says so when there are none, and when they can't be loaded", async () => {

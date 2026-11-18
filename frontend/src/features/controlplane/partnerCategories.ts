@@ -9,6 +9,8 @@
  * return to, since the server accepts a path with no query there.
  */
 
+import { isDay } from "./kit/DateRangeFilter";
+
 export type PartnerCategory = "affiliate" | "reseller" | "white_label";
 
 export const CATEGORIES: readonly PartnerCategory[] = ["affiliate", "reseller", "white_label"];
@@ -34,12 +36,14 @@ type Params = Record<string, string | string[] | undefined>;
 
 /** The filters a category page understands, carried from another address; an
  * unknown status never turns into an error. */
-const KEEP = ["q", "status", "profile", "kyc"] as const;
+const KEEP = ["q", "status", "profile", "kyc", "from", "to"] as const;
 const VALUES: Partial<Record<(typeof KEEP)[number], Set<string>>> = {
   status: new Set(["draft", "active", "suspended", "terminated"]),
   profile: new Set(["complete", "incomplete"]),
   kyc: new Set(["ready", "approved", "not_approved", "legacy"]),
 };
+/** The created-date range (admin-ux phase 3): whole days, `YYYY-MM-DD`. */
+const DAYS = new Set<string>(["from", "to"]);
 
 // --- the list this tab last showed ---------------------------------------------------
 //
@@ -93,6 +97,7 @@ export function categoryHref(category: PartnerCategory | null, params: Params = 
     if (!value) continue;
     const allowed = VALUES[key];
     if (allowed && !allowed.has(value)) continue;
+    if (DAYS.has(key) && !isDay(value)) continue;
     out.set(key, value.slice(0, 80));
   }
   const text = out.toString();

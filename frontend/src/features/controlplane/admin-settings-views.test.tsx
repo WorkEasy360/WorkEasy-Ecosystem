@@ -16,16 +16,31 @@ import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call } from 
  * filters, and what the top bar offers.
  */
 
+// One router object, as Next.js returns; the address is the test's to set.
+const nav = vi.hoisted(() => ({ router: { replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }, query: "", pathname: "/admin/settings" }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
-  usePathname: () => "/admin/settings",
+  useRouter: () => nav.router,
+  useSearchParams: () => new URLSearchParams(nav.query),
+  usePathname: () => nav.pathname,
 }));
 
 beforeEach(() => {
   vi.restoreAllMocks();
   window.localStorage.clear();
+  nav.router.replace.mockReset();
+  nav.router.push.mockReset();
+  nav.query = "";
+  nav.pathname = "/admin/settings";
 });
+
+/** Choose a range in a date-range filter's panel and apply it. */
+function applyRange(label: string, from: string, to: string) {
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${label}: Any time`) }));
+  const panel = screen.getByRole("dialog", { name: `${label} between` });
+  fireEvent.change(within(panel).getByLabelText("From"), { target: { value: from } });
+  fireEvent.change(within(panel).getByLabelText("To"), { target: { value: to } });
+  fireEvent.click(within(panel).getByRole("button", { name: "Apply" }));
+}
 
 const T = "2026-11-08T10:00:00Z";
 const asStaff = (permissions: string[], ui: React.ReactNode) => render(<AdminContextForTest permissions={permissions}>{ui}</AdminContextForTest>);
@@ -292,6 +307,15 @@ describe("domains and apps", () => {
     asStaff([SETTINGS_VIEW], <DomainsScreen />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Domains could not be read.");
   });
+
+  it("offers Try again when it cannot load (admin-ux phase 3)", async () => {
+    const calls = mockApi({ [`GET ${DOMAINS_URL}`]: [{ status: 500, body: { detail: "Domains could not be read." } }, ok(DOMAINS)] });
+    asStaff([SETTINGS_VIEW], <DomainsScreen />);
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("table", { name: "Primary domains" })).toBeInTheDocument();
+    expect(urlsOf(calls, `GET ${DOMAINS_URL}`)).toHaveLength(2);
+  });
 });
 
 // --- login clients ----------------------------------------------------------------------------
@@ -338,6 +362,15 @@ describe("login clients", () => {
     asStaff([SETTINGS_VIEW], <LoginClientsScreen />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Clients could not be read.");
   });
+
+  it("offers Try again when it cannot load (admin-ux phase 3)", async () => {
+    const calls = mockApi({ [`GET ${CLIENTS_URL}`]: [{ status: 500, body: { detail: "Clients could not be read." } }, ok({ results: [CLIENT] })] });
+    asStaff([SETTINGS_VIEW], <LoginClientsScreen />);
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("table", { name: "Login clients" })).toBeInTheDocument();
+    expect(urlsOf(calls, `GET ${CLIENTS_URL}`)).toHaveLength(2);
+  });
 });
 
 // --- the sign-in audit --------------------------------------------------------------------------
@@ -373,6 +406,7 @@ describe("the sign-in audit", () => {
   });
 
   it("sends each filter to the server, and pages through it", async () => {
+    nav.pathname = "/admin/security/sign-ins";
     const calls = mockApi({ [SIGN_INS]: [ok({ results: [EVENT], total: 40, limit: 25, offset: 0 })] });
     asStaff([AUDIT_VIEW], <SignInAuditScreen />);
     await screen.findByRole("table", { name: "Sign-in events" });
@@ -386,14 +420,76 @@ describe("the sign-in audit", () => {
     fireEvent.click(screen.getByRole("option", { name: "Account unlocked" }));
     await waitFor(() => expect(urlsOf(calls, SIGN_INS).at(-1)).toContain("kind=account_unlocked"));
     await screen.findByRole("table", { name: "Sign-in events" });
-    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-11-01" } });
+    // The days, from the date-range filter (admin-ux phase 3): sent on Apply, both ends at once.
+    applyRange("Date", "2026-11-01", "2026-11-08");
     await waitFor(() => expect(urlsOf(calls, SIGN_INS).at(-1)).toContain("from=2026-11-01"));
-    await screen.findByRole("table", { name: "Sign-in events" });
-    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-11-08" } });
-    await waitFor(() => expect(urlsOf(calls, SIGN_INS).at(-1)).toContain("to=2026-11-08"));
+    expect(urlsOf(calls, SIGN_INS).at(-1)).toContain("to=2026-11-08");
     await screen.findByRole("table", { name: "Sign-in events" });
     fireEvent.change(screen.getByLabelText("Search by email"), { target: { value: "pat" } });
     await waitFor(() => expect(urlsOf(calls, SIGN_INS).at(-1)).toContain("q=pat"));
+    // Every filter is kept in the address, the first page each time.
+    expect(nav.router.replace).toHaveBeenLastCalledWith(
+      "/admin/security/sign-ins?whose=everyone&kind=account_unlocked&q=pat&from=2026-11-01&to=2026-11-08",
+      { scroll: false },
+    );
+    expect(urlsOf(calls, SIGN_INS).at(-1)).toContain("offset=0");
+  });
+
+  it("reads its filters back from the address, drops what it does not know, and lists them as removable tags (admin-ux phase 3)", async () => {
+    nav.pathname = "/admin/security/sign-ins";
+    nav.query = "whose=everyone&kind=sign_in_failed&q=pat&from=2026-11-01&to=2026-11-08";
+    let calls = mockApi({ [SIGN_INS]: [ok({ results: [EVENT], total: 1, limit: 25, offset: 0 })] });
+    const view = asStaff([AUDIT_VIEW], <SignInAuditScreen />);
+    await screen.findByRole("table", { name: "Sign-in events" });
+    expect(Object.fromEntries(new URL(urlsOf(calls, SIGN_INS)[0], "https://x.invalid").searchParams)).toEqual({
+      kind: "sign_in_failed",
+      q: "pat",
+      from: "2026-11-01",
+      to: "2026-11-08",
+      everyone: "1",
+      limit: "25",
+      offset: "0",
+    });
+    expect(screen.getByRole("button", { name: "Everyone" })).toHaveAttribute("aria-pressed", "true");
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((t) => t.textContent)).toEqual([
+      "Search: “pat”",
+      "Event: Sign-in failed",
+      expect.stringMatching(/^Date: .*1.*Nov.*2026.*8.*Nov.*2026$/),
+    ]);
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Event: Sign-in failed" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/security/sign-ins?whose=everyone&q=pat&from=2026-11-01&to=2026-11-08", { scroll: false });
+    await waitFor(() => expect(urlsOf(calls, SIGN_INS).at(-1)).not.toContain("kind="));
+    // Reset filters keeps whose sign-ins: it is the list, not a filter on it.
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/security/sign-ins?whose=everyone", { scroll: false });
+    view.unmount();
+
+    nav.query = "whose=nobody&kind=hacked&to=2026-13-01";
+    calls = mockApi({ [SIGN_INS]: [ok({ results: [EVENT], total: 1, limit: 25, offset: 0 })] });
+    asStaff([AUDIT_VIEW], <SignInAuditScreen />);
+    await screen.findByRole("table", { name: "Sign-in events" });
+    expect(urlsOf(calls, SIGN_INS)[0]).toBe("/api/v1/admin/security/sign-ins?limit=25&offset=0");
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("sorts on its columns and offers Try again when it cannot load", async () => {
+    const calls = mockApi({
+      [SIGN_INS]: [
+        { status: 500, body: { detail: "The audit is unavailable." } },
+        ok({ results: [EVENT, { ...EVENT, id: "e2", email: "amy@example.com", name: "Amy Ng", kind: "sign_in", kind_label: "Signed in" }], total: 2, limit: 25, offset: 0 }),
+      ],
+    });
+    asStaff([AUDIT_VIEW], <SignInAuditScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The audit is unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    const table = await screen.findByRole("table", { name: "Sign-in events" });
+    expect(urlsOf(calls, SIGN_INS)).toHaveLength(2);
+    const people = () => within(table).getAllByRole("row").slice(1).map((r) => (r.textContent?.includes("Amy Ng") ? "Amy" : "Pat"));
+    expect(people()).toEqual(["Pat", "Amy"]);
+    fireEvent.click(within(table).getByRole("button", { name: "Person" }));
+    expect(people()).toEqual(["Amy", "Pat"]);
+    for (const name of ["When", "Event", "Reason", "Network", "Device"]) expect(within(table).getByRole("button", { name })).toBeInTheDocument();
   });
 
   it("says when there are none, and shows the server's refusal", async () => {
@@ -504,15 +600,79 @@ describe("the audit log's server filters", () => {
     const { container } = asStaff([AUDIT_VIEW], <AuditScreen />);
     await screen.findByRole("table", { name: "Audit entries" });
     expect(screen.queryByRole("combobox", { name: /^Date/ })).toBeNull();
-    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-11-01" } });
+    // The days, from the date-range filter (admin-ux phase 3): sent on Apply, both ends at once.
+    applyRange("Date", "2026-11-01", "2026-11-08");
     await waitFor(() => expect(urlsOf(calls, AUDIT).at(-1)).toContain("from=2026-11-01"));
-    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-11-08" } });
-    await waitFor(() => expect(urlsOf(calls, AUDIT).at(-1)).toContain("to=2026-11-08"));
+    expect(urlsOf(calls, AUDIT).at(-1)).toContain("to=2026-11-08");
     await screen.findByRole("table", { name: "Audit entries" });
     fireEvent.change(screen.getByLabelText("Filter by the person's ID"), { target: { value: PERSON } });
     await waitFor(() => expect(urlsOf(calls, AUDIT).at(-1)).toContain(`actor=${PERSON}`));
     await screen.findByRole("table", { name: "Audit entries" });
     await expectNoViolations(container);
+  });
+
+  it("keeps its server filters in the address and reads them back, dropping what it does not know (admin-ux phase 3)", async () => {
+    nav.pathname = "/admin/audit";
+    let calls = mockApi({ [AUDIT]: [auditPage([ENTRY])] });
+    let view = asStaff([AUDIT_VIEW], <AuditScreen />);
+    await screen.findByRole("table", { name: "Audit entries" });
+    fireEvent.click(screen.getByRole("combobox", { name: "Area" }));
+    fireEvent.click(screen.getByRole("option", { name: "Payouts" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/audit?area=payout.", { scroll: false });
+    await waitFor(() => expect(urlsOf(calls, AUDIT).at(-1)).toContain("action=payout."));
+    applyRange("Date", "2026-11-01", "2026-11-08");
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/audit?area=payout.&from=2026-11-01&to=2026-11-08", { scroll: false });
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((t) => t.textContent)).toEqual([
+      "Area: Payouts",
+      expect.stringMatching(/^Date: .*1.*Nov.*2026.*8.*Nov.*2026$/),
+    ]);
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Area: Payouts" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/audit?from=2026-11-01&to=2026-11-08", { scroll: false });
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/audit", { scroll: false });
+    view.unmount();
+
+    nav.query = `action=partner.&person=${PERSON}&from=2026-11-02`;
+    calls = mockApi({ [AUDIT]: [auditPage([ENTRY])] });
+    view = asStaff([AUDIT_VIEW], <AuditScreen />);
+    await screen.findByRole("table", { name: "Audit entries" });
+    const sent = new URL(urlsOf(calls, AUDIT)[0], "https://x.invalid").searchParams;
+    expect(Object.fromEntries(sent)).toEqual({ action: "partner.", actor: PERSON, from: "2026-11-02" });
+    expect(screen.getByLabelText("Filter by action (e.g. payout., partner.)")).toHaveValue("partner.");
+    expect(screen.getByRole("button", { name: /^Date: .*Nov.*2026/ })).toBeInTheDocument();
+    view.unmount();
+
+    nav.query = "area=everything&from=yesterday";
+    calls = mockApi({ [AUDIT]: [auditPage([ENTRY])] });
+    asStaff([AUDIT_VIEW], <AuditScreen />);
+    await screen.findByRole("table", { name: "Audit entries" });
+    expect(urlsOf(calls, AUDIT)[0]).toBe("/api/v1/admin/audit");
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("says that By and Resource narrow only the entries loaded so far, lists them as tags, and offers Try again", async () => {
+    const calls = mockApi({
+      [AUDIT]: [
+        { status: 500, body: {} },
+        ok({ results: [ENTRY, { ...ENTRY, id: "a2", actor_kind: "system", resource_type: "invoice" }], next_cursor: "c2", has_more: true }),
+      ],
+    });
+    asStaff([AUDIT_VIEW], <AuditScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load audit entries.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    const table = await screen.findByRole("table", { name: "Audit entries" });
+    expect(urlsOf(calls, AUDIT)).toHaveLength(2);
+    fireEvent.click(screen.getByRole("combobox", { name: "By" }));
+    fireEvent.click(screen.getByRole("option", { name: "System" }));
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    expect(screen.getByText(/narrow only the entries loaded so far/)).toBeInTheDocument();
+    // Not a server filter: nothing new is asked, and the address is not touched.
+    expect(urlsOf(calls, AUDIT)).toHaveLength(2);
+    expect(nav.router.replace).not.toHaveBeenCalled();
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter By: System" }));
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
   });
 
   it("says an incomplete ID is incomplete and does not send it", async () => {
@@ -607,11 +767,23 @@ describe("the top bar", () => {
     mockApi({ [ATTENTION]: [ok(WAITING)] });
     const { container } = render(<AdminNotifications />);
     const table = await screen.findByRole("table", { name: "Notifications" });
-    expect(within(table).getByRole("link", { name: "Open wallets" })).toHaveAttribute("href", "/admin/wallets?low=1");
-    expect(within(table).getByRole("link", { name: "Open tickets" })).toHaveAttribute("href", "/admin/tickets");
+    // Each row's way in is in its Actions column (admin-ux phase 3), named with the row.
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["What is waiting", "Count", "Actions"]);
+    expect(within(table).getByRole("link", { name: "Open wallets: Wallets low on balance" })).toHaveAttribute("href", "/admin/wallets?low=1");
+    expect(within(table).getByRole("link", { name: "Open tickets: Support tickets still open" })).toHaveAttribute("href", "/admin/tickets");
+    expect(within(table).getByRole("link", { name: "Open wallets: Wallets low on balance" })).toHaveTextContent("Open wallets");
     expect(within(table).getByText("Partner applications waiting for KYC review")).toBeInTheDocument();
     expect(within(table).getByText("Failed payments and activations")).toBeInTheDocument();
     await expectNoViolations(container);
+  });
+
+  it("offers Try again when the notifications page cannot load", async () => {
+    const calls = mockApi({ [ATTENTION]: [{ status: 500, body: { detail: "Nothing could be counted." } }, ok(WAITING)] });
+    render(<AdminNotifications />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Nothing could be counted.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("link", { name: "Open wallets: Wallets low on balance" })).toBeInTheDocument();
+    expect(urlsOf(calls, ATTENTION)).toHaveLength(2);
   });
 
   it("offers every Create item to one who holds every grant, in order", async () => {

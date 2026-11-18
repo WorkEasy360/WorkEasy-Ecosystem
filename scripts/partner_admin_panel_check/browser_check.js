@@ -395,9 +395,9 @@ async function partnerApi(page, method, url, body, key) {
     check("S4 the partner portal shows the Guest Session banner", (await text(s)).includes("Guest Session – Viewing Partner:"), s.url());
     const refused = await partnerApi(s, "POST", `/api/v1/partner/${IDS.reseller}/platform-wallet/top-up`, { amount: "100.00" });
     check("S5 a write in a guest session is refused (guest_read_only)", refused.status === 403 && refused.json?.reason === "guest_read_only", JSON.stringify(refused));
-    await Promise.all([s.waitForNavigation({ timeout: 60000 }).catch(() => {}), clickButton(s, "Return to Super Admin")]);
+    await Promise.all([s.waitForNavigation({ timeout: 60000 }).catch(() => {}), clickButton(s, "Exit Guest Session")]);
     await s.waitForFunction(() => location.host === "admin.workeasy360.com", { timeout: 60000 });
-    check("S6 Return to Super Admin returns to the Admin, still signed in", new URL(s.url()).pathname.startsWith("/admin/partners"), s.url());
+    check("S6 Exit Guest Session returns to the Admin, still signed in", new URL(s.url()).pathname.startsWith("/admin/partners"), s.url());
     // New partner: Partner Email, and base permissions beside White Label.
     await go(s, `${ADMIN}/admin/partners/new`);
     await waitText(s, "Partner Email");

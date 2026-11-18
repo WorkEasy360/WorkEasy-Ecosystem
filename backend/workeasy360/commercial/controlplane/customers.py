@@ -8,6 +8,7 @@ There is no product-domain record to show, and none is reached.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -62,13 +63,16 @@ def directory(
     subscription_status: str | None = None,
     access_class: str | None = None,
     product_code: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> Page:
     """One page of customers with subscription, products and partner.
 
     Three queries whatever the page size: the organizations (with owners), the
     summary projection for exactly those, and the partner links for exactly
     those. Seat *capacity* comes from the projection; assignment is shown only
-    in the detail, from the authoritative service (Task 15).
+    in the detail, from the authoritative service (Task 15). ``start``/``end``
+    keep the customers created in ``[start, end)``.
     """
     from workeasy360.commercial.provisioning.selectors import (
         organization_ids_matching,
@@ -83,6 +87,8 @@ def directory(
         status=status,
         limit=limit,
         cursor=cursor,
+        created_from=start,
+        created_before=end,
         only=(
             organization_ids_matching(
                 subscription_status=subscription_status,

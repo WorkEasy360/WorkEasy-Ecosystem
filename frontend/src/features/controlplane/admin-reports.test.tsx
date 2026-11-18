@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 
 import { ReportScreen, ReportsScreen } from "./AdminReports";
 import { dayBefore } from "./AdminListParts";
+import { rangeLabel } from "./kit";
 import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call, type Reply } from "./testSupport";
 
 /**
@@ -23,6 +24,17 @@ beforeEach(() => {
   nav.router.replace.mockReset();
   nav.query = "";
 });
+
+/** Chooses a period in the date-range panel (admin-ux phase 3) and applies it. */
+function choosePeriod(from: string, to?: string) {
+  fireEvent.click(screen.getByRole("button", { name: /^Period: / }));
+  const panel = screen.getByRole("dialog", { name: "Period between" });
+  fireEvent.change(within(panel).getByLabelText("From"), { target: { value: from } });
+  if (to !== undefined) fireEvent.change(within(panel).getByLabelText("To"), { target: { value: to } });
+  fireEvent.click(within(panel).getByRole("button", { name: "Apply" }));
+}
+
+const LAST_30 = () => rangeLabel({ from: dayBefore(29), to: dayBefore(0) });
 
 const VIEW = "platform.staff_report.view";
 const CATALOG = "platform.staff_catalog.view";
@@ -176,10 +188,16 @@ describe("a report", () => {
     const calls = mockApi(routes("sales", ok(SALES)));
     asStaff([VIEW], <ReportScreen kind="sales" />);
     await screen.findByRole("table", { name: "Sales" });
-    expect(screen.getByLabelText("From")).toHaveValue(dayBefore(29));
-    expect(screen.getByLabelText("To")).toHaveValue(dayBefore(0));
+    expect(screen.getByRole("button", { name: /^Period: / })).toHaveTextContent(`Period: ${LAST_30()}`);
+    fireEvent.click(screen.getByRole("button", { name: /^Period: / }));
+    const panel = screen.getByRole("dialog", { name: "Period between" });
+    expect(within(panel).getByLabelText("From")).toHaveValue(dayBefore(29));
+    expect(within(panel).getByLabelText("To")).toHaveValue(dayBefore(0));
     const params = runs(calls, "sales")[0];
     expect(Object.fromEntries(params)).toEqual({ from: dayBefore(29), to: dayBefore(0), limit: "25", offset: "0" });
+    // Where a report starts is not a filter: no tag, nothing written to the address.
+    expect(screen.queryByRole("list", { name: "Active filters" })).toBeNull();
+    expect(nav.router.replace).not.toHaveBeenCalled();
   });
 
   it("sends every filter, returns to the first page, and pages through the server", async () => {
@@ -194,8 +212,8 @@ describe("a report", () => {
     await waitFor(() => expect(runs(calls, "sales").at(-1)?.get("product")).toBe("easy_crm"));
     expect(runs(calls, "sales").at(-1)?.get("offset")).toBe("0");
     await screen.findByRole("table", { name: "Sales" });
-    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-11-01" } });
-    await waitFor(() => expect(runs(calls, "sales").at(-1)?.get("from")).toBe("2026-11-01"));
+    choosePeriod("2026-10-01");
+    await waitFor(() => expect(runs(calls, "sales").at(-1)?.get("from")).toBe("2026-10-01"));
     await screen.findByRole("table", { name: "Sales" });
     fireEvent.change(screen.getByLabelText("Search by invoice number"), { target: { value: "INV" } });
     await waitFor(() => expect(runs(calls, "sales").at(-1)?.get("q")).toBe("INV"));
@@ -205,12 +223,12 @@ describe("a report", () => {
     mockApi(routes("sales", ok(SALES), { "GET /api/v1/admin/catalog/products": [ok(PRODUCTS)] }));
     asStaff([VIEW, CATALOG], <ReportScreen kind="sales" />);
     await screen.findByRole("table", { name: "Sales" });
-    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-11-01" } });
-    await waitFor(() => expect(screen.getByLabelText("From")).toHaveValue("2026-11-01"));
+    choosePeriod("2026-10-01");
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Period: / })).toHaveTextContent(rangeLabel({ from: "2026-10-01", to: dayBefore(0) })));
     const link = await screen.findByRole("link", { name: "Export CSV" });
     const url = new URL(link.getAttribute("href") ?? "", "http://x");
     expect(url.pathname).toBe("/api/v1/admin/reports/sales");
-    expect(Object.fromEntries(url.searchParams)).toEqual({ format: "csv", from: "2026-11-01", to: dayBefore(0) });
+    expect(Object.fromEntries(url.searchParams)).toEqual({ format: "csv", from: "2026-10-01", to: dayBefore(0) });
   });
 
   it("does not offer a product filter a report ignores, or one the grants cannot fill", async () => {
@@ -262,7 +280,7 @@ describe("a report", () => {
     mockApi(routes("sales", { status: 400, body: { detail: "The period ends before it starts." } }));
     const view = asStaff([VIEW], <ReportScreen kind="sales" />);
     expect(await screen.findByRole("alert")).toHaveTextContent("The period ends before it starts.");
-    expect(screen.getByLabelText("From")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Period: / })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Sales" })).toBeInTheDocument();
     view.unmount();
 
@@ -275,5 +293,73 @@ describe("a report", () => {
     global.fetch = vi.fn(() => new Promise<Response>(() => undefined)) as typeof fetch;
     asStaff([VIEW], <ReportScreen kind="sales" />);
     expect(screen.getByText("Loading this report…")).toBeInTheDocument();
+  });
+});
+
+describe("a report's filters in the address (admin-ux phase 3)", () => {
+  it("writes the period, search and product beside ?report=, and reads them back", async () => {
+    nav.query = "report=sales";
+    nav.router.replace.mockImplementation((href: string) => {
+      nav.query = href.split("?")[1] ?? "";
+    });
+    const calls = mockApi(routes("sales", ok(SALES), { "GET /api/v1/admin/catalog/products": [ok(PRODUCTS)] }));
+    const first = asStaff([VIEW, CATALOG], <ReportsScreen />);
+    await screen.findByRole("table", { name: "Sales" });
+    choosePeriod("2026-10-01", "2026-10-15");
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/reports?report=sales&from=2026-10-01&to=2026-10-15", { scroll: false });
+    fireEvent.click(await screen.findByRole("combobox", { name: "Product" }));
+    fireEvent.click(screen.getByRole("option", { name: "Easy CRM" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/reports?report=sales&from=2026-10-01&to=2026-10-15&product=easy_crm", { scroll: false });
+    await waitFor(() => expect(runs(calls, "sales").at(-1)?.get("product")).toBe("easy_crm"));
+    first.unmount();
+
+    // A reload, or Back: the same report with the same filters.
+    const again = mockApi(routes("sales", ok(SALES), { "GET /api/v1/admin/catalog/products": [ok(PRODUCTS)] }));
+    asStaff([VIEW, CATALOG], <ReportsScreen />);
+    await screen.findByRole("table", { name: "Sales" });
+    expect(Object.fromEntries(runs(again, "sales")[0])).toEqual({ from: "2026-10-01", to: "2026-10-15", product: "easy_crm", limit: "25", offset: "0" });
+    expect(screen.getByRole("button", { name: /^Period: / })).toHaveTextContent(rangeLabel({ from: "2026-10-01", to: "2026-10-15" }));
+  });
+
+  it("lists the applied filters as tags; removing the period goes back to the last 30 days, and Reset filters clears them all", async () => {
+    nav.query = "report=sales&from=2026-10-01&to=2026-10-15&q=INV&product=easy_crm";
+    const calls = mockApi(routes("sales", ok(SALES), { "GET /api/v1/admin/catalog/products": [ok(PRODUCTS)] }));
+    asStaff([VIEW, CATALOG], <ReportsScreen />);
+    await screen.findByRole("table", { name: "Sales" });
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    await waitFor(() =>
+      expect(within(tags).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+        "Search: “INV”",
+        `Period: ${rangeLabel({ from: "2026-10-01", to: "2026-10-15" })}`,
+        "Product: Easy CRM",
+      ]),
+    );
+    fireEvent.click(within(tags).getByRole("button", { name: `Remove filter Period: ${rangeLabel({ from: "2026-10-01", to: "2026-10-15" })}` }));
+    await waitFor(() => expect(runs(calls, "sales").at(-1)?.get("from")).toBe(dayBefore(29)));
+    expect(runs(calls, "sales").at(-1)?.get("q")).toBe("INV");
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/reports?report=sales&q=INV&product=easy_crm", { scroll: false });
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/reports?report=sales", { scroll: false });
+    await waitFor(() => expect(runs(calls, "sales").at(-1)?.get("q")).toBeNull());
+    expect(Object.fromEntries(runs(calls, "sales").at(-1)!)).toEqual({ from: dayBefore(29), to: dayBefore(0), limit: "25", offset: "0" });
+  });
+
+  it("leaves out a date it cannot read, opens on the last 30 days, and says so", async () => {
+    nav.query = "report=sales&from=yesterday";
+    const calls = mockApi(routes("sales", ok(SALES)));
+    asStaff([VIEW], <ReportsScreen />);
+    await screen.findByRole("table", { name: "Sales" });
+    expect(runs(calls, "sales")[0].get("from")).toBe(dayBefore(29));
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("offers Try again when the report could not be loaded", async () => {
+    const calls = mockApi({ "GET /api/v1/admin/reports/sales": [{ status: 500, body: { detail: "Reports are unavailable." } }, ok(SALES)] });
+    asStaff([VIEW], <ReportScreen kind="sales" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Reports are unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("table", { name: "Sales" })).toBeInTheDocument();
+    expect(runs(calls, "sales")).toHaveLength(2);
   });
 });

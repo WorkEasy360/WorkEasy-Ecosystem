@@ -1,13 +1,14 @@
 # Admin UX simplification — status
 
-The owner's brief of 2026-11-18 asks for a simpler Super Admin console (`/admin`) in five phases. It is a frontend change only: no backend, database, API or RBAC changes. No feature is removed, every old address keeps working, and every page and action keeps its permission key.
+The owner's brief of 2026-11-18 asks for a simpler Super Admin console (`/admin`) in five phases. Phases 1–2 are frontend changes only. Phase 3 also adds optional date filters to the list endpoints; there are no database or RBAC changes. No feature is removed, every old address keeps working, and every page and action keeps its permission key.
 
 | Phase | State |
 |---|---|
 | Step 0 — discovery | Reported 2026-11-18. The owner accepted the recommended answers to the 7 decisions. |
 | Phase 1 — flatten navigation | **Done 2026-11-18** (4a97b2a). |
 | Phase 2 — detail pages | **Done 2026-11-18** (the Customer page; Step-0 list D approved nothing else). |
-| Phases 3–5 | Not started. Each waits for the owner's approval of the previous phase. |
+| Phase 3 — tables, filters & actions | **Done 2026-11-18** (with the server disk cleanup). |
+| Phases 4–5 | Not started. Each waits for the owner's approval of the previous phase. |
 
 ## Phase 1 — what changed
 
@@ -80,6 +81,147 @@ The owner's brief of 2026-11-18 asks for a simpler Super Admin console (`/admin`
   - "More actions" holds Reset network allow-list and Suspend / Reactivate organization (`customer.manage`).
   - Suspend keeps its confirmation with the optional reason.
   - Reset and Reactivate run at once, recording the automatic reason, as their buttons did before. The owner's decision of 2026-10-27 means no reason prompts.
+
+## Phase 3 — tables, filters & actions (2026-11-18)
+
+The owner's Phase 3 brief settled two questions:
+- **Decision A:** Login as Guest stays a button beside View; it does not move into the `⋯` menu.
+- **Decision B:** unused release images on the server are cleaned up safely.
+
+Unlike Phases 1–2, this phase changes the backend too: list endpoints accept date filters. Those parameters are additive and optional, so a request without them answers exactly as before. There is no migration.
+
+### The table system (kit)
+
+**`DataTable`**
+- **Actions column.** A table with row actions has one "Actions" column. It is always last and is held at the right edge while the table scrolls sideways. It holds the row's frequent actions as buttons (`actions`), then its `⋯` menu (`rowMenu`). In a table narrower than 600 px the buttons keep their icon and accessible name and drop the visible word.
+- **Small screens.** Each column has a `priority`: `essential`, `high` (folds under 600 px), `medium` (under 900 px) or `low` (under 1200 px). It is measured on the table's own width (a container query), not the window's. A folded column's value is listed in the row's details, opened by the button at the start of the row (`aria-expanded`).
+- **States:**
+  - skeleton rows while loading;
+  - the error with **Try again** (`onRetry`);
+  - "Load more" with its own spinner, and its own error that keeps the rows already shown;
+  - the empty state.
+- **Sorting** stays on the rows loaded. While the server has more rows, the footer says "sorted within the N loaded". The server's own order (newest first) is the default.
+
+**`usePaged`** has an in-flight guard, `loadingMore` and `moreError`. `pagedTable(paged, noun)` gives every server-paged list the same props. **`useLoad`** errors carry `retry`, so every `LoadGate` offers "Try again".
+
+**`FilterBar`**: with `active`, the applied filters are listed under the controls as tags, each with its own remove button, and **Reset filters** clears them. Without it, the old "Clear filters" link is drawn.
+
+**`DateRangeFilter`**
+- A button reads, for example, "Created: 1 Nov 2026 – 18 Nov 2026".
+- Its panel has quick ranges, From and To, and **Apply** / **Reset**. The server is asked only on Apply.
+- It refuses a range that ends before it starts, or one that starts in the future.
+- Days are whole UTC days, both ends included, matching the server.
+- Keyboard: the panel takes focus, Tab stays inside it, and Escape returns to the button.
+
+**`useUrlFilters(spec)`** keeps a list's filters in its address:
+- A filtered list survives a reload, can be linked to, and comes back with Back after opening a record.
+- Values the spec does not allow are dropped, never sent, and the page says so. A reversed range drops both ends.
+- Other parameters in the address (`tab`, `report`) are kept.
+- The router's own catch-up is not taken for a change from outside.
+
+### Pages
+
+**Partners › Partners** (Decision A):
+- The row is View · Login as Guest · `⋯` in the Actions column. "View partner" left the menu, because View is the row's own button.
+- A "Created" date range was added.
+- Applied filters show as tags. The type chips stay a separate row, as the list itself, not a filter.
+- Priorities: status essential, KYC high, type medium, the rest low. At 1366 px nothing scrolls sideways, and View / Login as Guest stay in view at every width.
+
+**Login as Guest**
+- The confirmation is the reason dialog, now titled "Login as Guest to <partner>?". It says that the session is read-only, lasts 30 minutes, and keeps the Admin signed in as themselves (no partner password). It says that **Exit Guest Session** in the banner ends it, and that the reason and every page are recorded. It names the partner type and account status.
+- A draft's button is shown, says why it is unavailable when pressed, and starts nothing. The server refuses a draft too.
+- The banner's buttons are now **Exit Guest Session** (was "Return to Super Admin") and **Exit to partner record** (was "End Guest Session"). Both end the session on the server first.
+- The server side is unchanged (ADR-062/063):
+  - the explicit dangerous permission `platform.staff_partner.guest`;
+  - a server row per session, read on every request;
+  - a 60-second one-time ticket, posted in a form body and stored only as a digest;
+  - read-only enforcement on every endpoint;
+  - one partner per session;
+  - audit of start, end and every request.
+- **Reauthentication:** none was added. The owner removed step-up for every action (ADR-050, 2026-10-24). A guest session cannot write anything, ends by itself, and is fully audited.
+
+**Lists with filters in the address, date range, tags, Try again and the Actions column:**
+
+| Page | Filters (address) | Date range | Actions column |
+|---|---|---|---|
+| Customers | q, status | Created | — (row opens) |
+| Users | q, segment, product (server, was client-side) | Signed up (server, was client-side) | menu |
+| Orders | q (server, was client-side), status, source | Created (server, was client-side) | — |
+| Subscriptions | status, product, renewing, q | Created | — |
+| Invoices | status, q | Issued | — |
+| Refunds | status | Requested | — |
+| Credit notes | q | Issued | — |
+| Commission entries | unpaid (`?partner` kept) | Earned | Reverse |
+| Payouts | status | Created | Mark ready, Approve, Record as paid, Cancel |
+| Failed & stuck | — | — | Open billing, Retry activation |
+| Payment events | provider, outcome | — | — |
+| Entitlements | product | — | — |
+| KYC applications | status, q (fixes the ignored `?status=` link from notifications) | Submitted | — |
+| Product requests | status, q, kind (already in the address) | — | Review |
+| Products | q, status, visibility, category | — | menu |
+| Coupons | — | — | Enable, Disable |
+| Wallets, Transaction controls | owner_type, q, low; tab + each tab's filters | — | History, Reverse, Retry, Mark reviewed |
+| Tickets, Partner tickets | status, audience, assigned, q | Opened | — |
+| Help articles | status, kind, q | — | menu |
+| Customer setup | status, product | — | Approve, Request correction |
+| Withdrawals | status | — | Start payout, Reject |
+| Audit log | action, area, person | Date | — |
+| Sign-in audit | whose, kind, q | Date | — |
+| Reports | report, product, q | Period (default: last 30 days) | — |
+| Usage pricing, Credit packs | — | — | Set/Remove rate, Edit/Archive |
+
+The Audit log's "By" and "Resource" filters still filter only the rows loaded, because the endpoint has no such parameters. They are listed as tags, with a note when more rows exist.
+
+**Confirmations added** for sensitive actions that acted at once:
+- Unpublish a help article, Unpublish a product, Disable a coupon.
+- Disable a payment provider, Switch a provider between live and test.
+- The withdrawal and payout-details Reject dialogs now say what follows.
+
+The rest (Suspend, Deactivate, Sign out everywhere, Reverse, Cancel payout, Archive, Remove rate, Revoke) already confirmed.
+
+**Route pages:** Wallets, Transaction controls, Orders, Invoices and Users no longer remount the screen on an address change, so a search box keeps its focus while the filter is written to the address.
+
+### Server: `from` / `to` on the list endpoints
+
+`YYYY-MM-DD`, whole UTC days, both ends included, either one optional. A bad day answers 400 ("Use a date like 2026-11-09."). A reversed range answers 400 ("The date range ends before it starts."). The check is in `optional_window`, so it also applies to the audit list.
+
+| Endpoint | Field |
+|---|---|
+| admin partners list | created_at |
+| customers | created_at |
+| users | account created_at (also `product`) |
+| orders | created_at (also `q`) |
+| subscriptions | created_at |
+| invoices | issued_at |
+| refunds | created_at |
+| credit notes | issued_at |
+| tickets | opened_at |
+| KYC queue | submitted_at |
+| commission entries | event_at (when earned) |
+| payouts | created_at |
+
+Tests: `backend/tests/admin_panel/test_list_date_filters.py`.
+
+### Server disk cleanup (Decision B)
+
+**Before:**
+- `/` was 80 % used, with 3.7 GB free.
+- Docker held 74 images (8.6 GB), with every release tag since 2026-10-13 kept.
+- Patch releases are built on top of each other, so most old tags held no layers of their own. The space was in images outside the kept chains: the 2026-10-13 build, five side-branch frontends from 2026-10-23/25, three untagged images, and one never-started container left by the failed first fa88fcc build attempt.
+
+**Retention:** the new committed script `deploy/single-host/w360-prune-images` is installed at `/opt/workeasy360/bin/`.
+- It keeps the release in `current` and in `W360_RELEASE`, the `--keep` rollback release and its `-flat` base, and every image any container uses.
+- It removes only other `workeasy360-frontend` / `workeasy360-backend` tags, then untagged images no container uses.
+- It never touches containers, volumes, release directories, backups or other repositories, including `alpine:3` (used by the backup job) and the stopped Partner Panel.
+- It is a dry run unless `--apply`, and it refuses when a kept release is incomplete.
+- Runbook: `deploy/single-host/README.md` › Release and rollback.
+
+**First run** (kept 2026.11.18-fa88fcc current + 2026.11.18-4a97b2a rollback):
+- 63 tags and 3 untagged images were removed.
+- `/` is now 62 % used, with 7.0 GB free.
+- Every service stayed up and healthy, with all 10 volumes present. The API health check answered 200, and admin, partner, app and store answered 200.
+
+**Left as is (owner's call):** the stopped Partner Panel's images (`partner-panel-api` 1.07 GB, `partner-panel-web`, `postgres:16-alpine`) and its stopped containers. README › partner.workeasy360.com keeps them as its documented way back.
 
 ## Old → new addresses
 

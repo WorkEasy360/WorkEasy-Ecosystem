@@ -15,10 +15,10 @@ import {
 import { can, useAdmin } from "./ControlShell";
 import { GUEST_PERMISSION, GUEST_RETURNED, ManageGuestAccess, guestAvailable, guestOutcomeMessage, useGuestLogin } from "./GuestAccess";
 import { ExperienceLabels, PrimaryType, TypeBadges } from "./labels";
-import { LoadGate, Status, autoReason, money, useAction, useLoad, usePaged } from "./ui";
+import { LoadGate, Status, autoReason, money, pagedTable, useAction, useLoad, usePaged } from "./ui";
 import { usePortals } from "@/lib/portalContext";
 import { portalHref } from "@/lib/portals";
-import { categoryHref, isCategory, lastPartnerList, rememberPartnerList, type PartnerCategory } from "./partnerCategories";
+import { CATEGORY_MENU_LABEL, categoryHref, isCategory, lastPartnerList, rememberPartnerList, type PartnerCategory } from "./partnerCategories";
 import {
   Alert,
   Avatar,
@@ -26,21 +26,26 @@ import {
   Button,
   ButtonLink,
   DataTable,
+  DateRangeFilter,
   EmptyState,
   FilterBar,
   IdCell,
   Page,
   PageHeader,
-  RowMenu,
   SearchInput,
   SectionHeader,
   Select,
   StatCard,
   StatusChips,
   Tooltip,
+  Trunc,
   formatDate,
+  isDay,
   kit,
+  rangeLabel,
   useConfirm,
+  useToast,
+  type ActiveFilter,
   type Column,
   type MenuItem,
   type StatTone,
@@ -191,8 +196,10 @@ function PartnerCell({ id, name, sub }: { id: string; name: string; sub?: React.
     <span className={kit.person}>
       <Avatar name={name} />
       <span className={kit.cellStack}>
+        {/* A long name is cut with an ellipsis (whole in its tooltip), so the row's
+            other columns and actions stay in view (admin-ux phase 3). */}
         <Link href={`/admin/partners/${id}`} className={kit.cellLink}>
-          {name}
+          <Trunc>{name}</Trunc>
         </Link>
         {sub && <span className={kit.cellSub}>{sub}</span>}
       </span>
@@ -326,6 +333,17 @@ const KYC_OPTIONS = [
 const kycAllowsActivation = (r: ResellerRow) => !r.kyc || !r.kyc.required || r.kyc.status === "approved";
 
 const pick = (raw: string | null, options: { value: string }[]) => (options.some((o) => o.value === raw) ? (raw as string) : "");
+
+/** The created-date range from an address: real days only, never one that ends
+ * before it starts (admin-ux phase 3). */
+function createdRange(params: URLSearchParams): { from: string; to: string } {
+  const from = params.get("from") ?? "";
+  const to = params.get("to") ?? "";
+  const range = { from: isDay(from) ? from : "", to: isDay(to) ? to : "" };
+  return range.from && range.to && range.from > range.to ? { from: "", to: "" } : range;
+}
+
+const optionLabel = (options: { value: string; label: string }[], value: string) => options.find((o) => o.value === value)?.label ?? value;
 
 /** The reason recorded when a partner's status is changed from its row. Nobody
  * has to type one (the owner's call, 2026-10-27); the server still requires a
@@ -486,6 +504,7 @@ export function AllPartnersList() {
     status: pick(source.get("status"), STATUS_OPTIONS),
     profile: pick(source.get("profile"), PROFILE_OPTIONS),
     kyc: pick(source.get("kyc"), KYC_OPTIONS),
+    ...createdRange(source),
   });
   useEffect(() => {
     if (!restored) return;
@@ -521,6 +540,7 @@ export function AllPartnersList() {
         status: pick(params.get("status"), STATUS_OPTIONS),
         profile: pick(params.get("profile"), PROFILE_OPTIONS),
         kyc: pick(params.get("kyc"), KYC_OPTIONS),
+        ...createdRange(params),
       });
     }
   }
@@ -542,9 +562,11 @@ export function AllPartnersList() {
         status: filters.status || undefined,
         profile: filters.profile || undefined,
         kyc: filters.kyc || undefined,
+        from: filters.from || undefined,
+        to: filters.to || undefined,
         cursor,
       }),
-    [filters.q, category, filters.status, filters.profile, filters.kyc],
+    [filters.q, category, filters.status, filters.profile, filters.kyc, filters.from, filters.to],
   );
   const { act, busy, feedback } = useAction(() => paged.reload());
 
@@ -594,12 +616,18 @@ export function AllPartnersList() {
   // said above the table (the server's own words), and the button is usable again.
   // ADR-063: Login as Guest asks why first; the dialog opens the session.
   const guestLogin = useGuestLogin(category ? CATEGORY_TITLE[category] : "All Partners");
-  const guest = (r: ResellerRow) => guestLogin.ask(r.id, r.display_name);
+  const toast = useToast();
+  const guest = (r: ResellerRow) =>
+    guestLogin.ask(r.id, r.display_name, {
+      type: isCategory(r.category) ? CATEGORY_MENU_LABEL[r.category] : undefined,
+      status: r.status,
+    });
 
   const rowMenu = (r: ResellerRow): MenuItem[] => {
     const url = panelUrl(r);
+    // View and Login as Guest are buttons in the row (the owner's decision, kept
+    // in admin-ux phase 3); the menu holds the rest.
     return [
-      { label: "View partner", icon: "user", href: `/admin/partners/${r.id}` },
       { label: r.profile_completion.complete ? "Edit partner" : "Complete setup", icon: "settings", href: `/admin/partners/${r.id}/profile` },
       // ADR-063: the specification's row actions.
       { label: "Review KYC", icon: "shield", href: `/admin/partners/applications/${r.id}`, when: canKyc },
@@ -619,7 +647,6 @@ export function AllPartnersList() {
       { label: "View Commission & Payout Records", icon: "currency", href: `/admin/partners/${r.id}?tab=commission` },
       { label: "Open partner panel", icon: "external", href: url, external: true },
       { label: "Copy panel link", icon: "copy", onSelect: () => void navigator.clipboard?.writeText(url) },
-      // Login as Guest is beside View in the row itself (2026-11-11), not in here.
       { label: "Manage Guest Access", icon: "eye", onSelect: () => setGuestAccess(r) },
       { label: "Suspend", icon: "pause", danger: true, separator: true, when: manage && r.status === "active", onSelect: () => changeStatus(r, "suspended") },
       { label: "Reactivate", icon: "play", separator: true, when: manage && r.status === "suspended", onSelect: () => changeStatus(r, "active") },
@@ -641,10 +668,12 @@ export function AllPartnersList() {
     ];
   };
 
-  // 2026-11-11 (the owner's expected layout): Partner Name, Partner Type, Status,
-  // then View / Actions (View, Login as Guest, the row's menu), then the other
-  // ADR-063 columns - Partner Email, KYC Status, Country, Assigned Customers and
-  // Created Date. No Earnings: they stay on each partner's own page.
+  // Partner Name, Type, Account Status, then the other ADR-063 columns - Partner
+  // Email, KYC Status, Country, Assigned Customers and Created Date - and the
+  // Actions column last (admin-ux phase 3): View and Login as Guest side by side,
+  // then the row's menu, held at the right edge so they are always in view. No
+  // Earnings: they stay on each partner's own page. A narrow table folds the
+  // later columns into each row's details (`priority`).
   const columns: Column<ResellerRow>[] = [
     {
       key: "partner",
@@ -655,6 +684,7 @@ export function AllPartnersList() {
     {
       key: "type",
       header: "Type / Permissions",
+      priority: "medium",
       value: (r) => r.primary_experience,
       render: (r) => (
         <span className={local.badgeWrap}>
@@ -666,6 +696,8 @@ export function AllPartnersList() {
     {
       key: "status",
       header: "Account Status",
+      // In the row's details on a phone, where the name and the actions take the width.
+      priority: "high",
       value: (r) => r.status,
       render: (r) => (
         <span className={local.badgeWrap}>
@@ -685,44 +717,9 @@ export function AllPartnersList() {
       ),
     },
     {
-      // 2026-11-11 (the owner): View and Login as Guest side by side, early in the
-      // row so both are on screen without scrolling sideways; the other actions
-      // are in the menu beside them. Login as Guest only for staff who may start
-      // a guest view - the server checks again.
-      key: "actions",
-      header: "View / Actions",
-      render: (r) => (
-        <span className={local.rowActions}>
-          <ButtonLink size="sm" variant="secondary" icon="eye" href={`/admin/partners/${r.id}`} aria-label={`View ${r.display_name}`}>
-            View
-          </ButtonLink>
-          {canGuest &&
-            (guestAvailable(r.status) ? (
-              <Button
-                size="sm"
-                variant="primary"
-                icon="login"
-                aria-label={`Login as Guest to ${r.display_name}`}
-                loading={guestLogin.pending === r.id}
-                disabled={busy || guestLogin.dialog !== null}
-                onClick={() => void guest(r)}
-              >
-                Login as Guest
-              </Button>
-            ) : (
-              <Tooltip content="Opens once the partner is active">
-                <Button size="sm" variant="primary" icon="login" aria-label={`Login as Guest to ${r.display_name}`} aria-disabled="true" className={local.unavailable}>
-                  Login as Guest
-                </Button>
-              </Tooltip>
-            ))}
-          <RowMenu label={`Actions for ${r.display_name}`} items={rowMenu(r)} />
-        </span>
-      ),
-    },
-    {
       key: "email",
       header: "Partner Email",
+      priority: "low",
       value: (r) => r.administrator?.email ?? "",
       render: (r) =>
         r.administrator?.email ? (
@@ -736,6 +733,7 @@ export function AllPartnersList() {
     {
       key: "kyc",
       header: "KYC Status",
+      priority: "high",
       // Never blank, so the column always shows (the table hides an all-empty one).
       value: (r) => r.kyc?.status ?? "unknown",
       render: (r) => (
@@ -763,6 +761,7 @@ export function AllPartnersList() {
     {
       key: "country",
       header: "Country",
+      priority: "low",
       // ADR-063: always shown (the table hides a column blank in every row, and
       // "—" counts as blank); a partner with no country sorts last.
       value: (r) => r.country || "ZZ",
@@ -771,6 +770,7 @@ export function AllPartnersList() {
     {
       key: "customers",
       header: "Assigned Customers",
+      priority: "low",
       value: (r) => r.customers,
       render: (r) => (
         <Link href={`/admin/partners/${r.id}?tab=customers`} aria-label={`${r.customers} assigned customers of ${r.display_name}`}>
@@ -778,10 +778,67 @@ export function AllPartnersList() {
         </Link>
       ),
     },
-    { key: "joined", header: "Created", value: (r) => r.created_at, render: (r) => formatDate(r.created_at) },
+    { key: "joined", header: "Created", priority: "low", value: (r) => r.created_at, render: (r) => formatDate(r.created_at) },
   ];
 
-  const filtered = Boolean(filters.q || filters.status || filters.profile || filters.kyc);
+  // The row's frequent actions (Decision A, 2026-11-18): View and Login as Guest,
+  // side by side, before the menu. Login as Guest only for staff who may start a
+  // guest view - the server checks again; for a draft it is shown, and pressing it
+  // says why it is not available.
+  const rowActions = (r: ResellerRow) => (
+    <>
+      <ButtonLink size="sm" variant="secondary" icon="eye" href={`/admin/partners/${r.id}`} aria-label={`View ${r.display_name}`}>
+        View
+      </ButtonLink>
+      {canGuest &&
+        (guestAvailable(r.status) ? (
+          <Button
+            size="sm"
+            variant="primary"
+            icon="login"
+            aria-label={`Login as Guest to ${r.display_name}`}
+            loading={guestLogin.pending === r.id}
+            disabled={busy || guestLogin.dialog !== null}
+            onClick={() => void guest(r)}
+          >
+            Login as Guest
+          </Button>
+        ) : (
+          <Tooltip content="Opens once the partner is active">
+            <Button
+              size="sm"
+              variant="primary"
+              icon="login"
+              aria-label={`Login as Guest to ${r.display_name}`}
+              aria-disabled="true"
+              className={local.unavailable}
+              onClick={() =>
+                toast.info(`Login as Guest is not available for ${r.display_name} yet: it is a draft, so it has no partner portal. It opens once the partner is active.`)
+              }
+            >
+              Login as Guest
+            </Button>
+          </Tooltip>
+        ))}
+    </>
+  );
+
+  const filtered = Boolean(filters.q || filters.status || filters.profile || filters.kyc || filters.from || filters.to);
+  const cleared = { q: "", status: "", profile: "", kyc: "", from: "", to: "" };
+  // The applied filters, as tags (the type is the chip row above, and the title).
+  const active: ActiveFilter[] = [
+    ...(filters.q ? [{ key: "q", label: "Search", value: `“${filters.q}”`, onRemove: () => apply({ ...filters, q: "" }) }] : []),
+    ...(filters.status
+      ? [{ key: "status", label: "Account status", value: optionLabel(STATUS_OPTIONS, filters.status), onRemove: () => apply({ ...filters, status: "" }) }]
+      : []),
+    ...(filters.profile
+      ? [{ key: "profile", label: "Profile", value: optionLabel(PROFILE_OPTIONS, filters.profile), onRemove: () => apply({ ...filters, profile: "" }) }]
+      : []),
+    ...(filters.kyc ? [{ key: "kyc", label: "KYC", value: optionLabel(KYC_OPTIONS, filters.kyc), onRemove: () => apply({ ...filters, kyc: "" }) }] : []),
+    ...(filters.from || filters.to
+      ? [{ key: "created", label: "Created", value: rangeLabel(filters), onRemove: () => apply({ ...filters, from: "", to: "" }) }]
+      : []),
+  ];
   const select = (key: "status" | "profile" | "kyc", label: string, options: { value: string; label: string }[]) => (
     <Select label={label} value={filters[key]} options={options} onChange={(value) => apply({ ...filters, [key]: value })} />
   );
@@ -796,27 +853,23 @@ export function AllPartnersList() {
       {created && <CreatedBanner partnerId={created} invite={createdInvite} />}
       {guestOutcome && <Alert tone="warning" title={guestOutcome} />}
       {onList && <StatusChips label="Partner type" value={filters.type} onChange={(type) => apply({ ...filters, type })} chips={TYPE_CHIPS} />}
-      <FilterBar
-        label="Filter partners"
-        onClear={filtered ? () => apply({ ...filters, q: "", status: "", profile: "", kyc: "" }) : undefined}
-      >
+      <FilterBar label="Filter partners" onClear={filtered ? () => apply({ ...filters, ...cleared }) : undefined} active={active}>
         <SearchInput label="Search by partner name or email" value={filters.q} onSearch={(q) => apply({ ...filters, q: q.slice(0, 80) })} />
         {select("status", "Status", STATUS_OPTIONS)}
         {select("profile", "Profile", PROFILE_OPTIONS)}
         {select("kyc", "KYC", KYC_OPTIONS)}
+        <DateRangeFilter label="Created" value={{ from: filters.from, to: filters.to }} onApply={(range) => apply({ ...filters, ...range })} />
       </FilterBar>
       {feedback}
       <DataTable
         caption="Partners"
         columns={columns}
-        rows={paged.rows}
+        {...pagedTable(paged, "partners")}
         rowKey={(r) => r.id}
         rowHref={(r) => `/admin/partners/${r.id}`}
         rowLabel={(r) => r.display_name}
-        loading={paged.state === "loading"}
-        error={paged.state === "forbidden" ? "You don't have access to partners." : paged.state === "error" ? "Couldn't load partners." : null}
-        onLoadMore={paged.more}
-        hasMore={paged.hasMore}
+        actions={rowActions}
+        rowMenu={rowMenu}
         empty={
           <EmptyState
             icon="search"

@@ -38,6 +38,7 @@ import {
   Button,
   Card,
   DataTable,
+  DateRangeFilter,
   DescriptionList,
   EmptyState,
   FilterBar,
@@ -51,12 +52,16 @@ import {
   StatusChips,
   Trunc,
   EMPTY,
+  droppedMessage,
   formatDate,
   formatDateTime,
+  rangeLabel,
   sentence,
   statusLabel,
   useConfirm,
   useToast,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
   usePageTrail,
 } from "./kit";
@@ -93,10 +98,23 @@ function chipCount(value: string, counts: Record<string, number>): number {
 
 const applicationHref = (partnerId: string) => `/admin/partners/applications/${partnerId}`;
 
+/** The queue's filters, kept in its address (admin-ux phase 3): the KYC status chip
+ * (none: waiting for review), the search and the submitted dates. */
+const QUEUE_FILTERS = {
+  status: { options: QUEUE_CHIPS.map((c) => c.value) },
+  q: {},
+  from: { date: true },
+  to: { date: true },
+};
+
 export function KycApplicationsScreen() {
-  const [status, setStatus] = useState("");
-  const [query, setQuery] = useState("");
-  const [offset, setOffset] = useState(0);
+  const filters = useUrlFilters(QUEUE_FILTERS);
+  const { status, q: query, from, to } = filters.values;
+  // The page is the filters' own: a new status, search or range starts on the first page.
+  const filterKey = `${status}|${query}|${from}|${to}`;
+  const [paging, setPaging] = useState({ key: filterKey, offset: 0 });
+  const offset = paging.key === filterKey ? paging.offset : 0;
+  const setOffset = (next: number) => setPaging({ key: filterKey, offset: next });
   // The last answer: the chips and the pager stay put, and keep focus, while the next one loads.
   const [seen, setSeen] = useState<{
     counts: Record<string, number>;
@@ -107,7 +125,14 @@ export function KycApplicationsScreen() {
     legacy: number;
   } | null>(null);
   const [load] = useLoad(async () => {
-    const page = await kycApi.queue({ status: status || undefined, q: query || undefined, limit: PAGE_SIZE, offset });
+    const page = await kycApi.queue({
+      status: status || undefined,
+      q: query || undefined,
+      from: from || undefined,
+      to: to || undefined,
+      limit: PAGE_SIZE,
+      offset,
+    });
     setSeen({
       counts: page.counts,
       total: page.total,
@@ -117,7 +142,7 @@ export function KycApplicationsScreen() {
       legacy: page.legacy_active ?? 0,
     });
     return page;
-  }, [status, query, offset]);
+  }, [status, query, from, to, offset]);
 
   const columns: Column<KycQueueRow>[] = [
     {
@@ -135,23 +160,40 @@ export function KycApplicationsScreen() {
         />
       ),
     },
-    { key: "email", header: "Contact email", value: (r) => r.contact_email, render: (r) => <Trunc>{r.contact_email}</Trunc> },
-    { key: "status", header: "KYC status", value: (r) => r.status, render: (r) => <KycBadge status={r.status} /> },
-    { key: "account", header: "Partner account status", value: (r) => r.partner_status, render: (r) => <StatusBadge value={r.partner_status} /> },
+    { key: "email", header: "Contact email", priority: "low", value: (r) => r.contact_email, render: (r) => <Trunc>{r.contact_email}</Trunc> },
+    { key: "status", header: "KYC status", priority: "essential", value: (r) => r.status, render: (r) => <KycBadge status={r.status} /> },
+    {
+      key: "account",
+      header: "Partner account status",
+      priority: "high",
+      value: (r) => r.partner_status,
+      render: (r) => <StatusBadge value={r.partner_status} />,
+    },
     {
       key: "experience",
       header: "Requested experience",
+      priority: "medium",
       value: (r) => r.requested_experience,
       render: (r) => experienceLabel(r.requested_experience),
     },
-    { key: "submitted", header: "Submitted", value: (r) => r.submitted_at, render: (r) => (r.submitted_at ? formatDate(r.submitted_at) : "Not sent") },
-    { key: "reviewer", header: "Reviewer", value: (r) => r.reviewer_name, render: (r) => r.reviewer_name || EMPTY },
+    {
+      key: "submitted",
+      header: "Submitted",
+      priority: "medium",
+      value: (r) => r.submitted_at,
+      render: (r) => (r.submitted_at ? formatDate(r.submitted_at) : "Not sent"),
+    },
+    { key: "reviewer", header: "Reviewer", priority: "low", value: (r) => r.reviewer_name, render: (r) => r.reviewer_name || EMPTY },
   ];
 
-  const choose = (next: string) => {
-    setStatus(next);
-    setOffset(0);
-  };
+  const choose = (next: string) => filters.set({ status: next });
+  const searched = Boolean(query || from || to);
+  // The status chips are the list itself, like tabs: the tags name what narrows it.
+  const active: ActiveFilter[] = [
+    ...(query ? [{ key: "q", label: "Search", value: `“${query}”`, onRemove: () => filters.set({ q: "" }) }] : []),
+    ...(from || to ? [{ key: "submitted", label: "Submitted", value: rangeLabel({ from, to }), onRemove: () => filters.set({ from: "", to: "" }) }] : []),
+  ];
+  const dropped = droppedMessage(filters.dropped);
 
   return (
     <Page>
@@ -160,6 +202,7 @@ export function KycApplicationsScreen() {
         subtitle="Partner applications and where each one stands."
         info="KYC status says where an application stands. Partner account status says whether the partner may operate. An active partner needs both: an approved application, then an Admin's activation."
       />
+      {dropped && <Alert tone="warning" title={dropped} />}
       {seen && seen.awaiting > 0 && (
         <Alert tone="info" title={`${seen.awaiting} approved ${seen.awaiting === 1 ? "partner is" : "partners are"} waiting to be activated`}>
           Approving an application does not activate the partner. Open an approved application and choose Activate partner, or{" "}
@@ -181,27 +224,12 @@ export function KycApplicationsScreen() {
         label="KYC status"
         value={status}
         onChange={choose}
-        // The counts are of every application: during a search they would not match the rows.
-        chips={QUEUE_CHIPS.map((c) => ({ ...c, count: seen && !query ? chipCount(c.value, seen.counts) : undefined }))}
+        // The counts are of every application: during a search or a date range they would not match the rows.
+        chips={QUEUE_CHIPS.map((c) => ({ ...c, count: seen && !searched ? chipCount(c.value, seen.counts) : undefined }))}
       />
-      <FilterBar
-        onClear={
-          query
-            ? () => {
-                setQuery("");
-                setOffset(0);
-              }
-            : undefined
-        }
-      >
-        <SearchInput
-          label="Search by partner, code or email"
-          value={query}
-          onSearch={(next) => {
-            setQuery(next);
-            setOffset(0);
-          }}
-        />
+      <FilterBar label="Filter applications" onClear={active.length > 0 ? () => filters.set({ q: "", from: "", to: "" }) : undefined} active={active}>
+        <SearchInput label="Search by partner, code or email" value={query} onSearch={(next) => filters.set({ q: next.slice(0, 80) })} />
+        <DateRangeFilter label="Submitted" value={{ from, to }} onApply={(range) => filters.set(range)} />
       </FilterBar>
       <DataTable
         caption="Partner applications"
@@ -209,14 +237,15 @@ export function KycApplicationsScreen() {
         rows={load.status === "ready" ? load.data.results : []}
         rowKey={(r) => r.partner_id}
         rowHref={(r) => applicationHref(r.partner_id)}
+        rowLabel={(r) => r.partner_name}
         pageSize={0}
         hideEmptyColumns={false}
         {...tableState(load, "partner applications")}
         empty={
-          status === "" && !query ? (
+          status === "" && !searched ? (
             <EmptyState icon="handshake" title="Nothing is waiting for review" hint="Applications appear here once a partner submits them." />
           ) : (
-            <EmptyState icon="handshake" title="No applications" hint="Try another status or search." />
+            <EmptyState icon="handshake" title="No applications" hint="Try another status, search or date range." />
           )
         }
       />
@@ -671,7 +700,7 @@ export function KycRequirementsScreen() {
       value: (r) => r.label,
       render: (r) => <Stack main={<Trunc>{r.label}</Trunc>} sub={<KeyText>{r.key}</KeyText>} />,
     },
-    { key: "help", header: "Help text", wrap: true, value: (r) => r.help_text, render: (r) => r.help_text || EMPTY },
+    { key: "help", header: "Help text", wrap: true, priority: "medium", value: (r) => r.help_text, render: (r) => r.help_text || EMPTY },
     {
       key: "required",
       header: "Required",
@@ -684,21 +713,7 @@ export function KycRequirementsScreen() {
       value: (r) => (r.is_active ? "Active" : "Inactive"),
       render: (r) => <BoolBadge value={r.is_active} yes="Active" no="Inactive" noTone="neutral" />,
     },
-    { key: "order", header: "Order", align: "right", value: (r) => r.display_order, render: (r) => r.display_order },
-    ...(manage
-      ? [
-          {
-            key: "edit",
-            header: "Edit",
-            align: "right",
-            render: (r: KycRequirement) => (
-              <Button size="sm" icon="edit" onClick={() => setEditing(r)} aria-label={`Edit ${r.label}`}>
-                Edit
-              </Button>
-            ),
-          } satisfies Column<KycRequirement>,
-        ]
-      : []),
+    { key: "order", header: "Order", align: "right", priority: "medium", value: (r) => r.display_order, render: (r) => r.display_order },
   ];
 
   return (
@@ -720,9 +735,20 @@ export function KycRequirementsScreen() {
         columns={columns}
         rows={load.status === "ready" ? load.data.results : []}
         rowKey={(r) => r.id}
+        rowLabel={(r) => r.label}
         pageSize={0}
         hideEmptyColumns={false}
         {...tableState(load, "KYC requirements")}
+        // Edit, in the one Actions column (admin-ux phase 3); only for staff who may change requirements.
+        actions={
+          manage
+            ? (r) => (
+                <Button size="sm" icon="edit" onClick={() => setEditing(r)} aria-label={`Edit ${r.label}`}>
+                  Edit
+                </Button>
+              )
+            : undefined
+        }
         empty={
           <EmptyState
             icon="file"
@@ -796,8 +822,8 @@ export function KycAccessLogScreen() {
         </Link>
       ),
     },
-    { key: "document", header: "Document", value: (r) => r.requirement_key, render: (r) => sentence(r.requirement_key) },
-    { key: "network", header: "Network", value: (r) => r.ip_prefix, render: (r) => <KeyText>{r.ip_prefix || EMPTY}</KeyText> },
+    { key: "document", header: "Document", priority: "medium", value: (r) => r.requirement_key, render: (r) => sentence(r.requirement_key) },
+    { key: "network", header: "Network", priority: "low", value: (r) => r.ip_prefix, render: (r) => <KeyText>{r.ip_prefix || EMPTY}</KeyText> },
   ];
   return (
     <Page>

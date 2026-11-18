@@ -791,17 +791,21 @@ def queue(
     search: str | None = None,
     limit: Any = 25,
     offset: Any = 0,
+    start: Any = None,
+    end: Any = None,
 ) -> dict[str, Any]:
     """Applications, oldest waiting first. Partners that never started one appear
     under ``draft`` only because a row exists once anyone asked for it; the queue's
-    default is what waits for a reviewer."""
+    default is what waits for a reviewer. ``start``/``end`` keep the applications
+    submitted in ``[start, end)`` (one never submitted has no date, so a date
+    filter leaves it out); ``total`` follows them, the status counts do not."""
     authz.require(ctx, VIEW)
     m = _models()
     known = {choice for choice, _label in m.PartnerKyc.Status.choices}
     if status and status != "all" and status not in known:
         raise PartnerValidationError("Unknown status.", field="status")
     size = max(1, min(_int(limit, 25), 100))
-    start = max(0, _int(offset, 0))
+    skip = max(0, _int(offset, 0))
     rows = m.PartnerKyc.objects.select_related("partner")
     if status and status != "all":
         rows = rows.filter(status=status)
@@ -815,8 +819,12 @@ def queue(
             | Q(partner__contact_email__icontains=term)
             | Q(partner__code__icontains=term)
         )
+    if start is not None:
+        rows = rows.filter(submitted_at__gte=start)
+    if end is not None:
+        rows = rows.filter(submitted_at__lt=end)
     total = rows.count()
-    page = list(rows.order_by("submitted_at", "created_at")[start : start + size])
+    page = list(rows.order_by("submitted_at", "created_at")[skip : skip + size])
     names = _user_names(
         {row.decided_by_id for row in page} | {row.reviewer_id for row in page}
     )
@@ -824,7 +832,7 @@ def queue(
         "results": [_queue_json(row, names) for row in page],
         "total": total,
         "limit": size,
-        "offset": start,
+        "offset": skip,
         "counts": status_counts(),
         # Approved applications whose partner an Admin has not activated yet.
         "awaiting_activation": awaiting_activation_count(),

@@ -27,10 +27,3 @@
   margin: 0;
 }
 
-.rowActions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--w360-space-2);
-  white-space: normal;
-}

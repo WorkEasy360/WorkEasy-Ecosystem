@@ -70,11 +70,13 @@ export function fileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** The table's loading and error props for a list read with `useLoad`. */
+/** The table's loading and error props for a list read with `useLoad`: an error
+ * carries "Try again" (admin-ux phase 3; `useLoad` puts its retry on the error). */
 export function tableState<T>(load: Load<T>, what: string) {
   return {
     loading: load.status === "loading",
     error: load.status === "forbidden" ? `You don't have access to ${what}.` : load.status === "error" ? load.message : null,
+    onRetry: load.status === "error" ? load.retry : undefined,
   };
 }
 

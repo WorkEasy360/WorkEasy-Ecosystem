@@ -13,7 +13,7 @@ import {
 } from "@/lib/api/adminPanel";
 import { can, useAdmin } from "./ControlShell";
 import { DialogHead, FormDialog, Modal, dialog } from "./Modal";
-import { LoadGate, useAction, useLoad, usePaged } from "./ui";
+import { LoadGate, pagedTable, useAction, useLoad, usePaged } from "./ui";
 import { SUPPORTED_CURRENCIES, toMajor, toMinor } from "./amounts";
 import { TextField } from "./widgets";
 import {
@@ -36,12 +36,15 @@ import {
   Stack,
   Tabs,
   Trunc,
+  droppedMessage,
   formatDateTime,
   formatMoney,
   formatNumber,
   sentence,
   useDebounced,
   useToast,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
   type Tone,
 } from "./kit";
@@ -112,16 +115,8 @@ function useCommandId(): string {
   return id;
 }
 
-/** The table props for a server-paged list. */
-function pagedProps<T>(paged: ReturnType<typeof usePaged<T>>, what: string) {
-  return {
-    loading: paged.state === "loading",
-    error:
-      paged.state === "forbidden" ? `You don't have access to ${what}.` : paged.state === "error" ? `Couldn't load ${what}. Try again in a moment.` : null,
-    onLoadMore: () => void paged.more(),
-    hasMore: paged.hasMore,
-  };
-}
+/** A filter option's words, for its active-filter tag. */
+const optionLabel = (options: { value: string; label: string }[], value: string) => options.find((o) => o.value === value)?.label ?? value;
 
 // --- small pieces -------------------------------------------------------------------
 
@@ -491,10 +486,9 @@ function WalletDetails({ wallet, manage, onClose, onChanged }: { wallet: WalletR
         <DataTable
           caption="This wallet's transactions"
           columns={entryColumns({ fallback: current })}
-          rows={entries.rows}
           rowKey={(e) => e.id}
           stickyFirst={false}
-          {...pagedProps(entries, "this wallet's transactions")}
+          {...pagedTable(entries, "this wallet's transactions")}
           empty={<EmptyState icon="history" title="No transactions yet" hint="Every movement of this balance appears here." compact />}
         />
       </div>
@@ -546,6 +540,7 @@ function entryColumns({
       key: "amount",
       header: "Amount",
       align: "right",
+      priority: "essential",
       value: (e) => e.amount,
       render: (e) => <SignedAmount value={e.amount} kind={kindOf(e)} currency={currencyOf(e)} />,
     },
@@ -553,17 +548,19 @@ function entryColumns({
       key: "after",
       header: "Balance after",
       align: "right",
+      priority: "medium",
       value: (e) => e.balance_after,
       render: (e) => balanceText(e.balance_after, kindOf(e), currencyOf(e)),
     },
-    { key: "reason", header: "Reason", value: (e) => e.reason, render: (e) => <Trunc max="md">{e.reason}</Trunc> },
+    { key: "reason", header: "Reason", priority: "low", value: (e) => e.reason, render: (e) => <Trunc max="md">{e.reason}</Trunc> },
     {
       key: "source",
       header: "Source",
+      priority: "low",
       value: (e) => e.source_type,
       render: (e) => <Stack main={sentence(e.source_type)} sub={e.source_id ? <Trunc max="sm">{e.source_id}</Trunc> : undefined} />,
     },
-    { key: "reversal", header: "Reversal", value: (e) => e.reverses, render: (e) => <ReversalCell entry={e} loaded={loaded} /> },
+    { key: "reversal", header: "Reversal", priority: "low", value: (e) => e.reverses, render: (e) => <ReversalCell entry={e} loaded={loaded} /> },
   ];
 }
 
@@ -575,6 +572,14 @@ const OWNER_FILTER = [
   { value: "partner", label: "Partners" },
 ];
 
+/** A wallet list's filters, kept in its address (admin-ux phase 3). The names are the
+ * ones the dashboard (`low=1`) and the partner list (`owner_type=partner&q=`) link with. */
+const WALLET_FILTERS = {
+  owner_type: { options: ["organization", "partner"] },
+  q: { maxLength: 120 },
+  low: { options: ["1"] },
+};
+
 interface PlacedOrder {
   number: string;
   customerId: string;
@@ -583,16 +588,14 @@ interface PlacedOrder {
   currency: string;
 }
 
-/** One wallet kind's list, its filters, and the page's actions. */
+/** One wallet kind's list, its filters, and the page's actions. The filters are read
+ * from the address and written back to it (admin-ux phase 3). */
 export function WalletsList({
   kind,
   title,
   subtitle,
   info,
   ownerFilter = false,
-  initialLow = false,
-  initialOwnerType = "",
-  initialQuery = "",
   links,
 }: {
   kind: WalletKind;
@@ -601,17 +604,16 @@ export function WalletsList({
   info: React.ReactNode;
   /** Only the Platform Wallet is held by partners too. */
   ownerFilter?: boolean;
-  initialLow?: boolean;
-  /** ADR-063: "View Partner Wallet" from the partner list opens one partner's wallet. */
-  initialOwnerType?: string;
-  initialQuery?: string;
   links?: React.ReactNode;
 }) {
   const { permissions } = useAdmin();
   const manage = can(permissions, MANAGE);
-  const [ownerType, setOwnerType] = useState(initialOwnerType);
-  const [query, setQuery] = useState(initialQuery);
-  const [low, setLow] = useState(initialLow);
+  const filters = useUrlFilters(WALLET_FILTERS);
+  // ADR-063: "View Partner Wallet" from the partner list names `owner_type=partner` and the
+  // partner's name. Only the Platform Wallet has partners: elsewhere the owner type is ignored.
+  const ownerType = ownerFilter ? filters.values.owner_type : "";
+  const query = filters.values.q;
+  const low = filters.values.low === "1";
   const [chosen, setChosen] = useState<WalletRow | null>(null);
   const [form, setForm] = useState<"open" | "order" | null>(null);
   const [placed, setPlaced] = useState<PlacedOrder | null>(null);
@@ -621,6 +623,7 @@ export function WalletsList({
   );
   const credits = isCredits(kind);
   const filtered = Boolean(ownerType || query || low);
+  const dropped = droppedMessage(filters.dropped);
 
   const columns: Column<WalletRow>[] = [
     {
@@ -632,37 +635,43 @@ export function WalletsList({
     {
       key: "type",
       header: "Type",
+      priority: "medium",
       value: (w) => w.owner_type,
       render: (w) => <Badge tone={w.owner_type === "partner" ? "brand" : "neutral"}>{w.owner_type === "partner" ? "Partner" : "Customer"}</Badge>,
     },
-    ...(credits ? [] : ([{ key: "currency", header: "Currency", value: (w) => w.currency, render: (w) => w.currency }] as Column<WalletRow>[])),
-    { key: "balance", header: "Balance", align: "right", value: (w) => w.balance, render: (w) => <Balance wallet={w} /> },
+    ...(credits ? [] : ([{ key: "currency", header: "Currency", priority: "medium", value: (w) => w.currency, render: (w) => w.currency }] as Column<WalletRow>[])),
+    { key: "balance", header: "Balance", align: "right", priority: "essential", value: (w) => w.balance, render: (w) => <Balance wallet={w} /> },
     {
       key: "threshold",
       header: "Low-balance threshold",
       align: "right",
+      priority: "low",
       value: (w) => w.low_balance_threshold,
       render: thresholdText,
     },
-    { key: "updated", header: "Updated", value: (w) => w.updated_at, render: (w) => formatDateTime(w.updated_at) },
-    {
-      key: "actions",
-      header: "Actions",
-      align: "right",
-      hideable: false,
-      render: (w) => (
-        <Button size="sm" aria-haspopup="dialog" aria-label={`${manage ? "History and actions" : "History"} for ${w.owner_name || "this owner"}'s wallet`} onClick={() => setChosen(w)}>
-          {manage ? "History and actions" : "History"}
-        </Button>
-      ),
-    },
+    { key: "updated", header: "Updated", priority: "medium", value: (w) => w.updated_at, render: (w) => formatDateTime(w.updated_at) },
   ];
 
-  const clearFilters = () => {
-    setOwnerType("");
-    setQuery("");
-    setLow(false);
-  };
+  // The wallet's history (and, for a manager, its commands), in the one Actions column.
+  const rowActions = (w: WalletRow) => (
+    <Button
+      size="sm"
+      icon="eye"
+      aria-haspopup="dialog"
+      aria-label={`${manage ? "History and actions" : "History"} for ${w.owner_name || "this owner"}'s wallet`}
+      onClick={() => setChosen(w)}
+    >
+      {manage ? "History and actions" : "History"}
+    </Button>
+  );
+
+  const active: ActiveFilter[] = [
+    ...(query ? [{ key: "q", label: "Search", value: `“${query}”`, onRemove: () => filters.set({ q: "" }) }] : []),
+    ...(ownerType
+      ? [{ key: "owner_type", label: "Owner", value: optionLabel(OWNER_FILTER, ownerType), onRemove: () => filters.set({ owner_type: "" }) }]
+      : []),
+    ...(low ? [{ key: "low", label: "Balance", value: "Low only", onRemove: () => filters.set({ low: "" }) }] : []),
+  ];
 
   return (
     <Page>
@@ -695,18 +704,22 @@ export function WalletsList({
           {formatMoney(placed.amountMinor, placed.currency)} is due. Its invoice is now open and is paid from the customer&apos;s billing page. The wallet is credited only when it is paid.
         </Alert>
       )}
-      <FilterBar onClear={filtered ? clearFilters : undefined}>
-        <SearchInput label="Search by owner name" value={query} onSearch={setQuery} maxLength={80} />
-        {ownerFilter && <Select label="Owner type" prefix="Owner:" value={ownerType} onChange={setOwnerType} options={OWNER_FILTER} />}
-        <ToggleFilter label="Low balance only" checked={low} onChange={setLow} />
+      {dropped && <Alert tone="warning" title={dropped} />}
+      <FilterBar label="Filter wallets" onClear={filtered ? filters.reset : undefined} active={active}>
+        <SearchInput label="Search by owner name" value={query} onSearch={(q) => filters.set({ q })} maxLength={80} />
+        {ownerFilter && (
+          <Select label="Owner type" prefix="Owner:" value={ownerType} onChange={(owner_type) => filters.set({ owner_type })} options={OWNER_FILTER} />
+        )}
+        <ToggleFilter label="Low balance only" checked={low} onChange={(on) => filters.set({ low: on ? "1" : "" })} />
       </FilterBar>
       <DataTable
         caption={`${title} wallets`}
         columns={columns}
-        rows={paged.rows}
         rowKey={(w) => w.id}
+        rowLabel={(w) => `${w.owner_name || "this owner"}'s wallet`}
         hideEmptyColumns={false}
-        {...pagedProps(paged, "these wallets")}
+        actions={rowActions}
+        {...pagedTable(paged, "these wallets")}
         empty={
           <EmptyState
             icon="wallet"
@@ -886,24 +899,17 @@ function PackOrderDialog({ onClose, onPlaced }: { onClose: () => void; onPlaced:
 
 // --- the three balances --------------------------------------------------------------
 
-export function PlatformWalletScreen({
-  initialLow = false,
-  initialOwnerType = "",
-  initialQuery = "",
-}: { initialLow?: boolean; initialOwnerType?: string; initialQuery?: string } = {}) {
-  return (
-    <WalletsList
-      kind="platform"
-      title="Platform Wallet"
-      subtitle="Money customers and partners hold on the platform."
-      info="A customer's top-up arrives by paid order or offline payment. A partner's arrives online from its partner panel (Add Money) or by an offline payment recorded here, and pays for its customers' plans at its purchase price. What a partner earns is recorded separately and never adds to this balance."
-      ownerFilter
-      initialLow={initialLow}
-      initialOwnerType={initialOwnerType}
-      initialQuery={initialQuery}
-    />
-  );
-}
+/** The filters (`low`, `owner_type`, `q`) are read from the address by the list itself
+ * (admin-ux phase 3). */
+export const PlatformWalletScreen = () => (
+  <WalletsList
+    kind="platform"
+    title="Platform Wallet"
+    subtitle="Money customers and partners hold on the platform."
+    info="A customer's top-up arrives by paid order or offline payment. A partner's arrives online from its partner panel (Add Money) or by an offline payment recorded here, and pays for its customers' plans at its purchase price. What a partner earns is recorded separately and never adds to this balance."
+    ownerFilter
+  />
+);
 
 export function AiCreditsScreen() {
   return (
@@ -977,25 +983,30 @@ const METER_FILTER = [
   { value: "webhook", label: "Webhook deliveries" },
 ];
 
-/** A value from the address, only if the filter offers it. */
-const offered = (options: { value: string }[], value: string | undefined) => (options.some((o) => o.value === value) ? (value as string) : "");
+/** The non-empty values a filter offers, for the address. */
+const valuesOf = (options: { value: string }[]) => options.map((o) => o.value).filter(Boolean);
 
 type ControlTab = "transactions" | "events";
 
-export function TransactionControlsScreen({
-  initialTab = "transactions",
-  initialKind,
-  initialType,
-  initialMeter,
-}: {
-  initialTab?: ControlTab;
-  initialKind?: string;
-  initialType?: string;
-  initialMeter?: string;
-} = {}) {
+/** Each tab keeps its filters in the address under its own names, and the tab
+ * itself is `?tab=` (admin-ux phase 3): the AI Credits page links here with them. */
+const TAB_FILTER = { tab: { options: ["transactions", "events"] } };
+const TRANSACTION_FILTERS = { kind: { options: valuesOf(KIND_FILTER) }, type: { options: valuesOf(ENTRY_TYPES) } };
+const EVENT_FILTERS = {
+  outcome: { options: valuesOf(OUTCOME_FILTER) },
+  meter: { options: valuesOf(METER_FILTER) },
+  duplicates: { options: ["1"] },
+  unreviewed: { options: ["1"] },
+};
+
+/** The tab and the filters are read from the address (admin-ux phase 3); `initialTab`
+ * is used only when the address names no tab. */
+export function TransactionControlsScreen({ initialTab = "transactions" }: { initialTab?: ControlTab } = {}) {
   const { permissions } = useAdmin();
   const manage = can(permissions, MANAGE);
-  const [tab, setTab] = useState<ControlTab>(initialTab);
+  const tabFilter = useUrlFilters(TAB_FILTER);
+  const tab = (tabFilter.values.tab || initialTab) as ControlTab;
+  const dropped = droppedMessage(tabFilter.dropped);
   return (
     <Page>
       <PageHeader
@@ -1003,6 +1014,7 @@ export function TransactionControlsScreen({
         subtitle="Every wallet movement and every usage event, with the means to correct them."
         info="A reversal adds an opposite entry that names the original; nothing is ever edited or deleted."
       />
+      {dropped && <Alert tone="warning" title={dropped} />}
       <ReconciliationCard />
       <Tabs
         label="Transaction controls"
@@ -1011,13 +1023,9 @@ export function TransactionControlsScreen({
           { key: "events", label: "Usage events" },
         ]}
         selected={tab}
-        onSelect={setTab}
+        onSelect={(next) => tabFilter.set({ tab: next })}
       >
-        {tab === "transactions" ? (
-          <TransactionsTab manage={manage} initialKind={offered(KIND_FILTER, initialKind)} initialType={offered(ENTRY_TYPES, initialType)} />
-        ) : (
-          <UsageEventsTab manage={manage} initialMeter={offered(METER_FILTER, initialMeter)} />
-        )}
+        {tab === "transactions" ? <TransactionsTab manage={manage} /> : <UsageEventsTab manage={manage} />}
       </Tabs>
     </Page>
   );
@@ -1065,74 +1073,63 @@ function ReconciliationCard() {
   );
 }
 
-function TransactionsTab({ manage, initialKind, initialType }: { manage: boolean; initialKind: string; initialType: string }) {
-  const [kind, setKind] = useState(initialKind);
-  const [type, setType] = useState(initialType);
+function TransactionsTab({ manage }: { manage: boolean }) {
+  const filters = useUrlFilters(TRANSACTION_FILTERS);
+  const { kind, type } = filters.values;
   const [reversing, setReversing] = useState<WalletEntryRow | null>(null);
   const paged = usePaged((cursor) => walletsApi.entries({ kind: (kind || undefined) as WalletKind | undefined, type: type || undefined, cursor }), [kind, type]);
   const loaded = useMemo(() => new Set(paged.rows.map((e) => e.id)), [paged.rows]);
   const filtered = Boolean(kind || type);
+  const dropped = droppedMessage(filters.dropped);
 
-  const columns = [
-    ...entryColumns({
-      loaded,
-      extra: [
-        {
-          key: "wallet",
-          header: "Wallet",
-          value: (e) => e.wallet_kind,
-          render: (e) => (e.wallet_kind ? KIND_LABEL[e.wallet_kind] : EMPTY),
-        },
-        {
-          key: "owner",
-          header: "Owner",
-          value: (e) => e.owner_name,
-          render: (e) => <OwnerLink type={e.owner_type} id={e.owner_id} name={e.owner_name} />,
-        },
-      ],
-    }),
-    ...(manage
-      ? ([
-          {
-            key: "actions",
-            header: "Actions",
-            align: "right",
-            hideable: false,
-            render: (e) =>
-              e.reverses ? (
-                EMPTY
-              ) : (
-                <Button size="sm" aria-haspopup="dialog" aria-label={`Reverse entry ${shortId(e.id)}`} onClick={() => setReversing(e)}>
-                  Reverse
-                </Button>
-              ),
-          },
-        ] as Column<WalletEntryRow>[])
-      : []),
+  const columns = entryColumns({
+    loaded,
+    extra: [
+      {
+        key: "wallet",
+        header: "Wallet",
+        priority: "medium",
+        value: (e) => e.wallet_kind,
+        render: (e) => (e.wallet_kind ? KIND_LABEL[e.wallet_kind] : EMPTY),
+      },
+      {
+        key: "owner",
+        header: "Owner",
+        value: (e) => e.owner_name,
+        render: (e) => <OwnerLink type={e.owner_type} id={e.owner_id} name={e.owner_name} />,
+      },
+    ],
+  });
+
+  // Reverse, in the one Actions column: only for a manager, never on an entry that
+  // already reverses another. It opens the reversal dialog, which says what will
+  // happen and asks for the reason: nothing moves until it is confirmed there.
+  const rowActions = (e: WalletEntryRow) =>
+    e.reverses ? null : (
+      <Button size="sm" icon="history" aria-haspopup="dialog" aria-label={`Reverse entry ${shortId(e.id)}`} onClick={() => setReversing(e)}>
+        Reverse
+      </Button>
+    );
+
+  const active: ActiveFilter[] = [
+    ...(kind ? [{ key: "kind", label: "Wallet", value: optionLabel(KIND_FILTER, kind), onRemove: () => filters.set({ kind: "" }) }] : []),
+    ...(type ? [{ key: "type", label: "Type", value: optionLabel(ENTRY_TYPES, type), onRemove: () => filters.set({ type: "" }) }] : []),
   ];
 
   return (
     <div className={styles.stack}>
-      <FilterBar
-        label="Transaction filters"
-        onClear={
-          filtered
-            ? () => {
-                setKind("");
-                setType("");
-              }
-            : undefined
-        }
-      >
-        <Select label="Wallet" prefix="Wallet:" value={kind} onChange={setKind} options={KIND_FILTER} />
-        <Select label="Type" prefix="Type:" value={type} onChange={setType} options={ENTRY_TYPES} />
+      {dropped && <Alert tone="warning" title={dropped} />}
+      <FilterBar label="Transaction filters" onClear={filtered ? filters.reset : undefined} active={active}>
+        <Select label="Wallet" prefix="Wallet:" value={kind} onChange={(next) => filters.set({ kind: next })} options={KIND_FILTER} />
+        <Select label="Type" prefix="Type:" value={type} onChange={(next) => filters.set({ type: next })} options={ENTRY_TYPES} />
       </FilterBar>
       <DataTable
         caption="Wallet transactions"
         columns={columns}
-        rows={paged.rows}
         rowKey={(e) => e.id}
-        {...pagedProps(paged, "transactions")}
+        rowLabel={(e) => `entry ${shortId(e.id)}`}
+        actions={manage ? rowActions : undefined}
+        {...pagedTable(paged, "transactions")}
         empty={
           <EmptyState
             icon="history"
@@ -1187,11 +1184,12 @@ function ReverseDialog({ entry, onClose, onDone }: { entry: WalletEntryRow; onCl
   );
 }
 
-function UsageEventsTab({ manage, initialMeter }: { manage: boolean; initialMeter: string }) {
-  const [outcome, setOutcome] = useState("");
-  const [meter, setMeter] = useState(initialMeter);
-  const [duplicates, setDuplicates] = useState(false);
-  const [unreviewed, setUnreviewed] = useState(false);
+function UsageEventsTab({ manage }: { manage: boolean }) {
+  const filters = useUrlFilters(EVENT_FILTERS);
+  const { outcome, meter } = filters.values;
+  const duplicates = filters.values.duplicates === "1";
+  const unreviewed = filters.values.unreviewed === "1";
+  const dropped = droppedMessage(filters.dropped);
   const [reviewing, setReviewing] = useState<UsageEventRow | null>(null);
   const paged = usePaged(
     (cursor) =>
@@ -1215,84 +1213,90 @@ function UsageEventsTab({ manage, initialMeter }: { manage: boolean; initialMete
       value: (e) => e.organization_name,
       render: (e) => <OwnerLink type="organization" id={e.organization_id} name={e.organization_name} />,
     },
-    { key: "product", header: "Product", value: (e) => e.product_code, render: (e) => sentence(e.product_code) },
+    { key: "product", header: "Product", priority: "medium", value: (e) => e.product_code, render: (e) => sentence(e.product_code) },
     { key: "meter", header: "Meter", value: (e) => e.meter_label, render: (e) => e.meter_label },
-    { key: "units", header: "Units", align: "right", value: (e) => e.quantity, render: (e) => formatNumber(e.quantity) },
+    { key: "units", header: "Units", align: "right", priority: "medium", value: (e) => e.quantity, render: (e) => formatNumber(e.quantity) },
     {
       key: "outcome",
       header: "Outcome",
+      priority: "essential",
       value: (e) => e.outcome,
       render: (e) => <Badge tone={OUTCOME[e.outcome].tone}>{OUTCOME[e.outcome].label}</Badge>,
     },
-    { key: "failure", header: "Failure", value: (e) => e.failure_code, render: (e) => (e.failure_code ? sentence(e.failure_code) : EMPTY) },
+    { key: "failure", header: "Failure", priority: "low", value: (e) => e.failure_code, render: (e) => (e.failure_code ? sentence(e.failure_code) : EMPTY) },
     {
       key: "amount",
       header: "Amount",
       align: "right",
+      priority: "medium",
       value: (e) => e.amount,
       render: (e) => (e.amount ? balanceText(e.amount, e.meter === "ai_tokens" ? "ai_credits" : undefined, e.currency) : EMPTY),
     },
-    { key: "duplicates", header: "Duplicates", align: "right", value: (e) => e.duplicate_count, render: (e) => formatNumber(e.duplicate_count) },
+    {
+      key: "duplicates",
+      header: "Duplicates",
+      align: "right",
+      priority: "low",
+      value: (e) => e.duplicate_count,
+      render: (e) => formatNumber(e.duplicate_count),
+    },
     {
       key: "review",
       header: "Review",
       hideable: false,
+      priority: "low",
+      value: (e) => e.reviewed_at ?? "",
       render: (e) =>
         e.reviewed_at ? <Stack main={`Reviewed ${formatDateTime(e.reviewed_at)}`} sub={<Trunc max="md">{e.review_note}</Trunc>} /> : "Not reviewed",
     },
-    ...(manage
-      ? ([
-          {
-            key: "actions",
-            header: "Actions",
-            align: "right",
-            hideable: false,
-            render: (e) => (
-              <span className={styles.cellActions}>
-                {e.outcome === "failed" && (
-                  <Button size="sm" disabled={busy} aria-label={`Retry the event received ${formatDateTime(e.received_at)}`} onClick={() => void act(() => walletsApi.retryEvent(e.id), "Event retried. Its new outcome is in the list.")}>
-                    Retry
-                  </Button>
-                )}
-                {!e.reviewed_at && (
-                  <Button size="sm" aria-haspopup="dialog" aria-label={`Mark reviewed the event received ${formatDateTime(e.received_at)}`} onClick={() => setReviewing(e)}>
-                    Mark reviewed
-                  </Button>
-                )}
-              </span>
-            ),
-          },
-        ] as Column<UsageEventRow>[])
-      : []),
+  ];
+
+  // Retry (a failed event) and Mark reviewed, in the one Actions column: only for a manager.
+  const rowActions = (e: UsageEventRow) => (
+    <>
+      {e.outcome === "failed" && (
+        <Button
+          size="sm"
+          icon="refresh"
+          disabled={busy}
+          aria-label={`Retry the event received ${formatDateTime(e.received_at)}`}
+          onClick={() => void act(() => walletsApi.retryEvent(e.id), "Event retried. Its new outcome is in the list.")}
+        >
+          Retry
+        </Button>
+      )}
+      {!e.reviewed_at && (
+        <Button size="sm" icon="check" aria-haspopup="dialog" aria-label={`Mark reviewed the event received ${formatDateTime(e.received_at)}`} onClick={() => setReviewing(e)}>
+          Mark reviewed
+        </Button>
+      )}
+    </>
+  );
+
+  const active: ActiveFilter[] = [
+    ...(outcome ? [{ key: "outcome", label: "Outcome", value: optionLabel(OUTCOME_FILTER, outcome), onRemove: () => filters.set({ outcome: "" }) }] : []),
+    ...(meter ? [{ key: "meter", label: "Meter", value: optionLabel(METER_FILTER, meter), onRemove: () => filters.set({ meter: "" }) }] : []),
+    ...(duplicates ? [{ key: "duplicates", label: "Duplicates", value: "Only duplicated", onRemove: () => filters.set({ duplicates: "" }) }] : []),
+    ...(unreviewed ? [{ key: "unreviewed", label: "Review", value: "Not yet reviewed", onRemove: () => filters.set({ unreviewed: "" }) }] : []),
   ];
 
   return (
     <div className={styles.stack}>
       {feedback}
-      <FilterBar
-        label="Usage event filters"
-        onClear={
-          filtered
-            ? () => {
-                setOutcome("");
-                setMeter("");
-                setDuplicates(false);
-                setUnreviewed(false);
-              }
-            : undefined
-        }
-      >
-        <Select label="Outcome" prefix="Outcome:" value={outcome} onChange={setOutcome} options={OUTCOME_FILTER} />
-        <Select label="Meter" prefix="Meter:" value={meter} onChange={setMeter} options={METER_FILTER} />
-        <ToggleFilter label="Duplicates" checked={duplicates} onChange={setDuplicates} />
-        <ToggleFilter label="Not yet reviewed" checked={unreviewed} onChange={setUnreviewed} />
+      {dropped && <Alert tone="warning" title={dropped} />}
+      <FilterBar label="Usage event filters" onClear={filtered ? filters.reset : undefined} active={active}>
+        <Select label="Outcome" prefix="Outcome:" value={outcome} onChange={(next) => filters.set({ outcome: next })} options={OUTCOME_FILTER} />
+        <Select label="Meter" prefix="Meter:" value={meter} onChange={(next) => filters.set({ meter: next })} options={METER_FILTER} />
+        <ToggleFilter label="Duplicates" checked={duplicates} onChange={(on) => filters.set({ duplicates: on ? "1" : "" })} />
+        <ToggleFilter label="Not yet reviewed" checked={unreviewed} onChange={(on) => filters.set({ unreviewed: on ? "1" : "" })} />
       </FilterBar>
       <DataTable
         caption="Usage events"
         columns={columns}
-        rows={paged.rows}
         rowKey={(e) => e.id}
-        {...pagedProps(paged, "usage events")}
+        rowLabel={(e) => `the event received ${formatDateTime(e.received_at)}`}
+        actions={manage ? rowActions : undefined}
+        {...pagedTable(paged, "usage events")}
         empty={
           <EmptyState
             icon="bolt"

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { accessApi, type DomainsOverview, type LoginClientRow, type SignInEventRow } from "@/lib/api/adminPanel";
 import { adminApi } from "@/lib/api/controlPlane";
 import { TableSection } from "./AdminCommerce";
-import { DateRange, OffsetPager } from "./AdminListParts";
+import { OffsetPager } from "./AdminListParts";
 import { DateText } from "./AdminUsers";
 import { can, useAdmin } from "./ControlShell";
 import { LoadGate, describeError, useLoad } from "./ui";
@@ -16,6 +16,7 @@ import {
   Button,
   ButtonLink,
   DataTable,
+  DateRangeFilter,
   EmptyState,
   FilterBar,
   IdCell,
@@ -31,10 +32,14 @@ import {
   Trunc,
   UrlCell,
   EMPTY,
+  droppedMessage,
   formatDateTime,
   orEmpty,
   productName,
+  rangeLabel,
   sentence,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
 } from "./kit";
 import local from "./AdminPeople.module.css";
@@ -390,30 +395,45 @@ const WHOSE = [
 ];
 
 const SIGN_IN_COLUMNS: Column<SignInEventRow>[] = [
-  { key: "when", header: "When", render: (e) => formatDateTime(e.occurred_at) },
+  { key: "when", header: "When", value: (e) => e.occurred_at, render: (e) => formatDateTime(e.occurred_at) },
   {
     key: "person",
     header: "Person",
+    value: (e) => e.name || e.email,
     render: (e) => <PersonCell name={e.name} email={e.email} badge={e.is_staff ? <Badge tone="brand">Staff</Badge> : undefined} />,
   },
   {
     key: "event",
     header: "Event",
+    priority: "essential",
+    value: (e) => e.kind_label,
     render: (e) => <Badge tone={e.kind === "sign_in_failed" ? "danger" : e.kind === "sign_in" ? "success" : "neutral"}>{e.kind_label}</Badge>,
   },
-  { key: "reason", header: "Reason", render: (e) => <Trunc max="md">{orEmpty(e.reason)}</Trunc> },
-  { key: "network", header: "Network", render: (e) => orEmpty(e.ip_prefix) },
-  { key: "device", header: "Device", render: (e) => <Trunc max="md">{orEmpty(e.device_label)}</Trunc> },
+  { key: "reason", header: "Reason", priority: "medium", value: (e) => e.reason, render: (e) => <Trunc max="md">{orEmpty(e.reason)}</Trunc> },
+  { key: "network", header: "Network", priority: "low", value: (e) => e.ip_prefix, render: (e) => orEmpty(e.ip_prefix) },
+  { key: "device", header: "Device", priority: "low", value: (e) => e.device_label, render: (e) => <Trunc max="md">{orEmpty(e.device_label)}</Trunc> },
 ];
 
+/** The audit's filters, kept in its address (2026-11-18, admin-ux phase 3). No
+ * `?whose=` is Staff only, the audit's first view. */
+const SIGN_IN_FILTERS = {
+  whose: { options: ["", ...WHOSE.map((w) => w.value)] },
+  kind: { options: SIGN_IN_KINDS.map((k) => k.value) },
+  q: {},
+  from: { date: true },
+  to: { date: true },
+};
+
 export function SignInAuditScreen() {
-  const [kind, setKind] = useState("");
-  const [query, setQuery] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [whose, setWhose] = useState("staff");
-  const [offset, setOffset] = useState(0);
-  const [load] = useLoad(
+  const filters = useUrlFilters(SIGN_IN_FILTERS);
+  const { kind, q: query, from, to } = filters.values;
+  const whose = filters.values.whose || "staff";
+  // The page of the list: a new filter (here or from the address) starts again on the first.
+  const filterKey = [whose, kind, query, from, to].join("|");
+  const [paging, setPaging] = useState({ key: filterKey, offset: 0 });
+  const offset = paging.key === filterKey ? paging.offset : 0;
+  const setOffset = (next: number) => setPaging({ key: filterKey, offset: next });
+  const [load, reload] = useLoad(
     () =>
       accessApi.signIns({
         kind: kind || undefined,
@@ -426,12 +446,16 @@ export function SignInAuditScreen() {
       }),
     [kind, query, from, to, whose, offset],
   );
-  /** A new filter starts again on the first page. */
-  const first = (set: (value: string) => void) => (value: string) => {
-    set(value);
-    setOffset(0);
-  };
-  const filtered = Boolean(kind || query || from || to);
+  const dropped = droppedMessage(filters.dropped);
+  // The applied filters, as tags (whose sign-ins is the chip row above).
+  const active: ActiveFilter[] = [
+    ...(query ? [{ key: "q", label: "Search", value: `“${query}”`, onRemove: () => filters.set({ q: "" }) }] : []),
+    ...(kind
+      ? [{ key: "kind", label: "Event", value: SIGN_IN_KINDS.find((k) => k.value === kind)?.label ?? kind, onRemove: () => filters.set({ kind: "" }) }]
+      : []),
+    ...(from || to ? [{ key: "date", label: "Date", value: rangeLabel({ from, to }), onRemove: () => filters.set({ from: "", to: "" }) }] : []),
+  ];
+  const filtered = active.length > 0;
   const rows = load.status === "ready" ? load.data.results : [];
   return (
     <Page>
@@ -440,32 +464,27 @@ export function SignInAuditScreen() {
         subtitle="Who signed in or failed to, from which network and device, newest first."
         info="Only a coarse network and device are kept, never a password or a token."
       />
-      <StatusChips label="Whose sign-ins" value={whose} onChange={first(setWhose)} chips={WHOSE} />
+      {dropped && <Alert tone="warning" title={dropped} />}
+      <StatusChips label="Whose sign-ins" value={whose} onChange={(next) => filters.set({ whose: next === "staff" ? "" : next })} chips={WHOSE} />
       <FilterBar
         label="Filter sign-ins"
-        onClear={
-          filtered
-            ? () => {
-                setKind("");
-                setQuery("");
-                setFrom("");
-                setTo("");
-                setOffset(0);
-              }
-            : undefined
-        }
+        active={active}
+        // Whose sign-ins stays: it is the chip row, not a filter on it.
+        onClear={filtered ? () => filters.set({ kind: "", q: "", from: "", to: "" }) : undefined}
       >
-        <SearchInput label="Search by email" value={query} onSearch={first(setQuery)} />
-        <Select label="Event" prefix="Event:" value={kind} onChange={first(setKind)} options={SIGN_IN_KINDS} />
-        <DateRange from={from} to={to} onFrom={first(setFrom)} onTo={first(setTo)} />
+        <SearchInput label="Search by email" value={query} onSearch={(q) => filters.set({ q })} />
+        <Select label="Event" prefix="Event:" value={kind} onChange={(next) => filters.set({ kind: next })} options={SIGN_IN_KINDS} />
+        <DateRangeFilter label="Date" value={{ from, to }} onApply={(range) => filters.set(range)} />
       </FilterBar>
       <DataTable
         caption="Sign-in events"
         columns={SIGN_IN_COLUMNS}
         rows={rows}
         rowKey={(e) => e.id}
+        rowLabel={(e) => `${e.kind_label}, ${e.email}`}
         loading={load.status === "loading"}
         error={load.status === "error" ? load.message : load.status === "forbidden" ? "You don't have access to the sign-in audit." : null}
+        onRetry={load.status === "error" ? reload : undefined}
         pageSize={0}
         hideEmptyColumns={false}
         empty={<EmptyState icon="login" title="No sign-in events" hint={filtered || whose === "staff" ? "Try other filters, or look at everyone." : undefined} />}

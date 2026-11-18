@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-import { KycApplicationScreen, KycApplicationsScreen, KycRequirementsScreen } from "./AdminKyc";
-import { ToastProvider } from "./kit";
+import { KycAccessLogScreen, KycApplicationScreen, KycApplicationsScreen, KycRequirementsScreen } from "./AdminKyc";
+import { ToastProvider, rangeLabel } from "./kit";
 import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call } from "./testSupport";
 
 /**
@@ -11,16 +11,22 @@ import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call } from 
  * the server says this person may do.
  */
 
-const nav = vi.hoisted(() => ({ router: { replace: vi.fn(), push: vi.fn(), refresh: vi.fn() } }));
+// The address: `replace` writes it, `useSearchParams` reads it (admin-ux phase 3).
+const nav = vi.hoisted(() => ({ query: "", router: { replace: vi.fn(), push: vi.fn(), refresh: vi.fn() } }));
 vi.mock("next/navigation", () => ({
   useRouter: () => nav.router,
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(nav.query),
   usePathname: () => "/admin/partners/applications",
 }));
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  nav.query = "";
   nav.router.push.mockReset();
+  nav.router.replace.mockReset();
+  nav.router.replace.mockImplementation((href: string) => {
+    nav.query = href.split("?")[1] ?? "";
+  });
 });
 
 const QUEUE = "/api/v1/admin/kyc/applications";
@@ -118,6 +124,8 @@ describe("the applications queue", () => {
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() => expect(lastUrl(calls, `GET ${QUEUE}`).searchParams.get("q")).toBe("acme"));
     expect(within(screen.getByRole("group", { name: "KYC status" })).getByRole("button", { name: /^Rejected/ })).not.toHaveTextContent("6");
+    // Kept in the address, so it survives a reload and Back from an application.
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/partners/applications?q=acme", { scroll: false });
   });
 
   it("pages by offset", async () => {
@@ -143,6 +151,104 @@ describe("the applications queue", () => {
     mockApi({ [`GET ${QUEUE}`]: [{ status: 403, body: { detail: "No." } }] });
     screenAs([], <KycApplicationsScreen />);
     expect(await screen.findByRole("alert")).toHaveTextContent("You don't have access to partner applications.");
+  });
+});
+
+describe("the applications queue keeps its filters in the address (admin-ux phase 3)", () => {
+  it("opens on the status the address names: the notifications' link to approved applications", async () => {
+    nav.query = "status=approved";
+    const calls = mockApi({ [`GET ${QUEUE}`]: [page([{ ...ROW, status: "approved" }])] });
+    screenAs(VIEW, <KycApplicationsScreen />);
+    await screen.findByRole("table", { name: "Partner applications" });
+    expect(lastUrl(calls, `GET ${QUEUE}`).searchParams.get("status")).toBe("approved");
+    expect(within(screen.getByRole("group", { name: "KYC status" })).getByRole("button", { name: /^Approved/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("writes a chosen status to the address", async () => {
+    mockApi({ [`GET ${QUEUE}`]: [page([ROW])] });
+    screenAs(VIEW, <KycApplicationsScreen />);
+    await screen.findByRole("table", { name: "Partner applications" });
+    fireEvent.click(within(screen.getByRole("group", { name: "KYC status" })).getByRole("button", { name: /^Rejected/ }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/partners/applications?status=rejected", { scroll: false });
+  });
+
+  it("drops a value the list does not offer, never sends it, and says so", async () => {
+    nav.query = "status=bogus&from=2026-13-40&q=acme";
+    const calls = mockApi({ [`GET ${QUEUE}`]: [page([ROW])] });
+    screenAs(VIEW, <KycApplicationsScreen />);
+    await screen.findByRole("table", { name: "Partner applications" });
+    const sent = lastUrl(calls, `GET ${QUEUE}`).searchParams;
+    expect(sent.has("status")).toBe(false);
+    expect(sent.has("from")).toBe(false);
+    expect(sent.get("q")).toBe("acme");
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("sends the submitted range as from and to, keeps it in the address, and starts again on the first page", async () => {
+    const calls = mockApi({ [`GET ${QUEUE}`]: [page([ROW], { total: 30 })] });
+    screenAs(VIEW, <KycApplicationsScreen />);
+    await screen.findByText("Showing 1–1 of 30");
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(lastUrl(calls, `GET ${QUEUE}`).searchParams.get("offset")).toBe("25"));
+    await screen.findByRole("table", { name: "Partner applications" });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Submitted: / }));
+    const panel = screen.getByRole("dialog", { name: "Submitted between" });
+    fireEvent.change(within(panel).getByLabelText("From"), { target: { value: "2026-10-01" } });
+    fireEvent.change(within(panel).getByLabelText("To"), { target: { value: "2026-10-15" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => expect(lastUrl(calls, `GET ${QUEUE}`).searchParams.get("from")).toBe("2026-10-01"));
+    const sent = lastUrl(calls, `GET ${QUEUE}`).searchParams;
+    expect(sent.get("to")).toBe("2026-10-15");
+    expect(sent.get("offset")).toBe("0");
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/partners/applications?from=2026-10-01&to=2026-10-15", { scroll: false });
+    // The counts are of every application: with a range they would not match the rows.
+    expect(within(screen.getByRole("group", { name: "KYC status" })).getByRole("button", { name: /^Rejected/ })).not.toHaveTextContent("6");
+  });
+
+  it("lists the applied filters as tags; removing one, or Reset filters, clears it and keeps the status", async () => {
+    nav.query = "status=approved&q=acme&from=2026-10-01&to=2026-10-15";
+    const calls = mockApi({ [`GET ${QUEUE}`]: [page([ROW])] });
+    screenAs(VIEW, <KycApplicationsScreen />);
+    await screen.findByRole("table", { name: "Partner applications" });
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Search: “acme”",
+      `Submitted: ${rangeLabel({ from: "2026-10-01", to: "2026-10-15" })}`,
+    ]);
+
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Search: “acme”" }));
+    await waitFor(() => expect(lastUrl(calls, `GET ${QUEUE}`).searchParams.has("q")).toBe(false));
+    expect(lastUrl(calls, `GET ${QUEUE}`).searchParams.get("from")).toBe("2026-10-01");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    await waitFor(() => expect(lastUrl(calls, `GET ${QUEUE}`).searchParams.has("from")).toBe(false));
+    expect(lastUrl(calls, `GET ${QUEUE}`).searchParams.get("status")).toBe("approved");
+    expect(screen.queryByRole("list", { name: "Active filters" })).not.toBeInTheDocument();
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/partners/applications?status=approved", { scroll: false });
+  });
+
+  it("offers Try again when the queue could not be loaded", async () => {
+    const calls = mockApi({ [`GET ${QUEUE}`]: [{ status: 500, body: { detail: "The queue is unavailable." } }, page([ROW])] });
+    screenAs(VIEW, <KycApplicationsScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The queue is unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("row", { name: /Acme Partners/ })).toBeInTheDocument();
+    expect(calls.filter((c) => c.key === `GET ${QUEUE}`)).toHaveLength(2);
+  });
+});
+
+describe("KYC document access", () => {
+  const LOG = "/api/v1/admin/kyc/document-access";
+  const ENTRY = { accessed_at: T, accessed_by_name: "Sam Lee", partner_id: PARTNER, partner_name: "Acme Partners", requirement_key: "tax_card", ip_prefix: "10.0.0.0/24" };
+
+  it("offers Try again when the log could not be loaded", async () => {
+    mockApi({ [`GET ${LOG}`]: [{ status: 500, body: { detail: "The log is unavailable." } }, ok({ results: [ENTRY], total: 1, limit: 25, offset: 0 })] });
+    screenAs(VIEW, <KycAccessLogScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The log is unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("row", { name: /Sam Lee/ })).toHaveTextContent("Tax card");
   });
 });
 
@@ -470,9 +576,28 @@ describe("KYC requirements", () => {
   it("hides the write actions without the review grant", async () => {
     mockApi({ [`GET ${REQUIREMENTS}`]: [ok({ results: [REQUIREMENT_A] })] });
     screenAs(VIEW, <KycRequirementsScreen />);
-    await screen.findByRole("table", { name: "KYC requirements" });
+    const table = await screen.findByRole("table", { name: "KYC requirements" });
     expect(screen.queryByRole("button", { name: "Add requirement" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Edit/ })).not.toBeInTheDocument();
+    expect(within(table).queryByRole("columnheader", { name: "Actions" })).not.toBeInTheDocument();
+  });
+
+  it("puts Edit in the one Actions column, last (admin-ux phase 3)", async () => {
+    mockApi({ [`GET ${REQUIREMENTS}`]: [ok({ results: [REQUIREMENT_A] })] });
+    screenAs(REVIEW, <KycRequirementsScreen />);
+    const table = await screen.findByRole("table", { name: "KYC requirements" });
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent?.trim());
+    expect(headers.at(-1)).toBe("Actions");
+    const row = within(table).getByRole("row", { name: /Certificate of incorporation/ });
+    expect(within(row).getAllByRole("cell").at(-1)).toContainElement(within(row).getByRole("button", { name: "Edit Certificate of incorporation" }));
+  });
+
+  it("offers Try again when the requirements could not be loaded", async () => {
+    mockApi({ [`GET ${REQUIREMENTS}`]: [{ status: 500, body: { detail: "Requirements are unavailable." } }, ok({ results: [REQUIREMENT_A] })] });
+    screenAs(REVIEW, <KycRequirementsScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Requirements are unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("row", { name: /Certificate of incorporation/ })).toBeInTheDocument();
   });
 });
 

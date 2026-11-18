@@ -788,10 +788,227 @@
   padding-right: 0;
 }
 
-.menuCol {
-  width: 48px;
+/* --- data table: actions, errors, folding (2026-11-18, admin-ux phase 3) ---------- */
+
+/* A table's own width (not the window's) decides which columns fold away. */
+.tableResponsive {
+  container: w360table / inline-size;
+}
+
+/* The Actions column: last, as narrow as its buttons, held at the right edge
+   while the table scrolls sideways - the row's actions never scroll out of view. */
+.dt .actionsCol {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  width: 1%;
   text-align: right;
-  padding-left: 0;
+  box-shadow: inset 1px 0 0 var(--w360-border);
+}
+
+.dt thead th.actionsCol {
+  z-index: 3;
+}
+
+.dt .menuOnly {
+  padding-left: var(--w360-space-2);
+}
+
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--w360-space-2);
+  vertical-align: middle;
+}
+
+.tableError {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  padding: var(--w360-space-3) 0;
+  white-space: normal;
+  color: var(--w360-danger);
+}
+
+.tableError > span {
+  color: var(--w360-text);
+}
+
+.footError {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-1);
+  color: var(--w360-danger);
+  font-weight: 600;
+}
+
+.firstCell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: middle;
+}
+
+.firstCellBody {
+  min-width: 0;
+}
+
+/* Shown only once a column has folded away (the container queries below). */
+.foldToggle,
+.detailsRow,
+.detailItem {
+  display: none;
+}
+
+.foldToggle {
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-surface);
+  color: var(--w360-text-secondary);
+  cursor: pointer;
+}
+
+.foldToggle:hover {
+  color: var(--w360-text);
+  border-color: var(--w360-input-border);
+}
+
+.foldToggle:focus-visible {
+  outline: none;
+  border-color: var(--w360-brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--w360-cta) 28%, transparent);
+}
+
+.dt .detailsRow > td {
+  height: auto;
+  padding: var(--w360-space-2) var(--w360-space-3) var(--w360-space-3);
+  white-space: normal;
+  background: var(--w360-gray-50);
+}
+
+.detailsList {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 1fr));
+  gap: var(--w360-space-3) var(--w360-space-4);
+  margin: 0;
+  /* Held in the visible part of the card even when the table scrolls sideways. */
+  position: sticky;
+  left: var(--w360-space-3);
+  max-width: calc(100cqw - 2 * var(--w360-space-3));
+}
+
+.detailItem {
+  gap: 2px;
+  align-content: start;
+  min-width: 0;
+}
+
+.detailItem dt {
+  font-size: var(--w360-fs-meta);
+  font-weight: 600;
+  color: var(--w360-text-muted);
+}
+
+.detailItem dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@container w360table (max-width: 1199.98px) {
+  .fold-low {
+    display: none;
+  }
+
+  /* A narrower table cuts a long name in its first column sooner (it is whole in
+     its tooltip), so the columns that stay and the Actions fit without scrolling. */
+  .firstCellBody .trunc {
+    max-width: 15ch;
+  }
+
+  .foldToggle.toggle-low {
+    display: inline-flex;
+  }
+
+  .detailsRow.toggle-low {
+    display: table-row;
+  }
+
+  .detailItem.show-low {
+    display: grid;
+  }
+}
+
+@container w360table (max-width: 899.98px) {
+  .fold-medium {
+    display: none;
+  }
+
+  .foldToggle.toggle-medium {
+    display: inline-flex;
+  }
+
+  .detailsRow.toggle-medium {
+    display: table-row;
+  }
+
+  .detailItem.show-medium {
+    display: grid;
+  }
+}
+
+@container w360table (max-width: 599.98px) {
+  .fold-high {
+    display: none;
+  }
+
+  .foldToggle.toggle-high {
+    display: inline-flex;
+  }
+
+  .detailsRow.toggle-high {
+    display: table-row;
+  }
+
+  .detailItem.show-high {
+    display: grid;
+  }
+
+  /* A phone: the first column drops its avatar and cuts a long name sooner. */
+  .firstCellBody .avatar {
+    display: none;
+  }
+
+  .firstCellBody .trunc {
+    max-width: 13ch;
+  }
+
+  /* On a phone a row action keeps its icon and its name (read by assistive
+     technology) and drops the visible word. */
+  .rowActions .btn > span:not(.spinner) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .rowActions .btn {
+    width: var(--w360-control-h-sm);
+    padding: 0;
+    justify-content: center;
+  }
 }
 
 .sortButton {
@@ -1615,4 +1832,150 @@ textarea.field {
   .btn {
     transition: none;
   }
+}
+
+/* "Load more" under a simple table, with its own error. */
+.moreRow {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  margin-top: var(--w360-space-2);
+}
+
+/* --- active filters, date range (2026-11-18, admin-ux phase 3) --------------------- */
+
+.filterBar:focus {
+  outline: none;
+}
+
+.activeFilters {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  font-size: var(--w360-fs-meta);
+}
+
+.activeFiltersLabel {
+  color: var(--w360-text-muted);
+  font-weight: 600;
+}
+
+.activeFiltersList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.filterTag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-1);
+  min-height: 26px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--w360-border-strong);
+  border-radius: var(--w360-radius-pill);
+  background: var(--w360-brand-soft);
+  color: var(--w360-text);
+  max-width: 100%;
+}
+
+.filterTag > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filterTagRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--w360-text-secondary);
+  cursor: pointer;
+}
+
+.filterTagRemove:hover {
+  background: var(--w360-gray-200);
+  color: var(--w360-text);
+}
+
+.filterTagRemove:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--w360-cta) 28%, transparent);
+}
+
+.selectButton[data-set] {
+  border-color: var(--w360-brand);
+}
+
+.datePanel {
+  width: min(360px, calc(100vw - 16px));
+  padding: var(--w360-space-3);
+  display: grid;
+  gap: var(--w360-space-3);
+}
+
+.datePanelTitle {
+  margin: 0;
+  font-weight: 600;
+  font-size: var(--w360-fs-body);
+}
+
+.datePresets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+}
+
+.datePresets .chip {
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--w360-fs-meta);
+}
+
+.dateFields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--w360-space-2);
+}
+
+.dateField {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-size: var(--w360-fs-meta);
+  font-weight: 600;
+  color: var(--w360-text-secondary);
+}
+
+.dateField input {
+  min-width: 0;
+  width: 100%;
+}
+
+.dateProblem {
+  margin: 0;
+  color: var(--w360-danger);
+  font-size: var(--w360-fs-meta);
+  font-weight: 600;
+}
+
+.datePanelFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-2);
 }

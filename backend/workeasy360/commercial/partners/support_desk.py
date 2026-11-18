@@ -79,8 +79,12 @@ def queue(
     search: Any = None,
     limit: Any = None,
     offset: Any = None,
+    start: Any = None,
+    end: Any = None,
 ) -> dict[str, Any]:
-    """Tickets to Workeasy360, newest activity first."""
+    """Tickets to Workeasy360, newest activity first. ``start``/``end`` keep the
+    tickets opened in ``[start, end)``; the status counts follow them, as they
+    follow the search."""
     authz.require(ctx, VIEW)
     directions = AUDIENCES.get(str(audience or "all"))
     if directions is None:
@@ -102,6 +106,10 @@ def queue(
         if text.lstrip("#").isdigit():
             filters |= Q(number=int(text.lstrip("#")))
         rows = rows.filter(filters)
+    if start is not None:
+        rows = rows.filter(opened_at__gte=start)
+    if end is not None:
+        rows = rows.filter(opened_at__lt=end)
     page = tickets._page(rows, status=status, limit=limit, offset=offset)
     found = {
         str(r.id): r

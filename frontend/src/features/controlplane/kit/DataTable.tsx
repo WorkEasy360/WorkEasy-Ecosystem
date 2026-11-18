@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/sidebar/icons";
@@ -11,6 +11,17 @@ import { formatNumber } from "./format";
 import k from "./Kit.module.css";
 
 const noSubscription = () => () => {};
+
+/**
+ * How early a column folds away as its table narrows (2026-11-18, admin-ux
+ * phase 3). A folded column's value is still one click away, in the row's
+ * details ("Show details"), so nothing is lost on a small screen:
+ * - `essential`: never folds (the first column always is);
+ * - `high`: folds when the table is narrower than 600 px (a phone);
+ * - `medium`: under 900 px (a tablet, a narrow window);
+ * - `low`: under 1200 px (a laptop with the sidebar open).
+ */
+export type ColumnPriority = "essential" | "high" | "medium" | "low";
 
 export interface Column<R> {
   key: string;
@@ -27,7 +38,11 @@ export interface Column<R> {
   hideable?: boolean;
   /** Off until turned on in the column picker. */
   defaultHidden?: boolean;
+  /** When the column folds into the row's details (default `high`; the first column never folds). */
+  priority?: ColumnPriority;
 }
+
+const FOLDS: Exclude<ColumnPriority, "essential">[] = ["low", "medium", "high"];
 
 const isBlank = (v: unknown) =>
   v === null || v === undefined || v === "" || v === "—" || (Array.isArray(v) && v.length === 0);
@@ -60,11 +75,27 @@ function useHiddenColumns(storageKey: string | undefined, defaults: string[]) {
  * The console's one table. Sentence-case headings, a sticky heading row and
  * first column (the table scrolls inside its own card, never the page), one
  * line per cell (long text is cut with an ellipsis and shown whole in a
- * tooltip), numbers right-aligned in tabular figures, a hover state, the row's
- * "⋯" menu at the right, and pagination with "Showing 1–25 of 132".
+ * tooltip), numbers right-aligned in tabular figures, a hover state, and
+ * pagination with "Showing 1–25 of 132".
  *
- * Columns empty in every row are hidden. A row with `rowHref` opens on a
- * click anywhere in it (its first cell also holds a real link, for the keyboard).
+ * **Actions (2026-11-18, admin-ux phase 3).** Every table that has row actions
+ * has one "Actions" column, last, held at the right edge while the table
+ * scrolls sideways: the row's frequent actions as buttons (`actions`: View,
+ * Login as Guest, Approve…), then its "⋯" menu (`rowMenu`) for the rest. In a
+ * narrow table the buttons keep their icon and their accessible name and drop
+ * the visible word.
+ *
+ * **Small screens.** A column folds away below its `priority` width and its
+ * value moves into the row's details, opened by the button at the start of the
+ * row - the table never needs a sideways scroll on a phone to be read.
+ *
+ * **States.** Skeleton rows while loading; the error with "Try again"
+ * (`onRetry`); the empty state; "Load more" with its own spinner and its own
+ * error. Sorting a server-paged list that has more rows says that it sorted
+ * only the rows loaded so far.
+ *
+ * Columns empty in every row are hidden. A row with `rowHref` opens on a click
+ * anywhere in it (its first cell also holds a real link, for the keyboard).
  */
 export function DataTable<R>({
   caption,
@@ -73,13 +104,17 @@ export function DataTable<R>({
   rowKey,
   rowHref,
   rowMenu,
+  actions,
   rowLabel,
   loading = false,
   error,
+  onRetry,
   empty,
   pageSize = 25,
   onLoadMore,
   hasMore = false,
+  loadingMore = false,
+  moreError,
   total,
   selectable,
   columnPicker = false,
@@ -88,6 +123,7 @@ export function DataTable<R>({
   stickyFirst = true,
   maxHeight = true,
   initialSort,
+  responsive = true,
 }: {
   /** What the table lists - read by assistive technology, not drawn. */
   caption: string;
@@ -95,11 +131,16 @@ export function DataTable<R>({
   rows: R[];
   rowKey: (row: R) => string;
   rowHref?: (row: R) => string | null | undefined;
+  /** The row's less frequent actions, in its "⋯" menu. */
   rowMenu?: (row: R) => MenuItem[];
-  /** The row's name, for its menu ("Actions for Asha Rao"). */
+  /** The row's frequent actions, as buttons in the Actions column (before the menu). */
+  actions?: (row: R) => React.ReactNode;
+  /** The row's name, for its menu ("Actions for Asha Rao") and its details. */
   rowLabel?: (row: R) => string;
   loading?: boolean;
   error?: string | null;
+  /** "Try again" beside the error. */
+  onRetry?: () => void;
   /** The empty state (an EmptyState). */
   empty?: React.ReactNode;
   /** Rows per page when every row is loaded (0: no pages). */
@@ -107,6 +148,10 @@ export function DataTable<R>({
   /** Server pages: a "Load more" button below the rows. */
   onLoadMore?: () => void;
   hasMore?: boolean;
+  /** The next page is on its way. */
+  loadingMore?: boolean;
+  /** The next page could not be loaded (the rows already shown stay). */
+  moreError?: string | null;
   /** How many rows exist in all, when the server says. */
   total?: number | null;
   selectable?: {
@@ -122,11 +167,15 @@ export function DataTable<R>({
   /** false: the table grows with its rows (a short list on a detail page). */
   maxHeight?: boolean;
   initialSort?: { key: string; dir: "asc" | "desc" };
+  /** false: no column folds on a small screen (the table scrolls sideways instead). */
+  responsive?: boolean;
 }) {
   const router = useRouter();
   const captionId = useId();
+  const detailsId = useId();
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(initialSort ?? null);
   const [page, setPage] = useState(0);
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
   const [hidden, setHidden] = useHiddenColumns(
     storageKey,
     columns.filter((c) => c.defaultHidden).map((c) => c.key),
@@ -148,6 +197,12 @@ export function DataTable<R>({
       }),
     [columns, hidden, hideEmptyColumns, rows],
   );
+
+  // Each visible column's fold, and the widest fold any column has (it decides
+  // from which width the rows' "Show details" buttons appear).
+  const folds = visibleColumns.map((c, i): ColumnPriority => (!responsive || i === 0 ? "essential" : (c.priority ?? "high")));
+  const widestFold = FOLDS.find((p) => folds.includes(p)) ?? null;
+  const foldClass = (p: ColumnPriority) => (p === "essential" ? undefined : k[`fold-${p}`]);
 
   const sorted = useMemo(() => {
     if (!sort) return rows;
@@ -178,21 +233,38 @@ export function DataTable<R>({
   const allSelected = selectable ? keys.length > 0 && keys.every((key) => selectable.selected.has(key)) : false;
   const someSelected = selectable ? keys.some((key) => selectable.selected.has(key)) : false;
 
-  const colSpan = visibleColumns.length + (selectable ? 1 : 0) + (rowMenu ? 1 : 0);
+  const hasActions = Boolean(actions || rowMenu);
+  const colSpan = visibleColumns.length + (selectable ? 1 : 0) + (hasActions ? 1 : 0);
 
   const toggleSort = (key: string) => {
     setPage(0);
     setSort((s) => (s?.key === key ? (s.dir === "asc" ? { key, dir: "desc" } : null) : { key, dir: "asc" }));
   };
 
+  const toggleDetails = (key: string) =>
+    setOpen((now) => {
+      const next = new Set(now);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
   const alignClass = (c: Column<R>) => (c.align === "right" ? k.num : c.align === "center" ? k.center : c.wrap ? k.wrap : undefined);
+  const cellClass = (c: Column<R>, i: number) =>
+    [alignClass(c), i === 0 && stickyFirst ? k.stickyCol : "", foldClass(folds[i])].filter(Boolean).join(" ") || undefined;
 
   if (!loading && !error && rows.length === 0) {
     return <div className={k.tableCard}>{empty ?? <EmptyState icon="search" title="Nothing to show" compact />}</div>;
   }
 
+  const retry = onRetry ? (
+    <Button size="sm" icon="refresh" onClick={onRetry}>
+      Try again
+    </Button>
+  ) : null;
+
   return (
-    <div className={k.tableCard}>
+    <div className={`${k.tableCard} ${k.tableResponsive}`}>
       {(selectable && selectable.selected.size > 0) || columnPicker ? (
         <div className={k.tableToolbar}>
           {selectable && selectable.selected.size > 0 ? (
@@ -247,7 +319,7 @@ export function DataTable<R>({
                   <th
                     key={c.key}
                     scope="col"
-                    className={[alignClass(c), i === 0 && stickyFirst ? k.stickyCol : ""].filter(Boolean).join(" ") || undefined}
+                    className={cellClass(c, i)}
                     aria-sort={sortedHere ? (sort!.dir === "asc" ? "ascending" : "descending") : undefined}
                   >
                     {sortable ? (
@@ -261,9 +333,9 @@ export function DataTable<R>({
                   </th>
                 );
               })}
-              {rowMenu && (
-                <th scope="col" className={k.menuCol}>
-                  <span className="w360-visually-hidden">Actions</span>
+              {hasActions && (
+                <th scope="col" className={actions ? k.actionsCol : `${k.actionsCol} ${k.menuOnly}`}>
+                  Actions
                 </th>
               )}
             </tr>
@@ -280,12 +352,14 @@ export function DataTable<R>({
                   </tr>
                 ))
               : null}
-            {error && rows.length === 0 ? (
+            {error && rows.length === 0 && !loading ? (
               <tr>
                 <td colSpan={colSpan}>
-                  <p role="alert" className={k.muted}>
-                    {error}
-                  </p>
+                  <div role="alert" className={k.tableError}>
+                    <Icon name="alert" size={16} />
+                    <span>{error}</span>
+                    {retry}
+                  </div>
                 </td>
               </tr>
             ) : null}
@@ -293,53 +367,92 @@ export function DataTable<R>({
               const key = rowKey(row);
               const href = rowHref?.(row) ?? null;
               const selected = selectable?.selected.has(key) ?? false;
+              const expanded = widestFold !== null && open.has(key);
+              const label = rowLabel?.(row) ?? "this row";
+              const detailsRowId = `${detailsId}-${key}`;
               return (
-                <tr
-                  key={key}
-                  data-clickable={href ? true : undefined}
-                  aria-selected={selectable ? selected : undefined}
-                  onClick={(e) => {
-                    if (!href) return;
-                    const target = e.target as HTMLElement;
-                    if (target.closest("a, button, input, select, textarea, label, [role='menu']")) return;
-                    if (window.getSelection()?.toString()) return;
-                    if (e.metaKey || e.ctrlKey) window.open(href, "_blank", "noopener");
-                    else router.push(href);
-                  }}
-                >
-                  {selectable && (
-                    <td className={k.checkCol}>
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${rowLabel?.(row) ?? "row"}`}
-                        checked={selected}
-                        onChange={() => {
-                          const next = new Set(selectable.selected);
-                          if (selected) next.delete(key);
-                          else next.add(key);
-                          selectable.onChange(next);
-                        }}
-                      />
-                    </td>
-                  )}
-                  {visibleColumns.map((c, i) => {
-                    const cls = [alignClass(c), i === 0 && stickyFirst ? k.stickyCol : ""].filter(Boolean).join(" ") || undefined;
-                    return i === 0 ? (
-                      <th key={c.key} scope="row" className={cls}>
-                        {c.render(row)}
-                      </th>
-                    ) : (
-                      <td key={c.key} className={cls}>
-                        {c.render(row)}
+                <Fragment key={key}>
+                  <tr
+                    data-clickable={href ? true : undefined}
+                    aria-selected={selectable ? selected : undefined}
+                    onClick={(e) => {
+                      if (!href) return;
+                      const target = e.target as HTMLElement;
+                      if (target.closest("a, button, input, select, textarea, label, [role='menu']")) return;
+                      if (window.getSelection()?.toString()) return;
+                      if (e.metaKey || e.ctrlKey) window.open(href, "_blank", "noopener");
+                      else router.push(href);
+                    }}
+                  >
+                    {selectable && (
+                      <td className={k.checkCol}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${label}`}
+                          checked={selected}
+                          onChange={() => {
+                            const next = new Set(selectable.selected);
+                            if (selected) next.delete(key);
+                            else next.add(key);
+                            selectable.onChange(next);
+                          }}
+                        />
                       </td>
-                    );
-                  })}
-                  {rowMenu && (
-                    <td className={k.menuCol}>
-                      <RowMenu label={`Actions for ${rowLabel?.(row) ?? "this row"}`} items={rowMenu(row)} />
-                    </td>
+                    )}
+                    {visibleColumns.map((c, i) =>
+                      i === 0 ? (
+                        <th key={c.key} scope="row" className={cellClass(c, i)}>
+                          {widestFold ? (
+                            <span className={k.firstCell}>
+                              <button
+                                type="button"
+                                className={`${k.foldToggle} ${k[`toggle-${widestFold}`]}`}
+                                aria-expanded={expanded}
+                                aria-controls={expanded ? detailsRowId : undefined}
+                                aria-label={`${expanded ? "Hide" : "Show"} details of ${label}`}
+                                title={expanded ? "Hide details" : "Show details"}
+                                onClick={() => toggleDetails(key)}
+                              >
+                                <Icon name={expanded ? "chevronDown" : "chevronRight"} size={14} />
+                              </button>
+                              <span className={k.firstCellBody}>{c.render(row)}</span>
+                            </span>
+                          ) : (
+                            c.render(row)
+                          )}
+                        </th>
+                      ) : (
+                        <td key={c.key} className={cellClass(c, i)}>
+                          {c.render(row)}
+                        </td>
+                      ),
+                    )}
+                    {hasActions && (
+                      <td className={actions ? k.actionsCol : `${k.actionsCol} ${k.menuOnly}`}>
+                        <span className={k.rowActions}>
+                          {actions?.(row)}
+                          {rowMenu && <RowMenu label={`Actions for ${label}`} items={rowMenu(row)} />}
+                        </span>
+                      </td>
+                    )}
+                  </tr>
+                  {expanded && widestFold && (
+                    <tr id={detailsRowId} className={`${k.detailsRow} ${k[`toggle-${widestFold}`]}`}>
+                      <td colSpan={colSpan}>
+                        <dl className={k.detailsList} aria-label={`Details of ${label}`}>
+                          {visibleColumns.map((c, i) =>
+                            folds[i] === "essential" ? null : (
+                              <div key={c.key} className={`${k.detailItem} ${k[`show-${folds[i]}`]}`}>
+                                <dt>{c.header}</dt>
+                                <dd>{c.render(row)}</dd>
+                              </div>
+                            ),
+                          )}
+                        </dl>
+                      </td>
+                    </tr>
                   )}
-                </tr>
+                </Fragment>
               );
             })}
           </tbody>
@@ -351,6 +464,8 @@ export function DataTable<R>({
             {sorted.length === 0
               ? "No rows"
               : `Showing ${formatNumber(from)}–${formatNumber(to)}${all !== null ? ` of ${formatNumber(all)}` : ""}`}
+            {/* Sorting happens on the rows this page holds: say so while the server has more. */}
+            {sort && onLoadMore && hasMore && sorted.length > 0 ? ` · sorted within the ${formatNumber(sorted.length)} loaded` : ""}
           </span>
           {paged && pages > 1 && (
             <span className={k.pager}>
@@ -368,9 +483,15 @@ export function DataTable<R>({
               />
             </span>
           )}
+          {moreError && rows.length > 0 ? (
+            <span role="alert" className={k.footError}>
+              <Icon name="alert" size={14} />
+              {moreError}
+            </span>
+          ) : null}
           {onLoadMore && hasMore && (
-            <Button size="sm" onClick={onLoadMore}>
-              Load more
+            <Button size="sm" loading={loadingMore} onClick={onLoadMore}>
+              {moreError ? "Try again" : "Load more"}
             </Button>
           )}
         </div>

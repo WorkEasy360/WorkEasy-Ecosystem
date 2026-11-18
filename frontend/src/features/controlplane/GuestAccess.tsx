@@ -73,15 +73,29 @@ export const GUEST_REASONS = [
   "Investigating a reported problem",
 ] as const;
 
-/** Why this guest session (ADR-063, the specification's 1.3): one of the usual
- * reasons, with optional details. The server records it with the session and its
- * every request; it never asks for or shows the partner's password. */
+/** What the confirmation names about the partner (its type in the Admin's words,
+ * its account status). */
+export interface GuestTargetDetails {
+  type?: string;
+  status?: string;
+}
+
+const STATUS_WORDS: Record<string, string> = { active: "Active", suspended: "Suspended", draft: "Draft", terminated: "Terminated" };
+
+/** The confirmation before a guest session (2026-11-18, admin-ux phase 3, Decision
+ * A): who, what it opens, for how long, that the Admin stays signed in as
+ * themselves, and the way back - then why (ADR-063, the specification's 1.3): one
+ * of the usual reasons, with optional details. Nothing starts until "Start guest
+ * session"; the server records the reason with the session and its every request,
+ * and never asks for or shows the partner's password. A refusal stays in the dialog. */
 export function GuestReasonDialog({
   partnerName,
+  target,
   onClose,
   onStart,
 }: {
   partnerName: string;
+  target?: GuestTargetDetails;
   onClose: () => void;
   onStart: (reason: string) => Promise<void>;
 }) {
@@ -92,8 +106,14 @@ export function GuestReasonDialog({
   const reason = (details.trim() ? `${choice}: ${details.trim()}` : choice).slice(0, 200);
   return (
     <FormDialog
-      title={`Login as Guest · ${partnerName}`}
-      intro="Opens this partner's portal read-only, as you, for 30 minutes. The reason and every page you open are recorded in the audit log."
+      title={`Login as Guest to ${partnerName}?`}
+      intro={
+        <>
+          You will see this partner&apos;s portal as they do, <strong>read-only</strong>, for <strong>30 minutes</strong>. You stay signed in
+          here as yourself (no partner password is used); <strong>Exit Guest Session</strong> in the banner ends it and brings you back. The
+          reason and every page you open are recorded in the audit log.
+        </>
+      }
       submitLabel="Start guest session"
       columns={1}
       canSubmit={reason.length >= 3}
@@ -103,6 +123,13 @@ export function GuestReasonDialog({
         return "Opening the guest session…";
       }}
     >
+      {(target?.type || target?.status) && (
+        <p className={styles.muted}>
+          {[target.type && `Partner type: ${target.type}`, target.status && `Account status: ${STATUS_WORDS[target.status] ?? target.status}`]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      )}
       <div className="w360-field">
         <label htmlFor={reasonId}>Reason</label>
         <select id={reasonId} className="w360-input" value={choice} onChange={(e) => setChoice(e.target.value)}>
@@ -131,16 +158,17 @@ export function GuestReasonDialog({
 /** Login as Guest from any Admin page: asks for the reason, then opens the session. */
 export function useGuestLogin(where: string) {
   const portals = usePortals();
-  const [target, setTarget] = useState<{ id: string; name: string } | null>(null);
+  const [target, setTarget] = useState<{ id: string; name: string; details?: GuestTargetDetails } | null>(null);
   const node = target ? (
     <GuestReasonDialog
       partnerName={target.name}
+      target={target.details}
       onClose={() => setTarget(null)}
       onStart={(reason) => loginAsGuest(target.id, where, currentReturnPath(), portals, reason)}
     />
   ) : null;
   return {
-    ask: (id: string, name: string) => setTarget({ id, name }),
+    ask: (id: string, name: string, details?: GuestTargetDetails) => setTarget({ id, name, details }),
     dialog: node,
     /** The partner whose Login as Guest is being opened (its button shows it). */
     pending: target?.id ?? null,
