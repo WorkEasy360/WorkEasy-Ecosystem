@@ -25,7 +25,8 @@ from contextlib import contextmanager
 from typing import Any
 from uuid import UUID
 
-from django.db import IntegrityError, transaction
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, connection, transaction
 
 from workeasy360.contracts.enums import (
     OrganizationStatus,
@@ -48,6 +49,13 @@ def ensure_platform_organization() -> None:
     ``flush``) truncates every table, and a migration-only row would not come
     back. Lazily creating it costs one indexed existence query per
     control-plane request.
+
+    Concurrent first callers are serialised by a transaction-scoped advisory
+    lock and re-check under it, so only one creates the anchor and the others
+    find it. Without the lock, a caller that saw no system account could lose
+    the race at either of two points: at the insert (``IntegrityError``) or a
+    moment earlier, when ``full_clean`` re-checks the address
+    (``ValidationError``). Both are still treated as a lost race.
     """
     from workeasy360.platform.identity import lifecycle
     from workeasy360.platform.identity.models import User
@@ -64,6 +72,13 @@ def ensure_platform_organization() -> None:
     ):
         try:
             with transaction.atomic():
+                with connection.cursor() as cur:
+                    cur.execute(
+                        "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                        ["platform.control_plane.anchor"],
+                    )
+                if organization_status(PLATFORM_ORGANIZATION_ID) is not None:
+                    return
                 owner = User.objects.filter(email=PLATFORM_SYSTEM_USER_EMAIL).first()
                 if owner is None:
                     owner = lifecycle.create_account(
@@ -78,7 +93,7 @@ def ensure_platform_organization() -> None:
                     name="Workeasy360 control plane",
                     created_by_id=owner.id,
                 )
-        except IntegrityError:
+        except (IntegrityError, ValidationError):
             # Lost the race for the system account: the anchor now exists.
             if organization_status(PLATFORM_ORGANIZATION_ID) is None:
                 raise

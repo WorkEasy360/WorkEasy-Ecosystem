@@ -146,6 +146,7 @@ def ensure_identity_for_email(email: str, *, full_name: str = "") -> tuple[Any, 
     Race-safe: two callers naming a new address at once both end with the one
     row the unique index allows.
     """
+    from django.core.exceptions import ValidationError
     from django.db import IntegrityError, transaction
 
     from workeasy360.platform.identity.email import (
@@ -176,7 +177,9 @@ def ensure_identity_for_email(email: str, *, full_name: str = "") -> tuple[Any, 
                 full_name=full_name.strip()[:255],
             )
         return user.id, True
-    except IntegrityError:
+    except (IntegrityError, ValidationError):
+        # Lost the race for the address: the insert failed, or a moment
+        # earlier full_clean saw the other request's committed row.
         existing = User.objects.filter(email=address).first()
         if existing is None:
             raise
