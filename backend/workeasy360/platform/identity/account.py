@@ -82,22 +82,117 @@ def record_sign_in(user: Any, *, ip_prefix: str, device_label: str) -> None:
 def recent_account_events(
     user_id: Any, *, limit: int = DEFAULT_EVENT_LIMIT
 ) -> list[dict]:
+    """The short security trail. ADR-072: product sign-ins are Login History
+    only (:func:`account_event_page`), so this list - the security panels on
+    every portal and the Super Admin's latest entries - reads as before."""
     from workeasy360.platform.identity.models import AccountEvent
 
     limit = max(1, min(int(limit or DEFAULT_EVENT_LIMIT), 100))
-    rows = AccountEvent.objects.filter(user_id=user_id).order_by("-occurred_at", "-id")[
-        :limit
-    ]
-    return [
-        {
-            "occurred_at": r.occurred_at.isoformat(),
-            "kind": r.kind,
-            "reason": r.reason,
-            "ip_prefix": r.ip_prefix,
-            "device_label": r.device_label,
-        }
-        for r in rows
-    ]
+    rows = (
+        AccountEvent.objects.filter(user_id=user_id)
+        .exclude(kind=AccountEvent.Kind.PRODUCT_SIGN_IN)
+        .order_by("-occurred_at", "-id")[:limit]
+    )
+    return [_event_json(r) for r in rows]
+
+
+def _event_json(row: Any) -> dict[str, Any]:
+    return {
+        "occurred_at": row.occurred_at.isoformat(),
+        "kind": row.kind,
+        "reason": row.reason,
+        "ip_prefix": row.ip_prefix,
+        "device_label": row.device_label,
+    }
+
+
+#: ADR-072: what Login History shows by default - every sign-in, kept or
+#: refused, to WorkEasy360 and (through it) to a product.
+SIGN_IN_KINDS: tuple[str, ...] = ("sign_in", "sign_in_failed", "product_sign_in")
+HISTORY_MAX_PAGE = 100
+
+
+def _history_cursor(raw: str | None) -> tuple[Any, str] | None:
+    import base64
+    import json
+    from datetime import datetime
+
+    if not raw or len(raw) > 200:
+        return None
+    try:
+        data = json.loads(base64.urlsafe_b64decode(raw.encode("ascii")))
+        return datetime.fromisoformat(str(data["t"])), str(UUID(str(data["i"])))
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _encode_history_cursor(occurred_at: Any, event_id: Any) -> str:
+    import base64
+    import json
+
+    payload = json.dumps({"t": occurred_at.isoformat(), "i": str(event_id)})
+    return base64.urlsafe_b64encode(payload.encode("ascii")).decode("ascii")
+
+
+def account_event_page(
+    user_id: Any,
+    *,
+    kinds: tuple[str, ...] | None = SIGN_IN_KINDS,
+    limit: int = 25,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """ADR-072: the person's Login History, newest first, keyset-paged past
+    the security panel's 20 entries (the whole retention window,
+    ``ACCOUNT_EVENT_RETENTION_DAYS``). ``kinds=None`` is every entry. Coarse
+    network and device only, as written."""
+    from django.db.models import Q
+
+    from workeasy360.platform.identity.models import AccountEvent
+
+    limit = max(1, min(int(limit or 25), HISTORY_MAX_PAGE))
+    rows = AccountEvent.objects.filter(user_id=user_id)
+    if kinds is not None:
+        rows = rows.filter(kind__in=list(kinds))
+    decoded = _history_cursor(cursor)
+    if decoded is not None:
+        moment, last = decoded
+        rows = rows.filter(Q(occurred_at__lt=moment) | Q(occurred_at=moment, id__lt=last))
+    page = list(rows.order_by("-occurred_at", "-id")[: limit + 1])
+    has_more = len(page) > limit
+    page = page[:limit]
+    return {
+        "results": [_event_json(r) for r in page],
+        "next_cursor": _encode_history_cursor(page[-1].occurred_at, page[-1].id)
+        if has_more and page
+        else None,
+        "has_more": has_more,
+    }
+
+
+def record_product_sign_in(
+    user_id: Any, *, product_code: str, sign_in_id: Any = None
+) -> None:
+    """ADR-072: a product redeemed a WorkEasy360 sign-in for this person (the
+    token endpoint). The network and device are those of the WorkEasy360
+    sign-in that authorized it - the token endpoint itself is the product's
+    server, not the person's browser - and empty when it is not known."""
+    from workeasy360.platform.identity.models import AccountEvent, UserSession
+
+    where = None
+    if sign_in_id is not None:
+        where = (
+            UserSession.objects.filter(user_id=user_id, sign_in_id=sign_in_id)
+            .order_by("-last_activity_at")
+            .values("ip_prefix", "device_label")
+            .first()
+        )
+    record_account_event(
+        user_id,
+        AccountEvent.Kind.PRODUCT_SIGN_IN,
+        reason=str(product_code),
+        ip_prefix=(where or {}).get("ip_prefix", ""),
+        device_label=(where or {}).get("device_label", ""),
+    )
 
 
 def prune_account_events(*, older_than_days: int) -> int:
@@ -148,6 +243,61 @@ def _uuid_or_none(raw: Any) -> UUID | None:
         return UUID(str(raw)) if raw else None
     except (TypeError, ValueError):
         return None
+
+
+def live_sign_in_ids(user_id: Any) -> set[UUID]:
+    """ADR-072: the person's WorkEasy360 sign-ins with a session still live -
+    what Connected Logins means by "WorkEasy360 sign-in still open"."""
+    return {
+        s
+        for s in _live_sessions(user_id).values_list("sign_in_id", flat=True)
+        if s is not None
+    }
+
+
+def list_sign_ins(user_id: Any, *, current_public_id: UUID | None) -> list[dict]:
+    """ADR-072: where this person is signed in, **one row per sign-in**.
+
+    In multi-portal mode one password sign-in has a session on WorkEasy360
+    Accounts and one on each portal it was handed to (ADR-043, the shared
+    ``sign_in_id``); :func:`list_sessions` shows each of them, so one device
+    appeared several times. Grouped here: the device and network of its most
+    recently active session, when it signed in (its earliest), when it was
+    last active (its latest) and how many portal sessions it holds.
+    ``session_id`` is that most recent session's public id, which is what
+    :func:`revoke_session` takes - and revoking it ends the whole sign-in.
+    A session without a sign-in id (older than ADR-043) is its own row."""
+    rows = _live_sessions(user_id).order_by("-last_activity_at")[:200]
+    groups: dict[Any, dict[str, Any]] = {}
+    for r in rows:
+        key = r.sign_in_id or r.public_id
+        found = groups.get(key)
+        if found is None:
+            groups[key] = {
+                "session_id": str(r.public_id),
+                "current": r.public_id == current_public_id,
+                "signed_in_at": r.created_at,
+                "last_active_at": r.last_activity_at,
+                "expires_at": r.expire_date,
+                "ip_prefix": r.ip_prefix,
+                "device_label": r.device_label or "Unknown device",
+                "portal_sessions": 1,
+            }
+            continue
+        found["portal_sessions"] += 1
+        found["current"] = found["current"] or r.public_id == current_public_id
+        found["signed_in_at"] = min(found["signed_in_at"], r.created_at)
+        found["expires_at"] = max(found["expires_at"], r.expire_date)
+    listed = sorted(groups.values(), key=lambda g: g["last_active_at"], reverse=True)
+    return [
+        {
+            **g,
+            "signed_in_at": g["signed_in_at"].isoformat(),
+            "last_active_at": g["last_active_at"].isoformat(),
+            "expires_at": g["expires_at"].isoformat(),
+        }
+        for g in listed[:50]
+    ]
 
 
 def revoke_session(
@@ -358,4 +508,57 @@ def change_password(
         )
     metrics.increment("identity_password_changed_total")
     logger.info("identity.password.changed", user_id=str(user_id))
+    return user
+
+
+# --- profile (ADR-072) ----------------------------------------------------------
+
+#: First and last name as signup takes them (100 each) and the space between.
+MAX_FULL_NAME = 201
+
+
+def clean_full_name(raw: Any) -> str:
+    """The name as stored: inner whitespace collapsed, never empty, never a
+    control character, never longer than signup allows."""
+    from workeasy360.contracts.errors import ProfileInvalid
+
+    if raw is not None and not isinstance(raw, str):
+        raise ProfileInvalid("Enter your name.", field="full_name")
+    value = " ".join((raw or "").split())
+    if not value:
+        raise ProfileInvalid("Enter your name.", field="full_name")
+    if len(value) > MAX_FULL_NAME or any(
+        ord(ch) < 32 or 0x7F <= ord(ch) < 0xA0 for ch in value
+    ):
+        raise ProfileInvalid(
+            f"Your name must be at most {MAX_FULL_NAME} characters, without control "
+            "characters.",
+            field="full_name",
+        )
+    return value
+
+
+def update_profile(
+    user_id: Any, *, full_name: Any, ip_prefix: str = "", device_label: str = ""
+) -> Any:
+    """Change the person's own display name (ADR-072). Only the name: the
+    sign-in email has its own confirmed change (ADR-066) and the password its
+    own. Products read the new name from the ID token's ``name`` claim at the
+    next sign-in. A no-op (and no trail entry) when nothing changed."""
+    from workeasy360.platform.identity.models import AccountEvent, User
+
+    value = clean_full_name(full_name)
+    with transaction.atomic():
+        user = User.objects.select_for_update().get(pk=user_id)
+        if user.full_name == value:
+            return user
+        user.full_name = value
+        user.save(update_fields=["full_name", "updated_at"])
+        record_account_event(
+            user_id,
+            AccountEvent.Kind.PROFILE_UPDATED,
+            ip_prefix=ip_prefix,
+            device_label=device_label,
+        )
+    logger.info("identity.profile.updated", user_id=str(user_id))
     return user

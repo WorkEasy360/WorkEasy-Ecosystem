@@ -797,6 +797,7 @@ def _token_response(redeemed: Any) -> dict[str, Any]:
         user_id=redeemed.user_id,
         sign_in_id=redeemed.sign_in_id,
     )
+    _record_connection(redeemed)
     return {
         "access_token": access_token.value,
         "token_type": "Bearer",
@@ -804,6 +805,48 @@ def _token_response(redeemed: Any) -> dict[str, Any]:
         "id_token": id_token.value,
         "scope": " ".join(redeemed.scope),
     }
+
+
+def _record_connection(redeemed: Any) -> None:
+    """ADR-072: the person's Connected Logins record and Login History entry
+    for this product sign-in, in every mode of the platform. History, not an
+    access decision: a failure to record is logged and never costs the
+    product its tokens."""
+    from workeasy360.platform.ecosystem import connections
+    from workeasy360.platform.identity import account
+
+    try:
+        connections.record_sign_in(
+            integration=redeemed.integration,
+            user_id=redeemed.user_id,
+            organization_id=redeemed.organization_id,
+        )
+        account.record_product_sign_in(
+            redeemed.user_id,
+            product_code=redeemed.integration.product_code,
+            sign_in_id=redeemed.sign_in_id,
+        )
+    except Exception:
+        logger.warning("ecosystem.token.connection_record_failed", exc_info=True)
+        metrics.increment("ecosystem_connection_record_failures_total", at="token")
+
+
+def _record_activity(client: Any, subject: str | None, organization_id: Any) -> None:
+    """ADR-072: a product asked about this person - their "last seen" in it.
+    Only an existing connection is touched; never fails the answer."""
+    if not subject:
+        return
+    from workeasy360.platform.ecosystem import connections
+
+    try:
+        connections.record_activity(
+            integration=client.integration,
+            subject=subject,
+            organization_id=organization_id,
+        )
+    except Exception:
+        logger.warning("ecosystem.verify.activity_record_failed", exc_info=True)
+        metrics.increment("ecosystem_connection_record_failures_total", at="verify")
 
 
 def _profile_claims(user_id: Any, scope: tuple[str, ...]) -> dict[str, Any]:
@@ -974,6 +1017,7 @@ def verify_entitlement(request: HttpRequest) -> JsonResponse:
             )
         )
 
+    _record_activity(client, subject, organization_id)
     response = JsonResponse(result.as_dict())
     response["Cache-Control"] = "no-store"
     return response
