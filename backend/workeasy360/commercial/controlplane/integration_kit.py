@@ -44,7 +44,9 @@ UTC: Final = timezone.utc  # the project still supports Python 3.10
 #: The connector release a Django kit pins: tag ``v0.3.1`` of the private
 #: WorkEasy360/workeasy360-sso repository, by commit so a moved tag cannot change it.
 CONNECTOR_VERSION: Final = "0.3.1"
-CONNECTOR_COMMIT: Final = "a98552f8f37e1e4f1fab1de99cc5b915cb9ed5c1"
+CONNECTOR_COMMIT: Final = (
+    "a98552f8f37e1e4f1fab1de99cc5b915cb9ed5c1"  # pragma: allowlist secret - a commit id
+)
 CONNECTOR_REQUIREMENT: Final = (
     "workeasy360-sso @ git+ssh://git@github.com/WorkEasy360/workeasy360-sso.git@"
     + CONNECTOR_COMMIT
@@ -284,9 +286,18 @@ def _node(f: dict[str, Any]) -> list[dict[str, str]]:
                 "const env = process.env;\n"
                 "export async function workeasy360() {\n"
                 f'  const key = await importPKCS8(await readFile(env.WORKEASY360_PRIVATE_KEY_FILE!, "utf8"), "{f["key_algorithm"]}");\n'
-                "  // Discovery from the configured issuer; openid-client checks the document's issuer equals it.\n"
-                "  return oidc.discovery(new URL(env.WORKEASY360_ISSUER!), env.WORKEASY360_CLIENT_ID!, undefined,\n"
-                "    oidc.PrivateKeyJwt({ key, kid: env.WORKEASY360_KEY_ID! }));\n"
+                "  // The client assertion's aud must be the token endpoint (RFC 7523 section 3): WorkEasy360\n"
+                "  // refuses any other. openid-client names the issuer unless told otherwise.\n"
+                '  let tokenEndpoint = "";\n'
+                "  const auth = oidc.PrivateKeyJwt({ key, kid: env.WORKEASY360_KEY_ID! }, {\n"
+                "    [oidc.modifyAssertion]: (_header, payload) => { payload.aud = tokenEndpoint; },\n"
+                "  });\n"
+                "  // Discovery from the configured issuer (openid-client checks the document names it), and\n"
+                "  // the ID token's signature verified against the key set, not only trusted over TLS.\n"
+                "  const config = await oidc.discovery(new URL(env.WORKEASY360_ISSUER!), env.WORKEASY360_CLIENT_ID!,\n"
+                "    undefined, auth, { execute: [oidc.enableNonRepudiationChecks] });\n"
+                "  tokenEndpoint = config.serverMetadata().token_endpoint!;\n"
+                "  return config;\n"
                 "}\n\n"
                 "// Start: keep verifier, state and nonce server-side (a signed, httpOnly, single-use flow cookie).\n"
                 "export async function start(config: oidc.Configuration) {\n"

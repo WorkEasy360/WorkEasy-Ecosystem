@@ -26,7 +26,7 @@ function kit(framework: string) {
     },
     missing: ["a back-channel logout URI (needed for global sign-out)"],
     files: [
-      { path: ".env.example", purpose: "Environment template (no secrets)", content: "WORKEASY360_CLIENT_ID=cid-123\n" },
+      { path: ".env.example", purpose: "Environment template (no secrets)", content: "WORKEASY360_CLIENT_ID=cid-123\n" }, // pragma: allowlist secret - a fake client id
       { path: "requirements.txt", purpose: "The connector", content: "workeasy360-sso @ git+ssh://...\n" },
     ],
     next: ["Store the private key in the product's secret manager."],
@@ -42,7 +42,7 @@ describe("Integration kit", () => {
     await screen.findByLabelText("Generated integration kit");
     expect(calls.map((c) => c.url)).toEqual(["/api/v1/admin/products/future_product/integration/kit?framework=spring"]);
     expect(screen.getByText(/Spring Security OAuth 2.0 client/)).toBeTruthy();
-    expect(screen.getByText("WORKEASY360_CLIENT_ID=cid-123")).toBeTruthy();
+    expect(screen.getByText("WORKEASY360_CLIENT_ID=cid-123")).toBeTruthy(); // pragma: allowlist secret - a fake client id
     expect(screen.getByText("a back-channel logout URI (needed for global sign-out)")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Copy .env.example" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Download" })).toHaveLength(2);

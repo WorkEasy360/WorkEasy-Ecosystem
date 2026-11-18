@@ -53,7 +53,8 @@ def test_a_kit_carries_the_registration_and_no_secret(
     assert f"WORKEASY360_CLIENT_ID={draft['client_id']}" in env
     assert "WORKEASY360_PRODUCT_CODE=crm" in env
     assert f"WORKEASY360_ISSUER={kit['facts']['issuer']}" in env
-    assert "WORKEASY360_PRIVATE_KEY_FILE=/run/secrets/" in env
+    key_line = "WORKEASY360_PRIVATE_KEY_FILE=/run/secrets/"  # pragma: allowlist secret
+    assert key_line in env  # a path to the secret, never the secret
     everything = "\n".join(f["content"] for f in kit["files"])
     # The product's private key exists in this test (the fixture made it); it is
     # never in a kit, and nothing resembling key material is.
@@ -78,6 +79,27 @@ def test_the_django_kit_pins_the_private_connector_by_commit(
     assert integration_kit.CONNECTOR_REQUIREMENT in requirements
     assert requirements.count("@" + integration_kit.CONNECTOR_COMMIT) == 1
     assert ".whl" not in requirements  # never a vendored wheel
+
+
+def test_the_node_kit_names_the_token_endpoint_as_the_assertion_audience(
+    staff_login,
+    draft,  # noqa: F811
+):
+    """Found by the first products built from it (2026-11-18): openid-client's
+    PrivateKeyJwt names the issuer as aud, which the platform's client
+    authentication refuses (token endpoint only). The starter sets it, and asks
+    for the ID token's signature to be verified."""
+    client, _ = staff_login(*CATALOG_STAFF, "platform.staff_integration.view")
+    kit = _kit(client, "node").json()
+    starter = next(
+        f["content"]
+        for f in kit["files"]
+        if f["path"].startswith("src/workeasy360/client.ts")
+    )
+    assert (
+        "[oidc.modifyAssertion]" in starter and "payload.aud = tokenEndpoint" in starter
+    )
+    assert "token_endpoint" in starter and "enableNonRepudiationChecks" in starter
 
 
 def test_a_kit_names_what_the_registration_still_lacks(
