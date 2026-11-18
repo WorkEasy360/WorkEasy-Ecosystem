@@ -36,14 +36,34 @@ REGISTRY = json.loads(
     ).read_text(encoding="utf-8")
 )["products"]
 CODES = [entry["code"] for entry in REGISTRY]
-assert sorted(CODES) == ["easy_crm", "easy_helpdesk", "easy_project", "easybook"]
+#: 2026-11-18: Forms, AI Commerce, LMS and HRMS joined the registry; every attack below
+#: now runs against their real manifests too.
+assert sorted(CODES) == [
+    "ai_commerce",
+    "easy_crm",
+    "easy_helpdesk",
+    "easy_project",
+    "easybook",
+    "workeasy_forms",
+    "workeasy_hrms",
+    "workeasy_lms",
+]
 #: The products whose registration offers Workeasy360 sign-in (ADR-044).
 SSO_CODES = [
     entry["code"]
     for entry in REGISTRY
     if entry["integration"].get("sign_in_mode", "sso_only") != "local_only"
 ]
-assert sorted(SSO_CODES) == ["easy_crm", "easy_helpdesk", "easy_project", "easybook"]
+assert sorted(SSO_CODES) == [
+    "ai_commerce",
+    "easy_crm",
+    "easy_helpdesk",
+    "easy_project",
+    "easybook",
+    "workeasy_forms",
+    "workeasy_hrms",
+    "workeasy_lms",
+]
 
 
 @pytest.fixture
