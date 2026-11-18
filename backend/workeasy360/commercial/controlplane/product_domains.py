@@ -259,6 +259,37 @@ def sso_readiness(ctx: TenantContext, *, product_code: str) -> dict[str, Any]:
             )
         )
 
+    # Evidence, not configuration: a completed sign-in and an acknowledged
+    # logout. Missing evidence is a warning here; publishing a product requires
+    # the completed sign-in (catalog publish checklist).
+    evidence = ecosystem_selectors.sign_in_evidence(ctx, client_id=current.client_id)
+    if mode != "local_only":
+        last = evidence["last_token_at"]
+        checks.append(
+            _check(
+                "sign_in_verified",
+                "Sign-in verified",
+                OK if last else WARNING,
+                f"Last completed {last:%Y-%m-%d %H:%M} UTC as {evidence['last_token_issuer']}."
+                if last
+                else "No sign-in has been completed yet: sign in once with a test "
+                "organization before publishing.",
+            )
+        )
+    if manifest.get("backchannel_logout_uri"):
+        delivered = int(evidence["logouts_delivered"])
+        checks.append(
+            _check(
+                "logout_verified",
+                "Logout verified",
+                OK if delivered else WARNING,
+                f"{delivered} back-channel logout(s) acknowledged by the product."
+                if delivered
+                else "No logout has been delivered yet: sign out once to prove the "
+                "product ends its session.",
+            )
+        )
+
     summary = ecosystem_selectors.backchannel_delivery_summary(
         ctx, client_id=current.client_id
     )

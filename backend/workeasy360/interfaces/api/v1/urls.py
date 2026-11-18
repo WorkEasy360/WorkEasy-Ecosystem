@@ -1491,6 +1491,11 @@ _admin = [
         name="admin-product-integration-readiness",
     ),
     path(
+        "admin/products/<str:product_code>/integration/kit",
+        admin_product_views.integration_kit_view,
+        name="admin-product-integration-kit",
+    ),
+    path(
         "admin/catalog/products/<uuid:product_id>/trial",
         admin_catalog_views.product_trial_view,
         name="admin-catalog-product-trial",

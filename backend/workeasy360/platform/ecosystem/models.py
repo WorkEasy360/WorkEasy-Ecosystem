@@ -241,6 +241,12 @@ class ProductIntegration(models.Model):
     last_token_issuer = models.CharField(
         max_length=255, blank=True, default="", db_default=""
     )
+    #: When this product last redeemed an authorization code, to the hour: the
+    #: evidence that a sign-in to it works (Super Admin's readiness and the
+    #: publish checklist) and when a sign-in name was last used (retiring
+    #: ``auth.``). Written at most once an hour per product, so a busy product
+    #: never contends on its own row. Never an access decision.
+    last_token_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

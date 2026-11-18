@@ -318,7 +318,21 @@ def test_the_command_invents_no_plan_price_or_credential(staff_factory):
     }
     assert configs == {
         code: (False, 7, [])
-        for code in ("easy_crm", "easybook", "easy_project", "easy_helpdesk")
+        for code in (
+            "easy_crm",
+            "easybook",
+            "easy_project",
+            "easy_helpdesk",
+            # 2026-11-18: the products connected to WorkEasy360 Accounts since.
+            "workeasy_forms",
+            "ai_commerce",
+            "workeasy_lms",
+            "workeasy_hrms",
+            "workeasy_campaign",
+            "workeasy_agents",
+            "workeasy_sendstack",
+            "workeasy_booking",
+        )
     }
     seen = public_product("easy_crm")
     assert seen["plans"] == []
@@ -355,6 +369,15 @@ def test_activation_is_explicit_and_leaves_no_credential(staff_factory):
         "easybook": "https://book.workeasy360.com/",
         "easy_project": "https://ops.workeasy360.com/",
         "easy_helpdesk": "https://help.workeasy360.com/",
+        # Each on its own host; AI Commerce never on admin. (Super Admin's).
+        "workeasy_forms": "https://forms.workeasy360.com/auth/workeasy360/start",
+        "ai_commerce": "https://commerce.workeasy360.com/auth/workeasy360/start",
+        "workeasy_lms": "https://learn.workeasy360.com/",
+        "workeasy_hrms": "https://hrms.workeasy360.com/api/auth/workeasy360/start",
+        "workeasy_campaign": "https://campaign.workeasy360.com/api/v1/auth/workeasy360/start",
+        "workeasy_agents": "https://agents.workeasy360.com/api/auth/workeasy360/start",
+        "workeasy_sendstack": "https://sendstack.workeasy360.com/api/v1/auth/workeasy360/start/",
+        "workeasy_booking": "https://booking.workeasy360.com/api/auth/workeasy360/start",
     }
 
 

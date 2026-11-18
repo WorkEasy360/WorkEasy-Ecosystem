@@ -930,6 +930,9 @@ PUBLISH_REQUIREMENTS: Final[tuple[tuple[str, str], ...]] = (
     # for an empty Application URL although its integration launches it.
     ("launch", "Launch destination"),
     ("return_destinations", "Approved return destinations"),
+    # 2026-11-18: an integration is not ready for customers because a client id
+    # exists; one real sign-in through WorkEasy360 must have completed first.
+    ("sign_in_verified", "WorkEasy360 sign-in verified"),
     ("plans", "At least one active plan"),
     ("channels", "At least one sales channel"),
     ("status", "Not archived"),
@@ -943,6 +946,10 @@ PUBLISH_DETAILS: Final[dict[str, str]] = {
     "return_destinations": (
         "A product that signs people in with Workeasy360 must list where they may be "
         "sent back to. Not needed for a product with no connected sign-in."
+    ),
+    "sign_in_verified": (
+        "Sign in to the product once through WorkEasy360 (a test organization with "
+        "the product granted). Not needed for a product with no connected sign-in."
     ),
     "plans": "A plan customers can be put on. Without one nothing can be sold.",
     "channels": "The customer store, resellers, affiliates or white-label partners.",
@@ -961,6 +968,7 @@ def publish_checklist(
     status: ProductStatus,
     has_app_link: bool = False,
     return_destinations: bool | None = None,
+    sign_in_verified: bool | None = None,
     has_active_plan: bool = False,
     channel_open: bool = False,
 ) -> list[dict[str, Any]]:
@@ -976,6 +984,7 @@ def publish_checklist(
         "logo": has_logo,
         "launch": bool(application_url.strip() or launch_url.strip() or has_app_link),
         "return_destinations": return_destinations is not False,
+        "sign_in_verified": sign_in_verified is not False,
         "plans": has_active_plan,
         "channels": channel_open,
         "status": status in (ProductStatus.DRAFT, ProductStatus.AVAILABLE),

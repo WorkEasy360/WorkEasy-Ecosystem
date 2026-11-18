@@ -574,6 +574,8 @@ const FIELD_LABEL: Record<string, string> = {
   healthUrl: "Health check URL",
   trialDays: "Trial length",
   plans: "Plans",
+  // The server names its publish checklist "listing" (e.g. "Missing: WorkEasy360 sign-in verified").
+  listing: "Publishing",
 };
 const PLAN_FIELD_LABEL: Record<string, string> = {
   name: "name",
