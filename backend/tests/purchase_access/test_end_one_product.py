@@ -88,9 +88,9 @@ def test_ending_one_product_keeps_the_other_and_the_subscription(two_products):
     assert apps["crm"]["cancel_at"] is None and apps["crm"]["renews_at"] == period_end
 
 
-def test_at_the_period_end_the_product_goes_and_is_not_invoiced_again(two_products):
-    from workeasy360.commercial.payments.invoicing import ensure_invoices
-    from workeasy360.commercial.provisioning.services import reconcile
+def test_at_the_period_end_the_product_goes_and_is_not_invoiced_again(
+    two_products, monkeypatch
+):
     from workeasy360.commercial.subscriptions.system import process_due_subscriptions
 
     shop = two_products
@@ -99,14 +99,14 @@ def test_at_the_period_end_the_product_goes_and_is_not_invoiced_again(two_produc
     )
     assert _end(shop["client"], shop, _line(shop, "desk")["id"]).status_code == 200
 
+    # The clock's pass a minute after the period ends. Everything it notifies -
+    # provisioning and the renewal invoice - reads the time, so the time is moved.
     after = period_end + timedelta(minutes=1)
-    process_due_subscriptions(at=after)
-    ensure_invoices(shop["id"], at=after)
-    # The clock's pass, at that moment (the change listener reconciles at the
-    # real time, when the line is still in force).
-    reconcile(shop["id"], at=after)
-    assert not _entitled(shop["id"], "desk")
-    assert _entitled(shop["id"], "crm")
+    with monkeypatch.context() as clock:
+        clock.setattr(timezone, "now", lambda: after)
+        process_due_subscriptions()
+        assert not _entitled(shop["id"], "desk")
+        assert _entitled(shop["id"], "crm")
     assert _subscription(shop)["status"] == "active"
     newest = (
         shop["client"].get(url(shop["slug"], "billing/invoices")).json()["results"][0]
