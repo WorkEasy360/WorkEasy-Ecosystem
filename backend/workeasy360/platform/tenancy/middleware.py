@@ -226,3 +226,18 @@ def _write_block_message(status: OrganizationStatus) -> str:
     if status is OrganizationStatus.PROVISIONING:
         return "This organization is still being set up. Try again shortly."
     return "This organization cannot accept changes at present."
+
+
+def admission_denial(
+    request: HttpRequest, resolution: TenantResolution
+) -> HttpResponse | None:
+    """The middleware's own admission decision for ``resolution`` - membership,
+    organization status, the organization's access policy, and the write block
+    for an unsafe method - for a caller that names an organization outside the
+    ``/orgs/<slug>/`` path shape (ADR-072: the Accounts Control Center lists a
+    person's products across their organizations on WorkEasy360 Accounts,
+    where ``/api/v1/orgs/*`` is not served). The same checks, not a copy of
+    them: the denial ``TenancyMiddleware`` would answer, or ``None``."""
+    return TenancyMiddleware(lambda _request: HttpResponse())._check_access(
+        request, resolution
+    )

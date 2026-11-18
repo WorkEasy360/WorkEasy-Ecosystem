@@ -53,6 +53,14 @@ export function describeAccountEvent(event: Pick<AccountEvent, "kind" | "reason"
       return "Email address verified";
     case "password_reset":
       return "Password reset by email";
+    // ADR-072 (the Accounts Control Center): the reason is the product code; the
+    // Control Center names the product beside it.
+    case "product_sign_in":
+      return "Signed in to a product with WorkEasy360";
+    case "product_signed_out":
+      return "Signed out of a product";
+    case "profile_updated":
+      return "Name changed";
     default:
       return event.kind.replace(/_/g, " ");
   }
@@ -110,7 +118,15 @@ export function MySecurityScreen() {
  * Security on the customer portal and the account page on WorkEasy360 Accounts
  * (ADR-071) both show it; neither needs an organization for it.
  */
-export function AccountSecurityPanels({ preferencesHref }: { preferencesHref?: string }) {
+export function AccountSecurityPanels({
+  preferencesHref,
+  sessionsHref,
+}: {
+  preferencesHref?: string;
+  /** ADR-072: where sessions are managed instead (the Accounts Control Center's
+   * Active Sessions, one row per sign-in); the panel then links there. */
+  sessionsHref?: string;
+}) {
   const confirm = useConfirm();
   const [sessions, reloadSessions] = useLoad(() => accountApi.sessions(), []);
   const [activity, reloadActivity] = useLoad(() => accountApi.activity(), []);
@@ -164,6 +180,13 @@ export function AccountSecurityPanels({ preferencesHref }: { preferencesHref?: s
         </ul>
       </Panel>
 
+      {sessionsHref ? (
+        <Panel title="Where you're signed in">
+          <p>
+            <Link href={sessionsHref}>See and sign out your devices</Link> - every device and browser where this account is signed in.
+          </p>
+        </Panel>
+      ) : (
       <Panel title="Where you're signed in">
         <p id={noteId} className={cp.muted}>
           Signing a session out ends it at once. Changing your password also signs out every other session.
@@ -193,6 +216,7 @@ export function AccountSecurityPanels({ preferencesHref }: { preferencesHref?: s
           )}
         </LoadGate>
       </Panel>
+      )}
 
       <Panel title="Sign out everywhere">
         {everywhere ? (

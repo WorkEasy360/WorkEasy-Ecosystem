@@ -2,7 +2,14 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { USER_SEGMENTS, adminConsoleApi, type UserAction, type UserDetail, type UserRow } from "@/lib/api/adminConsole";
+import {
+  USER_SEGMENTS,
+  adminConsoleApi,
+  type StaffUserConnection,
+  type UserAction,
+  type UserDetail,
+  type UserRow,
+} from "@/lib/api/adminConsole";
 import { useSession } from "@/lib/auth/useSession";
 import { can, useAdmin } from "./ControlShell";
 import { LoadGate, ReasonAction, useAction, useLoad, usePaged } from "./ui";
@@ -306,7 +313,16 @@ export function Users({ initialQuery = "", initialSegment = "" }: { initialQuery
   );
 }
 
-type DetailTab = "overview" | "organizations" | "subscriptions" | "sessions" | "activity";
+type DetailTab = "overview" | "organizations" | "subscriptions" | "connections" | "sessions" | "activity";
+
+/** ADR-072: the WorkEasy360 sign-in that opened a product - never a claim that the
+ * product's own session is live, which no signal reports. */
+const PLATFORM_SIGN_IN: Record<StaffUserConnection["platform_sign_in"], string> = {
+  open: "WorkEasy360 sign-in still open",
+  ended: "Signed out",
+  untracked: "Unknown (no back-channel logout)",
+  none: "No sign-in recorded",
+};
 
 export function UserDetailScreen({ userId }: { userId: string }) {
   const { permissions } = useAdmin();
@@ -389,7 +405,8 @@ export function UserDetailScreen({ userId }: { userId: string }) {
                       { key: "overview", label: "Overview" },
                       { key: "organizations", label: "Organizations", count: u.memberships.length },
                       { key: "subscriptions", label: "Subscriptions" },
-                      { key: "sessions", label: "Sessions", count: u.sessions.length },
+                      ...(u.connections ? [{ key: "connections" as const, label: "Product sign-ins", count: u.connections.length }] : []),
+                      { key: "sessions", label: "Sessions", count: (u.sign_ins ?? u.sessions).length },
                       { key: "activity", label: "Activity" },
                     ]}
                   />
@@ -490,6 +507,28 @@ function UserTab({ tab, user: u }: { tab: DetailTab; user: UserDetail }) {
       </div>
     );
   }
+  if (tab === "connections" && u.connections) {
+    return <ConnectionsTab user={u} connections={u.connections} />;
+  }
+  if (tab === "sessions" && u.sign_ins) {
+    return (
+      <DataTable
+        caption="Signed-in devices, one row per sign-in"
+        columns={[
+          { key: "device", header: "Device", value: (s) => s.device_label, render: (s) => s.device_label || EMPTY },
+          { key: "ip", header: "Network", value: (s) => s.ip_prefix, render: (s) => <code>{s.ip_prefix || EMPTY}</code> },
+          { key: "in", header: "Signed in", value: (s) => s.signed_in_at, render: (s) => formatDateTime(s.signed_in_at) },
+          { key: "last", header: "Last active", value: (s) => s.last_active_at, render: (s) => <DateText iso={s.last_active_at} relative /> },
+          { key: "hosts", header: "Portal sessions", align: "right", value: (s) => s.portal_sessions, render: (s) => s.portal_sessions },
+        ]}
+        rows={u.sign_ins}
+        rowKey={(s) => s.session_id}
+        pageSize={0}
+        maxHeight={false}
+        empty={<EmptyState icon="device" title="No active sessions" compact />}
+      />
+    );
+  }
   if (tab === "sessions") {
     return (
       <DataTable
@@ -509,6 +548,32 @@ function UserTab({ tab, user: u }: { tab: DetailTab; user: UserDetail }) {
       />
     );
   }
+  if (u.sign_in_history) {
+    return (
+      <div className={local.stack}>
+        <DataTable
+          caption="Sign-in history: WorkEasy360 and product sign-ins"
+          columns={[
+            { key: "when", header: "When", value: (a) => a.occurred_at, render: (a) => <DateText iso={a.occurred_at} relative /> },
+            { key: "event", header: "Event", value: (a) => a.kind, render: (a) => sentence(a.kind) },
+            { key: "product", header: "Product", value: (a) => a.product_name ?? "", render: (a) => a.product_name ?? EMPTY },
+            { key: "ip", header: "Network", value: (a) => a.ip_prefix, render: (a) => <code>{a.ip_prefix || EMPTY}</code> },
+            { key: "device", header: "Device", value: (a) => a.device_label, render: (a) => a.device_label || EMPTY },
+          ]}
+          rows={u.sign_in_history.map((a, i) => ({ ...a, key: `${a.occurred_at}-${i}` }))}
+          rowKey={(a) => a.key}
+          pageSize={0}
+          maxHeight={false}
+          empty={<EmptyState icon="history" title="No sign-ins recorded" compact />}
+        />
+        <ActivityTable user={u} />
+      </div>
+    );
+  }
+  return <ActivityTable user={u} />;
+}
+
+function ActivityTable({ user: u }: { user: UserDetail }) {
   return (
     <DataTable
       caption="Recent account events"
@@ -528,6 +593,63 @@ function UserTab({ tab, user: u }: { tab: DetailTab; user: UserDetail }) {
   );
 }
 
+function ConnectionsTab({ user: u, connections }: { user: UserDetail; connections: StaffUserConnection[] }) {
+  const rows = connections.flatMap((c) =>
+    c.organizations.map((o) => ({ ...o, product: c, key: `${c.product_code}-${o.organization_id}` })),
+  );
+  return (
+    <div className={local.stack}>
+      <Card title="Central user" description="The id every product links this person by (the ID token's sub).">
+        <code>{u.central_user_id}</code>
+      </Card>
+      <DataTable
+        caption="Product sign-ins with WorkEasy360, per organization"
+        columns={[
+          { key: "product", header: "Product", value: (r) => r.product.name, render: (r) => r.product.name },
+          {
+            key: "domain",
+            header: "Domain",
+            value: (r) => r.product.domain.host,
+            render: (r) => (
+              <span>
+                {r.product.domain.host || EMPTY} {r.product.domain.verified && <Badge tone="success">Verified</Badge>}
+              </span>
+            ),
+          },
+          {
+            key: "org",
+            header: "Organization",
+            value: (r) => r.name,
+            render: (r) => (r.name ? <Link href={`/admin/customers/${r.organization_id}`}>{r.name}</Link> : "Former organization"),
+          },
+          { key: "first", header: "First sign-in", value: (r) => r.first_sign_in_at, render: (r) => formatDateTime(r.first_sign_in_at) },
+          { key: "last", header: "Last sign-in", value: (r) => r.last_sign_in_at, render: (r) => <DateText iso={r.last_sign_in_at} relative /> },
+          { key: "count", header: "Sign-ins", align: "right", value: (r) => r.sign_in_count, render: (r) => r.sign_in_count },
+          {
+            key: "seen",
+            header: "Last activity",
+            // Never empty: "unknown" is a fact to show, so the column is always drawn.
+            value: (r) => r.last_activity_at ?? "unknown",
+            render: (r) => (r.last_activity_at ? <DateText iso={r.last_activity_at} relative /> : "Unknown"),
+          },
+          { key: "session", header: "Session", value: (r) => r.product.platform_sign_in, render: (r) => PLATFORM_SIGN_IN[r.product.platform_sign_in] },
+          {
+            key: "signout",
+            header: "Last sign-out",
+            value: (r) => r.product.last_sign_out?.status ?? "",
+            render: (r) => (r.product.last_sign_out ? <StatusBadge value={r.product.last_sign_out.status} /> : EMPTY),
+          },
+        ]}
+        rows={rows}
+        rowKey={(r) => r.key}
+        pageSize={0}
+        maxHeight={false}
+        empty={<EmptyState icon="apps" title="No product sign-ins recorded" compact />}
+      />
+    </div>
+  );
+}
+
 function OrgList({ user: u }: { user: UserDetail }) {
   if (u.memberships.length === 0) return <EmptyState icon="building" title="Not a member of any organization" compact />;
   return (
@@ -540,6 +662,7 @@ function OrgList({ user: u }: { user: UserDetail }) {
             <span className={local.note}>
               {" "}
               {m.products.length ? m.products.map(productName).join(", ") : "No products"}
+              {m.seats && ` · Seats: ${m.seats.length ? m.seats.map(productName).join(", ") : "none"}`}
             </span>
           </span>
           {m.subscription_status ? <StatusBadge value={m.subscription_status} /> : <Badge>No subscription</Badge>}

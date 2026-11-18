@@ -35,12 +35,18 @@ def app_directory_view(request: HttpRequest, org_slug: str) -> JsonResponse:
     each one (Task 6). Data-driven: the set of products comes from the
     catalog, not from anything hardcoded here (Task 21/22)."""
     ctx = request.tenant_context  # type: ignore[attr-defined]
+    return JsonResponse({"apps": directory_entries(ctx)})
+
+
+def directory_entries(ctx: Any) -> list[dict[str, Any]]:
+    """The app directory's entries for this member, in its wire shape - the
+    one assembly My Products on User Admin and, per organization, the Accounts
+    Control Center (ADR-072) both show. The caller has entered ``ctx``'s
+    tenant scope."""
     decisions = selectors.app_directory(ctx)
     decisions = _apply_portal_presentation(ctx, decisions)
     extras = _card_extras(ctx, [d.product_code for d in decisions])
-    return JsonResponse(
-        {"apps": [_public_dict(d, extras.get(d.product_code)) for d in decisions]}
-    )
+    return [_public_dict(d, extras.get(d.product_code)) for d in decisions]
 
 
 def _apply_portal_presentation(ctx: Any, decisions: list[Any]) -> list[Any]:

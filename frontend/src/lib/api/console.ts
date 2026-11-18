@@ -9,6 +9,7 @@
 
 import { apiFetch } from "./client";
 import type { Page } from "./controlPlane";
+import type { AppDirectoryEntry } from "./types";
 import type { NewTicket, TicketDetail, TicketPage } from "./partnerPanel";
 
 const json = (body: unknown): string => JSON.stringify(body);
@@ -753,4 +754,116 @@ export const accountApi = {
       method: "POST",
       body: json({ reference, organization_id: organizationId, outcome }),
     }),
+};
+
+// --- the Accounts Control Center (ADR-072) -----------------------------------------------
+
+/** Explore's trial facts for one product, as My Products reads them. */
+export type CenterExplore = Pick<ExploreProduct, "code" | "trial_state" | "trial_outcome" | "trial_ends_at"> & {
+  plans: { plan_code: string; billing_type: string; prices: { amount_minor: number | null }[] }[];
+};
+
+/** One of the person's organizations, with the launcher's directory of it when this
+ * session is admitted (`restricted` null); otherwise why the organization refuses it. */
+export interface CenterOrganization {
+  organization_id: string;
+  slug: string;
+  name: string;
+  status: string;
+  is_owner: boolean;
+  restricted: string | null;
+  roles?: string[];
+  may_manage_billing?: boolean;
+  may_assign_seats?: boolean;
+  apps: AppDirectoryEntry[];
+  explore?: CenterExplore[] | null;
+  setup?: { id: string; product_code: string; status: SetupStatus }[] | null;
+}
+
+export type SetupStatus = "pending" | "submitted" | "correction_required" | "approved";
+
+export interface CenterProducts {
+  organizations: CenterOrganization[];
+  app_origin: string;
+  store_origin: string;
+}
+
+/** Connected Logins: what is truthfully known about one product. `platform_sign_in`
+ * is about the WorkEasy360 sign-in that opened the product - never the product's own
+ * session, which no signal reports. */
+export interface ConnectedProduct {
+  product_code: string;
+  name: string;
+  icon: string;
+  domain: { host: string; verified: boolean };
+  subject: string;
+  integration_status: string;
+  sso_connected: boolean;
+  last_sign_in_at: string | null;
+  last_activity_at: string | null;
+  session: { platform_sign_in: "open" | "ended" | "untracked" | "none"; since: string | null; ended_at: string | null };
+  last_sign_out: {
+    status: "delivered" | "pending" | "failed";
+    requested_at: string;
+    finished_at: string | null;
+    by_this_product_sign_out: boolean;
+  } | null;
+  can_sign_out: boolean;
+  organizations: {
+    organization_id: string;
+    name: string;
+    slug: string;
+    member: boolean;
+    access: {
+      state: AppDirectoryEntry["state"];
+      can_launch: boolean;
+      entitlement_status: string | null;
+      licensing_mode: AppDirectoryEntry["licensing_mode"];
+      trial_ends_at: string | null;
+    } | null;
+    connection: { first_sign_in_at: string; last_sign_in_at: string; sign_in_count: number; last_activity_at: string | null } | null;
+  }[];
+}
+
+/** One WorkEasy360 sign-in (a device), with how many portal sessions it holds. */
+export interface SignInRow extends SessionRow {
+  portal_sessions: number;
+}
+
+export interface HistoryEntry extends AccountEvent {
+  product_name: string | null;
+}
+
+export interface AccountProfile {
+  user_id: string;
+  email: string;
+  name: string;
+  email_verified: boolean;
+  created_at: string | null;
+  last_sign_in_at: string | null;
+}
+
+export const accountCenterApi = {
+  products: () => apiFetch<CenterProducts>("/api/v1/auth/account/products"),
+  /** The launcher's own re-check and route, for one organization: the server-built
+   * launch URL with `organization=`, only when access is granted. */
+  launch: (organizationId: string, productCode: string) =>
+    apiFetch<{ redirect_url: string; state: string; sign_in: string }>(
+      `/api/v1/auth/account/products/${encodeURIComponent(organizationId)}/${encodeURIComponent(productCode)}/launch`,
+      { method: "POST" },
+    ),
+  connections: () => apiFetch<{ subject: string; products: ConnectedProduct[] }>("/api/v1/auth/account/connections"),
+  signOutOfProduct: (productCode: string) =>
+    apiFetch<{ product_code: string; status: "delivered" | "pending" | "failed" | "unsupported" }>(
+      `/api/v1/auth/account/connections/${encodeURIComponent(productCode)}/sign-out`,
+      { method: "POST" },
+    ),
+  sessions: () => apiFetch<{ sessions: SignInRow[] }>("/api/v1/auth/account/sessions"),
+  history: (cursor?: string, scope: "sign_ins" | "all" = "sign_ins") =>
+    apiFetch<{ results: HistoryEntry[]; next_cursor: string | null; has_more: boolean }>("/api/v1/auth/account/history", {
+      query: { ...(cursor ? { cursor } : {}), ...(scope === "all" ? { scope } : {}) },
+    }),
+  profile: () => apiFetch<AccountProfile>("/api/v1/auth/account/profile"),
+  updateProfile: (fullName: string) =>
+    apiFetch<AccountProfile>("/api/v1/auth/account/profile", { method: "PATCH", body: json({ full_name: fullName }) }),
 };
