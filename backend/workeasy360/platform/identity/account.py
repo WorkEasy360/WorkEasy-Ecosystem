@@ -142,23 +142,53 @@ def list_sessions(user_id: Any, *, current_public_id: UUID | None) -> list[dict]
     ]
 
 
+def _uuid_or_none(raw: Any) -> UUID | None:
+    """A sign-in id as the session stores it (hex) or the column does."""
+    try:
+        return UUID(str(raw)) if raw else None
+    except (TypeError, ValueError):
+        return None
+
+
 def revoke_session(
-    user_id: Any, public_id: UUID, *, ip_prefix: str = "", device_label: str = ""
-) -> None:
-    """End one of this person's sessions. Another user's id is not found."""
+    user_id: Any,
+    public_id: UUID,
+    *,
+    keep_sign_in_id: Any = None,
+    ip_prefix: str = "",
+    device_label: str = "",
+) -> int:
+    """End one of this person's sign-ins, given any of its sessions. Another
+    user's id is not found. Returns how many sessions ended.
+
+    ADR-072 security fix: in multi-portal mode a sign-in has a session on
+    WorkEasy360 Accounts and one on each portal it was handed to, all sharing
+    its ``sign_in_id``. Revoking used to delete only the row named, so the
+    same sign-in stayed alive on its other hosts (and its products were told
+    it had ended). Every session of that sign-in now ends together, exactly
+    as signing out of it does (``handoff.end_sign_in``).
+
+    ``keep_sign_in_id`` is the caller's own sign-in: a session of it is
+    refused here (signing out is how it ends), so revoking a sibling never
+    signs the caller out by surprise."""
     from workeasy360.platform.identity.models import AccountEvent, UserSession
 
     with transaction.atomic():
-        sign_in_ids = list(
-            UserSession.objects.filter(user_id=user_id, public_id=public_id).values_list(
-                "sign_in_id", flat=True
-            )
+        named = list(
+            UserSession.objects.select_for_update()
+            .filter(user_id=user_id, public_id=public_id)
+            .values_list("sign_in_id", flat=True)
         )
-        deleted, _ = UserSession.objects.filter(
-            user_id=user_id, public_id=public_id
-        ).delete()
-        if not deleted:
+        if not named:
             raise SessionNotFound("No such session.")
+        sign_in_id = named[0]
+        if sign_in_id is not None and sign_in_id == _uuid_or_none(keep_sign_in_id):
+            raise SessionNotFound("Use sign out to end this session.")
+        doomed = UserSession.objects.filter(user_id=user_id, public_id=public_id)
+        if sign_in_id is not None:
+            doomed = UserSession.objects.filter(user_id=user_id, sign_in_id=sign_in_id)
+        sign_in_ids = [sign_in_id]
+        deleted, _ = doomed.delete()
         # ADR-069: the products that sign-in opened are told, in this commit.
         notify_sign_ins_ended(
             user_id=user_id, sign_in_ids=sign_in_ids, reason=REASON_SESSION_REVOKED
@@ -170,7 +200,8 @@ def revoke_session(
             device_label=device_label,
         )
     metrics.increment("identity_sessions_revoked_total", scope="one")
-    logger.info("identity.session.revoked", user_id=str(user_id))
+    logger.info("identity.session.revoked", user_id=str(user_id), count=deleted)
+    return int(deleted)
 
 
 def revoke_other_sessions(
@@ -193,6 +224,10 @@ def revoke_other_sessions(
                 .first()
             )
             rows = rows.exclude(public_id=keep_public_id)
+            if kept_sign_in is not None:
+                # ADR-072: the caller's own sign-in is kept whole - its
+                # sessions on the other hosts too, not only this row.
+                rows = rows.exclude(sign_in_id=kept_sign_in)
         # The caller's own sign-in stays (its portal sessions included), so
         # products it opened are not signed out; every other sign-in's are.
         ended_sign_ins = {
