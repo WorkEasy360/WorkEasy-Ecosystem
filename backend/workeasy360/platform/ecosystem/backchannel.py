@@ -419,13 +419,18 @@ def _delivery_json(row: Any) -> dict[str, Any] | None:
     }
 
 
-def pending_for_user(user_id: UUID) -> list[dict[str, Any]]:
+def pending_for_user(user_id: UUID, *, since: Any = None) -> list[dict[str, Any]]:
     """Product sign-outs still being delivered for this person, newest first.
 
     What "sign out everywhere" shows instead of claiming it finished: products
-    that have not yet confirmed are listed by name, never hidden.
+    that have not yet confirmed are listed by name, never hidden. ``since``
+    limits it to the deliveries queued from that moment - the ones one sign-out
+    asked for (2026-11-18: without it the page also listed a product signed out
+    earlier that day, as if this sign-out had reached it); by default the last
+    24 hours.
     """
-    since = timezone.now() - timedelta(hours=24)
+    if since is None:
+        since = timezone.now() - timedelta(hours=24)
     rows = (
         BackchannelLogout.objects.filter(user_id=user_id, created_at__gte=since)
         .select_related("integration")

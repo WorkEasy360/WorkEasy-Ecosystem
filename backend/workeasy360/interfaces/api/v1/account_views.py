@@ -186,6 +186,7 @@ def sign_out_everywhere_view(request: HttpRequest) -> JsonResponse:
     import time
 
     from django.contrib.auth import logout as django_logout
+    from django.utils import timezone
 
     from workeasy360.platform.ecosystem import backchannel
 
@@ -195,15 +196,17 @@ def sign_out_everywhere_view(request: HttpRequest) -> JsonResponse:
         return blocked
     user_id = user.id
     started = time.monotonic()
+    # Only what this sign-out asked for: deliveries queued from this moment.
+    asked_from = timezone.now()
     ended = account.sign_out_everywhere(user_id)
     django_logout(request)
 
-    products = backchannel.pending_for_user(user_id)
+    products = backchannel.pending_for_user(user_id, since=asked_from)
     while any(p["status"] == "pending" for p in products):
         if time.monotonic() - started > SIGN_OUT_EVERYWHERE_WAIT_S:
             break
         time.sleep(0.25)
-        products = backchannel.pending_for_user(user_id)
+        products = backchannel.pending_for_user(user_id, since=asked_from)
     return JsonResponse(
         {
             "ok": True,

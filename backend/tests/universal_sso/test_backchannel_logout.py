@@ -507,3 +507,22 @@ def test_the_token_lifetime_is_short(queued, product_answers):
     token = parse_qs(product_answers["sent"][0].body.decode())["logout_token"][0]
     _, claims = _verify_logout_token(token, queued["crm"]["client_id"])
     assert before - 2 <= claims["iat"] <= int(time.time()) + 2
+
+
+def test_sign_out_everywhere_reports_only_the_products_this_sign_out_asked(
+    queued, product_answers
+):
+    """2026-11-18 (the real-browser onboarding run): the answer listed every
+    product signed out in the last 24 hours, so a product told by an earlier,
+    separate sign-out appeared as if this one had reached it."""
+    from django.utils import timezone
+
+    from workeasy360.integration.backchannel import delivery
+    from workeasy360.platform.ecosystem import backchannel
+
+    delivery.deliver_due()  # the earlier sign-out (the laptop's), delivered
+    earlier = backchannel.pending_for_user(queued["user"].pk)
+    assert [p["product_code"] for p in earlier] == ["crm"]
+
+    later = timezone.now()
+    assert backchannel.pending_for_user(queued["user"].pk, since=later) == []
