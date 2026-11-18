@@ -8,7 +8,7 @@ Three gaps were found on 18 November 2026:
 2. **Backups stay on the instance's own disk.** `w360-backup` keeps seven days in `/opt/workeasy360/backups`, so losing the EBS volume loses them too.
 3. **The origin answers directly.** It serves HTTPS for every name without Cloudflare, and SSH is open to the internet.
 
-This folder closes all three. **Nothing here has been applied:** that needs AWS credentials for the account and an alert address that someone reads. Each step is reversible.
+This folder closes all three. **Nothing here has been applied.** Applying it needs the one-time bootstrap below (no access keys) and an alert address that someone reads. Each step is reversible.
 
 | What | File | Region |
 |---|---|---|
@@ -17,6 +17,38 @@ This folder closes all three. **Nothing here has been applied:** that needs AWS 
 | Origin restricted to Cloudflare, and SSH to an admin network | `restrict-origin.sh` | the host's |
 | Host: copy each nightly backup to S3, a weekly restore drill, five-minute health metrics | `deploy/single-host/w360-backup-offsite`, `w360-restore-drill`, `w360-healthwatch`, `workeasy360-ops.cron` | - |
 | Host: ship the api's and workers' JSON logs to CloudWatch | `deploy/single-host/compose.cloudwatch.yml`, enabled by the `w360` wrapper | - |
+
+## 0. Access without access keys (owner, once)
+
+Every AWS step below runs from GitHub Actions (`.github/workflows/ops-aws.yml`, run by hand) with **one-hour credentials** obtained by GitHub OIDC. No access key is created, stored or pasted anywhere.
+
+1. **AWS console, CloudFormation:** Create stack, then upload `deploy/aws/github-oidc-bootstrap.yml`. Give it:
+   - the host's instance id;
+   - its security group;
+   - `CreateOidcProvider=false` if this account already trusts GitHub (Easy CRM and EasyBook deploy that way).
+
+   It creates two roles:
+   - **`workeasy360-github-ops`:** only this repository's `production-ops` environment can assume it. It may manage only the `workeasy360-ops*` and `workeasy360-uptime*` stacks, through the second role; change only that security group's rules; and run commands only on that instance, through Systems Manager.
+   - **`workeasy360-ops-cfn-execution`:** the role CloudFormation itself uses.
+2. **GitHub:** Settings, then Environments, then New `production-ops`. Add yourself as a **required reviewer**: every run then waits for your approval. Then set the repository variables:
+   - `W360_OPS_ROLE_ARN` and `W360_OPS_CFN_ROLE_ARN` (the stack outputs);
+   - `W360_AWS_REGION`, `W360_INSTANCE_ID`;
+   - `W360_ALERT_EMAIL` (the address that receives alerts);
+   - `W360_HOST_ROLE_NAME` (the host's current role, or empty);
+   - `W360_ADMIN_CIDR`.
+
+   None of these is a secret.
+3. Run **Ops (AWS)** with each action in turn, approving each run:
+   - `plan`: change sets only;
+   - `deploy-stacks`;
+   - `install-host`;
+   - `restore-drill`;
+   - `restrict-origin-dry-run`;
+   - `restrict-origin-apply`.
+
+   The workflow must be on the default branch to be run by hand, so this follows the merge of this PR.
+
+The commands in the sections below are what the workflow runs. They are kept here for an operator who holds short-lived credentials by other means, for example `aws sso login`.
 
 ## 1. The stacks (owner: approve; operator: run)
 
