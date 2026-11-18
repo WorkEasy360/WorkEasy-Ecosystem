@@ -276,6 +276,138 @@
           "https://hrms.workeasy360.com/login"
         ]
       }
+    },
+    {
+      "code": "workeasy_campaign",
+      "slug": "workeasy-campaign",
+      "name": "Workeasy Campaign",
+      "category": "Marketing",
+      "icon": "megaphone",
+      "tagline": "Email campaigns, audiences and consent.",
+      "description": "Workeasy Campaign sends email campaigns to the audiences you build. It runs as its own application: WorkEasy360 provides your account, plan, seats and access.",
+      "licensing_mode": "per_seat",
+      "sort_order": 90,
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
+      "features": [
+        {
+          "key": "workeasy_campaign.core",
+          "name": "Workeasy Campaign"
+        }
+      ],
+      "integration": {
+        "display_name": "Workeasy Campaign",
+        "launch_url": "https://campaign.workeasy360.com/api/v1/auth/workeasy360/start",
+        "redirect_uris": [
+          "https://campaign.workeasy360.com/api/v1/auth/workeasy360/callback"
+        ],
+        "sign_in_mode": "sso_optional",
+        "login_url": "https://campaign.workeasy360.com/login",
+        "post_logout_redirect_uris": [
+          "https://campaign.workeasy360.com/login"
+        ]
+      }
+    },
+    {
+      "code": "workeasy_agents",
+      "slug": "workeasy-agents",
+      "name": "WorkEasy360 Agents",
+      "category": "AI",
+      "icon": "cog",
+      "tagline": "AI agents that work from your documents.",
+      "description": "WorkEasy360 Agents builds AI agents that answer from your own documents. It runs as its own application: WorkEasy360 provides your account, plan, seats and access.",
+      "licensing_mode": "per_seat",
+      "sort_order": 100,
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
+      "features": [
+        {
+          "key": "workeasy_agents.core",
+          "name": "WorkEasy360 Agents"
+        }
+      ],
+      "integration": {
+        "display_name": "WorkEasy360 Agents",
+        "launch_url": "https://agents.workeasy360.com/api/auth/workeasy360/start",
+        "redirect_uris": [
+          "https://agents.workeasy360.com/api/auth/workeasy360/callback"
+        ],
+        "sign_in_mode": "sso_optional",
+        "login_url": "https://agents.workeasy360.com/login",
+        "post_logout_redirect_uris": [
+          "https://agents.workeasy360.com/login"
+        ]
+      }
+    },
+    {
+      "code": "workeasy_sendstack",
+      "slug": "sendstack",
+      "name": "SendStack",
+      "category": "Messaging",
+      "icon": "generic",
+      "tagline": "WhatsApp messaging for your business.",
+      "description": "SendStack sends and manages WhatsApp messages for your business. It runs as its own application: WorkEasy360 provides your account, plan, seats and access.",
+      "licensing_mode": "per_seat",
+      "sort_order": 110,
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
+      "features": [
+        {
+          "key": "workeasy_sendstack.core",
+          "name": "SendStack"
+        }
+      ],
+      "integration": {
+        "display_name": "SendStack",
+        "launch_url": "https://sendstack.workeasy360.com/api/v1/auth/workeasy360/start/",
+        "redirect_uris": [
+          "https://sendstack.workeasy360.com/api/v1/auth/workeasy360/callback/"
+        ],
+        "sign_in_mode": "sso_optional",
+        "login_url": "https://sendstack.workeasy360.com/login",
+        "post_logout_redirect_uris": [
+          "https://sendstack.workeasy360.com/login"
+        ]
+      }
+    },
+    {
+      "code": "workeasy_booking",
+      "slug": "workeasy-booking",
+      "name": "WorkEasy360 Booking",
+      "category": "Scheduling",
+      "icon": "calendar",
+      "tagline": "Appointments and bookings for your business.",
+      "description": "WorkEasy360 Booking takes appointments and bookings for your business. It runs as its own application: WorkEasy360 provides your account, plan, seats and access.",
+      "licensing_mode": "per_seat",
+      "sort_order": 120,
+      "trial": {
+        "enabled": true,
+        "duration_days": 7
+      },
+      "features": [
+        {
+          "key": "workeasy_booking.core",
+          "name": "WorkEasy360 Booking"
+        }
+      ],
+      "integration": {
+        "display_name": "WorkEasy360 Booking",
+        "launch_url": "https://booking.workeasy360.com/api/auth/workeasy360/start",
+        "redirect_uris": [
+          "https://booking.workeasy360.com/api/auth/workeasy360/callback"
+        ],
+        "sign_in_mode": "sso_optional",
+        "login_url": "https://booking.workeasy360.com/login",
+        "post_logout_redirect_uris": [
+          "https://booking.workeasy360.com/login"
+        ]
+      }
     }
   ]
 }

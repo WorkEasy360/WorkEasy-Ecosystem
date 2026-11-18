@@ -509,7 +509,7 @@ def test_the_operator_command_attests_first_party_hostnames(staff_factory):
         for p in registry
         for u in [p["integration"]["launch_url"], *p["integration"]["redirect_uris"]]
     }
-    assert _audited("ecosystem.integration.domain_attested") == len(hostnames) == 8
+    assert _audited("ecosystem.integration.domain_attested") == len(hostnames) == 12
 
 
 # --- the staff API -------------------------------------------------------------------------
