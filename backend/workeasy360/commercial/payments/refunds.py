@@ -48,6 +48,15 @@ REFUND_TIMER = "payments.refund"
 
 _OPEN = ("requested", "submitting", "pending", "needs_review")
 
+#: ADR-073 (G8): what a refund does to the product lines its payment paid for.
+#: ``keep`` - money only, the default and the behaviour before ADR-073.
+END_ACCESS_KEEP = "keep"
+END_ACCESS_PERIOD_END = "period_end"
+END_ACCESS_NOW = "now"
+END_ACCESS_CHOICES = (END_ACCESS_KEEP, END_ACCESS_PERIOD_END, END_ACCESS_NOW)
+#: Ending access is also a subscription operation (control-plane permission).
+SUBSCRIPTION_MANAGE = "platform.staff_subscription.manage"
+
 
 def request_refund(
     actor: TenantContext,
@@ -57,13 +66,27 @@ def request_refund(
     amount_minor: Any,
     reason: str,
     idempotency_key: str,
+    end_access: Any = END_ACCESS_KEEP,
 ) -> dict[str, Any]:
+    """Refund (part of) a captured payment. ``end_access`` (ADR-073, G8) is the
+    staff member's explicit choice about the product lines the payment paid for:
+    ``keep`` (the default - a refund is money only), ``period_end`` or ``now``.
+    Anything but ``keep`` also needs ``platform.staff_subscription.manage``, ends
+    those lines through the ordinary line-ending command in this same
+    transaction, and is audited with the refund's reason."""
     from workeasy360.commercial.payments.models import Refund
     from workeasy360.integration.scheduling import services as scheduling
     from workeasy360.platform.authz.control_plane import context_for_organization
     from workeasy360.platform.tenancy.context import tenant_context
 
     authz.require(actor, MANAGE)
+    if end_access not in END_ACCESS_CHOICES:
+        raise PaymentValidationError(
+            "end_access must be one of: " + ", ".join(END_ACCESS_CHOICES) + ".",
+            field="end_access",
+        )
+    if end_access != END_ACCESS_KEEP:
+        authz.require(actor, SUBSCRIPTION_MANAGE)
     if (
         isinstance(amount_minor, bool)
         or not isinstance(amount_minor, int)
@@ -150,14 +173,124 @@ def request_refund(
                     "attempt": str(attempt.id),
                     "amount_minor": amount_minor,
                     "currency": attempt.currency,
+                    "end_access": end_access,
                 },
                 reason=reason,
+            )
+            access = (
+                _end_refunded_access(
+                    rebound,
+                    attempt=attempt,
+                    refund=refund,
+                    end_access=end_access,
+                    reason=reason,
+                )
+                if end_access != END_ACCESS_KEEP
+                else None
             )
         from workeasy360.commercial.payments import tasks
 
         scheduling.enqueue_after_commit(tasks.send_refund, [refund.id], ctx=rebound)
     metrics.increment("payments_refunds_requested_total")
-    return refund_view(refund)
+    answer = refund_view(refund)
+    if access is not None:
+        answer["access"] = access
+    return answer
+
+
+def _refunded_items(attempt: Any) -> list[UUID]:
+    """The subscription lines this payment paid for: the lines its invoice's
+    charges are linked to (``orders._link_invoice``, the period invoices)."""
+    from workeasy360.commercial.payments.models import InvoiceLine
+
+    if attempt.invoice_id is None:
+        return []
+    return list(
+        dict.fromkeys(
+            InvoiceLine.unscoped.filter(
+                organization_id=attempt.organization_id,
+                invoice_id=attempt.invoice_id,
+                kind=InvoiceLine.Kind.CHARGE,
+                subscription_item_id__isnull=False,
+            )
+            .order_by("id")
+            .values_list("subscription_item_id", flat=True)
+        )
+    )
+
+
+def _end_refunded_access(
+    rebound: TenantContext, *, attempt: Any, refund: Any, end_access: str, reason: str
+) -> dict[str, Any]:
+    """End the refunded lines, inside the refund's transaction: each through
+    ``subscriptions.end_product`` (the line alone, the subscription and the
+    other products kept); the subscription's last product through
+    ``cancel_subscription`` instead, since a subscription is not left with
+    nothing in it. Keyed on the refund, so it happens once. A line whose
+    subscription has already ended needs nothing."""
+    from workeasy360.commercial.subscriptions import services as subscriptions
+    from workeasy360.commercial.subscriptions.models import Subscription, SubscriptionItem
+    from workeasy360.contracts.enums import SubscriptionStatus
+    from workeasy360.contracts.errors import CommercialError
+
+    items = _refunded_items(attempt)
+    if not items:
+        raise PaymentNotAllowed(
+            "This payment paid for no product line. End access from the "
+            "subscription instead.",
+            reason="no_product_line",
+        )
+    immediate = end_access == END_ACCESS_NOW
+    ended: list[str] = []
+    cancelled: list[str] = []
+    for item_id in items:
+        line = SubscriptionItem.objects.filter(id=item_id).first()
+        if line is None:
+            continue
+        subscription = Subscription.objects.get(id=line.subscription_id)
+        status = subscription.status_enum
+        if status is SubscriptionStatus.EXPIRED or (
+            status is SubscriptionStatus.CANCELLED and not immediate
+        ):
+            continue
+        try:
+            if status is SubscriptionStatus.CANCELLED:
+                raise CommercialError("Already cancelled.", reason="last_product")
+            result = subscriptions.end_product(
+                rebound,
+                subscription_item_id=item_id,
+                idempotency_key=f"refund:{refund.id}:{item_id}",
+                immediate=immediate,
+                reason_code="refund",
+            )
+            if result.removed_at != line.removed_at:
+                ended.append(str(item_id))
+        except CommercialError as exc:
+            if exc.context.get("reason") != "last_product":
+                raise
+            subscriptions.cancel_subscription(
+                rebound,
+                subscription_id=subscription.id,
+                idempotency_key=f"refund:{refund.id}:cancel:{subscription.id}",
+                immediate=immediate,
+                reason_code="refund",
+            )
+            cancelled.append(str(subscription.id))
+    outcome = {
+        "end_access": end_access,
+        "ended_items": ended,
+        "cancelled_subscriptions": cancelled,
+    }
+    audit.record(
+        rebound,
+        "billing.refund_access_ended",
+        resource_type="payments.refund",
+        resource_id=refund.id,
+        changes=outcome,
+        reason=reason,
+    )
+    metrics.increment("payments_refund_access_ended_total", end_access=end_access)
+    return outcome
 
 
 def refund_automatically(organization_id: UUID, attempt_id: UUID, *, reason: str) -> None:
