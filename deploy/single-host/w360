@@ -8,6 +8,15 @@
 #   sudo /opt/workeasy360/bin/w360 up -d
 set -eu
 ROOT="${W360_ROOT:-/opt/workeasy360}"
+# CloudWatch Logs (deploy/aws/README.md) only once the operator has turned it on, so a host
+# without the instance role keeps today's json-file logging exactly.
+if [ -f "$ROOT/env/cloudwatch.enabled" ]; then
+  exec docker compose -p w360 \
+    -f "$ROOT/current/deploy/compose/production.yml" \
+    -f "$ROOT/current/deploy/single-host/compose.single-host.yml" \
+    -f "$ROOT/current/deploy/single-host/compose.cloudwatch.yml" \
+    --env-file "$ROOT/env/production.env" --env-file "$ROOT/env/ops.env" "$@"
+fi
 exec docker compose -p w360 \
   -f "$ROOT/current/deploy/compose/production.yml" \
   -f "$ROOT/current/deploy/single-host/compose.single-host.yml" \
