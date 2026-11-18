@@ -368,7 +368,7 @@ def test_activation_is_explicit_and_leaves_no_credential(staff_factory):
         # Each on its own host; AI Commerce never on admin. (Super Admin's).
         "workeasy_forms": "https://forms.workeasy360.com/auth/workeasy360/start",
         "ai_commerce": "https://commerce.workeasy360.com/auth/workeasy360/start",
-        "workeasy_lms": "https://learn.workeasy360.com/api/auth/workeasy360/start",
+        "workeasy_lms": "https://learn.workeasy360.com/",
         "workeasy_hrms": "https://hrms.workeasy360.com/api/auth/workeasy360/start",
     }
 

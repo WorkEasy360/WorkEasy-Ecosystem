@@ -172,7 +172,7 @@
           "https://forms.workeasy360.com/auth/workeasy360/callback"
         ],
         "sign_in_mode": "sso_optional",
-        "login_url": "https://forms.workeasy360.com/login",
+        "login_url": "https://forms.workeasy360.com/",
         "post_logout_redirect_uris": [
           "https://forms.workeasy360.com/"
         ]
@@ -205,7 +205,7 @@
           "https://commerce.workeasy360.com/auth/workeasy360/callback"
         ],
         "sign_in_mode": "sso_optional",
-        "login_url": "https://commerce.workeasy360.com/login",
+        "login_url": "https://commerce.workeasy360.com/",
         "post_logout_redirect_uris": [
           "https://commerce.workeasy360.com/"
         ]
@@ -233,12 +233,12 @@
       ],
       "integration": {
         "display_name": "WorkEasyLMS",
-        "launch_url": "https://learn.workeasy360.com/api/auth/workeasy360/start",
+        "launch_url": "https://learn.workeasy360.com/",
         "redirect_uris": [
           "https://learn.workeasy360.com/api/auth/callback/workeasy360"
         ],
         "sign_in_mode": "sso_optional",
-        "login_url": "https://learn.workeasy360.com/login",
+        "login_url": "https://learn.workeasy360.com/",
         "post_logout_redirect_uris": [
           "https://learn.workeasy360.com/"
         ]
@@ -273,7 +273,7 @@
         "sign_in_mode": "sso_optional",
         "login_url": "https://hrms.workeasy360.com/login",
         "post_logout_redirect_uris": [
-          "https://hrms.workeasy360.com/"
+          "https://hrms.workeasy360.com/login"
         ]
       }
     }
