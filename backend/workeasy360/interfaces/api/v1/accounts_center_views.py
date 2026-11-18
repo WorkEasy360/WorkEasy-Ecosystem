@@ -131,7 +131,9 @@ def _visits(request: HttpRequest, user: Any) -> list[Visit]:
                 denial = None
             else:
                 try:
-                    denial = str(json.loads(refused.content).get("code") or "not_found")
+                    denial = str(
+                        json_input.loads(refused.content).get("code") or "not_found"
+                    )
                 except (ValueError, AttributeError):
                     denial = "not_found"
         visits.append(
