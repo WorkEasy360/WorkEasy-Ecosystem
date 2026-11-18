@@ -213,6 +213,14 @@ TENANT_SCOPE_EXEMPT = frozenset(
         # customer reaches only its own record, from the verified context
         # (provisioning/setup.py), and answers are bounded text.
         "provisioning.CustomerSetup",
+        # ADR-072. A person's own record of signing in to a product through
+        # WorkEasy360, per organization (the Accounts Control Center's
+        # Connected Logins). Written by the token and entitlement endpoints,
+        # which - like AuthorizationCode's - have no tenant context; read only
+        # by that person (their own user id, from the session) or by staff with
+        # platform.staff_user.view. organization_id is a label of the sign-in,
+        # never an access decision; the row holds timestamps and a count only.
+        "ecosystem.ProductConnection",
     }
 )
 

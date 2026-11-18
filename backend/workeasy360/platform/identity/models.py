@@ -335,6 +335,17 @@ class AccountEvent(models.Model):
         #: the new address) and then confirmed from that link.
         EMAIL_CHANGE_REQUESTED = "email_change_requested", "Email change requested"
         EMAIL_CHANGED = "email_changed", "Sign-in email changed"
+        #: ADR-072: a product redeemed a WorkEasy360 sign-in for this person at
+        #: the token endpoint. ``reason`` is the product code; the network and
+        #: device are those of the WorkEasy360 sign-in that opened it. Shown in
+        #: the person's Login History, never in the short security trail.
+        PRODUCT_SIGN_IN = "product_sign_in", "Signed in to a product"
+        #: ADR-072: the person signed out of one product from Connected Logins
+        #: (a back-channel logout of every session they have in it). ``reason``
+        #: is the product code.
+        PRODUCT_SIGNED_OUT = "product_signed_out", "Signed out of a product"
+        #: ADR-072: the person changed their own name on WorkEasy360 Accounts.
+        PROFILE_UPDATED = "profile_updated", "Profile updated"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
