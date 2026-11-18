@@ -1,0 +1,412 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  WorkEasy360 single production host - operations: encrypted off-instance backups (S3 + KMS),
+  CloudWatch logs and alarms for the platform's authentication, sign-in, logout delivery,
+  availability and database health, and an alert topic. Deployed in the host's region.
+  Changes nothing on the instance itself; see deploy/aws/README.md for the host side.
+
+Parameters:
+  AlertEmail:
+    Type: String
+    Description: The verified address that receives alerts. It must confirm the SNS subscription email.
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+  InstanceId:
+    Type: AWS::EC2::Instance::Id
+    Description: The production host.
+  ExistingInstanceRoleName:
+    Type: String
+    Default: ""
+    Description: >-
+      The IAM role of the host's current instance profile, to attach the host policy to.
+      Leave empty to create a new role and instance profile (then associate it with the instance).
+  BackupRetentionDays:
+    Type: Number
+    Default: 35
+    MinValue: 7
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [7, 14, 30, 60, 90, 180, 365]
+  LogGroupName:
+    Type: String
+    Default: /workeasy360/production
+
+Conditions:
+  CreateRole: !Equals [!Ref ExistingInstanceRoleName, ""]
+
+Resources:
+  # --- alerts -------------------------------------------------------------------------------
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: workeasy360-production-alerts
+      KmsMasterKeyId: alias/aws/sns
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # --- backups: off the instance, encrypted, versioned, never public -----------------------
+  BackupKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: WorkEasy360 production backups
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AccountAdministers
+            Effect: Allow
+            Principal: {AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"}
+            Action: "kms:*"
+            Resource: "*"
+  BackupKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/workeasy360-backups
+      TargetKeyId: !Ref BackupKey
+  BackupBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "workeasy360-backups-${AWS::AccountId}-${AWS::Region}"
+      VersioningConfiguration: {Status: Enabled}
+      OwnershipControls:
+        Rules: [{ObjectOwnership: BucketOwnerEnforced}]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt BackupKey.Arn
+            BucketKeyEnabled: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-backups
+            Status: Enabled
+            ExpirationInDays: !Ref BackupRetentionDays
+            NoncurrentVersionExpiration: {NoncurrentDays: 7}
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 2}
+  BackupBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BackupBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt BackupBucket.Arn, !Sub "${BackupBucket.Arn}/*"]
+            Condition: {Bool: {"aws:SecureTransport": "false"}}
+          - Sid: DenyUnencryptedUploads
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:PutObject"
+            Resource: !Sub "${BackupBucket.Arn}/*"
+            Condition: {StringNotEquals: {"s3:x-amz-server-side-encryption": "aws:kms"}}
+
+  # --- what the host may do: write backups (never delete), ship logs, publish metrics -------
+  HostPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: WorkEasy360 production host - backups, logs and metrics
+      Roles: !If [CreateRole, [!Ref HostRole], [!Ref ExistingInstanceRoleName]]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: WriteAndReadBackups
+            Effect: Allow
+            Action: ["s3:PutObject", "s3:GetObject", "s3:ListBucket"]
+            Resource: [!GetAtt BackupBucket.Arn, !Sub "${BackupBucket.Arn}/*"]
+          - Sid: UseTheBackupKey
+            Effect: Allow
+            Action: ["kms:GenerateDataKey", "kms:Decrypt"]
+            Resource: !GetAtt BackupKey.Arn
+          - Sid: ShipLogs
+            Effect: Allow
+            Action: ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"]
+            Resource: !Sub "${LogGroup.Arn}:*"
+          - Sid: PublishMetrics
+            Effect: Allow
+            Action: "cloudwatch:PutMetricData"
+            Resource: "*"
+            Condition: {StringEquals: {"cloudwatch:namespace": ["WorkEasy360", "CWAgent"]}}
+  HostRole:
+    Type: AWS::IAM::Role
+    Condition: CreateRole
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      # Session Manager: the administrative path that remains when SSH is closed to the internet.
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy"
+  HostInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: CreateRole
+    Properties:
+      Roles: [!Ref HostRole]
+
+  # --- logs: the api and workers' JSON lines (compose.cloudwatch.yml) ------------------------
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref LogGroupName
+      RetentionInDays: !Ref LogRetentionDays
+
+  Http5xxFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "http.request" && $.http_status >= 500 }'
+      MetricTransformations: [{MetricNamespace: WorkEasy360, MetricName: Http5xx, MetricValue: "1", DefaultValue: 0}]
+  SsoFailedFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "ecosystem.sso.failed" }'
+      MetricTransformations: [{MetricNamespace: WorkEasy360, MetricName: SsoFailed, MetricValue: "1", DefaultValue: 0}]
+  SsoSucceededFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "ecosystem.sso.succeeded" }'
+      MetricTransformations: [{MetricNamespace: WorkEasy360, MetricName: SsoSucceeded, MetricValue: "1", DefaultValue: 0}]
+  TokenIssuanceFailedFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "ecosystem.token.issuance_failed" }'
+      MetricTransformations: [{MetricNamespace: WorkEasy360, MetricName: TokenIssuanceFailed, MetricValue: "1", DefaultValue: 0}]
+  SigningKeyProblemFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ ($.event = "ecosystem.signing_key.none_active") || ($.event = "ecosystem.signing_key.unresolved") }'
+      MetricTransformations: [{MetricNamespace: WorkEasy360, MetricName: SigningKeyProblem, MetricValue: "1", DefaultValue: 0}]
+  AssertionReplayedFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "ecosystem.assertion.replayed" }'
+      MetricTransformations: [{MetricNamespace: WorkEasy360, MetricName: ClientAssertionReplayed, MetricValue: "1", DefaultValue: 0}]
+  LogoutDeliveryDeadFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ ($.event = "ecosystem.backchannel.dead") || ($.event = "ecosystem.backchannel.refused") }'
+      MetricTransformations: [{MetricNamespace: WorkEasy360, MetricName: LogoutDeliveryFailed, MetricValue: "1", DefaultValue: 0}]
+  LogoutDeliveryErrorFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ ($.event = "integration.backchannel.delivery_error") || ($.event = "integration.backchannel.mint_failed") }'
+      MetricTransformations: [{MetricNamespace: WorkEasy360, MetricName: LogoutDeliveryError, MetricValue: "1", DefaultValue: 0}]
+  LegacyHostServedFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "accounts.legacy_host.request" && $.kind = "served" }'
+      MetricTransformations: [{MetricNamespace: WorkEasy360, MetricName: LegacyIssuerHostServed, MetricValue: "1", DefaultValue: 0}]
+  LoginThrottledFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "identity.login.throttled" }'
+      MetricTransformations: [{MetricNamespace: WorkEasy360, MetricName: LoginThrottled, MetricValue: "1", DefaultValue: 0}]
+
+  # --- alarms (runbooks: docs/phase-12/10-runbooks.md) ---------------------------------------
+  InstanceStatusAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-host-status-check-failed
+      AlarmDescription: The production host fails its EC2 status checks. Runbook - api-or-database-outage.
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions: [{Name: InstanceId, Value: !Ref InstanceId}]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+  CpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-host-cpu-high
+      AlarmDescription: CPU above 85% for 15 minutes.
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions: [{Name: InstanceId, Value: !Ref InstanceId}]
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions: [!Ref AlertTopic]
+  Http5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-api-5xx
+      AlarmDescription: More than 20 server errors in 5 minutes.
+      Namespace: WorkEasy360
+      MetricName: Http5xx
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 20
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+  SsoFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-sso-failures
+      AlarmDescription: More than 25 failed product sign-ins in 5 minutes (issuer, callback or entitlement problems).
+      Namespace: WorkEasy360
+      MetricName: SsoFailed
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 25
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+  TokenIssuanceAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-token-issuance-failed
+      AlarmDescription: The token endpoint could not issue a token (signing key or database).
+      Namespace: WorkEasy360
+      MetricName: TokenIssuanceFailed
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+  SigningKeyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-signing-key-problem
+      AlarmDescription: No active OIDC signing key, or one could not be loaded.
+      Namespace: WorkEasy360
+      MetricName: SigningKeyProblem
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+  LogoutDeliveryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-logout-delivery-failed
+      AlarmDescription: A product refused, or never acknowledged, a back-channel logout - someone may still be signed in there.
+      Namespace: WorkEasy360
+      MetricName: LogoutDeliveryFailed
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+  DatabaseDownAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-database-unavailable
+      AlarmDescription: pg_isready failed on the host (w360-healthwatch). Runbook - database-outage.
+      Namespace: WorkEasy360
+      MetricName: DatabaseUp
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+  BackupAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-backup-stale
+      AlarmDescription: No backup has reached S3 for more than 26 hours.
+      Namespace: WorkEasy360
+      MetricName: BackupAgeHours
+      Statistic: Maximum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 26
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+  RestoreDrillAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-restore-drill-failed
+      AlarmDescription: The weekly restore drill from S3 did not verify (w360-restore-drill).
+      Namespace: WorkEasy360
+      MetricName: RestoreVerified
+      Statistic: Minimum
+      Period: 86400
+      EvaluationPeriods: 8
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+  CertificateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-origin-certificate-expiring
+      AlarmDescription: An origin certificate on the host expires in under 14 days (Caddy renewal is failing).
+      Namespace: WorkEasy360
+      MetricName: CertificateDaysLeft
+      Statistic: Minimum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 14
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+  DiskAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-host-disk-high
+      AlarmDescription: The root volume is more than 85% full.
+      Namespace: WorkEasy360
+      MetricName: DiskUsedPercent
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+
+Outputs:
+  AlertTopicArn: {Value: !Ref AlertTopic}
+  BackupBucketName: {Value: !Ref BackupBucket}
+  BackupKeyArn: {Value: !GetAtt BackupKey.Arn}
+  LogGroupName: {Value: !Ref LogGroup}
+  CreatedInstanceProfile:
+    Condition: CreateRole
+    Value: !Ref HostInstanceProfile

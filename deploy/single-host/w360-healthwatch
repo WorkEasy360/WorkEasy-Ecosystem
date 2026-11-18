@@ -1,0 +1,41 @@
+#!/bin/sh
+# WorkEasy360 on the single host: health metrics every five minutes (workeasy360-ops.cron).
+#
+#   DatabaseUp            1 when pg_isready answers inside the postgres container, else 0
+#   DiskUsedPercent       the root volume (and the backups' volume, if separate)
+#   CertificateDaysLeft   the soonest expiry among the origin certificates Caddy serves
+#
+# The alarms are in deploy/aws/ops-single-host.yml. A host that cannot run this at all is
+# caught by the EC2 status-check alarm and the Route 53 checks (ops-uptime-us-east-1.yml).
+set -u
+ROOT="${W360_ROOT:-/opt/workeasy360}"
+# shellcheck source=/dev/null # the operator's env/ops.env, outside the repository
+[ -f "$ROOT/env/ops.env" ] && . "$ROOT/env/ops.env"
+: "${W360_AWS_REGION:?W360_AWS_REGION is not set (env/ops.env)}"
+HOSTS="${W360_CERT_HOSTS:-auth.workeasy360.com app.workeasy360.com admin.workeasy360.com partner.workeasy360.com api.workeasy360.com store.workeasy360.com}"
+
+put() {
+  aws cloudwatch put-metric-data --region "$W360_AWS_REGION" --namespace WorkEasy360 \
+    --metric-name "$1" --value "$2" --unit "${3:-None}" >/dev/null 2>&1 \
+    || echo "[healthwatch] could not publish $1" >&2
+}
+
+if "$ROOT/bin/w360" exec -T postgres pg_isready -U postgres -d workeasy360 >/dev/null 2>&1; then
+  put DatabaseUp 1
+else
+  put DatabaseUp 0
+fi
+
+used="$(df -P / | awk 'NR == 2 { sub("%", "", $5); print $5 }')"
+[ -n "$used" ] && put DiskUsedPercent "$used" Percent
+
+soonest=""
+for host in $HOSTS; do
+  end="$(echo | timeout 10 openssl s_client -connect 127.0.0.1:443 -servername "$host" 2>/dev/null \
+    | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)"
+  [ -n "$end" ] || continue
+  days=$(( ($(date -u -d "$end" +%s) - $(date -u +%s)) / 86400 ))
+  if [ -z "$soonest" ] || [ "$days" -lt "$soonest" ]; then soonest="$days"; fi
+done
+[ -n "$soonest" ] && put CertificateDaysLeft "$soonest" Count
+exit 0
