@@ -2,11 +2,15 @@
 
 import { useId, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { POLICIES } from "@/features/store/links";
+import { Sla } from "@/features/partnerpanel/Helpdesk";
+import type { Ticket } from "@/lib/api/partnerPanel";
 import { supportApi, type HelpArticleRow, type TicketDetail, type TicketRow } from "@/lib/api/adminPanel";
 import { can, useAdmin } from "./ControlShell";
 import { DateText } from "./AdminUsers";
 import { OffsetPager } from "./AdminListParts";
+import { PartnerTicketsScreen } from "./PartnerDesk";
 import { DialogHead, FormDialog, FormPopup, Modal, dialog } from "./Modal";
 import { LoadGate, useAction, useLoad } from "./ui";
 import { TextAreaField, TextField } from "./widgets";
@@ -32,6 +36,7 @@ import {
   useConfirm,
   type Column,
   type MenuItem,
+  usePageTrail,
 } from "./kit";
 import local from "./AdminPeople.module.css";
 import styles from "./AdminSupport.module.css";
@@ -45,6 +50,8 @@ import styles from "./AdminSupport.module.css";
  */
 
 const MANAGE = "platform.staff_support.manage";
+const SUPPORT_VIEW = "platform.staff_support.view";
+const PARTNER_VIEW = "platform.staff_partner.view";
 const LIMIT = 25;
 
 // --- the ticket list ----------------------------------------------------------------
@@ -54,6 +61,10 @@ const AUDIENCES = [
   { value: "customer", label: "Customers" },
   { value: "partner", label: "Partners" },
 ];
+
+/** `?audience=` (the server's own word for Who asked): a link opens the list with it
+ * chosen - the old Partner tickets page opens Partners. */
+const audienceOf = (raw: string | null): string => (raw && AUDIENCES.some((a) => a.value === raw) ? raw : "all");
 
 const ASSIGNED = [
   { value: "", label: "Anyone" },
@@ -115,8 +126,48 @@ const TICKET_COLUMNS: Column<TicketRow>[] = [
   { key: "updated", header: "Updated", render: (t) => <DateText iso={t.updated_at} relative /> },
 ];
 
+/** Partners' tickets carry their answer promise (the old Partner tickets list's
+ * SLA column), from the same ticket row. */
+const SLA_COLUMN: Column<TicketRow> = {
+  key: "sla",
+  header: "SLA",
+  render: (t) => (t.sla && typeof t.sla.state === "string" ? <Sla ticket={t as unknown as Ticket} /> : EMPTY),
+};
+
+/**
+ * Support › Tickets (2026-11-18, admin-ux phase 1): every ticket to WorkEasy360,
+ * partners' included - "Who asked" chooses (`?audience=`). Read with the support
+ * grant. A staff member who holds only the partner grant (platform.staff_partner.view)
+ * reads partners' tickets the way that grant always allowed - the partner desk's list,
+ * answered with partner management - with Who asked fixed at Partners.
+ */
 export function TicketsScreen() {
-  const [audience, setAudience] = useState("all");
+  const { permissions } = useAdmin();
+  if (!can(permissions, SUPPORT_VIEW) && can(permissions, PARTNER_VIEW)) return <PartnerTicketsScreen asTickets />;
+  return <SupportTickets />;
+}
+
+function SupportTickets() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname() ?? "/admin/tickets";
+  const [audience, setAudienceState] = useState(() => audienceOf(params.get("audience")));
+  // Kept in the address, so a filtered list can be linked to and survives a reload.
+  const setAudience = (value: string) => {
+    setAudienceState(value);
+    const next = new URLSearchParams(params.toString());
+    if (value === "all") next.delete("audience");
+    else next.set("audience", value);
+    const text = next.toString();
+    router.replace(text ? `${pathname}?${text}` : pathname, { scroll: false });
+  };
+  // Who asked chosen from elsewhere (the command palette) while the list is open.
+  const addressAudience = audienceOf(params.get("audience"));
+  const [seenAudience, setSeenAudience] = useState(addressAudience);
+  if (addressAudience !== seenAudience) {
+    setSeenAudience(addressAudience);
+    setAudienceState(addressAudience);
+  }
   const [status, setStatus] = useState("open");
   const [assigned, setAssigned] = useState("");
   const [query, setQuery] = useState("");
@@ -158,7 +209,7 @@ export function TicketsScreen() {
         onClear={
           filtered
             ? () => {
-                setAudience("all");
+                if (audience !== "all") setAudience("all");
                 setAssigned("");
                 setQuery("");
                 setOffset(0);
@@ -172,7 +223,7 @@ export function TicketsScreen() {
       </FilterBar>
       <DataTable
         caption="Tickets, newest activity first"
-        columns={TICKET_COLUMNS}
+        columns={audience === "partner" ? [...TICKET_COLUMNS.slice(0, -1), SLA_COLUMN, TICKET_COLUMNS[TICKET_COLUMNS.length - 1]] : TICKET_COLUMNS}
         rows={rows}
         rowKey={(t) => t.id}
         rowHref={(t) => `/admin/tickets/${t.id}`}
@@ -198,11 +249,12 @@ export function TicketsScreen() {
 const TICKET_CRUMBS = [{ label: "Tickets", href: "/admin/tickets" }];
 
 export function TicketScreen({ ticketId }: { ticketId: string }) {
+  const trail = usePageTrail(TICKET_CRUMBS);
   const [load, reload] = useLoad(() => supportApi.ticket(ticketId), [ticketId]);
   if (load.status === "ready") return <TicketView t={load.data} reload={reload} />;
   return (
     <Page>
-      <PageHeader title="Ticket" crumbs={[...TICKET_CRUMBS, { label: "Ticket" }]} />
+      <PageHeader title="Ticket" crumbs={[...trail, { label: "Ticket" }]} />
       <LoadGate load={load} what="this ticket">
         {() => null}
       </LoadGate>
@@ -220,6 +272,7 @@ const SET_STATUS = [
 ];
 
 function TicketView({ t, reload }: { t: TicketDetail; reload: () => void }) {
+  const trail = usePageTrail(TICKET_CRUMBS);
   const closed = t.status === "closed";
   const answering = t.may_answer && !closed;
   const asker = askedBy(t);
@@ -228,7 +281,7 @@ function TicketView({ t, reload }: { t: TicketDetail; reload: () => void }) {
     <Page>
       <PageHeader
         title={`${t.reference} ${t.subject}`}
-        crumbs={[...TICKET_CRUMBS, { label: t.reference }]}
+        crumbs={[...trail, { label: t.reference }]}
         badges={
           <>
             <StatusBadge value={t.status} />

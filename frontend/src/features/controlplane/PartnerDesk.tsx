@@ -20,6 +20,7 @@ import {
   PageHeader,
   SearchInput,
   SectionHeader,
+  Select,
   StatusChips,
   Tooltip,
   exactTime,
@@ -62,7 +63,10 @@ function Priority({ value }: { value: string }) {
   return <Badge tone={value === "high" ? "warning" : "neutral"}>{titleCase(value)}</Badge>;
 }
 
-export function PartnerTicketsScreen() {
+/** Partners' tickets to Workeasy360, from the partner desk. `asTickets`: shown as
+ * Support › Tickets to a staff member who holds the partner grant but not the
+ * support grant - "Who asked" is then fixed at Partners, as that grant covers. */
+export function PartnerTicketsScreen({ asTickets = false }: { asTickets?: boolean } = {}) {
   const [status, setStatus] = useState("open");
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState<string | null>(null);
@@ -98,7 +102,7 @@ export function PartnerTicketsScreen() {
   return (
     <Page>
       <PageHeader
-        title="Partner tickets"
+        title={asTickets ? "Tickets" : "Partner tickets"}
         subtitle="Tickets partners raise from their dashboard's Helpdesk."
         info="Urgent tickets must be answered within an hour; the SLA column says whether each is on track."
       />
@@ -114,6 +118,13 @@ export function PartnerTicketsScreen() {
           />
           <FilterBar label="Filter tickets" onClear={search ? () => setSearch("") : undefined}>
             <SearchInput label="Search partner, subject or #number" value={search} onSearch={setSearch} />
+            {asTickets && (
+              <Tooltip content="Your access covers partners' tickets only.">
+                <span tabIndex={0}>
+                  <Select label="Who asked" prefix="Who asked:" value="partner" onChange={() => undefined} options={[{ value: "partner", label: "Partners" }]} disabled />
+                </span>
+              </Tooltip>
+            )}
           </FilterBar>
           <DataTable
             caption="Partner tickets, newest activity first"

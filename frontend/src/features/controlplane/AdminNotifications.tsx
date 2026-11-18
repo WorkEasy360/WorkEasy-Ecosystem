@@ -42,7 +42,11 @@ export function AdminNotifications() {
   const rows = load.status === "ready" ? load.data.items.filter((i) => WHAT[i.key] && i.count > 0) : [];
   return (
     <Page>
-      <PageHeader title="Notifications" subtitle="What is waiting for you across the console." />
+      <PageHeader
+        title="Notifications"
+        subtitle="What is waiting for you across the console."
+        crumbs={[{ label: "Dashboard", href: "/admin" }, { label: "Notifications" }]}
+      />
       <DataTable
           caption="Notifications"
           columns={COLUMNS}

@@ -339,7 +339,8 @@ describe("the header", () => {
     const suspend = screen.getByRole("button", { name: "Suspend" });
     expect(suspend.compareDocumentPosition(screen.getByRole("tablist", { name: "Partner sections" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // 2026-11-11: Back to Partners and Edit Partner are buttons at the top, not menu entries.
-    expect(screen.getByRole("link", { name: "Back to Partners" })).toHaveAttribute("href", "/admin/partners/reseller");
+    // The list with the partner's type chip chosen (admin-ux phase 1).
+    expect(screen.getByRole("link", { name: "Back to Partners" })).toHaveAttribute("href", "/admin/partners/all?type=reseller");
     expect(screen.getByRole("link", { name: /^Edit Partner/ })).toHaveAttribute("href", `/admin/partners/${ID}/profile`);
     // No Login as Guest without its own permission.
     expect(screen.queryByRole("button", { name: "Login as Guest" })).not.toBeInTheDocument();
@@ -364,11 +365,17 @@ describe("the header", () => {
     await expectNoViolations(container);
   });
 
-  it("Back to Partners opens the list this tab came from, with its search and filters", async () => {
-    window.sessionStorage.setItem("w360.admin.partners.list", JSON.stringify({ path: "/admin/partners/white-label", search: "?q=acme&status=active&evil=1" }));
+  it("Back to Partners opens the list this tab came from, with its type, search and filters", async () => {
+    window.sessionStorage.setItem("w360.admin.partners.list", JSON.stringify({ path: "/admin/partners/all", search: "?type=white_label&q=acme&status=active&evil=1" }));
+    mockApi(routes());
+    const first = mount();
+    expect(await screen.findByRole("link", { name: "Back to Partners" })).toHaveAttribute("href", "/admin/partners/all?type=white_label&q=acme&status=active");
+    first.unmount();
+    // A list remembered before the type chips: the old type page's chip.
+    window.sessionStorage.setItem("w360.admin.partners.list", JSON.stringify({ path: "/admin/partners/white-label", search: "?q=acme" }));
     mockApi(routes());
     mount();
-    expect(await screen.findByRole("link", { name: "Back to Partners" })).toHaveAttribute("href", "/admin/partners/white-label?q=acme&status=active");
+    expect(await screen.findByRole("link", { name: "Back to Partners" })).toHaveAttribute("href", "/admin/partners/all?type=white_label&q=acme");
     window.sessionStorage.clear();
   });
 
@@ -376,7 +383,7 @@ describe("the header", () => {
     window.sessionStorage.setItem("w360.admin.partners.list", JSON.stringify({ path: "https://evil.example.com/admin/partners/all", search: "" }));
     mockApi(routes({ [`GET /api/v1/admin/partners/${ID}`]: [ok({ ...DETAIL, experience: [AFFILIATE] })] }));
     mount();
-    expect(await screen.findByRole("link", { name: "Back to Partners" })).toHaveAttribute("href", "/admin/partners/affiliate");
+    expect(await screen.findByRole("link", { name: "Back to Partners" })).toHaveAttribute("href", "/admin/partners/all?type=affiliate");
     window.sessionStorage.clear();
   });
 

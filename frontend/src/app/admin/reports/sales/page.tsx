@@ -1,7 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { ReportScreen } from "@/features/controlplane/AdminReports";
-
+/** Old address: Reports is one page now, this report chosen on it (admin-ux phase 1). */
 export default function Page() {
-  return <ReportScreen kind="sales" />;
+  redirect("/admin/reports?report=sales");
 }

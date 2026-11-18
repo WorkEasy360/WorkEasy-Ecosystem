@@ -486,7 +486,7 @@ describe("New Admin", () => {
   it("is not offered without the security management grant", async () => {
     mockApi({ [ROLES_URL]: [ok({ results: [] })] });
     asStaff([SECURITY_VIEW], <SecurityScreen />);
-    await screen.findByRole("tab", { name: "Roles" });
+    await screen.findByRole("heading", { level: 2, name: "Roles" });
     expect(screen.queryByRole("button", { name: "New Admin" })).toBeNull();
   });
 });
@@ -539,24 +539,58 @@ const WAITING = {
 };
 
 describe("the top bar", () => {
-  it("opens the help library for those who may read it, and the help page for everyone else", async () => {
-    mockApi({ [ATTENTION]: [ok({ items: [] })] });
-    const view = render(<AdminTools permissions={[SUPPORT_VIEW]} />);
-    expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("href", "/admin/help-content");
-    view.unmount();
+  it("opens a drawer of published help: the library's for those who may read it, editing a link away", async () => {
+    const calls = mockApi({
+      [ATTENTION]: [ok({ items: [] })],
+      "GET /api/v1/admin/help-content": [
+        ok({
+          results: [
+            { id: "h1", slug: "invite", kind: "setup_guide", audience: "all", status: "published", title: "Invite your team", body: ["Open Users.", "Choose Invite."].join(String.fromCharCode(10)), product_code: "", display_order: 1, published_at: T, updated_at: T },
+            { id: "h2", slug: "refund", kind: "faq", audience: "customer", status: "published", title: "How refunds work", body: "Within 14 days.", product_code: "", display_order: 2, published_at: T, updated_at: T },
+          ],
+        }),
+      ],
+    });
+    const { container } = render(<AdminTools permissions={[SUPPORT_VIEW]} />);
+    // No settings shortcut in the top bar: Settings is in the sidebar.
+    expect(screen.queryByRole("link", { name: "Platform settings" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    const drawer = await screen.findByRole("dialog", { name: "Help" });
+    const list = await within(drawer).findByRole("list", { name: "Help articles" });
+    expect(calls.find((c) => c.key === "GET /api/v1/admin/help-content")?.url).toContain("status=published");
+    expect(within(list).getAllByRole("button").map((b) => b.textContent)).toEqual(["Invite your teamSetup guide", "How refunds workFAQ"]);
+    // Read-only: an article opens beneath its title.
+    fireEvent.click(within(list).getByRole("button", { name: /Invite your team/ }));
+    expect(within(list).getByRole("button", { name: /Invite your team/ })).toHaveAttribute("aria-expanded", "true");
+    expect(within(drawer).getByText(/Choose Invite/)).toBeInTheDocument();
+    expect(within(drawer).queryByRole("textbox", { name: /title|body/i })).not.toBeInTheDocument();
+    // Searchable.
+    fireEvent.change(within(drawer).getByLabelText("Search help articles"), { target: { value: "refund" } });
+    await waitFor(() => expect(within(list).getAllByRole("button")).toHaveLength(1));
+    expect(within(drawer).getByRole("link", { name: "Manage help articles" })).toHaveAttribute("href", "/admin/help-content");
+    expect(within(drawer).getByRole("link", { name: "Contact support" })).toHaveAttribute("href", "/contact");
+    await expectNoViolations(container.ownerDocument.body);
+  });
 
-    const second = render(<AdminTools permissions={[]} />);
-    expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("href", "/contact");
-    second.unmount();
-
+  it("gives staff who may not read the library the help published for everyone, and the help page", async () => {
+    const calls = mockApi({
+      [ATTENTION]: [ok({ items: [] })],
+      "GET /api/v1/public/help": [ok({ results: [{ slug: "start", kind: "faq", title: "Getting started", body: "Sign in.", product_code: "" }] })],
+    });
     const origins = { app: "https://app.example.com" } as PortalOrigins;
     render(
       <PortalsProvider origins={origins}>
         <AdminTools permissions={[]} />
       </PortalsProvider>,
     );
-    expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("href", "https://app.example.com/contact");
-    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    const drawer = await screen.findByRole("dialog", { name: "Help" });
+    expect(await within(drawer).findByRole("button", { name: /Getting started/ })).toBeInTheDocument();
+    expect(calls.some((c) => c.key === "GET /api/v1/admin/help-content")).toBe(false);
+    expect(within(drawer).queryByRole("link", { name: "Manage help articles" })).not.toBeInTheDocument();
+    expect(within(drawer).getByRole("link", { name: "Contact support" })).toHaveAttribute("href", "https://app.example.com/contact");
+    fireEvent.click(within(drawer).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Help" })).not.toBeInTheDocument());
   });
 
   it("says what is waiting behind the new notifications, and where each is dealt with", async () => {

@@ -138,7 +138,7 @@ describe("the Admin shell", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(navLabels()).toEqual(["Dashboard", "Customers", "Billing & Subscriptions", "Settings"]);
+    expect(navLabels()).toEqual(["Dashboard", "Customers", "Billing", "Settings"]);
   });
 
   it("says plainly that the account has no administrator access when the backend refuses, and offers the User way in", async () => {

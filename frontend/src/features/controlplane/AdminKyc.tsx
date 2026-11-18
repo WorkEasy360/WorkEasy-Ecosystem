@@ -58,6 +58,7 @@ import {
   useConfirm,
   useToast,
   type Column,
+  usePageTrail,
 } from "./kit";
 import styles from "./AdminKyc.module.css";
 
@@ -240,6 +241,7 @@ export function KycApplicationScreen({ partnerId }: { partnerId: string }) {
 type OpenDialog = "approve" | "correct" | "reject" | null;
 
 function Application({ app, reload }: { app: KycApplicationDetail; reload: () => void }) {
+  const trail = usePageTrail([{ label: "Applications", href: "/admin/partners/applications" }]);
   const { permissions } = useAdmin();
   const toast = useToast();
   const { ask, dialog: confirm } = useConfirm();
@@ -284,7 +286,7 @@ function Application({ app, reload }: { app: KycApplicationDetail; reload: () =>
   return (
     <>
       <PageHeader
-        crumbs={[{ label: "Applications", href: "/admin/partners/applications" }, { label: app.partner_name }]}
+        crumbs={[...trail, { label: app.partner_name }]}
         documentTitle={`${app.partner_name} · Applications`}
         title={app.partner_name}
         badges={

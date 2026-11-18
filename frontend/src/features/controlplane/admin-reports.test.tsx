@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-import { ReportScreen } from "./AdminReports";
+import { ReportScreen, ReportsScreen } from "./AdminReports";
 import { dayBefore } from "./AdminListParts";
 import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call, type Reply } from "./testSupport";
 
@@ -11,14 +11,17 @@ import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call, type R
  * on the screen.
  */
 
+const nav = vi.hoisted(() => ({ router: { replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }, query: "" }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
-  usePathname: () => "/admin/reports/sales",
+  useRouter: () => nav.router,
+  useSearchParams: () => new URLSearchParams(nav.query),
+  usePathname: () => "/admin/reports",
 }));
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  nav.router.replace.mockReset();
+  nav.query = "";
 });
 
 const VIEW = "platform.staff_report.view";
@@ -91,6 +94,45 @@ const routes = (kind: string, body: Reply, extra: Record<string, Reply[]> = {}) 
   ...extra,
 });
 const runs = (calls: Call[], kind: string) => calls.filter((c) => c.key === `GET /api/v1/admin/reports/${kind}`).map((c) => new URL(c.url, "http://x").searchParams);
+
+describe("the one Reports page (admin-ux phase 1)", () => {
+  it("opens the report the address names, Sales when it names none or an unknown one", async () => {
+    nav.query = "report=usage";
+    mockApi(routes("usage", ok(USAGE)));
+    const view = asStaff([VIEW], <ReportsScreen />);
+    expect(await screen.findByRole("table", { name: "Usage by Product" })).toBeInTheDocument();
+    view.unmount();
+    nav.query = "report=../../secrets";
+    mockApi(routes("sales", ok(SALES)));
+    asStaff([VIEW], <ReportsScreen />);
+    expect(await screen.findByRole("table", { name: "Sales" })).toBeInTheDocument();
+  });
+
+  it("chooses a report in one selector grouped Money, Partners and Usage, kept in the address", async () => {
+    mockApi(routes("sales", ok(SALES)));
+    const { container } = asStaff([VIEW], <ReportsScreen />);
+    await screen.findByRole("table", { name: "Sales" });
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("ReportsMoneySales");
+    const selector = screen.getByRole("combobox", { name: "Report" });
+    expect(selector).toHaveTextContent("Sales");
+    fireEvent.click(selector);
+    const list = screen.getByRole("listbox", { name: "Report" });
+    const groups = within(list).getAllByRole("group");
+    expect(groups.map((g) => g.getAttribute("aria-labelledby") && document.getElementById(g.getAttribute("aria-labelledby")!)?.textContent)).toEqual([
+      "Money",
+      "Partners",
+      "Usage",
+    ]);
+    expect(within(groups[0]).getAllByRole("option").map((o) => o.textContent)).toEqual(["Sales", "Payments", "Subscription Renewals", "Wallet Movements"]);
+    expect(within(groups[1]).getAllByRole("option").map((o) => o.textContent)).toEqual(["Partner Conversions", "Commissions", "Payouts"]);
+    expect(within(groups[2]).getAllByRole("option").map((o) => o.textContent)).toEqual(["Usage by Product"]);
+    // No tab row of eight reports.
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    await expectNoViolations(container);
+    fireEvent.click(within(list).getByRole("option", { name: "Payouts" }));
+    expect(nav.router.replace).toHaveBeenCalledWith("/admin/reports?report=payouts", { scroll: false });
+  });
+});
 
 describe("a report", () => {
   it("takes its title and description from the server and writes each cell by its kind; passes axe", async () => {

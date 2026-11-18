@@ -5,6 +5,7 @@ import { AdminShell } from "./ControlShell";
 import { Dashboard } from "./AdminDashboard";
 import { AdminSearch } from "./AdminTopbar";
 import { foldSlices } from "./dashboardCharts";
+import { Page, PageHeader, usePageTrail } from "./kit";
 import { AdminContextForTest, expectNoViolations, mockApi, ok } from "./testSupport";
 
 /**
@@ -322,20 +323,108 @@ describe("the Admin top bar", () => {
       </AdminShell>,
     );
     const nav = await screen.findByRole("navigation", { name: "Admin Portal" });
-    expect(within(nav).getByRole("link", { name: "Billing & Subscriptions" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "Billing" })).toHaveAttribute("aria-current", "page");
     expect(within(nav).getByRole("link", { name: "Customers" })).not.toHaveAttribute("aria-current");
     // Nothing beneath the nine entries: no disclosure buttons, no sub-pages.
     expect(within(nav).queryAllByRole("button").filter((b) => b.hasAttribute("aria-expanded"))).toEqual([]);
     expect(within(nav).queryByRole("link", { name: "Orders" })).not.toBeInTheDocument();
     expect(within(nav).queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
     expect(within(nav).getByText("Admin Portal")).toBeInTheDocument();
-    const sections = screen.getByRole("navigation", { name: "Billing & Subscriptions sections" });
-    expect(within(sections).getByRole("link", { name: "Orders & Payments" })).toHaveAttribute("aria-current", "true");
-    const pages = screen.getByRole("navigation", { name: "Orders & Payments pages" });
-    expect(within(pages).getByRole("link", { name: "Orders" })).toHaveAttribute("aria-current", "page");
-    expect(within(pages).getByRole("link", { name: "Payments" })).toHaveAttribute("href", "/admin/payments");
+    // ONE row of tabs (admin-ux phase 1): the brief's Billing tabs, this page's marked.
+    const tabs = screen.getByRole("navigation", { name: "Billing tabs" });
+    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual([
+      "Needs attention",
+      "Orders",
+      "Subscriptions",
+      "Invoices",
+      "Payments",
+      "Refunds",
+      "Credit notes",
+    ]);
+    expect(within(tabs).getByRole("link", { name: "Orders" })).toHaveAttribute("aria-current", "page");
+    expect(within(tabs).getByRole("link", { name: "Payments" })).toHaveAttribute("href", "/admin/payments");
+    expect(screen.queryByRole("navigation", { name: /pages$/ })).not.toBeInTheDocument();
+  });
+
+  it("counts Needs attention from what the bell read, and shows nothing when nothing waits", async () => {
+    pathname = "/admin/payments/failed";
+    shellApi(["platform.staff_payment.view"], { items: [{ key: "failed_payments", count: 3 }] });
+    render(
+      <AdminShell>
+        <h1>Page</h1>
+      </AdminShell>,
+    );
+    const tabs = await screen.findByRole("navigation", { name: "Billing tabs" });
+    await waitFor(() => expect(within(tabs).getByRole("link", { name: /^Needs attention/ })).toHaveTextContent("Needs attention3 waiting"));
+    expect(screen.getByRole("button", { name: "Notifications: 3 waiting" })).toBeInTheDocument();
+  });
+
+  it("draws no tab row on a record's own page, and names the way back in its breadcrumb", async () => {
+    pathname = "/admin/customers/org-1";
+    shellApi(["platform.staff_customer.view", "platform.staff_user.view"]);
+    render(
+      <AdminShell>
+        <PageHeaderProbe />
+      </AdminShell>,
+    );
+    await screen.findByRole("heading", { name: "Probe" });
+    expect(screen.queryByRole("navigation", { name: "Customers tabs" })).not.toBeInTheDocument();
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["Customers", "/admin/customers"],
+      ["Organizations", "/admin/customers"],
+    ]);
+  });
+
+  it("gives a list page its breadcrumb and its tab's other pages as header buttons", async () => {
+    pathname = "/admin/partners/applications";
+    shellApi(["platform.staff_kyc.view", "platform.staff_partner.view"]);
+    render(
+      <AdminShell>
+        <Page>
+          <PageHeader title="Applications" />
+        </Page>
+      </AdminShell>,
+    );
+    await screen.findByRole("heading", { name: "Applications" });
+    const tabs = screen.getByRole("navigation", { name: "Partners tabs" });
+    expect(within(tabs).getByRole("link", { name: "Applications" })).toHaveAttribute("aria-current", "page");
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(crumbs).toHaveTextContent("PartnersApplications");
+    expect(screen.getByRole("link", { name: "KYC requirements" })).toHaveAttribute("href", "/admin/partners/kyc-requirements");
+  });
+
+  it("lays Settings out as a menu down the left, its Security pages under one heading", async () => {
+    pathname = "/admin/audit";
+    shellApi(["platform.staff_settings.view", "platform.staff_audit.view", "platform.staff_security.view"]);
+    render(
+      <AdminShell>
+        <h1>Page</h1>
+      </AdminShell>,
+    );
+    const menu = await screen.findByRole("navigation", { name: "Settings" });
+    expect(within(menu).getAllByRole("link").map((a) => a.textContent)).toEqual([
+      "Platform settings",
+      "Domains & apps",
+      "Team & roles",
+      "Connected apps",
+      "Sign-in audit",
+      "Audit log",
+    ]);
+    expect(within(menu).getByRole("group", { name: "Security" })).toBeInTheDocument();
+    expect(within(menu).getByRole("link", { name: "Audit log" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("navigation", { name: "Settings tabs" })).not.toBeInTheDocument();
   });
 });
+
+function PageHeaderProbe() {
+  const trail = usePageTrail([{ label: "Fallback" }]);
+  return (
+    <Page>
+      <PageHeader title="Probe" crumbs={[...trail, { label: "Org one" }]} />
+    </Page>
+  );
+}
 
 describe("the command palette", () => {
   it("finds pages by name and records from the server, grouped, and opens the chosen one", async () => {

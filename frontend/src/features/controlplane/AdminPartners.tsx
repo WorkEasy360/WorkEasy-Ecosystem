@@ -28,7 +28,7 @@ import {
 import { TAB_LABELS, TAB_ORDER, tabFromParam, type TabKey, type TabProps } from "./partnerTabs";
 import { LoadGate, ReasonAction, Status, useAction, useLoad, type Load } from "./ui";
 import { UpgradeNotice, UpgradePanel } from "./UpgradePanel";
-import { Alert, Avatar, Button, ButtonLink, KeyText, Page, PageHeader, Tabs, Tooltip, useConfirm, type MenuItem } from "./kit";
+import { Alert, Avatar, Button, ButtonLink, KeyText, Page, PageHeader, Tabs, Tooltip, useConfirm, usePageTrail, type MenuItem } from "./kit";
 import styles from "./ControlPlane.module.css";
 import local from "./PartnerConsole.module.css";
 import ps from "./PartnerProfileTabs.module.css";
@@ -79,6 +79,7 @@ export function backTo(category: string | null | undefined): string {
 
 export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
   const { permissions } = useAdmin();
+  const trail = usePageTrail([{ label: "All partners", href: "/admin/partners/all" }]);
   const params = useSearchParams();
   const [tab, setTab] = useState<TabKey>(tabFromParam(params.get("tab")) ?? "overview");
   const [justCreated] = useState(params.get("created") === "1");
@@ -163,7 +164,7 @@ export function PartnerDetailScreen({ partnerId }: { partnerId: string }) {
           return (
             <>
               <PageHeader
-                crumbs={[{ label: "All partners", href: "/admin/partners/all" }, { label: p.display_name }]}
+                crumbs={[...trail, { label: p.display_name }]}
                 title={p.display_name}
                 documentTitle={p.display_name}
                 avatar={<Avatar name={p.display_name} size="lg" />}

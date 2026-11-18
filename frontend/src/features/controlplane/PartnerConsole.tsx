@@ -18,7 +18,7 @@ import { ExperienceLabels, PrimaryType, TypeBadges } from "./labels";
 import { LoadGate, Status, autoReason, money, useAction, useLoad, usePaged } from "./ui";
 import { usePortals } from "@/lib/portalContext";
 import { portalHref } from "@/lib/portals";
-import { CATEGORY_PATH, categoryHref, isCategory, lastPartnerList, rememberPartnerList, type PartnerCategory } from "./partnerCategories";
+import { categoryHref, isCategory, lastPartnerList, rememberPartnerList, type PartnerCategory } from "./partnerCategories";
 import {
   Alert,
   Avatar,
@@ -36,6 +36,7 @@ import {
   SectionHeader,
   Select,
   StatCard,
+  StatusChips,
   Tooltip,
   formatDate,
   kit,
@@ -129,11 +130,11 @@ const upgradeTarget = (key: string): string => (key === "white_label" ? "White-l
 const CARD_LINKS: Record<string, string> = {
   total_partners: "/admin/partners/all",
   active_partners: "/admin/partners/all?status=active",
-  // ADR-062: each type card opens its own page (Partners → Reseller, White Label,
-  // Affiliate), whose list is exactly what the card counts.
-  resellers: CATEGORY_PATH.reseller,
-  white_label: CATEGORY_PATH.white_label,
-  affiliates: CATEGORY_PATH.affiliate,
+  // ADR-062: each type card opens the list with its type chip chosen, which is
+  // exactly what the card counts.
+  resellers: categoryHref("reseller"),
+  white_label: categoryHref("white_label"),
+  affiliates: categoryHref("affiliate"),
   suspended_partners: "/admin/partners/all?status=suspended",
   profiles_incomplete: "/admin/partners/all?profile=incomplete",
 };
@@ -293,11 +294,12 @@ export function PartnersOverview() {
 
 // --- All partners ------------------------------------------------------------------------------
 
-const TYPE_OPTIONS = [
-  { value: "", label: "All types" },
+/** The type chips (admin-ux phase 1): All, then each category - one pressed. */
+const TYPE_CHIPS: { value: "" | PartnerCategory; label: string }[] = [
+  { value: "", label: "All" },
+  { value: "affiliate", label: "Affiliate" },
   { value: "reseller", label: "Reseller" },
   { value: "white_label", label: "White-label" },
-  { value: "affiliate", label: "Affiliate" },
 ];
 const STATUS_OPTIONS = [
   { value: "", label: "All statuses" },
@@ -450,32 +452,37 @@ const CATEGORY_NOUN: Record<PartnerCategory, string> = {
   white_label: "white-label partners",
 };
 
-/** Partners → All partners: one table, filtered by the server (search, partner
- * type, status, profile). The filters are kept in the address so a filtered
- * view can be linked to and survives a reload. A partner's actions are in its
- * row's menu; a status change asks to confirm.
+/** Partners › Partners: one table, filtered by the server (search, partner type,
+ * status, profile, KYC). The filters are kept in the address so a filtered view
+ * can be linked to and survives a reload. A partner's actions are in its row's
+ * menu; a status change asks to confirm.
  *
- * ADR-062: Partners → Affiliate, Reseller and White Label are this same table
- * with `category` fixed - the server lists only the partners of that type, each
- * partner under exactly one. "Partner type" moves between those pages (and back
- * to All partners), so the filter always means the type the Type column shows. */
-export function AllPartnersList({ category }: { category?: PartnerCategory } = {}) {
+ * The partner type is a row of chips - All, Affiliate, Reseller, White-label
+ * (`?type=`, 2026-11-18, admin-ux phase 1): the server lists only the partners of
+ * that type (ADR-062), each partner under exactly one, so a chip always means the
+ * type the Type column shows. The old type pages open this list with their chip
+ * chosen. On New partner (the list under its dialog) `?type=` is the form's. */
+export function AllPartnersList() {
   const { permissions } = useAdmin();
   const params = useSearchParams();
   const router = useRouter();
   const pathname = usePathname() ?? "/admin/partners/all";
-  // Back from a guest session (`?guest=ended`): this list's own search and
-  // filters, as this tab last showed them - the server keeps only the path.
+  // The list owns the query everywhere but on New partner, where `?type=` is the form's.
+  const onList = pathname !== "/admin/partners/new";
+  const typeOf = (value: string | null): "" | PartnerCategory => (onList && isCategory(value) ? value : "");
+  // Back from a guest session (`?guest=ended`): this list's own type, search and
+  // filters, as this tab last showed them - the server keeps only the path. A list
+  // this tab never showed keeps the type its address names.
   const returned = params.get("guest") === GUEST_RETURNED;
   const [restored] = useState(() => {
     if (!returned) return null;
-    const last = lastPartnerList(pathname);
-    return last ? new URLSearchParams(last.split("?")[1] ?? "") : new URLSearchParams();
+    const href = lastPartnerList(pathname) ?? categoryHref(typeOf(params.get("type")) || null);
+    return new URLSearchParams(href.split("?")[1] ?? "");
   });
   const source = restored ?? params;
   const [filters, setFilters] = useState({
     q: (source.get("q") ?? "").slice(0, 80),
-    type: category ?? "",
+    type: typeOf(source.get("type")),
     status: pick(source.get("status"), STATUS_OPTIONS),
     profile: pick(source.get("profile"), PROFILE_OPTIONS),
     kyc: pick(source.get("kyc"), KYC_OPTIONS),
@@ -483,7 +490,7 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
   useEffect(() => {
     if (!restored) return;
     const text = restored.toString();
-    router.replace(text ? `${pathname}?${text}` : pathname, { scroll: false });
+    router.replace(text ? `/admin/partners/all?${text}` : "/admin/partners/all", { scroll: false });
     // Once, on arrival: the address then carries the filters itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -501,15 +508,23 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
   const [guestOutcome] = useState(() => guestOutcomeMessage(params.get("guest")));
   const portals = usePortals();
 
-  // An old address (`/admin/partners/all?type=reseller`, a bookmark or the
-  // overview's old link) opens the type's own page, keeping the other filters.
-  // Only there: on New partner, `?type=` chooses the form's type.
-  const legacyType = !category && pathname === "/admin/partners/all" ? params.get("type") : null;
-  useEffect(() => {
-    if (legacyType && isCategory(legacyType)) {
-      router.replace(categoryHref(legacyType, Object.fromEntries(params.entries())));
+  // A type chosen from elsewhere (the command palette, a card on the overview)
+  // while the list is open: the list follows the address.
+  const addressType = typeOf(params.get("type"));
+  const [seenType, setSeenType] = useState(addressType);
+  if (addressType !== seenType) {
+    setSeenType(addressType);
+    if (!restored || addressType) {
+      setFilters({
+        q: (params.get("q") ?? "").slice(0, 80),
+        type: addressType,
+        status: pick(params.get("status"), STATUS_OPTIONS),
+        profile: pick(params.get("profile"), PROFILE_OPTIONS),
+        kyc: pick(params.get("kyc"), KYC_OPTIONS),
+      });
     }
-  }, [legacyType, params, router]);
+  }
+  const category = filters.type || undefined;
   const confirm = useConfirm();
   // New partner lands here with the new partner's id: the banner says where its
   // setup continues.
@@ -534,17 +549,14 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
   const { act, busy, feedback } = useAction(() => paged.reload());
 
   function apply(next: typeof filters) {
-    const { type, ...rest } = next;
-    if (type !== (category ?? "")) {
-      // Partner type is the page: Affiliate, Reseller, White Label or All partners.
-      router.push(categoryHref(isCategory(type) ? type : null, rest));
-      return;
-    }
     setFilters(next);
-    const query = new URLSearchParams();
-    for (const [key, value] of Object.entries(rest)) if (value) query.set(key, value);
-    const text = query.toString();
-    router.replace(text ? `${pathname}?${text}` : pathname, { scroll: false });
+    if (!onList) return;
+    const { type, ...rest } = next;
+    const href = categoryHref(isCategory(type) ? type : null, rest);
+    setSeenType(isCategory(type) ? type : "");
+    // A new type is a new list, kept in the history like a tab; a filter is not.
+    if (type !== filters.type) router.push(href, { scroll: false });
+    else router.replace(href, { scroll: false });
   }
 
   const panelUrl = (r: ResellerRow) => {
@@ -769,8 +781,8 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
     { key: "joined", header: "Created", value: (r) => r.created_at, render: (r) => formatDate(r.created_at) },
   ];
 
-  const filtered = Boolean(filters.q || (!category && filters.type) || filters.status || filters.profile || filters.kyc);
-  const select = (key: "type" | "status" | "profile" | "kyc", label: string, options: { value: string; label: string }[]) => (
+  const filtered = Boolean(filters.q || filters.status || filters.profile || filters.kyc);
+  const select = (key: "status" | "profile" | "kyc", label: string, options: { value: string; label: string }[]) => (
     <Select label={label} value={filters[key]} options={options} onChange={(value) => apply({ ...filters, [key]: value })} />
   );
 
@@ -783,12 +795,12 @@ export function AllPartnersList({ category }: { category?: PartnerCategory } = {
       />
       {created && <CreatedBanner partnerId={created} invite={createdInvite} />}
       {guestOutcome && <Alert tone="warning" title={guestOutcome} />}
+      {onList && <StatusChips label="Partner type" value={filters.type} onChange={(type) => apply({ ...filters, type })} chips={TYPE_CHIPS} />}
       <FilterBar
         label="Filter partners"
-        onClear={filtered ? () => apply({ q: "", type: category ?? "", status: "", profile: "", kyc: "" }) : undefined}
+        onClear={filtered ? () => apply({ ...filters, q: "", status: "", profile: "", kyc: "" }) : undefined}
       >
         <SearchInput label="Search by partner name or email" value={filters.q} onSearch={(q) => apply({ ...filters, q: q.slice(0, 80) })} />
-        {select("type", "Partner type", TYPE_OPTIONS)}
         {select("status", "Status", STATUS_OPTIONS)}
         {select("profile", "Profile", PROFILE_OPTIONS)}
         {select("kyc", "KYC", KYC_OPTIONS)}

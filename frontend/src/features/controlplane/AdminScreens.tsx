@@ -34,7 +34,6 @@ import {
   Select,
   Stack,
   StatusBadge,
-  Tabs,
   Trunc,
   EMPTY,
   eventLabel,
@@ -44,6 +43,7 @@ import {
   sentence,
   useConfirm,
   type Column,
+  usePageTrail,
 } from "./kit";
 import { downloadCsv } from "./kit/csv";
 import local from "./AdminPeople.module.css";
@@ -145,6 +145,7 @@ type Act = (action: () => Promise<unknown>, success: string) => Promise<void>;
 
 export function CustomerDetailScreen({ organizationId }: { organizationId: string }) {
   const { permissions } = useAdmin();
+  const trail = usePageTrail([{ label: "Customers", href: "/admin/customers" }]);
   const [load, reload] = useLoad(() => adminApi.customer(organizationId), [organizationId]);
   const { act, busy, feedback } = useAction(reload);
   const manage = can(permissions, "platform.staff_customer.manage");
@@ -160,7 +161,7 @@ export function CustomerDetailScreen({ organizationId }: { organizationId: strin
           return (
             <>
               <PageHeader
-                crumbs={[{ label: "Customers", href: "/admin/customers" }, { label: org.display_name }]}
+                crumbs={[...trail, { label: org.display_name }]}
                 documentTitle={`${org.display_name} · Customers`}
                 title={org.display_name}
                 badges={<StatusBadge value={org.status} />}
@@ -909,9 +910,10 @@ function NewAdminPopup({ onDone }: { onDone: () => void }) {
   );
 }
 
+/** Settings › Team & roles: roles, then individual permissions, as two sections of
+ * one page (2026-11-18, admin-ux phase 1: no tabs inside a tab). */
 export function SecurityScreen() {
   const { permissions } = useAdmin();
-  const [tab, setTab] = useState<"roles" | "permissions">("roles");
   // A new Admin changes who holds what: the lists below read it again.
   const [changes, setChanges] = useState(0);
   return (
@@ -921,19 +923,9 @@ export function SecurityScreen() {
         subtitle="Who can do what in the admin console."
         info="Grants take effect and end immediately, a time-boxed grant ends on its own when it expires, and the last permanent security administrator cannot be removed."
         primary={can(permissions, "platform.staff_security.manage") ? <NewAdminPopup onDone={() => setChanges((n) => n + 1)} /> : undefined}
-        tabs={
-          <Tabs
-            label="Staff access"
-            selected={tab}
-            onSelect={setTab}
-            tabs={[
-              { key: "roles", label: "Roles" },
-              { key: "permissions", label: "Permissions" },
-            ]}
-          />
-        }
       />
-      {tab === "roles" ? <StaffRolesPanel key={changes} /> : <PermissionsPanel key={changes} />}
+      <StaffRolesPanel key={`roles-${changes}`} />
+      <PermissionsPanel key={`permissions-${changes}`} />
     </Page>
   );
 }

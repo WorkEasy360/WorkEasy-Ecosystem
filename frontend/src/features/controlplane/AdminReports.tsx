@@ -1,9 +1,11 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/sidebar/icons";
 import { reportsApi, type ReportColumn, type ReportQuery } from "@/lib/api/adminPanel";
 import { adminApi } from "@/lib/api/controlPlane";
+import { REPORT_GROUPS } from "./adminModules";
 import { can, useAdmin } from "./ControlShell";
 import { DateRange, OffsetPager, dayBefore } from "./AdminListParts";
 import { LoadGate, useLoad } from "./ui";
@@ -31,7 +33,9 @@ import {
 } from "./kit";
 
 /**
- * Admin → Reports (2026-11-09): one screen for the eight standard reports. The server
+ * Admin → Reports (2026-11-09): one screen for the eight standard reports - since
+ * 2026-11-18 (admin-ux phase 1) one page, the report chosen in a grouped selector
+ * (`?report=`; the old /admin/reports/<report> addresses open it). The server
  * says what each report's columns are and how to write them. Money is shown per currency
  * as the row carries it and is never added up here; AI credits and units are whole numbers.
  * Every CSV export is recorded in the audit log by the server.
@@ -54,6 +58,23 @@ const REPORTS: Record<ReportKind, { label: string; search: string; product: bool
 
 const LIMIT = 25;
 const CATALOG_VIEW = "platform.staff_catalog.view";
+
+const isReport = (value: string | null): value is ReportKind => value !== null && Object.prototype.hasOwnProperty.call(REPORTS, value);
+
+/** The selector's choices: Money, Partners, Usage - every report once. */
+const REPORT_OPTIONS = REPORT_GROUPS.flatMap((group) =>
+  group.reports.filter((r) => isReport(r.kind)).map((r) => ({ value: r.kind as ReportKind, label: REPORTS[r.kind as ReportKind].label, group: group.label })),
+);
+
+/** Reports: the report the address names (`?report=`), Sales when it names none. */
+export function ReportsScreen() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const raw = params.get("report");
+  const kind: ReportKind = isReport(raw) ? raw : "sales";
+  // A new report starts with its own filters, as each report's page always did.
+  return <ReportScreen key={kind} kind={kind} onKind={(next) => router.replace(`/admin/reports?report=${next}`, { scroll: false })} />;
+}
 
 /** Columns holding a system key, written for a person. Names and references stay as they are. */
 const KEY_COLUMNS = new Set(["provider", "billing_interval", "renewal_policy", "earning", "reason_code", "meter"]);
@@ -84,8 +105,9 @@ function reportCell(column: ReportColumn, row: Row): React.ReactNode {
 /** A whole day from the server, on that day wherever the browser is. */
 const dayText = (day: string) => formatDate(`${day}T12:00:00`);
 
-export function ReportScreen({ kind }: { kind: ReportKind }) {
+export function ReportScreen({ kind, onKind }: { kind: ReportKind; onKind?: (kind: ReportKind) => void }) {
   const meta = REPORTS[kind];
+  const group = REPORT_OPTIONS.find((o) => o.value === kind)?.group;
   const { permissions } = useAdmin();
   const [from, setFrom] = useState(() => dayBefore(29));
   const [to, setTo] = useState(() => dayBefore(0));
@@ -126,7 +148,9 @@ export function ReportScreen({ kind }: { kind: ReportKind }) {
       <PageHeader
         title={data?.label ?? meta.label}
         subtitle={data?.description}
+        crumbs={onKind ? [{ label: "Reports" }, ...(group ? [{ label: group }] : []), { label: meta.label }] : undefined}
         meta={data ? [`Period: ${dayText(data.from)} to ${dayText(data.to)}`, `${formatNumber(data.total)} ${data.total === 1 ? "row" : "rows"}`] : undefined}
+        actions={onKind ? <Select label="Report" prefix="Report:" value={kind} onChange={onKind} options={REPORT_OPTIONS} /> : undefined}
       />
       {meta.earnings && (
         <Alert tone="info" title="Earnings, not wallet balances">

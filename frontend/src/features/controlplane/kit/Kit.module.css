@@ -596,6 +596,29 @@
   font-weight: 600;
 }
 
+/* A group of options under its heading (the report selector). */
+.optionGroup + .optionGroup {
+  margin-top: var(--w360-space-1);
+  padding-top: var(--w360-space-1);
+  border-top: 1px solid var(--w360-gray-200);
+}
+
+.optionGroupLabel {
+  display: block;
+  padding: 6px 10px 2px;
+  color: var(--w360-text-muted);
+  font-size: var(--w360-fs-meta);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.optionGroupList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .option svg,
 .menuItem svg {
   flex: none;

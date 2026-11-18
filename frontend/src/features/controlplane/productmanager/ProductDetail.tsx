@@ -18,6 +18,7 @@ import {
   Tabs,
   UrlCell,
   formatDate,
+  usePageTrail,
 } from "../kit";
 import { Icon } from "@/components/sidebar/icons";
 import { AvailabilityTab } from "./AvailabilityTab";
@@ -187,7 +188,8 @@ export function ProductDetail({ productId }: { productId: string }) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const saved = SAVED[params.get("saved") ?? ""];
 
-  const crumbs = (name: string) => [{ label: "Products", href: "/admin/products" }, { label: name }];
+  const trail = usePageTrail([{ label: "Products", href: "/admin/products" }]);
+  const crumbs = (name: string) => [...trail, { label: name }];
   return (
     <Page>
       {saved && <Alert tone="success">{saved}</Alert>}

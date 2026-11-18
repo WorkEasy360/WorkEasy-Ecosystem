@@ -9,16 +9,18 @@ import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call } from 
  * sent exactly, a refusal in the server's words, and what a read-only person is not offered.
  */
 
-const nav = vi.hoisted(() => ({ router: { replace: vi.fn(), push: vi.fn(), refresh: vi.fn() } }));
+const nav = vi.hoisted(() => ({ router: { replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }, query: "" }));
 vi.mock("next/navigation", () => ({
   useRouter: () => nav.router,
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(nav.query),
   usePathname: () => "/admin/tickets",
 }));
 
 beforeEach(() => {
   vi.restoreAllMocks();
   nav.router.push.mockReset();
+  nav.router.replace.mockReset();
+  nav.query = "";
 });
 
 const VIEW = "platform.staff_support.view";
@@ -80,6 +82,58 @@ const PARTNER_TICKET = {
 const COUNTS = { open: 2, in_progress: 3, waiting: 1, resolved: 4, closed: 5 };
 const QUEUE = { items: [CUSTOMER_TICKET, PARTNER_TICKET], counts: COUNTS, total: 60, limit: 25, offset: 0 };
 const TICKETS = "GET /api/v1/admin/tickets";
+
+describe("Tickets with Partner tickets in it (admin-ux phase 1)", () => {
+  it("opens with Who asked from the address, keeps a change there, and shows partners' SLA", async () => {
+    nav.query = "audience=partner";
+    const calls = mockApi({ [TICKETS]: [ok(QUEUE)] });
+    const { container } = asStaff([VIEW, "platform.staff_partner.view"], <TicketsScreen />);
+    const table = await screen.findByRole("table", { name: /^Tickets/ });
+    expect(urlsOf(calls, TICKETS)[0]).toContain("audience=partner");
+    expect(screen.getByRole("combobox", { name: "Who asked" })).toHaveTextContent("Partners");
+    // The old Partner tickets list's SLA column, from the same row.
+    expect(within(table).getByRole("columnheader", { name: "SLA" })).toBeInTheDocument();
+    expect(within(within(table).getByRole("row", { name: /Invoice is wrong/ })).getByText("Due soon")).toBeInTheDocument();
+    await expectNoViolations(container);
+    choose("Who asked", "Customers");
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/tickets?audience=customer", { scroll: false });
+    await waitFor(() => expect(urlsOf(calls, TICKETS).at(-1)).toContain("audience=customer"));
+    expect(screen.queryByRole("columnheader", { name: "SLA" })).not.toBeInTheDocument();
+    choose("Who asked", "All");
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/tickets", { scroll: false });
+  });
+
+  it("ignores a Who asked it does not know", async () => {
+    nav.query = "audience=everyone";
+    const calls = mockApi({ [TICKETS]: [ok(QUEUE)] });
+    asStaff([VIEW], <TicketsScreen />);
+    await screen.findByRole("table", { name: /^Tickets/ });
+    expect(urlsOf(calls, TICKETS)[0]).not.toContain("audience=");
+  });
+
+  it("shows a staff member with only the partner grant the partner desk, Who asked fixed at Partners", async () => {
+    nav.query = "audience=partner";
+    const calls = mockApi({
+      "GET /api/v1/admin/partner-tickets": [
+        ok({
+          items: [{ ...PARTNER_TICKET, partner_name: "Bright Partner", sla: { state: "on_track", resolution: "on_track" } }],
+          counts: { open: 1 },
+          total: 1,
+          priorities: [],
+          categories: [],
+        }),
+      ],
+    });
+    const { container } = asStaff(["platform.staff_partner.view"], <TicketsScreen />);
+    expect(screen.getByRole("heading", { level: 1, name: "Tickets" })).toBeInTheDocument();
+    expect(await screen.findByText("Bright Partner")).toBeInTheDocument();
+    expect(calls.some((c) => c.key === TICKETS)).toBe(false);
+    const who = screen.getByRole("combobox", { name: "Who asked" });
+    expect(who).toHaveTextContent("Partners");
+    expect(who).toBeDisabled();
+    await expectNoViolations(container);
+  });
+});
 
 describe("the ticket list", () => {
   it("shows who asked by audience, the counts and the first page; passes axe", async () => {

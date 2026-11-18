@@ -37,6 +37,7 @@ import {
   useConfirm,
   type Column,
   type MenuItem,
+  usePageTrail,
 } from "./kit";
 import { downloadCsv } from "./kit/csv";
 import local from "./AdminPeople.module.css";
@@ -309,6 +310,7 @@ export function Users({ initialQuery = "", initialSegment = "" }: { initialQuery
 type DetailTab = "overview" | "organizations" | "subscriptions" | "sessions" | "activity";
 
 export function UserDetailScreen({ userId }: { userId: string }) {
+  const trail = usePageTrail([{ label: "Users", href: "/admin/users" }]);
   const { permissions } = useAdmin();
   const session = useSession();
   const [load, reload] = useLoad(() => adminConsoleApi.user(userId), [userId]);
@@ -331,7 +333,7 @@ export function UserDetailScreen({ userId }: { userId: string }) {
           return (
             <>
               <PageHeader
-                crumbs={[{ label: "Users", href: "/admin/users" }, { label: name }]}
+                crumbs={[...trail, { label: name }]}
                 documentTitle={`${name} · Users`}
                 avatar={<Avatar name={name} size="lg" />}
                 title={name}

@@ -16,6 +16,8 @@ export type { Column } from "./DataTable";
 export {
   Page,
   PageHeader,
+  PagePlaceContext,
+  usePageTrail,
   usePageTitle,
   LinkTabs,
   Tabs,
@@ -37,7 +39,7 @@ export {
   kit,
   ADMIN_TITLE_SUFFIX,
 } from "./Layout";
-export type { Crumb, LinkTab, StateTab, DescriptionItem, Tone } from "./Layout";
+export type { Crumb, LinkTab, StateTab, DescriptionItem, Tone, PagePlace } from "./Layout";
 export { Badge, StatusBadge, BoolBadge, toneOf, statusLabel } from "./Badge";
 export { StatCard, StatGrid, Delta } from "./Stat";
 export type { StatTone } from "./Stat";

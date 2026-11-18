@@ -235,8 +235,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           }
           banner={banner}
         >
-          <ModuleNav permissions={state.permissions} />
-          {children}
+          <ModuleNav permissions={state.permissions}>{children}</ModuleNav>
         </SidebarShell>
       </ToastProvider>
     </AdminContext.Provider>

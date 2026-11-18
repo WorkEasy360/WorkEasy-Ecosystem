@@ -107,7 +107,7 @@ describe("the Admin navigation", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(modules()).toEqual(["Dashboard", "Customers", "Products & Pricing", "Billing & Subscriptions", "Settings"]);
+    expect(modules()).toEqual(["Dashboard", "Customers", "Products & Pricing", "Billing", "Settings"]);
   });
 
   it("hides them from staff without the grants", async () => {
@@ -123,7 +123,7 @@ describe("the Admin navigation", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(modules()).toEqual(["Dashboard", "Customers", "Billing & Subscriptions"]);
+    expect(modules()).toEqual(["Dashboard", "Customers", "Billing"]);
   });
 });
 
@@ -363,7 +363,7 @@ describe("staff access", () => {
       "POST /api/v1/admin/security/grants/g1/revoke": [{ status: 200, body: {} }],
     });
     asStaff(["platform.staff_security.view", "platform.staff_security.manage"], <SecurityScreen />);
-    fireEvent.click(await screen.findByRole("tab", { name: "Permissions" }));
+    // Roles and individual permissions are two sections of one page (admin-ux phase 1).
     const table = await screen.findByRole("table", { name: "Active grants" });
     expect(within(table).getByText("Customer · View")).toBeInTheDocument();
     choose(/^Area/, "Audit");
@@ -382,9 +382,11 @@ describe("staff access", () => {
       "POST /api/v1/admin/security/grants": [{ status: 201, body: {} }],
     });
     const { container } = asStaff(["platform.staff_security.view", "platform.staff_security.manage"], <SecurityScreen />);
-    // Roles first; the individual permissions are their own tab.
-    expect(await screen.findByRole("tab", { name: "Roles" })).toHaveAttribute("aria-selected", "true");
-    fireEvent.click(screen.getByRole("tab", { name: "Permissions" }));
+    // Roles first, then the individual permissions, on one page - no tabs.
+    const headings = (await screen.findAllByRole("heading", { level: 2 })).map((h) => h.textContent);
+    expect(headings.indexOf("Roles")).toBeGreaterThanOrEqual(0);
+    expect(headings.indexOf("Roles")).toBeLessThan(headings.indexOf("Individual permissions"));
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Grant a permission" }));
     const popup = screen.getByRole("dialog", { name: "Grant a permission" });
     fireEvent.change(within(popup).getByLabelText(/Staff member.s email/), { target: { value: "pat@example.com" } });
