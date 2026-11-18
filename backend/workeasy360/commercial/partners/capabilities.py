@@ -21,7 +21,7 @@ by, or attributed to, this partner earns anything.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
 
 from workeasy360.contracts.errors import PartnerValidationError
 
@@ -68,7 +68,8 @@ _SPECS: Final = (
         # Selling means seeing what is for sale and at what price. Reading the
         # catalog is the view tier, while the sale itself is the manage tier.
         view=("platform.partner_customer.view", "platform.partner_pricing.view"),
-        manage=("platform.partner_subscription.sell",),
+        # ADR-063: selling from the Platform Wallet means adding money to it.
+        manage=("platform.partner_subscription.sell", "platform.partner_wallet.manage"),
     ),
     CapabilitySpec(
         SUBSCRIPTION_MANAGE,
@@ -79,7 +80,8 @@ _SPECS: Final = (
     CapabilitySpec(
         PRICING_VIEW,
         "See the prices approved for this partner",
-        view=("platform.partner_pricing.view",),
+        # ADR-063: the Platform Wallet the reseller pays those prices from.
+        view=("platform.partner_pricing.view", "platform.partner_wallet.view"),
     ),
     CapabilitySpec(
         BRANDING_MANAGE,
@@ -291,7 +293,11 @@ _COMMERCIAL: Final = (
 
 EXPERIENCE_BUNDLES: Final[dict[str, tuple[str, ...]]] = {
     RESELLER: (*_COMMERCIAL, SUBPARTNER_MANAGE),
-    WHITE_LABEL: (*_COMMERCIAL, BRANDING_MANAGE, DOMAIN_MANAGE),
+    # ADR-063: White Label is an add-on - branding and a custom domain, nothing
+    # to sell, refer or earn. Selling or referring is a base permission (Reseller,
+    # Affiliate) granted explicitly beside it (``also``). Partners approved before
+    # this keep every grant they were given.
+    WHITE_LABEL: (BRANDING_MANAGE, DOMAIN_MANAGE),
     AFFILIATE: (
         REFERRAL_CREATE,
         REFERRAL_VIEW,
@@ -304,7 +310,10 @@ EXPERIENCE_BUNDLES: Final[dict[str, tuple[str, ...]]] = {
 #: One line per experience for the Add Partner type cards. Words only.
 EXPERIENCE_DESCRIPTIONS: Final[dict[str, str]] = {
     RESELLER: "Sell Workeasy360 products to customers.",
-    WHITE_LABEL: "Sell Workeasy360 products using the partner's own branding.",
+    WHITE_LABEL: (
+        "Run the partner's own branding and domain. Add Reseller to sell, or "
+        "Affiliate to refer."
+    ),
     AFFILIATE: "Promote Workeasy360 products and earn commission from referrals.",
 }
 
@@ -329,6 +338,25 @@ def require_experience(key: object) -> str:
 def experience_bundle(key: str) -> tuple[str, ...]:
     """The capability keys choosing ``key`` grants."""
     return EXPERIENCE_BUNDLES[require_experience(key)]
+
+
+def require_also(primary: str, raw: Any, *, field: str = "also") -> tuple[str, ...]:
+    """The base permissions granted explicitly beside ``primary`` (ADR-063): a
+    list of other experience keys, in a fixed order, or a 400. White Label alone
+    sells, refers and earns nothing; this is how a partner is authorized to do
+    more, never by default."""
+    if raw in (None, "", ()):
+        return ()
+    if not isinstance(raw, list | tuple) or not all(isinstance(k, str) for k in raw):
+        raise PartnerValidationError(
+            f"{field} must be a list of partner types.", field=field
+        )
+    unknown = sorted(set(raw) - set(EXPERIENCES))
+    if unknown:
+        raise PartnerValidationError(
+            f"{field} must name partner types from {sorted(EXPERIENCES)}.", field=field
+        )
+    return tuple(key for key in CATEGORIES if key in set(raw) and key != primary)
 
 
 def workspaces(held: frozenset[str] | set[str]) -> list[str]:
@@ -371,6 +399,29 @@ def resolve_landing(stored: str, held: frozenset[str] | set[str]) -> str | None:
     if inside is not None and inside in options:
         return inside
     return min(options, key=LANDING_ORDER.index)
+
+
+#: The Admin's three partner categories (2026-11-10, ADR-062), in menu order.
+CATEGORIES: Final = (AFFILIATE, RESELLER, WHITE_LABEL)
+
+
+def partner_category(stored: str, held: frozenset[str] | set[str]) -> str | None:
+    """The one category a partner is listed under in the Admin (Partners →
+    Affiliate, Reseller, White Label): the type the All Partners table already
+    shows (``resolve_landing``), and - for a partner whose grants earn no
+    workspace yet, such as a new draft - the type it was created as
+    (``default_experience``), so it is listed from the moment it exists.
+    ``None`` for a partner with neither (All Partners lists it).
+
+    A **listing**, never an authority: what a partner may do still comes from
+    its grants alone. ``console_reads.category_q`` is the same rule in SQL; a
+    test holds the two together over every combination."""
+    landing = resolve_landing(stored, held)
+    if landing is not None:
+        return landing
+    if workspaces(held):  # pragma: no cover - resolve_landing returned one
+        return None
+    return stored if stored in EXPERIENCES else None
 
 
 def experience_keys(label: str) -> frozenset[str]:
@@ -429,6 +480,15 @@ BASELINE_VIEW: Final = (
     "platform.partner_member.view",
     "platform.partner_product.view",
 )
+#: ADR-063: what a partner that may not trade yet holds - a draft waiting for its
+#: KYC, or an active partner the legacy policy confines. Onboarding status (the
+#: dashboard), support tickets and notifications (both read the dashboard
+#: permission) and a read of its own profile. No customer, price, referral,
+#: wallet or payout; the KYC application is its administrators' own.
+ONBOARDING_PERMISSIONS: Final = frozenset(
+    {"platform.partner_dashboard.view", "platform.partner_profile.view"}
+)
+
 BASELINE_MANAGE: Final = (
     "platform.partner_profile.manage",
     "platform.partner_member.manage",

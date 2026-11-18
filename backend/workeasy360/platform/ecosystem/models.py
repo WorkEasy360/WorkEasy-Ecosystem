@@ -670,6 +670,7 @@ class UserSignInPreference(models.Model):
 
     #: The values a row may hold. ``inherit`` is the absence of a row.
     STORED = (
+        SignInPreference.ASK_ONCE,
         SignInPreference.AUTO_SSO,
         SignInPreference.ASK,
         SignInPreference.PRODUCT_LOGIN,
@@ -698,6 +699,7 @@ class UserSignInPreference(models.Model):
             models.CheckConstraint(
                 condition=models.Q(
                     mode__in=[
+                        SignInPreference.ASK_ONCE.value,
                         SignInPreference.AUTO_SSO.value,
                         SignInPreference.ASK.value,
                         SignInPreference.PRODUCT_LOGIN.value,

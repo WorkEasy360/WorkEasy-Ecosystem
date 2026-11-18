@@ -33,6 +33,12 @@ OIDC_ISSUER = "http://testserver"
 # this and test_production_refuses_insecure_configuration proves it.
 OIDC_ALLOW_INSECURE_REDIRECT_URIS = True
 
+# Off for the suites that predate partner KYC, whose fixtures activate partners
+# directly. tests/admin_panel turns it on; production refuses to start with it off.
+PARTNER_KYC_REQUIRED = False
+# Likewise for the malware-scan rule on KYC documents; tests/admin_panel turns it on.
+KYC_MALWARE_SCAN_REQUIRED = False
+
 # Cookies are not sent over the test client's plain HTTP.
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False

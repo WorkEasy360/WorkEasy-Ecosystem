@@ -29,7 +29,10 @@ type IconName =
   | "home"
   | "arrow"
   | "check"
-  | "gift";
+  | "gift"
+  | "rocket"
+  | "refund"
+  | "ticket";
 
 const PATHS: Record<IconName, string> = {
   megaphone: "M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1Zm12-3a5 5 0 0 1 0 8m3-11a9 9 0 0 1 0 14",
@@ -56,6 +59,9 @@ const PATHS: Record<IconName, string> = {
   arrow: "M5 12h14m-6-6 6 6-6 6",
   check: "M5 12.5 10 17l9-10",
   gift: "M4 11h16v10H4V11Zm-1-4h18v4H3V7Zm9 0v14M12 7c-1-3-5-4-5-1.5S10 7 12 7Zm0 0c1-3 5-4 5-1.5S14 7 12 7Z",
+  rocket: "M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9a2.1 2.1 0 0 0-2.9-.1ZM12 15l-3-3a22 22 0 0 1 2-4A13 13 0 0 1 22 2c0 2.7-.8 7.5-6 11a22 22 0 0 1-4 2Zm-3-3H4s.6-3 2-4c1.6-1.1 5 0 5 0m1 7v5s3-.6 4-2c1.1-1.6 0-5 0-5",
+  refund: "M21 12a9 9 0 0 1-15.4 6.4M3 12A9 9 0 0 1 18.4 5.6M18 2v4h-4M6 22v-4h4",
+  ticket: "M3 8a2 2 0 0 0 0 4v0a2 2 0 0 1 0 4v3h18v-3a2 2 0 0 1 0-4 2 2 0 0 0 0-4V5H3v3Zm11-3v14",
 };
 
 export function StoreIcon({ name, size = 20, className }: { name: IconName; size?: number; className?: string }) {

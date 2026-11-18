@@ -846,6 +846,20 @@ class SignupValidationError(AccountSecurityError):
         super().__init__(message or "Invalid signup.", field=field, **context)
 
 
+class EmailChangeInvalid(AccountSecurityError):
+    """A new sign-in email that cannot be used: malformed, or the address the
+    account already has (ADR-066). Never says whether *another* account holds
+    the address - that answer is the same as for a free one, and the address
+    itself is told instead."""
+
+    code = "email_change_invalid"
+
+    def __init__(
+        self, message: str = "", *, field: str | None = None, **context: Any
+    ) -> None:
+        super().__init__(message or "That email cannot be used.", field=field, **context)
+
+
 class AccountLinkInvalid(AccountSecurityError):
     """No redeemable verification or reset link for this token. One answer for
     unknown, expired and already used, like ``InvitationInvalid``: the token

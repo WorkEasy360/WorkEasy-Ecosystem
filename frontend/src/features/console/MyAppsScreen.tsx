@@ -5,11 +5,10 @@ import { useSearchParams } from "next/navigation";
 import { getAppDirectory } from "@/lib/api/launcher";
 import { SeatTable } from "@/features/launcher/SeatTable";
 import { launchDenialMessage } from "@/features/launcher/launchCopy";
-import { MyProductsScreen } from "./CommerceScreens";
+import { MyProductsScreen } from "./MyProductsScreen";
 import { LoadGate, useLoad } from "@/features/controlplane/ui";
-import cp from "@/features/controlplane/ControlPlane.module.css";
+import { Alert, Card, EmptyState, Page } from "@/features/controlplane/kit";
 import styles from "./Console.module.css";
-import local from "./ConsoleScreens.module.css";
 import { PageHeader } from "./consoleUi";
 import { useOrgAccess } from "./OrgAccess";
 
@@ -19,15 +18,11 @@ import { useOrgAccess } from "./OrgAccess";
 function LaunchErrorBanner() {
   const error = useSearchParams().get("launch_error");
   if (!error) return null;
-  return (
-    <div role="alert" className={local.problem}>
-      <p>{launchDenialMessage(error)}</p>
-    </div>
-  );
+  return <Alert tone="danger">{launchDenialMessage(error)}</Alert>;
 }
 
-/** My products (Phase 9: only what the organization holds - the rest is in
- * Explore), with why a launch the person just tried was refused. */
+/** My Products (2026-11-11: held, trial, expired and pending-setup products, with
+ * filters and details), with why a launch the person just tried was refused. */
 export function MyAppsScreen() {
   return <MyProductsScreen banner={<LaunchErrorBanner />} />;
 }
@@ -43,15 +38,21 @@ export function ProductAccessScreen() {
   const [chosen, setChosen] = useState<string | null>(null);
 
   return (
-    <div className={styles.page}>
+    <Page>
       <PageHeader
-        title="Product access"
+        title="Product Access & Seats"
         lead="Choose who holds a seat for each per-seat product your organization owns."
       />
       <LoadGate load={load} what="products">
         {(apps) => {
           if (apps.length === 0) {
-            return <p className={cp.muted}>Your organization doesn&apos;t hold any per-seat products yet.</p>;
+            return (
+              <EmptyState
+                icon="users"
+                title="Your organization doesn't hold any per-seat products yet."
+                hint="Products bought per seat appear here, so you can choose who uses them."
+              />
+            );
           }
           const selected = apps.find((a) => a.product_code === chosen) ?? apps[0];
           return (
@@ -72,14 +73,13 @@ export function ProductAccessScreen() {
                   </div>
                 </div>
               )}
-              <div className={local.section}>
-                <h2 className={local.sectionTitle}>{selected.display_name}</h2>
+              <Card title={selected.display_name} description="Assign or release a seat for each member.">
                 <SeatTable key={selected.product_code} orgSlug={slug} productCode={selected.product_code} />
-              </div>
+              </Card>
             </>
           );
         }}
       </LoadGate>
-    </div>
+    </Page>
   );
 }

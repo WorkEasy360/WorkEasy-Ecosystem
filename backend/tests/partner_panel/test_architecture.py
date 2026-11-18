@@ -133,11 +133,25 @@ def test_no_mail_credential_is_stored_or_accepted_anywhere_in_the_partner_module
         assert not pattern.search(path.read_text(encoding="utf-8")), path.name
 
 
+#: ADR-063 (the Partner Admin Panel specification of 08 November 2026): a
+#: reseller's prepaid Platform Wallet is now a requirement - its balance, its
+#: transactions and an online top-up through the existing partner checkout.
+#: Exactly these routes; payment links, credit and the rest stay out.
+PLATFORM_WALLET_ROUTES = {
+    "partner/<uuid:partner_id>/platform-wallet",
+    "partner/<uuid:partner_id>/platform-wallet/transactions",
+    "partner/<uuid:partner_id>/platform-wallet/top-up",
+}
+
+
 def test_the_panel_urls_expose_no_wallet_recharge_or_payment_link_route():
     urls = (PACKAGE / "interfaces" / "api" / "v1" / "urls.py").read_text(encoding="utf-8")
     partner_routes = re.findall(r'"(partner/[^"]+)"', urls)
     assert partner_routes
+    assert PLATFORM_WALLET_ROUTES <= set(partner_routes)
     for route in partner_routes:
+        if route in PLATFORM_WALLET_ROUTES:
+            continue
         assert not re.search(
             r"wallet|recharge|top-?up|payment-?link|smtp|credit|(^|/)(css|scripts?)($|/)",
             route,

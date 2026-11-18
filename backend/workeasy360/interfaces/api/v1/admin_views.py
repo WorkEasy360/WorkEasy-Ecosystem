@@ -20,6 +20,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.debug import sensitive_variables
 
@@ -65,7 +66,9 @@ from workeasy360.interfaces.api.v1 import commercial_views as legacy
 from workeasy360.interfaces.api.v1.control_plane_http import (
     limited,
     page_response,
+    query_date_window,
     query_page_args,
+    query_product_code,
     staff_view,
 )
 from workeasy360.platform.authz.control_plane import acting_scope
@@ -144,10 +147,21 @@ def attention_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
 
 @staff_view(["GET"])
 def audit_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    from workeasy360.commercial.controlplane.overview import optional_window
+
+    start, end = optional_window(request.GET.get("from"), request.GET.get("to"))
+    actor = request.GET.get("actor") or None
+    try:
+        actor_id = UUID(actor) if actor else None
+    except ValueError:
+        raise CatalogValidationError("Unknown person.", field="actor") from None
     return page_response(
         cp_dashboard.control_plane_audit(
             ctx,
             action_prefix=request.GET.get("action") or None,
+            actor_user_id=actor_id,
+            start=start,
+            end=end,
             **query_page_args(request),
         )
     )
@@ -161,7 +175,8 @@ def customers_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     """The customer directory. Phase 9 adds commercial filters, which the
     Subscriptions and Entitlements pages use: ``subscription`` (a subscription
     status, or ``none``), ``access`` (``customer``/``trial``/``none``) and
-    ``product`` (holds this product now)."""
+    ``product`` (holds this product now). ``from``/``to`` narrow it to the customers
+    created in those days (Admin UX Phase 3)."""
     page = cp_customers.directory(
         ctx,
         search=request.GET.get("q") or None,
@@ -170,7 +185,8 @@ def customers_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             request, "subscription", {s.value for s in SubscriptionStatus}
         ),
         access_class=_choice(request, "access", {"customer", "trial"}),
-        product_code=_product_filter(request),
+        product_code=query_product_code(request),
+        **query_date_window(request),
         **query_page_args(request),
     )
     return page_response(page)
@@ -188,23 +204,37 @@ def _choice(request: HttpRequest, name: str, allowed: set[str]) -> str | None:
     return raw
 
 
-def _product_filter(request: HttpRequest) -> str | None:
-    from workeasy360.contracts.values.identifiers import ProductCode
-
-    raw = request.GET.get("product")
-    if not raw:
-        return None
-    try:
-        return str(ProductCode(raw))
-    except ValueError as exc:
-        raise CatalogValidationError("Unknown product filter.", field="product") from exc
-
-
 @staff_view(["GET"])
 def customer_detail_view(
     request: HttpRequest, ctx: TenantContext, organization_id: UUID
 ) -> JsonResponse:
     return JsonResponse(cp_customers.detail(ctx, organization_id))
+
+
+@staff_view(["GET", "POST"])
+def customer_partner_view(
+    request: HttpRequest, ctx: TenantContext, organization_id: UUID
+) -> JsonResponse:
+    """The customer's partner: GET the current one and the history; POST
+    ``{partner_id, reason}`` to assign one or change it (2026-11-10)."""
+    if request.method == "POST":
+        body = _body(request)
+        return JsonResponse(
+            cp_customers.assign_partner(
+                ctx,
+                organization_id,
+                partner_id=body.get("partner_id"),
+                reason=body.get("reason"),
+            )
+        )
+    return JsonResponse(cp_customers.partner_assignment(ctx, organization_id))
+
+
+@staff_view(["GET"])
+def assignable_partners_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    return JsonResponse(
+        {"results": cp_customers.assignable_partners(ctx, request.GET.get("q") or "")}
+    )
 
 
 @staff_view(["POST"])
@@ -447,7 +477,9 @@ def partners_recent_view(request: HttpRequest, ctx: TenantContext) -> JsonRespon
 @staff_view(["GET"])
 def partner_resellers_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     """The reseller list: partners wearing the Reseller label (a filter over
-    capability grants), or every partner with ``scope=all``."""
+    capability grants), or every partner with ``scope=all``; ``category``
+    (ADR-062) narrows it to the partners listed under one type; ``from``/``to``
+    to the partners created in those days."""
     return page_response(
         partner_console.resellers_page(
             ctx,
@@ -458,6 +490,9 @@ def partner_resellers_view(request: HttpRequest, ctx: TenantContext) -> JsonResp
             scope=request.GET.get("scope") or None,
             label=request.GET.get("type") or None,
             profile=request.GET.get("profile") or None,
+            kyc_filter=request.GET.get("kyc") or None,
+            category=request.GET.get("category") or None,
+            **query_date_window(request),
             **query_page_args(request),
         )
     )
@@ -668,20 +703,68 @@ def partner_referral_code_create_view(
 def partner_guest_view_start_view(
     request: HttpRequest, ctx: TenantContext, partner_id: UUID
 ) -> JsonResponse:
-    """All Partners → Guest login: open this partner's portal read-only, for a
-    reason, for a limited time (``commercial.partners.guest``)."""
+    """Login as Guest: open this partner's portal read-only, for a reason, for a
+    limited time (``commercial.partners.guest``, ADR-062).
+
+    Multi-portal mode also answers ``entry``: where the browser posts the
+    one-time ticket that opens the partner host's guest-only session. The
+    ticket is in this response body only, which is never cached; the action is
+    built from configuration."""
+    import uuid
+
     from workeasy360.commercial.partners import guest
     from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
 
-    view = guest.start(
+    blocked = limited(request, "partner_guest_start", user=request.user)
+    if blocked is not None:
+        return blocked
+    body = _body(request)
+    # A sign-in from before sign-in ids existed gets one now (as the hand-off did).
+    if not request.session.get(SESSION_SIGN_IN_ID_KEY):
+        request.session[SESSION_SIGN_IN_ID_KEY] = uuid.uuid4().hex
+    portals_on = bool(getattr(settings, "PORTALS_ENABLED", False))
+    view, ticket = guest.start(
         ctx,
         partner_id,
-        reason=_body(request).get("reason", ""),
+        reason=body.get("reason", ""),
         sign_in_id=request.session.get(SESSION_SIGN_IN_ID_KEY),
+        return_path=body.get("return_path"),
+        with_entry=portals_on,
     )
+    payload: dict[str, Any] = {
+        **view.as_json(),
+        "portal_path": guest.portal_path(view.partner_id),
+    }
+    if ticket is not None:
+        payload["entry"] = {
+            "action": f"{settings.W360_PORTAL_ORIGINS['partner']}"
+            "/api/v1/partner/guest-view/enter",
+            "ticket": ticket,
+        }
+    response = JsonResponse(payload, status=201)
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@staff_view(["GET"])
+def partner_guest_sessions_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID
+) -> JsonResponse:
+    """Manage Guest Access: this partner's recent guest views (ADR-062)."""
+    from workeasy360.commercial.partners import guest
+
+    return JsonResponse(guest.history(ctx, partner_id))
+
+
+@staff_view(["POST"])
+def partner_guest_session_revoke_view(
+    request: HttpRequest, ctx: TenantContext, partner_id: UUID, session_id: UUID
+) -> JsonResponse:
+    """Manage Guest Access → Revoke: end that guest view now (ADR-062)."""
+    from workeasy360.commercial.partners import guest
+
     return JsonResponse(
-        {**view.as_json(), "portal_path": guest.portal_path(view.partner_id)},
-        status=201,
+        guest.revoke(ctx, partner_id, session_id, reason=_body(request).get("reason", ""))
     )
 
 
@@ -1067,7 +1150,21 @@ def partner_create_view(request, ctx) -> JsonResponse:
                 "administrator": {
                     "email": created.administrator_email,
                     "account_created": created.account_created,
+                    "invited": created.invited,
                 },
+                # Where the invitation stands right now: queued, deferred,
+                # not_sent or null. Never "delivered" - that is not known yet;
+                # the partner's page shows sent or failed once the worker ran.
+                "invitation": (
+                    {
+                        "state": created.invitation_state,
+                        "delivery_mode": created.email_delivery_mode,
+                    }
+                    if created.invited
+                    else None
+                ),
+                "contact_email": created.contact_email,
+                "phone": created.phone,
                 "capabilities": created.capabilities,
                 "payout_currency": created.payout_currency,
             },
@@ -1162,6 +1259,7 @@ def partner_upgrade_decision_view(
             products=body.get("products"),
             commercial_reference=body.get("commercial_reference", ""),
             note=body.get("note", ""),
+            also=body.get("also"),
         )
     elif action == "reject":
         result = partner_upgrade_requests.reject(
@@ -1350,13 +1448,20 @@ def commission_rules_view(request, ctx, **_kw: Any) -> JsonResponse:
 
 
 @staff_view(["GET"])
+def commission_terms_view(request, ctx, **_kw: Any) -> JsonResponse:
+    return JsonResponse(cp_reads.commission_terms(ctx))
+
+
+@staff_view(["GET"])
 def commission_accruals_view(request, ctx, **_kw: Any) -> JsonResponse:
+    """Ledger entries; ``from``/``to`` keep those whose earning event fell in those days."""
     return page_response(
         cp_reads.accruals(
             ctx,
             partner_id=_optional_uuid(request, "partner_id"),
             kind=request.GET.get("kind") or None,
             unpaid=request.GET.get("unpaid") == "1",
+            **query_date_window(request),
             **query_page_args(request),
         )
     )
@@ -1398,11 +1503,13 @@ def commission_reconcile_view(request, ctx, **_kw: Any) -> JsonResponse:
 @staff_view(["GET", "POST"])
 def payouts_view(request, ctx, **_kw: Any) -> JsonResponse:
     if request.method == "GET":
+        # ``from``/``to``: the payouts prepared in those days.
         return page_response(
             cp_reads.payouts_list(
                 ctx,
                 partner_id=_optional_uuid(request, "partner_id"),
                 status=request.GET.get("status") or None,
+                **query_date_window(request),
                 **query_page_args(request),
             )
         )

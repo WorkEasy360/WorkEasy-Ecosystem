@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { assignSeat, getSeatOverview, releaseSeat } from "@/lib/api/launcher";
 import type { SeatOverview } from "@/lib/api/types";
 import { ApiError } from "@/lib/api/client";
+import { Badge, Button, EmptyState, LoadingBlock, formatNumber } from "@/features/controlplane/kit";
+import { Table, describeError } from "@/features/controlplane/ui";
+import local from "@/features/console/ConsoleScreens.module.css";
 
 type Load =
   | { status: "loading" }
@@ -11,9 +14,15 @@ type Load =
   | { status: "error" }
   | { status: "ready"; overview: SeatOverview };
 
+/**
+ * Who holds a seat for one per-seat product, and assigning or releasing one. The
+ * server decides: a full product refuses another seat whatever this table shows, and
+ * a refusal is said in its own words (2026-11-11; it used to be dropped silently).
+ */
 export function SeatTable({ orgSlug, productCode }: { orgSlug: string; productCode: string }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
 
   function refresh() {
     getSeatOverview(orgSlug, productCode)
@@ -31,6 +40,7 @@ export function SeatTable({ orgSlug, productCode }: { orgSlug: string; productCo
 
   async function toggle(membershipId: string, held: boolean) {
     setPendingId(membershipId);
+    setProblem(null);
     try {
       if (held) {
         await releaseSeat(orgSlug, productCode, membershipId);
@@ -38,64 +48,71 @@ export function SeatTable({ orgSlug, productCode }: { orgSlug: string; productCo
         await assignSeat(orgSlug, productCode, membershipId);
       }
       refresh();
-    } catch {
-      // The table simply keeps its last known-good state; a toast/error
-      // surface is a reasonable next iteration, out of Phase 4's scope.
+    } catch (err) {
+      // The table keeps its last known-good state and says why.
+      setProblem(describeError(err));
     } finally {
       setPendingId(null);
     }
   }
 
-  if (load.status === "loading") return <p aria-live="polite">Loading seats…</p>;
+  if (load.status === "loading") return <LoadingBlock what="seats" />;
   if (load.status === "forbidden") {
-    return <p role="alert">You don&apos;t have permission to manage seats for this product.</p>;
+    return (
+      <div role="alert">
+        <EmptyState icon="lock" title="You don't have permission to manage seats for this product." hint="Contact Organization Admin." compact />
+      </div>
+    );
   }
-  if (load.status === "error") return <p role="alert">Couldn&apos;t load seats right now.</p>;
+  if (load.status === "error") {
+    return (
+      <div role="alert">
+        <EmptyState icon="alert" title="Couldn't load seats right now." compact />
+      </div>
+    );
+  }
 
   const { overview } = load;
+  const full = overview.seats_assigned >= overview.seats_total;
   return (
-    <div>
-      <p style={{ color: "var(--w360-text-muted)", marginBottom: "var(--w360-space-4)" }}>
-        Seats: <strong style={{ color: "var(--w360-text)" }}>{overview.seats_assigned}</strong> /{" "}
-        {overview.seats_total}
+    <div className={local.section}>
+      <p className={local.contactLine}>
+        <span className={local.muted}>Seats in use</span>
+        <strong>
+          {formatNumber(overview.seats_assigned)} of {formatNumber(overview.seats_total)}
+        </strong>
+        {full && <Badge tone="warning">All seats assigned</Badge>}
       </p>
-      <div className="w360-card" style={{ overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <caption className="w360-visually-hidden">
-            Seat assignment for {overview.display_name}
-          </caption>
-          <thead>
-            <tr style={{ textAlign: "left", borderBottom: "1px solid var(--w360-border)" }}>
-              <th scope="col" style={{ padding: "var(--w360-space-3) var(--w360-space-4)" }}>
-                Member
-              </th>
-              <th scope="col" style={{ padding: "var(--w360-space-3) var(--w360-space-4)" }}>
-                Seat
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {overview.members.map((member) => (
-              <tr key={member.membership_id} style={{ borderTop: "1px solid var(--w360-border)" }}>
-                <td style={{ padding: "var(--w360-space-3) var(--w360-space-4)" }}>{member.email}</td>
-                <td style={{ padding: "var(--w360-space-3) var(--w360-space-4)" }}>
-                  <button
-                    className="w360-btn w360-btn-secondary"
-                    onClick={() => toggle(member.membership_id, member.held)}
-                    disabled={
-                      pendingId === member.membership_id ||
-                      (!member.held && overview.seats_assigned >= overview.seats_total)
-                    }
-                    aria-pressed={member.held}
-                  >
-                    {member.held ? "✓ Assigned" : "— Assign"}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {problem && (
+        <p role="alert" className="w360-error-text">
+          {problem}
+        </p>
+      )}
+      <Table
+        caption={`Seat assignment for ${overview.display_name}`}
+        head={["Member", "Seat"]}
+        isEmpty={overview.members.length === 0}
+        empty="No members to assign yet."
+      >
+        {overview.members.map((member) => (
+          <tr key={member.membership_id}>
+            <td>{member.email}</td>
+            <td>
+              <Button
+                size="sm"
+                variant={member.held ? "secondary" : "primary"}
+                icon={member.held ? "check" : "plus"}
+                onClick={() => void toggle(member.membership_id, member.held)}
+                disabled={pendingId === member.membership_id || (!member.held && full)}
+                aria-pressed={member.held}
+                aria-label={member.held ? `Assigned to ${member.email} - choose to release the seat` : `Assign a seat to ${member.email}`}
+              >
+                {member.held ? "Assigned" : "Assign"}
+              </Button>
+            </td>
+          </tr>
+        ))}
+      </Table>
     </div>
   );
 }

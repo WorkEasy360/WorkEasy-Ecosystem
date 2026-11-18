@@ -105,7 +105,8 @@ def test_the_country_is_optional_and_sets_the_starting_currency(catalog, admin):
 
 def test_a_second_partner_with_the_same_name_gets_its_own_code(catalog, admin):
     first = create(admin, "reseller")
-    second = create(admin, "affiliate", email="other@acme.example.com")
+    # Confirmed as a different partner: without that it is refused as a duplicate.
+    second = create(admin, "affiliate", email="other@acme.example.com", same_name=True)
     codes = set(
         PartnerAccount.objects.filter(id__in=[first["id"], second["id"]]).values_list(
             "code", flat=True
@@ -231,16 +232,11 @@ def test_a_new_reseller_profile_is_incomplete_with_what_it_needs(catalog, admin)
             "reseller",
             {"business", "capabilities", "products", "commission", "administrator"},
         ),
+        # ADR-063: White Label alone sells and earns nothing, so it needs no
+        # products and no commission - only its brand.
         (
             "white_label",
-            {
-                "business",
-                "capabilities",
-                "products",
-                "commission",
-                "brand",
-                "administrator",
-            },
+            {"business", "capabilities", "brand", "administrator"},
         ),
         (
             "affiliate",
@@ -270,7 +266,13 @@ def test_the_custom_domain_and_prices_never_count(catalog, admin):
     complete_profile(admin, created["id"])
     states = section_states(summary(admin, created["id"]))
     assert states["domain"] == ("optional", False)
-    assert states["pricing"] == ("optional", False)
+    # ADR-063: pricing is a seller's section; White Label alone sells nothing.
+    assert "pricing" not in states
+    seller = create(
+        admin, "reseller", name="Seller Co", email="owner@seller-co.example.com"
+    )
+    complete_profile(admin, seller["id"])
+    assert section_states(summary(admin, seller["id"]))["pricing"] == ("optional", False)
 
 
 def test_a_combined_partner_needs_the_union_of_its_capabilities(catalog, admin):
@@ -454,8 +456,9 @@ def test_the_dashboard_counts_are_factual(catalog, admin):
     ]
     assert cards["total_partners"] == 3
     assert cards["active_partners"] == 1
-    # The white-label bundle includes selling, so that partner wears both labels.
-    assert cards["resellers"] == 2
+    # ADR-062: each partner counts under the one type its row shows. The
+    # white-label bundle includes selling, but that partner is a White-label one.
+    assert cards["resellers"] == 1
     assert cards["white_label"] == 1
     assert cards["affiliates"] == 1
     assert cards["suspended_partners"] == 1
@@ -674,6 +677,6 @@ def test_a_terminated_partner_is_listed_by_type_but_never_counted_as_incomplete(
     assert created["id"] in listed(admin, type="affiliate")
     assert created["id"] not in listed(admin, profile="incomplete")
     cards = {c["key"]: c["count"] for c in admin.get(OVERVIEW).json()["cards"]}
-    # Each card is the size of the list it opens.
-    assert cards["affiliates"] == len(listed(admin, type="affiliate"))
+    # Each card is the size of the list it opens (ADR-062: the type's own page).
+    assert cards["affiliates"] == len(listed(admin, category="affiliate"))
     assert cards["profiles_incomplete"] == len(listed(admin, profile="incomplete"))

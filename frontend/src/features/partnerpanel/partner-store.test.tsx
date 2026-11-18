@@ -152,7 +152,7 @@ describe("a partner's Store", () => {
     });
     mount(<PartnerStore kind="promote" mine={MINE} />);
     fireEvent.click(await screen.findByRole("button", { name: "Request access to Deskly" }));
-    const form = screen.getByRole("form", { name: "Request access to Deskly" });
+    const form = screen.getByRole("dialog", { name: "Request access to Deskly" });
     fireEvent.change(within(form).getByLabelText("Promotion channel"), { target: { value: "social_media" } });
     fireEvent.change(within(form).getByLabelText("Target audience"), { target: { value: "Support leads" } });
     fireEvent.change(within(form).getByLabelText("How you will promote it"), { target: { value: "Weekly posts with a demo video." } });

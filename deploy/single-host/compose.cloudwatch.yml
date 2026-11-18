@@ -1,0 +1,26 @@
+# WorkEasy360 single host - ship the api's and workers' JSON log lines to CloudWatch Logs.
+#
+# Enabled by deploy/single-host/w360 when /opt/workeasy360/env/cloudwatch.enabled exists, so the
+# default stays exactly as before. The awslogs driver writes each line as it is (the platform's
+# structured JSON), which the metric filters in deploy/aws/ops-single-host.yml read; Docker's
+# dual logging keeps `w360 logs` working. Credentials come from the instance role.
+x-cloudwatch: &cloudwatch
+  driver: awslogs
+  options:
+    awslogs-region: ${W360_AWS_REGION:?W360_AWS_REGION is required for CloudWatch logging}
+    awslogs-group: ${W360_LOG_GROUP:-/workeasy360/production}
+    tag: "{{.Name}}"
+    mode: non-blocking
+    max-buffer-size: 8m
+
+services:
+  api:
+    logging: *cloudwatch
+  worker-critical:
+    logging: *cloudwatch
+  worker-default:
+    logging: *cloudwatch
+  worker-heavy:
+    logging: *cloudwatch
+  beat:
+    logging: *cloudwatch

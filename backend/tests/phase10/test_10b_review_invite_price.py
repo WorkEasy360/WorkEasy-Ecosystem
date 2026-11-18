@@ -589,7 +589,7 @@ def test_the_activation_email_contains_no_password_and_the_link_is_in_the_fragme
     address = f"frag-{uuid.uuid4().hex[:6]}@example.com"
     services.invite_member(manager, fx["partner"].id, email=address, role="admin")
     body = outbox_for(address)[0].body
-    assert re.search(r"/reset-password#token=", body)
+    assert re.search(r"/partner/accept-invitation#token=", body)
     assert "?token=" not in body and "password:" not in body.lower()
 
 

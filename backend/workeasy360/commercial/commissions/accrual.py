@@ -252,6 +252,10 @@ def evaluate_sale(
         return _skip("not_activated")
     if moment > now:
         return _skip("not_yet_effective")
+    if getattr(fact, "subscription_collection_mode", "") == "partner_wallet":
+        # ADR-063: the reseller bought this at its purchase price from its
+        # Platform Wallet and bills its customer itself; nothing to share.
+        return _skip("paid_from_partner_wallet")
 
     attribution = _attribute(fact, moment)
     if attribution is None:
@@ -340,6 +344,12 @@ def _payment_ref(line: dict[str, Any] | None) -> str:
     return f"payments.invoice_line:{line['line_id']}" if line else ""
 
 
+def _suspended_policy() -> str:
+    from workeasy360.platform.administration.site import partner_policies
+
+    return partner_policies().get("suspended_commission", "accrue")
+
+
 def _partner_problem(partner_id: UUID, moment: datetime, currency: str) -> str | None:
     """Why this partner cannot earn at ``moment`` in ``currency``, or ``None``."""
     partner = partner_selectors.partner_row(partner_id)
@@ -347,6 +357,9 @@ def _partner_problem(partner_id: UUID, moment: datetime, currency: str) -> str |
         return "no_attribution"
     if partner.terminated_at is not None and partner.terminated_at <= moment:
         return "partner_terminated"
+    if partner.status == "suspended" and _suspended_policy() == "stop":
+        # ADR-063: the Admin chose that a suspended partner earns nothing new.
+        return "partner_suspended"
     if not partner_selectors.had_capability_at(
         partner_id, capabilities.COMMISSION_EARN, moment
     ):

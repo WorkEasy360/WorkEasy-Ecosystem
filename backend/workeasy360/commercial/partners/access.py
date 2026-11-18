@@ -84,6 +84,15 @@ def require_transacting(actor: TenantContext) -> None:
             "This partner may not perform new commercial actions.",
             partner_status=row.status if row else None,
         )
+    # ADR-063: an active partner the Admin's legacy policy confines to
+    # onboarding (no approved KYC) may not trade either.
+    from workeasy360.commercial.partners import kyc
+
+    if not kyc.cleared(row.id, status=row.status):
+        raise PartnerNotActive(
+            "This partner's KYC must be approved before it can do this.",
+            partner_status=row.status,
+        )
 
 
 def subject_partner(

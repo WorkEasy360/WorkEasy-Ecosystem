@@ -608,8 +608,8 @@ async function addPartner(page, spec, { audit: auditIt = false } = {}) {
   for (const absent of [/business email/i, /legal/i, /partner code/i, /products?\b/i, /commission/i, /price/i]) {
     expectThat(!labels.some((l) => absent.test(l)), `Add Partner asks for more than the account: ${labels.join(" | ")}`);
   }
-  await type(page, "Partner name", spec.name);
-  await type(page, "Admin email", spec.adminEmail);
+  await type(page, "Partner / Business name", spec.name);
+  await type(page, "Partner Email", spec.adminEmail);
   await type(page, "Password", spec.password);
   await type(page, "Confirm password", spec.password);
   await tick(page, spec.type, true, { legend: "Partner type" });

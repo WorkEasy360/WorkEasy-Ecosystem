@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
-import styles from "./Console.module.css";
+import { useEffect, useRef, useState } from "react";
+import { Card, EmptyState, LoadingBlock, PageHeader as KitPageHeader, type MenuItem } from "@/features/controlplane/kit";
 import local from "./ConsoleScreens.module.css";
 
 /**
@@ -21,6 +21,17 @@ export const ROLE_LABELS: Record<string, string> = {
   member: "Member",
   readonly: "Read Only",
   collaborator: "External Collaborator",
+};
+
+/** What each system role may do - the access-control model's own descriptions
+ * (`platform/authz/services.py` SYSTEM_ROLES), so "View permissions" says what the
+ * server enforces. */
+export const ROLE_DESCRIPTIONS: Record<string, string> = {
+  owner: "Full control, including billing, deletion and ownership transfer.",
+  admin: "Members, roles, product access, security and integrations. Not billing.",
+  billing_manager: "Billing, invoices, subscriptions and wallets - the finance-authorized role. Separate from administrators on purpose.",
+  member: "Signs in, sees the organization and uses the products they hold a seat for.",
+  readonly: "Can view, with no ability to change anything.",
 };
 
 export function roleLabel(key: string): string {
@@ -54,37 +65,58 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 // --- page furniture -------------------------------------------------------------------
 
-/** The page's one `<h1>`, its lead and the page-level actions. */
+/** The page's one `<h1>`, its lead and the page-level actions - the consoles'
+ * one page header (the kit's), so the User Admin reads like the Admin and the
+ * Partner panel. `primary` is the page's main action; `actions` sit beside it. */
 export function PageHeader({
   title,
   lead,
   actions,
+  primary,
+  secondary,
+  info,
 }: {
   title: string;
   lead?: React.ReactNode;
   actions?: React.ReactNode;
+  primary?: React.ReactNode;
+  secondary?: MenuItem[];
+  /** A longer explanation, behind an (i) after the lead. */
+  info?: React.ReactNode;
+}) {
+  return <KitPageHeader title={title} subtitle={lead} actions={actions} primary={primary} secondary={secondary} info={info} />;
+}
+
+/** A titled card: a `<section>` named by its `<h2>` (the kit's Card). */
+export function Panel({
+  title,
+  children,
+  description,
+  actions,
+  flush,
+}: {
+  title: string;
+  children: React.ReactNode;
+  description?: React.ReactNode;
+  actions?: React.ReactNode;
+  /** No padding (a table that runs edge to edge). */
+  flush?: boolean;
 }) {
   return (
-    <div className={styles.pageHeader}>
-      <div>
-        <h1 className={styles.pageTitle}>{title}</h1>
-        {lead && <p className={styles.lead}>{lead}</p>}
-      </div>
-      {actions && <div className={local.actions}>{actions}</div>}
-    </div>
+    <Card title={title} description={description} actions={actions} flush={flush}>
+      <div className={local.section}>{children}</div>
+    </Card>
   );
 }
 
-/** A titled card: a `<section>` named by its `<h2>`. */
-export function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  const id = useId();
+/** "Contact Organization Admin" (the brief, Part 2 section 05): what a member
+ * without the billing or wallet permission sees in place of a financial action. */
+export function ContactOrgAdmin({ what = "this" }: { what?: string }) {
   return (
-    <section className={`w360-card ${styles.panel} ${local.section}`} aria-labelledby={id}>
-      <h2 id={id} className={styles.panelTitle}>
-        {title}
-      </h2>
-      {children}
-    </section>
+    <p className={local.contactAdmin} role="note">
+      <strong>Contact Organization Admin</strong> - only your organization&apos;s owner and Billing Managers can manage{" "}
+      {what}.
+    </p>
   );
 }
 
@@ -96,9 +128,21 @@ export function PagedState({
   state: "loading" | "ready" | "error" | "forbidden";
   what: string;
 }) {
-  if (state === "loading") return <p aria-live="polite">Loading {what}…</p>;
-  if (state === "forbidden") return <p role="alert">You don&apos;t have access to {what}.</p>;
-  if (state === "error") return <p role="alert">Couldn&apos;t load {what}. Try again in a moment.</p>;
+  if (state === "loading") return <LoadingBlock what={what} />;
+  if (state === "forbidden") {
+    return (
+      <div role="alert">
+        <EmptyState icon="lock" title={`You don't have access to ${what}.`} hint="Contact Organization Admin if you need it." compact />
+      </div>
+    );
+  }
+  if (state === "error") {
+    return (
+      <div role="alert">
+        <EmptyState icon="alert" title={`Couldn't load ${what}. Try again in a moment.`} compact />
+      </div>
+    );
+  }
   return null;
 }
 

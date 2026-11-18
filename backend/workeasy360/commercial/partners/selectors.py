@@ -91,6 +91,18 @@ def landing_workspace(partner_id: UUID) -> str | None:
     )
 
 
+def category_of(partner_id: UUID) -> str | None:
+    """The category the Admin lists ``partner_id`` under (Affiliate, Reseller,
+    White Label; ``capabilities.partner_category``), or ``None`` - for no such
+    partner, or one in none of them. A listing, no decision."""
+    partner = partner_row(partner_id)
+    if partner is None:
+        return None
+    return capabilities.partner_category(
+        partner.default_experience, active_capabilities(partner_id)
+    )
+
+
 def code_taken(code: str) -> bool:
     """Whether a partner already uses this code (a dry-run check: the command
     that creates the partner is what decides a race for it)."""
@@ -202,6 +214,14 @@ def partner_detail(partner_id: UUID) -> dict[str, Any] | None:
             if m.invitation_sent_at
             else None,
             "invitation_deferred": m.invitation_deferred,
+            # Where the setup email stands (queued, sent, retrying, failed),
+            # only for someone still without a password: never claimed when
+            # it was not sent.
+            "invitation_delivery": (
+                invitation_delivery(m.id)
+                if m.invitation_sent_at and not m.user.has_usable_password()
+                else None
+            ),
         }
         for m in member_rows
     ]
@@ -341,6 +361,12 @@ def guest_portal_entry(ctx: Any) -> dict[str, Any] | None:
     )
 
 
+def _onboarding(partner: Any) -> dict[str, Any]:
+    from workeasy360.commercial.partners import kyc
+
+    return kyc.onboarding_state(partner.id, status=partner.status)
+
+
 def _portal_entry(partner: Any, role: str, permissions: frozenset[str]) -> dict[str, Any]:
     held = active_capabilities(partner.id)
     return {
@@ -367,6 +393,11 @@ def _portal_entry(partner: Any, role: str, permissions: frozenset[str]) -> dict[
         # 2026-11-03: the level the unified dashboard shows (Level 1
         # Affiliate, 2 Reseller, 3 White-label) - the largest workspace.
         "level": capabilities.partner_level(held),
+        # ADR-063: the category the partner is listed under (a draft's comes
+        # from the type it was created as), and whether it may trade yet -
+        # KYC and account states side by side, never merged.
+        "category": capabilities.partner_category(partner.default_experience, held),
+        "onboarding": _onboarding(partner),
         # What the server will let this person do right now. The
         # portal's navigation is drawn from it; every request is
         # still authorized again by the service it reaches.
@@ -402,6 +433,19 @@ def link_for(partner_id: UUID, organization_id: UUID) -> Any | None:
         .exclude(status=PartnerLinkStatus.ENDED.value)
         .first()
     )
+
+
+def customer_names_for_partner(partner_id: UUID) -> list[dict[str, Any]]:
+    """This partner's live customers' names (ADR-063: a wallet movement names
+    its customer). An ended relationship shows no name, as on the customer list."""
+    from workeasy360.commercial.partners.models import PartnerOrganizationLink
+
+    return [
+        {"organization_id": org, "name": name}
+        for org, name in PartnerOrganizationLink.objects.filter(partner_id=partner_id)
+        .exclude(status=PartnerLinkStatus.ENDED.value)
+        .values_list("organization_id", "organization__display_name")
+    ]
 
 
 def live_link_for_organization(organization_id: UUID) -> Any | None:
@@ -946,3 +990,138 @@ def created_count(*, start: Any | None, end: Any) -> int:
     if start is not None:
         rows = rows.filter(created_at__gte=start)
     return rows.count()
+
+
+def active_partner_count(at: Any) -> int:
+    """Partners activated by ``at`` and not ended by it. An application that has not been
+    approved is not a partner yet, and a suspended partner still is one."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    return (
+        PartnerAccount.objects.filter(activated_at__lt=at)
+        .exclude(terminated_at__lt=at)
+        .count()
+    )
+
+
+def partner_names(partner_ids: Any) -> dict[Any, str]:
+    """A display name for each of these partners. One query, for a staff list."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    return dict(
+        PartnerAccount.objects.filter(id__in=partner_ids).values_list(
+            "id", "display_name"
+        )
+    )
+
+
+def partner_ids_matching(search: str) -> Any:
+    """A subquery of the partners whose name matches, to compose into a staff list."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    return PartnerAccount.objects.filter(display_name__icontains=search[:80]).values("id")
+
+
+def invitation_delivery(member_id: Any) -> dict[str, Any] | None:
+    """Where this member's latest setup-link email stands (``notify_account``
+    keys it ``partner-member:<id>:setup:<hash>``), or ``None`` if none was queued."""
+    from workeasy360.platform.notifications.services import account_message_state
+
+    return account_message_state(f"partner-member:{member_id}:setup:")
+
+
+def pending_member_partner_name(user_id: Any) -> str | None:
+    """The name of a partner this person is an active member of, used when they
+    have not accepted its invitation yet (no password): the Add Partner form says
+    which partner is waiting for them."""
+    from workeasy360.commercial.partners.models import PartnerMember
+
+    return (
+        PartnerMember.objects.filter(user_id=user_id, status="active")
+        .exclude(partner__status=PartnerStatus.TERMINATED.value)
+        .values_list("partner__display_name", flat=True)
+        .first()
+    )
+
+
+def live_partner_named(display_name: str) -> str | None:
+    """A partner that is not terminated with this name (case and outer spaces
+    ignored), as ``"Name (code)"``, or ``None``."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    row = (
+        PartnerAccount.objects.filter(display_name__iexact=display_name.strip())
+        .exclude(status=PartnerStatus.TERMINATED.value)
+        .values("display_name", "code")
+        .first()
+    )
+    return f"{row['display_name']} ({row['code']})" if row else None
+
+
+def live_partner_with_contact(email: str) -> str | None:
+    """A partner that is not terminated whose contact address is this email, as
+    ``"Name (code)"``, or ``None``."""
+    from workeasy360.commercial.partners.models import PartnerAccount
+
+    if not email:
+        return None
+    row = (
+        PartnerAccount.objects.filter(contact_email__iexact=email)
+        .exclude(status=PartnerStatus.TERMINATED.value)
+        .values("display_name", "code")
+        .first()
+    )
+    return f"{row['display_name']} ({row['code']})" if row else None
+
+
+def partner_history_for_organization(organization_id: Any) -> list[dict[str, Any]]:
+    """Every partner relationship this customer has had, newest first: who, when it
+    started and ended, why it ended and who ended it. For staff."""
+    from workeasy360.commercial.partners.models import PartnerOrganizationLink
+
+    rows = (
+        PartnerOrganizationLink.objects.filter(organization_id=organization_id)
+        .select_related("partner")
+        .order_by("-started_at")
+    )
+    return [
+        {
+            "link_id": str(r.id),
+            "partner_id": str(r.partner_id),
+            "partner_code": r.partner.code,
+            "partner_name": r.partner.display_name,
+            "status": r.status,
+            "started_at": r.started_at.isoformat(),
+            "ended_at": r.ended_at.isoformat() if r.ended_at else None,
+            "end_reason": r.end_reason,
+            "created_by_id": str(r.created_by_id) if r.created_by_id else None,
+            "ended_by_id": str(r.ended_by_id) if r.ended_by_id else None,
+        }
+        for r in rows
+    ]
+
+
+def assignable_partners(query: str = "", *, limit: int = 20) -> list[dict[str, Any]]:
+    """Active partners that can serve customers, matching ``query`` (name or code),
+    for the Assign Partner picker."""
+    from django.db.models import Q
+
+    from workeasy360.commercial.partners.models import (
+        PartnerAccount,
+        PartnerCapabilityGrant,
+    )
+
+    serving = PartnerCapabilityGrant.objects.filter(
+        status=GrantStatus.ACTIVE.value,
+        capability__in=["customer.manage", "customer.provision"],
+    ).values("partner_id")
+    rows = PartnerAccount.objects.filter(
+        status=PartnerStatus.ACTIVE.value, id__in=serving
+    )
+    term = (query or "").strip()[:80]
+    if term:
+        rows = rows.filter(Q(display_name__icontains=term) | Q(code__icontains=term))
+    return [
+        {"id": str(p.id), "code": p.code, "display_name": p.display_name}
+        for p in rows.order_by("display_name")[: max(1, min(limit, 50))]
+    ]

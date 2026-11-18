@@ -1,0 +1,58 @@
+#!/bin/sh
+# WorkEasy360 on the single host: copy the newest nightly backup off the instance.
+#
+# Runs after w360-backup (workeasy360-ops.cron). Uploads the backup directory as one archive
+# to the S3 bucket deploy/aws/ops-single-host.yml created, encrypted with its KMS key, using
+# the instance role (no stored credential). Checks what arrived (size and SHA-256 recorded on
+# the object) and publishes BackupAgeHours, which alarms when no backup reached S3 for 26 hours.
+#
+# Configuration: /opt/workeasy360/env/ops.env (no secrets - names only):
+#   W360_BACKUP_BUCKET=workeasy360-backups-<account>-<region>
+#   W360_BACKUP_KMS_KEY=<key arn>
+#   W360_AWS_REGION=<region>
+#   W360_S3_ENDPOINT=   (empty in production; an S3-compatible endpoint only for a rehearsal)
+set -eu
+ROOT="${W360_ROOT:-/opt/workeasy360}"
+# shellcheck source=/dev/null # the operator's env/ops.env, outside the repository
+[ -f "$ROOT/env/ops.env" ] && . "$ROOT/env/ops.env"
+: "${W360_BACKUP_BUCKET:?W360_BACKUP_BUCKET is not set (env/ops.env)}"
+: "${W360_AWS_REGION:?W360_AWS_REGION is not set (env/ops.env)}"
+BACKUPS="${W360_BACKUPS:-$ROOT/backups}"
+HOST="${W360_HOSTNAME:-$(hostname -s 2>/dev/null || hostname)}"
+endpoint=""
+[ -n "${W360_S3_ENDPOINT:-}" ] && endpoint="--endpoint-url $W360_S3_ENDPOINT"
+kms=""
+[ -n "${W360_BACKUP_KMS_KEY:-}" ] && kms="--sse aws:kms --sse-kms-key-id $W360_BACKUP_KMS_KEY"
+
+metric() {
+  # Metrics are best effort here: an upload that worked is not undone by a metric that failed.
+  [ -n "${W360_S3_ENDPOINT:-}" ] && return 0
+  aws cloudwatch put-metric-data --region "$W360_AWS_REGION" --namespace WorkEasy360 \
+    --metric-name "$1" --value "$2" --unit "${3:-None}" >/dev/null 2>&1 || true
+}
+
+latest="$(ls -1d "$BACKUPS"/20*Z 2>/dev/null | tail -n 1 || true)"
+[ -n "$latest" ] || { echo "[offsite] no backup in $BACKUPS" >&2; exit 1; }
+stamp="$(basename "$latest")"
+(cd "$latest" && sha256sum -c SHA256SUMS --quiet) || { echo "[offsite] $stamp fails its own checksums" >&2; exit 1; }
+
+archive="$(mktemp)"
+trap 'rm -f "$archive"' EXIT
+tar -C "$latest" -cf "$archive" .
+sum="$(sha256sum "$archive" | cut -d' ' -f1)"
+size="$(wc -c < "$archive" | tr -d ' ')"
+key="$HOST/$stamp.tar"
+
+# shellcheck disable=SC2086 # $endpoint and $kms are deliberately split into arguments
+aws s3 cp $endpoint --region "$W360_AWS_REGION" --only-show-errors $kms \
+  --metadata "sha256=$sum" "$archive" "s3://$W360_BACKUP_BUCKET/$key"
+
+# shellcheck disable=SC2086
+remote="$(aws s3api head-object $endpoint --region "$W360_AWS_REGION" --bucket "$W360_BACKUP_BUCKET" --key "$key" \
+  --query '[ContentLength, Metadata.sha256]' --output text)"
+[ "$remote" = "$size	$sum" ] || { echo "[offsite] $key arrived as '$remote', expected '$size $sum'" >&2; exit 1; }
+
+created="$(date -u -d "$(echo "$stamp" | sed -E 's/^([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z$/\1-\2-\3 \4:\5:\6/')" +%s)"
+age_hours=$(( ($(date -u +%s) - created) / 3600 ))
+metric BackupAgeHours "$age_hours" Count
+echo "[offsite] s3://$W360_BACKUP_BUCKET/$key ($size bytes, sha256 $sum, backup age ${age_hours}h)"

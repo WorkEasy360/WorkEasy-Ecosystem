@@ -91,7 +91,7 @@
 }
 
 .menuGlyph {
-  font-size: 16px;
+  display: inline-flex;
   line-height: 1;
 }
 
@@ -104,6 +104,18 @@
   background: var(--w360-surface);
   border-right: 1px solid var(--w360-border);
   padding: var(--w360-space-3) var(--w360-space-2) var(--w360-space-6);
+  /* A thin scrollbar that does not crowd the menu. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--w360-border-strong) transparent;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: var(--w360-border-strong);
+  border-radius: var(--w360-radius-pill);
 }
 
 .group + .group {
@@ -112,7 +124,7 @@
 
 .groupTitle {
   margin: var(--w360-space-2) var(--w360-space-3) var(--w360-space-1);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -186,8 +198,9 @@
 }
 
 .chevron {
+  display: inline-flex;
+  flex: none;
   transition: transform 0.15s ease;
-  font-size: 16px;
 }
 
 .chevron[data-expanded] {
@@ -300,13 +313,13 @@
   line-height: 1;
 }
 
-/* --- the Super Admin variant (2026-10-26): navy top bar and sidebar ----------- */
+/* --- the Admin variant (2026-11-09, the owner's reference image): a dark teal
+   frame holding a light sheet, with the current page a green pill ------------ */
 
 .frame[data-variant="admin"] {
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 252px minmax(0, 1fr);
   grid-template-rows: 64px minmax(0, 1fr);
-  /* The sidebar's column is navy the whole height of the page. */
-  background: linear-gradient(to right, var(--w360-shell) 240px, var(--w360-shell-canvas) 240px);
+  background: var(--w360-shell);
 }
 
 .frame[data-variant="admin"] .topbar {
@@ -317,7 +330,7 @@
 }
 
 .frame[data-variant="admin"] .brand {
-  width: calc(240px - var(--w360-space-4) - var(--w360-space-3));
+  width: calc(252px - var(--w360-space-4) - var(--w360-space-3));
 }
 
 .frame[data-variant="admin"] .menuButton {
@@ -332,22 +345,48 @@
 .frame[data-variant="admin"] .sidebar {
   top: 64px;
   height: calc(100dvh - 64px);
-  background: var(--w360-shell);
-  border-right-color: var(--w360-shell-border);
-  padding: var(--w360-space-4) 0 var(--w360-space-6);
+  /* The green glow low on the sidebar. Decoration only. */
+  background: linear-gradient(180deg, var(--w360-shell) 62%, var(--w360-hero-end) 100%);
+  border-right: none;
+  padding: 0 0 var(--w360-space-5);
 }
 
-.frame[data-variant="admin"] .navTitle,
 .frame[data-variant="admin"] .groupTitle {
   color: var(--w360-shell-muted);
 }
 
-.frame[data-variant="admin"] .link {
-  padding: 11px var(--w360-space-5) 11px calc(var(--w360-space-5) - 3px);
-  border-radius: 0;
+/* The portal badge under the logo. */
+.frame[data-variant="admin"] .navTitle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: fit-content;
+  margin: 4px auto var(--w360-space-4);
+  padding: 6px 14px;
+  border-radius: var(--w360-radius-pill);
+  background: var(--w360-shell-raised);
   color: var(--w360-shell-text);
-  font-size: 15px;
+  font-size: var(--w360-fs-meta);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.frame[data-variant="admin"] .list {
+  gap: 4px;
+}
+
+.frame[data-variant="admin"] .link {
+  width: calc(100% - 2 * var(--w360-space-3));
+  min-height: 44px;
+  margin-inline: var(--w360-space-3);
+  padding: 0 var(--w360-space-3) 0 calc(var(--w360-space-3) - 3px);
+  border-radius: 12px;
+  color: var(--w360-shell-text);
+  font-size: var(--w360-fs-body);
   font-weight: 500;
+  line-height: 20px;
   gap: var(--w360-space-3);
 }
 
@@ -360,13 +399,13 @@
   color: var(--w360-shell-text);
 }
 
-/* The current page: a lighter navy band, a green bar at the edge and bolder
-   text (not colour alone); aria-current="page" for assistive technology. */
+/* The current module: a green pill, a white bar at its edge and bolder text
+   (not colour alone); aria-current="page" for assistive technology. */
 .frame[data-variant="admin"] .link[data-active] {
   background: var(--w360-shell-active);
   color: var(--w360-shell-text);
   font-weight: 700;
-  border-left-color: var(--w360-shell-marker);
+  border-left-color: var(--w360-shell-active-bar);
 }
 
 .frame[data-variant="admin"] .link[data-active] svg,
@@ -374,9 +413,22 @@
   color: var(--w360-shell-text);
 }
 
+/* A section holding the current page: bold, with the green marker on its icon. */
 .frame[data-variant="admin"] .link[data-contains-current] {
   color: var(--w360-shell-text);
   font-weight: 700;
+}
+
+.frame[data-variant="admin"] .link[data-contains-current] svg:first-child {
+  color: var(--w360-shell-marker);
+}
+
+.frame[data-variant="admin"] .sidebar {
+  scrollbar-color: var(--w360-shell-border) transparent;
+}
+
+.frame[data-variant="admin"] .sidebar::-webkit-scrollbar-thumb {
+  background: var(--w360-shell-border);
 }
 
 .frame[data-variant="admin"] .subList {
@@ -384,8 +436,9 @@
 }
 
 .frame[data-variant="admin"] .subList .link {
+  min-height: 36px;
   padding-left: calc(var(--w360-space-5) + 18px + var(--w360-space-3) - 3px);
-  font-size: 14px;
+  font-size: var(--w360-fs-body);
 }
 
 .frame[data-variant="admin"] .chevron {
@@ -396,9 +449,97 @@
   outline-color: var(--w360-shell-text);
 }
 
+/* The light sheet the pages sit on, its corner cut into the teal frame. */
 .frame[data-variant="admin"] .main {
-  max-width: 1440px;
-  padding: var(--w360-space-5) var(--w360-space-5) var(--w360-space-7);
+  max-width: none;
+  padding: var(--w360-space-5) var(--w360-space-6) var(--w360-space-7);
+  background: var(--w360-shell-canvas);
+  border-top-left-radius: 20px;
+}
+
+/* Fold the menu: the button at its foot. */
+.railToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+  width: 100%;
+  min-height: 40px;
+  margin-top: var(--w360-space-4);
+  padding: 0 var(--w360-space-4) 0 var(--w360-space-5);
+  border: none;
+  border-top: 1px solid var(--w360-border);
+  background: none;
+  color: var(--w360-text-muted);
+  font: inherit;
+  font-size: var(--w360-fs-meta);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.frame[data-variant="admin"] .railToggle {
+  border-top-color: var(--w360-shell-border);
+  color: var(--w360-shell-muted);
+}
+
+.frame[data-variant="admin"] .railToggle:hover {
+  background: var(--w360-shell-raised);
+  color: var(--w360-shell-text);
+}
+
+/* The icon rail: icons only, each name shown beside its icon on hover or
+   keyboard focus (it stays the link's accessible name). */
+.frame[data-variant="admin"][data-rail] {
+  grid-template-columns: 68px minmax(0, 1fr);
+}
+
+.frame[data-rail] .sidebar {
+  overflow: visible;
+}
+
+.frame[data-rail] .navTitle,
+.frame[data-rail] .chevron,
+.frame[data-rail] .subList {
+  display: none;
+}
+
+.frame[data-variant="admin"][data-rail] .link,
+.frame[data-variant="admin"][data-rail] .railToggle {
+  justify-content: center;
+  padding: 0;
+  position: relative;
+}
+
+.frame[data-variant="admin"][data-rail] .sidebar {
+  padding-top: var(--w360-space-3);
+}
+
+.frame[data-rail] .linkText {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: max-content;
+  max-width: 240px;
+  padding: 6px 10px;
+  border-radius: var(--w360-radius-sm);
+  background: var(--w360-navy);
+  color: var(--w360-navy-contrast);
+  font-size: var(--w360-fs-meta);
+  font-weight: 600;
+  box-shadow: var(--w360-shadow-md);
+  pointer-events: none;
+  z-index: 40;
+  clip-path: inset(50%);
+  opacity: 0;
+}
+
+.frame[data-rail] .link:hover .linkText,
+.frame[data-rail] .link:focus-visible .linkText,
+.frame[data-rail] .railToggle:hover .linkText,
+.frame[data-rail] .railToggle:focus-visible .linkText {
+  clip-path: none;
+  opacity: 1;
 }
 
 .frame[data-variant="admin"] .main :focus-visible {
@@ -421,6 +562,21 @@
   color: var(--w360-text);
 }
 
+/* A context label in the dark top bar (the Partner panel's workspace and partner,
+   2026-11-11). */
+.frame[data-variant="admin"] .context > * {
+  background: var(--w360-shell-raised);
+  border-color: var(--w360-shell-border);
+  color: var(--w360-shell-text);
+}
+
+/* A tablet's or phone's top bar keeps the menu, the logo, the tools and the account. */
+@media (max-width: 900px) {
+  .frame[data-variant="admin"] .context {
+    display: none;
+  }
+}
+
 @media (max-width: 1100px) {
   .accountName,
   .accountChevron {
@@ -429,7 +585,7 @@
 }
 
 
-@media (max-width: 900px) {
+@media (max-width: 1024px) {
   .frame {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
@@ -482,6 +638,16 @@
     background: var(--w360-shell-canvas);
   }
 
+  .frame[data-variant="admin"] .sidebar {
+    top: 64px;
+    padding-top: var(--w360-space-3);
+    background: var(--w360-shell);
+  }
+
+  .frame[data-variant="admin"] .main {
+    border-top-left-radius: 0;
+  }
+
   .frame[data-variant="admin"] .brand {
     width: auto;
   }
@@ -497,6 +663,46 @@
 
   .frame[data-variant="admin"] .main {
     padding: var(--w360-space-4) var(--w360-space-4) var(--w360-space-6);
+  }
+
+  .frame[data-variant="admin"][data-rail] {
+    grid-template-columns: minmax(0, 1fr);
+    background: var(--w360-shell-canvas);
+  }
+
+  .railToggle {
+    display: none;
+  }
+
+  .frame[data-rail] .sidebar {
+    overflow-y: auto;
+  }
+
+  .frame[data-rail] .navTitle,
+  .frame[data-rail] .chevron {
+    display: inline-flex;
+  }
+
+  .frame[data-rail] .subList {
+    display: grid;
+  }
+
+  .frame[data-rail] .linkText {
+    position: static;
+    transform: none;
+    width: auto;
+    padding: 0;
+    background: none;
+    color: inherit;
+    font-size: inherit;
+    box-shadow: none;
+    clip-path: none;
+    opacity: 1;
+  }
+
+  .frame[data-variant="admin"][data-rail] .link {
+    justify-content: flex-start;
+    padding: 0 var(--w360-space-3) 0 calc(var(--w360-space-3) - 3px);
   }
 }
 
@@ -535,4 +741,23 @@
 .lockMark svg {
   width: 14px;
   height: 14px;
+}
+
+/* ADR-062: a section whose entries can be put in the person's own order (the
+   Admin's Partners menu): dragged with the pointer, or Alt+Arrow keys. */
+.subList > li[draggable="true"] {
+  cursor: grab;
+}
+
+.subList > li[data-dragging] {
+  opacity: 0.5;
+}
+
+/* Content below the menus (the User Admin's Store card). Not in the icon rail. */
+.navFooter {
+  margin: var(--w360-space-5) var(--w360-space-3) 0;
+}
+
+.frame[data-rail] .navFooter {
+  display: none;
 }

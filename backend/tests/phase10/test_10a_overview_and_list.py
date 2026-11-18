@@ -91,8 +91,9 @@ def test_the_overview_states_facts_and_only_facts(console, viewer):
     assert cards["active_partners"]["count"] == 2  # the reseller and the white-label
     assert cards["white_label"]["count"] == 1
     assert cards["suspended_partners"]["count"] == 0
-    # Each label card is the size of the list it opens.
-    listed = _rows(viewer, scope="all", type="reseller", limit=100)["results"]
+    # Each type card is the size of the list it opens (ADR-062: Partners →
+    # Reseller, where the white-label partner - which also sells - is not listed).
+    listed = _rows(viewer, scope="all", category="reseller", limit=100)["results"]
     assert cards["resellers"]["count"] == len(listed)
     incomplete = _rows(viewer, scope="all", profile="incomplete", limit=100)["results"]
     assert cards["profiles_incomplete"]["count"] == len(incomplete)

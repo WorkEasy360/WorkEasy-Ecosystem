@@ -194,6 +194,12 @@ def _products_with_offers(
                 "max_seats",
                 "trial_days",
                 "prices",
+                # ADR-065: the recommended plan, how it renews and the usage it
+                # includes - shown on the Store's plan cards.
+                "recommended",
+                "sort_order",
+                "renewal_rule",
+                "included_usage",
             )
         }
         by_product.setdefault(plan["product_code"], []).append(public_plan)

@@ -433,3 +433,83 @@ def _resolve_email(notification: Any) -> str:
     if membership is None:
         return ""
     return getattr(membership.user, "email", "")
+
+
+# --- where a person-addressed email stands (2026-11-10) ------------------------------
+
+#: What a screen may say about a queued email, from its delivery row. "sent" means
+#: the mail server accepted it - nothing here can know that it reached an inbox.
+_MESSAGE_STATES: dict[str, str] = {
+    DeliveryStatus.PENDING.value: "queued",
+    DeliveryStatus.SENDING.value: "queued",
+    DeliveryStatus.SENT.value: "sent",
+    DeliveryStatus.FAILED.value: "retrying",
+    DeliveryStatus.DEAD_LETTERED.value: "failed",
+    DeliveryStatus.SUPPRESSED.value: "suppressed",
+}
+
+
+def email_delivery_mode() -> str:
+    """``smtp`` when mail leaves this server; otherwise the development or test
+    backend (``console``, ``file``, ``memory``, ``disabled``). Production accepts
+    SMTP only (``config/settings/production.py``)."""
+    from django.conf import settings
+
+    backend = str(getattr(settings, "EMAIL_BACKEND", "")).rsplit(".", 2)[-2:]
+    name = backend[0] if backend else ""
+    return {
+        "smtp": "smtp",
+        "console": "console",
+        "filebased": "file",
+        "locmem": "memory",
+        "dummy": "disabled",
+    }.get(name, "other")
+
+
+def account_message_state(idempotency_prefix: str) -> dict[str, Any] | None:
+    """The latest person-addressed email (``notify_account``) whose idempotency key
+    starts with this prefix, and where its email delivery stands - or ``None``
+    when none was ever queued. Carries no address, no content and no link: a
+    state, its time and how many attempts were made."""
+    from workeasy360.contracts.values.control_plane import PLATFORM_ORGANIZATION_ID
+    from workeasy360.platform.notifications.models import (
+        Notification,
+        NotificationDelivery,
+    )
+    from workeasy360.platform.notifications.tasks import routing_context
+    from workeasy360.platform.tenancy.context import tenant_context
+    from workeasy360.platform.tenancy.db import organization_db_scope
+
+    prefix = str(idempotency_prefix or "")
+    if len(prefix) < 8:
+        return None
+    # Account messages live in the platform organization's scope (see
+    # notify_account), so they are read there with the same nil-actor routing
+    # context - through the tenant-scoped managers, never around them.
+    ctx = routing_context(PLATFORM_ORGANIZATION_ID, OrganizationStatus.ACTIVE)
+    with tenant_context(ctx), organization_db_scope(PLATFORM_ORGANIZATION_ID):
+        latest = (
+            Notification.objects.filter(idempotency_key__startswith=prefix)
+            .order_by("-created_at")
+            .values("id", "created_at")
+            .first()
+        )
+        if latest is None:
+            return None
+        delivery = (
+            NotificationDelivery.objects.filter(
+                notification_id=latest["id"], channel=NotificationChannel.EMAIL.value
+            )
+            .values("status", "attempts", "sent_at")
+            .first()
+        )
+    status = delivery["status"] if delivery else DeliveryStatus.PENDING.value
+    return {
+        "state": _MESSAGE_STATES.get(status, "queued"),
+        "queued_at": latest["created_at"].isoformat(),
+        "sent_at": (
+            delivery["sent_at"].isoformat() if delivery and delivery["sent_at"] else None
+        ),
+        "attempts": delivery["attempts"] if delivery else 0,
+        "delivery_mode": email_delivery_mode(),
+    }

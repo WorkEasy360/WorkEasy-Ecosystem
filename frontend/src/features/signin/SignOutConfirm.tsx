@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { StatusScreen } from "@/components/StatusScreen";
 import { getSession } from "@/lib/api/auth";
 import { confirmSignOut, getSignOutRequest, type SignOutRequest } from "@/lib/api/signIn";
+import { AccountsBrand } from "./AccountsBrand";
 import styles from "./ProductAccess.module.css";
 
 type Load = { status: "loading" } | { status: "invalid" } | { status: "ready"; request: SignOutRequest };
@@ -62,6 +63,7 @@ export function SignOutConfirm() {
   return (
     <main id="w360-main" className={styles.main}>
       <div className={styles.column}>
+        <AccountsBrand />
         <section className={`w360-card ${styles.card}`} aria-labelledby={headingId}>
           <h1 id={headingId} className={styles.title}>
             {request.signed_in ? "Sign out of Workeasy360 too?" : "You're signed out of Workeasy360"}

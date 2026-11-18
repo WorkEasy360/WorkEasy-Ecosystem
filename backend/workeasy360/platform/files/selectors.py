@@ -77,3 +77,18 @@ def open_servable_range(file_id: UUID, *, start: int, length: int) -> BinaryIO |
     if row is None or not row.key_belongs_to_tenant() or not row.is_servable:
         return None
     return get_store().get_range(row.storage_key, start, length)
+
+
+def scan_states(file_ids: Any) -> dict[Any, str]:
+    """Each file's malware-scan state (``scanning.scan_state``): ``clean``,
+    ``infected``, ``pending`` or ``not_required``. One query, in the caller's
+    scope; a file not found here is simply absent."""
+    from workeasy360.platform.files.models import File
+    from workeasy360.platform.files.scanning import scan_state
+
+    return {
+        row["id"]: scan_state(row["status"], row["scanner"])
+        for row in File.objects.filter(id__in=list(file_ids)).values(
+            "id", "status", "scanner"
+        )
+    }

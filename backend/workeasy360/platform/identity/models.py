@@ -331,6 +331,10 @@ class AccountEvent(models.Model):
             "sign_in_preference_changed",
             "Product sign-in preference changed",
         )
+        #: ADR-066: a change of sign-in email was asked for (a link went to
+        #: the new address) and then confirmed from that link.
+        EMAIL_CHANGE_REQUESTED = "email_change_requested", "Email change requested"
+        EMAIL_CHANGED = "email_changed", "Sign-in email changed"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
@@ -369,19 +373,25 @@ class AccountToken(models.Model):
     purpose, so only the latest emailed link works.
 
     ``organization_name`` carries the one thing a signup must remember until
-    the address is verified: the company the person asked to create. Nothing
-    else about the request is kept here.
+    the address is verified: the company the person asked to create.
+    ``new_email`` carries the one thing a change of sign-in email must remember
+    until the new address is proved (ADR-066). Nothing else about a request is
+    kept here.
     """
 
     class Purpose(models.TextChoices):
         VERIFY_EMAIL = "verify_email", "Verify email address"
         RESET_PASSWORD = "reset_password", "Reset password"
+        CHANGE_EMAIL = "change_email", "Change sign-in email"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
     purpose = models.CharField(max_length=16, choices=Purpose.choices)
     token_hash = models.CharField(max_length=64, unique=True)
     organization_name = models.CharField(max_length=150, blank=True, default="")
+    #: ``change_email`` only: the address as typed, which becomes the sign-in
+    #: email when this link is used.
+    new_email = models.EmailField(max_length=254, blank=True, default="", db_default="")
     created_at = models.DateTimeField(default=timezone.now)
     expires_at = models.DateTimeField()
     used_at = models.DateTimeField(null=True, blank=True)

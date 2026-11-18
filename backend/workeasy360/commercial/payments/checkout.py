@@ -21,6 +21,7 @@ from __future__ import annotations
 import time
 from datetime import timedelta
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID
 
 from django.conf import settings
@@ -39,6 +40,7 @@ from workeasy360.contracts.errors import (
     PaymentRecordNotFound,
     PaymentValidationError,
 )
+from workeasy360.contracts.values import portals as portal_values
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.audit import services as audit
 from workeasy360.platform.authz import services as authz
@@ -73,12 +75,35 @@ def choose_provider(currency: str) -> Any:
 
 
 def start_payment(
-    ctx: TenantContext, *, invoice_id: UUID, idempotency_key: str
+    ctx: TenantContext,
+    *,
+    invoice_id: UUID,
+    idempotency_key: str,
+    return_portal: str = "",
+    wallet_minor: int = 0,
 ) -> dict[str, Any]:
+    """Start (or continue) paying an invoice through a provider.
+
+    ADR-065: ``wallet_minor`` above zero pays that much from the Platform Wallet
+    and the rest here - the wallet's part is *held* in this transaction and
+    captured only when the provider confirms the rest (``settlement``); a payment
+    that fails, expires or is cancelled releases it. ``return_portal`` is where
+    the provider sends the payer back (``store`` for the Digital Store)."""
     from workeasy360.commercial.payments.models import Invoice, PaymentAttempt
     from workeasy360.integration.scheduling import services as scheduling
 
     authz.require(ctx, MANAGE)
+    if return_portal not in ("", portal_values.STORE):
+        return_portal = ""
+    if (
+        isinstance(wallet_minor, bool)
+        or not isinstance(wallet_minor, int)
+        or wallet_minor < 0
+    ):
+        raise PaymentValidationError(
+            "The wallet amount must be a whole number of minor units.",
+            field="wallet_amount_minor",
+        )
     if not idempotency_key or len(idempotency_key) > 128:
         raise PaymentValidationError(
             "An Idempotency-Key of at most 128 characters is required.",
@@ -108,6 +133,11 @@ def start_payment(
         )
         if in_flight is not None:
             return attempt_view(in_flight)
+        if wallet_minor >= invoice.amount_due_minor:
+            raise PaymentValidationError(
+                "To pay all of it from the wallet, pay from the wallet alone.",
+                field="wallet_amount_minor",
+            )
         provider = choose_provider(invoice.currency)
         if provider is None:
             raise PaymentProviderUnavailable(
@@ -120,17 +150,23 @@ def start_payment(
                     invoice=invoice,
                     provider_key=provider.key,
                     provider_mode=provider.mode,
-                    amount_minor=invoice.amount_due_minor,
+                    amount_minor=invoice.amount_due_minor - wallet_minor,
                     currency=invoice.currency,
                     idempotency_key=idempotency_key,
                     created_by_user_id=ctx.user_id,
                     expires_at=now
                     + timedelta(minutes=int(settings.PAYMENT_ATTEMPT_TTL_MINUTES)),
+                    return_portal=return_portal,
                 )
         except IntegrityError as exc:
             raise PaymentValidationError(
                 "This Idempotency-Key is already in use.", field="idempotency_key"
             ) from exc
+        if wallet_minor:
+            from workeasy360.commercial.payments import wallet_orders
+
+            # In this transaction: a hold that cannot be placed undoes the attempt.
+            wallet_orders.hold_for_payment(ctx, invoice, attempt, wallet_minor)
         scheduling.schedule(
             CHECKOUT_TIMER,
             organization_id=ctx.organization_id,
@@ -147,6 +183,7 @@ def start_payment(
                 "amount_minor": attempt.amount_minor,
                 "currency": attempt.currency,
                 "provider": provider.key,
+                "wallet_minor": wallet_minor,
             },
         )
         from workeasy360.commercial.payments import tasks
@@ -158,8 +195,12 @@ def start_payment(
 
 def attempt_view(attempt: Any) -> dict[str, Any]:
     """The browser's view of an attempt. The hosted page's address only while
-    it is still the thing to do."""
+    it is still the thing to do. ADR-065: what of the invoice the Platform
+    Wallet pays alongside it (held until the provider confirms, then captured)."""
+    from workeasy360.commercial.payments import wallet_orders
+
     return {
+        **wallet_orders.wallet_part(attempt),
         "attempt_id": str(attempt.id),
         "invoice_id": str(attempt.invoice_id),
         "status": attempt.status,
@@ -185,7 +226,15 @@ def attempt_status(ctx: TenantContext, attempt_id: UUID) -> dict[str, Any]:
 
 
 def hosted_page_url(attempt: Any, reference: str) -> str:
-    """The development test provider's "hosted page": the platform's own."""
+    """The development test provider's "hosted page": the platform's own - on
+    the Store's host for a payment started there (ADR-065), so its way back
+    lands where the payer's session is."""
+    if attempt.return_portal == portal_values.STORE:
+        back = quote(_return_url(attempt.organization_id, attempt, "success"), safe="")
+        return (
+            f"{portal_links.store_url()}/billing/test-checkout#reference={reference}"
+            f"&org={attempt.organization_id}&return={back}"
+        )
     return (
         f"{portal_links.app_url()}/billing/test-checkout#reference={reference}"
         f"&org={attempt.organization_id}"
@@ -294,6 +343,13 @@ def _return_url(organization_id: UUID, attempt: Any, outcome: str) -> str:
     from workeasy360.platform.organizations.selectors import organization_slug
 
     slug = organization_slug(organization_id) or ""
+    if attempt.return_portal == portal_values.STORE:
+        # ADR-065: the Store's own confirmation page, which asks the server
+        # what happened - the return itself proves nothing.
+        return (
+            f"{portal_links.store_url()}/store/checkout/complete?payment={attempt.id}"
+            f"&org={slug}&outcome={outcome}"
+        )
     return (
         f"{portal_links.app_url()}/o/{slug}/settings/billing?payment={attempt.id}"
         f"&outcome={outcome}"
@@ -321,7 +377,10 @@ def _fail_checkout(organization_id: UUID, attempt_id: UUID, category: str) -> st
 
 
 def _finish(attempt: Any, status: str, *, failure_code: str = "") -> None:
-    """Close an attempt that never took money. Clears the hosted address."""
+    """Close an attempt that never took money. Clears the hosted address, and
+    gives back what it held in the Platform Wallet (ADR-065)."""
+    from workeasy360.commercial.payments import wallet_orders
+
     attempt.status = status
     attempt.failure_code = failure_code
     attempt.checkout_url = ""
@@ -343,3 +402,29 @@ def _finish(attempt: Any, status: str, *, failure_code: str = "") -> None:
         changes={"failure_code": failure_code},
         reason="A payment attempt ended without taking a payment.",
     )
+    wallet_orders.release_for_attempt(attempt, why=status)
+
+
+#: How the Store names each kind of provider (ADR-065). The payer chooses UPI, a
+#: card, net banking or a wallet on the provider's own secure page.
+_PROVIDER_LABEL = {
+    "razorpay": ("Razorpay", ["UPI", "Cards", "Net Banking", "Wallets"]),
+    "stripe": ("Stripe", ["Cards"]),
+    "fake": ("Test payments", ["Test card"]),
+}
+
+
+def public_payment_option(currency: str) -> dict[str, Any]:
+    """Whether online payment is open in ``currency`` now, and through which kind of
+    provider - its name only, never a key, a reference or a credential (ADR-065)."""
+    provider = choose_provider(str(currency or "").upper())
+    if provider is None:
+        return {"available": False, "provider": None, "label": None, "methods": []}
+    label, methods = _PROVIDER_LABEL.get(provider.adapter, (provider.display_name, []))
+    return {
+        "available": True,
+        "provider": provider.adapter,
+        "label": label,
+        "methods": methods,
+        "test_mode": provider.adapter == "fake" or provider.mode == "test",
+    }

@@ -63,6 +63,13 @@ def test_the_partner_models_are_the_frozen_set_plus_the_declared_additions():
         "PartnerCannedResponse",
         "PartnerPayoutMethod",
         "PartnerWithdrawalRequest",
+        # The Admin Panel programme (ADR-060): KYC is a record beside the partner's status,
+        # with its own requirements, documents, decisions and access log.
+        "KycRequirement",
+        "PartnerKyc",
+        "PartnerKycDocument",
+        "PartnerKycDecision",
+        "PartnerKycDocumentAccess",
         # ADR-054: which products a partner may promote (a permission, not a
         # kind of partner; tests/affiliate_products pins it).
         "PartnerPromotionGrant",
@@ -72,6 +79,9 @@ def test_the_partner_models_are_the_frozen_set_plus_the_declared_additions():
         # ADR-056: Super Admin's bounds on a selling partner's own price - a
         # boundary, never a price (tests/store_upgrade pins what it allows).
         "SellingPriceRange",
+        # ADR-062: a staff member's guest view of one partner - a record of
+        # who looked and why, not a kind of partner (tests/guest_login pins it).
+        "PartnerGuestSession",
     }
 
 

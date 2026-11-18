@@ -236,9 +236,17 @@ def test_affiliate_goes_straight_to_white_label_without_being_a_reseller_first(
     assert request["from_experience"] == "affiliate"
     assert request["to_experience"] == "white_label"
 
-    approved = decide(admin, partner_id, request["id"], "approve")
+    # ADR-063: White Label alone sells nothing, so the products the affiliate
+    # proposed to sell are refused until the reviewer grants Reseller beside it.
+    refused = decide(admin, partner_id, request["id"], "approve")
+    assert refused.status_code == 400, refused.content
+    assert refused.json()["field"] == "products"
+    approved = decide(admin, partner_id, request["id"], "approve", also=["reseller"])
     assert approved.status_code == 200, approved.content
-    assert set(approved.json()["capabilities_added"]) == WHITE_LABEL_CAPS - AFFILIATE_CAPS
+    assert (
+        set(approved.json()["capabilities_added"])
+        == (WHITE_LABEL_CAPS | RESELLER_CAPS) - AFFILIATE_CAPS
+    )
     assert (User.objects.count(), PartnerAccount.objects.count()) == (users, partners)
 
     # The proposed brand and domain went through the brand and domain commands.
@@ -253,7 +261,7 @@ def test_affiliate_goes_straight_to_white_label_without_being_a_reseller_first(
     again, _ = sign_in(EMAIL, PASSWORD)
     entry = portal(again)[0]
     assert entry["landing"] == "white_label"
-    # ADR-053: additive - Reseller is offered beside White-label.
+    # ADR-053/063: additive - Reseller, granted beside it, is offered too.
     assert [w["key"] for w in entry["workspaces"]] == [
         "reseller",
         "white_label",

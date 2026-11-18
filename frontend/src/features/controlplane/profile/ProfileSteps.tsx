@@ -53,8 +53,8 @@ export function BusinessStep(props: StepProps) {
         </p>
       }
     >
-      <BusinessDetailsTab {...props} />
-      <ContactsTab {...props} />
+      <BusinessDetailsTab {...props} inline />
+      <ContactsTab {...props} inline />
     </Frame>
   );
 }
@@ -190,7 +190,7 @@ export function SubResellerStep(props: StepProps) {
       <div className={css.callout}>
         <p>
           A reseller can give a sub-reseller only capabilities it holds itself and only products it is allowed to sell. It can never give
-          commission or payouts (Workeasy360 decides who earns), custom domains, or the right to create sub-resellers: the hierarchy is one
+          commission or payouts (WorkEasy360 decides who earns), custom domains, or the right to create sub-resellers: the hierarchy is one
           level deep.
         </p>
       </div>
@@ -343,7 +343,7 @@ export function TeamStep(props: StepProps) {
       }
     >
       {feedback}
-      <MembersSection partner={props.partner} manage={manage} act={act} busy={busy} />
+      <MembersSection partner={props.partner} manage={manage} act={act} busy={busy} onChanged={props.bump} />
     </Frame>
   );
 }
@@ -447,7 +447,7 @@ export function PortalStep({ ctx }: { ctx: Ctx }) {
           <span>Show support details</span>
         </label>
         <p id={id} className="w360-hint">
-          The sign-in form itself is always Workeasy360&apos;s secure sign-in.
+          The sign-in form itself is always WorkEasy360&apos;s secure sign-in.
         </p>
       </fieldset>
       <PortalPreview data={previewData(ctx)} />

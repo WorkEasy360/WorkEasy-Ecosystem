@@ -30,8 +30,8 @@ from typing import Any
 from django.conf import settings
 from django.contrib.auth import login as django_login
 from django.contrib.auth import logout as django_logout
-from django.http import HttpRequest, JsonResponse
-from django.views.decorators.csrf import ensure_csrf_cookie
+from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 
 from workeasy360.contracts.errors import OrganizationValidationError
@@ -97,11 +97,29 @@ def login_view(request: HttpRequest) -> JsonResponse:
         from workeasy360.platform.administration.staff_users import record_staff_session
 
         record_staff_session(user, signed_in=True, where=connection_facts(request))
+    _apply_remember_me(request, body.get("remember"))
 
     metrics.increment("identity_login_success_total")
     return JsonResponse(
         {"user_id": str(user.id), "email": user.email, "name": user.full_name}
     )
+
+
+def _apply_remember_me(request: HttpRequest, remember: Any) -> None:
+    """The Admin and Partner sign-ins' "Remember me": how long this browser keeps
+    the session (the Partner sign-in's since 2026-11-11, for anyone who signs in).
+
+    Ticked: a persistent cookie and a longer idle window. Unticked: the cookie
+    ends with the browser, and the normal idle window still applies on the
+    server. Not sent at all (the customer and product sign-in forms, any older
+    client): nothing changes. ``SESSION_ABSOLUTE_TIMEOUT`` caps every one of
+    these, because it is enforced from the row's ``created_at`` whatever the
+    cookie says.
+    """
+    if remember is True:
+        request.session.set_expiry(settings.SESSION_REMEMBER_ME_AGE)
+    elif remember is False:
+        request.session.set_expiry(0)
 
 
 def connection_facts(request: HttpRequest) -> dict[str, str]:
@@ -240,14 +258,126 @@ def logout_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True})
 
 
+# --- Switch Account (ADR-066) -------------------------------------------------
+
+#: How long the hand-over to the central sign-in host lives: one redirect.
+SWITCH_HANDLE_MAX_AGE_S = 120
+_SWITCH_SALT = "workeasy360.identity.switch_account"
+
+
+def _switched_login(portal: str) -> str:
+    from workeasy360.contracts.values import portals
+    from workeasy360.platform.identity import portals as portal_links
+
+    if portal not in portals.ACCOUNT_PORTALS:
+        portal = portals.APP
+    return f"{portal_links.account_url(portal)}/login?switched=1"
+
+
+@require_http_methods(["POST"])
+def switch_account_view(request: HttpRequest) -> JsonResponse:
+    """Switch Account: sign out of this portal and of the central product
+    sign-in, then sign in as someone else (the unified-login brief 5.3, 16C).
+
+    Each portal signs in on its own host (ADR-059), so signing out here leaves
+    the ``auth.`` session - the one products are signed in with - untouched:
+    the next product would still open as the previous person. So in
+    multi-portal mode the answer is the central sign-in host's
+    ``/switch-account`` page, carrying a signed hand-over in the URL fragment
+    (never sent to a server by the browser) that names only who is switching.
+    That page ends the ``auth.`` session only if it belongs to the same person
+    (:func:`switch_account_finish_view`) - so no other site can sign anyone out
+    with it - then opens this portal's sign-in page. Session + CSRF, like
+    every session write; idempotent."""
+    from workeasy360.interfaces.api.v1.control_plane_http import limited
+    from workeasy360.platform.identity import portals as portal_links
+
+    portal = portal_links.request_portal(request)
+    target = _switched_login(portal)
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return JsonResponse({"redirect_url": target})
+    blocked = limited(request, "switch_account", user=user)
+    if blocked is not None:
+        return blocked
+    if portal_links.enabled():
+        from urllib.parse import urlencode
+
+        from django.core import signing
+
+        handle = signing.dumps({"u": str(user.pk), "p": portal}, salt=_SWITCH_SALT)
+        target = (
+            f"{portal_links.auth_url()}/switch-account#{urlencode({'handle': handle})}"
+        )
+    sign_out(request)
+    logger.info("identity.switch_account.started", portal=portal)
+    metrics.increment("identity_switch_account_total", step="started")
+    return JsonResponse({"redirect_url": target})
+
+
+@require_http_methods(["POST"])
+def switch_account_finish_view(request: HttpRequest) -> JsonResponse:
+    """The central sign-in host's half of Switch Account: end this host's
+    session when - and only when - it belongs to the person the hand-over
+    names, then send the browser to the sign-in page of the portal the switch
+    started on. Every other case (no session, someone else's session, an
+    expired or forged hand-over) changes nothing and answers the same, so the
+    endpoint is neither an oracle nor a way to sign a stranger out."""
+    from django.core import signing
+
+    from workeasy360.interfaces.api.v1.control_plane_http import limited
+
+    blocked = limited(request, "switch_account")
+    if blocked is not None:
+        return blocked
+    try:
+        body = json_input.loads(request.body or b"{}")
+    except (ValueError, UnicodeDecodeError):
+        body = {}
+    raw = body.get("handle") if isinstance(body, dict) else None
+    named: dict[str, Any] = {}
+    if isinstance(raw, str) and 0 < len(raw) <= 512:
+        try:
+            loaded = signing.loads(
+                raw, salt=_SWITCH_SALT, max_age=SWITCH_HANDLE_MAX_AGE_S
+            )
+        except signing.BadSignature:
+            loaded = None
+        if isinstance(loaded, dict):
+            named = loaded
+    user = getattr(request, "user", None)
+    ended = bool(
+        named
+        and user is not None
+        and user.is_authenticated
+        and str(user.pk) == str(named.get("u") or "")
+    )
+    if ended:
+        sign_out(request)
+    metrics.increment(
+        "identity_switch_account_total", step="central_ended" if ended else "central_kept"
+    )
+    return JsonResponse({"redirect_url": _switched_login(str(named.get("p") or ""))})
+
+
 def sign_out(request: HttpRequest) -> None:
     """The one sign-out: this session and every other session of the same
     sign-in (ADR-043). Also what the access chooser's "use another account"
     and a product's "sign out of Workeasy360 too" do (ADR-044)."""
+    from workeasy360.interfaces.api.guest_session import guest_session_id
     from workeasy360.platform.identity import handoff
     from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
 
     user = getattr(request, "user", None)
+    marker = guest_session_id(request)
+    if user is not None and user.is_authenticated and marker is not None:
+        # A session opened by Login as Guest (ADR-062) shares the Admin's sign-in
+        # id, so that signing out of the Admin ends it. Signing out of *it* ends
+        # that guest view and this session only - never the Admin's own session
+        # (ADR-059: a portal's sign-out is that portal's).
+        _end_guest_session(user, marker)
+        django_logout(request)
+        return
     if user is not None and user.is_authenticated:
         if user.is_staff:
             from workeasy360.platform.administration.staff_users import (
@@ -258,6 +388,20 @@ def sign_out(request: HttpRequest) -> None:
             _end_guest_view(request, user)
         handoff.end_sign_in(user.id, request.session.get(SESSION_SIGN_IN_ID_KEY))
     django_logout(request)
+
+
+def _end_guest_session(user: Any, marker: str) -> None:
+    """Signing out of a guest-only session: its guest view ends, recorded as
+    ``signed_out``. Never blocks the sign-out."""
+    from workeasy360.commercial.partners import guest
+    from workeasy360.platform.authz.control_plane import platform_context
+
+    try:
+        guest.end_session(
+            platform_context(user_id=user.id), marker, end_reason="signed_out"
+        )
+    except Exception:  # the sign-out itself must still happen
+        logger.warning("identity.sign_out.guest_session_end_failed", exc_info=True)
 
 
 def _end_guest_view(request: HttpRequest, user: Any) -> None:
@@ -271,6 +415,7 @@ def _end_guest_view(request: HttpRequest, user: Any) -> None:
         guest.end(
             platform_context(user_id=user.id),
             request.session.get(SESSION_SIGN_IN_ID_KEY),
+            end_reason="signed_out",
         )
     except Exception:  # the sign-out itself must still happen
         logger.warning("identity.sign_out.guest_view_end_failed", exc_info=True)
@@ -296,26 +441,27 @@ def _refused(code: str, status: int) -> JsonResponse:
     return JsonResponse({"code": code}, status=status)
 
 
-def _guest_hand_off(request: HttpRequest) -> int | None:
-    """When this sign-in's guest view ends (epoch seconds), if the staff member
-    may still hold it: a live guest view and the staff partner view grant in
-    force. ``None`` otherwise."""
+def _guest_hand_off(request: HttpRequest) -> Any | None:
+    """This sign-in's live guest view, if the staff member may still hold it
+    (the guest permission in force). ``None`` otherwise. The hand-off is kept,
+    not used (ADR-059); Login as Guest enters through ``guest_enter_view``."""
     from workeasy360.commercial.partners import guest
     from workeasy360.contracts.errors import AccessPolicyDenied, PermissionDenied
-    from workeasy360.interfaces.api.v1.control_plane_http import (
-        live_guest_view,
-        staff_context,
-    )
+    from workeasy360.interfaces.api.v1.control_plane_http import staff_context
     from workeasy360.platform.authz import services as authz
+    from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
 
-    view = live_guest_view(request)
+    user = request.user
+    if not user.is_staff:
+        return None
+    view = guest.current(user.id, request.session.get(SESSION_SIGN_IN_ID_KEY))
     if view is None:
         return None
     try:
-        authz.require(staff_context(request), guest.STAFF_VIEW)
+        authz.require(staff_context(request), guest.STAFF_GUEST)
     except (PermissionDenied, AccessPolicyDenied):
         return None
-    return int(view.expires_at.timestamp())
+    return view
 
 
 @require_http_methods(["POST"])
@@ -358,15 +504,15 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
         # A password sign-in opens the admin portal (owner decision
         # 2026-10-24).
         return _refused("portal_access_denied", 403)
-    guest_until: int | None = None
+    guest_view: Any | None = None
     if portal == portals.PARTNER and not consoles["partner"]:
         # A staff member's Guest login (commercial.partners.guest) is the
         # other way in: a live guest view of *this* sign-in, which only a
         # staff member with the manage grant and a
         # reason could start - and the staff view grant is checked again now. It opens a session and nothing else:
         # every partner request is authorized again, read-only (guest_context).
-        guest_until = _guest_hand_off(request)
-        if guest_until is None:
+        guest_view = _guest_hand_off(request)
+        if guest_view is None:
             return _refused("portal_access_denied", 403)
 
     source = session_public_id(request.session)
@@ -383,10 +529,14 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
     origin = settings.W360_PORTAL_ORIGINS[portal]
     keys = _handed_off_keys()
     auth_state = {k: request.session[k] for k in keys if k in request.session}
-    if guest_until is not None:
-        from workeasy360.platform.identity.sessions import SESSION_GUEST_UNTIL_KEY
+    if guest_view is not None:
+        from workeasy360.platform.identity.sessions import (
+            SESSION_GUEST_SESSION_KEY,
+            SESSION_GUEST_UNTIL_KEY,
+        )
 
-        auth_state[SESSION_GUEST_UNTIL_KEY] = guest_until
+        auth_state[SESSION_GUEST_UNTIL_KEY] = int(guest_view.expires_at.timestamp())
+        auth_state[SESSION_GUEST_SESSION_KEY] = str(guest_view.id)
     code = handoff.issue(
         user=user,
         portal=portal,
@@ -453,9 +603,12 @@ def handoff_redeem_view(request: HttpRequest) -> JsonResponse:
     # belonged to anyone else on this host.
     django_login(request, user, backend="django.contrib.auth.backends.ModelBackend")
     request.session[SESSION_EPOCH_KEY] = user.session_epoch
-    from workeasy360.platform.identity.sessions import SESSION_GUEST_UNTIL_KEY
+    from workeasy360.platform.identity.sessions import (
+        SESSION_GUEST_SESSION_KEY,
+        SESSION_GUEST_UNTIL_KEY,
+    )
 
-    allowed = {*_handed_off_keys(), SESSION_GUEST_UNTIL_KEY}
+    allowed = {*_handed_off_keys(), SESSION_GUEST_UNTIL_KEY, SESSION_GUEST_SESSION_KEY}
     for key, value in redemption.auth_state.items():
         if key in allowed:
             request.session[key] = value
@@ -482,6 +635,253 @@ def handoff_redeem_view(request: HttpRequest) -> JsonResponse:
     response["Cache-Control"] = "no-store"
     _clear_state_cookie(response)
     return response
+
+
+#: Login as Guest's second step (ADR-062): the partner host's own path.
+GUEST_ENTER_PATH = "/api/v1/partner/guest-view/enter"
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def guest_enter_view(request: HttpRequest) -> HttpResponse:
+    """Login as Guest, on the partner portal's host: spend the one-time ticket
+    the Admin was given and open this host's guest-only session (ADR-062).
+
+    The Admin page posts the ticket here in a form body - a top-level
+    navigation from the Admin's origin, so never a URL, a log line or a
+    Referer. CSRF is replaced by what makes this request unforgeable: the
+    ``Origin`` must be the configured Admin origin, and the ticket is random,
+    single use, sixty seconds, bound to one guest view, and stored only as a
+    digest. Refused - one answer for every reason - unless the ticket is good
+    and its staff member is still active staff holding the guest permission.
+
+    The session it opens is the staff member's own identity, never the
+    partner's: no partner password, code or secret is read. It carries the
+    guest view's id and the Admin's sign-in id (so signing out of the Admin
+    ends it), no authentication time (anything that asks for a recent password
+    refuses it), and ends with the view (``GuestSessionMiddleware``).
+    """
+    import uuid
+
+    from django.http import HttpResponseRedirect
+
+    from workeasy360.commercial.partners import guest
+    from workeasy360.contracts.values import portals
+    from workeasy360.platform.authz import services as authz
+    from workeasy360.platform.authz.control_plane import platform_context
+    from workeasy360.platform.identity.models import User
+    from workeasy360.platform.identity.sessions import (
+        SESSION_DEVICE_KEY,
+        SESSION_GUEST_SESSION_KEY,
+        SESSION_GUEST_UNTIL_KEY,
+        SESSION_IP_PREFIX_KEY,
+        SESSION_SIGN_IN_ID_KEY,
+        date_from_sign_in,
+    )
+
+    if not settings.PORTALS_ENABLED:
+        return _refused("not_found", 404)
+    origins = settings.W360_PORTAL_ORIGINS
+    admin_origin = origins[portals.ADMIN]
+
+    def back(outcome: str) -> HttpResponse:
+        # A fixed Admin page from configuration, never the request's.
+        response = HttpResponseRedirect(
+            f"{admin_origin}{guest.DEFAULT_RETURN}?guest={outcome}"
+        )
+        response.status_code = 303
+        response["Cache-Control"] = "no-store"
+        return response
+
+    origin = request.META.get("HTTP_ORIGIN")
+    if origin is None or portals.parse_origin(origin) != portals.parse_origin(
+        admin_origin
+    ):
+        return _refused("csrf_failed", 403)
+    limited = _throttle(
+        request, "guest_enter_ip", rate_limit_identity(client_ip(request))
+    )
+    if limited is not None:
+        return limited
+
+    view = guest.enter(request.POST.get("ticket"))
+    if view is None:
+        metrics.increment("partner_guest_entries_total", result="refused")
+        return back("expired")
+    user = User.objects.filter(id=view.user_id, is_staff=True).first()
+    staff_ctx = platform_context(user_id=view.user_id)
+    if (
+        user is None
+        or not user.is_active
+        or not authz.check(staff_ctx, guest.STAFF_GUEST).allowed
+    ):
+        if user is not None:
+            guest.end_session(staff_ctx, view.id)
+        metrics.increment("partner_guest_entries_total", result="refused")
+        return back("denied")
+
+    # A clean session for the guest view alone: nothing of whatever this
+    # browser had on this host survives, and the key is new (fixation).
+    request.session.flush()
+    django_login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+    request.session[SESSION_EPOCH_KEY] = user.session_epoch
+    request.session[SESSION_SIGN_IN_ID_KEY] = uuid.UUID(str(view.sign_in_id)).hex
+    request.session[SESSION_GUEST_SESSION_KEY] = str(view.id)
+    request.session[SESSION_GUEST_UNTIL_KEY] = int(view.expires_at.timestamp())
+    where = connection_facts(request)
+    request.session[SESSION_IP_PREFIX_KEY] = where["ip_prefix"]
+    request.session[SESSION_DEVICE_KEY] = where["device_label"]
+    from workeasy360.platform.administration.staff_users import record_staff_session
+
+    record_staff_session(user, signed_in=True, where=where)
+    date_from_sign_in(request.session)
+    metrics.increment("partner_guest_entries_total", result="entered")
+    response = HttpResponseRedirect(guest.portal_path(view.partner_id))
+    response.status_code = 303
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+# --- the Store's "My Account" (ADR-065) ------------------------------------------
+
+#: The customer portal's own path that spends an account pass.
+STORE_ACCOUNT_ENTER_PATH = "/api/v1/auth/account-pass/enter"
+
+
+@require_http_methods(["POST"])
+def account_pass_view(request: HttpRequest) -> JsonResponse:
+    """On the Store's host: hand this sign-in to the customer portal (User Admin)
+    for one "My Account" link - ``{next}`` -> ``{action, code}``.
+
+    The Store page posts ``code`` to ``action`` in a form body (a top-level
+    navigation, never a URL). The code is a hand-off (``identity.handoff``): 256
+    random bits stored as a digest, single use, ``PORTAL_HANDOFF_TTL_S`` long,
+    void once the Store sign-in ends or the account signs out everywhere. ``next``
+    is only a path the customer portal serves. It grants nothing: User Admin
+    authorizes every request from live memberships."""
+    from workeasy360.contracts.values import portals
+    from workeasy360.platform.identity import handoff
+    from workeasy360.platform.identity.sessions import (
+        SESSION_SIGN_IN_ID_KEY,
+        session_public_id,
+    )
+
+    if not settings.PORTALS_ENABLED or not settings.W360_PORTAL_ORIGINS.get(
+        portals.STORE
+    ):
+        return _refused("not_found", 404)
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return _refused("login_required", 401)
+    limited = _throttle(request, "handoff_issue", str(user.id))
+    if limited is not None:
+        return limited
+    source = session_public_id(request.session)
+    if source is None:
+        return _refused("login_required", 401)
+    if not request.session.get(SESSION_SIGN_IN_ID_KEY):
+        import uuid
+
+        request.session[SESSION_SIGN_IN_ID_KEY] = uuid.uuid4().hex
+    body = _body(request)
+    origin = settings.W360_PORTAL_ORIGINS[portals.APP]
+    auth_state = {
+        k: request.session[k] for k in _handed_off_keys() if k in request.session
+    }
+    auth_state["via"] = handoff.STORE_HANDOFF_VIA
+    code = handoff.issue(
+        user=user,
+        portal=portals.APP,
+        target_origin=origin,
+        next_path=portals.safe_next(portals.APP, body.get("next")),
+        state=handoff.new_state(),
+        source_session=source,
+        auth_state=auth_state,
+    )
+    metrics.increment(
+        "identity_portal_handoffs_total", portal="app", result="pass_issued"
+    )
+    response = JsonResponse(
+        {"action": f"{origin}{STORE_ACCOUNT_ENTER_PATH}", "code": code}
+    )
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def account_pass_enter_view(request: HttpRequest) -> HttpResponse:
+    """On the customer portal's host: spend an account pass from the Store and open
+    this host's own session for the same sign-in (ADR-065).
+
+    CSRF is replaced by what makes this request unforgeable: the ``Origin`` must be
+    the configured Store origin (so another site cannot sign a visitor into
+    someone else's account here - login CSRF), and the pass is random, single use,
+    short-lived and stored only as a digest. Refused - one answer for every reason
+    - with a 303 to this portal's own sign-in page."""
+    from django.http import HttpResponseRedirect
+
+    from workeasy360.contracts.values import portals
+    from workeasy360.platform.identity import handoff
+    from workeasy360.platform.identity.sessions import (
+        SESSION_DEVICE_KEY,
+        SESSION_IP_PREFIX_KEY,
+        date_from_sign_in,
+    )
+
+    origins = settings.W360_PORTAL_ORIGINS
+    if not settings.PORTALS_ENABLED or not origins.get(portals.STORE):
+        return _refused("not_found", 404)
+
+    def go(path: str) -> HttpResponse:
+        # A path on this host from the allowlist, never the request's.
+        response = HttpResponseRedirect(f"{origins[portals.APP]}{path}")
+        response.status_code = 303
+        response["Cache-Control"] = "no-store"
+        return response
+
+    origin = request.META.get("HTTP_ORIGIN")
+    if origin is None or portals.parse_origin(origin) != portals.parse_origin(
+        origins[portals.STORE]
+    ):
+        return _refused("csrf_failed", 403)
+    limited = _throttle(
+        request, "handoff_redeem_ip", rate_limit_identity(client_ip(request))
+    )
+    if limited is not None:
+        return limited
+    redemption = handoff.redeem_pass(
+        code=request.POST.get("code"), host=request.get_host().lower()
+    )
+    if redemption is None:
+        metrics.increment(
+            "identity_portal_handoffs_total", portal="app", result="pass_refused"
+        )
+        return go("/login")
+    user = redemption.user
+    # A clean session for this person alone (fixation): whoever was signed in
+    # on this host before is signed out here.
+    request.session.flush()
+    django_login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+    request.session[SESSION_EPOCH_KEY] = user.session_epoch
+    allowed = set(_handed_off_keys())
+    for key, value in redemption.auth_state.items():
+        if key in allowed:
+            request.session[key] = value
+    where = connection_facts(request)
+    request.session[SESSION_IP_PREFIX_KEY] = where["ip_prefix"]
+    request.session[SESSION_DEVICE_KEY] = where["device_label"]
+    # This session ends when the Store sign-in it came from does.
+    date_from_sign_in(request.session)
+    metrics.increment(
+        "identity_portal_handoffs_total", portal="app", result="pass_entered"
+    )
+    return go(portals.safe_next(portals.APP, redemption.next_path))
+
+
+#: CSRF-exempt because a credential authenticates them, not the session cookie
+#: (tests/architecture: every exempt view must say so).
+TICKET_VIEWS = (guest_enter_view, account_pass_enter_view)
 
 
 def _clear_state_cookie(response: JsonResponse) -> None:

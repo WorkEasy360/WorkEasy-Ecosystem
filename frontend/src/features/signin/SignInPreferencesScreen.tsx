@@ -13,6 +13,7 @@ import {
   type SignInPreferenceValue,
 } from "@/lib/api/signIn";
 import { PageHeader, Panel } from "@/features/console/consoleUi";
+import { FormPopup } from "@/features/controlplane/Modal";
 import { DEFAULT_LABELS, overrideLabel, whatHappens } from "./signInCopy";
 import styles from "./SignInPreferences.module.css";
 
@@ -26,15 +27,17 @@ type Load = { status: "loading" } | { status: "error"; signedOut: boolean } | { 
  * The server decides what each product offers (`choices`) and what therefore
  * happens (`effective`); this screen only offers those choices and shows the
  * saved answer. Changes take effect the next time a product is opened -
- * nothing is signed out.
+ * nothing is signed out. The page shows what is saved; the choices are made in
+ * an Edit popup (2026-11-05, every form in a popup).
  */
 export function SignInPreferencesScreen() {
   const [load, setLoad] = useState<Load>({ status: "loading" });
-  const [draftDefault, setDraftDefault] = useState<EffectiveSignIn>("auto_sso");
+  const [draftDefault, setDraftDefault] = useState<EffectiveSignIn>("ask_once");
   const [draftOverrides, setDraftOverrides] = useState<Record<string, SignInPreferenceValue>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const legendId = useId();
+  const noteId = useId();
 
   const apply = useCallback((data: SignInPreferences) => {
     setLoad({ status: "ready", data });
@@ -80,20 +83,20 @@ export function SignInPreferencesScreen() {
   if (Object.keys(productChanges).length > 0) changes.products = productChanges;
   const dirty = Object.keys(changes).length > 0;
 
-  async function save(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function save() {
     if (!dirty) return;
     setBusy(true);
     setMessage(null);
     try {
       apply(await saveSignInPreferences(changes));
-      setMessage({ tone: "ok", text: "Saved. This applies the next time you open a product." });
     } catch (err) {
       const detail = err instanceof ApiError && typeof err.body === "object" && err.body !== null ? (err.body as { detail?: string }).detail : undefined;
-      setMessage({ tone: "error", text: detail ?? "Couldn't save your sign-in preferences. Try again in a moment." });
+      // The popup's error line reads an ApiError's `detail`: the same words as before.
+      throw new ApiError(400, { detail: detail ?? "Couldn't save your sign-in preferences. Try again in a moment." });
     } finally {
       setBusy(false);
     }
+    return "Saved. This applies the next time you open a product.";
   }
 
   async function reset() {
@@ -109,15 +112,50 @@ export function SignInPreferencesScreen() {
     }
   }
 
+  const savedDefault = DEFAULT_LABELS[data.default]?.label ?? data.default;
+
   return (
     <div className={styles.stack}>
       <PageHeader
         title="Sign-in preferences"
         lead="Choose how Workeasy360 signs you in to its products. This is your own setting, in every organization. You can change it anytime."
       />
-      <form onSubmit={save} className={styles.stack} aria-describedby={legendId}>
-        <Panel title="Workeasy360 product sign-in">
-          <fieldset className={styles.fieldset}>
+      <Panel title="Workeasy360 product sign-in">
+        <p>
+          <span className={styles.productName}>Your default for every product:</span> {savedDefault}
+        </p>
+        <p className={styles.muted}>Products added to Workeasy360 later use this setting too, unless you choose otherwise for them.</p>
+      </Panel>
+
+      <Panel title="Product overrides">
+        {data.products.length === 0 ? (
+          <p>No products are connected to Workeasy360 sign-in yet.</p>
+        ) : (
+          <ul className={styles.products}>
+            {data.products.map((product) => (
+              <SavedProductRow key={product.product_code} product={product} />
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      <div className={styles.actions}>
+        <FormPopup
+          label="Edit sign-in preferences"
+          title="Edit sign-in preferences"
+          size="lg"
+          columns={1}
+          submitLabel="Save changes"
+          canSubmit={dirty && !busy}
+          disabled={busy}
+          onOpen={() => {
+            setMessage(null);
+            setDraftDefault(data.default);
+            setDraftOverrides(Object.fromEntries(data.products.map((p) => [p.product_code, p.override])));
+          }}
+          onSubmit={save}
+        >
+          <fieldset className={styles.fieldset} aria-describedby={noteId}>
             <legend id={legendId} className={styles.legend}>
               Your default for every product
             </legend>
@@ -132,46 +170,56 @@ export function SignInPreferencesScreen() {
                 />
               ))}
             </div>
+            <p id={noteId} className={styles.muted}>Products added to Workeasy360 later use this setting too, unless you choose otherwise for them below.</p>
           </fieldset>
-          <p className={styles.muted}>Products added to Workeasy360 later use this setting too, unless you choose otherwise for them below.</p>
-        </Panel>
-
-        <Panel title="Product overrides">
-          <p className={styles.muted}>
-            Choose differently for one product. &ldquo;Use my default&rdquo; follows the setting above. A product that cannot sign you in with
-            Workeasy360 has nothing to choose.
-          </p>
-          {data.products.length === 0 ? (
-            <p>No products are connected to Workeasy360 sign-in yet.</p>
-          ) : (
-            <ul className={styles.products}>
-              {data.products.map((product) => (
-                <ProductRow
-                  key={product.product_code}
-                  product={product}
-                  value={draftOverrides[product.product_code] ?? product.override}
-                  defaultValue={draftDefault}
-                  disabled={busy}
-                  onChange={(next) => setDraftOverrides((cur) => ({ ...cur, [product.product_code]: next }))}
-                />
-              ))}
-            </ul>
+          {data.products.length > 0 && (
+            <fieldset className={styles.fieldset}>
+              <legend className={styles.legend}>Product overrides</legend>
+              <p className={styles.muted}>
+                Choose differently for one product. &ldquo;Use my default&rdquo; follows the setting above. A product that cannot sign you in with
+                Workeasy360 has nothing to choose.
+              </p>
+              <ul className={styles.products}>
+                {data.products.map((product) => (
+                  <ProductRow
+                    key={product.product_code}
+                    product={product}
+                    value={draftOverrides[product.product_code] ?? product.override}
+                    defaultValue={draftDefault}
+                    disabled={busy}
+                    onChange={(next) => setDraftOverrides((cur) => ({ ...cur, [product.product_code]: next }))}
+                  />
+                ))}
+              </ul>
+            </fieldset>
           )}
-        </Panel>
-
-        <div className={styles.actions}>
-          <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !dirty}>
-            {busy ? "Saving…" : "Save changes"}
-          </button>
-          <button type="button" className="w360-btn w360-btn-secondary" disabled={busy} onClick={() => void reset()}>
-            Reset all to default
-          </button>
-        </div>
-        <p role="status" aria-live="polite" className={message?.tone === "error" ? styles.error : styles.ok}>
-          {message?.text ?? ""}
-        </p>
-      </form>
+        </FormPopup>
+        <button type="button" className="w360-btn w360-btn-secondary" disabled={busy} onClick={() => void reset()}>
+          Reset all to default
+        </button>
+      </div>
+      <p role="status" aria-live="polite" className={message?.tone === "error" ? styles.error : styles.ok}>
+        {message?.text ?? ""}
+      </p>
     </div>
+  );
+}
+
+/** A product's saved sign-in, as text on the page (it is changed in the popup). */
+function SavedProductRow({ product }: { product: SignInPreferences["products"][number] }) {
+  const name = product.name || product.display_name;
+  return (
+    <li className={styles.product}>
+      <span className={styles.glyph} aria-hidden="true">
+        {productIconKnown(product.icon) ? <ProductIcon icon={product.icon} size={20} /> : name.slice(0, 1)}
+      </span>
+      <div className={styles.productBody}>
+        <span className={styles.productName}>{name}</span>
+        <p className={styles.muted}>
+          {product.choices.length > 0 ? `Saved: ${whatHappens(product, name).toLowerCase()}.` : "Separate product sign-in required."}
+        </p>
+      </div>
+    </li>
   );
 }
 
@@ -195,7 +243,7 @@ function DefaultOption({
       <label htmlFor={id} className={styles.optionText}>
         <span className={styles.optionLabel}>
           {copy.label}
-          {value === "auto_sso" && <span className={styles.recommended}> (recommended)</span>}
+          {value === "ask_once" && <span className={styles.recommended}> (recommended)</span>}
         </span>
         <span id={hintId} className={styles.optionHint}>
           {copy.hint}

@@ -79,8 +79,9 @@ def host_client():
 
 @pytest.fixture
 def sign_in(portals_on):
-    """Sign ``user`` in on the central sign-in host; returns that host's
-    client."""
+    """Sign ``user`` in on the central sign-in host (the product sign-in's
+    host, and where a hand-off already in flight was issued); returns that
+    host's client."""
 
     def make(user):
         auth = HostClient("auth")

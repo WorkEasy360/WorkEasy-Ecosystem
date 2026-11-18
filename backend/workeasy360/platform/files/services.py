@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import timedelta
-from typing import BinaryIO, Final
+from typing import Any, BinaryIO, Final
 from uuid import UUID
 
 from django.conf import settings
@@ -393,9 +393,64 @@ def scan_now(file_id: UUID) -> None:
     not in quarantine is left alone: promoting an arbitrary file to ``clean``
     from here would bypass the upload flow.
     """
+    from workeasy360.platform.files import scanning
     from workeasy360.platform.files.models import File
 
     record = File.objects.get(id=file_id)
     if record.status != FileStatus.QUARANTINED.value:
         return
+    scanner = scanning.configured_scanner()
+    if scanner is not None:
+        try:
+            result = scanner.scan(record.storage_key)
+        except scanning.ScannerUnavailable as exc:
+            # No verdict is not a clean verdict: the file stays quarantined and
+            # ``rescan_quarantined`` tries again (2026-11-10).
+            _note_waiting(record, scanning.SCAN_ERROR)
+            logger.warning(
+                "file.scan_unavailable", file_id=str(file_id), reason=str(exc)[:120]
+            )
+            return
+        mark_scanned(file_id, result)
+        return
+    if scanning.is_strict(record.module):
+        # A strict module (KYC documents) is never served on the allowlist check
+        # alone: without a real scanner the file waits in quarantine.
+        _note_waiting(record, scanning.NO_SCANNER)
+        return
     mark_scanned(file_id, NullScanner().scan(record.storage_key))
+
+
+def _note_waiting(record: Any, scanner: str) -> None:
+    """Say why a quarantined file is still waiting, without changing its status."""
+    record.scanner = scanner
+    record.save(update_fields=["scanner", "updated_at"])
+
+
+def rescan_waiting(*, limit: int = 200) -> dict[str, int]:
+    """Scan again the quarantined files of strict modules that are waiting for a
+    verdict, in the current organization's database scope. Returns counts."""
+    from workeasy360.platform.files import scanning
+    from workeasy360.platform.files.models import File
+
+    counts = {"clean": 0, "infected": 0, "waiting": 0}
+    if scanning.configured_scanner() is None:
+        return counts
+    rows = list(
+        File.objects.filter(
+            status=FileStatus.QUARANTINED.value,
+            scanner__in=[scanning.NO_SCANNER, scanning.SCAN_ERROR],
+        ).values_list("id", "module")[:limit]
+    )
+    for file_id, module in rows:
+        if not scanning.is_strict(module):
+            continue
+        scan_now(file_id)
+        status = File.objects.filter(id=file_id).values_list("status", flat=True).first()
+        if status == FileStatus.CLEAN.value:
+            counts["clean"] += 1
+        elif status == FileStatus.INFECTED.value:
+            counts["infected"] += 1
+        else:
+            counts["waiting"] += 1
+    return counts

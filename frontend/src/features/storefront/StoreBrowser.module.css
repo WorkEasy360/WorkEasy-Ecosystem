@@ -39,6 +39,21 @@
   color: var(--w360-text-muted);
 }
 
+/* Inside the Partner panel and the User Admin Panel (2026-11-11): the Store
+   page's header on the consoles' scale, like every other console page. The
+   public store and the Admin's customer preview keep the storefront's own. */
+:global(:root[data-console="partner"]) .pageTitle,
+:global(:root[data-console="user"]) .pageTitle {
+  font-size: var(--w360-fs-title);
+  font-weight: 600;
+  line-height: 32px;
+}
+
+:global(:root[data-console="partner"]) .lead,
+:global(:root[data-console="user"]) .lead {
+  font-size: var(--w360-fs-body);
+}
+
 .headActions {
   display: flex;
   flex-wrap: wrap;

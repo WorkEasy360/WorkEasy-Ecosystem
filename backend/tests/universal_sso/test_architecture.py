@@ -137,6 +137,8 @@ def test_passwords_never_cross_the_product_boundary_from_the_frontend():
     allowed = {
         "/api/v1/auth/login",
         "/api/v1/auth/password",
+        # ADR-066: the current password confirms a change of sign-in email.
+        "/api/v1/auth/email",
         "/api/v1/public/signup",
         "/api/v1/public/password/reset",
         "/api/v1/public/invitations/accept",

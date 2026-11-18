@@ -43,6 +43,11 @@ class Choice(StrEnum):
     PRODUCT = "product"
     #: Sign out of Workeasy360 and sign in as someone else.
     SWITCH_ACCOUNT = "switch_account"
+    #: Sign out of Workeasy360 and register a new account (ADR-066). The
+    #: request is spent: a brand-new account holds no entitlement yet, so it
+    #: could only ever be refused - the person continues at the sign-up page
+    #: and, after it, the product's Store page.
+    CREATE_ACCOUNT = "create_account"
     #: Go back to the product without signing in (``access_denied``).
     CANCEL = "cancel"
 
@@ -94,11 +99,16 @@ class ChoiceOutcome:
     choice: Choice
     #: ``workeasy360``: this token is now resumable. ``switch_account``: a
     #: fresh, unbound token to resume after the next sign-in.
+    #: ``create_account`` sets nothing: the caller sends the browser to the
+    #: configured sign-up page.
     resume_token: str = ""
     #: ``product``: the product's registered sign-in page.
     product_login_url: str = ""
     #: ``cancel``: the verified request, for the ``access_denied`` redirect.
     request: authorization.AuthorizationRequest | None = None
+    #: ``create_account``: the product being opened, so the sign-up can
+    #: continue at that product's Store page.
+    product_code: str = ""
 
 
 def answer(
@@ -161,6 +171,13 @@ def answer(
         # next resumes it, and ``resume`` runs every check for *them*.
         fresh = authorization.create_pending(parked.request)
         outcome = ChoiceOutcome(choice=picked, resume_token=fresh.token)
+    elif picked is Choice.CREATE_ACCOUNT:
+        # Spent, never re-parked: nothing of this request - its organization
+        # least of all - may follow the browser into a sign-up for somebody
+        # else. The caller builds the sign-up destination from configuration.
+        if not authorization.claim_pending(parked):
+            return None
+        outcome = ChoiceOutcome(choice=picked, product_code=product_code)
     else:
         if not authorization.claim_pending(parked):
             return None

@@ -44,6 +44,7 @@ from django.utils import timezone
 
 from workeasy360.commercial.commissions import domain, policy, selectors
 from workeasy360.commercial.partners import access, capabilities, promotion
+from workeasy360.commercial.partners import kyc as partner_kyc
 from workeasy360.commercial.partners import selectors as partner_selectors
 from workeasy360.contracts.enums import (
     GrantStatus,
@@ -574,10 +575,16 @@ def capture_referral(
     return capture[0] if capture is not None else None
 
 
+#: ADR-063: where a link may be asked to open instead of its own page - a fixed
+#: list of platform paths, never a URL ("Copy Store referral link").
+LANDINGS: Final = {"store": "/store"}
+
+
 def capture_visit(
-    raw_code: Any, *, visitor_id: Any = None, held_token: Any = None
+    raw_code: Any, *, visitor_id: Any = None, held_token: Any = None, to: Any = None
 ) -> tuple[str, str] | None:
-    """:func:`capture_referral` plus the link's destination path.
+    """:func:`capture_referral` plus the link's destination path. ``to`` may
+    name one of ``LANDINGS`` (the Store); attribution is the same either way.
 
     ``held_token`` is the referral token the browser already keeps. While it
     is live, it is what comes back - first touch - and this click is recorded
@@ -595,6 +602,8 @@ def capture_visit(
     if (
         row is None
         or row.partner.status != PartnerStatus.ACTIVE.value
+        # ADR-063: no attribution for a partner its KYC does not clear.
+        or not partner_kyc.cleared(row.partner_id, status=row.partner.status)
         or capabilities.REFERRAL_CREATE
         not in partner_selectors.active_capabilities(row.partner_id)
         or (row.product_code and not _promotion_allows(row))
@@ -615,7 +624,8 @@ def capture_visit(
         visitor_hash=_hash(visitor) if 16 <= len(visitor) <= 64 else "",
     )
     metrics.increment(REFERRAL_EVENTS, outcome="kept" if held else "captured")
-    return held or token, destination(row)
+    landing = LANDINGS.get(str(to or ""))
+    return held or token, landing or destination(row)
 
 
 def _promotion_allows(code: Any) -> bool:
@@ -739,6 +749,9 @@ def convert_referral(*, user_id: UUID, token: Any, organization_id: UUID) -> boo
             or referral.status != ReferralStatus.CAPTURED.value
             or referral.expires_at <= now
             or referral.partner.status != PartnerStatus.ACTIVE.value
+            or not partner_kyc.cleared(
+                referral.partner_id, status=referral.partner.status
+            )
             or partner_selectors.has_been_member(referral.partner_id, user_id)
         ):
             return False

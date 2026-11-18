@@ -1073,6 +1073,7 @@ def test_every_session_authenticated_write_is_csrf_protected():
     API is a browser-reachable write with ambient authority and no
     protection - which is the bug, not the pattern.
     """
+    from workeasy360.interfaces.api.v1.auth_views import TICKET_VIEWS
     from workeasy360.interfaces.api.v1.ecosystem_views import CREDENTIALED_VIEWS
     from workeasy360.interfaces.api.v1.partner_api_views import (
         CREDENTIALED_VIEWS as PARTNER_KEY_VIEWS,
@@ -1082,9 +1083,17 @@ def test_every_session_authenticated_write_is_csrf_protected():
     # Phase 8 extension: payment provider callbacks, authenticated by the
     # provider's signature over the raw body - a credential, not a cookie.
     # ADR-046: the partner API authenticates by a scoped bearer key, read-only.
+    # ADR-062: Login as Guest's entry authenticates by a one-time ticket and an
+    # exact Origin, and replaces whatever session the browser had
+    # (tests/guest_login/test_guest_entry.py proves a cookie alone gets nothing).
     allowed = {
         view.__name__
-        for view in (*CREDENTIALED_VIEWS, *SIGNED_WEBHOOK_VIEWS, *PARTNER_KEY_VIEWS)
+        for view in (
+            *CREDENTIALED_VIEWS,
+            *SIGNED_WEBHOOK_VIEWS,
+            *PARTNER_KEY_VIEWS,
+            *TICKET_VIEWS,
+        )
     }
     offenders = []
     api_root = PACKAGE / "interfaces"

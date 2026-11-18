@@ -97,8 +97,8 @@ describe("channel manager", () => {
     });
     const { container } = shell(<ChannelManager />);
     const table = await screen.findByRole("table", { name: "Channels" });
-    expect(within(table).getByText("needs setup")).toBeInTheDocument();
-    expect(within(table).getByText("not available")).toBeInTheDocument();
+    expect(within(table).getByText("Needs setup")).toBeInTheDocument();
+    expect(within(table).getByText("Not available")).toBeInTheDocument();
     expect(within(table).queryByText("connected")).not.toBeInTheDocument();
     expect(within(table).getByRole("link", { name: "Set the sender" })).toHaveAttribute("href", `/partner/${ID}/brand-settings`);
     await expectNoViolations(container);
@@ -154,11 +154,16 @@ describe("API key manager", () => {
     });
     shell(<ApiKeys />);
     await screen.findByRole("table", { name: "Your API keys" });
-    fireEvent.change(screen.getByLabelText("Key name"), { target: { value: "Sync" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: /Read customers/ }));
-    fireEvent.change(screen.getByLabelText("Expires after"), { target: { value: "30" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create key" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Create an API key" }));
+    const popup = screen.getByRole("dialog", { name: "Create an API key" });
+    fireEvent.change(within(popup).getByLabelText("Key name"), { target: { value: "Sync" } });
+    expect(within(popup).getByRole("button", { name: "Create key" })).toBeDisabled();
+    fireEvent.click(within(popup).getByRole("checkbox", { name: /Read customers/ }));
+    fireEvent.change(within(popup).getByLabelText("Expires after"), { target: { value: "30" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Create key" }));
     expect(await screen.findByTestId("new-secret")).toHaveTextContent(SECRET);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("Sync was created.")).toBeInTheDocument();
     const create = calls.find((c) => c.key === `POST ${API}/api-keys`)!;
     // The browser names a label, scopes it picked from a list and an expiry from a list: nothing else.
     expect(create.body).toEqual({ name: "Sync", scopes: ["customers.read"], expires_in_days: 30 });
@@ -192,7 +197,7 @@ describe("API key manager", () => {
     mockApi({ ...BASE, [`GET ${API}/api-keys`]: [ok({ ...OVERVIEW, can_manage: false })] });
     shell(<ApiKeys />);
     await screen.findByRole("table", { name: "Your API keys" });
-    expect(screen.queryByRole("button", { name: "Create key" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create an API key/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Rotate|Revoke/ })).not.toBeInTheDocument();
   });
 
@@ -282,11 +287,32 @@ describe("support manager", () => {
   it("prepares an email in the person's own mail app and sends nothing itself", async () => {
     const calls = mockApi({ ...BASE, [`GET ${API}/support`]: [ok(SUPPORT)] });
     shell(<Support />);
-    fireEvent.change(await screen.findByLabelText("Subject"), { target: { value: "Payout question" } });
-    fireEvent.change(screen.getByLabelText("What do you need help with?"), { target: { value: "Where is my payout?" } });
-    expect(screen.getByRole("button", { name: "Prepare email" })).toBeEnabled();
+    fireEvent.click(await screen.findByRole("button", { name: "Prepare an email to support" }));
+    const popup = screen.getByRole("dialog", { name: "Send a support request" });
+    expect(within(popup).getByRole("button", { name: "Prepare email" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Subject"), { target: { value: "Payout question" } });
+    fireEvent.change(within(popup).getByLabelText("What do you need help with?"), { target: { value: "Where is my payout?" } });
+    expect(within(popup).getByRole("button", { name: "Prepare email" })).toBeEnabled();
     // Nothing but the page's own reads went to the server.
     expect(calls.every((c) => c.key.startsWith("GET"))).toBe(true);
+  });
+
+  it("sends a request from its popup and closes it, with the subject, message and priority only", async () => {
+    const calls = mockApi({
+      ...BASE,
+      [`GET ${API}/support`]: [ok({ ...SUPPORT, can_send: true })],
+      [`POST ${API}/support`]: [ok({ sent: true, reference: "SR-1" })],
+    });
+    shell(<Support />);
+    fireEvent.click(await screen.findByRole("button", { name: "+ New support request" }));
+    const popup = screen.getByRole("dialog", { name: "Send a support request" });
+    fireEvent.change(within(popup).getByLabelText("Subject"), { target: { value: "Payout question" } });
+    fireEvent.change(within(popup).getByLabelText("Priority"), { target: { value: "high" } });
+    fireEvent.change(within(popup).getByLabelText("What do you need help with?"), { target: { value: "Where is my payout?" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Send request" }));
+    expect(await screen.findByText(/Request sent to Workeasy360 support/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.find((c) => c.key === `POST ${API}/support`)!.body).toMatchObject({ subject: "Payout question", message: "Where is my payout?", priority: "high" });
   });
 
   it("refuses to link an address that is not https", async () => {
@@ -462,7 +488,7 @@ describe("plans & add-ons and payments", () => {
     });
     shell(<Payments />);
     const tabs = await screen.findByRole("navigation", { name: "Sections" });
-    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["Orders", "Commissions", "Balance"]);
+    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["Orders", "Commissions", "Earnings balance"]);
     expect(within(tabs).getByRole("link", { name: "Orders" })).toHaveAttribute("aria-current", "page");
   });
 });
@@ -490,7 +516,7 @@ describe("the team", () => {
     const self = within(table).getByText("owner@acme.example.com").closest("tr")!;
     expect(within(self).queryByRole("button", { name: "Suspend" })).not.toBeInTheDocument();
     const paused = within(table).getByText("pat@acme.example.com").closest("tr")!;
-    expect(within(paused).getByText("suspended")).toBeInTheDocument();
+    expect(within(paused).getByText("Suspended")).toBeInTheDocument();
     expect(within(paused).queryByRole("combobox")).not.toBeInTheDocument(); // no role change while paused
     fireEvent.click(within(within(table).getByText("sam@acme.example.com").closest("tr")!).getByRole("button", { name: "Suspend" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${API}/members/m2/suspend`)).toBe(true));
@@ -536,9 +562,14 @@ describe("appearance", () => {
     // No free-text styling control of any kind.
     expect(container.querySelector("textarea")).toBeNull();
     expect(screen.queryByLabelText(/css|javascript|script|html/i)).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Primary colour"), { target: { value: "#1a56db" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save theme tokens" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit theme tokens" }));
+    const popup = screen.getByRole("dialog", { name: "Edit theme tokens" });
+    expect(popup.querySelector("textarea")).toBeNull();
+    fireEvent.change(within(popup).getByLabelText("Primary colour"), { target: { value: "#1a56db" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save theme tokens" }));
     await waitFor(() => expect(calls.some((c) => c.key === `PUT ${API}/branding`)).toBe(true));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText("Theme tokens saved.")).toBeInTheDocument();
     const body = calls.find((c) => c.key === `PUT ${API}/branding`)!.body as Record<string, unknown>;
     expect(Object.keys(body).sort()).toEqual(["accent_color", "brand_name", "expected_version", "support_email", "support_url", "theme"]);
     expect(Object.keys(body.theme as object).sort()).toEqual(["accent", "border", "on_primary", "on_surface", "primary", "surface"]);
@@ -550,9 +581,11 @@ describe("appearance", () => {
   it("refuses to save colours whose text would be unreadable", async () => {
     mockApi({ ...BASE, [`GET ${API}/branding`]: [ok({ brand: BRAND })], [`GET ${API}/features`]: [ok(FEATURES)] });
     shell(<Appearance />);
-    fireEvent.change(await screen.findByLabelText("Text on primary"), { target: { value: "#0b8244" } });
-    expect(screen.getByText(/too low/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save theme tokens" })).toBeDisabled();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit theme tokens" }));
+    const popup = screen.getByRole("dialog", { name: "Edit theme tokens" });
+    fireEvent.change(within(popup).getByLabelText("Text on primary"), { target: { value: "#0b8244" } });
+    expect(within(popup).getByText(/too low/)).toBeInTheDocument();
+    expect(within(popup).getByRole("button", { name: "Save theme tokens" })).toBeDisabled();
   });
 
   it("computes contrast the WCAG way", () => {

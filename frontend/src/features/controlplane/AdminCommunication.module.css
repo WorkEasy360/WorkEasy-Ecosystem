@@ -1,0 +1,15 @@
+/* Super Admin → Email templates (2026-11-07 design system). Tokens only. */
+
+.group {
+  display: grid;
+  gap: var(--w360-space-3);
+  min-width: 0;
+}
+
+.description {
+  display: block;
+  max-width: 60ch;
+  color: var(--w360-text-secondary);
+  line-height: 20px;
+  padding-block: var(--w360-space-2);
+}

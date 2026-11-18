@@ -1,20 +1,15 @@
 "use client";
 
 import { Suspense } from "react";
-import { useSearchParams } from "next/navigation";
 import { Users } from "@/features/controlplane/AdminUsers";
+import { LoadingBlock } from "@/features/controlplane/kit";
 
-/** Suspense: the page reads a search from the address (the console's search box). */
+/** Suspense: the list reads its filters from the address (a search from the
+ * console's search box, a segment from a link) and writes them back there. */
 export default function Page() {
   return (
-    <Suspense fallback={<p aria-live="polite">Loading users…</p>}>
-      <UsersFromAddress />
+    <Suspense fallback={<LoadingBlock what="users" />}>
+      <Users />
     </Suspense>
   );
-}
-
-function UsersFromAddress() {
-  const q = (useSearchParams().get("q") ?? "").trim().slice(0, 80);
-  // A new search from the box replaces the page's own state.
-  return <Users key={q} initialQuery={q} />;
 }

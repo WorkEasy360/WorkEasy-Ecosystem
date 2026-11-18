@@ -65,6 +65,23 @@ class BillingAccount(TenantScopedModel):
     #: validation belongs to the tax service at invoicing time.
     tax_reference = models.CharField(max_length=64, blank=True, default="")
 
+    #: The billing profile (User Admin Panel, 2026-11-11): who the invoice is made
+    #: out to and where. Shown on the customer's Billing Profile and edited there by
+    #: a billing manager. Plain text the customer entered: it never chooses a price
+    #: book - ``billing_region`` below stays Workeasy360's to set.
+    legal_name = models.CharField(max_length=200, blank=True, default="", db_default="")
+    address_line1 = models.CharField(
+        max_length=200, blank=True, default="", db_default=""
+    )
+    address_line2 = models.CharField(
+        max_length=200, blank=True, default="", db_default=""
+    )
+    city = models.CharField(max_length=100, blank=True, default="", db_default="")
+    state = models.CharField(max_length=100, blank=True, default="", db_default="")
+    postal_code = models.CharField(max_length=20, blank=True, default="", db_default="")
+    #: ISO 3166-1 alpha-2, or empty.
+    country = models.CharField(max_length=2, blank=True, default="", db_default="")
+
     #: Derived from the verified billing address, never from IP or locale, and
     #: used to select a regional price book.
     billing_region = models.CharField(max_length=16, blank=True, default="")

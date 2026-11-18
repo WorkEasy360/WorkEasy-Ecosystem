@@ -111,7 +111,7 @@ def invite_ttl() -> timedelta:
 
 
 def _url(token: str) -> str:
-    return f"{portal_links.auth_url()}/owner-invitations/accept#token={token}"
+    return f"{portal_links.account_url()}/owner-invitations/accept#token={token}"
 
 
 def public_state(invite: Any, now: Any | None = None) -> dict[str, Any]:

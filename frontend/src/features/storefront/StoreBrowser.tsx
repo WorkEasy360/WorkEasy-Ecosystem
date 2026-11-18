@@ -399,6 +399,9 @@ export interface StoreBrowserProps<C, P extends StoreBrowsePage<C>> {
   start?: StoreStart;
   /** No search box beside the title - the page's header has one. */
   hideSearch?: boolean;
+  /** 2 when the browser sits inside a page that has its own h1 (the Super
+   * Admin's customer preview); 1 otherwise. */
+  titleLevel?: 1 | 2;
 }
 
 type Result<P> = { stamp: string; page?: P; error?: string; forbidden?: boolean };
@@ -416,7 +419,9 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
   forbidden,
   start,
   hideSearch = false,
+  titleLevel = 1,
 }: StoreBrowserProps<C, P>) {
+  const Title = titleLevel === 2 ? "h2" : "h1";
   const [search, setSearch] = useState(start?.q ?? "");
   const q = useDebounced(search.trim(), 250);
   const [f, setF] = useState<Filters>(() => ({
@@ -558,7 +563,7 @@ export function StoreBrowser<C, P extends StoreBrowsePage<C>>({
     <div className={styles.page}>
       <div className={styles.head}>
         <div className={styles.headText}>
-          <h1 className={styles.pageTitle}>{title}</h1>
+          <Title className={styles.pageTitle}>{title}</Title>
           <p className={styles.lead}>{lead}</p>
         </div>
         {(!hideSearch || headActions) && (

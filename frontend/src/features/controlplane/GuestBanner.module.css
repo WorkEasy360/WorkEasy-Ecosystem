@@ -1,0 +1,45 @@
+/* The guest session banner (Login as Guest): held at the top of the page, under
+   the top bar, while the page scrolls - so the way out is always in view. */
+.banner {
+  position: sticky;
+  top: 56px;
+  z-index: 10;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-3);
+  padding: 10px 14px;
+  border: 1px solid var(--w360-info);
+  box-shadow: var(--w360-shadow-sm, 0 1px 2px rgb(0 0 0 / 8%));
+}
+
+/* The console look's top bar is 64px tall. */
+:global([data-variant="admin"]) .banner {
+  top: 64px;
+}
+
+.text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px var(--w360-space-2);
+  min-width: 0;
+  flex: 1 1 24rem;
+}
+
+.type {
+  font-weight: 600;
+}
+
+.detail {
+  flex-basis: 100%;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+}
+
+.problem {
+  flex-basis: 100%;
+}

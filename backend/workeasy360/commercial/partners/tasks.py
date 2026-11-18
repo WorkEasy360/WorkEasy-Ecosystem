@@ -1,4 +1,5 @@
-"""Scheduled partner work: custom-domain control re-verification."""
+"""Scheduled partner work: custom-domain control re-verification, and the
+end of guest views that ran out (ADR-062)."""
 
 from __future__ import annotations
 
@@ -27,3 +28,22 @@ def recheck_domains() -> dict[str, int]:
     from workeasy360.commercial.partners.domains import recheck_proven_domains
 
     return recheck_proven_domains()
+
+
+@shared_task(
+    base=CrossTenantTask,
+    queue="default",
+    soft_time_limit=120,
+    time_limit=180,
+    name="commercial.partners.close_guest_sessions",
+)
+def close_guest_sessions() -> int:
+    """Record the end of every guest view past its time (``guest.close_expired``).
+
+    Refusing them needs nothing from here - a guest view is refused from the
+    moment it expires. This writes the row's end and the audit entry, once each,
+    as ``SYSTEM`` in the platform organization's scope.
+    """
+    from workeasy360.commercial.partners import guest
+
+    return guest.close_expired()

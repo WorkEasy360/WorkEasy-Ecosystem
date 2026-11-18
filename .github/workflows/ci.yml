@@ -205,52 +205,15 @@ jobs:
       - run: npm run build
       - name: Dependency vulnerabilities
         # The full audit, dev dependencies included, at moderate and above.
-        # Two advisories are accepted by ID; both reach only lint tooling,
-        # the image prunes dev dependencies, and production dependencies
-        # audit clean (`npm audit --omit=dev`):
-        # - GHSA-vfj7-8cjw-p6xm (braces <= 3.0.3) has no fixed version
-        #   (eslint-config-next -> fast-glob -> micromatch; docs/audit-2026-10,
-        #   owner decision on PR #1).
-        # - GHSA-g3hv-75wg-m249 (minimatch >=7.0.0 <11.0.1, ReDoS-style DoS
-        #   via globparts): eslint-config-next -> typescript-eslint ->
-        #   @typescript-eslint/typescript-estree -> minimatch 10.x. Even the
-        #   latest typescript-estree (8.72.1) still requires minimatch ^10,
-        #   so there is no in-range fix (owner decision 2026-11-05).
-        # Any other advisory still fails the build. Remove an ID once
-        # upstream ships a fix.
+        # frontend/scripts/audit-gate.mjs holds the accepted advisories: each
+        # by ID, with why it cannot reach production, its owner and (from
+        # 2026-11-18) a review date after which this step fails again. Any
+        # other advisory fails the build. The "Dependency watch" workflow
+        # re-runs this gate daily and fails when an accepted advisory gets a
+        # fixed version, so the exception is removed rather than forgotten.
         run: |
           npm audit --json > "$RUNNER_TEMP/npm-audit.json" || true
-          node - "$RUNNER_TEMP/npm-audit.json" <<'JS'
-          const report = JSON.parse(require("fs").readFileSync(process.argv[2], "utf8"));
-          if (report.error || !report.vulnerabilities) {
-            console.error(JSON.stringify(report.error ?? report, null, 2));
-            process.exit(1);
-          }
-          const ACCEPTED = new Set(["GHSA-vfj7-8cjw-p6xm", "GHSA-g3hv-75wg-m249"]);
-          const LEVELS = ["info", "low", "moderate", "high", "critical"];
-          // Advisories are the object entries in `via`; string entries only
-          // point at another vulnerable package.
-          const advisories = new Map();
-          for (const vulnerability of Object.values(report.vulnerabilities)) {
-            for (const via of vulnerability.via) {
-              if (typeof via === "object") advisories.set(via.url, via);
-            }
-          }
-          let failed = false;
-          for (const [url, advisory] of advisories) {
-            if (LEVELS.indexOf(advisory.severity) < LEVELS.indexOf("moderate")) continue;
-            const id = url.split("/").pop();
-            const line = `${id} ${advisory.name} ${advisory.range} (${advisory.severity}): ${advisory.title}`;
-            if (ACCEPTED.has(id)) {
-              console.log(`accepted, still open upstream: ${line}`);
-            } else {
-              console.log(line);
-              failed = true;
-            }
-          }
-          if (failed) process.exit(1);
-          console.log("No unaccepted advisories at moderate or above.");
-          JS
+          node scripts/audit-gate.mjs "$RUNNER_TEMP/npm-audit.json"
       # The build's own output is a gate. A nonce-based CSP requires every
       # route to be dynamically rendered (frontend/src/app/layout.tsx); a
       # route that slips back into static prerendering ships script tags with
@@ -434,6 +397,27 @@ jobs:
             -e W360_AUTH_ORIGIN=https://auth.example.net \
             -e W360_API_ORIGIN=https://api.example.net \
             -e W360_EDGE_UPSTREAM_HOST=api.example.net \
+            -v "$PWD/deploy/edge/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          # ADR-065: and with the Store's own host switched on.
+          docker run --rm -e W360_TLS_ISSUER=internal \
+            -e W360_ADMIN_ORIGIN=https://admin.example.net \
+            -e W360_PARTNER_ORIGIN=https://partner.example.net \
+            -e W360_APP_ORIGIN=https://app.example.net \
+            -e W360_AUTH_ORIGIN=https://auth.example.net \
+            -e W360_API_ORIGIN=https://api.example.net \
+            -e W360_EDGE_UPSTREAM_HOST=api.example.net \
+            -e W360_STORE_EDGE=on -e W360_STORE_ORIGIN=https://store.example.net \
+            -v "$PWD/deploy/edge/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          # ADR-067: WorkEasy360 Accounts with the sign-in's previous name kept.
+          docker run --rm -e W360_TLS_ISSUER=internal \
+            -e W360_ADMIN_ORIGIN=https://admin.example.net \
+            -e W360_PARTNER_ORIGIN=https://partner.example.net \
+            -e W360_APP_ORIGIN=https://app.example.net \
+            -e W360_AUTH_ORIGIN=https://accounts.example.net \
+            -e W360_API_ORIGIN=https://api.example.net \
+            -e W360_EDGE_UPSTREAM_HOST=api.example.net \
+            -e W360_STORE_EDGE=on -e W360_STORE_ORIGIN=https://store.example.net \
+            -e W360_AUTH_LEGACY_EDGE=on -e W360_AUTH_LEGACY_ORIGIN=https://auth.example.net \
             -v "$PWD/deploy/edge/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           docker run --rm --entrypoint promtool -v "$PWD/deploy/observability:/w:ro"             prom/prometheus:v3.5.0 check rules /w/alerts.yml
 

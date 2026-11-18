@@ -3,43 +3,67 @@
 import { useId, useState } from "react";
 import { adminApi, type ConsoleIntegration, type ConsoleProduct } from "@/lib/api/controlPlane";
 import { AuthenticationEditor, AuthenticationFacts, CredentialsPanel, RegisterIntegration } from "../IntegrationAuthentication";
+import { FormPopup } from "../Modal";
 import { ReasonAction, Status, when } from "../ui";
 import { TextField } from "../widgets";
+import { AppLinksPanel } from "./AppLinksPanel";
 import { INTEGRATION_BADGE, INTEGRATION_LABEL, integrationState, looksLikeHttps } from "./model";
 import cp from "../ControlPlane.module.css";
 import styles from "./ProductManager.module.css";
 
 type Act = (action: () => Promise<unknown>, success: string) => Promise<void>;
 
+type LaunchSettings = Pick<ConsoleIntegration, "display_name" | "launch_url" | "health_url" | "contact_email">;
+
+const settingsOf = (integration: ConsoleIntegration): LaunchSettings => ({
+  display_name: integration.display_name,
+  launch_url: integration.launch_url,
+  health_url: integration.health_url,
+  contact_email: integration.contact_email,
+});
+
 /** Launch, health and contact settings - the registry's own audited manifest
- * write (moved here from the Phase 11 products console unchanged). */
+ * write (moved here from the Phase 11 products console unchanged), in a popup.
+ * The browser's checks of the old on-page form (name required, https launch and
+ * health addresses, an email) are made here before the popup sends anything. */
 function IntegrationEditor({
+  code,
   integration,
   busy,
-  onSave,
+  onDone,
 }: {
+  code: string;
   integration: ConsoleIntegration;
   busy: boolean;
-  onSave: (changes: Partial<Pick<ConsoleIntegration, "display_name" | "launch_url" | "health_url" | "contact_email">>, message: string) => void;
+  onDone: () => void;
 }) {
-  const [draft, setDraft] = useState({
-    display_name: integration.display_name,
-    launch_url: integration.launch_url,
-    health_url: integration.health_url,
-    contact_email: integration.contact_email,
-  });
+  const [draft, setDraft] = useState<LaunchSettings>(() => settingsOf(integration));
   const ids = { name: useId(), launch: useId(), health: useId(), contact: useId() };
-  const field = (key: keyof typeof draft) => ({
+  const field = (key: keyof LaunchSettings) => ({
     value: draft[key],
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => setDraft((d) => ({ ...d, [key]: e.target.value })),
   });
+  const problems = {
+    launch: draft.launch_url && !draft.launch_url.startsWith("https://") ? "Use an https:// address." : undefined,
+    health: draft.health_url && !draft.health_url.startsWith("https://") ? "Use an https:// address." : undefined,
+    contact: draft.contact_email && !/^[^\s@]+@[^\s@]+$/.test(draft.contact_email) ? "Enter an email address." : undefined,
+  };
+  const ready = draft.display_name.trim() !== "" && draft.launch_url !== "" && !problems.launch && !problems.health && !problems.contact;
   return (
-    <form
-      className={cp.form}
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSave(draft, "Integration updated.");
+    <FormPopup
+      label="Edit"
+      buttonAriaLabel="Edit launch settings"
+      buttonClassName="w360-btn w360-btn-secondary"
+      title="Launch settings"
+      submitLabel="Save"
+      disabled={busy}
+      canSubmit={ready}
+      onOpen={() => setDraft(settingsOf(integration))}
+      onSubmit={async () => {
+        await adminApi.updateIntegration(code, draft);
+        return "Integration updated.";
       }}
+      onDone={onDone}
     >
       <div className={cp.field}>
         <label className="w360-label" htmlFor={ids.name}>
@@ -51,26 +75,24 @@ function IntegrationEditor({
         <label className="w360-label" htmlFor={ids.launch}>
           Launch URL (https)
         </label>
-        <input id={ids.launch} className="w360-input" type="url" required pattern="https://.*" {...field("launch_url")} />
+        <input id={ids.launch} className="w360-input" type="url" required pattern="https://.*" aria-invalid={!!problems.launch || undefined} {...field("launch_url")} />
+        {problems.launch && <p className="w360-error-text">{problems.launch}</p>}
       </div>
       <div className={cp.field}>
         <label className="w360-label" htmlFor={ids.health}>
           Health URL (https, optional - the launch URL is checked otherwise)
         </label>
-        <input id={ids.health} className="w360-input" type="url" pattern="https://.*" {...field("health_url")} />
+        <input id={ids.health} className="w360-input" type="url" pattern="https://.*" aria-invalid={!!problems.health || undefined} {...field("health_url")} />
+        {problems.health && <p className="w360-error-text">{problems.health}</p>}
       </div>
       <div className={cp.field}>
         <label className="w360-label" htmlFor={ids.contact}>
           Contact email (optional)
         </label>
-        <input id={ids.contact} className="w360-input" type="email" {...field("contact_email")} />
+        <input id={ids.contact} className="w360-input" type="email" aria-invalid={!!problems.contact || undefined} {...field("contact_email")} />
+        {problems.contact && <p className="w360-error-text">{problems.contact}</p>}
       </div>
-      <div className={styles.toolbar}>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-          Save
-        </button>
-      </div>
-    </form>
+    </FormPopup>
   );
 }
 
@@ -94,7 +116,6 @@ export function IntegrationPanel({
   act: Act;
   reload: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
   const [editingAuth, setEditingAuth] = useState(false);
   const [health, setHealth] = useState<string | null>(null);
 
@@ -147,9 +168,7 @@ export function IntegrationPanel({
                 Resume
               </button>
             )}
-            <button type="button" className="w360-btn w360-btn-secondary" aria-expanded={editing} onClick={() => setEditing((v) => !v)}>
-              {editing ? "Cancel" : "Edit"}
-            </button>
+            <IntegrationEditor code={code} integration={integration} busy={busy} onDone={reload} />
           </div>
         )}
       </div>
@@ -180,18 +199,6 @@ export function IntegrationPanel({
         <p className={styles.muted}>Suspended: {integration.suspension_reason}</p>
       )}
       {health && <p role="status">{health}</p>}
-      {editing && (
-        <div className={styles.editor}>
-          <IntegrationEditor
-            integration={integration}
-            busy={busy}
-            onSave={(changes, message) => {
-              void act(() => adminApi.updateIntegration(code, changes), message);
-              setEditing(false);
-            }}
-          />
-        </div>
-      )}
       <details className={styles.disclosure}>
         <summary>
           <h3 className={styles.disclosureTitle}>Authentication &amp; credentials</h3>
@@ -247,7 +254,7 @@ export function IntegrationTab({
   reload: () => void;
 }) {
   const [appUrl, setAppUrl] = useState(p.application_url);
-  const [error, setError] = useState<string | undefined>();
+  const appUrlProblem = appUrl.trim() && !looksLikeHttps(appUrl.trim()) ? "The application URL must be an https:// address." : undefined;
   const state = integrationState(p.integration, p.launch_url);
   return (
     <div className={styles.page}>
@@ -274,34 +281,34 @@ export function IntegrationTab({
             <dt>Launch URL</dt>
             <dd className={styles.url}>{p.launch_url || "Not set"}</dd>
           </div>
+          <div>
+            <dt>Application URL</dt>
+            <dd className={styles.url}>{p.application_url || "Not set"}</dd>
+          </div>
         </dl>
-        {manageCatalog ? (
-          <form
-            className={styles.inlineForm}
-            onSubmit={(e) => {
-              e.preventDefault();
-              const value = appUrl.trim();
-              if (value && !looksLikeHttps(value)) {
-                setError("The application URL must be an https:// address.");
-                return;
-              }
-              setError(undefined);
-              void act(() => adminApi.updateProduct(p.id, { application_url: value }), "Application URL saved.");
-            }}
-          >
-            <TextField label="Application URL" type="url" value={appUrl} error={error} placeholder="https://" onChange={setAppUrl} hint="The product's own address." />
-            <div>
-              <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || appUrl.trim() === p.application_url}>
-                Save application URL
-              </button>
-            </div>
-          </form>
-        ) : (
-          <p>
-            Application URL: <span className={styles.url}>{p.application_url || "Not set"}</span>
-          </p>
+        {manageCatalog && (
+          <div className={styles.toolbar}>
+            <FormPopup
+              label="Edit application URL"
+              title="Application URL"
+              size="sm"
+              submitLabel="Save application URL"
+              buttonClassName="w360-btn w360-btn-secondary"
+              disabled={busy}
+              canSubmit={appUrl.trim() !== p.application_url && !appUrlProblem}
+              onOpen={() => setAppUrl(p.application_url)}
+              onSubmit={async () => {
+                await adminApi.updateProduct(p.id, { application_url: appUrl.trim() });
+                return "Application URL saved.";
+              }}
+              onDone={reload}
+            >
+              <TextField label="Application URL" type="url" value={appUrl} error={appUrlProblem} placeholder="https://" onChange={setAppUrl} hint="The product's own address." />
+            </FormPopup>
+          </div>
         )}
       </section>
+      <AppLinksPanel product={p} manage={manageCatalog} busy={busy} reload={reload} />
       {canSeeIntegrations ? (
         <section className={styles.card} aria-label="Launch, sign-in and credentials">
           <IntegrationPanel code={p.code} name={p.name} integration={p.integration} busy={busy} manage={manageIntegration} act={act} reload={reload} />

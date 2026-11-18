@@ -225,3 +225,17 @@ def accounts_created(*, start: Any | None, end: Any) -> int:
     if start is not None:
         rows = rows.filter(created_at__gte=start)
     return rows.count()
+
+
+def display_names(user_ids: Any) -> dict[Any, str]:
+    """A name for each of these accounts (their full name, else their address), for
+    a staff list. One query."""
+    from workeasy360.platform.identity.models import User
+
+    ids = [i for i in user_ids if i]
+    if not ids:
+        return {}
+    return {
+        row["id"]: row["full_name"] or row["email"]
+        for row in User.objects.filter(id__in=ids).values("id", "full_name", "email")
+    }

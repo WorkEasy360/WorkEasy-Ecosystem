@@ -359,3 +359,118 @@ class ContractPrice(TenantScopedModel):
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"contract {self.amount_minor} {self.currency}"
+
+
+class Coupon(models.Model):
+    """A discount code the Super Admin issues (ADR-058). **Control plane**: a
+    code is the platform's, valid for every customer it allows.
+
+    ``percent`` takes ``percent_bp`` off (1 bp = 0.01%); ``fixed`` takes
+    ``amount_minor`` off in ``currency`` (and applies only to orders in that
+    currency). Either way it lowers the **first payment** of an order - the
+    plan's price for the period, never a set-up fee or a renewal - and never
+    by more than 99% of it (``coupons.MAX_SHARE_BP``), so a coupon can never
+    turn a paid purchase into an unpaid one.
+
+    ``product_codes`` empty = every product. ``max_redemptions`` empty = no
+    limit; ``once_per_organization`` stops one customer using it twice.
+    Redemptions are counted by ``CouponRedemption`` rows: a placed order holds
+    one until it is paid, and gives it back when it is cancelled or expires.
+    """
+
+    class Kind(models.TextChoices):
+        PERCENT = "percent", "Percent off"
+        FIXED = "fixed", "Fixed amount off"
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        DISABLED = "disabled", "Disabled"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    #: Upper-case letters, digits, ``-`` and ``_``; what the customer types.
+    code = models.CharField(max_length=32, unique=True)
+    description = models.CharField(max_length=200, blank=True, default="")
+    kind = models.CharField(max_length=8, choices=Kind.choices)
+    percent_bp = models.PositiveIntegerField(null=True, blank=True)
+    amount_minor = models.BigIntegerField(null=True, blank=True)
+    currency = models.CharField(max_length=3, blank=True, default="")
+    product_codes = models.JSONField(default=list, blank=True)
+    starts_at = models.DateTimeField(null=True, blank=True)
+    ends_at = models.DateTimeField(null=True, blank=True)
+    max_redemptions = models.PositiveIntegerField(null=True, blank=True)
+    once_per_organization = models.BooleanField(default=True)
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.ACTIVE
+    )
+    created_by_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "pricing_coupon"
+        ordering = ["-created_at"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        kind="percent",
+                        percent_bp__gte=1,
+                        percent_bp__lte=9900,
+                        amount_minor__isnull=True,
+                    )
+                    | models.Q(
+                        kind="fixed",
+                        amount_minor__gt=0,
+                        percent_bp__isnull=True,
+                    )
+                    & ~models.Q(currency="")
+                ),
+                name="ck_coupon_terms",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(ends_at__isnull=True)
+                | models.Q(starts_at__isnull=True)
+                | models.Q(ends_at__gt=models.F("starts_at")),
+                name="ck_coupon_window",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return self.code
+
+
+class CouponRedemption(models.Model):
+    """One order's use of a coupon. **Control plane** (beside ``Coupon``): the
+    organization and order are soft references, like ``OrderSummary``'s.
+
+    Written in the order's own transaction when it is placed, with the coupon
+    row locked, so two customers cannot both take its last use; deleted when
+    the order is cancelled, expires, is voided or fails, so an abandoned
+    checkout gives its use back."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    coupon = models.ForeignKey(
+        Coupon, on_delete=models.PROTECT, related_name="redemptions"
+    )
+    organization_id = models.UUIDField()
+    order_id = models.UUIDField(unique=True)
+    discount_minor = models.BigIntegerField()
+    currency = models.CharField(max_length=3)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "pricing_coupon_redemption"
+        indexes = [
+            models.Index(
+                fields=["coupon", "organization_id"], name="ix_coupon_redemption_org"
+            )
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(discount_minor__gt=0),
+                name="ck_coupon_redemption_positive",
+            )
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.coupon_id}:{self.order_id}"

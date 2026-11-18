@@ -154,3 +154,30 @@ def price_range_view(
 ) -> HttpResponse:
     price_ranges.remove_range(ctx, range_id=range_id)
     return HttpResponse(status=204)
+
+
+@staff_view(["GET", "POST"])
+def coupons_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """ADR-058. GET: every coupon. POST: issue one."""
+    from workeasy360.commercial.pricing import coupons
+
+    if request.method == "GET":
+        return JsonResponse(coupons.coupons(ctx))
+    body = _body(request)
+    with acting_scope(ctx):
+        made = coupons.create_coupon(ctx, body)
+    return JsonResponse(made, status=201)
+
+
+@staff_view(["PATCH"])
+def coupon_view(
+    request: HttpRequest, ctx: TenantContext, coupon_id: UUID
+) -> JsonResponse:
+    """Change a coupon's products, window, limit or status (the code and the
+    discount never change)."""
+    from workeasy360.commercial.pricing import coupons
+
+    body = _body(request)
+    with acting_scope(ctx):
+        changed = coupons.update_coupon(ctx, coupon_id, body)
+    return JsonResponse(changed)

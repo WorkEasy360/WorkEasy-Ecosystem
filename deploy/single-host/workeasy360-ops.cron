@@ -1,0 +1,10 @@
+# WorkEasy360 - off-instance backups, the weekly restore drill and health metrics.
+# Installed as /etc/cron.d/workeasy360-ops beside workeasy360-backup (20:15 UTC).
+# Needs /opt/workeasy360/env/ops.env and the instance role from deploy/aws/ops-single-host.yml.
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# After the nightly backup has finished (it takes minutes; 45 leaves room).
+0 21 * * * root /opt/workeasy360/bin/w360-backup-offsite >> /var/log/workeasy360-backup.log 2>&1
+# Sundays 22:00 UTC: restore the newest off-instance copy into a throwaway database and verify it.
+0 22 * * 0 root /opt/workeasy360/bin/w360-restore-drill >> /var/log/workeasy360-backup.log 2>&1
+*/5 * * * * root /opt/workeasy360/bin/w360-healthwatch >> /var/log/workeasy360-healthwatch.log 2>&1

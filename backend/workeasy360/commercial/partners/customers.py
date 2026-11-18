@@ -467,6 +467,46 @@ def _assert_sellable_by(ctx: TenantContext, plan_version_id: UUID) -> Any:
     return plan
 
 
+def refuse_wallet_paid(organization_id: UUID) -> None:
+    """ADR-063: a customer its partner pays for from the partner's Platform Wallet
+    is never invoiced, so selling to it, adding seats or changing a plan through
+    the ordinary commands would grant what nobody paid for. Those go through the
+    wallet actions (``controlplane.partner_wallet``), which debit the wallet in
+    the same transaction. Called inside the customer's scope."""
+    from workeasy360.contracts.enums import CollectionMode
+
+    account = billing.billing_account_or_none(organization_id)
+    if (
+        account is not None
+        and account.collection_mode == CollectionMode.PARTNER_WALLET.value
+    ):
+        raise PartnerValidationError(
+            "You pay for this customer from your Platform Wallet. Use Plan "
+            "Activation, Renew or Change Plan, which charge the wallet.",
+            field="collection_mode",
+        )
+
+
+def assert_sellable(ctx: TenantContext, plan_version_id: UUID) -> Any:
+    """The plan version, if this partner may sell it now (its product grant and
+    switches); a 403 otherwise. For the wallet actions (ADR-063)."""
+    return _assert_sellable_by(ctx, plan_version_id)
+
+
+def assert_codes_sellable(ctx: TenantContext, product_code: str, plan_code: str) -> None:
+    _assert_codes_sellable(ctx, product_code, plan_code)
+
+
+def scoped_key(ctx: TenantContext, client_key: Any) -> str:
+    """The caller's idempotency key, namespaced by partner (``_scoped_key``)."""
+    return _scoped_key(ctx, client_key)
+
+
+def seller_for(ctx: TenantContext) -> Any:
+    """This partner as the seller of an order (``_seller``)."""
+    return _seller(ctx)
+
+
 @in_scope
 def open_billing(ctx: TenantContext, organization_id: UUID, *, currency: Any) -> Any:
     authz.require(ctx, CUSTOMER_MANAGE)
@@ -498,6 +538,7 @@ def sell_plan(
     key = _scoped_key(ctx, idempotency_key)
     with acting_scope(customer):
         access.lock_active_link(ctx, organization_id)
+        refuse_wallet_paid(organization_id)
         item = subscription_services.purchase_plan(
             customer,
             plan_version_id=plan_version_id,
@@ -526,6 +567,7 @@ def change_customer_plan(
     _assert_sellable_by(ctx, to_plan_version_id)
     with acting_scope(customer):
         access.lock_active_link(ctx, organization_id)
+        refuse_wallet_paid(organization_id)
         item = subscription_services.change_plan(
             customer,
             subscription_item_id=subscription_item_id,
@@ -552,6 +594,7 @@ def change_customer_quantity(
     customer = access.customer_context(ctx, organization_id, write=True)
     with acting_scope(customer):
         access.lock_active_link(ctx, organization_id)
+        refuse_wallet_paid(organization_id)
         # More seats is more sale: the line's product must be one this partner
         # may sell *now*, not merely one it once sold (or never did).
         codes = subscription_selectors.item_codes(subscription_item_id)
@@ -613,6 +656,7 @@ def activate_customer_subscription(
     customer = access.customer_context(ctx, organization_id, write=True)
     with acting_scope(customer):
         access.lock_active_link(ctx, organization_id)
+        refuse_wallet_paid(organization_id)
         # Converting a trial is when it becomes a paid sale (and earns): every
         # open, priced line on it must be within the partner's product scope.
         detail = subscription_selectors.subscription_detail(subscription_id)

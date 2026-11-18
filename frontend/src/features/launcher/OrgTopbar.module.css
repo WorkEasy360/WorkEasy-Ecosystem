@@ -1,0 +1,90 @@
+/* The User Admin Panel's top bar (OrgTopbar.tsx), on the console's teal frame.
+   The search, bell and account reuse the Admin top bar's look
+   (AdminTopbar.module.css); these are only what the customer side adds.
+   Tokens only. */
+
+/* The organization: a pill with its icon, the switcher when there is a choice. */
+.orgPill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  max-width: 300px;
+  height: var(--w360-control-h);
+  padding: 0 var(--w360-space-3);
+  border: 1px solid var(--w360-shell-border);
+  border-radius: var(--w360-radius-control);
+  background: var(--w360-shell-raised);
+  color: var(--w360-shell-text);
+  font: inherit;
+  font-size: var(--w360-fs-body);
+  font-weight: 600;
+  line-height: 1;
+  text-align: left;
+}
+
+button.orgPill {
+  cursor: pointer;
+}
+
+button.orgPill:hover {
+  border-color: var(--w360-shell-muted);
+}
+
+.orgPill svg {
+  flex: none;
+}
+
+.orgName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orgChevron {
+  display: inline-flex;
+  margin-left: auto;
+  color: var(--w360-shell-muted);
+}
+
+.search {
+  flex: 1 1 420px;
+  max-width: 520px;
+}
+
+.noteIcon[data-tone="warning"] {
+  background: var(--w360-warning-bg);
+  color: var(--w360-warning);
+}
+
+.noteIcon[data-tone="danger"] {
+  background: var(--w360-danger-bg);
+  color: var(--w360-danger);
+}
+
+.noteDetail {
+  color: var(--w360-text-secondary);
+  font-size: var(--w360-fs-meta);
+}
+
+@media (max-width: 1100px) {
+  .orgPill {
+    max-width: 200px;
+  }
+}
+
+/* Phones and small tablets: the organization keeps its icon, the search its glass. */
+@media (max-width: 760px) {
+  .orgName {
+    display: none;
+  }
+
+  .search {
+    flex: 0 0 auto;
+  }
+
+  .search :global(span),
+  .search kbd {
+    display: none;
+  }
+}

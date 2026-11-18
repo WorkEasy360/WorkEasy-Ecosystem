@@ -2,6 +2,8 @@
 
 Status: design frozen 2026-10-11, before implementation. Builds on ADR-033 (session registry), ADR-038 (four products and per-product trials), ADR-039 (white-label domains keep sign-in canonical) and ADR-041 (sign-in modes). The decision record is ADR-043.
 
+> **Since then.** ADR-059 (2026-11-06) moved every portal's own sign-in onto its own host and left the central sign-in with the product sign-in only. ADR-067 (2026-11-16) renamed the central sign-in **WorkEasy360 Accounts**, on `accounts.workeasy360.com` (`W360_AUTH_ORIGIN`). `auth.workeasy360.com` is kept as its previous name while products move: there, products are served and browsers are forwarded to `accounts.` (`docs/accounts-portal/status.md`). The table below is the 2026-10-11 design, kept as it was written.
+
 ## 1. What already exists (reused, not rebuilt)
 
 - **One Next.js app and one Django API.** The browser calls `/api/*` on its own origin, and Next rewrites that to Django server-side. Session and CSRF cookies are therefore **host-only** cookies on whatever host the browser is on. There is no credentialed CORS anywhere.
@@ -27,6 +29,8 @@ Status: design frozen 2026-10-11, before implementation. Builds on ADR-033 (sess
 **Single-host mode.** When no portal origins are configured (development, the test suite, the browser checks of earlier phases), every host serves everything, exactly as today. Production refuses to start without all five origins.
 
 ## 3. Central sign-in and the hand-off
+
+> **Superseded for the portals by ADR-059 (2026-11-06).** The Admin, Partner and customer portals now each serve their own `/login`, `/forgot-password` and `/reset-password` and sign in on their own host. No redirect to `auth.` happens and no hand-off is used. Sign-up, verification and invitations are on `app.`. `auth.` keeps only the product (OIDC) sign-in. The hand-off below still works for a sign-in in flight, but no page starts one.
 
 Cookies stay host-only, so a session set on `auth.` is invisible to `admin.`. Sharing a `Domain=.workeasy360.com` cookie would also expose it to the four product applications on sibling subdomains, which this platform does not control. Instead:
 

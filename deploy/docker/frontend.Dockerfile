@@ -27,7 +27,10 @@ RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 ARG BACKEND_ORIGIN=http://api:8000
 ENV BACKEND_ORIGIN=${BACKEND_ORIGIN}
-RUN npm run build \
+# public/ may hold no file (robots.txt became a host-aware route, ADR-065) and
+# git keeps no empty folder, but the runtime stage copies it: make sure it exists.
+RUN mkdir -p public \
+ && npm run build \
  && node scripts/assert-dynamic-rendering.mjs \
  && npm prune --omit=dev --no-audit --no-fund
 

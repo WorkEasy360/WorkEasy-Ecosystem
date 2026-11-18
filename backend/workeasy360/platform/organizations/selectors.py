@@ -359,6 +359,8 @@ def organizations_directory_page(
     cursor: str | None = None,
     only: Any = None,
     exclude: Any = None,
+    created_from: Any = None,
+    created_before: Any = None,
 ) -> Page:
     """The staff customer directory: every customer, bounded, newest first.
 
@@ -367,6 +369,9 @@ def organizations_directory_page(
     owner flag without a tenant scope). Never a query per row. The platform
     organization is excluded by id. Owner is shown as an address only - the
     directory is a staff surface, and staff hold ``platform.staff_customer.view``.
+
+    ``created_from``/``created_before`` (plain datetimes, end exclusive) keep the
+    organizations created in that window; the cursor pages within it.
     """
     from django.db.models import Q
 
@@ -384,6 +389,10 @@ def organizations_directory_page(
     )
     if status:
         queryset = queryset.filter(status=status)
+    if created_from is not None:
+        queryset = queryset.filter(created_at__gte=created_from)
+    if created_before is not None:
+        queryset = queryset.filter(created_at__lt=created_before)
     if only is not None:
         # Phase 9: a caller-composed subquery of organization ids (the staff
         # Subscriptions and Entitlements views filter on commercial state this
@@ -832,6 +841,13 @@ def organization_slug(organization_id: UUID) -> str | None:
     )
 
 
+def organization_ids_matching(search: str) -> Any:
+    """A subquery of the organizations whose name matches, for a staff list to compose."""
+    from workeasy360.platform.organizations.models import Organization
+
+    return Organization.objects.filter(display_name__icontains=search[:80]).values("id")
+
+
 def organization_names(organization_ids: Any) -> dict[UUID, str]:
     """Display names for these organizations - one query, for staff lists
     that page through a control-plane projection (Phase 9)."""
@@ -874,3 +890,55 @@ def access_rows_for_users(user_ids: Any) -> dict[UUID, list[dict[str, Any]]]:
             }
         )
     return result
+
+
+def customers_created_before(end: Any) -> int:
+    """Live customers created before ``end`` (the platform organization excluded)."""
+    from workeasy360.contracts.values.control_plane import PLATFORM_ORGANIZATION_ID
+    from workeasy360.platform.organizations.models import Organization
+
+    return (
+        Organization.objects.filter(deleted_at__isnull=True, created_at__lt=end)
+        .exclude(id=PLATFORM_ORGANIZATION_ID)
+        .count()
+    )
+
+
+def recently_created_customers(*, limit: int = 8) -> list[dict[str, Any]]:
+    """The newest customers, for the Admin dashboard's activity list."""
+    from workeasy360.contracts.values.control_plane import PLATFORM_ORGANIZATION_ID
+    from workeasy360.platform.organizations.models import Organization
+
+    rows = (
+        Organization.objects.filter(deleted_at__isnull=True)
+        .exclude(id=PLATFORM_ORGANIZATION_ID)
+        .order_by("-created_at")[: max(1, min(limit, 50))]
+    )
+    return [
+        {
+            "id": str(row.id),
+            "name": row.display_name,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row in rows
+    ]
+
+
+def member_rows_in_scope() -> list[dict[str, Any]]:
+    """The current organization's members, for a staff screen already inside its scope.
+    Names and standing only."""
+    from workeasy360.platform.organizations.models import Membership
+
+    rows = Membership.objects.select_related("user").order_by("user__email")[:500]
+    return [
+        {
+            "membership_id": str(row.id),
+            "user_id": str(row.user_id),
+            "email": row.user.email,
+            "name": row.user.full_name,
+            "status": row.status,
+            "is_owner": bool(getattr(row, "is_owner", False)),
+            "joined_at": row.created_at.isoformat(),
+        }
+        for row in rows
+    ]

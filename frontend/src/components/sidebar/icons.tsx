@@ -28,6 +28,8 @@ const PATHS: Record<string, string> = {
   handshake: "M3 12 7 8l4 2 3-3 7 5-5 5-3-2-2 2-4-3-4-2Zm8-2 3 3",
   gift: "M4 11h16v10H4V11Zm-1-4h18v4H3V7Zm9 0v14M12 7c-1.5-3-5-3-5-1s3 1 5 1Zm0 0c1.5-3 5-3 5-1s-3 1-5 1Z",
   store: "M4 9l1.5-5h13L20 9M4 9h16M4 9v11h16V9M9 20v-6h6v6",
+  gauge: "M4.9 17a8 8 0 1 1 14.2 0M12 13l3.5-3.5M12 14a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z",
+  rocket: "M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2M14 4c3-1.5 6-1 6-1s.5 3-1 6l-6 6-5-5 6-6Zm1 5h.01M9 10l-3-.5L4 12l4 1M14 15l.5 3L12 20l-1-4",
   lock: "M6 11h12v10H6V11Zm2 0V7a4 4 0 1 1 8 0v4",
   device: "M5 4h14v11H5V4Zm-2 15h18M9 19l1-4h4l1 4",
   history: "M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 7v5l3 3",
@@ -36,7 +38,84 @@ const PATHS: Record<string, string> = {
   help: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 13h.01M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5",
   login: "M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l4-4-4-4M14 12H3",
   copy: "M9 9h11v11H9V9Zm-5 6V4h11",
+  chevronDown: "m6 9 6 6 6-6",
+  chevronRight: "m9 6 6 6-6 6",
+  chevronLeft: "m15 6-6 6 6 6",
+  chevronUp: "m6 15 6-6 6 6",
+  search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm9 3-4.3-4.3",
+  x: "M6 6l12 12M18 6 6 18",
+  more: "M5 12h.01M12 12h.01M19 12h.01",
+  check: "m5 12 5 5 9-10",
+  checkCircle: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm-4 9 3 3 5-6",
+  xCircle: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm-3 6 6 6m0-6-6 6",
+  circle: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z",
+  info: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 8v5m0-8h.01",
+  alert: "M12 4 2.5 20h19L12 4Zm0 6v4m0 3h.01",
+  external: "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6",
+  eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z",
+  eyeOff: "M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3 3.9M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2",
+  download: "M12 4v11m-5-5 5 5 5-5M4 20h16",
+  upload: "M12 20V9m-5 5 5-5 5 5M4 4h16",
+  columns: "M4 4h16v16H4V4Zm6 0v16m6-16v16",
+  sort: "m8 9 4-4 4 4M8 15l4 4 4-4",
+  arrowUp: "M12 19V5m-6 6 6-6 6 6",
+  arrowDown: "M12 5v14m-6-6 6 6 6-6",
+  calendar: "M4 6h16v14H4V6Zm0 4h16M8 3v4m8-4v4",
+  user: "M20 21v-1a5 5 0 0 0-5-5H9a5 5 0 0 0-5 5v1M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z",
+  trash: "M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  edit: "M4 20h4L19 9l-4-4L4 16v4Zm9-13 4 4",
+  refresh: "M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4m-4 5a8 8 0 0 0 14.6 4.5L20 16m0 4v-4h-4",
+  play: "M7 4v16l13-8L7 4Z",
+  send: "m4 12 16-8-6 16-2-7-8-1Z",
+  ban: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM5.6 5.6l12.8 12.8",
+  pause: "M8 5v14m8-14v14",
+  logout: "M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M14 16l4-4-4-4M18 12H9",
+  book: "M4 5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0-2 2V5Zm0 14a2 2 0 0 1 2-2h14",
+  menu: "M4 6h16M4 12h16M4 18h16",
+  sidebar: "M4 4h16v16H4V4Zm5 0v16",
+  filter: "M4 5h16l-6 8v6l-4-2v-4L4 5Z",
+  globe: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm-9 9h18M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3Z",
+  ticket: "M3 8a2 2 0 0 0 2-2h14a2 2 0 0 0 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 0-2 2H5a2 2 0 0 0-2-2v-2a2 2 0 0 0 0-4V8Zm11-2v12",
+  wallet: "M4 7h15v12H4a1 1 0 0 1-1-1V6a2 2 0 0 1 2-2h12v3M16 13h.01",
+  box: "M12 3 3 7.5v9L12 21l9-4.5v-9L12 3Zm0 0v18M3 7.5l9 4.5 9-4.5",
+  clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 4v5l3 2",
+  cart: "M3 4h2l2.4 11h11L21 7H6.2M9 20h.01M18 20h.01",
+  // The partner sign-in's story (2026-11-11).
+  megaphone: "M3 10v4h3l8 4V6l-8 4H3Zm14-2a5 5 0 0 1 0 8M7 14l1.5 6h3l-1.4-5.2",
+  layers: "M12 3 2 8l10 5 10-5-10-5Zm-10 9 10 5 10-5M2 16l10 5 10-5",
+  coins: "M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Zm0 0v5c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12v5c0 1.7 3.6 3 8 3s8-1.3 8-3v-5",
+  headset: "M4 15v-3a8 8 0 0 1 16 0v3M4 13h3v6H6a2 2 0 0 1-2-2v-4Zm16 0h-3v6h1a2 2 0 0 0 2-2v-4Zm-3 6a3 3 0 0 1-3 2h-2",
+  chat: "M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Zm-12 0h.01M12 12h.01M15 12h.01",
+  message: "M4 5h16v11H9l-5 4V5Zm4 5h8M8 13h5",
+  browser: "M3 5h18v14H3V5Zm0 4h18M6 7h.01M9 7h.01M7 12h5v4H7v-4Zm8 0h2m-2 3h2",
+  monitor: "M3 4h18v12H3V4Zm6 16h6m-3-4v4",
+  phone: "M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z",
+  userPlus: "M15 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm10-3v6m-3-3h6",
 };
+
+/** Any icon above at a chosen size (16 inside buttons and inputs, 18 in the
+ * navigation, 20 on cards). Decorative: the control carries the name. */
+export function Icon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {
+  const d = PATHS[name];
+  if (!d) return null;
+  return (
+    <svg
+      aria-hidden="true"
+      focusable="false"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d={d} />
+    </svg>
+  );
+}
 
 export function NavIcon({ name }: { name?: string }) {
   const d = name ? PATHS[name] : undefined;

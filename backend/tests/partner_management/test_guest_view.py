@@ -1,7 +1,7 @@
 """All Partners → Guest login: a staff member's read-only view of a partner's
 portal (``commercial.partners.guest``).
 
-The rules held here: it needs the staff manage grant and a reason; it is the
+The rules held here: it needs the staff guest grant (ADR-062) and a reason; it is the
 staff member acting (audited under their name, with the reason), never the
 partner's identity; it reads and never writes; it opens exactly one partner,
 for one sign-in, for a limited time; and the partner can see that it happened.
@@ -15,11 +15,28 @@ from unittest import mock as unittest_mock
 import pytest
 from django.utils import timezone
 
-from tests.partner_experience.conftest import admin_path, send
+from tests.partner_experience.conftest import (
+    COMMISSION,
+    MANAGE,
+    PRICING,
+    VIEW,
+    admin_path,
+    send,
+)
 from workeasy360.commercial.partners import guest
 from workeasy360.platform.audit.models import AuditEvent
 
 pytestmark = pytest.mark.django_db
+
+GUEST = "platform.staff_partner.guest"
+
+
+@pytest.fixture
+def admin(staff_client):
+    """The Admin of these tests: also holds Login as Guest's own permission."""
+    client, user = staff_client(GUEST, MANAGE, VIEW, PRICING, COMMISSION)
+    client.staff_user = user  # type: ignore[attr-defined]
+    return client
 
 
 def audit_rows(action):
@@ -141,6 +158,9 @@ def test_view_only_staff_and_partners_cannot_start_one(
     owner, partner_id = reseller
     viewer, _user = staff_client("platform.staff_partner.view")
     assert start(viewer, partner_id).status_code == 403
+    # Managing partners is not enough: Login as Guest has its own permission.
+    manager, _user = staff_client(MANAGE, VIEW)
+    assert start(manager, partner_id).status_code == 403
     assert start(owner, partner_id).status_code in (403, 404)
 
 
@@ -185,11 +205,15 @@ def test_exit_ends_it_and_is_audited(catalog, admin, reseller):
     _owner, partner_id = reseller
     start(admin, partner_id)
     response = send(admin, END)
-    assert response.status_code == 200 and response.json() == {"ended": True}
+    assert response.status_code == 200
+    assert response.json() == {"ended": True, "return_url": "/admin/partners/all"}
     assert portal_entry(admin, partner_id) is None
     assert admin.get(f"/api/v1/partner/{partner_id}/customers").status_code == 404
     assert len(audit_rows("partner.guest_view_ended")) == 1
-    assert send(admin, END).json() == {"ended": False}
+    assert send(admin, END).json() == {
+        "ended": False,
+        "return_url": "/admin/partners/all",
+    }
 
 
 def test_it_ends_by_itself(catalog, admin, reseller, monkeypatch):
@@ -207,11 +231,9 @@ def test_losing_the_staff_grant_ends_access(catalog, admin, reseller):
 
     _owner, partner_id = reseller
     start(admin, partner_id)
-    # Manage includes view, so both go.
+    # The guest permission is read again on every request.
     for grant in StaffGrant.objects.filter(
-        user_id=admin.staff_user.id,
-        permission__in=["platform.staff_partner.view", "platform.staff_partner.manage"],
-        revoked_at__isnull=True,
+        user_id=admin.staff_user.id, permission=GUEST, revoked_at__isnull=True
     ):
         staff.end_grant(
             grant_id=grant.id, revoked_by_id=admin.staff_user.id, reason="Test revokes it"
@@ -238,26 +260,3 @@ def test_the_list_rows_carry_phone_and_country(catalog, admin):
     row = next(r for r in rows if r["id"] == response.json()["id"])
     assert row["country"] == "IN"
     assert row["phone"] == ""
-
-
-def test_exit_on_the_partner_host_ends_that_session_only(
-    catalog, admin, reseller, settings
-):
-    """Multi-portal mode: "Exit guest session" on partner.<domain> also ends the
-    staff member's partner-portal session, which existed only for the guest
-    view - no session is left behind on the partner origin."""
-    from tests.portals.conftest import HOST, ORIGINS, WEB
-
-    _owner, partner_id = reseller
-    start(admin, partner_id)
-    settings.PORTALS_ENABLED = True
-    settings.W360_PORTAL_ORIGINS = dict(ORIGINS)
-    settings.ALLOWED_HOSTS = list(HOST.values())
-    settings.CSRF_TRUSTED_ORIGINS = [ORIGINS[n] for n in WEB]
-    on_partner = {"HTTP_HOST": HOST["partner"], "secure": True}
-
-    response = admin.post(END, "{}", content_type="application/json", **on_partner)
-    assert response.status_code == 200 and response.json() == {"ended": True}
-    session = admin.get("/api/v1/auth/session", **on_partner)
-    assert session.json()["authenticated"] is False
-    assert len(audit_rows("partner.guest_view_ended")) == 1

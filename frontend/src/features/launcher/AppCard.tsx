@@ -108,6 +108,10 @@ export function AppCard({
   app,
   manageHref,
   seatsHref,
+  onDetails,
+  setup,
+  expired = false,
+  exploreHref,
 }: {
   orgSlug: string;
   app: AppDirectoryEntry;
@@ -116,8 +120,18 @@ export function AppCard({
   /** Product access (seat assignment), for those who may assign seats - so
    * the person who *is* the administrator is not told to ask one. */
   seatsHref?: string;
+  /** "View details" (My Products, 2026-11-11): the product's plan, seats, validity and setup. */
+  onDetails?: () => void;
+  /** Where the product's setup stands, when it asks the organization for details. */
+  setup?: { label: string; tone: string } | null;
+  /** The organization's trial of it ran out (Explore's state): "Trial expired" and a way to buy. */
+  expired?: boolean;
+  /** Where a product the organization does not hold is bought (default: Explore). */
+  exploreHref?: string;
 }) {
-  const copy = STATE_COPY[app.state];
+  const copy = expired
+    ? { badge: "Trial expired", tone: "w360-badge-warning", hint: "Your free trial has ended. Upgrade or buy to keep using it." }
+    : STATE_COPY[app.state];
   const status = statusBadge(app.entitlement_status);
   const assignsSeats = app.state === "no_seat" && Boolean(seatsHref);
   const hint = assignsSeats ? SELF_ASSIGN_HINT : (copy.hint ?? status?.hint);
@@ -131,16 +145,17 @@ export function AppCard({
             {app.display_name}
           </h2>
           {app.category && <p className={styles.category}>{app.category}</p>}
-          {(status || copy.badge) && (
+          {(status || copy.badge || setup) && (
             <ul className={styles.badgeRow} aria-label="Status">
               {status && <li className={`w360-badge ${status.tone}`}>{status.label}</li>}
               {copy.badge && <li className={`w360-badge ${copy.tone}`}>{copy.badge}</li>}
+              {setup && <li className={`w360-badge ${setup.tone}`}>{setup.label}</li>}
             </ul>
           )}
         </div>
       </div>
       <p className={styles.description}>{app.description}</p>
-      {(app.plan || app.seats || app.trial || app.renews_at) && (
+      {(app.plan || app.seats || app.trial || app.renews_at || app.cancel_at) && (
         <dl className={styles.facts}>
           {app.plan && (
             <div>
@@ -168,6 +183,12 @@ export function AppCard({
               <dd>{when(app.renews_at)}</dd>
             </div>
           )}
+          {app.cancel_at && (
+            <div>
+              <dt>Ends</dt>
+              <dd>{when(app.cancel_at)}</dd>
+            </div>
+          )}
         </dl>
       )}
       {hint && <p className={styles.hint}>{hint}</p>}
@@ -193,14 +214,29 @@ export function AppCard({
           <span className="w360-badge w360-badge-neutral">Ask an admin</span>
         )}
         {app.state === "no_entitlement" && (
-          <Link className="w360-btn w360-btn-secondary" href={`/o/${orgSlug}/explore`}>
-            Explore products
+          <Link
+            className={expired ? "w360-btn w360-btn-primary" : "w360-btn w360-btn-secondary"}
+            href={exploreHref ?? `/o/${orgSlug}/explore`}
+            aria-label={expired ? `Upgrade or buy: ${app.display_name}` : undefined}
+          >
+            {expired ? "Upgrade / Buy now" : "Explore products"}
           </Link>
         )}
         {manageHref && app.state !== "no_entitlement" && app.state !== "product_unavailable" && (
           <Link className="w360-btn w360-btn-secondary" href={manageHref}>
             Manage subscription
           </Link>
+        )}
+        {onDetails && (
+          <button
+            type="button"
+            className="w360-btn w360-btn-secondary"
+            aria-haspopup="dialog"
+            aria-label={`View details: ${app.display_name}`}
+            onClick={onDetails}
+          >
+            View details
+          </button>
         )}
         {app.state === "active" && app.sign_in?.sso === "enabled" && (
           <Link

@@ -23,8 +23,207 @@
   color: var(--w360-text);
 }
 
+.medium {
+  width: min(680px, 100%);
+}
+
 .wide {
   width: min(880px, 100%);
+}
+
+/* 2026-11-16 (the owner: every popup opens "very smoothly"): the backdrop fades
+   in and the card rises a little into place; leaving reverses it. Transform and
+   opacity only, so nothing reflows; nothing moves for anyone who asked for
+   reduced motion. */
+@keyframes w360-backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes w360-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+}
+
+@keyframes w360-backdrop-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes w360-dialog-out {
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+}
+
+/* `backwards`, never `both`: once the entrance has played no transform stays
+   on the card - a transform in effect would make it the containing block of
+   every fixed or absolutely positioned element inside it (a full-screen
+   viewer, a visually hidden input) and let the card itself scroll. */
+.backdrop {
+  animation: w360-backdrop-in 180ms ease-out backwards;
+}
+
+.dialog {
+  animation: w360-dialog-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+.leaving {
+  animation: w360-backdrop-out 160ms ease-in both;
+  pointer-events: none;
+}
+
+.leaving .dialog {
+  animation: w360-dialog-out 160ms ease-in both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop,
+  .dialog,
+  .leaving,
+  .leaving .dialog {
+    animation: none;
+  }
+}
+
+/* xl: a whole page in a popup (the Product Publisher). A sheet as tall as the
+   window allows: its title stays at the top, its body scrolls inside, its
+   actions stay at the bottom. Full screen on a phone. */
+.backdrop.sheetBackdrop {
+  align-items: center;
+  overflow: hidden;
+  overflow: clip;
+  padding: var(--w360-space-4);
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(1180px, 100%);
+  height: min(94dvh, 1200px);
+  margin: 0;
+  overflow: hidden;
+  /* Not even a script's scrollIntoView may scroll the sheet itself: only its body scrolls. */
+  overflow: clip;
+}
+
+@media (max-width: 720px) {
+  .backdrop.sheetBackdrop {
+    padding: 0;
+  }
+
+  .sheet {
+    width: 100%;
+    height: 100dvh;
+    border-radius: 0;
+  }
+}
+
+/* drawer (2026-11-18): a panel along the right edge, as tall as the window; its
+   body scrolls inside it. It slides in a little from the right; nothing moves for
+   anyone who asked for reduced motion. Full width on a phone. */
+.backdrop.drawerBackdrop {
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: 0;
+  overflow: hidden;
+  overflow: clip;
+}
+
+.drawer {
+  display: flex;
+  flex-direction: column;
+  width: min(440px, 100%);
+  height: 100dvh;
+  margin: 0;
+  border-radius: 0;
+  overflow: hidden;
+  overflow: clip;
+  animation-name: w360-drawer-in;
+}
+
+@keyframes w360-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+
+.leaving .drawer {
+  animation-name: w360-drawer-out;
+}
+
+@keyframes w360-drawer-out {
+  to {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer,
+  .leaving .drawer {
+    animation: none;
+  }
+}
+
+/* A popup form's fields, lined up (2026-11-05): two equal columns, one gap,
+   each label above its input, every input as wide as its column. */
+.dialogGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--w360-space-3) var(--w360-space-4);
+  align-items: start;
+}
+
+.dialogStack {
+  display: grid;
+  gap: var(--w360-space-3);
+}
+
+.span {
+  grid-column: 1 / -1;
+}
+
+.dialogGrid > *,
+.dialogStack > * {
+  min-width: 0;
+}
+
+.dialogBody :global(.w360-input),
+.dialogBody select,
+.dialogBody textarea {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.dialogBody fieldset {
+  margin: 0;
+  min-width: 0;
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-md);
+}
+
+.dialogIntro {
+  margin: 0;
+  color: var(--w360-text-muted);
+  font-size: 14px;
+}
+
+.popupMessage {
+  margin-inline-start: var(--w360-space-2);
+  font-size: 14px;
+}
+
+.popupMessage:empty {
+  display: none;
 }
 
 .dialogForm {
@@ -97,6 +296,12 @@
   gap: var(--w360-space-2);
   padding: var(--w360-space-3) var(--w360-space-5) var(--w360-space-4);
   border-top: 1px solid var(--w360-border);
+}
+
+@media (max-width: 600px) {
+  .dialogGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 480px) {

@@ -14,10 +14,12 @@ import {
   type PriceRange,
 } from "@/lib/api/store";
 import { percentToBp, toMajor, toMinor } from "../amounts";
-import { Modal } from "../Modal";
-import { LoadGate, describeError, money, useAction, useLoad } from "../ui";
+import { dialog, FormDialog } from "../Modal";
+import { LoadGate, money, useAction, useLoad } from "../ui";
 import { SelectField, TextField } from "../widgets";
-import { StoreTabs } from "./StoreTabs";
+import { refusal } from "./model";
+import { StoreHeader } from "./StoreTabs";
+import { Page, Select } from "../kit";
 import styles from "./ProductManager.module.css";
 
 /**
@@ -77,8 +79,7 @@ function QuoteCell({ q }: { q: ChannelQuote | undefined }) {
   );
 }
 
-function CommissionDialog({ product, currency, onDone, onCancel }: { product: CommercialProduct; currency: string; onDone: (m: string) => void; onCancel: () => void }) {
-  const titleId = useId();
+function CommissionDialog({ product, currency, onDone, onCancel }: { product: CommercialProduct; currency: string; onDone: (m: string | undefined) => void; onCancel: () => void }) {
   const current = product.affiliate_commission;
   const [plan, setPlan] = useState("");
   const [mode, setMode] = useState<"rate" | "fixed">(current?.fixed_amount_minor ? "fixed" : "rate");
@@ -87,125 +88,93 @@ function CommissionDialog({ product, currency, onDone, onCancel }: { product: Co
   const [recurring, setRecurring] = useState(!!current?.recurring);
   const [months, setMonths] = useState(current?.recurring_months ? String(current.recurring_months) : "");
   const [from, setFrom] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const modeName = useId();
 
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
+  async function save(): Promise<string> {
     const rateBp = percentToBp(rate);
     const fixedMinor = mode === "fixed" ? toMinor(fixed, currency) : null;
-    if (mode === "rate" && rateBp === null) return setError("Enter a commission from 0 to 100%, up to two decimals.");
-    if (mode === "fixed" && (fixedMinor === null || fixedMinor <= 0)) return setError("Enter the fixed commission as an amount above zero.");
+    if (mode === "rate" && rateBp === null) throw refusal("Enter a commission from 0 to 100%, up to two decimals.");
+    if (mode === "fixed" && (fixedMinor === null || fixedMinor <= 0)) throw refusal("Enter the fixed commission as an amount above zero.");
     const m = months.trim() ? Number(months) : null;
-    if (m !== null && (!Number.isInteger(m) || m < 1 || m > 120)) return setError("Months is a whole number from 1 to 120.");
-    try {
-      await storeAdminApi.setCommission({
-        product_code: product.code,
-        plan_code: plan,
-        rate_bp: mode === "rate" ? (rateBp ?? 0) : 0,
-        fixed_amount_minor: fixedMinor,
-        fixed_currency: mode === "fixed" ? currency : "",
-        recurring,
-        recurring_months: recurring ? m : null,
-        effective_from: from ? `${from}T00:00:00+00:00` : null,
-      });
-      onDone(`Commission for ${product.name} saved. Sales already made keep the commission they were made under.`);
-    } catch (err) {
-      setError(describeError(err));
-    }
+    if (m !== null && (!Number.isInteger(m) || m < 1 || m > 120)) throw refusal("Months is a whole number from 1 to 120.");
+    await storeAdminApi.setCommission({
+      product_code: product.code,
+      plan_code: plan,
+      rate_bp: mode === "rate" ? (rateBp ?? 0) : 0,
+      fixed_amount_minor: fixedMinor,
+      fixed_currency: mode === "fixed" ? currency : "",
+      recurring,
+      recurring_months: recurring ? m : null,
+      effective_from: from ? `${from}T00:00:00+00:00` : null,
+    });
+    return `Commission for ${product.name} saved. Sales already made keep the commission they were made under.`;
   }
 
   return (
-    <Modal labelledBy={titleId} onClose={onCancel}>
-      <form onSubmit={(e) => void save(e)} noValidate>
-        <h2 id={titleId}>Commission: {product.name}</h2>
-        <p className={styles.muted}>Earned by affiliates (and by selling partners without a margin rule) only after a verified payment.</p>
-        {error && (
-          <p className="w360-error-text" role="alert">
-            {error}
-          </p>
-        )}
-        <SelectField
-          label="Applies to"
-          value={plan}
-          onChange={setPlan}
-          options={[{ value: "", label: `Every plan of ${product.name}` }, ...product.plans.map((p) => ({ value: p.code, label: `Only ${p.name}` }))]}
-        />
-        <fieldset className={styles.card}>
-          <legend className="w360-label">Commission type</legend>
-          <label className="w360-label">
-            <input type="radio" name="mode" checked={mode === "rate"} onChange={() => setMode("rate")} /> Percentage of the sale
-          </label>
-          <label className="w360-label">
-            <input type="radio" name="mode" checked={mode === "fixed"} onChange={() => setMode("fixed")} /> Fixed amount per payment ({currency})
-          </label>
+    <FormDialog
+      title={`Commission: ${product.name}`}
+      intro="Earned by affiliates (and by selling partners without a margin rule) only after a verified payment."
+      submitLabel="Save commission"
+      onSubmit={save}
+      onDone={onDone}
+      onClose={onCancel}
+    >
+      <SelectField
+        label="Applies to"
+        value={plan}
+        onChange={setPlan}
+        options={[{ value: "", label: `Every plan of ${product.name}` }, ...product.plans.map((p) => ({ value: p.code, label: `Only ${p.name}` }))]}
+      />
+      <TextField label="Effective from (UTC)" type="date" value={from} onChange={setFrom} hint="Empty = now. A commission change never applies to past sales." />
+      <fieldset className={dialog.span}>
+        <legend className="w360-label">Commission type</legend>
+        <div className={dialog.grid}>
+          <div className={styles.radioStack}>
+            <label className="w360-label">
+              <input type="radio" name={modeName} checked={mode === "rate"} onChange={() => setMode("rate")} /> Percentage of the sale
+            </label>
+            <label className="w360-label">
+              <input type="radio" name={modeName} checked={mode === "fixed"} onChange={() => setMode("fixed")} /> Fixed amount per payment ({currency})
+            </label>
+          </div>
           {mode === "rate" ? (
             <TextField label="Commission %" inputMode="decimal" value={rate} onChange={setRate} />
           ) : (
             <TextField label={`Fixed commission (${currency})`} inputMode="decimal" value={fixed} onChange={setFixed} />
           )}
-        </fieldset>
-        <label className="w360-label">
-          <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} /> Also earn on renewals (recurring)
-        </label>
-        {recurring && (
-          <TextField label="For how many months" hint="Empty = as long as the customer stays." inputMode="numeric" value={months} onChange={setMonths} />
-        )}
-        <TextField label="Effective from (UTC)" type="date" value={from} onChange={setFrom} hint="Empty = now. A commission change never applies to past sales." />
-        <div className={styles.toolbar}>
-          <button type="submit" className="w360-btn w360-btn-primary">
-            Save commission
-          </button>
-          <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
-            Cancel
-          </button>
         </div>
-      </form>
-    </Modal>
+      </fieldset>
+      <label className={`w360-label ${dialog.span}`}>
+        <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} /> Also earn on renewals (recurring)
+      </label>
+      {recurring && (
+        <TextField label="For how many months" hint="Empty = as long as the customer stays." inputMode="numeric" value={months} onChange={setMonths} />
+      )}
+    </FormDialog>
   );
 }
 
-function MarginDialog({ product, experience, onDone, onCancel }: { product: CommercialProduct; experience: "reseller" | "white_label"; onDone: (m: string) => void; onCancel: () => void }) {
-  const titleId = useId();
+function MarginDialog({ product, experience, onDone, onCancel }: { product: CommercialProduct; experience: "reseller" | "white_label"; onDone: (m: string | undefined) => void; onCancel: () => void }) {
   const current = product.margins?.[experience];
   const [value, setValue] = useState(current ? String(current.discount_bp / 100) : "");
-  const [error, setError] = useState<string | null>(null);
   const who = CHANNEL_LABEL[experience];
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    const bp = percentToBp(value);
-    if (bp === null) return setError("Enter a margin from 0 to 100%, up to two decimals.");
-    try {
-      await storeAdminApi.setMargin({ experience, product_code: product.code, discount_bp: bp });
-      onDone(`${who} margin for ${product.name} saved.`);
-    } catch (err) {
-      setError(describeError(err));
-    }
-  }
   return (
-    <Modal labelledBy={titleId} onClose={onCancel}>
-      <form onSubmit={(e) => void save(e)} noValidate>
-        <h2 id={titleId}>
-          {who} margin: {product.name}
-        </h2>
-        <p className={styles.muted}>
-          A {who.toLowerCase()} buys at the list price less this discount and keeps the difference to what its customer pays. Workeasy360 keeps the rest. Applies to new sales from now; a partner&apos;s own override still wins.
-        </p>
-        {error && (
-          <p className="w360-error-text" role="alert">
-            {error}
-          </p>
-        )}
-        <TextField label="Margin (discount off list) %" inputMode="decimal" value={value} onChange={setValue} />
-        <div className={styles.toolbar}>
-          <button type="submit" className="w360-btn w360-btn-primary">
-            Save margin
-          </button>
-          <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
-      </form>
-    </Modal>
+    <FormDialog
+      title={`${who} margin: ${product.name}`}
+      intro={`A ${who.toLowerCase()} buys at the list price less this discount and keeps the difference to what its customer pays. WorkEasy360 keeps the rest. Applies to new sales from now; a partner's own override still wins.`}
+      size="sm"
+      submitLabel="Save margin"
+      onSubmit={async () => {
+        const bp = percentToBp(value);
+        if (bp === null) throw refusal("Enter a margin from 0 to 100%, up to two decimals.");
+        await storeAdminApi.setMargin({ experience, product_code: product.code, discount_bp: bp });
+        return `${who} margin for ${product.name} saved.`;
+      }}
+      onDone={onDone}
+      onClose={onCancel}
+    >
+      <TextField label="Margin (discount off list) %" inputMode="decimal" value={value} onChange={setValue} />
+    </FormDialog>
   );
 }
 
@@ -214,63 +183,43 @@ function RangeDialog({ plan, experience, currency, existing, onDone, onCancel }:
   experience: "reseller" | "white_label";
   currency: string;
   existing: PriceRange | undefined;
-  onDone: (m: string) => void;
+  onDone: (m: string | undefined) => void;
   onCancel: () => void;
 }) {
-  const titleId = useId();
   const [interval, setInterval] = useState(existing?.interval ?? "monthly");
   const [min, setMin] = useState(existing ? toMajor(existing.min_minor, currency) : "");
   const [max, setMax] = useState(existing?.max_minor != null ? toMajor(existing.max_minor, currency) : "");
   const [allowed, setAllowed] = useState(existing?.partner_may_set ?? true);
-  const [error, setError] = useState<string | null>(null);
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    const low = toMinor(min, currency);
-    const high = max.trim() ? toMinor(max, currency) : null;
-    if (low === null) return setError("Enter the lowest allowed price.");
-    if (max.trim() && (high === null || high < low)) return setError("The highest price must be at least the lowest.");
-    try {
-      await storeAdminApi.setRange({ experience, plan_id: plan.plan_id, interval, currency, min_minor: low, max_minor: high, partner_may_set: allowed });
-      onDone(`Price range for ${plan.name} saved.`);
-    } catch (err) {
-      setError(describeError(err));
-    }
-  }
   return (
-    <Modal labelledBy={titleId} onClose={onCancel}>
-      <form onSubmit={(e) => void save(e)} noValidate>
-        <h2 id={titleId}>
-          {CHANNEL_LABEL[experience]} price range: {plan.name}
-        </h2>
-        <p className={styles.muted}>Partners may set their own customer price only inside this range, and only while it is allowed. Prices they already set stay until they change them.</p>
-        {error && (
-          <p className="w360-error-text" role="alert">
-            {error}
-          </p>
-        )}
+    <FormDialog
+      title={`${CHANNEL_LABEL[experience]} price range: ${plan.name}`}
+      intro="Partners may set their own customer price only inside this range, and only while it is allowed. Prices they already set stay until they change them."
+      submitLabel="Save range"
+      onSubmit={async () => {
+        const low = toMinor(min, currency);
+        const high = max.trim() ? toMinor(max, currency) : null;
+        if (low === null) throw refusal("Enter the lowest allowed price.");
+        if (max.trim() && (high === null || high < low)) throw refusal("The highest price must be at least the lowest.");
+        await storeAdminApi.setRange({ experience, plan_id: plan.plan_id, interval, currency, min_minor: low, max_minor: high, partner_may_set: allowed });
+        return `Price range for ${plan.name} saved.`;
+      }}
+      onDone={onDone}
+      onClose={onCancel}
+    >
+      <div className={dialog.span}>
         <SelectField
           label="Billing cycle"
           value={interval}
           onChange={setInterval}
           options={["monthly", "quarterly", "semi_annual", "annual"].map((i) => ({ value: i, label: INTERVAL_LABELS[i] }))}
         />
-        <div className={styles.formGrid}>
-          <TextField label={`Lowest price (${currency})`} inputMode="decimal" value={min} onChange={setMin} />
-          <TextField label={`Highest price (${currency})`} hint="Empty = no limit." inputMode="decimal" value={max} onChange={setMax} />
-        </div>
-        <label className="w360-label">
-          <input type="checkbox" checked={allowed} onChange={(e) => setAllowed(e.target.checked)} /> Partners may set their own price
-        </label>
-        <div className={styles.toolbar}>
-          <button type="submit" className="w360-btn w360-btn-primary">
-            Save range
-          </button>
-          <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
-      </form>
-    </Modal>
+      </div>
+      <TextField label={`Lowest price (${currency})`} inputMode="decimal" value={min} onChange={setMin} />
+      <TextField label={`Highest price (${currency})`} hint="Empty = no limit." inputMode="decimal" value={max} onChange={setMax} />
+      <label className={`w360-label ${dialog.span}`}>
+        <input type="checkbox" checked={allowed} onChange={(e) => setAllowed(e.target.checked)} /> Partners may set their own price
+      </label>
+    </FormDialog>
   );
 }
 
@@ -292,7 +241,7 @@ function RangeList({ plan, experience, currency, manage, busy, open, act }: {
   const mine = plan.ranges.filter((r) => r.experience === experience && r.currency === currency);
   return (
     <div>
-      {mine.length === 0 && <span className={styles.muted}>Set by Workeasy360</span>}
+      {mine.length === 0 && <span className={styles.muted}>Set by WorkEasy360</span>}
       {mine.map((r) => (
         <div key={r.id}>
           {INTERVAL_LABELS[r.interval]?.split(" ")[0] ?? r.interval}: {money(r.min_minor, r.currency)}–{r.max_minor != null ? money(r.max_minor, r.currency) : "no limit"}
@@ -447,47 +396,46 @@ export function CommercialRules() {
   const [currency, setCurrency] = useState<string | undefined>(undefined);
   const [load, reload] = useLoad(() => storeAdminApi.commercialRules(currency), [currency]);
   const { act, busy, feedback } = useAction(reload);
-  const [dialog, setDialog] = useState<Dialog>(null);
+  const [opened, setOpened] = useState<Dialog>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const done = (m: string) => {
-    setDialog(null);
-    setNotice(m);
+  const done = (m: string | undefined) => {
+    setNotice(m ?? null);
     reload();
   };
   return (
-    <div className={styles.page}>
-      <h1>Commercial rules</h1>
-      <StoreTabs current="rules" />
-      <p className={styles.muted}>
-        One central catalog, priced once. Each Store level sees the same prices; partners earn a margin or a commission computed on the server, only after verified payment.
-      </p>
+    <Page>
+      <StoreHeader
+        current="rules"
+        info="One central catalog, priced once. Each Store level sees the same prices; partners earn a margin or a commission computed on the server, only after verified payment."
+      />
       {notice && <p role="status">{notice}</p>}
       {feedback}
       <LoadGate load={load} what="the commercial rules">
         {(data: Rules) => (
           <>
             {data.currencies.length > 1 && (
-              <label className="w360-label">
-                Currency{" "}
-                <select className="w360-input" value={data.currency ?? ""} onChange={(e) => setCurrency(e.target.value)}>
-                  {data.currencies.map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
-              </label>
+              <div>
+                <Select
+                  label="Currency"
+                  prefix="Currency:"
+                  value={data.currency ?? data.currencies[0]}
+                  onChange={(c) => setCurrency(c)}
+                  options={data.currencies.map((c) => ({ value: c, label: c }))}
+                />
+              </div>
             )}
             {!data.currency && <p className={styles.muted}>No price book yet: create one on Currency &amp; pricing.</p>}
             {data.products.map((p) => (
-              <ProductRules key={p.code} product={p} data={data} act={act} busy={busy} open={setDialog} />
+              <ProductRules key={p.code} product={p} data={data} act={act} busy={busy} open={setOpened} />
             ))}
-            {dialog?.kind === "commission" && <CommissionDialog product={dialog.product} currency={data.currency ?? ""} onDone={done} onCancel={() => setDialog(null)} />}
-            {dialog?.kind === "margin" && <MarginDialog product={dialog.product} experience={dialog.experience} onDone={done} onCancel={() => setDialog(null)} />}
-            {dialog?.kind === "range" && (
-              <RangeDialog plan={dialog.plan} experience={dialog.experience} currency={data.currency ?? ""} existing={dialog.existing} onDone={done} onCancel={() => setDialog(null)} />
+            {opened?.kind === "commission" && <CommissionDialog product={opened.product} currency={data.currency ?? ""} onDone={done} onCancel={() => setOpened(null)} />}
+            {opened?.kind === "margin" && <MarginDialog product={opened.product} experience={opened.experience} onDone={done} onCancel={() => setOpened(null)} />}
+            {opened?.kind === "range" && (
+              <RangeDialog plan={opened.plan} experience={opened.experience} currency={data.currency ?? ""} existing={opened.existing} onDone={done} onCancel={() => setOpened(null)} />
             )}
           </>
         )}
       </LoadGate>
-    </div>
+    </Page>
   );
 }

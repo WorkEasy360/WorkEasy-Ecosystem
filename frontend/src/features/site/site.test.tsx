@@ -322,4 +322,22 @@ describe("self-service accounts", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("don't match");
     expect(calls.filter((c) => c.key.startsWith("POST"))).toEqual([]);
   });
+
+  it("a partner's invitation link sets a first password, then says KYC and an Admin's activation come next (2026-11-10)", async () => {
+    window.history.replaceState(null, "", "/partner/accept-invitation#token=zyxwvutsrqponmlkjihgfedcba9876");
+    const calls = mockApi({
+      "GET /api/v1/auth/session": [SIGNED_OUT],
+      "POST /api/v1/public/password/reset": [{ status: 200, body: { status: "ok" } }],
+    });
+    const { container } = render(<ResetPasswordScreen invitation />);
+    expect(await screen.findByRole("heading", { name: "Accept your invitation" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "a long enough passphrase" } });
+    fireEvent.change(screen.getByLabelText("Repeat the password"), { target: { value: "a long enough passphrase" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set password" }));
+    expect(await screen.findByRole("heading", { name: "Your password is set" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("approved and an Admin activates it");
+    const sent = calls.find((c) => c.key === "POST /api/v1/public/password/reset");
+    expect(sent?.url).not.toContain("token");
+    await expectNoViolations(container);
+  });
 });

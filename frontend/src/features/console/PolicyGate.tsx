@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { logout } from "@/lib/api/auth";
+import { forgetAccountState } from "@/lib/accountState";
 import type { AccessPolicyDenial } from "@/lib/api/console";
 import { ChangePasswordForm } from "./ChangePasswordForm";
 import styles from "./Console.module.css";
@@ -28,7 +29,11 @@ export function PolicyGate({
 }) {
   const router = usePortalRouter();
 
-  const signInAgain = () => logout().finally(() => router.replace("/login"));
+  const signInAgain = () =>
+    logout().finally(() => {
+      forgetAccountState();
+      router.replace("/login");
+    });
 
   return (
     <main id="w360-main" className={styles.gate}>

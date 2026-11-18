@@ -1,0 +1,136 @@
+/* The KYC review, the setup queue and the requirement forms (2026-11-09). Tokens only. */
+
+.note {
+  margin: 0;
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-text-muted);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  font-size: var(--w360-fs-body);
+  color: var(--w360-text);
+}
+
+.checks {
+  display: grid;
+  gap: var(--w360-space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.checks legend {
+  padding: 0;
+  margin-bottom: var(--w360-space-1);
+}
+
+.fields {
+  display: grid;
+  gap: var(--w360-space-3);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* --- documents --------------------------------------------------------------------- */
+
+.docs {
+  display: grid;
+  gap: var(--w360-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.doc {
+  display: grid;
+  gap: var(--w360-space-2);
+  min-width: 0;
+  padding: var(--w360-space-3);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-control);
+}
+
+.docHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  font-weight: 600;
+}
+
+.files {
+  display: grid;
+  gap: var(--w360-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  min-width: 0;
+  font-size: var(--w360-fs-body);
+}
+
+.fileName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.replaced {
+  color: var(--w360-text-muted);
+}
+
+.missing {
+  margin: 0;
+  padding-left: var(--w360-space-5);
+}
+
+/* --- the setup queue's answers ------------------------------------------------------ */
+
+.answers {
+  display: grid;
+  gap: var(--w360-space-1);
+  margin: 0;
+  padding: var(--w360-space-2) 0;
+}
+
+.answers dt {
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-text-muted);
+}
+
+.answers dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.cellActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-2);
+}
+
+/* A filter shortcut written inside a sentence: looks like a link, is a button. */
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.linkButton:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}

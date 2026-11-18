@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  WorkEasy360 - outside-in availability: Route 53 health checks of the public sign-in and API
+  endpoints (through Cloudflare, as customers reach them) and alarms on them. Route 53 health-check
+  metrics exist only in us-east-1, so this stack is deployed there, with its own alert topic.
+
+Parameters:
+  AlertEmail:
+    Type: String
+    Description: The verified address that receives alerts (confirm the SNS subscription email).
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+  CheckAccounts:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: "true once accounts.workeasy360.com resolves (release runbook step 3)."
+
+Conditions:
+  WithAccounts: !Equals [!Ref CheckAccounts, "true"]
+
+Resources:
+  UptimeTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: workeasy360-uptime-alerts
+      KmsMasterKeyId: alias/aws/sns
+  UptimeSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref UptimeTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # The issuer's discovery document: if it fails, no product can sign anyone in.
+  AuthDiscoveryCheck:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        Type: HTTPS_STR_MATCH
+        FullyQualifiedDomainName: auth.workeasy360.com
+        ResourcePath: /.well-known/openid-configuration
+        SearchString: '"issuer"'
+        RequestInterval: 30
+        FailureThreshold: 3
+        EnableSNI: true
+      HealthCheckTags: [{Key: Name, Value: w360-auth-discovery}]
+  AccountsDiscoveryCheck:
+    Type: AWS::Route53::HealthCheck
+    Condition: WithAccounts
+    Properties:
+      HealthCheckConfig:
+        Type: HTTPS_STR_MATCH
+        FullyQualifiedDomainName: accounts.workeasy360.com
+        ResourcePath: /.well-known/openid-configuration
+        SearchString: '"issuer"'
+        RequestInterval: 30
+        FailureThreshold: 3
+        EnableSNI: true
+      HealthCheckTags: [{Key: Name, Value: w360-accounts-discovery}]
+  UserAdminCheck:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        Type: HTTPS
+        FullyQualifiedDomainName: app.workeasy360.com
+        ResourcePath: /
+        RequestInterval: 30
+        FailureThreshold: 3
+        EnableSNI: true
+      HealthCheckTags: [{Key: Name, Value: w360-app}]
+
+  AuthDiscoveryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-auth-discovery-down
+      AlarmDescription: auth.workeasy360.com's discovery document does not answer - product sign-in is down.
+      Namespace: AWS/Route53
+      MetricName: HealthCheckStatus
+      Dimensions: [{Name: HealthCheckId, Value: !Ref AuthDiscoveryCheck}]
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      AlarmActions: [!Ref UptimeTopic]
+      OKActions: [!Ref UptimeTopic]
+  AccountsDiscoveryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: WithAccounts
+    Properties:
+      AlarmName: w360-accounts-discovery-down
+      AlarmDescription: accounts.workeasy360.com's discovery document does not answer.
+      Namespace: AWS/Route53
+      MetricName: HealthCheckStatus
+      Dimensions: [{Name: HealthCheckId, Value: !Ref AccountsDiscoveryCheck}]
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      AlarmActions: [!Ref UptimeTopic]
+      OKActions: [!Ref UptimeTopic]
+  UserAdminAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: w360-app-down
+      AlarmDescription: app.workeasy360.com does not answer.
+      Namespace: AWS/Route53
+      MetricName: HealthCheckStatus
+      Dimensions: [{Name: HealthCheckId, Value: !Ref UserAdminCheck}]
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      AlarmActions: [!Ref UptimeTopic]
+      OKActions: [!Ref UptimeTopic]

@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession } from "@/lib/auth/useSession";
+import { usePortals } from "@/lib/portalContext";
 import { publicApi, type PublicProduct, type SiteSettings } from "@/lib/api/public";
 import { money } from "@/features/controlplane/ui";
 import { Logo } from "@/components/brand/Logo";
@@ -74,6 +75,17 @@ export interface PurchaseIntent {
   /** How many of the plan (2026-11-03, the Store's checkout box) - a plan
    * intent only; the checkout prices that quantity again on the server. */
   quantity?: number;
+  /** ADR-058: the coupon code typed on the Store's product page - a code only;
+   * the checkout prices it again for the organization's own order. */
+  coupon?: string;
+}
+
+/** The shape of a coupon code (`pricing.coupons`). */
+export const COUPON_CODE = /^[A-Z0-9][A-Z0-9_-]{2,31}$/;
+
+export function cleanCoupon(raw: unknown): string | undefined {
+  const code = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+  return COUPON_CODE.test(code) ? code : undefined;
 }
 
 /** The checkout's own quantity limit (`payments.orders.MAX_QUANTITY`). */
@@ -96,7 +108,7 @@ export function cleanIntent(raw: PurchaseIntent | null | undefined): PurchaseInt
     const ids = [...new Set(raw.cart.filter((id) => typeof id === "string" && UUID.test(id)))].slice(0, MAX_INTENT_CART);
     if (ids.length === 0) return null;
     const interval = raw.interval && INTERVALS.has(raw.interval) ? raw.interval : undefined;
-    return { cart: ids, interval };
+    return { cart: ids, interval, coupon: cleanCoupon(raw.coupon) };
   }
   const plan = raw.plan && UUID.test(raw.plan) ? raw.plan : undefined;
   const bundle = raw.bundle && UUID.test(raw.bundle) ? raw.bundle : undefined;
@@ -107,6 +119,7 @@ export function cleanIntent(raw: PurchaseIntent | null | undefined): PurchaseInt
     interval: raw.interval && INTERVALS.has(raw.interval) ? raw.interval : undefined,
     trial: raw.trial === true,
     quantity: plan ? cleanQuantity(raw.quantity) : undefined,
+    coupon: raw.trial === true ? undefined : cleanCoupon(raw.coupon),
   };
 }
 
@@ -145,6 +158,8 @@ export function intentQuery(intent: PurchaseIntent): string {
   if (intent.interval) params.set("interval", intent.interval);
   if (intent.trial) params.set("trial", "1");
   if (intent.plan && intent.quantity && intent.quantity > 1) params.set("quantity", String(intent.quantity));
+  const coupon = cleanCoupon(intent.coupon);
+  if (coupon && !intent.trial) params.set("coupon", coupon);
   return params.toString();
 }
 
@@ -279,6 +294,7 @@ const NAV = [
  */
 export function SiteShell({ children, header }: { children: React.ReactNode; header?: React.ReactNode }) {
   const pathname = usePathname();
+  const origins = usePortals();
   const session = useSession();
   const products = useMenuProducts(!header);
   const [navOpen, setNavOpen] = useState(false);
@@ -305,7 +321,8 @@ export function SiteShell({ children, header }: { children: React.ReactNode; hea
             {NAV.map((item) => (
               <Link
                 key={item.href}
-                href={item.href}
+                // ADR-065: the Store is its own site once it has a host.
+                href={item.href === "/store" && origins?.store ? `${origins.store}/` : item.href}
                 className={styles.navLink}
                 aria-current={pathname === item.href || pathname.startsWith(`${item.href}/`) ? "page" : undefined}
               >

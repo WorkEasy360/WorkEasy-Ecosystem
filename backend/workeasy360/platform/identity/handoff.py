@@ -81,6 +81,17 @@ def issue(
     return code
 
 
+#: ADR-065: marks a code issued as an *account pass* - the Store's "My Account"
+#: handing its sign-in to the customer portal. Such a code is redeemed only by
+#: :func:`redeem_pass`, never by :func:`redeem`, and the other way round.
+STORE_HANDOFF_VIA: Final = "store_pass"
+
+
+def new_state() -> str:
+    """A binding value for a code no portal cookie will ever present (a pass)."""
+    return secrets.token_urlsafe(32)
+
+
 @dataclass(frozen=True, slots=True)
 class Redemption:
     user: Any
@@ -114,11 +125,44 @@ def redeem(*, code: object, state: object, host: str) -> Redemption | None:
 
     if host_of(row.target_origin) != (host or "").strip().lower():
         return None
+    if (row.auth_state or {}).get("via") == STORE_HANDOFF_VIA:
+        return None
     if not isinstance(state, str) or not constant_time_compare(
         row.state_hash, _digest(state)
     ):
         return None
+    return _live_redemption(row, now)
 
+
+def redeem_pass(*, code: object, host: str) -> Redemption | None:
+    """Spend an account pass (ADR-065) on this request, or ``None``.
+
+    Like :func:`redeem`, but bound by the request's ``Origin`` (checked by the
+    caller: only the Store's configured origin may present one) instead of a
+    portal cookie - the pass is posted from one host to another in a form body.
+    Claimed first, so a pass is burnt by its first presentation."""
+    if not isinstance(code, str) or not _CODE_RE.match(code):
+        return None
+    now = timezone.now()
+    row = SessionHandoff.objects.filter(
+        code_hash=_digest(code), consumed_at__isnull=True, expires_at__gt=now
+    ).first()
+    if row is None:
+        return None
+    claimed = SessionHandoff.objects.filter(pk=row.pk, consumed_at__isnull=True).update(
+        consumed_at=now
+    )
+    if claimed != 1:
+        return None
+    if host_of(row.target_origin) != (host or "").strip().lower():
+        return None
+    if (row.auth_state or {}).get("via") != STORE_HANDOFF_VIA:
+        return None
+    return _live_redemption(row, now)
+
+
+def _live_redemption(row: SessionHandoff, now: Any) -> Redemption | None:
+    """The account behind a claimed code, if it and its sign-in are still live."""
     user = User.objects.filter(pk=row.user_id).first()
     if (
         user is None

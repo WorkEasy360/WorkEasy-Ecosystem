@@ -139,7 +139,7 @@ describe("Store Console - Explore Products", () => {
     mount(<StoreConsole tab="explore" />);
     const list = await screen.findByRole("list", { name: "Products" });
     fireEvent.click(within(list).getByRole("button", { name: "Request access to Help Desk" }));
-    const form = screen.getByRole("form", { name: "Request access to Help Desk" });
+    const form = screen.getByRole("dialog", { name: "Request access to Help Desk" });
     expect(within(form).getByLabelText(/Website or social profile/)).toHaveValue("https://aff.example.com");
     fireEvent.change(within(form).getByLabelText("Promotion channel"), { target: { value: "social_media" } });
     fireEvent.change(within(form).getByLabelText("Target audience"), { target: { value: "Support leads" } });
@@ -155,6 +155,21 @@ describe("Store Console - Explore Products", () => {
       strategy: "Weekly LinkedIn posts with a demo video.",
     });
     expect(await screen.findByRole("status")).toHaveTextContent(/Request sent for Help Desk/);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps the request popup open, with nothing sent, while a required answer is missing", async () => {
+    const calls = mockApi(routes());
+    mount(<StoreConsole tab="explore" />);
+    const list = await screen.findByRole("list", { name: "Products" });
+    fireEvent.click(within(list).getByRole("button", { name: "Request access to Help Desk" }));
+    const form = screen.getByRole("dialog", { name: "Request access to Help Desk" });
+    fireEvent.change(within(form).getByLabelText("Target audience"), { target: { value: "Support leads" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Send request" }));
+    expect(await within(form).findByRole("alert")).toHaveTextContent("Check the highlighted field.");
+    expect(calls.some((c) => c.key.startsWith("POST"))).toBe(false);
+    fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("shows the server's refusal, and offers no request button when the member may not ask", async () => {
@@ -203,7 +218,7 @@ describe("Store Console - a reseller asks to sell", () => {
     expect(within(list).getByText(/Commission: 10.00% of each paid sale/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Store Console");
     fireEvent.click(within(list).getByRole("button", { name: "Request access to Help Desk" }));
-    const form = screen.getByRole("form", { name: "Request access to Help Desk" });
+    const form = screen.getByRole("dialog", { name: "Request access to Help Desk" });
     fireEvent.change(within(form).getByLabelText("Sales channel"), { target: { value: "existing_customers" } });
     fireEvent.change(within(form).getByLabelText("Target customers"), { target: { value: "Our accounting clients" } });
     fireEvent.change(within(form).getByLabelText("How you will sell it"), { target: { value: "Bundle it with our support plans." } });

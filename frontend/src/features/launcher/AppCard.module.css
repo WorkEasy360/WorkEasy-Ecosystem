@@ -72,9 +72,10 @@
 
 .footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: var(--w360-space-2);
+  margin-top: auto;
 }
 
 /* Phase 9: the plan and entitlement status the organization holds. */

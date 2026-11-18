@@ -197,7 +197,7 @@ describe("the reseller wizard", () => {
       "Team",
       "Review",
     ]);
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Complete Your Profile: ABC Technologies");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Complete partner profile: ABC Technologies");
     expect(document.body.textContent).toMatch(/50%/);
     expect(document.body.textContent).toMatch(/Still needed: Business information/);
     await screen.findByLabelText(/^Business email/, { selector: "input" });
@@ -296,8 +296,12 @@ describe("the affiliate wizard", () => {
     );
     mount();
     expect(await screen.findByText(/Promoting a product is not selling it/)).toBeInTheDocument();
-    expect(await screen.findByLabelText("Assign a product to promote")).toBeInTheDocument();
+    // Assigning is a popup (2026-11-05).
+    fireEvent.click(await screen.findByRole("button", { name: "+ Assign a product" }));
+    const popup = screen.getByRole("dialog", { name: "Assign a product to promote" });
+    expect(within(popup).getByRole("combobox", { name: "Assign a product to promote" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Allow product" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Allow a product" })).not.toBeInTheDocument();
   });
 });
 
@@ -323,7 +327,7 @@ describe("the review step", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Activate partner" }));
     expect(screen.queryByLabelText(/Reason for/)).not.toBeInTheDocument();
     await waitFor(() => expect(calls.some((c) => c.key.endsWith("/status"))).toBe(true));
-    expect(calls.find((c) => c.key.endsWith("/status"))!.body).toEqual({ status: "active", reason: "Activate partner - Super Admin console", expected_version: 2 });
+    expect(calls.find((c) => c.key.endsWith("/status"))!.body).toEqual({ status: "active", reason: "Activate partner - Admin console", expected_version: 2 });
   });
 
   it("does not offer activation while something required is missing", async () => {
@@ -339,7 +343,7 @@ describe("the review step", () => {
     mockApi(base(["reseller"], RESELLER));
     mount();
     // jsdom drops the space before the visually hidden part of the name.
-    fireEvent.click(await screen.findByRole("button", { name: /^Complete ?Business information$/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Add details ?for Business information$/ }));
     expect(await screen.findByRole("heading", { level: 2, name: /Step 1 of 8: Business information/ })).toBeInTheDocument();
     expect(replace).toHaveBeenLastCalledWith(`/admin/partners/${ID}/profile?step=business`, { scroll: false });
   });

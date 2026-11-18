@@ -1,0 +1,39 @@
+# ADR-063: The Partner Admin Panel: eight menus, a Platform Wallet that pays, onboarding before trading
+
+Date: 2026-11-11. Status: accepted (built on `feat/partner-admin-panel`, not deployed). Amends ADR-057 (the unified 14-entry partner menu), ADR-047/049/053 (White Label as a selling level), ADR-060 (partner wallets topped up offline only), ADR-061 (KYC gates activation only) and ADR-062 (Login as Guest).
+
+## Context
+
+The owner's Partner Admin Panel specification of 08 November 2026 asked for the existing partner portal and the Super Admin partner module to be completed, not rebuilt. The audit (`docs/partner-admin-panel/00-gap-analysis.md`) found most of the platform in place, and these gaps:
+
+- **Nothing ever debited a partner's Platform Wallet.** Staff could open one and record an offline top-up; a reseller's sale either invoiced the customer or, for a `partner_billed` account, was fulfilled with nothing charged. The partner could not see the wallet at all.
+- **White Label granted the reseller's selling rights.** Its bundle was the reseller's commercial set plus branding and a domain.
+- **Nothing checked KYC except activation.** A draft partner held no permission at all (not even support), and a partner made active before KYC existed kept every right.
+- **The menu had fourteen entries per workspace**, some drawn locked with an upgrade prompt.
+- Login as Guest generated its reason (`autoReason`), audited only the start and the end, and its banner read "Guest Mode".
+- The partner list did not show the Partner Email, KYC status or customer count as columns.
+
+## Decision
+
+1. **Eight menus, the same for everyone** (`partnerpanel/experiences.ts`): Dashboard, Products & Referrals, Customers, Billing & Subscriptions, Platform Wallet, Earnings & Payouts, Help, Settings. Every other page is a tab of one of them (or a page a tab links to); every earlier address is still served or aliased (tested). **Nothing is drawn locked**: a module the partner's permissions cannot use is not drawn. The Upgrade Plan action stays in the top bar.
+2. **Onboarding before trading.** A partner may trade only when its account is active and, with KYC required, its KYC clears it (`kyc.cleared`). Otherwise it holds the **onboarding tier** (`capabilities.ONBOARDING_PERMISSIONS`: dashboard view - which also opens support tickets and notifications - and profile view) and the portal draws only Dashboard (onboarding status), Help (tickets, help content) and Settings (Business & KYC, My Account & Security). `access.require_transacting` refuses every commercial command for such a partner, and referral capture and conversion skip it. A draft opens on its workspace's onboarding dashboard instead of the separate KYC page.
+3. **Legacy partners are an Admin decision.** A partner made active before KYC existed has no approved application. `PlatformSettings.partner_legacy_kyc_policy` (administration.0004) is `allow` by default - it keeps trading, labelled "Active before KYC" - or `restrict`, which confines it to onboarding until its KYC is approved. No approval is ever recorded on its behalf. The default keeps every live partner trading, because production cannot approve KYC until a malware scanner runs (ADR-061).
+4. **Suspended partners' commission is an Admin decision** too: `partner_suspended_commission_policy` is `accrue` (today's behaviour: payouts held) or `stop` (accrual skips the partner, `partner_suspended`).
+5. **White Label is an add-on.** Its bundle is branding and a domain only. Selling or referring is a base permission granted explicitly beside it: `also` on New Partner, on KYC approval and on upgrade approval (`capabilities.require_also`), each a tick box in the Admin. Partners approved before this keep every grant they hold. Products and pricing are required in a partner's profile only when it holds the reseller's keys.
+6. **The Platform Wallet pays** (`controlplane/partner_wallet.py`):
+   - **Read and top up.** `platform.partner_wallet.view` (the pricing capability's read tier, so a reseller's Finance role sees it) and `.manage` (Add Money, dangerous, the selling capability's manage tier). Add Money opens the existing partner checkout (`payments.partner_fees`, new purpose `partner_wallet_top_up`, no new table); only the provider's verified callback credits the wallet, once, keyed by the payment.
+   - **A new collection mode, `partner_wallet`** (billing.0002, subscriptions.0006, choices only): the customer is never invoiced (`invoicing.ensure_invoices`), its own members may not add to or change its subscription, the ordinary sell and order commands refuse it, and its sales earn the reseller no margin or commission (it bought at cost).
+   - **Plan Activation** (`orders.place_paid_by_partner_wallet`): one transaction that prices the order, checks the exact amount the partner confirmed (`price_changed` otherwise), buys the subscription line, records the order (fulfilled, `paid_by: partner_wallet`, the wallet entry in its snapshot) and debits the wallet - an overdraft rolls all of it back. The order's key and the debit's key make a retry a replay. The price is the commissions margin rule's partner cost for the plan, cycle, seats and currency; no margin rule means no wallet price, never a guessed one. A line added mid-period pays the rest of the period; a set-up fee is added in full. Only a customer with no subscription it pays for itself (or already wallet-paid) can be moved to the wallet.
+   - **Renewal**: each period is paid once under `partner-renewal:<subscription>:<period end>` - by "Renew now" (30 days before the end) or by the subscription clock at the end (`subscriptions.system` asks a registered collector). If the wallet cannot pay, the lines end with the paid period.
+   - **Plan change**: under the Admin's plan-change rule; an upgrade is immediate and pays the prorated difference in purchase price; a downgrade waits for the period end.
+7. **New partner reads** (`controlplane/partner_billing.py`): subscriptions with the Active, Pending Setup, Expiring and Expired filters (separate facts, never one merged status), billing records (the partner's own payments and its wallet's payments), a customer's products and setup (never the setup answers), help content (`audience=partner`) and sales resources (product media, approved descriptions, the new `sales_guide` help kind). The dashboard gains the onboarding states, referral performance with paid renewals, and the wallet beside - never added to - the earnings.
+8. **Store referral link**: `/r/<code>?to=store` opens the Store; `to` names a fixed landing (`referrals.LANDINGS`), never a URL.
+9. **Login as Guest**: the Admin chooses a reason (with optional details) before the session starts; every API request of a guest view - a refused write included - is audited (`partner.guest_view_request`, the reason, the staff member, the path with ids masked, the answer); the banner reads "Guest Session — Viewing Partner: <name>" with "Exit Guest Session".
+10. **The Admin's partner list** shows Partner Name, Partner Email, Type / Permissions, KYC Status, Account Status, Country, Assigned Customers, Created, Login as Guest; its row menu adds Review KYC, Approve / Reject KYC, Manage Permissions, View Assigned Customers, View Partner Wallet and View Commission & Payout Records.
+
+## Consequences
+
+- An affiliate upgrading to White Label no longer gains selling by default: the reviewer ticks "Also allow Reseller".
+- `tests/partner_panel/test_architecture.py` allowed no partner route named after a wallet; it now allows exactly the three Platform Wallet routes.
+- Production keeps today's behaviour after deploying, by the two policy defaults, until an Admin changes them.
+- Open (owner): automatic grace on an unpaid wallet renewal (the lines end today), GST on wallet purchases (none is charged), and online top-ups need a live payment provider for the partner's currency.

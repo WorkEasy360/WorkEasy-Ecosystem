@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
+import { Icon } from "@/components/sidebar/icons";
 import { RequiredMark } from "../widgets";
 import styles from "./AddPartner.module.css";
 import cp from "../ControlPlane.module.css";
@@ -12,8 +13,8 @@ import { passwordChecks, passwordStrength } from "./model";
  * `type="password"` with `autoComplete="new-password"`, so a browser or a
  * password manager treats it as a password being *created* (and never offers to
  * fill it from another site). The value is controlled by the parent's React
- * state and goes nowhere else: no storage, no URL, no log. Show/Hide changes how
- * it is drawn and nothing else; it starts hidden.
+ * state and goes nowhere else: no storage, no URL, no log. The eye inside the
+ * input changes how it is drawn and nothing else; it starts hidden.
  */
 export function PasswordField({
   label,
@@ -65,15 +66,14 @@ export function PasswordField({
         />
         <button
           type="button"
-          className="w360-btn w360-btn-secondary"
+          className={styles.eye}
           aria-pressed={visible}
           aria-controls={id}
-          // The visible word is "Show"/"Hide"; the name adds which field, and
-          // starts with the visible word (WCAG 2.5.3).
           aria-label={`${visible ? "Hide" : "Show"} ${label.toLowerCase()}`}
+          title={visible ? "Hide" : "Show"}
           onClick={() => setVisible((v) => !v)}
         >
-          {visible ? "Hide" : "Show"}
+          <Icon name={visible ? "eyeOff" : "eye"} size={16} />
         </button>
       </div>
       {hint && (
@@ -123,12 +123,12 @@ export function PasswordGuidance({
       <ul className={styles.requirements} aria-label="Password requirements">
         {checks.map((c) => (
           <li key={c.key} className={c.ok ? styles.met : styles.unmet}>
-            <span aria-hidden="true">{c.ok ? "✓" : "○"}</span> {c.label}
+            <Icon name={c.ok ? "checkCircle" : "circle"} size={14} /> {c.label}
             <span className="w360-visually-hidden">{c.ok ? " - met" : " - not met yet"}</span>
           </li>
         ))}
         <li className={styles.unmet}>
-          <span aria-hidden="true">○</span> Not a common password, not only digits, not like the email address
+          <Icon name="info" size={14} /> Not a common password, not only digits, not like the email address
           <span className="w360-visually-hidden"> - checked when you continue</span>
         </li>
       </ul>

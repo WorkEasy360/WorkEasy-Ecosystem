@@ -1,8 +1,9 @@
 "use client";
 
-import { AddProductWizard } from "@/features/controlplane/productmanager/AddProductWizard";
+import { ProductManager } from "@/features/controlplane/productmanager/ProductManager";
 
-/** Product Manager → Add Product: the four-step wizard. */
+/** Products → Add Product (ADR-068): the product list with the one-page Product
+ * Publisher open over it. Closing it returns to the list. */
 export default function Page() {
-  return <AddProductWizard />;
+  return <ProductManager openNew />;
 }

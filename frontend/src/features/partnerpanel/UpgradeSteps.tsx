@@ -28,7 +28,7 @@ export interface StepFormProps {
 
 function Actions({ busy, onBack, backLabel = "Back", nextLabel = "Save and continue", disabled }: Omit<StepFormProps, "onNext"> & { disabled?: boolean }) {
   return (
-    <div className={styles.wizardActions}>
+    <div className={`${styles.wizardActions} ${styles.alignEnd}`}>
       <button type="button" className="w360-btn w360-btn-secondary" onClick={onBack}>
         {backLabel}
       </button>

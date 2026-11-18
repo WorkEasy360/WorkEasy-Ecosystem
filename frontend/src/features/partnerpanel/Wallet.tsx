@@ -3,11 +3,13 @@
 import { useId, useState } from "react";
 import { LoadGate, Status, Table, money, useAction, useLoad, when } from "@/features/controlplane/ui";
 import { panelApi, type PayoutMethod, type PayoutMethodInput, type Wallet as WalletData } from "@/lib/api/partnerPanel";
+import { FormDialog } from "@/features/controlplane/Modal";
 import { Kpi, PageHeader, usePanel } from "./PanelKit";
+import { useFieldChecks, useNote } from "./workspaceKit";
 import styles from "./PartnerPanel.module.css";
 
 /**
- * Wallet & Payouts (2026-11-03): the balance, where payouts go, and asking for
+ * Earnings & Payouts (2026-11-03): what has been earned, where payouts go, and asking for
  * one. Every amount is the server's - the browser sends none: a withdrawal asks
  * for the whole available balance, and the server works out the TDS. Payout
  * details are verified by Workeasy360 staff before the first withdrawal; the
@@ -20,7 +22,7 @@ export function Wallet() {
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Wallet & payouts"
+        title="Earnings & payouts"
         lead="Your commission balance, where we pay it and your withdrawal requests. Amounts are worked out by Workeasy360 from your ledger."
       />
       <LoadGate load={load} what="your wallet">
@@ -40,6 +42,7 @@ function WalletBody({ w, reload, active }: { w: WalletData; reload: () => void; 
   const { id } = usePanel();
   const [editing, setEditing] = useState(false);
   const { act, busy, feedback } = useAction(reload);
+  const saved = useNote();
   const balance = w.balances.find((b) => b.currency === w.currency);
   return (
     <>
@@ -97,23 +100,33 @@ function WalletBody({ w, reload, active }: { w: WalletData; reload: () => void; 
       <section className={styles.panel} aria-labelledby="payout-details">
         <div className={styles.panelHead}>
           <h2 id="payout-details">Payout details</h2>
-          {w.can_manage && !editing && (
-            <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setEditing(true)}>
+          {w.can_manage && (
+            <button
+              type="button"
+              className="w360-btn w360-btn-secondary"
+              aria-haspopup="dialog"
+              onClick={() => {
+                saved.clear();
+                setEditing(true);
+              }}
+            >
               {w.method ? "Change details" : "Add payout details"}
             </button>
           )}
         </div>
-        {editing ? (
+        {saved.node}
+        {editing && (
           <MethodForm
             current={w.method}
             panRequired={w.rules.pan_required}
-            onDone={() => {
-              setEditing(false);
+            onDone={(m) => {
+              saved.show(m);
               reload();
             }}
-            onCancel={() => setEditing(false)}
+            onClose={() => setEditing(false)}
           />
-        ) : w.method ? (
+        )}
+        {w.method ? (
           <dl className={styles.facts}>
             <div>
               <dt>Paid to</dt>
@@ -190,12 +203,12 @@ function MethodForm({
   current,
   panRequired,
   onDone,
-  onCancel,
+  onClose,
 }: {
   current: PayoutMethod | null;
   panRequired: boolean;
-  onDone: () => void;
-  onCancel: () => void;
+  onDone: (message: string | undefined) => void;
+  onClose: () => void;
 }) {
   const { id } = usePanel();
   const ids = { method: useId(), holder: useId(), bank: useId(), ifsc: useId(), acc: useId(), acc2: useId(), vpa: useId(), pan: useId() };
@@ -209,17 +222,22 @@ function MethodForm({
     upi_vpa: current?.upi_vpa ?? "",
     pan: "",
   });
-  const { act, busy, feedback } = useAction(onDone);
+  const checks = useFieldChecks();
   const set = (key: keyof PayoutMethodInput) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
   const keepsAccount = current?.method === "bank" && form.method === "bank";
   return (
-    <form
-      className={styles.form}
-      onSubmit={(e) => {
-        e.preventDefault();
-        act(() => panelApi.savePayoutMethod(id, form), "Payout details saved. Workeasy360 will verify them.");
+    <FormDialog
+      title={current ? "Change payout details" : "Add payout details"}
+      intro="The account number and PAN are stored encrypted. Saving sends the details to Workeasy360 for verification before the next withdrawal."
+      submitLabel="Save payout details"
+      onSubmit={async () => {
+        checks.check();
+        await panelApi.savePayoutMethod(id, form);
+        return "Payout details saved. Workeasy360 will verify them.";
       }}
+      onDone={onDone}
+      onClose={onClose}
     >
       <div>
         <label className="w360-label" htmlFor={ids.method}>
@@ -303,18 +321,7 @@ function MethodForm({
           onChange={set("pan")}
         />
       </div>
-      <p className={styles.muted}>
-        The account number and PAN are stored encrypted. Saving sends the details to Workeasy360 for verification before the next withdrawal.
-      </p>
-      <p className={styles.actionsRow}>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-          Save payout details
-        </button>
-        <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
-          Cancel
-        </button>
-      </p>
-      {feedback}
-    </form>
+      {checks.probe}
+    </FormDialog>
   );
 }

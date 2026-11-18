@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
-import { allPartnersHref } from "@/features/controlplane/oldPartnerRoutes";
+import { typePageHref } from "@/features/controlplane/partnerCategories";
 
-/** Old address: White-label is now All Partners filtered on the White-label type (ADR-048). */
+/** Old address (ADR-062): Partners → White Label is now Partners › Partners with the
+ * White Label chip chosen (admin-ux phase 1), keeping the filters it understands and a
+ * guest session's return. Still the path a guest session may come back to. */
 export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  redirect(allPartnersHref(await searchParams, "white_label"));
+  redirect(typePageHref("white_label", await searchParams));
 }

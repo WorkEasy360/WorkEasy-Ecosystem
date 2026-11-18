@@ -264,6 +264,54 @@ describe("checkout", () => {
     assign.mockRestore();
   });
 
+  it("shows the coupon and GST the server applied, drops a refused coupon, and takes a new one (ADR-058)", async () => {
+    nav.search = new URLSearchParams(`plan=${PV}&interval=annual&coupon=gone10`);
+    const priced = {
+      ...QUOTE,
+      billing_interval: "annual",
+      recurring_amount_minor: 839900,
+      amount_due_minor: 991100,
+      subtotal_minor: 839900,
+      setup_fee_minor: 0,
+      coupon: null,
+      discount_minor: 0,
+      tax: { label: "GST", rate_bp: 1800, amount_minor: 151200, description: "GST (18%)" },
+      tax_minor: 151200,
+    };
+    const withCoupon = {
+      ...priced,
+      amount_due_minor: 892000,
+      coupon: { code: "SAVE10", label: "10% off", discount_minor: 83990 },
+      discount_minor: 83990,
+      tax: { ...priced.tax, amount_minor: 136100 },
+      tax_minor: 136100,
+    };
+    const calls = mockApi({
+      [`GET ${ORG}/billing-account`]: [{ status: 200, body: { billing_account: { id: "b1", currency: "INR", collection_mode: "automatic", billing_email: "", billing_region: "" } } }],
+      [`POST ${ORG}/orders/quote`]: [
+        { status: 409, body: { code: "order_not_allowed", detail: "The coupon GONE10 has expired.", reason: "coupon_invalid", coupon_reason: "expired" } },
+        { status: 200, body: priced },
+        { status: 200, body: withCoupon },
+      ],
+    });
+    const { container } = renderOrg(<CheckoutScreen />, OWNER);
+    expect(await screen.findByText(/The order is priced without it/)).toBeInTheDocument();
+    expect(screen.getByText("GST (18%)").nextSibling?.textContent).toMatch(/1,512/);
+    expect(screen.getByText("Total payable now").nextSibling?.textContent).toMatch(/9,911/);
+    await expectNoViolations(container);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Coupon code" }), { target: { value: "save10" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(await screen.findByText(/Coupon SAVE10 \(10% off\)/)).toBeInTheDocument();
+    expect(screen.getByText("Total payable now").nextSibling?.textContent).toMatch(/8,920/);
+    const quotes = calls.filter((c) => c.key === `POST ${ORG}/orders/quote`).map((c) => c.body);
+    expect(quotes).toEqual([
+      { plan_version_id: PV, billing_interval: "annual", coupon_code: "GONE10" },
+      { plan_version_id: PV, billing_interval: "annual" },
+      { plan_version_id: PV, billing_interval: "annual", coupon_code: "SAVE10" },
+    ]);
+  });
+
   it("asks for billing details first when the organization has none", async () => {
     nav.search = new URLSearchParams(`plan=${PV}`);
     mockApi({ [`GET ${ORG}/billing-account`]: [{ status: 200, body: { billing_account: null } }] });
@@ -343,32 +391,173 @@ describe("the cart (ADR-052)", () => {
   });
 });
 
-describe("orders", () => {
-  it("lists orders and cancels one awaiting payment", async () => {
-    const calls = mockApi({
-      [`GET ${ORG}/orders`]: [{ status: 200, body: { results: [ORDER], next_cursor: null, has_more: false } }],
-      [`POST ${ORG}/orders/${ORDER.order_id}/cancel`]: [{ status: 200, body: { ...ORDER, status: "cancelled" } }],
-    });
+const NO_PROVIDER = { provider: null, items: [], counts: {}, total: 0, priorities: ["low", "normal", "high", "urgent"], categories: ["general", "technical", "billing", "commission", "payout", "account", "product"] };
+const PAID_ORDER = {
+  ...ORDER,
+  order_id: "33333333-3333-4333-8333-333333333333",
+  number: "ORD-000002",
+  status: "fulfilled",
+  invoice_id: "inv2",
+  invoice_number: "INV-000010",
+  paid_at: "2026-09-20T10:00:00Z",
+  fulfilled_at: "2026-09-20T10:01:00Z",
+  lines: [{ product_code: "crm", plan_name: "CRM Pro", quantity: 1, recurring_amount_minor: 99900, amount_due_minor: 99900 }],
+};
+const ordersRoutes = (extra: Record<string, Reply[]> = {}) => ({
+  [`GET ${ORG}/orders`]: [{ status: 200, body: { results: [ORDER, PAID_ORDER], next_cursor: null, has_more: false } }],
+  [`GET ${ORG}/billing/invoices`]: [{ status: 200, body: { results: [] } }],
+  ...extra,
+});
+
+describe("orders & payments", () => {
+  it("lists orders with their payment and activation status, and cancels one awaiting payment after a confirm", async () => {
+    const calls = mockApi(
+      ordersRoutes({ [`POST ${ORG}/orders/${ORDER.order_id}/cancel`]: [{ status: 200, body: { ...ORDER, status: "cancelled" } }] }),
+    );
     const { container } = renderOrg(<OrdersScreen />, OWNER);
+    expect(screen.getByRole("heading", { level: 1, name: "Orders & Payments" })).toBeInTheDocument();
     const table = await screen.findByRole("table", { name: "Orders" });
     expect(within(table).getByText("ORD-000001")).toBeInTheDocument();
+    expect(within(table).getByText("Awaiting payment")).toBeInTheDocument();
+    expect(within(table).getByText("Activated")).toBeInTheDocument();
     expect(within(table).getByRole("button", { name: "Pay order ORD-000001" })).toBeInTheDocument();
+    // The invoices are on this page too.
+    expect(await screen.findByRole("heading", { name: "Invoices" })).toBeInTheDocument();
     await expectNoViolations(container);
     fireEvent.click(within(table).getByRole("button", { name: "Cancel order ORD-000001" }));
+    expect(calls.some((c) => c.key === `POST ${ORG}/orders/${ORDER.order_id}/cancel`)).toBe(false);
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Cancel order ORD-000001?" })).getByRole("button", { name: "Cancel order" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${ORG}/orders/${ORDER.order_id}/cancel`)).toBe(true));
+  });
+
+  it("filters by status and searches the loaded orders", async () => {
+    mockApi(ordersRoutes());
+    renderOrg(<OrdersScreen />, OWNER);
+    const table = await screen.findByRole("table", { name: "Orders" });
+    fireEvent.click(within(screen.getByRole("group", { name: "Order status" })).getByRole("button", { name: /^Complete/ }));
+    expect(within(table).queryByText("ORD-000001")).not.toBeInTheDocument();
+    expect(within(table).getByText("ORD-000002")).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("group", { name: "Order status" })).getByRole("button", { name: /^All/ }));
+    const search = screen.getByLabelText("Search by order, invoice or item");
+    fireEvent.change(search, { target: { value: "INV-000009" } });
+    fireEvent.keyDown(search, { key: "Enter" });
+    await waitFor(() => expect(within(screen.getByRole("table", { name: "Orders" })).queryByText("ORD-000002")).not.toBeInTheDocument());
+  });
+
+  it("shows an order's payment details: lines, dates and the payment attempts", async () => {
+    mockApi(
+      ordersRoutes({
+        [`GET ${ORG}/billing/invoices/inv2`]: [
+          {
+            status: 200,
+            body: {
+              invoice_id: "inv2",
+              number: "INV-000010",
+              status: "paid",
+              currency: "INR",
+              lines: [],
+              attempts: [
+                { attempt_id: "a1aaaaaa-0000", invoice_id: "inv2", status: "succeeded", amount_minor: 99900, currency: "INR", provider: "razorpay", checkout_url: null, failure_code: null, expires_at: "2026-09-21T00:00:00Z" },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    renderOrg(<OrdersScreen />, OWNER);
+    fireEvent.click(await screen.findByRole("button", { name: "Payment details of order ORD-000002" }));
+    const details = screen.getByRole("dialog", { name: "Order ORD-000002" });
+    expect(within(details).getByRole("table", { name: "Products in order ORD-000002" })).toBeInTheDocument();
+    expect(await within(details).findByText("razorpay")).toBeInTheDocument();
+    await expectNoViolations(document.body);
+  });
+
+  it("a refund is asked for as a billing ticket to whoever sold the order, prefilled", async () => {
+    const calls = mockApi(
+      ordersRoutes({
+        [`GET ${ORG}/provider-tickets`]: [{ status: 200, body: NO_PROVIDER }],
+        [`GET ${ORG}/support-tickets`]: [{ status: 200, body: { items: [], counts: {} } }],
+        [`POST ${ORG}/support-tickets`]: [{ status: 201, body: { id: "t9", reference: "#9", subject: "Refund request: order ORD-000002", status: "open", updated_at: "2026-09-26T10:00:00Z" } }],
+      }),
+    );
+    renderOrg(<OrdersScreen />, OWNER);
+    // Only a paid order offers it.
+    await screen.findByRole("table", { name: "Orders" });
+    expect(screen.queryByRole("button", { name: "Request a refund for order ORD-000001" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Request a refund for order ORD-000002" }));
+    const dialog = await screen.findByRole("dialog", { name: /Request a refund/ });
+    expect(within(dialog).getByLabelText("Subject")).toHaveValue("Refund request: order ORD-000002");
+    expect(within(dialog).getByLabelText("Category")).toHaveValue("billing");
+    fireEvent.change(within(dialog).getByLabelText("How can we help?"), { target: { value: "Please refund order ORD-000002. Reason: bought twice" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send ticket" }));
+    expect(await screen.findByText(/Refund request for order ORD-000002 sent/)).toBeInTheDocument();
+    const sent = calls.find((c) => c.key === `POST ${ORG}/support-tickets`)!;
+    expect(sent.body).toEqual({
+      subject: "Refund request: order ORD-000002",
+      message: "Please refund order ORD-000002. Reason: bought twice",
+      category: "billing",
+      priority: "normal",
+    });
+  });
+
+  it("someone who may not pay sees Contact Organization Admin instead of Pay or a refund", async () => {
+    mockApi(ordersRoutes());
+    renderOrg(<OrdersScreen />, ["platform.billing.view"]);
+    await screen.findByRole("table", { name: "Orders" });
+    expect(screen.queryByRole("button", { name: /^Pay order/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Request a refund/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Cancel order/ })).not.toBeInTheDocument();
+    expect(screen.getAllByText("Contact Organization Admin").length).toBeGreaterThan(0);
   });
 });
 
-describe("support", () => {
-  it("shows where to write and the reference to quote", async () => {
-    mockApi({
-      "GET /api/v1/public/site": [
-        { status: 200, body: { signup_enabled: true, support_email: "help@example.com", sales_email: "", catalog_currency: "INR" } },
-      ],
-    });
+const helpRoutes = (extra: Record<string, Reply[]> = {}) => ({
+  "GET /api/v1/public/site": [
+    { status: 200, body: { signup_enabled: true, support_email: "help@example.com", sales_email: "", catalog_currency: "INR" } },
+  ],
+  [`GET ${ORG}/provider-tickets`]: [{ status: 200, body: NO_PROVIDER }],
+  [`GET ${ORG}/support-tickets`]: [{ status: 200, body: { items: [], counts: {} } }],
+  [`GET ${ORG}/setup`]: [{ status: 200, body: { results: [] } }],
+  "GET /api/v1/public/help": [
+    {
+      status: 200,
+      body: {
+        results: [
+          { slug: "s", kind: "setup_guide", title: "Connect your CRM", body: "Open CRM settings." },
+          { slug: "b", kind: "faq", title: "How do I pay an invoice?", body: "Open Orders & Payments." },
+          { slug: "o", kind: "faq", title: "How do I export?", body: "Open Reports." },
+        ],
+      },
+    },
+  ],
+  ...extra,
+});
+
+describe("help & support", () => {
+  it("shows who answers, where to write, the reference to quote, and the guides", async () => {
+    mockApi(helpRoutes());
     const { container } = renderOrg(<HelpScreen />, []);
     expect(await screen.findByRole("link", { name: "help@example.com" })).toBeInTheDocument();
     expect(screen.getByText("acme")).toBeInTheDocument();
+    expect(await screen.findByText(/The WorkEasy360 team answers your tickets/)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "My tickets" })).toBeInTheDocument();
+    // Guides: setup, billing and the rest, from the published library.
+    const setup = await screen.findByRole("region", { name: "Setup guides" });
+    expect(within(setup).getByText("Connect your CRM")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Billing guides" })).getByText("How do I pay an invoice?")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Common questions" })).getByText("How do I export?")).toBeInTheDocument();
     await expectNoViolations(container);
+  });
+
+  it("?new=1 opens Create Support Ticket on arrival, and points a product's pending setup to My Products", async () => {
+    nav.search = new URLSearchParams("new=1");
+    mockApi(
+      helpRoutes({
+        [`GET ${ORG}/setup`]: [{ status: 200, body: { results: [{ id: "s1", product_code: "crm", status: "pending", answers: {}, decision_reason: "", requirements: [], editable: true }] } }],
+      }),
+    );
+    renderOrg(<HelpScreen />, []);
+    expect(await screen.findByRole("dialog", { name: "Create support ticket" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Open Pending Setup" })).toHaveAttribute("href", "/o/acme/apps?filter=setup");
   });
 });

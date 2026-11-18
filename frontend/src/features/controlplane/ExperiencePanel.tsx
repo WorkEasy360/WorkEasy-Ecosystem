@@ -3,7 +3,8 @@
 import { useId, useMemo, useState } from "react";
 import type { PartnerDetail } from "@/lib/api/controlPlane";
 import { partnerConsoleApi } from "@/lib/api/partnerConsole";
-import { autoReason, useAction, useLoad } from "./ui";
+import { dialog, FormPopup } from "./Modal";
+import { autoReason, useLoad } from "./ui";
 import { Segmented } from "./widgets";
 import styles from "./ControlPlane.module.css";
 import wizard from "./AddReseller.module.css";
@@ -40,12 +41,6 @@ export function ExperiencePanel({ partner, manage, onChanged }: { partner: Partn
   const [experience, setExperience] = useState("");
   const [makePrimary, setMakePrimary] = useState(true);
   const [chosen, setChosen] = useState<string[]>([]);
-  // Only a change that went through clears the form; a refusal keeps what was typed.
-  const { act, busy, feedback } = useAction(() => {
-    setChosen([]);
-    setExperience("");
-    onChanged();
-  });
 
   // An answer from before workspaces existed (a release overlapping this one) has
   // none: the panel then offers only what it can offer safely.
@@ -65,18 +60,22 @@ export function ExperiencePanel({ partner, manage, onChanged }: { partner: Partn
 
   const valid = Boolean(experience) && (action !== "retire" || canRetire);
 
-  function submit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!valid || busy) return;
+  function reset() {
+    setAction("grant");
+    setExperience("");
+    setMakePrimary(true);
+    setChosen([]);
+  }
+
+  async function submit() {
     const why = autoReason(REASON[action]);
-    const run = () =>
-      partnerConsoleApi.changeExperience(partner.id, {
-        action,
-        experience,
-        reason: why,
-        ...(action === "grant" ? { make_default: makePrimary, products: sells ? chosen : [] } : {}),
-      });
-    void act(run, SUCCESS[action]);
+    await partnerConsoleApi.changeExperience(partner.id, {
+      action,
+      experience,
+      reason: why,
+      ...(action === "grant" ? { make_default: makePrimary, products: sells ? chosen : [] } : {}),
+    });
+    return SUCCESS[action];
   }
 
   return (
@@ -94,75 +93,88 @@ export function ExperiencePanel({ partner, manage, onChanged }: { partner: Partn
         The experience decides which workspace the partner lands in. What it may do always comes from its capabilities, listed on the
         Users &amp; Permissions tab.
       </p>
-      {feedback}
       {!ended && (
-        <form onSubmit={submit} className={styles.form}>
-          <Segmented<Action>
-            legend="Change"
-            options={[
-              { value: "grant", label: "Add an experience" },
-              { value: "default", label: "Set the primary experience", disabled: workspaces.length < 2 },
-              { value: "retire", label: "Retire an experience", disabled: !canRetire },
-            ]}
-            value={action}
-            onChange={(v) => {
-              setAction(v);
+        <div>
+          <FormPopup
+            label="Change experience"
+            buttonClassName="w360-btn w360-btn-secondary"
+            title="Change the experience"
+            intro="Referrals, commissions, payouts and customers are untouched, and the change is audited."
+            submitLabel="Apply"
+            canSubmit={valid}
+            onOpen={reset}
+            onSubmit={submit}
+            // Only a change that went through clears the form; a refusal keeps what was typed.
+            onDone={() => {
+              setChosen([]);
               setExperience("");
+              onChanged();
             }}
-            hint={
-              action === "grant"
-                ? "Gives the partner the capabilities of that experience. Nothing it holds is removed, and its history is untouched."
-                : action === "retire"
-                  ? "Withdraws only what no remaining experience needs. Its commission, referral and payout history stays, and so does its view of the money it is owed."
-                  : "Chooses which of its workspaces the partner opens first."
-            }
-          />
-          <div className={styles.field}>
-            <label className="w360-label" htmlFor={`${id}-exp`}>
-              Experience
-            </label>
-            <select id={`${id}-exp`} className="w360-input" value={experience} onChange={(e) => setExperience(e.target.value)}>
-              <option value="">Choose…</option>
-              {options.map((o) => (
-                <option key={o.key} value={o.key}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            {action === "grant" && addable.length === 0 && catalog.status === "ready" && (
-              <p className={styles.muted}>This partner already holds every experience.</p>
-            )}
-          </div>
-          {action === "grant" && (
-            <label>
-              <input type="checkbox" checked={makePrimary} onChange={(e) => setMakePrimary(e.target.checked)} /> Make it the primary experience
-            </label>
-          )}
-          {sells && (
-            <fieldset className={wizard.section}>
-              <legend className="w360-label">Products it may sell (optional)</legend>
-              <ul className={wizard.plain}>
-                {offered.map((p) => (
-                  <li key={p.code}>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={chosen.includes(p.code)}
-                        onChange={(e) => setChosen(e.target.checked ? [...chosen, p.code] : chosen.filter((c) => c !== p.code))}
-                      />{" "}
-                      {p.name}
-                    </label>
-                  </li>
+          >
+            <div className={dialog.span}>
+              <Segmented<Action>
+                legend="Change"
+                options={[
+                  { value: "grant", label: "Add an experience" },
+                  { value: "default", label: "Set the primary experience", disabled: workspaces.length < 2 },
+                  { value: "retire", label: "Retire an experience", disabled: !canRetire },
+                ]}
+                value={action}
+                onChange={(v) => {
+                  setAction(v);
+                  setExperience("");
+                }}
+                hint={
+                  action === "grant"
+                    ? "Gives the partner the capabilities of that experience. Nothing it holds is removed, and its history is untouched."
+                    : action === "retire"
+                      ? "Withdraws only what no remaining experience needs. Its commission, referral and payout history stays, and so does its view of the money it is owed."
+                      : "Chooses which of its workspaces the partner opens first."
+                }
+              />
+            </div>
+            <div className={styles.field}>
+              <label className="w360-label" htmlFor={`${id}-exp`}>
+                Experience
+              </label>
+              <select id={`${id}-exp`} className="w360-input" value={experience} onChange={(e) => setExperience(e.target.value)}>
+                <option value="">Choose…</option>
+                {options.map((o) => (
+                  <option key={o.key} value={o.key}>
+                    {o.label}
+                  </option>
                 ))}
-              </ul>
-            </fieldset>
-          )}
-          <div>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !valid}>
-              Apply
-            </button>
-          </div>
-        </form>
+              </select>
+              {action === "grant" && addable.length === 0 && catalog.status === "ready" && (
+                <p className={styles.muted}>This partner already holds every experience.</p>
+              )}
+            </div>
+            {action === "grant" && (
+              <label className={dialog.span}>
+                <input type="checkbox" checked={makePrimary} onChange={(e) => setMakePrimary(e.target.checked)} /> Make it the primary experience
+              </label>
+            )}
+            {sells && (
+              <fieldset className={dialog.span}>
+                <legend className="w360-label">Products it may sell (optional)</legend>
+                <ul className={wizard.plain}>
+                  {offered.map((p) => (
+                    <li key={p.code}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={chosen.includes(p.code)}
+                          onChange={(e) => setChosen(e.target.checked ? [...chosen, p.code] : chosen.filter((c) => c !== p.code))}
+                        />{" "}
+                        {p.name}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </fieldset>
+            )}
+          </FormPopup>
+        </div>
       )}
     </section>
   );

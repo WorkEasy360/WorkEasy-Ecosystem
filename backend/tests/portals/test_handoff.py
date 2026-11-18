@@ -336,7 +336,7 @@ def test_signing_out_ends_only_that_sign_in(sign_in, hand_off, customer):
 
 
 def _guest_staff(staff_user):
-    return staff_user("platform.staff_partner.manage", "platform.staff_partner.view")
+    return staff_user("platform.staff_partner.guest", "platform.staff_partner.view")
 
 
 def test_guest_login_reaches_the_partner_portal_without_a_partner_membership(
@@ -373,7 +373,10 @@ def test_guest_login_reaches_the_partner_portal_without_a_partner_membership(
     # Exit Guest Session on partner.: the guest view and that session end;
     # the Super Admin's own sessions stay.
     exited = partner.post("/api/v1/partner/guest-view/end")
-    assert exited.json() == {"ended": True}
+    assert exited.json() == {
+        "ended": True,
+        "return_url": "https://admin.workeasy360.com/admin/partners/all",
+    }
     assert partner.get("/api/v1/auth/session").json()["authenticated"] is False
     assert admin.get("/api/v1/admin/session").status_code == 200
     _, again, _ = hand_off(auth, "partner")

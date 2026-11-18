@@ -260,7 +260,10 @@ def test_a_product_supplied_organization_cannot_be_substituted_at_resume(
     parked = client.get(AUTHORIZE, _authorize_params(registration, org_a))
     token = _resume_token(parked["Location"])
 
-    client.force_login(user)
+    # Automatic (ADR-066): force_login records no sign-in time, so under the
+    # Ask once default the resume would show the access chooser first - this
+    # test is about the organization, not the question.
+    signed_in(user)
     session = client.session
     session["w360_aal"] = 1
     session.save()

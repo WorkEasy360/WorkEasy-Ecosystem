@@ -1,6 +1,7 @@
-import { redirect } from "next/navigation";
+"use client";
 
-/** Old address: a partner's payouts are on its own page; this opens All Partners (ADR-048). */
+import { PayoutsScreen } from "@/features/controlplane/AdminBillingViews";
+
 export default function Page() {
-  redirect("/admin/partners/all");
+  return <PayoutsScreen />;
 }

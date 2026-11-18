@@ -21,16 +21,19 @@ from typing import Final
 
 from workeasy360.contracts.enums import ProductSignInMode, SignInPreference
 
-#: The preference of a person who never chose one. Automatic: click Open (or
-#: type the product's address) and the product opens with the Workeasy360
-#: session - the "one login for all products" brief's recommended experience
-#: (docs/universal-sso/one-login.md section 1). It only decides *how*: every
-#: access check has already passed, and a person can still choose "Ask me each
-#: time" or the product's own sign-in.
-DEFAULT_PREFERENCE: Final = SignInPreference.AUTO_SSO
+#: The preference of a person who never chose one. Ask once: the first time a
+#: product is opened in a Workeasy360 sign-in, the access chooser names the
+#: signed-in account and asks "Continue with the same account" or "Use a
+#: different account"; for the rest of that sign-in the product opens with no
+#: question (the unified-login brief section 5, ADR-066 - superseding ADR-044
+#: item 14's Automatic). It only decides *how*: every access check has already
+#: passed, and a person can still choose Automatic, "Ask me each time" or the
+#: product's own sign-in.
+DEFAULT_PREFERENCE: Final = SignInPreference.ASK_ONCE
 
 #: What a person may store as their default for every product.
 DEFAULT_CHOICES: Final[tuple[SignInPreference, ...]] = (
+    SignInPreference.ASK_ONCE,
     SignInPreference.AUTO_SSO,
     SignInPreference.ASK,
     SignInPreference.PRODUCT_LOGIN,
@@ -78,6 +81,7 @@ class ProductDoors:
             return ()
         choices = [
             SignInPreference.INHERIT,
+            SignInPreference.ASK_ONCE,
             SignInPreference.AUTO_SSO,
             SignInPreference.ASK,
         ]
@@ -93,7 +97,7 @@ class SignInDecision:
     #: What the person asked for: their override, else their default, else
     #: :data:`DEFAULT_PREFERENCE`. Never ``inherit``.
     preference: SignInPreference
-    #: What happens: ``auto_sso``, ``ask`` or ``product_login``.
+    #: What happens: ``ask_once``, ``auto_sso``, ``ask`` or ``product_login``.
     effective: SignInPreference
     #: Empty when ``effective == preference``; otherwise why not.
     constraint: str = ""
@@ -107,8 +111,24 @@ class SignInDecision:
     @property
     def silent(self) -> bool:
         """Whether Workeasy360 may complete a product's sign-in request with
-        the existing session and no question."""
+        the existing session and no question, whatever this sign-in has done
+        before (Automatic only)."""
         return self.effective is SignInPreference.AUTO_SSO
+
+    def asks(self, *, entered_this_sign_in: bool) -> bool:
+        """Whether the access chooser is shown before this request completes.
+
+        ``entered_this_sign_in``: this Workeasy360 sign-in has already been
+        let into the product (a code was issued for it to this person in this
+        session). Only Ask once reads it: the question comes on first entry,
+        never on every page, refresh or launch after that (the brief's
+        section 5.5). Ask each time and the product-login preference always
+        ask; Automatic never does."""
+        if self.effective is SignInPreference.AUTO_SSO:
+            return False
+        if self.effective is SignInPreference.ASK_ONCE:
+            return not entered_this_sign_in
+        return True
 
 
 def stored_preference(

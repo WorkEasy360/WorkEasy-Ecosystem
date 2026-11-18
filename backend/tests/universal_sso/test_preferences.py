@@ -24,21 +24,22 @@ def _by_code(body):
     return {p["product_code"]: p for p in body["products"]}
 
 
-def test_a_new_person_is_signed_in_automatically_and_sees_every_product_that_can_be_entered(
+def test_a_new_person_is_asked_once_per_sign_in_and_sees_every_product_that_can_be_entered(
     client, products, user_factory
 ):
     client.force_login(user_factory())
     body = client.get(PREFS).json()
-    # Nothing stored: the platform default, Automatic (one-login brief).
-    assert body["default"] == "auto_sso" and body["default_is_set"] is False
-    assert body["default_choices"] == ["auto_sso", "ask", "product_login"]
+    # Nothing stored: the platform default, Ask once (unified-login brief, ADR-066).
+    assert body["default"] == "ask_once" and body["default_is_set"] is False
+    assert body["default_choices"] == ["ask_once", "auto_sso", "ask", "product_login"]
     rows = _by_code(body)
     assert set(rows) == {"crm", "books"}
     crm, books = rows["crm"], rows["books"]
     assert crm["mode"] == "sso_optional" and crm["sso"] == "enabled"
-    assert crm["choices"] == ["inherit", "auto_sso", "ask", "product_login"]
-    assert crm["override"] == "inherit" and crm["effective"] == "auto_sso"
-    assert books["choices"] == ["inherit", "auto_sso", "ask"]  # no door of its own
+    assert crm["choices"] == ["inherit", "ask_once", "auto_sso", "ask", "product_login"]
+    assert crm["override"] == "inherit" and crm["effective"] == "ask_once"
+    # No door of its own.
+    assert books["choices"] == ["inherit", "ask_once", "auto_sso", "ask"]
     # Display facts only: nothing identifying the registration.
     for row in body["products"]:
         assert not {"client_id", "redirect_uris", "login_url", "credential_id"} & set(row)
@@ -145,7 +146,7 @@ def test_draft_and_retired_products_are_not_listed(
     assert client.get(PREFS).json()["products"] == []
 
 
-def test_reset_puts_everything_back_to_the_automatic_default(
+def test_reset_puts_everything_back_to_the_ask_once_default(
     client, products, user_factory
 ):
     from workeasy360.platform.ecosystem.models import UserSignInPreference
@@ -157,9 +158,9 @@ def test_reset_puts_everything_back_to_the_automatic_default(
         content_type="application/json",
     )
     body = client.delete(PREFS).json()
-    assert body["default"] == "auto_sso" and body["default_is_set"] is False
+    assert body["default"] == "ask_once" and body["default_is_set"] is False
     assert all(
-        p["override"] == "inherit" and p["effective"] == "auto_sso"
+        p["override"] == "inherit" and p["effective"] == "ask_once"
         for p in body["products"]
     )
     assert not UserSignInPreference.objects.exists()
@@ -203,7 +204,7 @@ def test_a_preference_is_private_to_its_person(products, user_factory):
     a.force_login(ana)
     b.force_login(ben)
     a.put(PREFS, {"default": "ask"}, content_type="application/json")
-    assert b.get(PREFS).json()["default"] == "auto_sso"
+    assert b.get(PREFS).json()["default"] == "ask_once"
     # No endpoint takes a person: a user id in the body changes nothing.
     b.put(
         PREFS,

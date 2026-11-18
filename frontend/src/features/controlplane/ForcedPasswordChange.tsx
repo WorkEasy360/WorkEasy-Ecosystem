@@ -4,8 +4,8 @@ import { ChangePasswordForm } from "@/features/console/ChangePasswordForm";
 import styles from "./ControlPlane.module.css";
 
 /**
- * Shown instead of the partner portal while the account's password is a
- * temporary one someone else chose (a development demo partner, for example).
+ * Shown instead of the Admin console or the partner portal while the account's
+ * password is a temporary one someone else chose.
  * The server refuses every other call until it is replaced, so this is the only
  * thing that can work; changing it clears the requirement and the page reloads
  * into the portal.

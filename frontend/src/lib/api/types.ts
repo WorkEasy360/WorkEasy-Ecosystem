@@ -101,9 +101,9 @@ export interface AppSignIn {
   sso: "enabled" | "integration_required" | "disabled";
   mode: "sso_only" | "sso_optional" | "local_only";
   product_login_available: boolean;
-  override: "inherit" | "auto_sso" | "ask" | "product_login";
-  preference: "auto_sso" | "ask" | "product_login";
-  effective: "auto_sso" | "ask" | "product_login";
+  override: "inherit" | "ask_once" | "auto_sso" | "ask" | "product_login";
+  preference: "ask_once" | "auto_sso" | "ask" | "product_login";
+  effective: "ask_once" | "auto_sso" | "ask" | "product_login";
   constraint: "" | "sso_unavailable" | "product_requires_sso";
 }
 
@@ -246,3 +246,11 @@ export interface AutomationExecution {
   created_at: string;
   event: { event_type: string; event_version: number } | null;
 }
+
+/** A list's date filter (admin-ux phase 3): whole UTC days, `YYYY-MM-DD`, both
+ * included, either end optional. The server refuses a range that ends before it
+ * starts. */
+export type DayRangeQuery = {
+  from?: string;
+  to?: string;
+};

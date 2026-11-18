@@ -115,9 +115,13 @@ describe("AI settings", () => {
   it("describes each provider's data handling and what deletion cannot reach", async () => {
     mockApi({ [`GET ${API}/ai/usage`]: [USAGE], [`GET ${API}/ai/settings`]: [SETTINGS], [`GET ${API}/ai/requests`]: [REQUESTS] });
     render(<AiSettings orgSlug="acme" />);
-    expect(await screen.findByLabelText(/OpenAI.*region us; keeps inputs 30 days; does not train on inputs/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Anthropic.*input retention not stated.*Not used for training\./)).toBeInTheDocument();
-    expect(screen.getByText(/a provider may keep what it already received/i)).toBeInTheDocument();
+    // The settings are read-only on the page and changed in an Edit popup.
+    fireEvent.click(await screen.findByRole("button", { name: "Edit AI settings" }));
+    const popup = screen.getByRole("dialog", { name: "AI settings" });
+    expect(within(popup).getByLabelText(/OpenAI.*region us; keeps inputs 30 days; does not train on inputs/)).toBeInTheDocument();
+    expect(within(popup).getByLabelText(/Anthropic.*input retention not stated.*Not used for training\./)).toBeInTheDocument();
+    expect(within(popup).getByText(/a provider may keep what it already received/i)).toBeInTheDocument();
+    await expectNoViolations(popup);
   });
 
   it("saves the settings with the revision it read", async () => {
@@ -128,11 +132,16 @@ describe("AI settings", () => {
       [`PATCH ${API}/ai/settings`]: [{ status: 200, body: { policy: { ...POLICY, ai_enabled: false, revision: 2 } } }],
     });
     render(<AiSettings orgSlug="acme" />);
-    fireEvent.click(await screen.findByLabelText(/allow products to use ai/i));
-    fireEvent.change(screen.getByLabelText(/monthly ai budget/i), { target: { value: "12.5" } });
-    fireEvent.click(screen.getByLabelText(/^OpenAI/));
-    fireEvent.click(screen.getByRole("button", { name: /save ai settings/i }));
+    expect(await screen.findByText("Every approved provider")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/allow products to use ai/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit AI settings" }));
+    const popup = screen.getByRole("dialog", { name: "AI settings" });
+    fireEvent.click(within(popup).getByLabelText(/allow products to use ai/i));
+    fireEvent.change(within(popup).getByLabelText(/monthly ai budget/i), { target: { value: "12.5" } });
+    fireEvent.click(within(popup).getByLabelText(/^OpenAI/));
+    fireEvent.click(within(popup).getByRole("button", { name: /save ai settings/i }));
     await screen.findByText("AI settings saved.");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     const patch = calls.find((c) => c.key === `PATCH ${API}/ai/settings`);
     expect(patch?.body).toEqual({
       revision: 1,
@@ -151,8 +160,10 @@ describe("AI settings", () => {
       [`PATCH ${API}/ai/settings`]: [{ status: 409, body: { code: "ai_request_conflict" } }],
     });
     render(<AiSettings orgSlug="acme" />);
-    fireEvent.click(await screen.findByRole("button", { name: /save ai settings/i }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/changed since you opened them/i);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit AI settings" }));
+    const popup = screen.getByRole("dialog", { name: "AI settings" });
+    fireEvent.click(within(popup).getByRole("button", { name: /save ai settings/i }));
+    expect(await within(popup).findByRole("alert")).toHaveTextContent(/changed since you opened them/i);
   });
 
   it("says so when the member may not see AI settings", async () => {
@@ -281,6 +292,13 @@ describe("Super Admin AI", () => {
     );
     expect(await screen.findByText("Configured")).toBeInTheDocument();
     expect(screen.getByText("Not configured")).toBeInTheDocument();
+    // Active but without a credential: needs setup, not a green "active".
+    expect(within(screen.getByRole("row", { name: /OpenAI/ })).getByText("Needs setup")).toBeInTheDocument();
+    // A readable model name, its id kept as small copyable text; health, not "circuit".
+    const model = screen.getByRole("row", { name: /Claude Opus 5/ });
+    expect(model).toHaveTextContent("anthropic.claude-opus-5");
+    expect(within(model).getByText("Healthy")).toBeInTheDocument();
+    expect(within(model).getByText("Structured output")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /disable/i })).not.toBeInTheDocument();
     await expectNoViolations(container);
   });
@@ -302,7 +320,7 @@ describe("Super Admin AI", () => {
     await waitFor(() =>
       expect(calls.find((c) => c.key === "POST /api/v1/admin/ai/providers/anthropic/status")?.body).toEqual({
         status: "disabled",
-        reason: "Disable Anthropic - Super Admin console",
+        reason: "Disable Anthropic - Admin console",
       }),
     );
   });

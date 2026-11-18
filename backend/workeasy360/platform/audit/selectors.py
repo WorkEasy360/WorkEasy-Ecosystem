@@ -28,6 +28,9 @@ def audit_page(
     actions: Iterable[str] | None = None,
     resource_ids: Iterable[str] | None = None,
     changes_match: tuple[str, str] | None = None,
+    actor_user_id: Any = None,
+    start: Any = None,
+    end: Any = None,
     limit: int = 25,
     cursor: str | None = None,
 ) -> Page:
@@ -63,6 +66,12 @@ def audit_page(
         about.append(Q(**{f"changes__{key}": value}))
     if about:
         queryset = queryset.filter(reduce(operator.or_, about))
+    if actor_user_id is not None:
+        queryset = queryset.filter(actor_user_id=actor_user_id)
+    if start is not None:
+        queryset = queryset.filter(occurred_at__gte=start)
+    if end is not None:
+        queryset = queryset.filter(occurred_at__lt=end)
     decoded = decode_cursor(cursor)
     if decoded is not None:
         stamp, last_id = decoded

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import {
   adminConsoleApi,
@@ -15,15 +15,17 @@ import { LoadGate, Table, money, useAction, useLoad } from "./ui";
 import {
   DEFAULT_INTERVALS,
   NOUN,
-  STATUS_BADGE,
   STATUS_LABEL,
   statusPath,
   uiStatusOf,
   type BuilderKind,
   type UiStatus,
 } from "./catalogUi";
+import { DialogHead, Modal, dialog } from "./Modal";
 import { PlanBuilder, type BuilderOutcome } from "./PlanBuilder";
-import { DescriptionField, ErrorSummary, ProgressList, Segmented, Tabs, TextField, useStepRunner, type StepDef } from "./widgets";
+import { PlanRulesDialog } from "./AdminUsagePricing";
+import { DescriptionField, ErrorSummary, ProgressList, Segmented, TextField, useStepRunner, type StepDef } from "./widgets";
+import { Alert, Badge, Button, Page, PageHeader, SectionHeader, StatusBadge, Tabs } from "./kit";
 import cp from "./ControlPlane.module.css";
 import styles from "./AdminConsole.module.css";
 
@@ -41,7 +43,7 @@ import styles from "./AdminConsole.module.css";
  */
 
 type Row = PlanRow | BundleRow;
-type Panel = { mode: "new" } | { mode: "edit"; id: string } | { mode: "version"; id: string };
+type Panel = { mode: "new" } | { mode: "edit"; id: string } | { mode: "version"; id: string } | { mode: "rules"; id: string };
 
 const TAB_TITLE: Record<BuilderKind, string> = {
   bundle: "Plans",
@@ -78,6 +80,7 @@ function rowsOf(overview: CatalogOverview, kind: BuilderKind, productCode?: stri
 export function PlansScreen({ productCode }: { productCode?: string } = {}) {
   const { permissions } = useAdmin();
   const manage = can(permissions, "platform.staff_catalog.manage");
+  const managePricing = can(permissions, "platform.staff_pricing.manage");
   const [load, reload] = useLoad(() => adminConsoleApi.catalogOverview(), []);
   const [tab, setTab] = useState<BuilderKind>(productCode ? "package" : "bundle");
   const [panel, setPanel] = useState<Panel | null>(null);
@@ -95,14 +98,12 @@ export function PlansScreen({ productCode }: { productCode?: string } = {}) {
   }
 
   return (
-    <div className={cp.stack}>
-      <div>
-        <h1>Plans &amp; add-ons</h1>
-        <p className={cp.lead}>
-          Build what customers can buy. Terms are versioned: publishing a new version changes new sales only, and
-          existing subscriptions keep the version they bought.
-        </p>
-      </div>
+    <Page>
+      <PageHeader
+        title="Plans & add-ons"
+        subtitle="Build what customers can buy: plans, product packages and add-ons."
+        info="Terms are versioned: publishing a new version changes new sales only, and existing subscriptions keep the version they bought."
+      />
       {notice && (
         <p role="status" tabIndex={-1} ref={noticeRef}>
           {notice}
@@ -112,14 +113,18 @@ export function PlansScreen({ productCode }: { productCode?: string } = {}) {
         {(overview) => (
           <div>
             {productCode && (
-              <p className={cp.muted}>
+              <Alert tone="info">
                 Showing {overview.products.find((p) => p.code === productCode)?.name ?? productCode} only.{" "}
                 <Link href="/admin/plans">Show all products</Link>
-              </p>
+              </Alert>
             )}
             <Tabs
               label="Catalog offers"
-              items={(["bundle", "package", "addon"] as const).map((key) => ({ key, label: TAB_TITLE[key] }))}
+              tabs={(["bundle", "package", "addon"] as const).map((key) => ({
+                key,
+                label: TAB_TITLE[key],
+                count: rowsOf(overview, key, productCode).length,
+              }))}
               selected={tab}
               onSelect={(key) => {
                 if (key === tab) return;
@@ -133,6 +138,7 @@ export function PlansScreen({ productCode }: { productCode?: string } = {}) {
                 overview={overview}
                 productCode={productCode}
                 manage={manage}
+                managePricing={managePricing}
                 panel={panel}
                 open={(p) => {
                   setNotice(null);
@@ -144,7 +150,7 @@ export function PlansScreen({ productCode }: { productCode?: string } = {}) {
           </div>
         )}
       </LoadGate>
-    </div>
+    </Page>
   );
 }
 
@@ -153,6 +159,7 @@ function OfferTab({
   overview,
   productCode,
   manage,
+  managePricing,
   panel,
   open,
   onClose,
@@ -161,6 +168,7 @@ function OfferTab({
   overview: CatalogOverview;
   productCode?: string;
   manage: boolean;
+  managePricing: boolean;
   panel: Panel | null;
   open: (panel: Panel) => void;
   onClose: (outcome: BuilderOutcome) => void;
@@ -170,42 +178,41 @@ function OfferTab({
   const row = panel && panel.mode !== "new" ? rows.find((r) => r.id === panel.id) : undefined;
   const productColumn = kind === "bundle" ? [] : [kind === "addon" ? "Product / add-on for" : "Product"];
 
+  const add = manage ? (
+    <Button variant="primary" icon="plus" aria-haspopup="dialog" disabled={panel?.mode === "new"} onClick={() => open({ mode: "new" })}>
+      New {noun}
+    </Button>
+  ) : null;
   return (
-    <>
-      <div className={styles.header}>
-        <div>
-          <h2 className={styles.sectionTitle}>{TAB_TITLE[kind]}</h2>
-          <p className={cp.muted}>{TAB_LEAD[kind]}</p>
-        </div>
-        {manage && (
-          <button
-            type="button"
-            className="w360-btn w360-btn-primary"
-            disabled={panel?.mode === "new"}
-            onClick={() => open({ mode: "new" })}
-          >
-            New {noun}
-          </button>
-        )}
-      </div>
+    <div className={cp.stack}>
+      <SectionHeader title={TAB_TITLE[kind]} description={TAB_LEAD[kind]} actions={add} />
 
       {panel?.mode === "new" && <PlanBuilder key={`new-${kind}`} kind={kind} overview={overview} onClose={onClose} />}
       {panel?.mode === "version" && row && (
         <PlanBuilder key={`version-${row.id}`} kind={kind} overview={overview} existing={row} onClose={onClose} />
       )}
       {panel?.mode === "edit" && row && <DetailsEditor key={`edit-${row.id}`} kind={kind} row={row} onClose={onClose} />}
+      {panel?.mode === "rules" && row && isPlanRow(row) && <PlanRulesDialog key={`rules-${row.id}`} plan={row} onClose={onClose} />}
 
       <Table
         caption={TAB_TITLE[kind]}
         head={["Name", ...productColumn, "Type", "Status", "Billing cycles (latest published version)", "Version", "Actions"]}
         isEmpty={rows.length === 0}
         empty={`No ${noun}s yet.`}
+        emptyHint={TAB_LEAD[kind]}
+        emptyAction={
+          manage && panel?.mode !== "new" ? (
+            <Button variant="primary" icon="plus" aria-haspopup="dialog" onClick={() => open({ mode: "new" })}>
+              {`Create the first ${noun}`}
+            </Button>
+          ) : undefined
+        }
       >
         {rows.map((r) => (
-          <OfferRow key={r.id} row={r} kind={kind} manage={manage} open={open} />
+          <OfferRow key={r.id} row={r} kind={kind} manage={manage} managePricing={managePricing} open={open} />
         ))}
       </Table>
-    </>
+    </div>
   );
 }
 
@@ -213,11 +220,13 @@ function OfferRow({
   row,
   kind,
   manage,
+  managePricing,
   open,
 }: {
   row: Row;
   kind: BuilderKind;
   manage: boolean;
+  managePricing: boolean;
   open: (panel: Panel) => void;
 }) {
   const status = uiStatusOf(row);
@@ -238,10 +247,10 @@ function OfferRow({
         </td>
       )}
       <td>
-        <span className="w360-badge w360-badge-neutral">{row.billing_type === "free_trial" ? "Free trial" : "Paid"}</span>
+        <Badge tone={row.billing_type === "free_trial" ? "info" : "neutral"}>{row.billing_type === "free_trial" ? "Free trial" : "Paid"}</Badge>
       </td>
       <td>
-        <span className={STATUS_BADGE[status]}>{STATUS_LABEL[status]}</span>
+        <StatusBadge value={status} label={STATUS_LABEL[status]} />
       </td>
       <td>
         <CyclePrices prices={published?.prices} published={Boolean(published)} />
@@ -251,24 +260,39 @@ function OfferRow({
         {latest && !latest.published_at && <div className={cp.muted}>draft v{latest.version}</div>}
       </td>
       <td>
-        {manage && (
+        {(manage || (managePricing && isPlanRow(row))) && (
           <div className={styles.actions}>
-            <button
-              type="button"
-              className="w360-btn w360-btn-secondary"
-              aria-label={`Edit details of ${row.name}`}
-              onClick={() => open({ mode: "edit", id: row.id })}
-            >
-              Edit details
-            </button>
-            {status !== "retired" && (
+            {manage && (
+              <button
+                type="button"
+                className="w360-btn w360-btn-secondary"
+                aria-label={`Edit details of ${row.name}`}
+                aria-haspopup="dialog"
+                onClick={() => open({ mode: "edit", id: row.id })}
+              >
+                Edit details
+              </button>
+            )}
+            {manage && status !== "retired" && (
               <button
                 type="button"
                 className="w360-btn w360-btn-secondary"
                 aria-label={`Publish new version of ${row.name}`}
+                aria-haspopup="dialog"
                 onClick={() => open({ mode: "version", id: row.id })}
               >
                 Publish new version
+              </button>
+            )}
+            {managePricing && isPlanRow(row) && (
+              <button
+                type="button"
+                className="w360-btn w360-btn-secondary"
+                aria-label={`Rules for ${row.name}`}
+                aria-haspopup="dialog"
+                onClick={() => open({ mode: "rules", id: row.id })}
+              >
+                Rules
               </button>
             )}
           </div>
@@ -314,11 +338,7 @@ function DetailsEditor({ kind, row, onClose }: { kind: BuilderKind; row: Row; on
   const [errors, setErrors] = useState<string[]>([]);
   const runner = useStepRunner();
   const { act, busy, feedback } = useAction();
-  const heading = useRef<HTMLHeadingElement | null>(null);
-
-  useEffect(() => {
-    heading.current?.focus();
-  }, []);
+  const titleId = useId();
 
   const isDraft = row.status === "draft";
   const retired = current === "retired";
@@ -364,70 +384,76 @@ function DetailsEditor({ kind, row, onClose }: { kind: BuilderKind; row: Row; on
     }, message);
   }
 
+  const close = () => onClose({ saved: false, changed: runner.started });
+
   return (
-    <section className={`w360-card ${cp.card}`} aria-labelledby={`edit-${row.id}`}>
-      <form className={styles.builder} onSubmit={submit} noValidate>
-        <h3 id={`edit-${row.id}`} ref={heading} tabIndex={-1} className={styles.panelTitle}>
-          Edit details of “{row.name}”
-        </h3>
-        <ErrorSummary errors={errors} />
-        <TextField label="Title" value={name} onChange={setName} maxLength={128} />
-        <TextField
-          label="Caption (one line)"
-          value={caption}
-          onChange={(v) => setCaption(v.replace(/[\r\n]+/g, " "))}
-          maxLength={160}
-        />
-        <DescriptionField value={description} onChange={setDescription} />
-        {isDraft ? (
-          <Segmented
-            legend="Type"
-            options={[
-              { value: "free_trial", label: "Free Trial", disabled: kind === "addon" },
-              { value: "paid", label: "Paid" },
-            ]}
-            value={billingType}
-            onChange={setBillingType}
-            hint="The type can change only while it is a draft."
-          />
-        ) : (
-          <p>Type: {row.billing_type === "free_trial" ? "Free Trial" : "Paid"} (fixed once it has been on sale)</p>
-        )}
-        {retired ? (
-          <p>Status: Retired. A retired offer can&apos;t be put back on sale.</p>
-        ) : (
-          <Segmented
-            legend="Status"
-            options={[
-              { value: "draft", label: "Draft", disabled: !isDraft },
-              { value: "private", label: "Private" },
-              { value: "public", label: "Public" },
-              { value: "deactivated", label: "Deactivated" },
-            ]}
-            value={status}
-            onChange={setStatus}
-            hint={
-              kind === "bundle"
-                ? "A plan can go on sale only once it has a published version."
-                : "Deactivated stops new sales; existing customers keep what they bought."
-            }
-          />
-        )}
-        <div className={styles.actions}>
+    <Modal labelledBy={titleId} onClose={close} size="md">
+      <form className={dialog.form} onSubmit={submit} noValidate>
+        <DialogHead titleId={titleId} title={`Edit details of “${row.name}”`} onClose={close} />
+        <div className={dialog.body}>
+          <ErrorSummary errors={errors} />
+          <div className={dialog.grid}>
+            <TextField label="Title" value={name} onChange={setName} maxLength={128} />
+            <TextField
+              label="Caption (one line)"
+              value={caption}
+              onChange={(v) => setCaption(v.replace(/[\r\n]+/g, " "))}
+              maxLength={160}
+            />
+            <div className={dialog.span}>
+              <DescriptionField value={description} onChange={setDescription} />
+            </div>
+            <div className={dialog.span}>
+              {isDraft ? (
+                <Segmented
+                  legend="Type"
+                  options={[
+                    { value: "free_trial", label: "Free Trial", disabled: kind === "addon" },
+                    { value: "paid", label: "Paid" },
+                  ]}
+                  value={billingType}
+                  onChange={setBillingType}
+                  hint="The type can change only while it is a draft."
+                />
+              ) : (
+                <p>Type: {row.billing_type === "free_trial" ? "Free Trial" : "Paid"} (fixed once it has been on sale)</p>
+              )}
+            </div>
+            <div className={dialog.span}>
+              {retired ? (
+                <p>Status: Retired. A retired offer can&apos;t be put back on sale.</p>
+              ) : (
+                <Segmented
+                  legend="Status"
+                  options={[
+                    { value: "draft", label: "Draft", disabled: !isDraft },
+                    { value: "private", label: "Private" },
+                    { value: "public", label: "Public" },
+                    { value: "deactivated", label: "Deactivated" },
+                  ]}
+                  value={status}
+                  onChange={setStatus}
+                  hint={
+                    kind === "bundle"
+                      ? "A plan can go on sale only once it has a published version."
+                      : "Deactivated stops new sales; existing customers keep what they bought."
+                  }
+                />
+              )}
+            </div>
+          </div>
+          <ProgressList steps={runner.steps} title="Saving" />
+          {feedback}
+        </div>
+        <div className={dialog.foot}>
+          <button type="button" className="w360-btn w360-btn-secondary" onClick={close}>
+            Cancel
+          </button>
           <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || runner.running}>
             {runner.started ? "Resume saving" : "Save details"}
           </button>
-          <button
-            type="button"
-            className="w360-btn w360-btn-secondary"
-            onClick={() => onClose({ saved: false, changed: runner.started })}
-          >
-            Cancel
-          </button>
         </div>
       </form>
-      <ProgressList steps={runner.steps} title="Saving" />
-      {feedback}
-    </section>
+    </Modal>
   );
 }

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { LoadGate, Status, Table, useAction, useLoad, when } from "@/features/controlplane/ui";
 import {
   panelApi,
@@ -13,7 +13,9 @@ import {
   type TicketDetail,
   type TicketPage,
 } from "@/lib/api/partnerPanel";
+import { dialog, FormDialog, FormPopup } from "@/features/controlplane/Modal";
 import { EmptyState, PageHeader, usePanel } from "./PanelKit";
+import { useNote } from "./workspaceKit";
 import styles from "./PartnerPanel.module.css";
 
 /**
@@ -129,13 +131,18 @@ function Filters({ status, onStatus, counts }: { status: string; onStatus: (s: s
   );
 }
 
+/** A new ticket, in a popup (opened by "Raise a ticket" or "Raise a dispute"). */
 export function NewTicketForm({
+  title,
   onCreated,
+  onClose,
   categories,
   priorities,
   preset,
 }: {
-  onCreated: (t: TicketDetail) => void;
+  title: string;
+  onCreated: (t: TicketDetail, message: string | undefined) => void;
+  onClose: () => void;
   categories: string[];
   priorities: string[];
   preset?: Partial<NewTicket>;
@@ -143,62 +150,61 @@ export function NewTicketForm({
   const { id } = usePanel();
   const ids = { subject: useId(), category: useId(), priority: useId(), message: useId() };
   const [form, setForm] = useState<NewTicket>({ subject: "", message: "", category: "general", priority: "normal", ...preset });
-  const { act, busy, feedback } = useAction();
+  // The new ticket, kept from the save until the popup reports it (a ref: no redraw needed).
+  const created = useRef<TicketDetail | null>(null);
   const set = (key: keyof NewTicket) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
   return (
-    <form
-      className={styles.form}
-      onSubmit={(e) => {
-        e.preventDefault();
-        act(async () => onCreated(await panelApi.openTicket(id, form)), "Ticket sent to Workeasy360.");
+    <FormDialog
+      title={title}
+      submitLabel="Send ticket"
+      canSubmit={Boolean(form.subject.trim() && form.message.trim())}
+      onSubmit={async () => {
+        created.current = await panelApi.openTicket(id, form);
+        return "Ticket sent to Workeasy360.";
       }}
+      onDone={(m) => {
+        if (created.current) onCreated(created.current, m);
+      }}
+      onClose={onClose}
     >
-      <div>
+      <div className={dialog.span}>
         <label className="w360-label" htmlFor={ids.subject}>
           Subject
         </label>
         <input id={ids.subject} className="w360-input" required maxLength={200} value={form.subject} onChange={set("subject")} />
       </div>
-      <div className={styles.formRow}>
-        <div>
-          <label className="w360-label" htmlFor={ids.category}>
-            Category
-          </label>
-          <select id={ids.category} className="w360-input" value={form.category} onChange={set("category")}>
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {CATEGORY_LABEL[c] ?? c}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="w360-label" htmlFor={ids.priority}>
-            Priority
-          </label>
-          <select id={ids.priority} className="w360-input" value={form.priority} onChange={set("priority")}>
-            {priorities.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div>
+        <label className="w360-label" htmlFor={ids.category}>
+          Category
+        </label>
+        <select id={ids.category} className="w360-input" value={form.category} onChange={set("category")}>
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {CATEGORY_LABEL[c] ?? c}
+            </option>
+          ))}
+        </select>
       </div>
       <div>
+        <label className="w360-label" htmlFor={ids.priority}>
+          Priority
+        </label>
+        <select id={ids.priority} className="w360-input" value={form.priority} onChange={set("priority")}>
+          {priorities.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className={dialog.span}>
         <label className="w360-label" htmlFor={ids.message}>
           What do you need?
         </label>
         <textarea id={ids.message} className="w360-input" required rows={5} maxLength={5000} value={form.message} onChange={set("message")} />
       </div>
-      <p>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-          Send ticket
-        </button>
-      </p>
-      {feedback}
-    </form>
+    </FormDialog>
   );
 }
 
@@ -230,12 +236,6 @@ function Conversation({ t, reload, desk }: { t: TicketDetail; reload: () => void
   const [message, setMessage] = useState("");
   const [internal, setInternal] = useState(false);
   const [status, setStatus] = useState("");
-  const { act, busy, feedback } = useAction(() => {
-    setMessage("");
-    setInternal(false);
-    setStatus("");
-    reload();
-  });
   const ids = { message: useId(), internal: useId(), status: useId(), canned: useId() };
   const closed = t.status === "closed";
   const mayAnswer = !answering || t.may_answer;
@@ -269,46 +269,54 @@ function Conversation({ t, reload, desk }: { t: TicketDetail; reload: () => void
       ) : !mayAnswer ? (
         <p className={styles.muted}>Your role can read customer tickets but not answer them.</p>
       ) : (
-        <form
-          className={styles.form}
-          onSubmit={(e) => {
-            e.preventDefault();
-            act(
-              () => panelApi.replyTicket(id, t.id, { message: message || undefined, internal, status: status || undefined }),
-              status ? "Ticket updated." : "Reply sent.",
-            );
-          }}
-        >
-          {answering && canned.status === "ready" && canned.data.items.length > 0 && (
+        <div className={styles.actions}>
+          <FormPopup
+            label={answering ? "Answer" : "Reply"}
+            buttonAriaLabel={`${answering ? "Answer" : "Reply to"} ${t.reference}`}
+            title={`${answering ? "Answer" : "Reply to"} ${t.reference}`}
+            size="sm"
+            submitLabel="Send"
+            canSubmit={Boolean(message.trim() || status)}
+            onOpen={() => {
+              setMessage("");
+              setInternal(false);
+              setStatus("");
+            }}
+            onSubmit={async () => {
+              await panelApi.replyTicket(id, t.id, { message: message || undefined, internal, status: status || undefined });
+              return status ? "Ticket updated." : "Reply sent.";
+            }}
+            onDone={reload}
+          >
+            {answering && canned.status === "ready" && canned.data.items.length > 0 && (
+              <div>
+                <label className="w360-label" htmlFor={ids.canned}>
+                  Insert a saved reply
+                </label>
+                <select
+                  id={ids.canned}
+                  className="w360-input"
+                  value=""
+                  onChange={(e) => {
+                    const chosen = canned.data.items.find((c) => c.id === e.target.value);
+                    if (chosen) setMessage((m) => (m ? `${m}\n\n${chosen.body}` : chosen.body));
+                  }}
+                >
+                  <option value="">Choose…</option>
+                  {canned.data.items.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
-              <label className="w360-label" htmlFor={ids.canned}>
-                Insert a saved reply
+              <label className="w360-label" htmlFor={ids.message}>
+                {answering ? "Your answer" : "Your reply"}
               </label>
-              <select
-                id={ids.canned}
-                className="w360-input"
-                value=""
-                onChange={(e) => {
-                  const chosen = canned.data.items.find((c) => c.id === e.target.value);
-                  if (chosen) setMessage((m) => (m ? `${m}\n\n${chosen.body}` : chosen.body));
-                }}
-              >
-                <option value="">Choose…</option>
-                {canned.data.items.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title}
-                  </option>
-                ))}
-              </select>
+              <textarea id={ids.message} className="w360-input" rows={4} maxLength={5000} value={message} onChange={(e) => setMessage(e.target.value)} />
             </div>
-          )}
-          <div>
-            <label className="w360-label" htmlFor={ids.message}>
-              {answering ? "Your answer" : "Your reply"}
-            </label>
-            <textarea id={ids.message} className="w360-input" rows={4} maxLength={5000} value={message} onChange={(e) => setMessage(e.target.value)} />
-          </div>
-          <div className={styles.formRow}>
             {answering && (
               <label className={styles.check} htmlFor={ids.internal}>
                 <input id={ids.internal} type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} /> Internal note (the
@@ -333,14 +341,8 @@ function Conversation({ t, reload, desk }: { t: TicketDetail; reload: () => void
                 )}
               </select>
             </div>
-          </div>
-          <p>
-            <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || (!message.trim() && !status)}>
-              Send
-            </button>
-          </p>
-          {feedback}
-        </form>
+          </FormPopup>
+        </div>
       )}
     </>
   );
@@ -355,37 +357,46 @@ export function MyTickets() {
   const [composing, setComposing] = useState(params?.get("new") === "1");
   const [load, reload] = useLoad(() => panelApi.tickets(id, "platform", status), [id, status]);
   const [support] = useLoad(() => panelApi.support(id), [id]);
+  const sent = useNote();
   return (
     <div className={styles.page}>
       <PageHeader
         title="Helpdesk"
         lead="Ask Workeasy360 for help and follow every ticket to its answer. Urgent tickets are answered first."
         actions={
-          !open && !composing ? (
-            <button type="button" className="w360-btn w360-btn-primary" onClick={() => setComposing(true)}>
+          !open ? (
+            <button
+              type="button"
+              className="w360-btn w360-btn-primary"
+              aria-haspopup="dialog"
+              onClick={() => {
+                sent.clear();
+                setComposing(true);
+              }}
+            >
               Raise a ticket
             </button>
           ) : undefined
         }
       />
+      {sent.node}
+      {composing && load.status === "ready" && (
+        <NewTicketForm
+          title="New ticket"
+          categories={load.data.categories}
+          priorities={load.data.priorities}
+          onClose={() => setComposing(false)}
+          onCreated={(t, m) => {
+            sent.show(m);
+            reload();
+            setOpen(t.id);
+          }}
+        />
+      )}
       {open ? (
         <TicketView ticketId={open} onClose={() => setOpen(null)} />
       ) : (
         <>
-          {composing && load.status === "ready" && (
-            <section className={styles.panel} aria-labelledby="new-ticket">
-              <h2 id="new-ticket">New ticket</h2>
-              <NewTicketForm
-                categories={load.data.categories}
-                priorities={load.data.priorities}
-                onCreated={(t) => {
-                  setComposing(false);
-                  reload();
-                  setOpen(t.id);
-                }}
-              />
-            </section>
-          )}
           <Filters status={status} onStatus={setStatus} counts={load.status === "ready" ? load.data.counts : null} />
           <LoadGate load={load} what="your tickets">
             {(page) =>
@@ -463,28 +474,34 @@ export function SavedReplies() {
   const [load, reload] = useLoad(() => panelApi.cannedResponses(id), [id]);
   const [editing, setEditing] = useState<CannedResponse | "new" | null>(null);
   const { act, busy, feedback } = useAction(reload);
+  const stored = useNote();
   const may = can("desk.manage");
+  const edit = (what: CannedResponse | "new") => {
+    stored.clear();
+    setEditing(what);
+  };
   return (
     <div className={styles.page}>
       <PageHeader
         title="Saved replies"
         lead="Answers your support team inserts into a reply in one step."
         actions={
-          may && editing === null ? (
-            <button type="button" className="w360-btn w360-btn-primary" onClick={() => setEditing("new")}>
+          may ? (
+            <button type="button" className="w360-btn w360-btn-primary" aria-haspopup="dialog" onClick={() => edit("new")}>
               New saved reply
             </button>
           ) : undefined
         }
       />
+      {stored.node}
       {editing !== null && (
         <CannedForm
           current={editing === "new" ? null : editing}
-          onDone={() => {
-            setEditing(null);
+          onDone={(m) => {
+            stored.show(m);
             reload();
           }}
-          onCancel={() => setEditing(null)}
+          onClose={() => setEditing(null)}
         />
       )}
       <LoadGate load={load} what="saved replies">
@@ -498,8 +515,8 @@ export function SavedReplies() {
                 <td>
                   {may && (
                     <span className={styles.actionsRow}>
-                      <button type="button" className="w360-btn w360-btn-secondary" onClick={() => setEditing(c)}>
-                        Edit
+                      <button type="button" className="w360-btn w360-btn-secondary" aria-haspopup="dialog" onClick={() => edit(c)}>
+                        Edit<span className="w360-visually-hidden"> {c.title}</span>
                       </button>
                       <button
                         type="button"
@@ -522,19 +539,24 @@ export function SavedReplies() {
   );
 }
 
-function CannedForm({ current, onDone, onCancel }: { current: CannedResponse | null; onDone: () => void; onCancel: () => void }) {
+/** A saved reply, new or changed, in a popup. */
+function CannedForm({ current, onDone, onClose }: { current: CannedResponse | null; onDone: (m: string | undefined) => void; onClose: () => void }) {
   const { id } = usePanel();
   const [title, setTitle] = useState(current?.title ?? "");
   const [body, setBody] = useState(current?.body ?? "");
-  const { act, busy, feedback } = useAction(onDone);
   const ids = { title: useId(), body: useId() };
   return (
-    <form
-      className={`${styles.panel} ${styles.form}`}
-      onSubmit={(e) => {
-        e.preventDefault();
-        act(() => panelApi.saveCannedResponse(id, { title, body }, current?.id), "Saved reply stored.");
+    <FormDialog
+      size="sm"
+      title={current ? `Edit saved reply: ${current.title}` : "New saved reply"}
+      submitLabel="Save"
+      canSubmit={Boolean(title.trim() && body.trim())}
+      onSubmit={async () => {
+        await panelApi.saveCannedResponse(id, { title, body }, current?.id);
+        return "Saved reply stored.";
       }}
+      onDone={onDone}
+      onClose={onClose}
     >
       <div>
         <label className="w360-label" htmlFor={ids.title}>
@@ -548,16 +570,7 @@ function CannedForm({ current, onDone, onCancel }: { current: CannedResponse | n
         </label>
         <textarea id={ids.body} className="w360-input" required rows={5} maxLength={5000} value={body} onChange={(e) => setBody(e.target.value)} />
       </div>
-      <p className={styles.actionsRow}>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-          Save
-        </button>
-        <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel}>
-          Cancel
-        </button>
-      </p>
-      {feedback}
-    </form>
+    </FormDialog>
   );
 }
 
@@ -570,32 +583,39 @@ export function Disputes() {
   const entry = params?.get("entry") ?? "";
   const [composing, setComposing] = useState(entry !== "");
   const [load, reload] = useLoad(() => panelApi.tickets(id, "platform", "all"), [id]);
+  const sent = useNote();
   return (
     <div className={styles.page}>
       <PageHeader
         title="Commission disputes"
         lead="Think a commission is missing or wrong? Raise a dispute. Workeasy360 reviews it, and any correction appears in your ledger as an adjustment."
         actions={
-          !composing ? (
-            <button type="button" className="w360-btn w360-btn-primary" onClick={() => setComposing(true)}>
-              Raise a dispute
-            </button>
-          ) : undefined
+          <button
+            type="button"
+            className="w360-btn w360-btn-primary"
+            aria-haspopup="dialog"
+            onClick={() => {
+              sent.clear();
+              setComposing(true);
+            }}
+          >
+            Raise a dispute
+          </button>
         }
       />
+      {sent.node}
       {composing && load.status === "ready" && (
-        <section className={styles.panel} aria-labelledby="new-dispute">
-          <h2 id="new-dispute">New dispute</h2>
-          <NewTicketForm
-            categories={["commission"]}
-            priorities={load.data.priorities}
-            preset={{ category: "commission", subject: entry ? "Dispute about a commission entry" : "", related_ref: entry ? `commission:${entry}` : undefined }}
-            onCreated={() => {
-              setComposing(false);
-              reload();
-            }}
-          />
-        </section>
+        <NewTicketForm
+          title="New dispute"
+          categories={["commission"]}
+          priorities={load.data.priorities}
+          preset={{ category: "commission", subject: entry ? "Dispute about a commission entry" : "", related_ref: entry ? `commission:${entry}` : undefined }}
+          onClose={() => setComposing(false)}
+          onCreated={(_t, m) => {
+            sent.show(m);
+            reload();
+          }}
+        />
       )}
       <LoadGate load={load} what="your disputes">
         {(page) => {

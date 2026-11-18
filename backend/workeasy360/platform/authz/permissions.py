@@ -310,6 +310,18 @@ STAFF_PERMISSIONS: Final = (
         control_plane=True,
         implies=("platform.staff_partner.view", "platform.staff_customer.view"),
     ),
+    # ADR-062 (2026-11-10): Login as Guest - open one partner's portal read-only,
+    # for a reason, for a limited time, and revoke another Admin's guest view.
+    # Dangerous: every use is audited, and it is refused under impersonation, so
+    # a guest view can never start another.
+    _p(
+        "platform.staff_partner.guest",
+        "Log in as a guest to a partner's portal (read-only, time-limited)",
+        category="control_plane",
+        dangerous=True,
+        control_plane=True,
+        implies=("platform.staff_partner.view",),
+    ),
     _p(
         "platform.staff_commission.view",
         "View commission rules, accruals and payouts",
@@ -467,6 +479,56 @@ STAFF_PERMISSIONS: Final = (
         dangerous=True,
         control_plane=True,
         implies=("platform.staff_payment.view",),
+    ),
+    # Admin Panel (2026-11-09). Partner KYC: reading the queue is separate from
+    # reviewing, because opening a partner's identity documents and deciding an
+    # application are what must stay with a few people.
+    _p(
+        "platform.staff_kyc.view",
+        "View partner applications and their KYC status",
+        category="control_plane",
+        control_plane=True,
+    ),
+    _p(
+        "platform.staff_kyc.review",
+        "Open partner KYC documents and approve, correct or reject applications",
+        category="control_plane",
+        dangerous=True,
+        control_plane=True,
+        implies=("platform.staff_kyc.view",),
+    ),
+    # Wallets: balances and movements. Managing writes to a financial ledger
+    # (audited manual adjustments, reversals), so it is dangerous.
+    _p(
+        "platform.staff_wallet.view",
+        "View wallet balances, transactions and usage events",
+        category="control_plane",
+        control_plane=True,
+    ),
+    _p(
+        "platform.staff_wallet.manage",
+        "Adjust and reverse wallet transactions and review usage events",
+        category="control_plane",
+        dangerous=True,
+        control_plane=True,
+        implies=("platform.staff_wallet.view",),
+    ),
+    # Support: the tickets of customers and partners, and the shared help
+    # content everyone reads, so changing either is dangerous.
+    _p(
+        "platform.staff_support.manage",
+        "Assign, answer and resolve support tickets and edit help content",
+        category="control_plane",
+        dangerous=True,
+        control_plane=True,
+        implies=("platform.staff_support.view",),
+    ),
+    # Reports: standard read-only reports across the platform, and their export.
+    _p(
+        "platform.staff_report.view",
+        "View and export platform reports",
+        category="control_plane",
+        control_plane=True,
     ),
     _p(
         "platform.staff_security.view",

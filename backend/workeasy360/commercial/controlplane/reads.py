@@ -7,6 +7,7 @@ and keyset-paginated; none returns a secret.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -72,6 +73,11 @@ def rules_list(ctx: TenantContext, *, live_only: bool) -> list[dict[str, Any]]:
     return commission_selectors.rules_list(live_only=live_only)
 
 
+def commission_terms(ctx: TenantContext) -> dict[str, Any]:
+    authz.require(ctx, COMMISSION_VIEW)
+    return commission_selectors.terms()
+
+
 def accruals(
     ctx: TenantContext,
     *,
@@ -80,7 +86,10 @@ def accruals(
     limit: int,
     cursor: str | None,
     unpaid: bool = False,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> Page:
+    """``start``/``end``: entries whose earning event is in ``[start, end)``."""
     authz.require(ctx, COMMISSION_VIEW)
     return commission_selectors.accruals_page(
         partner_id=partner_id,
@@ -89,6 +98,8 @@ def accruals(
         unpaid=unpaid,
         limit=limit,
         cursor=cursor,
+        start=start,
+        end=end,
     )
 
 
@@ -99,7 +110,10 @@ def payouts_list(
     status: str | None,
     limit: int,
     cursor: str | None,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> Page:
+    """``start``/``end``: payouts prepared (created) in ``[start, end)``."""
     authz.require(ctx, COMMISSION_VIEW)
     return commission_selectors.payouts_page(
         partner_id=partner_id,
@@ -107,6 +121,8 @@ def payouts_list(
         status=status,
         limit=limit,
         cursor=cursor,
+        start=start,
+        end=end,
     )
 
 

@@ -247,7 +247,36 @@ def public_product(slug: Any, *, currency: Any = None) -> dict[str, Any] | None:
     )
     if page is None:
         return None
-    return {"currency": listing["currency"], "currencies": listing["currencies"], **page}
+    from workeasy360.commercial.billing import tax
+
+    return {
+        "currency": listing["currency"],
+        "currencies": listing["currencies"],
+        # ADR-058: GST added on top of INR prices - the page's order summary.
+        "tax": tax.terms(listing["currency"]),
+        **page,
+    }
+
+
+def check_coupon(
+    code: Any, *, slug: Any, currency: Any, amount_minor: Any
+) -> dict[str, Any]:
+    """The product page's coupon "Apply" (ADR-058): what ``code`` would take
+    off ``amount_minor`` of this product. A preview for a visitor - the
+    organization's checkout prices the code again for its own order."""
+    from workeasy360.commercial.pricing import coupons
+    from workeasy360.commercial.subscriptions.marketplace import public_catalog
+
+    listing = public_catalog(currency=currency)
+    product = next((p for p in listing["products"] if p["slug"] == str(slug or "")), None)
+    if product is None:
+        return {"valid": False, "message": "This product is not on sale."}
+    return coupons.preview(
+        code,
+        product_code=product["code"],
+        currency=listing["currency"],
+        amount_minor=amount_minor,
+    )
 
 
 def public_store(*, currency: Any = None, **params: Any) -> dict[str, Any]:
@@ -357,9 +386,15 @@ def customer_product(
     }
 
 
-def _video_of(slug: str, row: dict[str, Any] | None) -> dict[str, Any] | None:
+def _video_of(
+    slug: str,
+    row: dict[str, Any] | None,
+    *,
+    video_url: Callable[[str, dict[str, Any]], str] | None = None,
+) -> dict[str, Any] | None:
     """A product page's video: its uploaded file when it has one, else its
-    YouTube or Vimeo link, else nothing."""
+    YouTube or Vimeo link, else nothing. ``video_url`` addresses an uploaded
+    file (the public route by default; the staff preview passes its own)."""
     if row is None:
         return None
     uploaded = catalog.product_videos([row["id"]]).get(str(row["id"]))
@@ -367,10 +402,51 @@ def _video_of(slug: str, row: dict[str, Any] | None) -> dict[str, Any] | None:
         return {
             "provider": "upload",
             "id": uploaded["id"],
-            "url": catalog.video_url(slug, uploaded),
+            "url": (video_url or catalog.video_url)(slug, uploaded),
             "content_type": uploaded["content_type"],
         }
     return catalog.video_embed(row.get("video_url", ""))
+
+
+def _video_extras(row: dict[str, Any] | None, poster_url: str | None) -> dict[str, Any]:
+    """ADR-068: the demo's title, description and thumbnail - each only when
+    set, so a video with none keeps exactly the shape it always had."""
+    out: dict[str, Any] = {}
+    if row and row.get("video_title"):
+        out["title"] = row["video_title"]
+    if row and row.get("video_description"):
+        out["description"] = row["video_description"]
+    if poster_url:
+        out["poster"] = poster_url
+    return out
+
+
+#: The app stores a product page names (ADR-065), in the order it shows them.
+ACCESS_APPS = ("android", "ios", "windows", "macos")
+
+
+def _access_of(row: dict[str, Any] | None) -> dict[str, Any]:
+    """How a customer reaches the product (ADR-065): the web application - its
+    application address, a web link, or the launch page its registration names -
+    and the official app-store links the Super Admin entered (https only, checked
+    when saved). Never a guessed link: what is not set is left out."""
+    from workeasy360.platform.ecosystem import selectors as ecosystem
+
+    links = dict((row or {}).get("app_links") or {})
+    code = str((row or {}).get("code") or "")
+    web = bool(
+        (row or {}).get("application_url")
+        or links.get("web")
+        or (code and ecosystem.launch_urls([code]).get(code))
+    )
+    return {
+        "web": web,
+        "apps": {
+            name: links[name]
+            for name in ACCESS_APPS
+            if isinstance(links.get(name), str) and links[name].startswith("https://")
+        },
+    }
 
 
 def _product_page(
@@ -379,10 +455,15 @@ def _product_page(
     *,
     status_of: Callable[[dict[str, Any]], str],
     held: dict[str, Any],
+    media_url: Callable[[str, Any], str] | None = None,
+    video_url: Callable[[str, dict[str, Any]], str] | None = None,
 ) -> dict[str, Any] | None:
     """One product's Store page from a customer-facing listing: content,
     screenshots, plan comparison and related products, plus ``held`` (what an
-    organization holds of it, or nothing for a visitor)."""
+    organization holds of it, or nothing for a visitor). ``media_url`` and
+    ``video_url`` address its files - the public routes by default; the staff
+    preview (ADR-068) passes the staff ones, so nothing is made public."""
+    address = media_url or catalog.media_url
     now = timezone.now()
     product = next((p for p in products if p["code"] == product_code), None)
     if product is None:
@@ -394,7 +475,7 @@ def _product_page(
 
     def image(m: dict[str, Any]) -> dict[str, Any]:
         return {
-            "url": catalog.media_url(product["slug"], m["id"]),
+            "url": address(product["slug"], m["id"]),
             "caption": m["caption"],
             "width": m["width"],
             "height": m["height"],
@@ -449,7 +530,20 @@ def _product_page(
             "highlights": (row or {}).get("highlights", []),
             "benefits": (row or {}).get("benefits", []),
             "use_cases": (row or {}).get("use_cases", []),
-            "video": _video_of(product["slug"], row if on_sale else None),
+            "setup_requirements": (row or {}).get("setup_requirements", []),
+            "access": _access_of(row),
+            "video": _with_extras(
+                _video_of(product["slug"], row if on_sale else None, video_url=video_url),
+                row,
+                next(
+                    (
+                        address(product["slug"], m["id"])
+                        for m in media
+                        if m["kind"] == "video_poster"
+                    ),
+                    None,
+                ),
+            ),
             "documentation_url": (row or {}).get("documentation_url", ""),
             "support_url": (row or {}).get("support_url", ""),
             **store.merchandising_of(row, now),
@@ -465,6 +559,12 @@ def _product_page(
         "comparison": _comparison(plans, features) if plans else [],
         "related": related,
     }
+
+
+def _with_extras(
+    video: dict[str, Any] | None, row: dict[str, Any] | None, poster_url: str | None
+) -> dict[str, Any] | None:
+    return None if video is None else {**video, **_video_extras(row, poster_url)}
 
 
 def my_holding(product_code: str) -> Any:
@@ -549,3 +649,71 @@ def partner_store(ctx: TenantContext, *, kind: str, **params: Any) -> dict[str, 
         }
     )
     return page
+
+
+# --- the Digital Store's own host (ADR-065) ------------------------------------------
+
+
+def public_recharge(currency: Any = None) -> dict[str, Any]:
+    """The Recharge page's public terms: the live usage rates (money meters in the
+    page's currency, AI tokens in credits), the AI credit packs on sale and whether
+    online payment is open. Anonymous; nothing here is a balance."""
+    from workeasy360.commercial.payments import checkout
+    from workeasy360.commercial.subscriptions.marketplace import public_catalog
+    from workeasy360.commercial.wallets import api as wallets
+
+    code = str(public_catalog(currency=currency)["currency"] or "")
+    return {
+        "currency": code,
+        "rates": wallets.public_rates(code),
+        "credit_packs": wallets.packs_on_sale(code),
+        "payment": checkout.public_payment_option(code),
+    }
+
+
+def public_payment_option(currency: Any) -> dict[str, Any]:
+    from workeasy360.commercial.payments import checkout
+
+    return checkout.public_payment_option(str(currency or ""))
+
+
+def check_return(product: Any, url: Any) -> dict[str, Any]:
+    """ADR-065: may the Store return a buyer to ``url`` after a purchase this
+    product started? Only a product on the public Store, and only an address its
+    own registration approves (``ecosystem.permits_return``)."""
+    from workeasy360.commercial.subscriptions.marketplace import public_catalog
+    from workeasy360.platform.ecosystem import selectors as ecosystem
+
+    code = str(product or "")[:64]
+    raw = str(url or "")
+    if not code or not raw or len(raw) > 2048:
+        return {"allowed": False}
+    listed = any(p["code"] == code for p in public_catalog()["products"])
+    return {"allowed": bool(listed and ecosystem.permits_return(code, raw))}
+
+
+def sitemap_urls() -> list[str]:
+    """ADR-065: the Store's public pages for its ``sitemap.xml`` - the marketplace,
+    its sections, each policy the Super Admin published and every product on the
+    public Store. Absolute, on the configured Store origin (never the request's)."""
+    from workeasy360.commercial.subscriptions.marketplace import public_catalog
+    from workeasy360.platform.administration import help_content
+    from workeasy360.platform.identity import portals as portal_links
+
+    base = portal_links.store_url()
+    home = f"{base}/" if portal_links.store_enabled() else f"{base}/store"
+    pages = [home] + [
+        f"{base}/store/{path}" for path in ("products", "recharge", "partners", "help")
+    ]
+    published = {a["slug"] for a in help_content.published(kind="policy")}
+    pages += [
+        f"{base}/store/policies/{key}"
+        for key in help_content.POLICY_KEYS
+        if key in published
+    ]
+    pages += [
+        f"{base}/store/product/{p['slug']}"
+        for p in public_catalog()["products"]
+        if p.get("slug")
+    ]
+    return pages

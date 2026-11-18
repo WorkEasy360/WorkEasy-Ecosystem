@@ -90,6 +90,27 @@ class ConcurrentModification(CommercialError):
 # --- shared helpers -------------------------------------------------------
 
 
+def _assert_member_may_change(
+    ctx: TenantContext, subscription: Any, *, operation: str
+) -> None:
+    """ADR-063: a subscription its partner pays from the partner's Platform Wallet
+    is never invoiced to the customer, so the customer's own members may not add
+    to it or change it - that would be a plan nobody paid for. The partner (its
+    wallet actions) and staff may."""
+    from workeasy360.contracts.enums import PrincipalKind
+
+    if (
+        subscription.collection_mode == CollectionMode.PARTNER_WALLET.value
+        and ctx.principal is PrincipalKind.MEMBER
+    ):
+        raise CommercialError(
+            "Your partner pays for this subscription and manages its plans. Ask "
+            "them to make the change.",
+            operation=operation,
+            reason="partner_wallet_subscription",
+        )
+
+
 def _lock(subscription_id: UUID, *, expected_version: int | None) -> Any:
     """Row-lock the subscription and check the optimistic token.
 
@@ -466,6 +487,7 @@ def purchase_plan(
             trial_source=trial_source,
         )
         assert_mutable(subscription.status_enum, operation="purchase_plan")
+        _assert_member_may_change(ctx, subscription, operation="purchase_plan")
         if plan.plan_kind is PlanKind.ADD_ON:
             _assert_add_on_base(subscription, plan)
 
@@ -606,6 +628,7 @@ def purchase_bundle(
             trial_source=trial_source,
         )
         assert_mutable(subscription.status_enum, operation="purchase_bundle")
+        _assert_member_may_change(ctx, subscription, operation="purchase_bundle")
 
         clashing = _open_line_for(subscription, [item.product_code for item in wanted])
         if clashing:
@@ -764,6 +787,24 @@ def activate_subscription(
     return subscription
 
 
+def _assert_plan_change_allowed(plan_code: str, direction: str) -> None:
+    """The rule an Admin set on the plan a customer is moving away from. ``any`` is the
+    default, so a plan nobody configured behaves as it always did. ``direction`` is the
+    classification the change itself uses: anything smaller makes it a downgrade."""
+    from workeasy360.commercial.catalog import selectors as catalog_selectors
+
+    rules = catalog_selectors.plan_rules(plan_code)
+    rule = rules["change_rule"] if rules else "any"
+    if rule == "none":
+        raise CatalogValidationError(
+            "This plan does not allow plan changes.", field="to_plan_version_id"
+        )
+    if rule == "upgrade_only" and direction == "downgrade":
+        raise CatalogValidationError(
+            "This plan can only be upgraded.", field="to_plan_version_id"
+        )
+
+
 def change_plan(
     ctx: TenantContext,
     *,
@@ -831,6 +872,7 @@ def change_plan(
             current_item.subscription_id, expected_version=expected_version
         )
         assert_mutable(subscription.status_enum, operation="change_plan")
+        _assert_member_may_change(ctx, subscription, operation="change_plan")
 
         source = catalog.require_plan_version(current_item.plan_version_id)
         if source.product_code != target.product_code:
@@ -854,6 +896,7 @@ def change_plan(
             from_features=source.feature_map(),
             to_features=target.feature_map(),
         )
+        _assert_plan_change_allowed(source.plan_code, direction)
         chosen = timing or default_timing(direction)
         effective_at = effective_moment(
             timing=chosen, now=now, period_end=subscription.current_period_end
@@ -1227,6 +1270,7 @@ def change_quantity(
             current_item.subscription_id, expected_version=expected_version
         )
         assert_mutable(subscription.status_enum, operation="change_quantity")
+        _assert_member_may_change(ctx, subscription, operation="change_quantity")
         if quantity == current_item.quantity:
             raise InvalidStateTransition(
                 "The line already has this quantity.",

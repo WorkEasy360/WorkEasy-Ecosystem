@@ -12,7 +12,19 @@ import local from "./ConsoleScreens.module.css";
 
 /** `org` is empty for a fee a partner pays (2026-11-03), which belongs to no
  * organization; `back` is then the partner's upgrade page to return to. */
-type CheckoutLink = { reference: string; org: string; back: string | null };
+type CheckoutLink = { reference: string; org: string; back: string | null; store?: string | null };
+
+/** ADR-065: the Store's own confirmation page on this same host, for a payment
+ * started in the Store - never another site. */
+function storeConfirmation(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw, window.location.origin);
+    return url.origin === window.location.origin && url.pathname === "/store/checkout/complete" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Only a page of the partner portal, never another site (a link, not a redirect). */
 function partnerPage(raw: string | null): string | null {
@@ -31,8 +43,9 @@ function readCheckoutLink(): CheckoutLink | null {
   const reference = params.get("reference") ?? "";
   const org = params.get("org") ?? "";
   const back = partnerPage(params.get("return"));
+  const store = storeConfirmation(params.get("return"));
   if (!reference || reference.length > 128 || org.length > 64) return null;
-  return org || back ? { reference, org, back } : null;
+  return org || back ? { reference, org, back, store } : null;
 }
 
 /**
@@ -137,7 +150,11 @@ export function TestCheckout() {
             {error}
           </p>
         )}
-        {link?.back ? (
+        {link?.store ? (
+          <p>
+            <a href={link.store}>Return to the Store</a> to see your order.
+          </p>
+        ) : link?.back ? (
           <p>
             <a href={link.back}>Return to your upgrade</a> to see the result.
           </p>

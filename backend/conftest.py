@@ -188,6 +188,17 @@ def django_db_setup(django_db_setup, django_db_blocker):
                 "ALTER TABLE commissions_accrual "
                 "DISABLE TRIGGER commissions_accrual_reject_truncate"
             )
+            # The Admin Panel's ledgers refuse TRUNCATE the same way (tenancy
+            # 0016); disabled here for the same flush-based teardown, TEST
+            # DATABASE ONLY. tests/admin_panel asserts the triggers exist.
+            for table in (
+                "wallets_entry",
+                "partners_kyc_decision",
+                "partners_kyc_document_access",
+            ):
+                cur.execute(
+                    f"ALTER TABLE {table} DISABLE TRIGGER {table}_reject_truncate"
+                )
 
     connection.close()
 

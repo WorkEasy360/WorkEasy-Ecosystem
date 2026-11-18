@@ -22,7 +22,7 @@ from django.utils import timezone
 from workeasy360.commercial.commissions import selectors as commission_selectors
 from workeasy360.commercial.controlplane import partner_console as console
 from workeasy360.commercial.controlplane import profile_completion
-from workeasy360.commercial.partners import capabilities
+from workeasy360.commercial.partners import capabilities, kyc
 from workeasy360.commercial.partners import console_reads as partner_reads
 from workeasy360.commercial.partners import selectors as partner_selectors
 from workeasy360.commercial.partners.domain import owner_activation
@@ -205,6 +205,8 @@ def summary(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
         priced={partner_id: has_partner_price},
         domains={partner_id: domain_state},
     )[partner_id]
+    kyc_status = kyc.status_of(partner_id)
+    kyc_gap = kyc.activation_gap(partner_id) if row.status == "draft" else None
     return {
         "partner": partner_selectors.partner_dict(row),
         "experience": capabilities.experience_labels(held),
@@ -266,11 +268,13 @@ def summary(ctx: TenantContext, partner_id: UUID) -> dict[str, Any]:
         # capabilities make it need, and how far each is.
         "profile_completion": completion,
         # What is still missing before it can be activated: the required
-        # sections of its profile that are not complete.
+        # sections of its profile that are not complete, and (for a draft)
+        # an approved KYC application - the server refuses without one.
         "activation": {
-            "can_activate": completion["complete"],
-            "missing": completion["missing"],
+            "can_activate": completion["complete"] and kyc_gap is None,
+            "missing": [*completion["missing"], *([kyc_gap] if kyc_gap else [])],
         },
+        "kyc": kyc.standing(row.status, kyc_status),
     }
 
 

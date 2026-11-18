@@ -83,8 +83,8 @@ def test_the_dashboard_counts_every_partner_and_the_affiliates(
 ):
     cards = _cards(viewer)
     # The reseller, the white-label partner, the draft and the affiliate. The
-    # label cards (ADR-048) count every partner holding the grants, in any
-    # state - each card is the size of the All Partners list it opens.
+    # type cards count every partner of that type, in any state - each card is
+    # the size of the list it opens (ADR-062: the type's own page).
     assert cards["total_partners"]["count"] == 4
     assert cards["active_partners"]["count"] == 3
     assert cards["affiliates"]["count"] == 1
@@ -489,8 +489,9 @@ def test_view_permission_unchanged_for_the_lists(staff_client):
 
 
 def admin_list_count(client, label: str) -> int:
+    """How many partners the type's own page lists (ADR-062)."""
     response = client.get(
-        f"{BASE}/resellers", {"scope": "all", "type": label, "limit": 100}
+        f"{BASE}/resellers", {"scope": "all", "category": label, "limit": 100}
     )
     assert response.status_code == 200, response.content
     return len(response.json()["results"])

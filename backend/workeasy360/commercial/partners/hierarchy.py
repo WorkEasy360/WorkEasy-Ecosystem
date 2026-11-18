@@ -386,6 +386,12 @@ def activate_sub_partner(ctx: TenantContext, child_id: UUID) -> Any:
                 field="capabilities",
             )
         first_time = child.status_enum is PartnerStatus.DRAFT
+        if first_time:
+            # A sub-partner is a partner: leaving draft needs its own approved KYC,
+            # whoever asks. Without this a parent could activate an unreviewed one.
+            from workeasy360.commercial.partners.kyc import assert_may_activate
+
+            assert_may_activate(child.id)
         previous = child.status_enum
         child.status = PartnerStatus.ACTIVE.value
         child.status_reason = "Activated by its parent partner"

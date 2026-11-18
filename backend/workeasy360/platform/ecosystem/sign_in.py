@@ -181,6 +181,68 @@ def decision_at_authorize(
     return resolve(offered, default=default, override=override), offered
 
 
+# --- entered in this sign-in (Ask once, ADR-066) -----------------------------
+
+#: The identity provider's session key listing the products this sign-in has
+#: entered. Bound to the person and the sign-in it was written for, so it can
+#: never answer for a later sign-in or for anyone else, even where the session
+#: itself outlives a sign-in (Django keeps the session of a person who signs
+#: in again without signing out).
+SESSION_ENTERED_KEY = "w360_sso_entered"
+
+#: A sign-in that opens more products than this simply asks again for the
+#: oldest: a bound on what one session row can hold, not a policy.
+MAX_ENTERED = 64
+
+
+def _entry_owner(request: Any) -> tuple[str, str] | None:
+    from workeasy360.platform.identity.sessions import SESSION_SIGN_IN_ID_KEY
+
+    user = getattr(request, "user", None)
+    session = getattr(request, "session", None)
+    if user is None or not user.is_authenticated or session is None:
+        return None
+    return str(user.pk), str(session.get(SESSION_SIGN_IN_ID_KEY) or "")
+
+
+def entered_this_sign_in(request: Any, product_code: str) -> bool:
+    """Whether this Workeasy360 sign-in has already been let into
+    ``product_code`` (a code was issued for it in this session). Only Ask once
+    reads it; it never grants anything - it is consulted after every check."""
+    owner = _entry_owner(request)
+    if owner is None:
+        return False
+    raw = request.session.get(SESSION_ENTERED_KEY)
+    if not isinstance(raw, dict) or (raw.get("u"), raw.get("s")) != owner:
+        return False
+    products = raw.get("p")
+    return isinstance(products, list) and product_code in products
+
+
+def record_entry(request: Any, product_code: str) -> None:
+    """Remember that this sign-in entered ``product_code``: called only once
+    a code has been issued, after every check. Signing out flushes the
+    session, and a different person signing in starts a new one, so the next
+    sign-in is asked again."""
+    owner = _entry_owner(request)
+    if owner is None:
+        return
+    raw = request.session.get(SESSION_ENTERED_KEY)
+    products: list[str] = []
+    if isinstance(raw, dict) and (raw.get("u"), raw.get("s")) == owner:
+        found = raw.get("p")
+        if isinstance(found, list):
+            products = [str(code) for code in found]
+    if product_code in products:
+        return
+    products.append(str(product_code))
+    request.session[SESSION_ENTERED_KEY] = {
+        "u": owner[0],
+        "s": owner[1],
+        "p": products[-MAX_ENTERED:],
+    }
+
+
 # --- writes: the person's own, recorded in their own trail ------------------
 
 
@@ -217,7 +279,8 @@ def set_preferences(
         chosen = _parse(default, field="default")
         if chosen not in DEFAULT_CHOICES:
             raise SignInPreferenceInvalid(
-                "Choose automatic, ask, or the product's own sign-in.", field="default"
+                "Choose ask once, automatic, ask each time, or the product's own sign-in.",
+                field="default",
             )
         changes[DEFAULT_KEY] = chosen
 
@@ -279,7 +342,7 @@ def remember_choice(
 def reset_preferences(
     user_id: Any, *, ip_prefix: str = "", device_label: str = ""
 ) -> bool:
-    """ "Reset all to default": the platform default (Automatic) again, every
+    """ "Reset all to default": the platform default (Ask once) again, every
     override gone. Returns whether anything was stored."""
     from workeasy360.platform.ecosystem.models import UserSignInPreference
 

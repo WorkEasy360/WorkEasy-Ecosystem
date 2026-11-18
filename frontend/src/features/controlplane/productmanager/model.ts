@@ -7,6 +7,7 @@
  * bytes it receives.
  */
 
+import { ApiError } from "@/lib/api/client";
 import type { ConsoleIntegration, ConsoleProduct, TrialConfig } from "@/lib/api/controlPlane";
 
 export type ManagerStatus = ConsoleProduct["manager_status"];
@@ -106,7 +107,8 @@ export function looksLikeHttps(value: string): boolean {
 
 // --- images -----------------------------------------------------------------------
 
-export type MediaKind = "logo" | "banner" | "screenshot";
+/** 2026-11-16: `video_poster` is the product demo's thumbnail. */
+export type MediaKind = "logo" | "banner" | "screenshot" | "video_poster";
 
 interface MediaRule {
   maxBytes: number;
@@ -122,15 +124,17 @@ export const MEDIA_RULES: Record<MediaKind, MediaRule> = {
   logo: { maxBytes: 512 * 1024, minWidth: 64, minHeight: 64, maxWidth: 2048, maxHeight: 2048 },
   banner: { maxBytes: 2 * 1024 * 1024, minWidth: 600, minHeight: 150, maxWidth: 4096, maxHeight: 4096 },
   screenshot: { maxBytes: 2 * 1024 * 1024, minWidth: 320, minHeight: 200, maxWidth: 4096, maxHeight: 4096 },
+  video_poster: { maxBytes: 2 * 1024 * 1024, minWidth: 320, minHeight: 180, maxWidth: 4096, maxHeight: 4096 },
 };
 
-export const MAX_SCREENSHOTS = 8;
+export const MAX_SCREENSHOTS = 10;
 export const ACCEPTED_TYPES = ["image/png", "image/jpeg"];
 
 export const MEDIA_HINT: Record<MediaKind, string> = {
   logo: "PNG or JPEG, up to 512 KB, at least 64×64 px (square works best).",
   banner: "PNG or JPEG, up to 2 MB, at least 600×150 px.",
   screenshot: "PNG or JPEG, up to 2 MB each, at least 320×200 px.",
+  video_poster: "PNG or JPEG, up to 2 MB, at least 320×180 px (16:9 works best).",
 };
 
 function bytesOf(file: Blob, count: number): Promise<Uint8Array> {
@@ -211,4 +215,11 @@ export function dateOnly(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** A form's own refusal (before any request), thrown from a `FormDialog`'s
+ * `onSubmit`: the popup shows its text the way it shows the server's own
+ * refusal (`describeError` reads `detail`) and stays open with the values kept. */
+export function refusal(detail: string): ApiError {
+  return new ApiError(400, { detail });
 }

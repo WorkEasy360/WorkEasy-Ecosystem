@@ -14,28 +14,6 @@
   min-width: 0;
 }
 
-.header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--w360-space-3) var(--w360-space-4);
-  align-items: flex-end;
-  justify-content: space-between;
-}
-
-.header h1 {
-  margin: 0;
-  font-size: 26px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  color: var(--w360-text);
-}
-
-.lead {
-  margin: var(--w360-space-1) 0 0;
-  color: var(--w360-text-muted);
-  max-width: 62ch;
-}
-
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -58,9 +36,9 @@
   align-content: start;
   padding: var(--w360-space-4) var(--w360-space-5);
   border: 1px solid var(--w360-border);
-  border-radius: var(--w360-radius-lg);
+  border-radius: var(--w360-radius-card);
   background: var(--w360-surface);
-  box-shadow: var(--w360-shadow-sm);
+  box-shadow: var(--w360-shadow-card);
 }
 
 .kpiHead {
@@ -83,22 +61,22 @@
 }
 
 .kpiLabel {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--w360-fs-body);
+  font-weight: 500;
   color: var(--w360-text-muted);
 }
 
 .kpiValue {
   color: var(--w360-text);
-  font-size: 28px;
-  font-weight: 800;
+  font-size: var(--w360-fs-kpi);
+  font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.15;
   overflow-wrap: anywhere;
 }
 
 .kpiNote {
-  font-size: 13px;
+  font-size: var(--w360-fs-meta);
   color: var(--w360-text-muted);
 }
 
@@ -117,11 +95,11 @@
 }
 
 .panel {
-  padding: var(--w360-space-4) var(--w360-space-5);
+  padding: var(--w360-space-5);
   border: 1px solid var(--w360-border);
-  border-radius: var(--w360-radius-lg);
+  border-radius: var(--w360-radius-card);
   background: var(--w360-surface);
-  box-shadow: var(--w360-shadow-sm);
+  box-shadow: var(--w360-shadow-card);
   min-width: 0;
 }
 
@@ -132,7 +110,9 @@
 .panel h2,
 .panel h3 {
   margin: 0 0 var(--w360-space-3);
-  font-size: 16px;
+  font-size: var(--w360-fs-section);
+  font-weight: 600;
+  line-height: 24px;
 }
 
 .quick {
@@ -176,12 +156,12 @@
   justify-content: space-between;
   padding-bottom: var(--w360-space-2);
   border-bottom: 1px solid var(--w360-border);
-  font-size: 14px;
+  font-size: var(--w360-fs-body);
 }
 
 .muted {
   color: var(--w360-text-muted);
-  font-size: 14px;
+  font-size: var(--w360-fs-body);
 }
 
 .num {
@@ -191,7 +171,7 @@
 
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+  font-size: var(--w360-fs-meta);
   overflow-wrap: anywhere;
 }
 
@@ -212,7 +192,7 @@
 }
 
 .range legend {
-  font-size: 13px;
+  font-size: var(--w360-fs-meta);
   font-weight: 600;
   color: var(--w360-text-muted);
   margin-bottom: var(--w360-space-1);
@@ -220,14 +200,14 @@
 }
 
 .rangeButton {
-  min-height: 40px;
+  min-height: var(--w360-control-h);
   padding: 0 var(--w360-space-3);
   border: 1px solid var(--w360-border-strong);
   border-radius: var(--w360-radius-sm);
   background: var(--w360-surface);
   color: var(--w360-text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--w360-fs-body);
   cursor: pointer;
 }
 
@@ -277,7 +257,7 @@
 
 .chartAxis {
   fill: var(--w360-text-muted);
-  font-size: 11px;
+  font-size: var(--w360-fs-meta);
 }
 
 .chartControls {
@@ -323,7 +303,7 @@
 
 .emptyText strong {
   color: var(--w360-text);
-  font-size: 16px;
+  font-size: var(--w360-fs-section);
 }
 
 .notice {
@@ -338,7 +318,7 @@
 
 .notice h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--w360-fs-section);
 }
 
 .notice p {
@@ -360,9 +340,9 @@
   align-content: start;
   padding: var(--w360-space-4) var(--w360-space-5);
   border: 1px solid var(--w360-border);
-  border-radius: var(--w360-radius-lg);
+  border-radius: var(--w360-radius-card);
   background: var(--w360-surface);
-  box-shadow: var(--w360-shadow-sm);
+  box-shadow: var(--w360-shadow-card);
   min-width: 0;
 }
 
@@ -374,7 +354,7 @@
 
 .cardTitle {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--w360-fs-section);
 }
 
 .monogram {
@@ -386,7 +366,7 @@
   border-radius: var(--w360-radius-sm);
   background: var(--w360-brand-soft);
   color: var(--w360-brand);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 /* A product's row heading: its icon on the shared mint tile, then its name.
@@ -407,7 +387,7 @@
   border-radius: var(--w360-radius-md);
   background: var(--w360-brand-soft);
   color: var(--w360-brand);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .facts {
@@ -415,7 +395,7 @@
   gap: var(--w360-space-1) var(--w360-space-3);
   grid-template-columns: auto minmax(0, 1fr);
   margin: 0;
-  font-size: 14px;
+  font-size: var(--w360-fs-body);
 }
 
 .facts dt {
@@ -458,11 +438,35 @@
   font-weight: 700;
 }
 
+/* A form on the page (the upgrade steps, the translation list) lined up like
+   the popups (2026-11-05): two equal columns, labels above their fields; one
+   column on a narrow screen. */
 .formGrid {
   display: grid;
-  gap: var(--w360-space-3);
-  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: var(--w360-space-3) var(--w360-space-4);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   max-width: 760px;
+}
+
+.formGrid > * {
+  min-width: 0;
+}
+
+.formGrid :global(.w360-input) {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 560px) {
+  .formGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A wizard step's Back and Continue, at the bottom right. */
+.alignEnd {
+  justify-content: flex-end;
 }
 
 .checks {
@@ -605,7 +609,7 @@
 
 .linkBox h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--w360-fs-section);
 }
 
 .linkBox p {
@@ -641,7 +645,7 @@
   border-radius: 999px;
   color: var(--w360-text);
   text-decoration: none;
-  font-size: 14px;
+  font-size: var(--w360-fs-body);
 }
 
 .switcher a[aria-current="page"] {
@@ -655,15 +659,6 @@
 .switcher a:focus-visible {
   outline: 2px solid var(--w360-focus-ring);
   outline-offset: 2px;
-}
-
-.statusStrip {
-  display: grid;
-  gap: var(--w360-space-3);
-  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
-  margin: 0;
-  padding: 0;
-  list-style: none;
 }
 
 .denied {
@@ -688,9 +683,9 @@
   gap: var(--w360-space-3);
   padding: var(--w360-space-4) var(--w360-space-5);
   border: 1px solid var(--w360-border);
-  border-radius: var(--w360-radius-lg);
+  border-radius: var(--w360-radius-card);
   background: var(--w360-surface);
-  box-shadow: var(--w360-shadow-sm);
+  box-shadow: var(--w360-shadow-card);
   min-width: 0;
 }
 
@@ -701,7 +696,7 @@
 }
 
 .grow h2 {
-  font-size: 18px;
+  font-size: var(--w360-fs-section);
 }
 
 .steps {
@@ -797,7 +792,7 @@
   display: grid;
   gap: var(--w360-space-1);
   justify-items: start;
-  font-size: 13px;
+  font-size: var(--w360-fs-meta);
 }
 
 .mediaThumb {
@@ -806,7 +801,7 @@
   max-height: 120px;
   height: auto;
   border: 1px solid var(--w360-border);
-  border-radius: var(--w360-radius-md, 8px);
+  border-radius: var(--w360-radius-md);
   background: var(--w360-surface);
   object-fit: contain;
 }
@@ -871,7 +866,7 @@
   border-radius: 999px;
   background: var(--w360-surface);
   color: var(--w360-text-secondary);
-  font-size: 13px;
+  font-size: var(--w360-fs-meta);
   white-space: nowrap;
 }
 
@@ -881,6 +876,30 @@
 
 .upgradeButton {
   white-space: nowrap;
+}
+
+/* In the console's dark top bar (2026-11-11, the Admin's colours): the level on the
+   raised teal, "Upgrade Plan" in the green the Admin's Create button wears. */
+:global([data-variant="admin"]) .levelBadge {
+  background: var(--w360-shell-raised);
+  border-color: var(--w360-shell-border);
+  color: var(--w360-shell-muted);
+}
+
+:global([data-variant="admin"]) .levelBadge strong {
+  color: var(--w360-shell-text);
+}
+
+:global([data-variant="admin"]) .upgradeButton {
+  background: var(--w360-shell-active);
+  border-color: var(--w360-shell-active);
+  color: var(--w360-shell-text);
+}
+
+:global([data-variant="admin"]) .upgradeButton:hover {
+  background: var(--w360-admin-action-hover);
+  border-color: var(--w360-admin-action-hover);
+  color: var(--w360-shell-text);
 }
 
 .upgradeWord {
@@ -906,31 +925,13 @@
   .upgradeButton {
     min-height: 32px;
     padding: 4px 8px;
-    font-size: 13px;
+    font-size: var(--w360-fs-meta);
   }
 }
 
-/* Two columns: the business on the left, the partner level on the right. */
-.dashGrid {
-  display: grid;
-  gap: var(--w360-space-4);
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-}
-
-@media (min-width: 1200px) {
-  .dashGrid {
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
-  }
-}
-
-.dashMain,
-.dashSide {
-  display: grid;
-  gap: var(--w360-space-4);
-  min-width: 0;
-}
-
+/* A dashboard row: two sections side by side on a wide screen, one above the
+   other when narrow. A section alone in its row (the partner may not see the
+   other) takes the whole width; an empty row takes no space. */
 .dashRow {
   display: grid;
   gap: var(--w360-space-4);
@@ -943,92 +944,19 @@
   }
 }
 
+.dashRow > :only-child {
+  grid-column: 1 / -1;
+}
+
+.dashRow:empty {
+  display: none;
+}
+
 .rangePicker {
   display: flex;
   flex-wrap: wrap;
   gap: var(--w360-space-3);
   align-items: flex-end;
-}
-
-/* The metric ribbon. */
-.ribbon {
-  display: grid;
-  gap: var(--w360-space-3);
-  grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.metric {
-  display: flex;
-  flex-direction: column;
-  gap: var(--w360-space-2);
-  align-items: flex-start;
-  padding: var(--w360-space-3) var(--w360-space-4);
-  border: 1px solid var(--w360-border);
-  border-radius: var(--w360-radius-lg);
-  background: var(--w360-surface);
-  box-shadow: var(--w360-shadow-sm);
-  min-width: 0;
-}
-
-.metricIcon {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--w360-radius-md);
-  background: var(--w360-brand-soft);
-  color: var(--w360-brand);
-}
-
-.metricBody {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.metricLabel {
-  color: var(--w360-text-muted);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.metricValue {
-  color: var(--w360-text);
-  font-size: clamp(17px, 1.5vw, 20px);
-  font-weight: 800;
-  line-height: 1.2;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.metricDelta {
-  justify-self: start;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-  background: var(--w360-neutral-bg);
-  color: var(--w360-text-secondary);
-}
-
-.metricDelta[data-tone="up"] {
-  background: var(--w360-success-bg);
-  color: var(--w360-success);
-}
-
-.metricDelta[data-tone="down"] {
-  background: var(--w360-danger-bg);
-  color: var(--w360-danger);
-}
-
-.metricNote {
-  color: var(--w360-text-muted);
-  font-size: 12px;
 }
 
 .panelHead {
@@ -1053,7 +981,7 @@
   padding: 0;
   list-style: none;
   color: var(--w360-text-secondary);
-  font-size: 13px;
+  font-size: var(--w360-fs-meta);
 }
 
 .legend li,
@@ -1093,7 +1021,7 @@
   background: var(--w360-surface);
   box-shadow: var(--w360-shadow-md);
   color: var(--w360-text);
-  font-size: 13px;
+  font-size: var(--w360-fs-meta);
   pointer-events: none;
 }
 
@@ -1117,7 +1045,7 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 14px;
+  font-size: var(--w360-fs-body);
 }
 
 .splitLegend li {
@@ -1143,10 +1071,10 @@
   justify-items: center;
   padding: var(--w360-space-3);
   border: 1px solid var(--w360-border);
-  border-radius: var(--w360-radius-lg);
+  border-radius: var(--w360-radius-card);
   background: var(--w360-surface);
   color: var(--w360-text);
-  font-size: 13px;
+  font-size: var(--w360-fs-meta);
   font-weight: 600;
   text-align: center;
   text-decoration: none;
@@ -1193,7 +1121,7 @@
 
 .earnings > div[data-strong] dd {
   color: var(--w360-brand);
-  font-size: 18px;
+  font-size: var(--w360-fs-section);
 }
 
 .facts {
@@ -1205,7 +1133,7 @@
 
 .facts dt {
   color: var(--w360-text-muted);
-  font-size: 13px;
+  font-size: var(--w360-fs-meta);
 }
 
 .facts dd {
@@ -1230,7 +1158,7 @@
   gap: var(--w360-space-2);
   align-items: center;
   margin: 0;
-  font-size: 18px;
+  font-size: var(--w360-fs-section);
 }
 
 .levelFee {
@@ -1266,7 +1194,7 @@
 
 .levelNumber {
   color: var(--w360-text-muted);
-  font-size: 12px;
+  font-size: var(--w360-fs-meta);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1278,17 +1206,20 @@
 
 .levelLead {
   color: var(--w360-text-secondary);
-  font-size: 13px;
+  font-size: var(--w360-fs-meta);
 }
 
+/* Positioned, so the screen-reader caption (absolutely placed) stays inside the
+   scroll region instead of widening the page on a phone. */
 .matrixWrap {
+  position: relative;
   overflow-x: auto;
 }
 
 .matrix {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--w360-fs-meta);
 }
 
 .matrix th,
@@ -1323,7 +1254,7 @@
 
 .markYes {
   color: var(--w360-success);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .markNo {
@@ -1428,5 +1359,201 @@
 @media print {
   .noPrint {
     display: none !important;
+  }
+}
+
+/* --- Onboarding progress (2026-11-11 brief, section 9): six numbered steps on a
+   line; each says its state in words, colour only reinforces it. A column on a
+   narrow screen. */
+.kycProgress {
+  display: grid;
+  gap: var(--w360-space-4);
+}
+
+.kycSteps {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kycSteps li {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: var(--w360-space-2);
+  text-align: center;
+  min-width: 0;
+}
+
+/* The line joining one step to the next. Decoration only. */
+.kycSteps li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 15px;
+  left: calc(50% + 20px);
+  right: calc(-50% + 20px);
+  height: 2px;
+  background: var(--w360-border);
+}
+
+.kycSteps li[data-state="done"]:not(:last-child)::after {
+  background: var(--w360-brand);
+}
+
+.kycDot {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 2px solid var(--w360-border-strong);
+  background: var(--w360-surface);
+  color: var(--w360-text-muted);
+  font-size: var(--w360-fs-meta);
+  font-weight: 700;
+}
+
+.kycSteps li[data-state="done"] .kycDot {
+  border-color: var(--w360-brand);
+  background: var(--w360-brand);
+  color: var(--w360-surface);
+}
+
+.kycSteps li[data-state="current"] .kycDot {
+  border-color: var(--w360-brand);
+  color: var(--w360-brand);
+}
+
+.kycSteps li[data-state="attention"] .kycDot {
+  border-color: var(--w360-warning);
+  background: var(--w360-warning-bg);
+  color: var(--w360-warning);
+}
+
+.kycStepText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.kycStepName {
+  color: var(--w360-text);
+  font-size: var(--w360-fs-body);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.kycStepState {
+  color: var(--w360-text-muted);
+  font-size: var(--w360-fs-meta);
+}
+
+.kycSteps li[data-state="attention"] .kycStepState {
+  color: var(--w360-warning);
+  font-weight: 600;
+}
+
+.kycNote {
+  margin: 0;
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border-radius: var(--w360-radius-control);
+  background: var(--w360-neutral-bg);
+  color: var(--w360-text);
+}
+
+@media (max-width: 768px) {
+  .kycSteps {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--w360-space-3);
+  }
+
+  .kycSteps li {
+    grid-template-columns: auto minmax(0, 1fr);
+    justify-items: start;
+    align-items: center;
+    text-align: left;
+  }
+
+  .kycSteps li:not(:last-child)::after {
+    display: none;
+  }
+}
+
+/* --- The dashboard's pending actions (2026-11-11): each fact with its one
+   action on the right; the action drops below the words when narrow. */
+.pendingList {
+  display: grid;
+  gap: var(--w360-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pendingList li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w360-space-2) var(--w360-space-3);
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-control);
+  background: var(--w360-surface);
+}
+
+/* A section heading's links, side by side (View all, Add Money). */
+.panelLinks {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-3);
+}
+
+/* --- The top bar's partner tools (2026-11-11): the account's standing, the
+   level and Upgrade, the notifications - one row, nothing pushed off a phone. */
+.topTools {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  margin-left: auto;
+  min-width: 0;
+}
+
+.standing {
+  white-space: nowrap;
+}
+
+/* An account notice above the page (draft, suspended, KYC required). Its action
+   may wrap on a phone rather than push past the edge. */
+.shellNotice {
+  margin: 0 0 var(--w360-space-4);
+}
+
+.shellNotice a {
+  white-space: normal;
+  text-align: center;
+  height: auto;
+}
+
+/* A tablet's top bar: the level is on the dashboard, so its badge gives way. */
+@media (max-width: 1100px) {
+  .levelBadge {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .standing {
+    display: none;
+  }
+}
+
+/* The smallest phones: "Upgrade" keeps its arrow and its accessible name. */
+@media (max-width: 420px) {
+  .upgradeButton > span:last-child {
+    display: none;
   }
 }

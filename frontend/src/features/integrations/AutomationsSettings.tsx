@@ -19,7 +19,8 @@ import type {
   RuleDefinition,
   RuleStatus,
 } from "@/lib/api/types";
-import { describeError } from "./ConnectionsSettings";
+import { dialog, FormPopup } from "@/features/controlplane/Modal";
+import { describeError, popupError } from "./ConnectionsSettings";
 import styles from "./Integrations.module.css";
 
 type Load =
@@ -59,7 +60,7 @@ export function parseValue(raw: string, op: ConditionRule["op"]): ConditionRule[
 /**
  * Settings → Automations (Task 80): name, trigger, conditions, one action,
  * activate/pause. Deliberately a form, not a canvas: one trigger, a short
- * list of conditions, an action.
+ * list of conditions, an action - written in a popup (2026-11-05).
  */
 export function AutomationsSettings({ orgSlug }: { orgSlug: string }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
@@ -107,13 +108,20 @@ export function AutomationsSettings({ orgSlug }: { orgSlug: string }) {
           {error}
         </p>
       )}
-      <RuleForm
-        catalog={load.catalog}
-        connections={load.connections}
-        onCreate={(name, definition) =>
-          act(() => createRule(orgSlug, name, definition).then(), "Automation saved as a draft.")
-        }
-      />
+      <div className={styles.row}>
+        <RulePopup
+          catalog={load.catalog}
+          connections={load.connections}
+          onCreate={async (name, definition) => {
+            try {
+              await createRule(orgSlug, name, definition);
+            } catch (err) {
+              throw popupError(err);
+            }
+          }}
+          onDone={refresh}
+        />
+      </div>
       {load.rules.length === 0 ? (
         <p>No automations yet.</p>
       ) : (
@@ -125,14 +133,17 @@ export function AutomationsSettings({ orgSlug }: { orgSlug: string }) {
   );
 }
 
-function RuleForm({
+/** "+ New automation" in a popup (2026-11-05, every form in a popup). */
+function RulePopup({
   catalog,
   connections,
   onCreate,
+  onDone,
 }: {
   catalog: CatalogEvent[];
   connections: Connection[];
-  onCreate: (name: string, definition: RuleDefinition) => void;
+  onCreate: (name: string, definition: RuleDefinition) => Promise<void>;
+  onDone: () => void;
 }) {
   const nameId = useId();
   const triggerId = useId();
@@ -149,9 +160,17 @@ function RuleForm({
   const canSubmit =
     name.trim() !== "" && target !== "" && (trigger === "schedule" || eventRef !== "");
 
-  function submit(e: React.FormEvent) {
-    e.preventDefault();
-    onCreate(name.trim(), {
+  function reset() {
+    setName("");
+    setTrigger("event");
+    setEventRef(catalog[0]?.ref ?? "");
+    setMinutes("60");
+    setTarget(connections[0]?.id ?? "");
+    setConditions([]);
+  }
+
+  function submit() {
+    return onCreate(name.trim(), {
       trigger:
         trigger === "event"
           ? { kind: "event", event: eventRef }
@@ -167,8 +186,19 @@ function RuleForm({
   }
 
   return (
-    <form className={`w360-card ${styles.card} ${styles.form}`} onSubmit={submit}>
-      <h2 className={styles.cardTitle}>New automation</h2>
+    <FormPopup
+      label="+ New automation"
+      title="New automation"
+      size="lg"
+      submitLabel="Save automation"
+      canSubmit={canSubmit}
+      onOpen={reset}
+      onSubmit={async () => {
+        await submit();
+        return "Automation saved as a draft.";
+      }}
+      onDone={onDone}
+    >
       <div className={styles.field}>
         <label className="w360-label" htmlFor={nameId}>
           Name
@@ -207,8 +237,22 @@ function RuleForm({
         </div>
       )}
 
+      <div className={styles.field}>
+        <label className="w360-label" htmlFor={connectionId}>
+          Send the event to
+        </label>
+        <select id={connectionId} className="w360-input" value={target} onChange={(e) => setTarget(e.target.value)}>
+          {connections.length === 0 && <option value="">No active connections</option>}
+          {connections.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.display_name}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {trigger === "event" && (
-        <fieldset className={styles.fieldset}>
+        <fieldset className={`${styles.fieldset} ${dialog.span}`}>
           <legend>Only if (all must match)</legend>
           {conditions.map((condition, index) => (
             <ConditionRow
@@ -230,26 +274,7 @@ function RuleForm({
           )}
         </fieldset>
       )}
-
-      <div className={styles.field}>
-        <label className="w360-label" htmlFor={connectionId}>
-          Send the event to
-        </label>
-        <select id={connectionId} className="w360-input" value={target} onChange={(e) => setTarget(e.target.value)}>
-          {connections.length === 0 && <option value="">No active connections</option>}
-          {connections.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.display_name}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={!canSubmit}>
-          Save automation
-        </button>
-      </div>
-    </form>
+    </FormPopup>
   );
 }
 

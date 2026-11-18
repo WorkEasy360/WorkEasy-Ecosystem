@@ -92,6 +92,19 @@ PARTNER_PERMISSIONS: Final = (
         dangerous=True,
     ),
     _d("platform.partner_pricing.view", "See prices approved for the partner"),
+    # ADR-063: the reseller's Platform Wallet. Seeing it goes with seeing the
+    # prices it pays; adding money goes with selling, and is dangerous (a
+    # payment, audited, refused in a guest view).
+    _d(
+        "platform.partner_wallet.view",
+        "See the partner's Platform Wallet balance and transactions",
+    ),
+    _d(
+        "platform.partner_wallet.manage",
+        "Add money to the partner's Platform Wallet",
+        implies=("platform.partner_wallet.view",),
+        dangerous=True,
+    ),
     _d("platform.partner_branding.view", "View the partner's branding"),
     _d(
         "platform.partner_branding.manage",

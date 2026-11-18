@@ -1,0 +1,228 @@
+/* Product categories (2026-11-16): the category field's "+ New category" row
+   and "Manage categories" link, and the Manage categories popup. Tokens only
+   (globals.css), so the light and dark themes both work. */
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.addControls {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-2);
+  min-width: 0;
+}
+
+.addControls > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.small {
+  height: var(--w360-control-h-sm);
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.manageLink {
+  justify-self: start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--w360-brand);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.manageLink:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.manageLink:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.notice {
+  min-height: 0;
+  margin: 0;
+  color: var(--w360-success);
+  font-size: 14px;
+}
+
+.notice:empty {
+  display: none;
+}
+
+.muted {
+  margin: 0;
+  color: var(--w360-text-muted);
+}
+
+.addRow {
+  display: grid;
+  gap: 6px;
+  margin-bottom: var(--w360-space-4);
+}
+
+.list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--w360-border);
+  border-radius: var(--w360-radius-sm);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-3);
+  min-height: 52px;
+  padding: 8px 12px;
+  background: var(--w360-surface);
+  transition: background 120ms ease;
+}
+
+.row + .row {
+  border-top: 1px solid var(--w360-border);
+}
+
+.row:hover {
+  background: var(--w360-bg-soft);
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  flex: none;
+  color: var(--w360-text-muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.rowActions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.iconButton {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--w360-radius-sm);
+  background: none;
+  color: var(--w360-text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.iconButton:hover:not(:disabled) {
+  background: var(--w360-bg-soft);
+  color: var(--w360-text);
+}
+
+.iconButton:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.iconButton.danger:hover:not(:disabled) {
+  color: var(--w360-danger);
+}
+
+.editRow,
+.deleteRow {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  min-width: 0;
+  animation: rowIn 160ms ease backwards;
+}
+
+.editRow > input {
+  flex: 1;
+  min-width: 160px;
+}
+
+.deleteRow {
+  justify-content: space-between;
+}
+
+.moveLabel {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w360-space-2);
+  min-width: 0;
+  font-size: 14px;
+}
+
+.moveLabel > select {
+  flex: 1;
+  min-width: 160px;
+}
+
+.deleteQuestion {
+  font-weight: 600;
+}
+
+.empty {
+  padding: 16px 12px;
+  color: var(--w360-text-muted);
+}
+
+.unlisted {
+  display: grid;
+  gap: 6px;
+  margin-top: var(--w360-space-5);
+}
+
+.unlistedTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+@keyframes rowIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editRow,
+  .deleteRow {
+    animation: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .row {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .count {
+    order: 3;
+    flex-basis: 100%;
+  }
+}

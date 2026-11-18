@@ -86,6 +86,36 @@ def password_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True})
 
 
+@require_http_methods(["POST"])
+@never_cache
+def email_change_view(request: HttpRequest) -> JsonResponse:
+    """Ask to sign in with another email (ADR-066). Needs the current
+    password; the confirmation link goes to the new address, and nothing
+    changes until it is used. Answers 202 whatever the address (an address
+    another account holds is told instead - ``self_service``)."""
+    from workeasy360.platform.administration import self_service
+    from workeasy360.platform.identity import portals as portal_links
+
+    user = _user(request)
+    body = _body(request)
+    new_email = str(body.get("new_email") or "")
+    blocked = limited(
+        request, "email_change", user=user, account_email=new_email.strip() or None
+    )
+    if blocked is not None:
+        return blocked
+    where = connection_facts(request)
+    self_service.request_email_change(
+        user.id,
+        password=str(body.get("password") or ""),
+        new_email=new_email,
+        portal=portal_links.request_portal(request),
+        ip_prefix=where["ip_prefix"],
+        device_label=where["device_label"],
+    )
+    return JsonResponse({"status": "confirmation_sent"}, status=202)
+
+
 @require_http_methods(["GET"])
 @never_cache
 def sessions_view(request: HttpRequest) -> JsonResponse:

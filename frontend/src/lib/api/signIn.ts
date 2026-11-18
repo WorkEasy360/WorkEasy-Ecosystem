@@ -10,7 +10,9 @@ import { apiFetch } from "./client";
  */
 
 /** A stored preference. `inherit` exists only per product ("use my default"). */
-export type SignInPreferenceValue = "inherit" | "auto_sso" | "ask" | "product_login";
+/** `ask_once` (the default since ADR-066): asked the first time a product is
+ * opened in a Workeasy360 sign-in, then no question for the rest of it. */
+export type SignInPreferenceValue = "inherit" | "ask_once" | "auto_sso" | "ask" | "product_login";
 /** What actually happens for a product (never `inherit`). */
 export type EffectiveSignIn = Exclude<SignInPreferenceValue, "inherit">;
 /** Whether Workeasy360 sign-in works for a product, as the server sees it. */
@@ -57,7 +59,7 @@ export function saveSignInPreferences(changes: SignInPreferenceChanges): Promise
   return apiFetch("/api/v1/auth/sign-in-preferences", { method: "PUT", body: JSON.stringify(changes) });
 }
 
-/** "Reset all to default": the platform default (Automatic) again, every override gone. */
+/** "Reset all to default": the platform default (Ask once) again, every override gone. */
 export function resetSignInPreferences(): Promise<SignInPreferences> {
   return apiFetch("/api/v1/auth/sign-in-preferences", { method: "DELETE" });
 }
@@ -69,11 +71,12 @@ export interface PendingAccess {
   product: { code: string; name: string; icon: string };
   organization: { name: string };
   account: { email: string; name: string };
-  choices: { workeasy360: boolean; product: boolean };
+  /** `create_account`: offered only while registration is open. */
+  choices: { workeasy360: boolean; product: boolean; create_account?: boolean };
   remembered: SignInPreferenceValue;
 }
 
-export type AccessChoice = "workeasy360" | "product" | "switch_account" | "cancel";
+export type AccessChoice = "workeasy360" | "product" | "switch_account" | "create_account" | "cancel";
 
 export function getPendingAccess(resume: string): Promise<PendingAccess> {
   return apiFetch("/api/v1/integrations/oauth/pending", { query: { resume } });

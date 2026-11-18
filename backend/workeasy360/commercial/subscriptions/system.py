@@ -34,7 +34,7 @@ bug here can corrupt one tenant's own record and cannot reach another's.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
@@ -49,7 +49,12 @@ from django.utils import timezone
 
 from workeasy360.commercial.subscriptions.domain import advance_period, assert_transition
 from workeasy360.commercial.subscriptions.hooks import notify_commercial_change
-from workeasy360.contracts.enums import ActorKind, RenewalPolicy, SubscriptionStatus
+from workeasy360.contracts.enums import (
+    ActorKind,
+    CollectionMode,
+    RenewalPolicy,
+    SubscriptionStatus,
+)
 from workeasy360.contracts.events import commercial_events as schemas
 from workeasy360.contracts.events.envelope import Actor, DomainEvent
 from workeasy360.platform.audit import services as audit
@@ -291,6 +296,9 @@ def _process_one(
             and subscription.renewal_policy == RenewalPolicy.AUTO_RENEW.value
             and status.is_live
         ):
+            _end_lines_that_do_not_renew(subscription)
+            if subscription.collection_mode == CollectionMode.PARTNER_WALLET.value:
+                _collect_partner_wallet_renewal(subscription, moment)
             _roll_period(subscription, moment)
             applied["periods_rolled"] = 1
 
@@ -348,6 +356,87 @@ def _expire_cancelled(subscription: Any, moment: datetime) -> None:
         reason="Scheduled cancellation reached its effective date.",
     )
     metrics.increment(SYSTEM_TRANSITIONS, transition="cancellation_applied")
+
+
+#: ADR-063: who collects a renewal its partner pays from its Platform Wallet.
+#: One registrant (``controlplane.partner_wallet``, set at app start) - the
+#: subscription clock sits below wallets and partners and imports neither. It
+#: returns ``True`` when the next period is paid (now or earlier, by "Renew
+#: now"), ``False`` when the wallet could not pay.
+_renewal_collectors: list[Callable[[Any, datetime], bool]] = []
+
+
+def on_partner_wallet_renewal(collector: Callable[[Any, datetime], bool]) -> None:
+    _renewal_collectors[:] = [collector]
+
+
+def _collect_partner_wallet_renewal(subscription: Any, moment: datetime) -> None:
+    """Pay the period about to start from the partner's wallet. If it cannot be
+    paid, every line ends with the period that was paid for - exactly what a
+    plan that does not renew does - so nothing is granted that nobody paid for;
+    the partner activates the plan again once its wallet holds enough."""
+    from workeasy360.commercial.subscriptions.models import SubscriptionItem
+
+    paid = bool(_renewal_collectors) and _renewal_collectors[0](subscription, moment)
+    if paid:
+        return
+    ended_at = subscription.current_period_end
+    lines = SubscriptionItem.unscoped.filter(
+        organization_id=subscription.organization_id,
+        subscription=subscription,
+        removed_at__isnull=True,
+    )
+    count = lines.update(removed_at=ended_at, updated_at=moment)
+    if count:
+        audit.record_system(
+            subscription.organization_id,
+            "commercial.subscription.renewal_unpaid",
+            resource_type="subscriptions.subscription",
+            resource_id=subscription.id,
+            changes={"ended_at": ended_at.isoformat(), "lines": count},
+            reason="The partner's Platform Wallet could not pay the renewal.",
+        )
+        metrics.increment(SYSTEM_TRANSITIONS, transition="partner_wallet_renewal_unpaid")
+
+
+def _end_lines_that_do_not_renew(subscription: Any) -> None:
+    """Lines on a plan an Admin set to renew by hand, or not at all, end with the period
+    the customer paid for, and leave the renewal with it. The rule is read when the period
+    ends, so changing it reaches subscriptions already running. A bundle's derived line
+    follows its bundle, which has no plan rule to read. Entitlements follow from the sweep
+    that called this, which recomputes after any transition."""
+    from workeasy360.commercial.catalog import selectors as catalog
+    from workeasy360.commercial.subscriptions.models import SubscriptionItem
+
+    lines = list(
+        SubscriptionItem.unscoped.filter(
+            organization_id=subscription.organization_id,
+            subscription=subscription,
+            removed_at__isnull=True,
+            parent_item__isnull=True,
+        ).exclude(plan_code="")
+    )
+    rules = catalog.renewal_rules_of(line.plan_code for line in lines)
+    ended_at = subscription.current_period_end
+    for line in lines:
+        rule = rules.get(line.plan_code, RenewalPolicy.AUTO_RENEW.value)
+        if rule == RenewalPolicy.AUTO_RENEW.value:
+            continue
+        line.removed_at = ended_at
+        line.save(update_fields=["removed_at", "updated_at"])
+        audit.record_system(
+            subscription.organization_id,
+            "commercial.subscription.line_not_renewed",
+            resource_type="subscriptions.item",
+            resource_id=line.id,
+            changes={
+                "plan": line.plan_code,
+                "rule": rule,
+                "ended_at": ended_at.isoformat(),
+            },
+            reason="The plan is set not to renew automatically.",
+        )
+        metrics.increment(SYSTEM_TRANSITIONS, transition="line_not_renewed")
 
 
 def _roll_period(subscription: Any, moment: datetime) -> None:

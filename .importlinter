@@ -202,13 +202,14 @@ forbidden_modules =
 ; pricing reads catalog. Any edge back up that chain is a cycle, and a cycle
 ; here is what makes "who decides the price?" unanswerable.
 [importlinter:contract:commercial-internal-layers]
-name = commercial internal layering: catalog < pricing < billing < subscriptions < provisioning|payments < partners < commissions < controlplane
+name = commercial internal layering: catalog < pricing < billing < subscriptions < wallets < provisioning|payments < partners < commissions < controlplane
 type = layers
 layers =
     workeasy360.commercial.controlplane
     workeasy360.commercial.commissions
     workeasy360.commercial.partners
     workeasy360.commercial.provisioning | workeasy360.commercial.payments
+    workeasy360.commercial.wallets
     workeasy360.commercial.subscriptions
     workeasy360.commercial.billing
     workeasy360.commercial.pricing

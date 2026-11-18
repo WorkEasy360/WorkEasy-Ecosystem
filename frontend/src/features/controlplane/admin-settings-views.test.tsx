@@ -1,0 +1,820 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+
+import { PortalsProvider } from "@/lib/portalContext";
+import type { PortalOrigins } from "@/lib/portals";
+import { PlatformSettingsScreen } from "./AdminCommerce";
+import { DomainsScreen, LoginClientsScreen, SignInAuditScreen } from "./AdminDomains";
+import { AdminNotifications } from "./AdminNotifications";
+import { AuditScreen, SecurityScreen } from "./AdminScreens";
+import { AdminTools } from "./AdminTopbar";
+import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call } from "./testSupport";
+
+/**
+ * Admin > Settings and the top bar (2026-11-09): the platform settings' new sections,
+ * Domains & Apps, Login clients, the Sign-in audit, New Admin, the audit log's server
+ * filters, and what the top bar offers.
+ */
+
+// One router object, as Next.js returns; the address is the test's to set.
+const nav = vi.hoisted(() => ({ router: { replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }, query: "", pathname: "/admin/settings" }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => nav.router,
+  useSearchParams: () => new URLSearchParams(nav.query),
+  usePathname: () => nav.pathname,
+}));
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+  window.localStorage.clear();
+  nav.router.replace.mockReset();
+  nav.router.push.mockReset();
+  nav.query = "";
+  nav.pathname = "/admin/settings";
+});
+
+/** Choose a range in a date-range filter's panel and apply it. */
+function applyRange(label: string, from: string, to: string) {
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${label}: Any time`) }));
+  const panel = screen.getByRole("dialog", { name: `${label} between` });
+  fireEvent.change(within(panel).getByLabelText("From"), { target: { value: from } });
+  fireEvent.change(within(panel).getByLabelText("To"), { target: { value: to } });
+  fireEvent.click(within(panel).getByRole("button", { name: "Apply" }));
+}
+
+const T = "2026-11-08T10:00:00Z";
+const asStaff = (permissions: string[], ui: React.ReactNode) => render(<AdminContextForTest permissions={permissions}>{ui}</AdminContextForTest>);
+const bodyOf = (calls: Call[], key: string) => calls.find((c) => c.key === key)?.body;
+const urlsOf = (calls: Call[], key: string) => calls.filter((c) => c.key === key).map((c) => c.url);
+
+// --- platform settings -----------------------------------------------------------------
+
+const SETTINGS_VIEW = "platform.staff_settings.view";
+const SETTINGS_MANAGE = "platform.staff_settings.manage";
+const SETTINGS = "/api/v1/admin/settings";
+const CURRENT = {
+  signup_enabled: true,
+  partner_applications_enabled: true,
+  support_email: "help@example.com",
+  sales_email: "sales@example.com",
+  catalog_currency: "INR",
+  public_catalog_currency: "USD",
+  default_currency: "INR",
+  currencies: ["INR", "USD"],
+  company_name: "WorkEasy",
+  company_legal_name: "",
+  company_address: "1 Main Road",
+  company_tax_id: "GST123",
+  tax_rate_bp: null,
+  default_tax_rate_bp: 1800,
+  notifications_email: "",
+  version: 7,
+};
+/** What the server is sent when nothing else is changed: every field, always. */
+const UNCHANGED = {
+  signup_enabled: true,
+  partner_applications_enabled: true,
+  support_email: "help@example.com",
+  sales_email: "sales@example.com",
+  public_catalog_currency: "USD",
+  company_name: "WorkEasy",
+  company_legal_name: "",
+  company_address: "1 Main Road",
+  company_tax_id: "GST123",
+  tax_rate_bp: null,
+  notifications_email: "",
+  // ADR-063: the partner policies travel with every save (their defaults here).
+  partner_legacy_kyc_policy: "allow",
+  partner_suspended_commission_policy: "accrue",
+  version: 7,
+};
+
+describe("platform settings' new sections", () => {
+  it("shows them, with the rate that applies when none is entered; passes axe", async () => {
+    mockApi({ [`GET ${SETTINGS}`]: [ok(CURRENT)] });
+    const { container } = asStaff([SETTINGS_VIEW, SETTINGS_MANAGE], <PlatformSettingsScreen />);
+    expect((await screen.findByText("Company name")).nextElementSibling).toHaveTextContent("WorkEasy");
+    expect(screen.getByText("Legal name").nextElementSibling).toHaveTextContent("Not set");
+    expect(screen.getByText("Tax rate").nextElementSibling).toHaveTextContent("Deployment default (18%)");
+    expect(screen.getByText("Partner applications").nextElementSibling).toHaveTextContent("Open");
+    expect(screen.getByRole("button", { name: "Add a notifications email" })).toBeInTheDocument();
+    await expectNoViolations(container);
+  });
+
+  it("saves company details with every other field and the version", async () => {
+    const calls = mockApi({ [`GET ${SETTINGS}`]: [ok(CURRENT)], [`PUT ${SETTINGS}`]: [ok({ ...CURRENT, version: 8 })] });
+    asStaff([SETTINGS_VIEW, SETTINGS_MANAGE], <PlatformSettingsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit company information" }));
+    fireEvent.change(screen.getByLabelText("Legal name"), { target: { value: " WorkEasy Pvt Ltd " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(bodyOf(calls, `PUT ${SETTINGS}`)).toEqual({ ...UNCHANGED, company_legal_name: "WorkEasy Pvt Ltd" }));
+    await waitFor(() => expect(screen.queryByLabelText("Legal name")).toBeNull());
+  });
+
+  it("takes the tax rate as a percentage and sends basis points; refuses a bad one before sending", async () => {
+    const calls = mockApi({ [`GET ${SETTINGS}`]: [ok(CURRENT)], [`PUT ${SETTINGS}`]: [ok(CURRENT)] });
+    asStaff([SETTINGS_VIEW, SETTINGS_MANAGE], <PlatformSettingsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit billing" }));
+    const rate = screen.getByLabelText("Tax rate (%)");
+    expect(rate).toHaveValue("");
+    expect(screen.getByText(/Left empty, 18% applies/)).toBeInTheDocument();
+    fireEvent.change(rate, { target: { value: "120" } });
+    expect(screen.getByText(/percentage from 0 to 100/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.change(rate, { target: { value: "12.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(bodyOf(calls, `PUT ${SETTINGS}`)).toEqual({ ...UNCHANGED, tax_rate_bp: 1250 }));
+  });
+
+  it("starts the rate field from what is stored, and clearing it goes back to the default", async () => {
+    const calls = mockApi({ [`GET ${SETTINGS}`]: [ok({ ...CURRENT, tax_rate_bp: 1250 })], [`PUT ${SETTINGS}`]: [ok(CURRENT)] });
+    asStaff([SETTINGS_VIEW, SETTINGS_MANAGE], <PlatformSettingsScreen />);
+    expect((await screen.findByText("Tax rate")).nextElementSibling).toHaveTextContent("12.5%");
+    fireEvent.click(screen.getByRole("button", { name: "Edit billing" }));
+    expect(screen.getByLabelText("Tax rate (%)")).toHaveValue("12.5");
+    fireEvent.change(screen.getByLabelText("Tax rate (%)"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(bodyOf(calls, `PUT ${SETTINGS}`)).toEqual(UNCHANGED));
+  });
+
+  it("closes partner applications and sets the notifications address", async () => {
+    const calls = mockApi({ [`GET ${SETTINGS}`]: [ok(CURRENT)], [`PUT ${SETTINGS}`]: [ok({ ...CURRENT, version: 8 })] });
+    const view = asStaff([SETTINGS_VIEW, SETTINGS_MANAGE], <PlatformSettingsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit applications" }));
+    fireEvent.click(screen.getByLabelText("Partner applications are open"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(bodyOf(calls, `PUT ${SETTINGS}`)).toEqual({ ...UNCHANGED, partner_applications_enabled: false }));
+    view.unmount();
+
+    const second = mockApi({ [`GET ${SETTINGS}`]: [ok(CURRENT)], [`PUT ${SETTINGS}`]: [ok({ ...CURRENT, version: 8 })] });
+    asStaff([SETTINGS_VIEW, SETTINGS_MANAGE], <PlatformSettingsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit notifications" }));
+    fireEvent.change(screen.getByLabelText("Notifications email"), { target: { value: "ops@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(bodyOf(second, `PUT ${SETTINGS}`)).toEqual({ ...UNCHANGED, notifications_email: "ops@example.com" }));
+  });
+
+  it("keeps the edit open and shows the server's refusal", async () => {
+    mockApi({
+      [`GET ${SETTINGS}`]: [ok(CURRENT)],
+      [`PUT ${SETTINGS}`]: [{ status: 409, body: { detail: "Someone else changed the platform settings. Reload and try again." } }],
+    });
+    asStaff([SETTINGS_VIEW, SETTINGS_MANAGE], <PlatformSettingsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit company information" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Someone else changed the platform settings.");
+    expect(screen.getByLabelText("Company name")).toBeInTheDocument();
+  });
+
+  it("offers view-only staff no edit, and says when it cannot load", async () => {
+    mockApi({ [`GET ${SETTINGS}`]: [ok(CURRENT)] });
+    const view = asStaff([SETTINGS_VIEW], <PlatformSettingsScreen />);
+    await screen.findByText("Company name");
+    expect(screen.queryByRole("button", { name: /^Edit/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Add/ })).toBeNull();
+    view.unmount();
+
+    mockApi({ [`GET ${SETTINGS}`]: [{ status: 500, body: { detail: "Settings could not be read." } }] });
+    asStaff([SETTINGS_VIEW], <PlatformSettingsScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Settings could not be read.");
+  });
+});
+
+// --- domains & apps -------------------------------------------------------------------------
+
+const DOMAINS_URL = "/api/v1/admin/settings/domains";
+const CATALOG_VIEW = "platform.staff_catalog.view";
+const DOMAINS = {
+  portals: [
+    { key: "admin", label: "Admin Portal", origin: "https://admin.example.com" },
+    { key: "app", label: "Customer Portal", origin: "https://app.example.com" },
+  ],
+  apps: [
+    {
+      code: "easy_crm",
+      name: "Easy CRM",
+      status: "active",
+      application_url: "https://crm.example.com",
+      marketing_url: "",
+      documentation_url: "",
+      support_url: "",
+      app_links: { android: "https://play.example.com/crm", odd: "javascript:alert(1)" },
+      store_link: "/store/product/easy-crm",
+      purchase_routes: { store: true, reseller: false, affiliate: true, white_label: false },
+    },
+    {
+      code: "easybook",
+      name: "EasyBook",
+      status: "draft",
+      application_url: "",
+      marketing_url: "",
+      documentation_url: "",
+      support_url: "",
+      app_links: {},
+      store_link: "",
+      purchase_routes: { store: false, reseller: false, affiliate: false, white_label: false },
+    },
+  ],
+  partner_domains: [{ id: "d1", hostname: "crm.bright.example", status: "verified", partner_id: "p1", partner_name: "Bright Partner", verified_at: T }],
+  brands: [{ partner_id: "p1", partner_name: "Bright Partner", brand_name: "Bright", has_logo: true }],
+  dns_provider_connected: false,
+};
+const PRODUCTS = { results: [{ id: "prod-1", code: "easy_crm", name: "Easy CRM" }] };
+
+describe("domains and apps", () => {
+  it("lists all four sections and says what the check is; passes axe", async () => {
+    mockApi({ [`GET ${DOMAINS_URL}`]: [ok(DOMAINS)], "GET /api/v1/admin/catalog/products": [ok(PRODUCTS)] });
+    const { container } = asStaff([SETTINGS_VIEW, CATALOG_VIEW], <DomainsScreen />);
+    const portals = await screen.findByRole("table", { name: "Primary domains" });
+    expect(within(portals).getByText("Admin Portal")).toBeInTheDocument();
+    expect(screen.getByText("No Cloudflare account is connected, so this is a live check of the address itself, not Cloudflare's own status.")).toBeInTheDocument();
+
+    const apps = screen.getByRole("table", { name: "Product addresses and apps" });
+    const crm = within(apps).getByRole("row", { name: /easy_crm/ });
+    await waitFor(() => expect(within(crm).getByRole("link", { name: "Easy CRM" })).toHaveAttribute("href", "/admin/products/prod-1"));
+    expect(within(crm).getByText("crm.example.com")).toBeInTheDocument();
+    expect(within(crm).getByRole("link", { name: /Android/ })).toHaveAttribute("href", "https://play.example.com/crm");
+    // Only a web address becomes a link.
+    expect(within(crm).queryByRole("link", { name: /Odd/ })).toBeNull();
+    expect(within(crm).getByText("Odd: javascript:alert(1)")).toBeInTheDocument();
+    expect(within(crm).getByText("app.example.com/store/product/easy-crm")).toBeInTheDocument();
+    expect(within(crm).getByText("Store")).toBeInTheDocument();
+    expect(within(crm).getByText("Affiliate")).toBeInTheDocument();
+    expect(within(crm).queryByText("Reseller")).toBeNull();
+    const book = within(apps).getByRole("row", { name: /easybook/ });
+    expect(within(book).getByText("Not on sale")).toBeInTheDocument();
+    // Not in the catalog list: the products page, rather than a dead address.
+    expect(within(book).getByRole("link", { name: "EasyBook" })).toHaveAttribute("href", "/admin/products");
+
+    const partnerDomains = screen.getByRole("table", { name: "Partner domains" });
+    expect(within(partnerDomains).getByText("crm.bright.example")).toBeInTheDocument();
+    expect(within(partnerDomains).getByRole("link", { name: "Bright Partner" })).toHaveAttribute("href", "/admin/partners/p1");
+    expect(within(within(partnerDomains).getByRole("row", { name: /crm\.bright\.example/ })).getByText("Verified")).toBeInTheDocument();
+    const brands = screen.getByRole("table", { name: "Partner branding" });
+    expect(within(brands).getByText("Bright")).toBeInTheDocument();
+    expect(within(brands).getByText("Has logo")).toBeInTheDocument();
+    await expectNoViolations(container);
+  });
+
+  it("checks a portal's address live and shows exactly what came back", async () => {
+    const calls = mockApi({
+      [`GET ${DOMAINS_URL}`]: [ok(DOMAINS)],
+      [`POST ${DOMAINS_URL}/check`]: [
+        ok({ host: "admin.example.com", ok: true, detail: "Resolves, and answers over HTTPS with a valid certificate (http_200)." }),
+        ok({ host: "app.example.com", ok: false, detail: "Did not answer over HTTPS (timeout)." }),
+      ],
+    });
+    asStaff([SETTINGS_VIEW], <DomainsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Check Admin Portal" }));
+    expect(await screen.findByText(/valid certificate \(http_200\)/)).toBeInTheDocument();
+    expect(screen.getByText("Answering")).toBeInTheDocument();
+    expect(bodyOf(calls, `POST ${DOMAINS_URL}/check`)).toEqual({ host: "admin.example.com" });
+    fireEvent.click(screen.getByRole("button", { name: "Check Customer Portal" }));
+    expect(await screen.findByText(/Did not answer over HTTPS/)).toBeInTheDocument();
+    expect(screen.getByText("Not answering")).toBeInTheDocument();
+  });
+
+  it("shows a refused check in the server's words", async () => {
+    mockApi({
+      [`GET ${DOMAINS_URL}`]: [ok(DOMAINS)],
+      [`POST ${DOMAINS_URL}/check`]: [{ status: 400, body: { detail: "That address is not one of the platform's." } }],
+    });
+    asStaff([SETTINGS_VIEW], <DomainsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Check Admin Portal" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("That address is not one of the platform's.");
+  });
+
+  it("links no product page without the catalog grant, and does not ask the catalog", async () => {
+    const calls = mockApi({ [`GET ${DOMAINS_URL}`]: [ok(DOMAINS)] });
+    asStaff([SETTINGS_VIEW], <DomainsScreen />);
+    const apps = await screen.findByRole("table", { name: "Product addresses and apps" });
+    expect(within(apps).queryByRole("link", { name: "Easy CRM" })).toBeNull();
+    expect(within(apps).getByText("Easy CRM")).toBeInTheDocument();
+    expect(calls.map((c) => c.key)).toEqual([`GET ${DOMAINS_URL}`]);
+  });
+
+  it("says when each section is empty, and when it cannot load", async () => {
+    mockApi({ [`GET ${DOMAINS_URL}`]: [ok({ portals: [], apps: [], partner_domains: [], brands: [], dns_provider_connected: true })] });
+    const view = asStaff([SETTINGS_VIEW], <DomainsScreen />);
+    expect(await screen.findByText("No portal addresses are configured")).toBeInTheDocument();
+    expect(screen.getByText("No products yet")).toBeInTheDocument();
+    expect(screen.getByText("No partner domains yet")).toBeInTheDocument();
+    expect(screen.getByText("No partner has set up a brand yet")).toBeInTheDocument();
+    expect(screen.queryByText(/No Cloudflare account/)).toBeNull();
+    view.unmount();
+
+    mockApi({ [`GET ${DOMAINS_URL}`]: [{ status: 500, body: { detail: "Domains could not be read." } }] });
+    asStaff([SETTINGS_VIEW], <DomainsScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Domains could not be read.");
+  });
+
+  it("offers Try again when it cannot load (admin-ux phase 3)", async () => {
+    const calls = mockApi({ [`GET ${DOMAINS_URL}`]: [{ status: 500, body: { detail: "Domains could not be read." } }, ok(DOMAINS)] });
+    asStaff([SETTINGS_VIEW], <DomainsScreen />);
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("table", { name: "Primary domains" })).toBeInTheDocument();
+    expect(urlsOf(calls, `GET ${DOMAINS_URL}`)).toHaveLength(2);
+  });
+});
+
+// --- login clients ----------------------------------------------------------------------------
+
+const CLIENTS_URL = "/api/v1/admin/settings/login-clients";
+const CLIENT = {
+  product_code: "easy_crm",
+  client_id: "client-1234567890abcdef",
+  status: "active",
+  redirect_uris: ["https://crm.example.com/callback", "https://crm.example.com/alt"],
+  post_logout_redirect_uris: ["https://crm.example.com/bye"],
+  launch_url: "https://crm.example.com/start",
+};
+
+describe("login clients", () => {
+  it("lists every client's destinations, read-only, with the way to change them; passes axe", async () => {
+    mockApi({ [`GET ${CLIENTS_URL}`]: [ok({ results: [CLIENT] })] });
+    const { container } = asStaff([SETTINGS_VIEW, CATALOG_VIEW], <LoginClientsScreen />);
+    const table = await screen.findByRole("table", { name: "Login clients" });
+    expect(within(table).getByText("easy_crm")).toBeInTheDocument();
+    expect(within(table).getByRole("button", { name: "Copy client ID" })).toBeInTheDocument();
+    expect(within(table).getByText("https://crm.example.com/callback")).toBeInTheDocument();
+    expect(within(table).getByText("https://crm.example.com/alt")).toBeInTheDocument();
+    expect(within(table).getByText("https://crm.example.com/bye")).toBeInTheDocument();
+    expect(within(table).getByText("crm.example.com/start")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open products/ })).toHaveAttribute("href", "/admin/products");
+    await expectNoViolations(container);
+  });
+
+  it("hides the way to change them without the catalog grant", async () => {
+    mockApi({ [`GET ${CLIENTS_URL}`]: [ok({ results: [CLIENT] })] });
+    asStaff([SETTINGS_VIEW], <LoginClientsScreen />);
+    await screen.findByRole("table", { name: "Login clients" });
+    expect(screen.queryByRole("link", { name: /Open products/ })).toBeNull();
+  });
+
+  it("says when there are none, and when it cannot load", async () => {
+    mockApi({ [`GET ${CLIENTS_URL}`]: [ok({ results: [] })] });
+    const view = asStaff([SETTINGS_VIEW], <LoginClientsScreen />);
+    expect(await screen.findByText("No login clients yet")).toBeInTheDocument();
+    view.unmount();
+
+    mockApi({ [`GET ${CLIENTS_URL}`]: [{ status: 500, body: { detail: "Clients could not be read." } }] });
+    asStaff([SETTINGS_VIEW], <LoginClientsScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Clients could not be read.");
+  });
+
+  it("offers Try again when it cannot load (admin-ux phase 3)", async () => {
+    const calls = mockApi({ [`GET ${CLIENTS_URL}`]: [{ status: 500, body: { detail: "Clients could not be read." } }, ok({ results: [CLIENT] })] });
+    asStaff([SETTINGS_VIEW], <LoginClientsScreen />);
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("table", { name: "Login clients" })).toBeInTheDocument();
+    expect(urlsOf(calls, `GET ${CLIENTS_URL}`)).toHaveLength(2);
+  });
+});
+
+// --- the sign-in audit --------------------------------------------------------------------------
+
+const SIGN_INS = "GET /api/v1/admin/security/sign-ins";
+const AUDIT_VIEW = "platform.staff_audit.view";
+const EVENT = {
+  id: "e1",
+  user_id: "u1",
+  email: "pat@example.com",
+  name: "Pat Lee",
+  is_staff: true,
+  kind: "sign_in_failed",
+  kind_label: "Sign-in failed",
+  reason: "bad_password",
+  ip_prefix: "203.0.113.0/24",
+  device_label: "Chrome on Windows",
+  occurred_at: T,
+};
+
+describe("the sign-in audit", () => {
+  it("shows each column, staff only by default; passes axe", async () => {
+    const calls = mockApi({ [SIGN_INS]: [ok({ results: [EVENT], total: 40, limit: 25, offset: 0 })] });
+    const { container } = asStaff([AUDIT_VIEW], <SignInAuditScreen />);
+    const table = await screen.findByRole("table", { name: "Sign-in events" });
+    for (const text of ["Pat Lee", "pat@example.com", "Sign-in failed", "bad_password", "203.0.113.0/24", "Chrome on Windows"]) {
+      expect(within(table).getByText(text)).toBeInTheDocument();
+    }
+    expect(within(table).getByText(/8 Nov 2026/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Staff only" })).toHaveAttribute("aria-pressed", "true");
+    expect(urlsOf(calls, SIGN_INS)[0]).toBe("/api/v1/admin/security/sign-ins?limit=25&offset=0");
+    await expectNoViolations(container);
+  });
+
+  it("sends each filter to the server, and pages through it", async () => {
+    nav.pathname = "/admin/security/sign-ins";
+    const calls = mockApi({ [SIGN_INS]: [ok({ results: [EVENT], total: 40, limit: 25, offset: 0 })] });
+    asStaff([AUDIT_VIEW], <SignInAuditScreen />);
+    await screen.findByRole("table", { name: "Sign-in events" });
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(urlsOf(calls, SIGN_INS).at(-1)).toContain("offset=25"));
+    await screen.findByRole("table", { name: "Sign-in events" });
+    fireEvent.click(screen.getByRole("button", { name: "Everyone" }));
+    await waitFor(() => expect(urlsOf(calls, SIGN_INS).at(-1)).toBe("/api/v1/admin/security/sign-ins?everyone=1&limit=25&offset=0"));
+    await screen.findByRole("table", { name: "Sign-in events" });
+    fireEvent.click(screen.getByRole("combobox", { name: "Event" }));
+    fireEvent.click(screen.getByRole("option", { name: "Account unlocked" }));
+    await waitFor(() => expect(urlsOf(calls, SIGN_INS).at(-1)).toContain("kind=account_unlocked"));
+    await screen.findByRole("table", { name: "Sign-in events" });
+    // The days, from the date-range filter (admin-ux phase 3): sent on Apply, both ends at once.
+    applyRange("Date", "2026-11-01", "2026-11-08");
+    await waitFor(() => expect(urlsOf(calls, SIGN_INS).at(-1)).toContain("from=2026-11-01"));
+    expect(urlsOf(calls, SIGN_INS).at(-1)).toContain("to=2026-11-08");
+    await screen.findByRole("table", { name: "Sign-in events" });
+    fireEvent.change(screen.getByLabelText("Search by email"), { target: { value: "pat" } });
+    await waitFor(() => expect(urlsOf(calls, SIGN_INS).at(-1)).toContain("q=pat"));
+    // Every filter is kept in the address, the first page each time.
+    expect(nav.router.replace).toHaveBeenLastCalledWith(
+      "/admin/security/sign-ins?whose=everyone&kind=account_unlocked&q=pat&from=2026-11-01&to=2026-11-08",
+      { scroll: false },
+    );
+    expect(urlsOf(calls, SIGN_INS).at(-1)).toContain("offset=0");
+  });
+
+  it("reads its filters back from the address, drops what it does not know, and lists them as removable tags (admin-ux phase 3)", async () => {
+    nav.pathname = "/admin/security/sign-ins";
+    nav.query = "whose=everyone&kind=sign_in_failed&q=pat&from=2026-11-01&to=2026-11-08";
+    let calls = mockApi({ [SIGN_INS]: [ok({ results: [EVENT], total: 1, limit: 25, offset: 0 })] });
+    const view = asStaff([AUDIT_VIEW], <SignInAuditScreen />);
+    await screen.findByRole("table", { name: "Sign-in events" });
+    expect(Object.fromEntries(new URL(urlsOf(calls, SIGN_INS)[0], "https://x.invalid").searchParams)).toEqual({
+      kind: "sign_in_failed",
+      q: "pat",
+      from: "2026-11-01",
+      to: "2026-11-08",
+      everyone: "1",
+      limit: "25",
+      offset: "0",
+    });
+    expect(screen.getByRole("button", { name: "Everyone" })).toHaveAttribute("aria-pressed", "true");
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((t) => t.textContent)).toEqual([
+      "Search: “pat”",
+      "Event: Sign-in failed",
+      expect.stringMatching(/^Date: .*1.*Nov.*2026.*8.*Nov.*2026$/),
+    ]);
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Event: Sign-in failed" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/security/sign-ins?whose=everyone&q=pat&from=2026-11-01&to=2026-11-08", { scroll: false });
+    await waitFor(() => expect(urlsOf(calls, SIGN_INS).at(-1)).not.toContain("kind="));
+    // Reset filters keeps whose sign-ins: it is the list, not a filter on it.
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/security/sign-ins?whose=everyone", { scroll: false });
+    view.unmount();
+
+    nav.query = "whose=nobody&kind=hacked&to=2026-13-01";
+    calls = mockApi({ [SIGN_INS]: [ok({ results: [EVENT], total: 1, limit: 25, offset: 0 })] });
+    asStaff([AUDIT_VIEW], <SignInAuditScreen />);
+    await screen.findByRole("table", { name: "Sign-in events" });
+    expect(urlsOf(calls, SIGN_INS)[0]).toBe("/api/v1/admin/security/sign-ins?limit=25&offset=0");
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("sorts on its columns and offers Try again when it cannot load", async () => {
+    const calls = mockApi({
+      [SIGN_INS]: [
+        { status: 500, body: { detail: "The audit is unavailable." } },
+        ok({ results: [EVENT, { ...EVENT, id: "e2", email: "amy@example.com", name: "Amy Ng", kind: "sign_in", kind_label: "Signed in" }], total: 2, limit: 25, offset: 0 }),
+      ],
+    });
+    asStaff([AUDIT_VIEW], <SignInAuditScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The audit is unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    const table = await screen.findByRole("table", { name: "Sign-in events" });
+    expect(urlsOf(calls, SIGN_INS)).toHaveLength(2);
+    const people = () => within(table).getAllByRole("row").slice(1).map((r) => (r.textContent?.includes("Amy Ng") ? "Amy" : "Pat"));
+    expect(people()).toEqual(["Pat", "Amy"]);
+    fireEvent.click(within(table).getByRole("button", { name: "Person" }));
+    expect(people()).toEqual(["Amy", "Pat"]);
+    for (const name of ["When", "Event", "Reason", "Network", "Device"]) expect(within(table).getByRole("button", { name })).toBeInTheDocument();
+  });
+
+  it("says when there are none, and shows the server's refusal", async () => {
+    mockApi({ [SIGN_INS]: [ok({ results: [], total: 0, limit: 25, offset: 0 })] });
+    const view = asStaff([AUDIT_VIEW], <SignInAuditScreen />);
+    expect(await screen.findByText("No sign-in events")).toBeInTheDocument();
+    view.unmount();
+
+    mockApi({ [SIGN_INS]: [{ status: 400, body: { detail: "Use a date like 2026-11-09." } }] });
+    const again = asStaff([AUDIT_VIEW], <SignInAuditScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Use a date like 2026-11-09.");
+    again.unmount();
+
+    mockApi({ [SIGN_INS]: [{ status: 403, body: { detail: "Forbidden." } }] });
+    asStaff([], <SignInAuditScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("You don't have access to the sign-in audit.");
+  });
+});
+
+// --- New Admin ---------------------------------------------------------------------------------------
+
+const SECURITY_VIEW = "platform.staff_security.view";
+const SECURITY_MANAGE = "platform.staff_security.manage";
+const ROLES_URL = "GET /api/v1/admin/security/roles";
+const ACCOUNTS = "POST /api/v1/admin/security/accounts";
+
+function fillNewAdmin() {
+  const popup = screen.getByRole("dialog", { name: "New Admin" });
+  fireEvent.change(within(popup).getByLabelText("Full name"), { target: { value: " Asha Rao " } });
+  fireEvent.change(within(popup).getByLabelText("Email"), { target: { value: "asha@example.com" } });
+  fireEvent.change(within(popup).getByLabelText("Reason"), { target: { value: "Joined the billing team" } });
+  return popup;
+}
+
+describe("New Admin", () => {
+  it("creates the account with the exact fields, says a link is coming, and refreshes who holds what", async () => {
+    const calls = mockApi({
+      [ROLES_URL]: [ok({ results: [] })],
+      [ACCOUNTS]: [{ status: 201, body: { user_id: "u9", new_account: true, role: "BILLING_ADMIN", added: [] } }],
+    });
+    const { container } = asStaff([SECURITY_VIEW, SECURITY_MANAGE], <SecurityScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "New Admin" }));
+    const popup = screen.getByRole("dialog", { name: "New Admin" });
+    expect(within(popup).getByText(/They will get a link to set their own password/)).toBeInTheDocument();
+    const create = within(popup).getByRole("button", { name: "Create Admin" });
+    expect(create).toBeDisabled();
+    fillNewAdmin();
+    fireEvent.change(within(popup).getByLabelText("Email"), { target: { value: "not-an-email" } });
+    expect(within(popup).getByText("Enter a valid email address.")).toBeInTheDocument();
+    expect(create).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Email"), { target: { value: "asha@example.com" } });
+    fireEvent.change(within(popup).getByLabelText("Reason"), { target: { value: "too short" } });
+    expect(create).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Reason"), { target: { value: "Joined the billing team" } });
+    fireEvent.click(within(popup).getByRole("combobox", { name: /^Role/ }));
+    fireEvent.click(screen.getByRole("option", { name: "Billing Admin" }));
+    await expectNoViolations(popup);
+    fireEvent.click(create);
+    expect(await screen.findByText("Admin created. They will get a link to set their own password.")).toBeInTheDocument();
+    expect(bodyOf(calls, ACCOUNTS)).toEqual({ full_name: "Asha Rao", email: "asha@example.com", role: "BILLING_ADMIN", reason: "Joined the billing team" });
+    await waitFor(() => expect(urlsOf(calls, ROLES_URL).length).toBe(2));
+    await expectNoViolations(container);
+  });
+
+  it("says so when the person already had an account, because no link is sent", async () => {
+    mockApi({
+      [ROLES_URL]: [ok({ results: [] })],
+      [ACCOUNTS]: [{ status: 201, body: { user_id: "u9", new_account: false, role: "SUPPORT_ADMIN", added: [] } }],
+    });
+    asStaff([SECURITY_VIEW, SECURITY_MANAGE], <SecurityScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "New Admin" }));
+    const popup = fillNewAdmin();
+    fireEvent.click(within(popup).getByRole("button", { name: "Create Admin" }));
+    expect(await screen.findByText(/already had an account, so they keep their password/)).toBeInTheDocument();
+  });
+
+  it("keeps a refusal in the popup, in the server's words", async () => {
+    mockApi({
+      [ROLES_URL]: [ok({ results: [] })],
+      [ACCOUNTS]: [{ status: 400, body: { detail: "That account cannot be an Admin." } }],
+    });
+    asStaff([SECURITY_VIEW, SECURITY_MANAGE], <SecurityScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "New Admin" }));
+    const popup = fillNewAdmin();
+    fireEvent.click(within(popup).getByRole("button", { name: "Create Admin" }));
+    expect(await within(popup).findByRole("alert")).toHaveTextContent("That account cannot be an Admin.");
+    expect(within(popup).getByLabelText("Email")).toHaveValue("asha@example.com");
+  });
+
+  it("is not offered without the security management grant", async () => {
+    mockApi({ [ROLES_URL]: [ok({ results: [] })] });
+    asStaff([SECURITY_VIEW], <SecurityScreen />);
+    await screen.findByRole("heading", { level: 2, name: "Roles" });
+    expect(screen.queryByRole("button", { name: "New Admin" })).toBeNull();
+  });
+});
+
+// --- the audit log's filters ----------------------------------------------------------------------------
+
+const AUDIT = "GET /api/v1/admin/audit";
+const PERSON = "0b8f6a52-6c1e-4f39-9d55-1f0f6f0e2a11";
+const auditPage = (results: unknown[]) => ok({ results, next_cursor: null, has_more: false });
+const ENTRY = { id: "a1", occurred_at: T, action: "partner.created", actor_kind: "staff", resource_type: "partner", resource_id: "p1", outcome: "success", reason: "" };
+
+describe("the audit log's server filters", () => {
+  it("sends the person's ID and the dates, and has no date filter of its own", async () => {
+    const calls = mockApi({ [AUDIT]: [auditPage([ENTRY])] });
+    const { container } = asStaff([AUDIT_VIEW], <AuditScreen />);
+    await screen.findByRole("table", { name: "Audit entries" });
+    expect(screen.queryByRole("combobox", { name: /^Date/ })).toBeNull();
+    // The days, from the date-range filter (admin-ux phase 3): sent on Apply, both ends at once.
+    applyRange("Date", "2026-11-01", "2026-11-08");
+    await waitFor(() => expect(urlsOf(calls, AUDIT).at(-1)).toContain("from=2026-11-01"));
+    expect(urlsOf(calls, AUDIT).at(-1)).toContain("to=2026-11-08");
+    await screen.findByRole("table", { name: "Audit entries" });
+    fireEvent.change(screen.getByLabelText("Filter by the person's ID"), { target: { value: PERSON } });
+    await waitFor(() => expect(urlsOf(calls, AUDIT).at(-1)).toContain(`actor=${PERSON}`));
+    await screen.findByRole("table", { name: "Audit entries" });
+    await expectNoViolations(container);
+  });
+
+  it("keeps its server filters in the address and reads them back, dropping what it does not know (admin-ux phase 3)", async () => {
+    nav.pathname = "/admin/audit";
+    let calls = mockApi({ [AUDIT]: [auditPage([ENTRY])] });
+    let view = asStaff([AUDIT_VIEW], <AuditScreen />);
+    await screen.findByRole("table", { name: "Audit entries" });
+    fireEvent.click(screen.getByRole("combobox", { name: "Area" }));
+    fireEvent.click(screen.getByRole("option", { name: "Payouts" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/audit?area=payout.", { scroll: false });
+    await waitFor(() => expect(urlsOf(calls, AUDIT).at(-1)).toContain("action=payout."));
+    applyRange("Date", "2026-11-01", "2026-11-08");
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/audit?area=payout.&from=2026-11-01&to=2026-11-08", { scroll: false });
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((t) => t.textContent)).toEqual([
+      "Area: Payouts",
+      expect.stringMatching(/^Date: .*1.*Nov.*2026.*8.*Nov.*2026$/),
+    ]);
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Area: Payouts" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/audit?from=2026-11-01&to=2026-11-08", { scroll: false });
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/audit", { scroll: false });
+    view.unmount();
+
+    nav.query = `action=partner.&person=${PERSON}&from=2026-11-02`;
+    calls = mockApi({ [AUDIT]: [auditPage([ENTRY])] });
+    view = asStaff([AUDIT_VIEW], <AuditScreen />);
+    await screen.findByRole("table", { name: "Audit entries" });
+    const sent = new URL(urlsOf(calls, AUDIT)[0], "https://x.invalid").searchParams;
+    expect(Object.fromEntries(sent)).toEqual({ action: "partner.", actor: PERSON, from: "2026-11-02" });
+    expect(screen.getByLabelText("Filter by action (e.g. payout., partner.)")).toHaveValue("partner.");
+    expect(screen.getByRole("button", { name: /^Date: .*Nov.*2026/ })).toBeInTheDocument();
+    view.unmount();
+
+    nav.query = "area=everything&from=yesterday";
+    calls = mockApi({ [AUDIT]: [auditPage([ENTRY])] });
+    asStaff([AUDIT_VIEW], <AuditScreen />);
+    await screen.findByRole("table", { name: "Audit entries" });
+    expect(urlsOf(calls, AUDIT)[0]).toBe("/api/v1/admin/audit");
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("says that By and Resource narrow only the entries loaded so far, lists them as tags, and offers Try again", async () => {
+    const calls = mockApi({
+      [AUDIT]: [
+        { status: 500, body: {} },
+        ok({ results: [ENTRY, { ...ENTRY, id: "a2", actor_kind: "system", resource_type: "invoice" }], next_cursor: "c2", has_more: true }),
+      ],
+    });
+    asStaff([AUDIT_VIEW], <AuditScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load audit entries.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    const table = await screen.findByRole("table", { name: "Audit entries" });
+    expect(urlsOf(calls, AUDIT)).toHaveLength(2);
+    fireEvent.click(screen.getByRole("combobox", { name: "By" }));
+    fireEvent.click(screen.getByRole("option", { name: "System" }));
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    expect(screen.getByText(/narrow only the entries loaded so far/)).toBeInTheDocument();
+    // Not a server filter: nothing new is asked, and the address is not touched.
+    expect(urlsOf(calls, AUDIT)).toHaveLength(2);
+    expect(nav.router.replace).not.toHaveBeenCalled();
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter By: System" }));
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+  });
+
+  it("says an incomplete ID is incomplete and does not send it", async () => {
+    const calls = mockApi({ [AUDIT]: [auditPage([ENTRY])] });
+    asStaff([AUDIT_VIEW], <AuditScreen />);
+    await screen.findByRole("table", { name: "Audit entries" });
+    fireEvent.change(screen.getByLabelText("Filter by the person's ID"), { target: { value: "0b8f" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("whole ID");
+    expect(urlsOf(calls, AUDIT).some((url) => url.includes("actor="))).toBe(false);
+  });
+});
+
+// --- the top bar -------------------------------------------------------------------------------------------
+
+const ATTENTION = "GET /api/v1/admin/attention";
+const SUPPORT_VIEW = "platform.staff_support.view";
+const WAITING = {
+  items: [
+    { key: "kyc_reviews", count: 2 },
+    { key: "failed_payments", count: 1 },
+    { key: "low_balance", count: 3 },
+    { key: "support_tickets", count: 4 },
+  ],
+};
+
+describe("the top bar", () => {
+  it("opens a drawer of published help: the library's for those who may read it, editing a link away", async () => {
+    const calls = mockApi({
+      [ATTENTION]: [ok({ items: [] })],
+      "GET /api/v1/admin/help-content": [
+        ok({
+          results: [
+            { id: "h1", slug: "invite", kind: "setup_guide", audience: "all", status: "published", title: "Invite your team", body: ["Open Users.", "Choose Invite."].join(String.fromCharCode(10)), product_code: "", display_order: 1, published_at: T, updated_at: T },
+            { id: "h2", slug: "refund", kind: "faq", audience: "customer", status: "published", title: "How refunds work", body: "Within 14 days.", product_code: "", display_order: 2, published_at: T, updated_at: T },
+          ],
+        }),
+      ],
+    });
+    const { container } = render(<AdminTools permissions={[SUPPORT_VIEW]} />);
+    // No settings shortcut in the top bar: Settings is in the sidebar.
+    expect(screen.queryByRole("link", { name: "Platform settings" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    const drawer = await screen.findByRole("dialog", { name: "Help" });
+    const list = await within(drawer).findByRole("list", { name: "Help articles" });
+    expect(calls.find((c) => c.key === "GET /api/v1/admin/help-content")?.url).toContain("status=published");
+    expect(within(list).getAllByRole("button").map((b) => b.textContent)).toEqual(["Invite your teamSetup guide", "How refunds workFAQ"]);
+    // Read-only: an article opens beneath its title.
+    fireEvent.click(within(list).getByRole("button", { name: /Invite your team/ }));
+    expect(within(list).getByRole("button", { name: /Invite your team/ })).toHaveAttribute("aria-expanded", "true");
+    expect(within(drawer).getByText(/Choose Invite/)).toBeInTheDocument();
+    expect(within(drawer).queryByRole("textbox", { name: /title|body/i })).not.toBeInTheDocument();
+    // Searchable.
+    fireEvent.change(within(drawer).getByLabelText("Search help articles"), { target: { value: "refund" } });
+    await waitFor(() => expect(within(list).getAllByRole("button")).toHaveLength(1));
+    expect(within(drawer).getByRole("link", { name: "Manage help articles" })).toHaveAttribute("href", "/admin/help-content");
+    expect(within(drawer).getByRole("link", { name: "Contact support" })).toHaveAttribute("href", "/contact");
+    await expectNoViolations(container.ownerDocument.body);
+  });
+
+  it("gives staff who may not read the library the help published for everyone, and the help page", async () => {
+    const calls = mockApi({
+      [ATTENTION]: [ok({ items: [] })],
+      "GET /api/v1/public/help": [ok({ results: [{ slug: "start", kind: "faq", title: "Getting started", body: "Sign in.", product_code: "" }] })],
+    });
+    const origins = { app: "https://app.example.com" } as PortalOrigins;
+    render(
+      <PortalsProvider origins={origins}>
+        <AdminTools permissions={[]} />
+      </PortalsProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    const drawer = await screen.findByRole("dialog", { name: "Help" });
+    expect(await within(drawer).findByRole("button", { name: /Getting started/ })).toBeInTheDocument();
+    expect(calls.some((c) => c.key === "GET /api/v1/admin/help-content")).toBe(false);
+    expect(within(drawer).queryByRole("link", { name: "Manage help articles" })).not.toBeInTheDocument();
+    expect(within(drawer).getByRole("link", { name: "Contact support" })).toHaveAttribute("href", "https://app.example.com/contact");
+    fireEvent.click(within(drawer).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Help" })).not.toBeInTheDocument());
+  });
+
+  it("says what is waiting behind the new notifications, and where each is dealt with", async () => {
+    mockApi({ [ATTENTION]: [ok(WAITING)] });
+    render(<AdminTools permissions={[SUPPORT_VIEW]} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Notifications: 10 waiting" }));
+    expect(await screen.findByRole("link", { name: /^2 partner applications wait for KYC review/ })).toHaveAttribute("href", "/admin/partners/applications");
+    expect(screen.getByRole("link", { name: /^1 failed payment or activation needs attention/ })).toHaveAttribute("href", "/admin/payments/failed");
+    expect(screen.getByRole("link", { name: /^3 wallets are low on balance/ })).toHaveAttribute("href", "/admin/wallets?low=1");
+    expect(screen.getByRole("link", { name: /^4 support tickets are still open/ })).toHaveAttribute("href", "/admin/tickets");
+  });
+
+  it("lists the same on the notifications page", async () => {
+    mockApi({ [ATTENTION]: [ok(WAITING)] });
+    const { container } = render(<AdminNotifications />);
+    const table = await screen.findByRole("table", { name: "Notifications" });
+    // Each row's way in is in its Actions column (admin-ux phase 3), named with the row.
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["What is waiting", "Count", "Actions"]);
+    expect(within(table).getByRole("link", { name: "Open wallets: Wallets low on balance" })).toHaveAttribute("href", "/admin/wallets?low=1");
+    expect(within(table).getByRole("link", { name: "Open tickets: Support tickets still open" })).toHaveAttribute("href", "/admin/tickets");
+    expect(within(table).getByRole("link", { name: "Open wallets: Wallets low on balance" })).toHaveTextContent("Open wallets");
+    expect(within(table).getByText("Partner applications waiting for KYC review")).toBeInTheDocument();
+    expect(within(table).getByText("Failed payments and activations")).toBeInTheDocument();
+    await expectNoViolations(container);
+  });
+
+  it("offers Try again when the notifications page cannot load", async () => {
+    const calls = mockApi({ [ATTENTION]: [{ status: 500, body: { detail: "Nothing could be counted." } }, ok(WAITING)] });
+    render(<AdminNotifications />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Nothing could be counted.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("link", { name: "Open wallets: Wallets low on balance" })).toBeInTheDocument();
+    expect(urlsOf(calls, ATTENTION)).toHaveLength(2);
+  });
+
+  it("offers every Create item to one who holds every grant, in order", async () => {
+    mockApi({ [ATTENTION]: [ok({ items: [] })] });
+    render(
+      <AdminTools
+        permissions={[
+          "platform.staff_customer.manage",
+          "platform.staff_partner.manage",
+          "platform.staff_catalog.manage",
+          "platform.staff_pricing.manage",
+          "platform.staff_support.manage",
+          "platform.staff_security.manage",
+        ]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    const items = screen.getAllByRole("menuitem");
+    expect(items.map((m) => m.textContent)).toEqual(["New customer", "New partner", "New product", "New plan", "New credit pack", "New help article", "New Admin"]);
+    expect(items[0]).toHaveAttribute("href", "/admin/customers");
+    expect(items[4]).toHaveAttribute("href", "/admin/usage-pricing/credit-packs");
+    expect(items[5]).toHaveAttribute("href", "/admin/help-content");
+    expect(items[6]).toHaveAttribute("href", "/admin/security");
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+  });
+
+  it("offers only what the grant covers", async () => {
+    mockApi({ [ATTENTION]: [ok({ items: [] })] });
+    render(<AdminTools permissions={["platform.staff_support.manage"]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["New help article"]);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+  });
+});

@@ -87,18 +87,49 @@
   --w360-chart-4: #c2410c;
   --w360-chart-5: #7c3aed;
   --w360-chart-6: #db2777;
-  /* The Super Admin console's shell (2026-10-26 redesign): a deep navy top bar
-     and sidebar, dark in both themes, white text with a muted blue-grey for
-     group titles and icons; the current page is a lighter navy with a green
-     marker. The page itself sits on a cool light grey. */
-  --w360-shell: #0f2b3c;
-  --w360-shell-raised: #173a4f;
-  --w360-shell-active: #1d4760;
-  --w360-shell-border: #2a4d62;
+  /* The Admin console's shell (2026-11-09, the owner's reference images): a dark
+     teal top bar and sidebar, dark in both themes, white text with a muted
+     teal-grey for icons; the current page is a deep green pill with a white
+     bar at its edge (not colour alone). The page sits on a light grey sheet. */
+  --w360-shell: #06403f;
+  --w360-shell-deep: #042f30;
+  --w360-shell-raised: #0b514d;
+  --w360-shell-active: #0a7f3f;
+  --w360-shell-active-bar: #ffffff;
+  --w360-shell-border: #1a5f5a;
   --w360-shell-text: #ffffff;
-  --w360-shell-muted: #b4c5cf;
+  --w360-shell-muted: #bcd8d2;
   --w360-shell-marker: var(--w360-green-500);
-  --w360-shell-canvas: #f3f6f8;
+  --w360-shell-canvas: #f4f7f6;
+  /* The Admin console's green actions: white on a deep green (5.1:1). The vivid
+     --w360-green-500 only holds navy text, so it stays an accent here. */
+  --w360-admin-action: #0a7f3f;
+  --w360-admin-action-hover: #086b35;
+  --w360-admin-action-text: #ffffff;
+  --w360-admin-accent-soft: #e7f6ee;
+  /* The Admin sign-in's left panel, and the glow low on the sidebar. */
+  --w360-hero-start: #042f30;
+  --w360-hero-mid: #06484a;
+  --w360-hero-end: #0a6a52;
+  --w360-hero-glow: #12c56f;
+  --w360-hero-text: #ffffff;
+  --w360-hero-muted: #cfe6e0;
+  --w360-hero-tile: #0c6a55;
+  --w360-hero-screen: #f4f7f6;
+  --w360-hero-frame: #c7d2d3;
+  --w360-hero-base: #9fb0b2;
+  --w360-hero-line: #dfe7e6;
+  --w360-hero-bar: #0a7f3f;
+  --w360-hero-bar-soft: #7fd9a8;
+  /* The Partner sign-in's product tiles on that panel (2026-11-11): a deep card,
+     its edge (decoration), and the icons on it (3:1 or more). */
+  --w360-hero-card: #0a3f40;
+  --w360-hero-edge: #1f6b62;
+  --w360-hero-icon-green: #34d77f;
+  --w360-hero-icon-purple: #c3a6ff;
+  --w360-hero-icon-blue: #8cc4ff;
+  --w360-hero-icon-pink: #ff9fd0;
+  --w360-hero-icon-light: #e8f3f0;
   /* The dashboard's figure tiles: a soft circle behind a coloured icon. */
   --w360-tile-blue: #2459c4;
   --w360-tile-blue-bg: #e5eefc;
@@ -122,6 +153,29 @@
   --w360-space-5: 24px;
   --w360-space-6: 32px;
   --w360-space-7: 48px;
+  /* 2026-11-07 admin design system (docs/admin-ui/design-system.md): one type
+     scale, one control height pair, one card radius, one card shadow and one
+     popover shadow. The neutral scale is for borders, fills and muted text. */
+  --w360-gray-50: #f7f9fa;
+  --w360-gray-100: #eef2f4;
+  --w360-gray-200: #e2e8ec;
+  --w360-gray-300: #cbd5dc;
+  --w360-gray-500: #5b6b76;
+  --w360-gray-700: #374451;
+  --w360-gray-900: #161d24;
+  --w360-fs-meta: 12px;
+  --w360-fs-body: 14px;
+  --w360-fs-section: 16px;
+  --w360-fs-subhead: 20px;
+  --w360-fs-title: 24px;
+  --w360-fs-kpi: 28px;
+  --w360-radius-control: 6px;
+  --w360-radius-card: 12px;
+  --w360-radius-pill: 999px;
+  --w360-control-h: 36px;
+  --w360-control-h-sm: 32px;
+  --w360-shadow-card: 0 1px 2px rgba(22, 29, 36, 0.06), 0 1px 3px rgba(22, 29, 36, 0.04);
+  --w360-shadow-popover: 0 12px 32px rgba(22, 29, 36, 0.16), 0 2px 6px rgba(22, 29, 36, 0.08);
   /* Plus Jakarta Sans, as on the website (loaded in app/layout.tsx); the system
      stack only until it arrives or if it cannot load. */
   --w360-font: var(--w360-font-brand, "Plus Jakarta Sans"), -apple-system, BlinkMacSystemFont,
@@ -182,6 +236,7 @@
     --w360-chart-5: #b794f6;
     --w360-chart-6: #f472b6;
     --w360-shell-canvas: var(--w360-bg);
+    --w360-admin-accent-soft: #13342d;
     --w360-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --w360-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
   }
@@ -238,6 +293,7 @@
   --w360-chart-5: #b794f6;
   --w360-chart-6: #f472b6;
   --w360-shell-canvas: var(--w360-bg);
+  --w360-admin-accent-soft: #13342d;
   --w360-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --w360-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
@@ -562,4 +618,100 @@ fieldset:disabled .w360-input {
 .w360-error-text ul {
   margin: 0;
   padding-left: var(--w360-space-5);
+}
+
+/* --- The consoles (2026-11-07 design system; the Partner panel since 2026-11-11)
+   AdminShell marks <html data-console="admin"> and the Partner workspace
+   <html data-console="partner">, so these apply to both consoles and to their
+   dialogs (drawn on <body>), and never to the customer portal, the sign-in
+   pages or the public site. */
+
+:root[data-console] {
+  /* The page never jumps sideways between pages with and without a scrollbar. */
+  scrollbar-gutter: stable;
+  /* Green actions in this console are white on deep green, as in the owner's
+     reference images. Everywhere else keeps the website's navy on vivid green. */
+  --w360-cta: var(--w360-admin-action);
+  --w360-cta-hover: var(--w360-admin-action-hover);
+  --w360-cta-contrast: var(--w360-admin-action-text);
+}
+
+:root[data-console] body {
+  font-size: var(--w360-fs-body);
+  background: var(--w360-shell-canvas);
+}
+
+:root[data-console] :where(h1) {
+  font-size: var(--w360-fs-title);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+:root[data-console] :where(h2) {
+  font-size: var(--w360-fs-section);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+:root[data-console] :where(h3, h4) {
+  font-size: var(--w360-fs-body);
+  font-weight: 600;
+}
+
+:root[data-console] .w360-btn {
+  min-height: var(--w360-control-h);
+  padding: 0 14px;
+  border-radius: var(--w360-radius-control);
+  white-space: nowrap;
+  font-size: var(--w360-fs-body);
+}
+
+:root[data-console] .w360-btn-primary {
+  font-weight: 600;
+  box-shadow: none;
+}
+
+:root[data-console] .w360-btn-primary:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+
+:root[data-console] .w360-btn-danger {
+  font-weight: 600;
+}
+
+:root[data-console] :is(input.w360-input, select.w360-input, select) {
+  min-height: var(--w360-control-h);
+  padding-block: 0;
+}
+
+:root[data-console] .w360-input {
+  border-radius: var(--w360-radius-control);
+  font-size: var(--w360-fs-body);
+}
+
+:root[data-console] textarea.w360-input {
+  padding-block: 8px;
+}
+
+:root[data-console] .w360-label {
+  font-size: var(--w360-fs-meta);
+}
+
+:root[data-console] .w360-hint,
+:root[data-console] .w360-error-text {
+  font-size: var(--w360-fs-meta);
+}
+
+:root[data-console] .w360-card {
+  border-radius: var(--w360-radius-card);
+  box-shadow: var(--w360-shadow-card);
+}
+
+:root[data-console] .w360-badge {
+  padding: 2px 8px;
+  font-size: var(--w360-fs-meta);
+  line-height: 18px;
+  text-transform: none;
+  letter-spacing: 0;
 }

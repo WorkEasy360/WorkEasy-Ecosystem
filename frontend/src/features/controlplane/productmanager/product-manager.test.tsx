@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { ProductManager } from "./ProductManager";
-import { AddProductWizard, toRequest, validateStep, EMPTY_DRAFT } from "./AddProductWizard";
 import { ProductDetail } from "./ProductDetail";
 import { imageSize } from "./model";
 import { AdminContextForTest, expectNoViolations, mockApi, ok } from "../testSupport";
@@ -17,8 +16,12 @@ import { AdminContextForTest, expectNoViolations, mockApi, ok } from "../testSup
 
 let query = "";
 const push = vi.fn();
+// The list keeps its filters in the address (admin-ux phase 3): `replace` writes it.
+const replace = vi.fn((href: string) => {
+  query = href.split("?")[1] ?? "";
+});
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push, replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push, replace, refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(query),
   usePathname: () => "/admin/products",
 }));
@@ -134,6 +137,7 @@ class FakeXHR {
 beforeEach(() => {
   query = "";
   push.mockReset();
+  replace.mockClear();
   uploads.length = 0;
   vi.stubGlobal("XMLHttpRequest", FakeXHR);
 });
@@ -145,46 +149,144 @@ function renderAs(permissions: string[], ui: React.ReactNode) {
 
 // --- the list ---------------------------------------------------------------------------
 
+/** Opens a row's "⋯" menu and returns it. */
+function rowMenu(name: string): HTMLElement {
+  fireEvent.click(screen.getByRole("button", { name: `Actions for ${name}` }));
+  return screen.getByRole("menu", { name: `Actions for ${name}` });
+}
+
+/** Chooses an option of one of the console's styled selects. */
+function choose(label: string, option: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: label }));
+  fireEvent.click(screen.getByRole("option", { name: option }));
+}
+
 describe("Product Manager list", () => {
   it("shows every product with its logo, status, visibility, trial, plans and launch URL, and passes axe", async () => {
     mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
     const { container } = renderAs(MANAGE, <ProductManager />);
-    expect(await screen.findByRole("heading", { level: 1, name: "Product Manager" })).toBeInTheDocument();
-    expect(screen.getByText("Manage Workeasy360 products and their store availability.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "+ Add Product" })).toHaveAttribute("href", "/admin/products/new");
+    expect(await screen.findByRole("heading", { level: 1, name: "Products" })).toBeInTheDocument();
+    expect(screen.getByText("Manage WorkEasy360 products and their store availability.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Product" })).toBeInTheDocument();
+    const summary = screen.getByRole("group", { name: "Catalog summary" });
+    expect(within(summary).getByText("Published").nextElementSibling).toBeTruthy();
     const row = screen.getByRole("link", { name: "Easy Sample" }).closest("tr") as HTMLElement;
     expect(within(row).getByText("easy-sample")).toBeInTheDocument();
     expect(within(row).getByText("Active")).toBeInTheDocument();
     expect(within(row).getByText("Published")).toBeInTheDocument();
     expect(within(row).getByText("14 days")).toBeInTheDocument();
-    expect(within(row).getByText("https://sample.workeasy360.com/")).toBeInTheDocument();
+    // The launch URL is cut to one line, with copy and open buttons.
+    expect(within(row).getByText("sample.workeasy360.com/")).toHaveAttribute("title", "sample.workeasy360.com/");
+    expect(within(row).getByRole("button", { name: "Copy URL" })).toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: "Open in a new tab" })).toHaveAttribute("href", "https://sample.workeasy360.com/");
     expect(row.querySelector("img")?.getAttribute("src")).toBe(`${ADMIN}/products/p1/media/m-logo`);
     const draft = screen.getByRole("link", { name: "Draft Tool" }).closest("tr") as HTMLElement;
     expect(within(draft).getByText("Draft")).toBeInTheDocument();
     expect(within(draft).getByText("Hidden")).toBeInTheDocument();
     expect(within(draft).getByText("Not set")).toBeInTheDocument();
+    // Sentence-case headings, never upper case.
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent?.trim()).filter(Boolean)).toEqual([
+      "Product",
+      "Category",
+      "Status",
+      "Store visibility",
+      "Trial",
+      "Plans",
+      "Launch URL",
+      "Last updated",
+      "Actions",
+    ]);
     await expectNoViolations(container);
   });
 
-  it("searches and filters by status, visibility and category", async () => {
+  it("searches as you type and filters by status, visibility and category", async () => {
     mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
     renderAs(MANAGE, <ProductManager />);
     await screen.findByRole("link", { name: "Easy Sample" });
     fireEvent.change(screen.getByLabelText("Search products"), { target: { value: "draft-t" } });
-    expect(screen.queryByRole("link", { name: "Easy Sample" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("link", { name: "Easy Sample" })).not.toBeInTheDocument());
     expect(screen.getByRole("link", { name: "Draft Tool" })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Search products"), { target: { value: "" } });
-    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "active" } });
+    expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    await screen.findByRole("link", { name: "Easy Sample" });
+    choose("Status", "Active");
     expect(screen.queryByRole("link", { name: "Draft Tool" })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "all" } });
-    fireEvent.change(screen.getByLabelText("Store visibility"), { target: { value: "hidden" } });
+    choose("Status", "All");
+    choose("Store visibility", "Hidden");
     expect(screen.queryByRole("link", { name: "Easy Sample" })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Store visibility"), { target: { value: "all" } });
-    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "Other" } });
-    expect(screen.getByText("No product matches these filters.")).toBeInTheDocument();
+    choose("Store visibility", "All");
+    choose("Category", "Other");
+    expect(screen.getByText("No product matches these filters")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(screen.getByRole("link", { name: "Easy Sample" })).toBeInTheDocument();
   });
 
-  it("publishes, unpublishes and archives through the server, and previews a listing", async () => {
+  it("keeps the filters in the address, so they come back after opening a product", async () => {
+    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
+    const first = renderAs(MANAGE, <ProductManager />);
+    await screen.findByRole("link", { name: "Easy Sample" });
+    choose("Status", "Draft");
+    expect(replace).toHaveBeenLastCalledWith("/admin/products?status=draft", { scroll: false });
+    choose("Category", "Finance");
+    expect(replace).toHaveBeenLastCalledWith("/admin/products?status=draft&category=Finance", { scroll: false });
+    first.unmount();
+
+    // Back from a product: the address brings them back.
+    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
+    renderAs(MANAGE, <ProductManager />);
+    expect(await screen.findByRole("link", { name: "Draft Tool" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Easy Sample" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent("Draft");
+    expect(screen.getByRole("combobox", { name: "Category" })).toHaveTextContent("Finance");
+  });
+
+  it("lists the applied filters as tags; removing one shows the products it hid", async () => {
+    query = "q=easy&visibility=published";
+    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
+    renderAs(MANAGE, <ProductManager />);
+    await screen.findByRole("link", { name: "Easy Sample" });
+    expect(screen.queryByRole("link", { name: "Draft Tool" })).not.toBeInTheDocument();
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Search: “easy”", "Store visibility: Published"]);
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Search: “easy”" }));
+    expect(replace).toHaveBeenLastCalledWith("/admin/products?visibility=published", { scroll: false });
+    fireEvent.click(screen.getByRole("button", { name: "Remove filter Store visibility: Published" }));
+    expect(await screen.findByRole("link", { name: "Draft Tool" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Active filters" })).not.toBeInTheDocument();
+  });
+
+  it("leaves out a filter value the list does not offer, and says so", async () => {
+    query = "status=bogus&visibility=everywhere";
+    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
+    renderAs(MANAGE, <ProductManager />);
+    await screen.findByRole("link", { name: "Easy Sample" });
+    expect(screen.getByRole("link", { name: "Draft Tool" })).toBeInTheDocument();
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Active filters" })).not.toBeInTheDocument();
+  });
+
+  it("offers Try again when the catalog could not be loaded", async () => {
+    const calls = mockApi({ [`GET ${ADMIN}/products/console`]: [{ status: 500, body: { detail: "The catalog is unavailable." } }, ok(CATALOG)] });
+    renderAs(MANAGE, <ProductManager />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The catalog is unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("link", { name: "Easy Sample" })).toBeInTheDocument();
+    expect(calls.filter((c) => c.key === `GET ${ADMIN}/products/console`)).toHaveLength(2);
+  });
+
+  it("asks before unpublishing, and sends nothing on Cancel", async () => {
+    const calls = mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)], [`POST ${ADMIN}/products/p1/unpublish`]: [ok({})] });
+    renderAs(MANAGE, <ProductManager />);
+    await screen.findByRole("link", { name: "Easy Sample" });
+    fireEvent.click(within(rowMenu("Easy Sample")).getByRole("menuitem", { name: "Unpublish" }));
+    const confirm = screen.getByRole("dialog", { name: "Unpublish Easy Sample?" });
+    expect(within(confirm).getByText(/hidden from the store at once/)).toBeInTheDocument();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(calls.some((c) => c.key === `POST ${ADMIN}/products/p1/unpublish`)).toBe(false);
+  });
+
+  it("publishes, unpublishes and archives (after a confirmation) through the server, and previews a listing", async () => {
     const calls = mockApi({
       [`GET ${ADMIN}/products/console`]: [ok(CATALOG)],
       [`POST ${ADMIN}/products/p2/publish`]: [ok({})],
@@ -193,15 +295,21 @@ describe("Product Manager list", () => {
     });
     renderAs(MANAGE, <ProductManager />);
     await screen.findByRole("link", { name: "Draft Tool" });
-    const more = (name: string) => screen.getByLabelText(`More actions for ${name}`).closest("details") as HTMLElement;
-    fireEvent.click(within(more("Draft Tool")).getByRole("button", { name: "Publish" }));
+    fireEvent.click(within(rowMenu("Draft Tool")).getByRole("menuitem", { name: "Publish" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${ADMIN}/products/p2/publish`)).toBe(true));
-    fireEvent.click(within(more("Easy Sample")).getByRole("button", { name: "Unpublish" }));
+    fireEvent.click(within(rowMenu("Easy Sample")).getByRole("menuitem", { name: "Unpublish" }));
+    const unpublish = screen.getByRole("dialog", { name: "Unpublish Easy Sample?" });
+    expect(calls.some((c) => c.key === `POST ${ADMIN}/products/p1/unpublish`)).toBe(false);
+    fireEvent.click(within(unpublish).getByRole("button", { name: "Unpublish" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${ADMIN}/products/p1/unpublish`)).toBe(true));
-    fireEvent.click(within(more("Draft Tool")).getByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    fireEvent.click(within(rowMenu("Draft Tool")).getByRole("menuitem", { name: "Archive" }));
+    const confirm = screen.getByRole("dialog", { name: "Archive Draft Tool?" });
+    expect(calls.some((c) => c.key === `POST ${ADMIN}/products/p2/archive`)).toBe(false);
+    fireEvent.click(within(confirm).getByRole("button", { name: "Archive" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${ADMIN}/products/p2/archive`)).toBe(true));
 
-    fireEvent.click(within(more("Easy Sample")).getByRole("button", { name: "Preview listing" }));
+    fireEvent.click(within(rowMenu("Easy Sample")).getByRole("menuitem", { name: "Preview listing" }));
     const dialog = screen.getByRole("dialog", { name: "Store listing preview" });
     expect(within(dialog).getAllByText("Easy Sample").length).toBeGreaterThan(0);
     expect(within(dialog).getByText("Sampling for teams.")).toBeInTheDocument();
@@ -213,178 +321,16 @@ describe("Product Manager list", () => {
     mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
     renderAs(VIEW, <ProductManager />);
     await screen.findByRole("link", { name: "Easy Sample" });
-    expect(screen.queryByRole("link", { name: "+ Add Product" })).not.toBeInTheDocument();
-    const menu = screen.getByLabelText("More actions for Draft Tool").closest("details") as HTMLElement;
-    expect(within(menu).queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
-    expect(within(menu).queryByRole("button", { name: "Archive" })).not.toBeInTheDocument();
-    expect(within(menu).queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Product" })).not.toBeInTheDocument();
+    const menu = rowMenu("Draft Tool");
+    expect(within(menu).queryByRole("menuitem", { name: "Publish" })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Archive" })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Edit in Publisher" })).not.toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Manage" })).toHaveAttribute("href", "/admin/products/p2");
   });
 });
 
-// --- the wizard -------------------------------------------------------------------------
-
-async function fillIdentity(name = "New Ledger") {
-  fireEvent.change(await screen.findByLabelText(/^Product name/), { target: { value: name } });
-  fireEvent.change(screen.getByLabelText(/^Category/), { target: { value: "Finance" } });
-  fireEvent.change(screen.getByLabelText(/^Short description/), { target: { value: "Books that balance." } });
-  fireEvent.change(screen.getByLabelText("Product logo"), { target: { files: [pngFile(256, 256)] } });
-  expect(await screen.findByText("logo.png")).toBeInTheDocument();
-}
-
-describe("Add Product wizard", () => {
-  it("has four steps and checks step 1 before moving on", async () => {
-    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
-    const { container } = renderAs(MANAGE, <AddProductWizard />);
-    const steps = await screen.findByRole("list", { name: "Steps" });
-    expect(within(steps).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-      "1Step 1: Identity",
-      "2Step 2: Store Listing",
-      "3Step 3: Integration",
-      "4Step 4: Availability",
-    ]);
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    const alert = (await screen.findByText(/^Fix these/)).closest("[role=alert]") as HTMLElement;
-    expect(alert).toHaveTextContent("Enter the product name.");
-    expect(alert).toHaveTextContent("Choose a category.");
-    expect(alert).toHaveTextContent("Add the product logo.");
-    await expectNoViolations(container);
-  });
-
-  it("suggests the slug from the name, shows the permanent code and refuses a slug in use", async () => {
-    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
-    renderAs(MANAGE, <AddProductWizard />);
-    fireEvent.change(await screen.findByLabelText(/^Product name/), { target: { value: "Draft Tool" } });
-    expect(screen.getByLabelText(/^Product slug/)).toHaveValue("draft-tool");
-    expect(screen.getByText("draft_tool")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText("This slug is already used by another product.", { selector: "li" })).toBeInTheDocument();
-  });
-
-  it("refuses an SVG or a too-small logo before uploading anything", async () => {
-    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
-    renderAs(MANAGE, <AddProductWizard />);
-    const input = await screen.findByLabelText("Product logo");
-    fireEvent.change(input, { target: { files: [new File(["<svg/>"], "x.svg", { type: "image/svg+xml" })] } });
-    expect(await screen.findByText(/SVG and other formats are not accepted/)).toBeInTheDocument();
-    fireEvent.change(input, { target: { files: [pngFile(16, 16, "tiny.png")] } });
-    expect(await screen.findByText(/16×16 px; it must be from 64×64/)).toBeInTheDocument();
-    expect(uploads).toEqual([]);
-  });
-
-  it("creates, uploads with progress and publishes - sending exactly the fields chosen", async () => {
-    const calls = mockApi({
-      [`GET ${ADMIN}/products/console`]: [ok(CATALOG)],
-      [`POST ${ADMIN}/products`]: [{ status: 201, body: { product: { ...DRAFT, id: "new1" } } }],
-      [`POST ${ADMIN}/products/new1/publish`]: [ok({})],
-    });
-    renderAs(MANAGE, <AddProductWizard />);
-    await fillIdentity();
-    fireEvent.click(screen.getByLabelText("Icon: wallet"));
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-
-    expect(await screen.findByRole("heading", { name: "2. Store Listing" })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Short store description"), { target: { value: "Ledgers for small teams." } });
-    fireEvent.change(screen.getByLabelText("Add screenshots"), { target: { files: [pngFile(1280, 720, "board.png")] } });
-    fireEvent.change(await screen.findByLabelText("Caption for screenshot 1 (optional)"), { target: { value: "The board" } });
-    fireEvent.change(screen.getByLabelText("Support URL"), { target: { value: "https://support.workeasy360.com/ledger" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-
-    expect(await screen.findByRole("heading", { name: "3. Integration" })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/^Launch URL/), { target: { value: "javascript:alert(1)" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText("The launch URL must be an https:// address.", { selector: "li" })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/^Application URL/), { target: { value: "https://ledger.workeasy360.com" } });
-    fireEvent.change(screen.getByLabelText(/^Launch URL/), { target: { value: "https://ledger.workeasy360.com/" } });
-    fireEvent.change(screen.getByLabelText("Sign-in callback URL"), { target: { value: "https://ledger.workeasy360.com/api/auth/callback" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-
-    expect(await screen.findByRole("heading", { name: "4. Availability" })).toBeInTheDocument();
-    expect(screen.getByText("Plans/Pricing required before final Store sale activation.")).toBeInTheDocument();
-    const affiliate = screen.getByRole("group", { name: "Affiliate" });
-    fireEvent.click(within(affiliate).getByLabelText("Not allowed"));
-    fireEvent.click(within(screen.getByRole("group", { name: "Free trial" })).getByLabelText("Enabled"));
-    fireEvent.change(screen.getByLabelText("Trial duration (days)"), { target: { value: "7" } });
-    fireEvent.click(screen.getByRole("button", { name: "Publish Product" }));
-
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/products/new1?saved=published"));
-    const create = calls.find((c) => c.key === `POST ${ADMIN}/products`)!;
-    expect(create.body).toEqual({
-      name: "New Ledger",
-      slug: "new-ledger",
-      category: "Finance",
-      tagline: "Books that balance.",
-      icon: "wallet",
-      store_title: "",
-      store_summary: "Ledgers for small teams.",
-      description: "",
-      marketing_url: "",
-      documentation_url: "",
-      support_url: "https://support.workeasy360.com/ledger",
-      application_url: "https://ledger.workeasy360.com",
-      customer_store_enabled: true,
-      reseller_enabled: true,
-      affiliate_enabled: false,
-      white_label_enabled: true,
-      integration: {
-        launch_url: "https://ledger.workeasy360.com/",
-        sso_enabled: true,
-        redirect_uri: "https://ledger.workeasy360.com/api/auth/callback",
-      },
-      trial: { enabled: true, duration_days: 7 },
-    });
-    expect(JSON.stringify(create.body)).not.toMatch(/secret|code"/);
-    expect(uploads.map((u) => u.url)).toEqual([
-      `${ADMIN}/products/new1/media?kind=logo`,
-      `${ADMIN}/products/new1/media?kind=screenshot&caption=The+board`,
-    ]);
-    expect(uploads.every((u) => u.type === "image/png" && u.progress)).toBe(true);
-    expect(calls.some((c) => c.key === `POST ${ADMIN}/products/new1/publish`)).toBe(true);
-  });
-
-  it("Save Draft needs only a name and a slug, and never publishes", async () => {
-    const calls = mockApi({
-      [`GET ${ADMIN}/products/console`]: [ok(CATALOG)],
-      [`POST ${ADMIN}/products`]: [{ status: 201, body: { product: { ...DRAFT, id: "new2" } } }],
-    });
-    renderAs(MANAGE, <AddProductWizard />);
-    fireEvent.change(await screen.findByLabelText(/^Product name/), { target: { value: "Scratch Pad" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/products/new2?saved=draft"));
-    expect(calls.find((c) => c.key === `POST ${ADMIN}/products`)!.body).toMatchObject({ name: "Scratch Pad", slug: "scratch-pad", integration: null, trial: null });
-    expect(calls.some((c) => c.key.endsWith("/publish"))).toBe(false);
-  });
-
-  it("a server refusal is shown and nothing claims success", async () => {
-    mockApi({
-      [`GET ${ADMIN}/products/console`]: [ok(CATALOG)],
-      [`POST ${ADMIN}/products`]: [{ status: 400, body: { code: "catalog_validation", detail: "support_url: the address must be publicly routable" } }],
-    });
-    renderAs(MANAGE, <AddProductWizard />);
-    fireEvent.change(await screen.findByLabelText(/^Product name/), { target: { value: "Scratch Pad" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
-    expect(await screen.findByText(/publicly routable/, { selector: "p" })).toBeInTheDocument();
-    expect(push).not.toHaveBeenCalled();
-  });
-
-  it("is not offered without the catalog management permission", async () => {
-    mockApi({ [`GET ${ADMIN}/products/console`]: [ok(CATALOG)] });
-    renderAs(VIEW, <AddProductWizard />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("needs the catalog management permission");
-  });
-
-  it("the step rules and the request are pure functions of the fields", () => {
-    const taken = { takenSlugs: new Set(["easy-sample"]), takenCodes: new Set(["easy_sample"]) };
-    expect(validateStep(0, { ...EMPTY_DRAFT, name: "A", slug: "a" }, { strict: false, hasLogo: false, ...taken })).toEqual({});
-    expect(Object.keys(validateStep(0, { ...EMPTY_DRAFT, name: "A", slug: "a" }, { strict: true, hasLogo: false, ...taken }))).toEqual(["category", "tagline", "logo"]);
-    expect(validateStep(3, { ...EMPTY_DRAFT, trial: "enabled", trialDays: "0" }, { strict: true, hasLogo: true, ...taken }).trialDays).toBeTruthy();
-    expect(toRequest({ ...EMPTY_DRAFT, name: " X ", slug: "x", launchUrl: "https://x.workeasy360.com/", sso: "no" }).integration).toEqual({
-      launch_url: "https://x.workeasy360.com/",
-      sso_enabled: false,
-      redirect_uri: undefined,
-      health_url: undefined,
-    });
-  });
-
+describe("Product images", () => {
   it("reads an image's size from its bytes, as the server does", async () => {
     expect(await imageSize(pngFile(640, 400))).toEqual({ width: 640, height: 400 });
     expect(await imageSize(new File(["GIF89a"], "x.gif"))).toBeNull();
@@ -417,11 +363,11 @@ describe("Product detail", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Draft Tool" })).toBeInTheDocument();
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
       "Overview",
-      "Store Listing",
+      "Store listing",
       "Integration",
       "Availability",
       "Updates",
-      "Plans & Pricing",
+      "Plans & pricing",
       "Price books",
       "Activity",
     ]);
@@ -481,11 +427,11 @@ describe("Product detail", () => {
       [`POST ${ADMIN}/catalog/prices`]: [ok({ id: "pr2" })],
     });
     renderAs(MANAGE, <ProductDetail productId="p1" />);
-    fireEvent.click(await screen.findByRole("tab", { name: "Plans & Pricing" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Plans & pricing" }));
     expect(await screen.findByRole("heading", { name: "Sample Team" })).toBeInTheDocument();
     expect(screen.getByText("Recommended")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Edit price" }));
-    const dialog = await screen.findByRole("dialog");
+    const dialog = await screen.findByRole("dialog", { name: "Edit price: Sample Team" });
     const monthly = within(dialog).getAllByRole("group")[0];
     fireEvent.change(within(monthly).getByLabelText(/^Price/), { target: { value: "599" } });
     fireEvent.change(within(monthly).getByLabelText(/^Discount/), { target: { value: "10" } });
@@ -502,8 +448,10 @@ describe("Product detail", () => {
       setup_fee_minor: 100000,
       valid_from: null,
     });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText(/^Price of Sample Team updated\./)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Price books" }));
-    expect(screen.getByRole("link", { name: "Manage Pricing →" })).toHaveAttribute("href", "/admin/pricing?product=easy_sample");
+    expect(screen.getByRole("link", { name: "Manage pricing" })).toHaveAttribute("href", "/admin/pricing?product=easy_sample");
   });
 
   it("availability saves only the flags that changed, and archive is confirmed", async () => {
@@ -514,10 +462,19 @@ describe("Product detail", () => {
       [`POST ${ADMIN}/products/p1/archive`]: [ok(managed())],
     });
     renderAs(MANAGE, <ProductDetail productId="p1" />);
-    const group = await screen.findByRole("group", { name: "White-label" });
+    const channels = await screen.findByRole("region", { name: "Where it may be offered" });
+    expect(within(channels).getByText("White-label").nextElementSibling).toHaveTextContent("Allowed");
+    expect(screen.queryByRole("group", { name: "White-label" })).not.toBeInTheDocument();
+    fireEvent.click(within(channels).getByRole("button", { name: "Edit availability" }));
+    const popup = screen.getByRole("dialog", { name: "Where it may be offered" });
+    // Nothing changed yet: nothing to save.
+    expect(within(popup).getByRole("button", { name: "Save availability" })).toBeDisabled();
+    const group = within(popup).getByRole("group", { name: "White-label" });
     fireEvent.click(within(group).getByLabelText("Not allowed"));
-    fireEvent.click(screen.getByRole("button", { name: "Save availability" }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Save availability" }));
     await waitFor(() => expect(calls.find((c) => c.key === `PATCH ${ADMIN}/catalog/products/p1`)?.body).toEqual({ white_label_enabled: false }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText("Availability saved.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Archive" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm archive" }));
     await waitFor(() => expect(calls.some((c) => c.key === `POST ${ADMIN}/products/p1/archive`)).toBe(true));
@@ -530,10 +487,15 @@ describe("Product detail", () => {
       [`PUT ${ADMIN}/catalog/products/p2/trial`]: [ok({})],
     });
     renderAs(MANAGE, <ProductDetail productId="p2" />);
-    const group = await screen.findByRole("group", { name: "Free trial" });
+    fireEvent.click(await screen.findByRole("button", { name: "Edit trial" }));
+    const popup = screen.getByRole("dialog", { name: "Trial" });
+    const group = within(popup).getByRole("group", { name: "Free trial" });
     fireEvent.click(within(group).getByLabelText("Enabled"));
-    fireEvent.change(screen.getByLabelText("Trial duration (days)"), { target: { value: "7" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save trial configuration" }));
+    fireEvent.change(within(popup).getByLabelText("Trial duration (days)"), { target: { value: "0" } });
+    expect(within(popup).getByText("Enter a trial length from 1 to 365 days.")).toBeInTheDocument();
+    expect(within(popup).getByRole("button", { name: "Save trial configuration" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Trial duration (days)"), { target: { value: "7" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save trial configuration" }));
     await waitFor(() =>
       expect(calls.find((c) => c.key === `PUT ${ADMIN}/catalog/products/p2/trial`)?.body).toEqual({
         enabled: true,
@@ -543,6 +505,8 @@ describe("Product detail", () => {
         eligible_plan_codes: [],
       }),
     );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText("Trial configuration for Draft Tool saved.")).toBeInTheDocument();
   });
 
   it("the store listing saves only what changed, and the slug is fixed once on sale", async () => {
@@ -552,10 +516,18 @@ describe("Product detail", () => {
       [`PATCH ${ADMIN}/catalog/products/p1`]: [ok({})],
     });
     renderAs(MANAGE, <ProductDetail productId="p1" />);
-    expect(await screen.findByLabelText(/^Product slug/)).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Store title"), { target: { value: "Easy Sample Pro" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save listing" }));
+    const listing = await screen.findByRole("region", { name: "Identity and store listing" });
+    expect(within(listing).getByText("Sampling for teams.")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Product slug/)).not.toBeInTheDocument();
+    fireEvent.click(within(listing).getByRole("button", { name: "Edit listing" }));
+    const popup = screen.getByRole("dialog", { name: "Identity and store listing" });
+    expect(within(popup).getByLabelText(/^Product slug/)).toBeDisabled();
+    expect(within(popup).getByRole("button", { name: "Save listing" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Store title"), { target: { value: "Easy Sample Pro" } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save listing" }));
     await waitFor(() => expect(calls.find((c) => c.key === `PATCH ${ADMIN}/catalog/products/p1`)?.body).toEqual({ store_title: "Easy Sample Pro" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText("Store listing saved.")).toBeInTheDocument();
   });
 
   it("the store listing takes a YouTube or Vimeo video, and refuses any other link", async () => {
@@ -565,14 +537,17 @@ describe("Product detail", () => {
       [`PATCH ${ADMIN}/catalog/products/p1`]: [ok({})],
     });
     renderAs(MANAGE, <ProductDetail productId="p1" />);
-    const field = await screen.findByLabelText("Product video");
+    fireEvent.click(await screen.findByRole("button", { name: "Edit listing" }));
+    const popup = screen.getByRole("dialog", { name: "Identity and store listing" });
+    const field = within(popup).getByLabelText("Product video");
     fireEvent.change(field, { target: { value: "https://example.com/clip.mp4" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save listing" }));
-    expect(await screen.findAllByText("Use a YouTube or Vimeo link.")).not.toHaveLength(0);
+    expect(within(popup).getByText("Use a YouTube or Vimeo link.")).toBeInTheDocument();
+    expect(within(popup).getByRole("button", { name: "Save listing" })).toBeDisabled();
+    fireEvent.click(within(popup).getByRole("button", { name: "Save listing" }));
     expect(calls.find((c) => c.key === `PATCH ${ADMIN}/catalog/products/p1`)).toBeUndefined();
 
     fireEvent.change(field, { target: { value: " https://youtu.be/dQw4w9WgXcQ " } });
-    fireEvent.click(screen.getByRole("button", { name: "Save listing" }));
+    fireEvent.click(within(popup).getByRole("button", { name: "Save listing" }));
     await waitFor(() =>
       expect(calls.find((c) => c.key === `PATCH ${ADMIN}/catalog/products/p1`)?.body).toEqual({ video_url: "https://youtu.be/dQw4w9WgXcQ" }),
     );
@@ -585,7 +560,8 @@ describe("Product detail", () => {
       [`PATCH ${ADMIN}/catalog/products/p1`]: [ok({})],
     });
     renderAs(MANAGE, <ProductDetail productId="p1" />);
-    const form = await screen.findByRole("form", { name: "Store merchandising" });
+    fireEvent.click(await screen.findByRole("button", { name: "Edit merchandising" }));
+    const form = screen.getByRole("dialog", { name: "Store merchandising" });
     fireEvent.change(within(form).getByLabelText("Product type"), { target: { value: "ai_tool" } });
     const bestFor = within(form).getByRole("group", { name: "Best for" });
     fireEvent.click(within(bestFor).getByLabelText("Agencies"));
@@ -602,13 +578,16 @@ describe("Product detail", () => {
         best_seller: true,
       }),
     );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText("Store merchandising saved.")).toBeInTheDocument();
   });
 
   it("merchandising refuses an integration name the server would refuse", async () => {
     query = "tab=listing";
     const calls = mockApi({ [`GET ${ADMIN}/products/p1`]: [ok(managed())] });
     renderAs(MANAGE, <ProductDetail productId="p1" />);
-    const form = await screen.findByRole("form", { name: "Store merchandising" });
+    fireEvent.click(await screen.findByRole("button", { name: "Edit merchandising" }));
+    const form = screen.getByRole("dialog", { name: "Store merchandising" });
     fireEvent.change(within(form).getByLabelText("Integrations"), { target: { value: "x".repeat(33) } });
     expect(within(form).getByText("Each integration name is at most 32 characters.")).toBeInTheDocument();
     expect(within(form).getByRole("button", { name: "Save merchandising" })).toBeDisabled();
@@ -681,7 +660,81 @@ describe("Product detail", () => {
     await screen.findByRole("heading", { level: 1, name: "Easy Sample" });
     expect(screen.queryByRole("tab", { name: "Activity" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Unpublish" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Store Listing" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Store listing" }));
     expect(screen.getByText(/Editing the listing needs/)).toBeInTheDocument();
+  });
+  it("the application URL reads on the page and is edited in a popup that refuses a non-https address", async () => {
+    query = "tab=integration";
+    const calls = mockApi({
+      [`GET ${ADMIN}/products/p1`]: [ok(managed())],
+      [`PATCH ${ADMIN}/catalog/products/p1`]: [ok({})],
+    });
+    renderAs(MANAGE, <ProductDetail productId="p1" />);
+    const summary = await screen.findByRole("region", { name: "Integration" });
+    expect(within(summary).getByText("Application URL").nextElementSibling).toHaveTextContent("https://sample.workeasy360.com");
+    fireEvent.click(within(summary).getByRole("button", { name: "Edit application URL" }));
+    const popup = screen.getByRole("dialog", { name: "Application URL" });
+    const field = within(popup).getByLabelText("Application URL");
+    expect(field).toHaveValue("https://sample.workeasy360.com");
+    fireEvent.change(field, { target: { value: "http://sample.example.com" } });
+    expect(within(popup).getByText("The application URL must be an https:// address.")).toBeInTheDocument();
+    expect(within(popup).getByRole("button", { name: "Save application URL" })).toBeDisabled();
+    fireEvent.change(field, { target: { value: " https://app.example.com " } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save application URL" }));
+    await waitFor(() => expect(calls.find((c) => c.key === `PATCH ${ADMIN}/catalog/products/p1`)?.body).toEqual({ application_url: "https://app.example.com" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText("Application URL saved.")).toBeInTheDocument();
+  });
+
+  it("updates: a new update and a row's edit open the same fields in a popup", async () => {
+    query = "tab=updates";
+    const update = {
+      id: "u1",
+      kind: "release",
+      slug: "spring-release",
+      title: "Spring release",
+      summary: "",
+      body: "",
+      banner_id: null,
+      banner_url: null,
+      landing_url: "",
+      status: "published",
+      page_path: "/products/easy-sample/updates/spring-release",
+      published_at: "2026-10-20T10:00:00Z",
+      archived_at: null,
+    };
+    const calls = mockApi({
+      [`GET ${ADMIN}/products/p1`]: [ok(managed())],
+      [`GET ${ADMIN}/products/p1/updates`]: [ok({ updates: [update], approved_hosts: ["www.workeasy360.com"], images: [] })],
+      [`POST ${ADMIN}/products/p1/updates`]: [{ status: 201, body: { id: "u2" } }],
+      [`PATCH ${ADMIN}/products/p1/updates/u1`]: [ok({ id: "u1" })],
+    });
+    renderAs(MANAGE, <ProductDetail productId="p1" />);
+    expect(await screen.findByRole("rowheader", { name: "Spring release" })).toBeInTheDocument();
+    // No form sits open on the page.
+    expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "New update" }));
+    let popup = screen.getByRole("dialog", { name: "New update" });
+    expect(within(popup).getByRole("button", { name: "Create draft" })).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Title"), { target: { value: "Faster reports" } });
+    expect(within(popup).getByLabelText("Page address")).toHaveValue("faster-reports");
+    fireEvent.click(within(popup).getByRole("button", { name: "Create draft" }));
+    await waitFor(() => expect(calls.find((c) => c.key === `POST ${ADMIN}/products/p1/updates`)?.body).toMatchObject({ kind: "release", title: "Faster reports", slug: "faster-reports", banner_id: null }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText("Draft update created.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Spring release" }));
+    popup = screen.getByRole("dialog", { name: "Edit Spring release" });
+    // A published update's address is fixed, and never sent again.
+    expect(within(popup).getByLabelText("Page address")).toBeDisabled();
+    fireEvent.change(within(popup).getByLabelText("Summary"), { target: { value: "What is new." } });
+    fireEvent.click(within(popup).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.some((c) => c.key === `PATCH ${ADMIN}/products/p1/updates/u1`)).toBe(true));
+    const sent = calls.find((c) => c.key === `PATCH ${ADMIN}/products/p1/updates/u1`)?.body as Record<string, unknown>;
+    expect(sent).toMatchObject({ title: "Spring release", summary: "What is new." });
+    expect(sent.slug).toBeUndefined();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText("Update saved.")).toBeInTheDocument();
   });
 });

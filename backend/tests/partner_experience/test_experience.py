@@ -71,19 +71,23 @@ def test_the_affiliate_bundle_reaches_no_customer_price_or_subscription():
     assert not {p for p in permissions if "customer" in p or "subscription" in p}
 
 
-def test_the_white_label_bundle_is_the_commercial_set_plus_brand_and_domain():
+def test_the_white_label_bundle_is_brand_and_domain_only():
+    """ADR-063: White Label is an add-on. Selling, referring and earning are base
+    permissions granted beside it explicitly (``also``), never by White Label."""
     wl = set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL])
-    assert {caps.BRANDING_MANAGE, caps.DOMAIN_MANAGE} <= wl
-    assert set(caps._COMMERCIAL) <= wl
-    assert caps.SUBPARTNER_MANAGE not in wl
+    assert wl == {caps.BRANDING_MANAGE, caps.DOMAIN_MANAGE}
+    assert not set(caps._COMMERCIAL) & wl
     assert caps.SUBPARTNER_MANAGE in caps.EXPERIENCE_BUNDLES[RESELLER]
 
 
-def test_the_money_capabilities_are_in_every_bundle():
-    for bundle in caps.EXPERIENCE_BUNDLES.values():
+def test_the_money_capabilities_are_in_every_base_bundle():
+    for key in (RESELLER, AFFILIATE):
         assert {caps.COMMISSION_EARN, caps.COMMISSION_VIEW, caps.PAYOUT_VIEW} <= set(
-            bundle
+            caps.EXPERIENCE_BUNDLES[key]
         )
+    assert not {caps.COMMISSION_EARN, caps.PAYOUT_VIEW} & set(
+        caps.EXPERIENCE_BUNDLES[WHITE_LABEL]
+    )
 
 
 @pytest.mark.parametrize(
@@ -91,9 +95,8 @@ def test_the_money_capabilities_are_in_every_bundle():
     [
         (set(), []),
         (set(caps.EXPERIENCE_BUNDLES[RESELLER]), [RESELLER]),
-        # ADR-053: White-label holds the commercial set too, and the Reseller
-        # workspace is offered beside it (additive, no subsumption).
-        (set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL]), [RESELLER, WHITE_LABEL]),
+        # ADR-063: White Label alone is its own workspace and nothing more.
+        (set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL]), [WHITE_LABEL]),
         (set(caps.EXPERIENCE_BUNDLES[AFFILIATE]), [AFFILIATE]),
         (
             set(caps.EXPERIENCE_BUNDLES[RESELLER])
@@ -103,7 +106,7 @@ def test_the_money_capabilities_are_in_every_bundle():
         (
             set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL])
             | set(caps.EXPERIENCE_BUNDLES[AFFILIATE]),
-            [RESELLER, WHITE_LABEL, AFFILIATE],
+            [WHITE_LABEL, AFFILIATE],
         ),
         ({caps.SUPPORT_ACCESS}, []),
     ],
@@ -139,9 +142,15 @@ def test_workspaces_are_a_pure_function_of_the_grants(held, expected):
         ("white_label", set(AFFILIATE_CAPS), "affiliate"),
         # Unset: the first workspace there is.
         ("", set(caps.EXPERIENCE_BUNDLES[RESELLER]) | set(AFFILIATE_CAPS), "reseller"),
-        # ADR-053: Reseller stays a workspace of a white-label partner, so the
-        # preference for it is honoured; unset opens the largest one.
-        ("reseller", set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL]), "reseller"),
+        # ADR-053/063: a partner holding White Label and Reseller keeps both
+        # workspaces, so the preference for Reseller is honoured; unset opens the
+        # largest one.
+        (
+            "reseller",
+            set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL])
+            | set(caps.EXPERIENCE_BUNDLES[RESELLER]),
+            "reseller",
+        ),
         ("", set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL]), "white_label"),
         ("affiliate", set(), None),
         ("nonsense", set(AFFILIATE_CAPS), "affiliate"),
@@ -287,9 +296,11 @@ def workspace_keys(user_id) -> list[str]:
 def test_white_label_to_reseller_swaps_the_brand_for_the_sub_partner_capability(
     catalog, partner_factory, manager
 ):
-    """White-label contains the Reseller workspace, so a White-label partner has one
-    workspace but two experiences; moving it to Reseller must work, not refuse."""
-    fx = partner_factory(*caps.EXPERIENCE_BUNDLES[WHITE_LABEL], code="wl-to-rs")
+    """ADR-063: a White Label partner that sold held the reseller's set beside it;
+    moving it to Reseller keeps that set and ends only the brand and the domain."""
+    fx = partner_factory(
+        *caps.EXPERIENCE_BUNDLES[WHITE_LABEL], *caps._COMMERCIAL, code="wl-to-rs"
+    )
     result = experience.transition_experience(
         manager,
         fx["partner"].id,
@@ -316,12 +327,22 @@ def test_reseller_to_white_label_adds_the_brand_and_drops_only_the_sub_partner_c
         retire=RESELLER,
         reason="Became a white-label partner",
     )
+    # ADR-063: White Label alone sells nothing, so retiring Reseller ends the
+    # selling set and keeps what the partner earned (the money capabilities).
     assert set(result.capabilities_granted) == {caps.BRANDING_MANAGE, caps.DOMAIN_MANAGE}
-    assert result.capabilities_revoked == [caps.SUBPARTNER_MANAGE]
-    assert selectors.active_capabilities(fx["partner"].id) == set(
-        caps.EXPERIENCE_BUNDLES[WHITE_LABEL]
-    )
-    assert workspace_keys(fx["user"].id) == ["reseller", "white_label"]
+    assert set(result.capabilities_revoked) == {
+        caps.CUSTOMER_PROVISION,
+        caps.CUSTOMER_MANAGE,
+        caps.SUBSCRIPTION_SELL,
+        caps.SUBSCRIPTION_MANAGE,
+        caps.PRICING_VIEW,
+        caps.SUPPORT_ACCESS,
+        caps.SUBPARTNER_MANAGE,
+    }
+    held = selectors.active_capabilities(fx["partner"].id)
+    assert set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL]) <= held
+    assert {caps.COMMISSION_EARN, caps.COMMISSION_VIEW, caps.PAYOUT_VIEW} <= held
+    assert workspace_keys(fx["user"].id) == ["white_label"]
 
 
 def test_retiring_white_label_keeps_the_reseller_set_the_partner_also_wears(
@@ -361,7 +382,16 @@ def test_retiring_reseller_while_white_label_is_held_withdraws_only_what_white_l
     result = experience.retire_experience(
         manager, fx["partner"].id, experience=RESELLER, reason="No sub-partners any more"
     )
-    assert result.capabilities_revoked == [caps.SUBPARTNER_MANAGE]
+    # ADR-063: White Label needs none of the reseller's set any more.
+    assert set(result.capabilities_revoked) == {
+        caps.CUSTOMER_PROVISION,
+        caps.CUSTOMER_MANAGE,
+        caps.SUBSCRIPTION_SELL,
+        caps.SUBSCRIPTION_MANAGE,
+        caps.PRICING_VIEW,
+        caps.SUPPORT_ACCESS,
+        caps.SUBPARTNER_MANAGE,
+    }
     assert set(caps.EXPERIENCE_BUNDLES[WHITE_LABEL]) <= selectors.active_capabilities(
         fx["partner"].id
     )

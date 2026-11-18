@@ -496,3 +496,74 @@ def test_no_invitation_or_password_email_is_sent_for_a_typed_password(catalog, a
             str(n) for n in Notification.objects.values_list("template_key", flat=True)
         ]
     assert not any("member_invited" in k or "password" in k for k in keys), keys
+
+
+# --- an invitation instead of a typed password (2026-11-07) ---------------------------------
+
+
+def _mail_to(address: str):
+    from django.core import mail
+
+    from tests.phase9.conftest import deliver_account_mail
+
+    deliver_account_mail()
+    return [m for m in mail.outbox if address in m.to]
+
+
+def test_an_invited_administrator_has_no_password_and_is_emailed_when_the_partner_is_activated(
+    catalog, admin
+):
+    from tests.partner_experience.conftest import activate, complete_profile
+
+    response = send(admin, CREATE, make_body("reseller", mode="invite", password=None))
+    assert response.status_code == 201, response.content
+    assert response.json()["administrator"] == {
+        "email": ADMIN_EMAIL,
+        "account_created": True,
+        "invited": True,
+    }
+    user = User.objects.get(email=ADMIN_EMAIL)
+    assert not user.has_usable_password()
+    member = PartnerMember.objects.get(partner__code="acme-partner")
+    assert member.role == "owner"
+    assert member.invitation_deferred is True and member.invitation_sent_at is None
+    # The partner is a draft: nothing is sent yet.
+    assert _mail_to(ADMIN_EMAIL) == []
+
+    partner_id = response.json()["id"]
+    complete_profile(admin, partner_id, brand=False, referral=False)
+    assert activate(admin, partner_id).status_code == 200
+    member.refresh_from_db()
+    assert member.invitation_sent_at is not None
+    sent = _mail_to(ADMIN_EMAIL)
+    assert len(sent) == 1
+    # The link opens the partner portal's own reset page.
+    assert "/partner/accept-invitation#token=" in sent[0].body
+
+
+def test_an_invitation_takes_no_password(catalog, admin):
+    response = send(admin, CREATE, make_body("reseller", mode="invite"))
+    assert response.status_code == 400
+    assert "administrator.password" in fields(response)
+    nothing_was_created()
+
+
+def test_an_invitation_to_an_address_that_has_an_account_is_refused(
+    catalog, admin, existing
+):
+    response = send(
+        admin,
+        CREATE,
+        make_body("reseller", email=existing.email, mode="invite", password=None),
+    )
+    assert response.status_code == 400
+    assert "administrator.email" in fields(response)
+    existing.refresh_from_db()
+    assert existing.check_password(PASSWORD)
+    assert not PartnerAccount.objects.filter(code="acme-partner").exists()
+
+
+def test_a_typed_password_still_answers_not_invited(catalog, admin):
+    response = send(admin, CREATE, make_body("reseller"))
+    assert response.status_code == 201
+    assert response.json()["administrator"]["invited"] is False

@@ -11,6 +11,7 @@ import {
   type IssuedKey,
   type TranslationsOverview,
 } from "@/lib/api/partnerPanel";
+import { dialog, FormPopup } from "@/features/controlplane/Modal";
 import { NotAvailable, PageHeader, usePanel } from "./PanelKit";
 import styles from "./PartnerPanel.module.css";
 
@@ -88,6 +89,7 @@ export function ApiKeys() {
       <LoadGate load={load} what="API keys">
         {(d) => (
           <>
+            {d.can_manage && active && <CreateKey data={d} onIssued={setIssued} onCreated={reload} />}
             <KeysTable
               data={d}
               manage={d.can_manage && active}
@@ -99,17 +101,6 @@ export function ApiKeys() {
               }
               onRevoke={(key) => void act(() => panelApi.revokeApiKey(id, key.id), `${key.name} was revoked.`)}
             />
-            {d.can_manage && active && (
-              <CreateKey
-                data={d}
-                busy={busy}
-                onCreate={(body) =>
-                  void act(async () => {
-                    setIssued(await panelApi.createApiKey(id, body));
-                  }, `${body.name} was created.`)
-                }
-              />
-            )}
             <section className={styles.panel} aria-labelledby="key-never">
               <h2 id="key-never">What a key can never be</h2>
               <ul>
@@ -236,15 +227,9 @@ function KeysTable({
   );
 }
 
-function CreateKey({
-  data,
-  busy,
-  onCreate,
-}: {
-  data: ApiKeysOverview;
-  busy: boolean;
-  onCreate: (body: { name: string; scopes: string[]; expires_in_days: number }) => void;
-}) {
+/** "Create an API key", in a popup. The new key's secret shows on the page once the popup closes. */
+function CreateKey({ data, onIssued, onCreated }: { data: ApiKeysOverview; onIssued: (issued: IssuedKey) => void; onCreated: () => void }) {
+  const { id } = usePanel();
   const nameId = useId();
   const expiryId = useId();
   const [name, setName] = useState("");
@@ -252,17 +237,25 @@ function CreateKey({
   const [days, setDays] = useState(data.default_expiry_days);
   const toggle = (key: string) => setScopes((l) => (l.includes(key) ? l.filter((x) => x !== key) : [...l, key]));
   return (
-    <form
-      className={styles.panel}
-      onSubmit={(e) => {
-        e.preventDefault();
-        onCreate({ name: name.trim(), scopes, expires_in_days: days });
-        setName("");
-        setScopes([]);
-      }}
-    >
-      <h2>Create an API key</h2>
-      <div className={styles.formGrid}>
+    <div className={styles.actions}>
+      <FormPopup
+        label="+ Create an API key"
+        title="Create an API key"
+        intro={`A key can only be given what your own role can already see. Up to ${data.limit} keys can be active at once.`}
+        submitLabel="Create key"
+        canSubmit={Boolean(name.trim()) && scopes.length > 0}
+        onOpen={() => {
+          setName("");
+          setScopes([]);
+          setDays(data.default_expiry_days);
+        }}
+        onSubmit={async () => {
+          const body = { name: name.trim(), scopes, expires_in_days: days };
+          onIssued(await panelApi.createApiKey(id, body));
+          return `${body.name} was created.`;
+        }}
+        onDone={onCreated}
+      >
         <div>
           <label className="w360-label" htmlFor={nameId}>
             Key name
@@ -281,27 +274,21 @@ function CreateKey({
             ))}
           </select>
         </div>
-      </div>
-      <fieldset className={styles.checks}>
-        <legend>Scope</legend>
-        {data.scopes.map((s) => (
-          <label key={s.key}>
-            <input type="checkbox" checked={scopes.includes(s.key)} onChange={() => toggle(s.key)} />
-            <span>
-              {s.label}
-              <span className={styles.muted}> — {s.description}</span>
-            </span>
-          </label>
-        ))}
-        {data.scopes.length === 0 && <p className={styles.muted}>Your role holds nothing a key could be given.</p>}
-      </fieldset>
-      <p className={styles.muted}>A key can only be given what your own role can already see. Up to {data.limit} keys can be active at once.</p>
-      <div>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy || !name.trim() || scopes.length === 0}>
-          Create key
-        </button>
-      </div>
-    </form>
+        <fieldset className={`${styles.checks} ${dialog.span}`}>
+          <legend>Scope</legend>
+          {data.scopes.map((s) => (
+            <label key={s.key}>
+              <input type="checkbox" checked={scopes.includes(s.key)} onChange={() => toggle(s.key)} />
+              <span>
+                {s.label}
+                <span className={styles.muted}> — {s.description}</span>
+              </span>
+            </label>
+          ))}
+          {data.scopes.length === 0 && <p className={styles.muted}>Your role holds nothing a key could be given.</p>}
+        </fieldset>
+      </FormPopup>
+    </div>
   );
 }
 
@@ -370,27 +357,30 @@ function TranslationForm({
       {groups.map((group) => (
         <fieldset key={group} className={styles.panel}>
           <legend>{group}</legend>
-          {data.strings
-            .filter((s) => s.group === group)
-            .map((s) => (
-              <div key={s.key}>
-                <label className="w360-label" htmlFor={`tr-${s.key}`}>
-                  {s.label}
-                </label>
-                <input
-                  id={`tr-${s.key}`}
-                  className="w360-input"
-                  maxLength={s.max_length}
-                  disabled={!editable || busy}
-                  placeholder={s.english}
-                  value={draft[s.key] ?? ""}
-                  onChange={(e) => setDraft((d) => ({ ...d, [s.key]: e.target.value }))}
-                />
-                <span className={styles.muted}>
-                  Shown now: {s.effective || "nothing"} ({s.source === "partner" ? "your wording" : s.source === "platform" ? "Workeasy360's wording" : "English"})
-                </span>
-              </div>
-            ))}
+          {/* Two aligned columns, each label above its field and the current wording under it. */}
+          <div className={styles.formGrid}>
+            {data.strings
+              .filter((s) => s.group === group)
+              .map((s) => (
+                <div key={s.key}>
+                  <label className="w360-label" htmlFor={`tr-${s.key}`}>
+                    {s.label}
+                  </label>
+                  <input
+                    id={`tr-${s.key}`}
+                    className="w360-input"
+                    maxLength={s.max_length}
+                    disabled={!editable || busy}
+                    placeholder={s.english}
+                    value={draft[s.key] ?? ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, [s.key]: e.target.value }))}
+                  />
+                  <p className="w360-hint">
+                    Shown now: {s.effective || "nothing"} ({s.source === "partner" ? "your wording" : s.source === "platform" ? "Workeasy360's wording" : "English"})
+                  </p>
+                </div>
+              ))}
+          </div>
         </fieldset>
       ))}
       {editable && (

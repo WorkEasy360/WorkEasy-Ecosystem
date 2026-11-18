@@ -32,16 +32,16 @@ const PARTNER_MANAGE = "platform.staff_partner.manage";
 const PARTNER_PAGE = /^\/admin\/partners\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/|$)/i;
 
 export const CENTER_ITEMS: CenterItem[] = [
-  { href: "/admin/partners", label: "Dashboard", icon: "dashboard", exact: true, permission: PARTNER_VIEW },
-  { href: "/admin/partners/all", label: "All Partners", icon: "handshake", alsoMatches: PARTNER_PAGE, permission: PARTNER_VIEW },
-  { href: "/admin/partners/new", label: "Add Partner", icon: "plus", permission: PARTNER_MANAGE },
-  { href: "/admin/partners/product-requests", label: "Product Requests", icon: "store", permission: PARTNER_VIEW },
+  { href: "/admin/partners", label: "Partner overview", icon: "dashboard", exact: true, permission: PARTNER_VIEW },
+  { href: "/admin/partners/all", label: "All partners", icon: "handshake", alsoMatches: PARTNER_PAGE, permission: PARTNER_VIEW },
+  { href: "/admin/partners/new", label: "New partner", icon: "plus", permission: PARTNER_MANAGE },
+  { href: "/admin/partners/product-requests", label: "Product requests", icon: "store", permission: PARTNER_VIEW },
   // 2026-11-03: what an upgrade to Reseller or White-label costs, and how to pay
   // it offline - the same fees as Currency & pricing's Partner set-up fees.
-  { href: "/admin/partners/upgrade-fees", label: "Upgrade Fees", icon: "currency", permission: PARTNER_VIEW },
+  { href: "/admin/partners/upgrade-fees", label: "Upgrade fees", icon: "currency", permission: PARTNER_VIEW },
   // 2026-11-03 (unified partner dashboard): partners' helpdesk tickets to
   // Workeasy360, and their withdrawal requests and payout details.
-  { href: "/admin/partners/tickets", label: "Partner Tickets", icon: "help", permission: PARTNER_VIEW },
+  { href: "/admin/partners/tickets", label: "Partner tickets", icon: "help", permission: PARTNER_VIEW },
   { href: "/admin/partners/withdrawals", label: "Withdrawals", icon: "card", permission: "platform.staff_payout.manage" },
 ];
 

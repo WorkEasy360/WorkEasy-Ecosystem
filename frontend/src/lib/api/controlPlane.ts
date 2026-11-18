@@ -17,6 +17,9 @@
  */
 
 import { apiFetch, apiUpload } from "./client";
+import type { DayRangeQuery } from "./types";
+import type { InvitationDelivery } from "./partnerConsole";
+import type { PublicStoreProductPage } from "./public";
 
 export interface Page<T> {
   results: T[];
@@ -72,6 +75,9 @@ export interface PartnerMemberRow {
    * activated. Null `invitation_sent_at` with this false and no password is a
    * person attached before invitations were tracked: show "Invitation pending". */
   invitation_deferred: boolean;
+  /** Where the latest setup email stands (queued, sent, retrying, failed), for
+   * someone still without a password; null when none was queued. */
+  invitation_delivery?: InvitationDelivery | null;
 }
 
 export interface PartnerDetail extends PartnerSummary {
@@ -101,6 +107,33 @@ export interface CustomerRow {
   /** Phase 9: "customer", "trial" or "" (its people are Explorers). */
   access_class: string;
   partner: { partner_id: string; partner_code: string; partner_name: string; link_status: string } | null;
+  /** Only when the list is filtered by product: where that product's access comes from. */
+  product_source?: ProductSource | null;
+}
+
+/** The kind of source behind a product's access. `grant` is a staff override;
+ * `trial` is a product trial, which is not a subscription. */
+export type AccessSourceKind = "subscription" | "bundle" | "grant" | "trial";
+
+export interface ProductSource {
+  kind: AccessSourceKind | string;
+  status: string;
+  effective_to: string | null;
+  effective_now: boolean;
+}
+
+export interface ProductTrialView {
+  id: string;
+  product_code: string;
+  plan_code: string;
+  seats: number;
+  /** active, converted, expired or cancelled, as the record says. */
+  status: string;
+  /** Still granting access now: active and inside its window. */
+  in_effect: boolean;
+  started_at: string;
+  ends_at: string;
+  ended_at: string | null;
 }
 
 export interface AuditRow {
@@ -139,7 +172,9 @@ export interface CustomerDetail {
   organization: { organization_id: string; slug: string; display_name: string; status: string; created_at: string; suspension_reason: string };
   members: Record<string, number>;
   subscriptions: SubscriptionView[];
-  entitlements: Record<string, { status: string; seats: number | null }>;
+  entitlements: Record<string, { status: string; seats: number | null; source_kind?: string | null }>;
+  /** Product trials: their own record, not a subscription (Phase 11). */
+  product_trials?: ProductTrialView[];
   licenses: { product_code: string; seats_total: number; seats_assigned: number; over_limit: number }[];
   entitlement_overrides: { id: string; product_code: string; feature_key: string; reason: string; expires_at: string | null }[];
   billing: { currency: string; collection_mode: string; billing_region: string; provider: string; note: string } | null;
@@ -207,8 +242,26 @@ export interface RuleRow {
   rate_bp: number;
   /** ADR-052: also earns on each paid renewal of the sale. */
   recurring: boolean;
+  /** The partner a rule belongs to, by name, when it belongs to one. */
+  partner_name?: string;
+  /** ADR-056: one plan of the product, a fixed amount instead of a rate, a limit on renewals. */
+  plan_code?: string;
+  fixed_amount_minor?: number | null;
+  fixed_currency?: string;
+  recurring_months?: number | null;
   effective_from: string;
   retired_at: string | null;
+}
+
+/** The platform's fixed terms for commissions, as the server applies them. */
+export interface CommissionTerms {
+  clearance_days: number;
+  referral_earning_days: number;
+  reversal_reasons: string[];
+  min_withdrawal_minor: number;
+  withdrawal_currency: string;
+  tds_rate_bp: number;
+  tds_currency: string;
 }
 
 export interface CatalogProduct {
@@ -265,6 +318,8 @@ export interface ProductChanges {
   product_type?: ProductType;
   best_for?: string[];
   integrations?: string[];
+  /** ADR-058: the refund promise in days; null = none. */
+  refund_days?: number | null;
 }
 
 /** The marketplace's product types (2026-11-04); the server checks the value. */
@@ -357,7 +412,7 @@ export interface IssuedConsoleCredential {
  * {@link productMediaUrl}; a file id never reaches the browser. */
 export interface ProductMediaRow {
   id: string;
-  kind: "logo" | "banner" | "screenshot" | "video";
+  kind: "logo" | "banner" | "screenshot" | "video" | "video_poster";
   width: number;
   height: number;
   content_type: string;
@@ -370,6 +425,8 @@ export interface ReadinessItem {
   key: string;
   label: string;
   ok: boolean;
+  /** What the requirement asks for, when the label alone does not say. */
+  detail?: string;
 }
 
 export interface ConsoleProduct {
@@ -413,6 +470,7 @@ export interface ConsoleProduct {
   product_type?: ProductType;
   best_for?: string[];
   integrations?: string[];
+  refund_days?: number | null;
   created_at: string | null;
   updated_at: string | null;
   activated_at: string | null;
@@ -432,6 +490,22 @@ export interface ConsoleProduct {
   };
   /** `null` when the caller may not see integrations, or none is registered. */
   integration: ConsoleIntegration | null;
+}
+
+/** 2026-11-16: one category on the Super Admin's own list. */
+export interface ProductCategoryRow {
+  id: string;
+  name: string;
+  /** How many products are in it (archived ones included). */
+  products: number;
+}
+
+/** The category list, with any category a product carries that is not on it. */
+export interface ProductCategoryList {
+  categories: ProductCategoryRow[];
+  unlisted: { name: string; products: number }[];
+  max_categories: number;
+  can_manage: boolean;
 }
 
 export interface ProductsConsole {
@@ -519,6 +593,72 @@ export interface ManagedProduct {
   can_see_activity: boolean;
 }
 
+/** ADR-068: a direct price book a Publisher plan can be priced in. */
+export interface PublisherPriceBook {
+  id: string;
+  code: string;
+  name: string;
+  currency: string;
+  region: string;
+}
+
+/** ADR-068: one of the product's standard plans as the Publisher edits it -
+ * the same plan record Products & Pricing > Plans shows. */
+export interface PublisherPlanRow {
+  id: string;
+  code: string;
+  name: string;
+  caption: string;
+  description: string;
+  status: string;
+  visible: boolean;
+  recommended: boolean;
+  billing_type: string;
+  free: boolean;
+  price_book_id: string | null;
+  currency: string | null;
+  /** Billing period -> amount in minor units, current direct prices. */
+  prices: Partial<Record<"monthly" | "quarterly" | "semi_annual" | "annual", number>>;
+  per_user: boolean;
+  setup_fee_minor: number;
+  discount_bp: number;
+  included_seats: number;
+  max_seats: number | null;
+  trial_days: number;
+  version: number | null;
+  published: boolean;
+  features: Record<string, unknown>;
+}
+
+/** ADR-068: what an empty Add Product page needs. */
+export interface PublisherBootstrap {
+  categories: string[];
+  books: PublisherPriceBook[];
+  intervals: ("monthly" | "quarterly" | "semi_annual" | "annual")[];
+  max_plans: number;
+  can_manage: { catalog: boolean; pricing: boolean; integration: boolean };
+}
+
+/** ADR-068: one product as the Publisher edits it. */
+export interface PublisherState extends PublisherBootstrap, ManagedProduct {
+  listing: {
+    description: string;
+    video_url: string;
+    video_title: string;
+    video_description: string;
+    highlights: string[];
+    store_title: string;
+    store_summary: string;
+    application_url: string;
+    documentation_url: string;
+    support_url: string;
+    marketing_url: string;
+  };
+  video: { id: string; content_type: string; size_bytes: number } | null;
+  plans: PublisherPlanRow[];
+  add_on_count: number;
+}
+
 /** What the Add Product wizard sends. `code` is derived from the slug by the server. */
 export interface NewProduct {
   name: string;
@@ -574,8 +714,8 @@ export const adminApi = {
   dashboard: (month?: string) => apiFetch<Dashboard>(`${admin}/dashboard`, { query: { month } }),
   /** What is waiting for staff - the console's notification bell. */
   attention: () => apiFetch<{ items: AttentionItem[] }>(`${admin}/attention`),
-  audit: (cursor?: string, action?: string) =>
-    apiFetch<Page<AuditRow>>(`${admin}/audit`, { query: { cursor, action } }),
+  audit: (cursor?: string, action?: string, filters?: { actor?: string; from?: string; to?: string }) =>
+    apiFetch<Page<AuditRow>>(`${admin}/audit`, { query: { cursor, action, ...filters } }),
 
   /** Phase 9 filters: `subscription` (a status, or "none"), `access`
    * ("customer" | "trial" | "none") and `product` (holds it now). */
@@ -586,7 +726,7 @@ export const adminApi = {
     subscription?: string;
     access?: string;
     product?: string;
-  }) => apiFetch<Page<CustomerRow>>(`${admin}/customers`, { query: q }),
+  } & DayRangeQuery) => apiFetch<Page<CustomerRow>>(`${admin}/customers`, { query: q }),
   customer: (id: string) => apiFetch<CustomerDetail>(`${admin}/customers/${id}`),
   suspendCustomer: (id: string, reason: string) =>
     apiFetch(`${admin}/customers/${id}/suspend`, { method: "POST", body: json({ reason }) }),
@@ -641,6 +781,27 @@ export const adminApi = {
   createManagedProduct: (body: NewProduct) =>
     apiFetch<ManagedProduct>(`${admin}/products`, { method: "POST", body: json(body) }),
   managedProduct: (id: string) => apiFetch<ManagedProduct>(`${admin}/products/${id}`),
+  /** 2026-11-16: the Super Admin's product categories - add, rename, order, delete. */
+  productCategories: () => apiFetch<ProductCategoryList>(`${admin}/products/categories`),
+  createProductCategory: (name: string) =>
+    apiFetch<ProductCategoryRow>(`${admin}/products/categories`, { method: "POST", body: json({ name }) }),
+  renameProductCategory: (id: string, name: string) =>
+    apiFetch<ProductCategoryRow>(`${admin}/products/categories/${id}`, { method: "PATCH", body: json({ name }) }),
+  /** Products in it move to `moveTo` (another category's id); without one, a category in use is refused. */
+  deleteProductCategory: (id: string, moveTo?: string) =>
+    apiFetch<ProductCategoryList>(`${admin}/products/categories/${id}`, { method: "DELETE", query: { move_to: moveTo } }),
+  reorderProductCategories: (order: string[]) =>
+    apiFetch<ProductCategoryList>(`${admin}/products/categories/order`, { method: "POST", body: json({ order }) }),
+  /** ADR-068: the one-page Product Publisher - product, listing and plans saved together. */
+  publisherBootstrap: () => apiFetch<PublisherBootstrap>(`${admin}/products/publisher`),
+  publisherState: (id: string) => apiFetch<PublisherState>(`${admin}/products/${id}/publisher`),
+  createFromPublisher: (body: Record<string, unknown>) =>
+    apiFetch<PublisherState>(`${admin}/products/publisher`, { method: "POST", body: json(body) }),
+  saveFromPublisher: (id: string, body: Record<string, unknown>) =>
+    apiFetch<PublisherState>(`${admin}/products/${id}/publisher`, { method: "PUT", body: json(body) }),
+  publishFromPublisher: (id: string) => apiFetch<PublisherState>(`${admin}/products/${id}/publisher/publish`, { method: "POST" }),
+  /** The Store product page as it will look once published - a draft too (staff only). */
+  storePreview: (id: string) => apiFetch<PublicStoreProductPage & { preview: true }>(`${admin}/products/${id}/store-preview`),
   productLifecycle: (id: string, action: "publish" | "unpublish" | "archive" | "restore") =>
     apiFetch<ManagedProduct>(`${admin}/products/${id}/${action}`, { method: "POST" }),
   deleteProduct: (id: string) => apiFetch<{ deleted: boolean; code: string }>(`${admin}/products/${id}`, { method: "DELETE" }),
@@ -699,9 +860,19 @@ export const adminApi = {
     contact_email?: string;
   }) =>
     apiFetch<PartnerSummary>(`${admin}/partners`, { method: "POST", body: json(body) }),
-  /** Guest login: open the partner's portal read-only, for a reason, for a limited time. */
-  startGuestView: (id: string, reason: string) =>
-    apiFetch<GuestView & { portal_path: string }>(`${admin}/partners/${id}/guest-view`, {
+  /** Login as Guest (ADR-062): open the partner's portal read-only, for a reason, for
+   * a limited time. Multi-portal mode answers `entry`: where to post the one-time
+   * ticket that opens the partner host's session. */
+  startGuestView: (id: string, reason: string, returnPath?: string) =>
+    apiFetch<GuestStart>(`${admin}/partners/${id}/guest-view`, {
+      method: "POST",
+      body: json({ reason, return_path: returnPath }),
+    }),
+  /** Manage Guest Access: this partner's recent guest views. */
+  guestSessions: (id: string) => apiFetch<GuestAccess>(`${admin}/partners/${id}/guest-sessions`),
+  /** Manage Guest Access → Revoke: end that guest view now. */
+  revokeGuestSession: (id: string, sessionId: string, reason: string) =>
+    apiFetch<GuestAccess>(`${admin}/partners/${id}/guest-sessions/${sessionId}/revoke`, {
       method: "POST",
       body: json({ reason }),
     }),
@@ -730,15 +901,29 @@ export const adminApi = {
       body: json({ product_code: productCode, plan_code: planCode || undefined, ...options }),
     }),
 
-  rules: () => apiFetch<{ results: RuleRow[] }>(`${admin}/commission/rules`),
-  createRule: (body: { code: string; rate_bp: number; reason: string; product_code?: string; partner_id?: string; recurring?: boolean }) =>
-    apiFetch(`${admin}/commission/rules`, { method: "POST", body: json(body) }),
+  /** `all`: replaced versions too, not only the rules still live. */
+  rules: (q: { all?: boolean } = {}) =>
+    apiFetch<{ results: RuleRow[] }>(`${admin}/commission/rules`, { query: q.all ? { all: "1" } : {} }),
+  createRule: (body: {
+    code: string;
+    rate_bp: number;
+    reason: string;
+    product_code?: string;
+    plan_code?: string;
+    partner_id?: string;
+    recurring?: boolean;
+    recurring_months?: number | null;
+    fixed_amount_minor?: number | null;
+    fixed_currency?: string;
+    effective_from?: string;
+  }) => apiFetch(`${admin}/commission/rules`, { method: "POST", body: json(body) }),
+  commissionTerms: () => apiFetch<CommissionTerms>(`${admin}/commission/terms`),
   /** `unpaid: "1"` keeps only entries that are in no live payout. */
-  accruals: (q: { partner_id?: string; cursor?: string; unpaid?: string }) =>
+  accruals: (q: { partner_id?: string; cursor?: string; unpaid?: string } & DayRangeQuery) =>
     apiFetch<Page<AccrualRow>>(`${admin}/commission/accruals`, { query: q }),
   reconcileCommissions: () => apiFetch<Reconciliation>(`${admin}/commission/reconcile`),
 
-  payouts: (q: { status?: string; cursor?: string; partner_id?: string }) =>
+  payouts: (q: { status?: string; cursor?: string; partner_id?: string } & DayRangeQuery) =>
     apiFetch<Page<PayoutRow>>(`${admin}/payouts`, { query: q }),
   preparePayout: (partnerId: string, periodEnd: string) =>
     apiFetch<PayoutRow>(`${admin}/payouts`, {
@@ -797,7 +982,15 @@ export interface DashboardOverview {
 }
 
 export interface AttentionItem {
-  key: "partner_upgrades" | "draft_partners" | "payouts";
+  key:
+    | "partner_upgrades"
+    | "draft_partners"
+    | "payouts"
+    | "kyc_reviews"
+    | "kyc_awaiting_activation"
+    | "failed_payments"
+    | "low_balance"
+    | "support_tickets";
   count: number;
 }
 
@@ -840,14 +1033,68 @@ export interface PortalPartner {
   permissions?: string[];
   /** Present when a staff member is viewing this partner as a guest (read-only). */
   guest?: GuestView;
+  /** ADR-063: the category the partner is listed under (a draft's: the type it was created as). */
+  category?: string | null;
+  /** ADR-063: KYC and account states, side by side, and whether the partner may trade. */
+  onboarding?: PartnerOnboarding;
+}
+
+/** Where a partner stands before it may trade (ADR-063). KYC and account states
+ * are separate facts; `cleared` is whether the server lets it trade now. */
+export interface PartnerOnboarding {
+  kyc_status: "draft" | "submitted" | "under_review" | "correction_required" | "approved" | "rejected" | string;
+  account_status: string;
+  cleared: boolean;
+  reason: "kyc_pending" | "activation_pending" | "legacy_kyc_required" | string | null;
+  legacy: boolean;
+  kyc_required: boolean;
+}
+
+/** Whether the menu is confined to onboarding (ADR-063): a draft, or a partner
+ * made active before KYC existed that the Admin's policy restricts. A suspended or
+ * ended partner is not - its permissions already show only its history. */
+export function onboardingOnly(partner: Pick<PortalPartner, "status" | "onboarding">): boolean {
+  if (partner.status === "draft") return true;
+  return partner.onboarding?.reason === "legacy_kyc_required";
 }
 
 /** A staff guest view of one partner's portal: read-only, time-boxed, audited. */
 export interface GuestView {
+  id?: string;
   partner_id: string;
   reason: string;
   started_at?: string;
   expires_at: string;
+  /** Who is looking - the staff member, never the partner. */
+  viewer?: { name: string; email: string };
+}
+
+/** The answer to Login as Guest. `entry` only in multi-portal mode. */
+export interface GuestStart extends GuestView {
+  portal_path: string;
+  entry?: { action: string; ticket: string };
+}
+
+export type GuestSessionStatus = "active" | "exited" | "revoked" | "signed_out" | "replaced" | "expired";
+
+export interface GuestSessionRow {
+  id: string;
+  staff: { id: string; name: string; email: string } | null;
+  reason: string;
+  started_at: string;
+  expires_at: string;
+  entered_at: string | null;
+  ended_at: string | null;
+  ended_by: { id: string; name: string; email: string } | null;
+  status: GuestSessionStatus;
+  mine: boolean;
+}
+
+/** Manage Guest Access: a partner's recent guest views, newest first. */
+export interface GuestAccess {
+  minutes: number;
+  may_start: boolean;
+  sessions: GuestSessionRow[];
 }
 
 export interface PartnerCustomerRow {
@@ -937,7 +1184,8 @@ const partner = (id: string) => `/api/v1/partner/${encodeURIComponent(id)}`;
 
 export const partnerApi = {
   portal: () => apiFetch<{ partners: PortalPartner[] }>("/api/v1/partner/portal"),
-  endGuestView: () => apiFetch<{ ended: boolean }>("/api/v1/partner/guest-view/end", { method: "POST" }),
+  /** Exit Guest Mode: the answer says where the Admin is (from the server's configuration). */
+  endGuestView: () => apiFetch<{ ended: boolean; return_url: string }>("/api/v1/partner/guest-view/end", { method: "POST" }),
   customers: (id: string, cursor?: string, q?: string) =>
     apiFetch<Page<PartnerCustomerRow>>(`${partner(id)}/customers`, { query: { cursor, q: q || undefined } }),
   provision: (id: string, organizationName: string, ownerEmail: string, key: string, owner?: { first?: string; last?: string }) =>

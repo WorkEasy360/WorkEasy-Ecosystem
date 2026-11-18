@@ -157,6 +157,9 @@ def test_the_partner_portal_has_no_partner_type_branch():
 _IS_STAFF_READERS = {
     # The grant mechanism: a grant on a non-staff account is inert.
     "workeasy360/platform/authz/staff.py",
+    # ADR-062: a Login as Guest session is read only for a staff identity whose
+    # guest view is live; the flag can only end it, never grant anything.
+    "workeasy360/interfaces/api/guest_session.py",
     # The admin API refuses a non-staff session before building a context.
     "workeasy360/interfaces/api/v1/control_plane_http.py",
     # Operator commands that designate staff identities.
@@ -325,6 +328,15 @@ def test_the_frontend_contains_no_product_screens():
         "product-access",
         "sign-out",
         "settings",
+        # ADR-065: /robots.txt, per host - the Digital Store's own host invites
+        # crawlers to its public pages, every other host disallows all. A route
+        # handler returning text, not a screen.
+        "robots.txt",
+        # ADR-066: /switch-account (the central sign-in host ends its own
+        # session for a person switching accounts) and /confirm-email (the
+        # emailed change-of-sign-in-email link). Account pages, not screens.
+        "switch-account",
+        "confirm-email",
     }, top
     assert {p.name for p in (app / "auth").iterdir()} == {"continue"}
     site = {p.name for p in (app / "(site)").iterdir() if p.is_dir()}
@@ -355,6 +367,8 @@ def test_the_exemptions_from_tenant_scoping_are_exactly_the_ones_D019_justifies(
         "commissions.CommissionAccrual",
         # ADR-057 (2026-11-03): a partner's helpdesk spans its customers.
         "partners.PartnerTicket",
+        # Admin Panel (2026-11-09): the setup queue spans customers.
+        "provisioning.CustomerSetup",
     }, "adding a control-plane exemption needs an entry in the debt register"
     register = (REPO_ROOT / "docs" / "architecture" / "debt-register.md").read_text(
         encoding="utf-8"

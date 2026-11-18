@@ -13,6 +13,8 @@ import {
   type AiRequestRow,
   type AiUsage,
 } from "@/lib/api/intelligence";
+import { FormPopup } from "@/features/controlplane/Modal";
+import details from "@/features/console/ConsoleScreens.module.css";
 import styles from "./Intelligence.module.css";
 
 type Load =
@@ -50,8 +52,6 @@ export function describeError(err: unknown): string {
  */
 export function AiSettings({ orgSlug }: { orgSlug: string }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   function refresh() {
     Promise.all([getAiUsage(orgSlug), getAiSettings(orgSlug), listAiRequests(orgSlug)])
@@ -80,27 +80,17 @@ export function AiSettings({ orgSlug }: { orgSlug: string }) {
   const { usage, policy, providers, requests } = load;
   const money = (micros: number) => formatMicros(micros, usage.currency);
 
+  // The popup shows a failure in this screen's own words (its error line reads an ApiError's `detail`).
   async function save(change: Parameters<typeof updateAiSettings>[1]) {
-    setError(null);
-    setMessage(null);
     try {
       await updateAiSettings(orgSlug, change);
-      setMessage("AI settings saved.");
-      refresh();
     } catch (err) {
-      setError(describeError(err));
+      throw new ApiError(400, { detail: describeError(err) });
     }
   }
 
   return (
     <div className={styles.stack}>
-      {message && <p role="status">{message}</p>}
-      {error && (
-        <p className="w360-error-text" role="alert">
-          {error}
-        </p>
-      )}
-
       <section className={`w360-card ${styles.card}`} aria-labelledby="ai-status">
         <h2 id="ai-status" className={styles.cardTitle}>
           {STATUS_TEXT[usage.status]}
@@ -147,7 +137,7 @@ export function AiSettings({ orgSlug }: { orgSlug: string }) {
         )}
       </section>
 
-      <SettingsForm policy={policy} providers={providers} currency={usage.currency} onSave={save} />
+      <SettingsPanel policy={policy} providers={providers} currency={usage.currency} onSave={save} onDone={refresh} />
 
       <section aria-labelledby="ai-requests">
         <h2 id="ai-requests" className={styles.sectionTitle}>
@@ -192,101 +182,140 @@ export function AiSettings({ orgSlug }: { orgSlug: string }) {
   );
 }
 
-function SettingsForm({
+/** The settings as they are, and an Edit popup for them (2026-11-05, every form in a popup). */
+function SettingsPanel({
   policy,
   providers,
   currency,
   onSave,
+  onDone,
 }: {
   policy: AiPolicy;
   providers: AiProvider[];
   currency: string;
-  onSave: (change: Parameters<typeof updateAiSettings>[1]) => void;
+  onSave: (change: Parameters<typeof updateAiSettings>[1]) => Promise<void>;
+  onDone: () => void;
 }) {
   const enabledId = useId();
   const budgetId = useId();
   const fallbackId = useId();
+  const initialBudget = () =>
+    policy.monthly_budget_micros === null ? "" : String(policy.monthly_budget_micros / 1_000_000);
   const [enabled, setEnabled] = useState(policy.ai_enabled);
-  const [budget, setBudget] = useState(
-    policy.monthly_budget_micros === null ? "" : String(policy.monthly_budget_micros / 1_000_000),
-  );
+  const [budget, setBudget] = useState(initialBudget);
   const [allowed, setAllowed] = useState<string[]>(policy.allowed_providers);
   const [fallback, setFallback] = useState(policy.allow_provider_fallback);
   const budgetValue = budget.trim() === "" ? null : Math.round(Number(budget) * 1_000_000);
   const budgetValid = budgetValue === null || (Number.isFinite(budgetValue) && budgetValue >= 0);
+  const allowedNames = providers.filter((p) => policy.allowed_providers.includes(p.key)).map((p) => p.display_name);
 
   return (
-    <form
-      className={`w360-card ${styles.card} ${styles.form}`}
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!budgetValid) return;
-        onSave({
-          revision: policy.revision,
-          ai_enabled: enabled,
-          monthly_budget_micros: budgetValue,
-          allowed_providers: allowed,
-          allow_provider_fallback: fallback,
-        });
-      }}
-    >
-      <h2 className={styles.cardTitle}>Settings</h2>
-      <div className={styles.check}>
-        <input id={enabledId} type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-        <label htmlFor={enabledId}>Allow products to use AI for this organization</label>
-      </div>
-      <div className={styles.field}>
-        <label className="w360-label" htmlFor={budgetId}>
-          Monthly AI budget ({currency}, leave empty for the platform limit of{" "}
-          {formatMicros(policy.platform_cap_micros, currency)})
-        </label>
-        <input
-          id={budgetId}
-          className="w360-input"
-          inputMode="decimal"
-          value={budget}
-          aria-invalid={!budgetValid}
-          onChange={(e) => setBudget(e.target.value)}
-        />
-      </div>
-      <fieldset className={styles.fieldset}>
-        <legend>Providers that may process this organization&apos;s data</legend>
-        <p className={styles.muted}>
-          None ticked means every approved provider. Deleting knowledge removes it from Workeasy360; a provider may
-          keep what it already received for the period its own terms allow.
-        </p>
-        {providers.map((p) => {
-          const id = `${budgetId}-${p.key}`;
-          return (
-            <div key={p.key} className={styles.check}>
-              <input
-                id={id}
-                type="checkbox"
-                checked={allowed.includes(p.key)}
-                onChange={(e) =>
-                  setAllowed(e.target.checked ? [...allowed, p.key] : allowed.filter((k) => k !== p.key))
-                }
-              />
-              <label htmlFor={id}>
-                {p.display_name}
-                <span className={styles.muted}> — {describeProvider(p)}</span>
-              </label>
-            </div>
-          );
-        })}
-      </fieldset>
-      <div className={styles.check}>
-        <input id={fallbackId} type="checkbox" checked={fallback} onChange={(e) => setFallback(e.target.checked)} />
-        <label htmlFor={fallbackId}>
-          If a provider is unavailable, allow another approved provider to answer instead
-        </label>
-      </div>
+    <section className={`w360-card ${styles.card} ${styles.form}`} aria-labelledby="ai-settings">
+      <h2 id="ai-settings" className={styles.cardTitle}>
+        Settings
+      </h2>
+      <dl className={details.details}>
+        <div>
+          <dt>Products may use AI</dt>
+          <dd>{policy.ai_enabled ? "Yes" : "No"}</dd>
+        </div>
+        <div>
+          <dt>Monthly AI budget</dt>
+          <dd>
+            {policy.monthly_budget_micros === null
+              ? `The platform limit (${formatMicros(policy.platform_cap_micros, currency)})`
+              : formatMicros(policy.monthly_budget_micros, currency)}
+          </dd>
+        </div>
+        <div>
+          <dt>Providers</dt>
+          <dd>{allowedNames.length ? allowedNames.join(", ") : "Every approved provider"}</dd>
+        </div>
+        <div>
+          <dt>Fallback to another provider</dt>
+          <dd>{policy.allow_provider_fallback ? "Allowed" : "Not allowed"}</dd>
+        </div>
+      </dl>
       <div>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={!budgetValid}>
-          Save AI settings
-        </button>
+        <FormPopup
+          label="Edit"
+          buttonClassName="w360-btn w360-btn-secondary"
+          buttonAriaLabel="Edit AI settings"
+          title="AI settings"
+          columns={1}
+          submitLabel="Save AI settings"
+          canSubmit={budgetValid}
+          onOpen={() => {
+            setEnabled(policy.ai_enabled);
+            setBudget(initialBudget());
+            setAllowed(policy.allowed_providers);
+            setFallback(policy.allow_provider_fallback);
+          }}
+          onSubmit={async () => {
+            await onSave({
+              revision: policy.revision,
+              ai_enabled: enabled,
+              monthly_budget_micros: budgetValue,
+              allowed_providers: allowed,
+              allow_provider_fallback: fallback,
+            });
+            return "AI settings saved.";
+          }}
+          onDone={onDone}
+        >
+          <div className={styles.check}>
+            <input id={enabledId} type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            <label htmlFor={enabledId}>Allow products to use AI for this organization</label>
+          </div>
+          <div className={styles.field}>
+            <label className="w360-label" htmlFor={budgetId}>
+              Monthly AI budget ({currency}, leave empty for the platform limit of{" "}
+              {formatMicros(policy.platform_cap_micros, currency)})
+            </label>
+            <input
+              id={budgetId}
+              className="w360-input"
+              inputMode="decimal"
+              value={budget}
+              aria-invalid={!budgetValid}
+              onChange={(e) => setBudget(e.target.value)}
+            />
+          </div>
+          <fieldset className={styles.fieldset}>
+            <legend>Providers that may process this organization&apos;s data</legend>
+            <p className={styles.muted}>
+              None ticked means every approved provider. Deleting knowledge removes it from Workeasy360; a provider may
+              keep what it already received for the period its own terms allow.
+            </p>
+            {providers.map((p) => {
+              const id = `${budgetId}-${p.key}`;
+              return (
+                <div key={p.key} className={styles.check}>
+                  <input
+                    id={id}
+                    type="checkbox"
+                    checked={allowed.includes(p.key)}
+                    onChange={(e) =>
+                      setAllowed(e.target.checked ? [...allowed, p.key] : allowed.filter((k) => k !== p.key))
+                    }
+                  />
+                  <label htmlFor={id}>
+                    {p.display_name}
+                    <span className={styles.muted}> — {describeProvider(p)}</span>
+                  </label>
+                </div>
+              );
+            })}
+          </fieldset>
+          <div className={styles.check}>
+            <input id={fallbackId} type="checkbox" checked={fallback} onChange={(e) => setFallback(e.target.checked)} />
+            <label htmlFor={fallbackId}>
+              If a provider is unavailable, allow another approved provider to answer instead
+            </label>
+          </div>
+        </FormPopup>
       </div>
-    </form>
+    </section>
   );
 }
 

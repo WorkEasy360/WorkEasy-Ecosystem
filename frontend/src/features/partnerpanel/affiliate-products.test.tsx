@@ -129,7 +129,7 @@ describe("My Products", () => {
     mount(<MyProducts />);
     const updates = await screen.findByRole("table", { name: "Easy CRM: published features and updates" });
     fireEvent.click(within(updates).getByRole("button", { name: /Create link/ }));
-    const form = screen.getByRole("form", { name: "Create a link for Easy CRM" });
+    const form = screen.getByRole("dialog", { name: "Create a link for Easy CRM" });
     expect(within(form).getByLabelText("Link opens")).toHaveValue("update");
     expect(within(form).getByLabelText("Update")).toHaveValue("u1");
     fireEvent.click(within(form).getByRole("button", { name: "Generate link" }));
@@ -137,6 +137,27 @@ describe("My Products", () => {
     const body = calls.find((c) => c.key === `POST ${API}/referrals`)!.body as Record<string, unknown>;
     expect(body).toMatchObject({ link_kind: "update", product_code: "easy_crm", update_id: "u1" });
     expect(Object.values(body).some((v) => typeof v === "string" && v.startsWith("http"))).toBe(false);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText("Referral link created.")).toBeInTheDocument();
+    expect(screen.getByText("https://app.example.com/r/NEW1")).toBeInTheDocument();
+  });
+
+  it("opens the link popup from the section's button, refuses a malformed own code and closes after creating", async () => {
+    const calls = mockApi(
+      routes({ [`POST ${API}/referrals`]: [{ status: 201, body: { id: "c9", code: "MINE1", label: "", url: "https://app.example.com/r/MINE1" } }] }),
+    );
+    mount(<MyProducts />);
+    fireEvent.click(await screen.findByRole("button", { name: /Create link for Easy CRM/ }));
+    const form = screen.getByRole("dialog", { name: "Create a link for Easy CRM" });
+    expect(within(form).getByLabelText("Link opens")).toHaveValue("product");
+    fireEvent.change(within(form).getByLabelText("Your own code (optional)"), { target: { value: "ab" } });
+    expect(within(form).getByRole("button", { name: "Generate link" })).toBeDisabled();
+    fireEvent.change(within(form).getByLabelText("Your own code (optional)"), { target: { value: "mine1" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Generate link" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    const body = calls.find((c) => c.key === `POST ${API}/referrals`)!.body as Record<string, unknown>;
+    expect(body).toMatchObject({ link_kind: "product", product_code: "easy_crm", code: "MINE1" });
+    expect(screen.getByText("https://app.example.com/r/MINE1")).toBeInTheDocument();
   });
 
   it("renames and switches off a link through the server", async () => {
@@ -148,10 +169,13 @@ describe("My Products", () => {
     mount(<MyProducts />);
     const links = await screen.findByRole("table", { name: "Your links for Easy CRM" });
     fireEvent.click(within(links).getByRole("button", { name: /Rename/ }));
-    fireEvent.change(within(links).getByLabelText("New name for CRMAI"), { target: { value: "Blog" } });
-    fireEvent.click(within(links).getByRole("button", { name: "Save" }));
+    const rename = screen.getByRole("dialog", { name: "Rename link CRMAI" });
+    fireEvent.change(within(rename).getByLabelText("New name for CRMAI"), { target: { value: "Blog" } });
+    fireEvent.click(within(rename).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(calls.filter((c) => c.key === `PATCH ${API}/referral-codes/c1`)).toHaveLength(1));
     expect(calls.find((c) => c.key === `PATCH ${API}/referral-codes/c1`)!.body).toEqual({ label: "Blog" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText("Link renamed.")).toBeInTheDocument();
     fireEvent.click(await within(screen.getByRole("table", { name: "Your links for Easy CRM" })).findByRole("button", { name: /Switch off/ }));
     await waitFor(() => expect(calls.filter((c) => c.key === `PATCH ${API}/referral-codes/c1`)).toHaveLength(2));
     expect(calls.filter((c) => c.key === `PATCH ${API}/referral-codes/c1`)[1].body).toEqual({ active: false });
@@ -161,7 +185,7 @@ describe("My Products", () => {
     mockApi(routes({ [`GET ${API}/affiliate/products`]: [ok({ ...PRODUCTS, can_create: false })] }));
     mount(<MyProducts />, perm("dashboard.view", "referral.view"));
     expect(await screen.findByRole("heading", { level: 2, name: "Easy CRM" })).toBeInTheDocument();
-    expect(screen.queryByRole("form", { name: "Create a link for Easy CRM" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create link for Easy CRM/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Switch off/ })).not.toBeInTheDocument();
     expect(screen.getAllByRole("note")[0]).toHaveTextContent(/Your role cannot create links/);
   });
@@ -171,7 +195,7 @@ describe("My Products", () => {
     const guest = { ...partner(perm("dashboard.view", "referral.view")), guest: { partner_id: ID, reason: "", expires_at: "2026-10-29T05:00:00Z" } };
     render(<PartnerContext.Provider value={{ partner: guest, base: "/partner/affiliate" }}><MyProducts /></PartnerContext.Provider>);
     expect(await screen.findByRole("heading", { level: 2, name: "Easy CRM" })).toBeInTheDocument();
-    expect(screen.queryByRole("form", { name: "Create a link for Easy CRM" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create link for Easy CRM/ })).not.toBeInTheDocument();
     const note = screen.getAllByRole("note")[0];
     expect(note).toHaveTextContent(/viewing this portal as a guest/);
     expect(note).toHaveTextContent(/“Create a link for Easy CRM” form appears here/);
@@ -223,7 +247,7 @@ describe("the attribution trail", () => {
     expect(screen.getByText(/Started a trial: not yet/)).toBeInTheDocument();
     const sales = screen.getByRole("table", { name: "Paid sales and their commission" });
     expect(within(sales).getByText("Verified")).toBeInTheDocument();
-    expect(within(sales).getByText("pending")).toBeInTheDocument();
+    expect(within(sales).getByText("Pending")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Close/ }));
     expect(onClose).toHaveBeenCalled();
   });

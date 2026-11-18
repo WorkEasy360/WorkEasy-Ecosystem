@@ -22,6 +22,13 @@ DANGEROUS_STAFF = frozenset(
         "platform.staff_pricing.manage",
         "platform.staff_subscription.manage",
         "platform.staff_partner.manage",
+        # ADR-062: Login as Guest - an impersonation-class read of a partner's
+        # portal, audited and refused under impersonation.
+        "platform.staff_partner.guest",
+        # ADR-060: decides whether a partner may operate, moves wallet money, answers customers.
+        "platform.staff_kyc.review",
+        "platform.staff_wallet.manage",
+        "platform.staff_support.manage",
         "platform.staff_commission.manage",
         "platform.staff_payout.manage",
         "platform.staff_payout.approve",
@@ -51,6 +58,8 @@ DANGEROUS_PARTNER = frozenset(
         # under it, are each as consequential as selling.
         "platform.partner_member.manage",
         "platform.partner_subpartner.manage",
+        # ADR-063: adding money to the Platform Wallet is a payment.
+        "platform.partner_wallet.manage",
         # ADR-046: minting, rotating or revoking a credential that reads the
         # partner's data from outside the portal.
         "platform.partner_apikey.manage",

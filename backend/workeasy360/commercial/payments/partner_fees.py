@@ -50,7 +50,10 @@ from workeasy360.platform.observability.metrics import metrics
 logger = get_logger(__name__)
 
 PARTNER_UPGRADE: Final = "partner_upgrade"
-PURPOSES: Final = (PARTNER_UPGRADE,)
+#: ADR-063: money a reseller adds to its Platform Wallet. The subject is the
+#: wallet; the wallet is credited once, by the verified callback's handler.
+PARTNER_WALLET_TOP_UP: Final = "partner_wallet_top_up"
+PURPOSES: Final = (PARTNER_UPGRADE, PARTNER_WALLET_TOP_UP)
 #: How long a hosted page may take payment.
 CHECKOUT_LIFETIME: Final = timedelta(hours=1)
 _IN_FLIGHT: Final = ("pending", "awaiting_payment")
@@ -93,6 +96,26 @@ def view(row: Any) -> dict[str, Any]:
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
         "failure_code": row.failure_code,
     }
+
+
+def for_partner(
+    partner_id: UUID, *, purpose: str | None = None, limit: int = 50
+) -> list[dict[str, Any]]:
+    """This partner's own payments to the platform, newest first (ADR-063: the
+    partner's billing records), with what each was for."""
+    rows = _model().objects.filter(partner_id=partner_id)
+    if purpose in PURPOSES:
+        rows = rows.filter(purpose=purpose)
+    return [
+        {**view(row), "purpose": row.purpose, "created_at": row.created_at.isoformat()}
+        for row in rows.order_by("-created_at")[:limit]
+    ]
+
+
+def paid_amount(payment_id: UUID) -> tuple[int, str] | None:
+    """What a succeeded payment paid, or ``None`` - for a handler crediting it."""
+    row = _model().objects.filter(id=payment_id, status="succeeded").first()
+    return (int(row.amount_minor), row.currency) if row is not None else None
 
 
 def get(payment_id: UUID | None) -> dict[str, Any] | None:

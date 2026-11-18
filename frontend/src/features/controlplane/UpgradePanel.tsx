@@ -9,8 +9,10 @@ import {
   type UpgradeProposal,
   type UpgradeRequestRow,
 } from "@/lib/api/partnerConsole";
-import { LoadGate, Status, money, useAction, when, type Load } from "./ui";
+import { dialog, FormPopup } from "./Modal";
+import { LoadGate, Status, money, when, type Load } from "./ui";
 import { Segmented, TextAreaField, TextField } from "./widgets";
+import { Alert, Button } from "./kit";
 import styles from "./ControlPlane.module.css";
 import local from "./UpgradePanel.module.css";
 
@@ -73,13 +75,20 @@ export function UpgradeNotice({ load, onOpen }: { load: Load<PartnerUpgrades>; o
   if (load.status !== "ready" || !load.data.open) return null;
   const open = load.data.open;
   return (
-    <section className={`w360-card ${local.notice}`} aria-label="Upgrade request">
-      <p>
-        Upgrade to <strong>{level(open.to_experience)}</strong> requested: <Status value={open.status} />
-      </p>
-      <button type="button" className="w360-btn w360-btn-secondary" onClick={onOpen}>
-        Review the upgrade request
-      </button>
+    <section aria-label="Upgrade request">
+      <Alert
+        tone="info"
+        title={
+          <>
+            Upgrade to {level(open.to_experience)} requested <Status value={open.status} />
+          </>
+        }
+        actions={
+          <Button size="sm" onClick={onOpen}>
+            Review the upgrade request
+          </Button>
+        }
+      />
     </section>
   );
 }
@@ -347,11 +356,9 @@ function Decision({
   const asked = open.proposal.products ?? [];
   const [chosen, setChosen] = useState<string[]>(asked);
   const [missing, setMissing] = useState<string[]>([]);
-  const { act, busy, feedback } = useAction(() => {
-    setNote("");
-    setReference("");
-    onChanged();
-  });
+  // ADR-063: an upgrade to White Label adds branding and a domain only;
+  // selling is granted beside it explicitly.
+  const [withReseller, setWithReseller] = useState(false);
 
   const offered = [...data.products, ...asked.filter((c) => !data.products.some((p) => p.code === c)).map((c) => ({ code: c, name: c }))];
   const needsNote = action !== "approve";
@@ -362,136 +369,169 @@ function Decision({
   async function decide() {
     setMissing([]);
     try {
-      return await partnerConsoleApi.decideUpgrade(partnerId, open.id, {
+      await partnerConsoleApi.decideUpgrade(partnerId, open.id, {
         action,
         note: note.trim(),
-        ...(action === "approve" ? { products: chosen, commercial_reference: reference.trim() } : {}),
+        ...(action === "approve"
+          ? {
+              products: chosen,
+              commercial_reference: reference.trim(),
+              ...(open.to_experience === "white_label" && withReseller ? { also: ["reseller"] } : {}),
+            }
+          : {}),
       });
     } catch (err) {
-      // The refusal text itself is shown by the action; the list of what is
+      // The refusal text itself is shown by the popup; the list of what is
       // missing is the server's own, given words here.
       const found = err instanceof ApiError ? (err.body as { missing?: unknown } | undefined)?.missing : undefined;
       if (Array.isArray(found)) setMissing(found.filter((m): m is string => typeof m === "string"));
       throw err;
     }
+    return SUCCESS[action];
   }
 
-  function submit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!valid || busy) return;
-    void act(decide, SUCCESS[action]);
-  }
-
-  // The outcome sits beside the decision form, not inside it.
+  // The decision is made in a popup; what to check first stays on the page,
+  // beside the button that opens it.
   return (
-    <div className={styles.stack}>
-      <form className={styles.form} onSubmit={submit} aria-labelledby={`${id}-h`}>
-        <h3 id={`${id}-h`}>Decision</h3>
-        <Segmented<UpgradeAction>
-          legend="What do you want to do?"
-          options={[
-            { value: "approve", label: "Approve", disabled: !waiting },
-            { value: "request_info", label: "Ask for more information", disabled: !waiting },
-            { value: "reject", label: "Reject" },
-          ]}
-          value={action}
-          onChange={setAction}
-          hint={
-            action === "approve"
-              ? `Gives the partner the ${target} capabilities on its existing login and account. Nothing it holds is removed and its history is untouched. The server refuses if the partner is not active or its profile is not complete for everything it will hold.`
-              : action === "request_info"
-                ? "Sends the request back to the partner with your note. It can edit and submit again."
-                : "Closes the request. The partner keeps exactly what it had and may ask again."
-          }
-        />
-        {!waiting && <p className={styles.muted}>The partner is still completing this request, so it can only be rejected for now.</p>}
-
-        {action === "approve" && (
-          <>
-            {pointers.length > 0 && (
-              <p className={styles.muted}>
-                Before approving, check the partner&apos;s{" "}
-                {pointers.map((p, i) => (
-                  <span key={p.tab}>
-                    {i > 0 && (i === pointers.length - 1 ? " and " : ", ")}
-                    <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpenTab?.(p.tab)}>
-                      {p.label}
-                    </button>
-                  </span>
-                ))}
-                . Prices are set on the Pricing tab once the partner sells.
-              </p>
-            )}
-            <fieldset className={styles.field}>
-              <legend className="w360-label">Products the partner may sell</legend>
-              {offered.length === 0 ? (
-                <p className={styles.muted}>No products are on sale to choose from.</p>
-              ) : (
-                <ul className={local.products}>
-                  {offered.map((p) => (
-                    <li key={p.code}>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={chosen.includes(p.code)}
-                          onChange={(e) => setChosen(e.target.checked ? [...chosen, p.code] : chosen.filter((c) => c !== p.code))}
-                        />{" "}
-                        {p.name}
-                        {asked.includes(p.code) && <span className={styles.muted}> (asked for)</span>}
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </fieldset>
-            {open.setup_fee && <FeeStatus fee={open.setup_fee} />}
-            <TextField
-              label={
-                open.setup_fee && !open.setup_fee.paid_online ? "Set-up fee payment reference (required)" : "Commercial reference (optional)"
-              }
-              value={reference}
-              onChange={setReference}
-              maxLength={120}
+    <section className={styles.stack} aria-labelledby={`${id}-h`}>
+      <h3 id={`${id}-h`}>Decision</h3>
+      {!waiting && <p className={styles.muted}>The partner is still completing this request, so it can only be rejected for now.</p>}
+      {waiting && pointers.length > 0 && (
+        <p className={styles.muted}>
+          Before approving, check the partner&apos;s{" "}
+          {pointers.map((p, i) => (
+            <span key={p.tab}>
+              {i > 0 && (i === pointers.length - 1 ? " and " : ", ")}
+              <button type="button" className="w360-btn w360-btn-secondary" onClick={() => onOpenTab?.(p.tab)}>
+                {p.label}
+              </button>
+            </span>
+          ))}
+          . Prices are set on the Pricing tab once the partner sells.
+        </p>
+      )}
+      <div>
+        <FormPopup
+          label="Decide the request"
+          title={`Upgrade to ${target}: decision`}
+          submitLabel={action === "approve" ? "Approve upgrade" : action === "request_info" ? "Send back to the partner" : "Reject upgrade"}
+          danger={action === "reject"}
+          canSubmit={valid}
+          onOpen={() => setMissing([])}
+          onSubmit={decide}
+          onDone={() => {
+            setNote("");
+            setReference("");
+            onChanged();
+          }}
+        >
+          <div className={dialog.span}>
+            <Segmented<UpgradeAction>
+              legend="What do you want to do?"
+              options={[
+                { value: "approve", label: "Approve", disabled: !waiting },
+                { value: "request_info", label: "Ask for more information", disabled: !waiting },
+                { value: "reject", label: "Reject" },
+              ]}
+              value={action}
+              onChange={setAction}
               hint={
-                open.setup_fee?.paid_online
-                  ? "The set-up fee was paid online and confirmed by the payment provider. A reference is optional."
-                  : open.setup_fee
-                    ? `This upgrade carries a set-up fee of ${money(open.setup_fee.amount_minor, open.setup_fee.currency)}. Check the partner's transfer, then keep its reference; approval is refused without it.`
-                    : "A pointer to the terms agreed, such as a contract number. It is recorded; no amount is stored or charged here."
+                action === "approve"
+                  ? `Gives the partner the ${target} capabilities on its existing login and account. Nothing it holds is removed and its history is untouched. The server refuses if the partner is not active or its profile is not complete for everything it will hold.`
+                  : action === "request_info"
+                    ? "Sends the request back to the partner with your note. It can edit and submit again."
+                    : "Closes the request. The partner keeps exactly what it had and may ask again."
               }
             />
-          </>
-        )}
+          </div>
 
-        <TextAreaField
-          label={needsNote ? "Note to the partner (required)" : "Note (optional)"}
-          value={note}
-          onChange={setNote}
-          maxLength={500}
-          rows={3}
-          hint={needsNote ? "The partner reads this." : "Recorded with the decision."}
-        />
+          {action === "approve" && (
+            <>
+              {open.to_experience === "white_label" && (
+                <div className={dialog.span}>
+                  <label>
+                    <input type="checkbox" checked={withReseller} onChange={(e) => setWithReseller(e.target.checked)} /> Also allow Reseller: sell to
+                    customers and use the Platform Wallet
+                  </label>
+                  <p className={styles.muted}>
+                    White Label on its own gives branding and a custom domain. A partner that is not a reseller yet needs this ticked to sell the
+                    products below.
+                  </p>
+                </div>
+              )}
+              <fieldset className={`${styles.field} ${dialog.span}`}>
+                <legend className="w360-label">Products the partner may sell</legend>
+                {offered.length === 0 ? (
+                  <p className={styles.muted}>No products are on sale to choose from.</p>
+                ) : (
+                  <ul className={local.products}>
+                    {offered.map((p) => (
+                      <li key={p.code}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={chosen.includes(p.code)}
+                            onChange={(e) => setChosen(e.target.checked ? [...chosen, p.code] : chosen.filter((c) => c !== p.code))}
+                          />{" "}
+                          {p.name}
+                          {asked.includes(p.code) && <span className={styles.muted}> (asked for)</span>}
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </fieldset>
+              {open.setup_fee && (
+                <div className={dialog.span}>
+                  <FeeStatus fee={open.setup_fee} />
+                </div>
+              )}
+              <div className={dialog.span}>
+                <TextField
+                  label={
+                    open.setup_fee && !open.setup_fee.paid_online ? "Set-up fee payment reference (required)" : "Commercial reference (optional)"
+                  }
+                  value={reference}
+                  onChange={setReference}
+                  maxLength={120}
+                  hint={
+                    open.setup_fee?.paid_online
+                      ? "The set-up fee was paid online and confirmed by the payment provider. A reference is optional."
+                      : open.setup_fee
+                        ? `This upgrade carries a set-up fee of ${money(open.setup_fee.amount_minor, open.setup_fee.currency)}. Check the partner's transfer, then keep its reference; approval is refused without it.`
+                        : "A pointer to the terms agreed, such as a contract number. It is recorded; no amount is stored or charged here."
+                  }
+                />
+              </div>
+            </>
+          )}
 
-        <div>
-          <button type="submit" className={`w360-btn ${action === "reject" ? "w360-btn-danger" : "w360-btn-primary"}`} disabled={busy || !valid}>
-            {action === "approve" ? "Approve upgrade" : action === "request_info" ? "Send back to the partner" : "Reject upgrade"}
-          </button>
-        </div>
-      </form>
-      {feedback}
-      <div role="status" aria-live="polite">
-        {missing.length > 0 && (
-          <>
-            <p>Still needed before this can be approved:</p>
-            <ul>
-              {missing.map((m) => (
-                <li key={m}>{MISSING[m] ?? m}</li>
-              ))}
-            </ul>
-          </>
-        )}
+          <div className={dialog.span}>
+            <TextAreaField
+              label={needsNote ? "Note to the partner (required)" : "Note (optional)"}
+              value={note}
+              onChange={setNote}
+              maxLength={500}
+              rows={3}
+              hint={needsNote ? "The partner reads this." : "Recorded with the decision."}
+            />
+          </div>
+
+          <div className={dialog.span} role="status" aria-live="polite">
+            {missing.length > 0 && (
+              <>
+                <p>Still needed before this can be approved:</p>
+                <ul>
+                  {missing.map((m) => (
+                    <li key={m}>{MISSING[m] ?? m}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        </FormPopup>
       </div>
-    </div>
+    </section>
   );
 }
 

@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { LoadGate, Table, money, useAction, useLoad, when } from "@/features/controlplane/ui";
+import { useId, useMemo, useState } from "react";
+import { LoadGate, Table, money, useLoad, when } from "@/features/controlplane/ui";
+import { dialog, FormDialog } from "@/features/controlplane/Modal";
 import {
   panelApi,
   type ProductAccess,
@@ -14,7 +15,7 @@ import {
 import { MyProductsTab } from "./AffiliateProducts";
 import { GrantedProducts } from "./Catalog";
 import { EmptyState, PageHeader, SubNav, monogram, usePanel } from "./PanelKit";
-import { percent } from "./workspaceKit";
+import { percent, useFieldChecks } from "./workspaceKit";
 import styles from "./PartnerPanel.module.css";
 
 /**
@@ -340,6 +341,7 @@ function ProductCard({
   );
 }
 
+/** The access request, in a popup opened from a product's card. */
 export function RequestForm({
   product,
   kind,
@@ -355,87 +357,81 @@ export function RequestForm({
 }) {
   const { id } = usePanel();
   const formId = useId();
-  const heading = useRef<HTMLHeadingElement | null>(null);
-  const { act, busy, feedback } = useAction();
+  const checks = useFieldChecks();
   const [channel, setChannel] = useState("");
   const [website, setWebsite] = useState(data.prefill.website);
   const [audience, setAudience] = useState("");
   const [strategy, setStrategy] = useState("");
   const [notes, setNotes] = useState("");
-  // The form opens above the list: take the keyboard to it.
-  useEffect(() => heading.current?.focus(), [product.code]);
   return (
-    <form
-      className={styles.panel}
-      aria-labelledby={`${formId}-h`}
-      onSubmit={(e) => {
-        e.preventDefault();
-        void act(async () => {
-          await panelApi.requestProduct(id, kind, {
-            product_code: product.code,
-            channel,
-            website: website.trim() || undefined,
-            audience: audience.trim(),
-            strategy: strategy.trim(),
-            notes: notes.trim() || undefined,
-          });
-          onSent(product.name);
-        }, "Request sent.");
+    <FormDialog
+      title={`Request access to ${product.name}`}
+      intro={
+        <>
+          Tell Workeasy360 how you will {WORDS[kind].verb} it. Your partner profile is used for everything else; do not include anyone else&apos;s
+          personal details.
+        </>
+      }
+      submitLabel="Send request"
+      onSubmit={async () => {
+        checks.check();
+        await panelApi.requestProduct(id, kind, {
+          product_code: product.code,
+          channel,
+          website: website.trim() || undefined,
+          audience: audience.trim(),
+          strategy: strategy.trim(),
+          notes: notes.trim() || undefined,
+        });
+        return "Request sent.";
       }}
+      onDone={() => onSent(product.name)}
+      onClose={onCancel}
     >
-      <h2 id={`${formId}-h`} ref={heading} tabIndex={-1}>
-        Request access to {product.name}
-      </h2>
-      <p className={styles.muted}>
-        Tell Workeasy360 how you will {WORDS[kind].verb} it. Your partner profile is used for everything else; do not include anyone
-        else&apos;s personal details.
-      </p>
-      <div className={styles.formGrid}>
-        <div>
-          <label className="w360-label" htmlFor={`${formId}-channel`}>
-            {WORDS[kind].channel}
-          </label>
-          <select id={`${formId}-channel`} className="w360-input" required value={channel} onChange={(e) => setChannel(e.target.value)}>
-            <option value="">Choose…</option>
-            {Object.entries(data.channels).map(([key, label]) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="w360-label" htmlFor={`${formId}-website`}>
-            Website or social profile (optional)
-          </label>
-          <input
-            id={`${formId}-website`}
-            className="w360-input"
-            type="url"
-            inputMode="url"
-            placeholder="https://"
-            maxLength={300}
-            pattern="https://.+"
-            value={website}
-            onChange={(e) => setWebsite(e.target.value)}
-          />
-        </div>
-        <div>
-          <label className="w360-label" htmlFor={`${formId}-audience`}>
-            {WORDS[kind].audience}
-          </label>
-          <input
-            id={`${formId}-audience`}
-            className="w360-input"
-            required
-            minLength={3}
-            maxLength={300}
-            value={audience}
-            onChange={(e) => setAudience(e.target.value)}
-          />
-        </div>
+      <div>
+        <label className="w360-label" htmlFor={`${formId}-channel`}>
+          {WORDS[kind].channel}
+        </label>
+        <select id={`${formId}-channel`} className="w360-input" required value={channel} onChange={(e) => setChannel(e.target.value)}>
+          <option value="">Choose…</option>
+          {Object.entries(data.channels).map(([key, label]) => (
+            <option key={key} value={key}>
+              {label}
+            </option>
+          ))}
+        </select>
       </div>
       <div>
+        <label className="w360-label" htmlFor={`${formId}-website`}>
+          Website or social profile (optional)
+        </label>
+        <input
+          id={`${formId}-website`}
+          className="w360-input"
+          type="url"
+          inputMode="url"
+          placeholder="https://"
+          maxLength={300}
+          pattern="https://.+"
+          value={website}
+          onChange={(e) => setWebsite(e.target.value)}
+        />
+      </div>
+      <div className={dialog.span}>
+        <label className="w360-label" htmlFor={`${formId}-audience`}>
+          {WORDS[kind].audience}
+        </label>
+        <input
+          id={`${formId}-audience`}
+          className="w360-input"
+          required
+          minLength={3}
+          maxLength={300}
+          value={audience}
+          onChange={(e) => setAudience(e.target.value)}
+        />
+      </div>
+      <div className={dialog.span}>
         <label className="w360-label" htmlFor={`${formId}-strategy`}>
           {WORDS[kind].how}
         </label>
@@ -450,22 +446,14 @@ export function RequestForm({
           onChange={(e) => setStrategy(e.target.value)}
         />
       </div>
-      <div>
+      <div className={dialog.span}>
         <label className="w360-label" htmlFor={`${formId}-notes`}>
           Anything else (optional)
         </label>
         <textarea id={`${formId}-notes`} className="w360-input" maxLength={1000} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>
-      <div className={styles.actions}>
-        <button type="submit" className="w360-btn w360-btn-primary" disabled={busy}>
-          {busy ? "Sending…" : "Send request"}
-        </button>
-        <button type="button" className="w360-btn w360-btn-secondary" onClick={onCancel} disabled={busy}>
-          Cancel
-        </button>
-      </div>
-      {feedback}
-    </form>
+      {checks.probe}
+    </FormDialog>
   );
 }
 

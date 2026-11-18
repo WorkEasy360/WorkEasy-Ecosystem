@@ -1,0 +1,41 @@
+/* Super Admin → AI platform (2026-11-07 design system). Tokens only. */
+
+.section {
+  display: grid;
+  gap: var(--w360-space-3);
+  min-width: 0;
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: var(--w360-space-1);
+  margin: 0;
+  font-size: var(--w360-fs-section);
+  font-weight: 600;
+}
+
+.badges {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: var(--w360-space-1);
+}
+
+.idLine {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--w360-space-1);
+  min-width: 0;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--w360-fs-meta);
+  color: var(--w360-text-muted);
+  white-space: nowrap;
+}
+
+.focusable {
+  display: inline-flex;
+  border-radius: var(--w360-radius-control);
+}

@@ -52,7 +52,9 @@ def test_the_product_code_is_nowhere_in_the_source_tree():
 def test_product_twenty_is_registered_sold_and_launched_without_code_changes(
     staff_login, catalog, register_product, console_org, login, fake_payments
 ):
-    # 1-2. Staff register the product and its plan and price (Super Admin).
+    # 1-2. Staff register the product and its plan and price (Super Admin). It
+    # starts hidden: since 2026-11-10 a product reaches the store only through
+    # the publish checklist (step 4b), never by being made available.
     staff, _ = staff_login(
         "platform.staff_catalog.manage", "platform.staff_pricing.manage"
     )
@@ -65,7 +67,7 @@ def test_product_twenty_is_registered_sold_and_launched_without_code_changes(
             "licensing_mode": "per_organization",
             "slug": SLUG,
             "tagline": "Dispatch, visits and job sheets.",
-            "listing": "listed",
+            "listing": "hidden",
         },
     )
     _staff_post(staff, f"products/{product['id']}/status", {"status": "available"})
@@ -93,6 +95,29 @@ def test_product_twenty_is_registered_sold_and_launched_without_code_changes(
 
     # 4. The product registers its integration (manifest + credential).
     register_product(CODE)
+
+    # 4b. Staff complete the listing (category, logo) and publish it: the
+    # checklist now finds a launch destination, a plan and a sales channel.
+    from tests.product_manager.conftest import png
+
+    edited = staff.patch(
+        f"{CATALOG}/products/{product['id']}",
+        {"category": "Operations"},
+        content_type="application/json",
+    )
+    assert edited.status_code == 200, edited.content
+    logo = staff.post(
+        f"/api/v1/admin/products/{product['id']}/media?kind=logo",
+        png(256, 256),
+        content_type="image/png",
+    )
+    assert logo.status_code == 201, logo.content
+    published = staff.post(
+        f"/api/v1/admin/products/{product['id']}/publish",
+        {},
+        content_type="application/json",
+    )
+    assert published.status_code == 200, published.content
 
     # 5. A visitor finds it in the public catalog, priced by the server.
     from django.test import Client

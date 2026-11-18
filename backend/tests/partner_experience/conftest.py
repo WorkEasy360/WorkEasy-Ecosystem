@@ -49,6 +49,7 @@ def make_body(
     confirm: str | None = None,
     mode: str = "create",
     country: str | None = "GB",
+    same_name: bool = False,
     **overrides: Any,
 ) -> dict[str, Any]:
     """The Add Partner form as the browser sends it (ADR-048): the partner's
@@ -60,6 +61,10 @@ def make_body(
     partner: dict[str, Any] = {"display_name": name}
     if country is not None:
         partner["country"] = country
+    if same_name:
+        # 2026-11-10: a second partner with a live partner's name is refused
+        # unless the Admin confirms it is a different partner.
+        partner["allow_same_name"] = True
     body: dict[str, Any] = {
         "experience": experience,
         "partner": partner,
