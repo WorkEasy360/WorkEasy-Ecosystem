@@ -832,8 +832,9 @@ def _record_connection(redeemed: Any) -> None:
 
 
 def _record_activity(client: Any, subject: str | None, organization_id: Any) -> None:
-    """ADR-072: a product asked about this person - their "last seen" in it.
-    Only an existing connection is touched; never fails the answer."""
+    """ADR-072: a product asked about this person and was told yes - their
+    "last seen" in it. Only an existing connection is touched; never fails
+    the answer."""
     if not subject:
         return
     from workeasy360.platform.ecosystem import connections
@@ -1017,7 +1018,11 @@ def verify_entitlement(request: HttpRequest) -> JsonResponse:
             )
         )
 
-    _record_activity(client, subject, organization_id)
+    if result.decision == "allow":
+        # Only an allowed person: every denied one must cost the same reads
+        # (test_every_denied_person_costs_the_same_reads), so the answer stays
+        # the only thing a product learns.
+        _record_activity(client, subject, organization_id)
     response = JsonResponse(result.as_dict())
     response["Cache-Control"] = "no-store"
     return response

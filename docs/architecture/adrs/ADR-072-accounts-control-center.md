@@ -39,7 +39,7 @@ The audit (section H) found what the platform could and could not say:
 
 3. **`ProductConnection`, the durable record behind Connected Logins** (`ecosystem.0010`). One row per (person, product, organization), for every product:
    - `first_sign_in_at`, `last_sign_in_at` and `sign_in_count`, written at the token endpoint;
-   - `last_activity_at`, written when the product calls `/integrations/entitlements/verify` with `subject` - only for an existing row (a product cannot create one by naming a subject), and at most every 5 minutes;
+   - `last_activity_at`, written when the product calls `/integrations/entitlements/verify` with `subject` and the answer is `allow` - only for an existing row (a product cannot create one by naming a subject), at most every 5 minutes, and never for a denied person, so every denial still costs the same reads (no timing oracle);
    - deleted with the account (cascade), and after `ACCOUNT_EVENT_RETENTION_DAYS` (400) with neither sign-in nor activity, by the hourly ecosystem prune.
 
    It is exempt from tenant scoping (`TENANT_SCOPE_EXEMPT`), for `AuthorizationCode`'s reason: it is written by two server-to-server endpoints with no tenant context. It is the person's, read only by that person or by staff with `platform.staff_user.view`. `organization_id` labels the sign-in; it decides nothing. Recording never fails a token or an entitlement answer: an error is logged and counted.

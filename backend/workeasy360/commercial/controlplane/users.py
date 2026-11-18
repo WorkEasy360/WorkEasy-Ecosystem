@@ -159,6 +159,7 @@ def _accounts_view(
     No password, token, session key or full address: the session rows carry
     public ids and network prefixes only, exactly as the person sees them."""
     from workeasy360.commercial.catalog import selectors as catalog
+    from workeasy360.contracts.errors import CommercialRecordNotFound
     from workeasy360.platform.authz.control_plane import organization_scope
     from workeasy360.platform.ecosystem import connections
     from workeasy360.platform.entitlements.services.seats import pools_held_by_member
@@ -174,13 +175,17 @@ def _accounts_view(
         held: list[str] = []
         membership_id = member_ids.get(membership["organization_id"])
         if membership_id:
-            with organization_scope(ctx, UUID(membership["organization_id"])):
-                held = sorted(
-                    pools_held_by_member(
-                        UUID(membership["organization_id"]),
-                        membership_id=UUID(membership_id),
+            try:
+                with organization_scope(ctx, UUID(membership["organization_id"])):
+                    held = sorted(
+                        pools_held_by_member(
+                            UUID(membership["organization_id"]),
+                            membership_id=UUID(membership_id),
+                        )
                     )
-                )
+            except CommercialRecordNotFound:
+                # The organization is gone (or is the platform's own): no seats.
+                held = []
         membership["membership_id"] = membership_id
         membership["seats"] = held
 

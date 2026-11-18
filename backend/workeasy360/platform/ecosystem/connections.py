@@ -113,6 +113,14 @@ def record_activity(*, integration: Any, subject: Any, organization_id: Any) -> 
     )
 
 
+def is_connected(*, user_id: Any, product_code: str) -> bool:
+    """Whether this person ever signed in to this product with WorkEasy360
+    (in any of their organizations)."""
+    return ProductConnection.objects.filter(
+        user_id=user_id, integration__product_code=str(product_code)
+    ).exists()
+
+
 def purge_stale(*, older_than_days: int | None = None) -> int:
     """Connections with neither a sign-in nor any activity within the
     retention window (the same window as the person's security trail)."""

@@ -799,7 +799,8 @@ class ProductConnection(models.Model):
       authorization code for this person in this organization (the token
       endpoint) - "an SSO connection was established", "last signed in";
     - ``last_activity_at``: when the product last asked
-      ``/integrations/entitlements/verify`` about this person (``subject``),
+      ``/integrations/entitlements/verify`` about this person (``subject``)
+      and was told yes,
       which a product does while their session is in use - "last seen", to
       ``ACTIVITY_RESOLUTION``. **Never "active"**: no signal says a product
       session exists right now.

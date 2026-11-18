@@ -450,16 +450,13 @@ def product_sign_out_view(
     ``unsupported`` for a product that takes no back-channel logout. Only a
     product the person is connected to."""
     from workeasy360.platform.ecosystem import connections
-    from workeasy360.platform.ecosystem.models import ProductConnection
     from workeasy360.platform.identity.models import AccountEvent
 
     blocked = limited(request, "session_revoke", user=user)
     if blocked is not None:
         return blocked
     code = str(product_code)[:32]
-    if not ProductConnection.objects.filter(
-        user_id=user.id, integration__product_code=code
-    ).exists():
+    if not connections.is_connected(user_id=user.id, product_code=code):
         return _not_found()
     started = time.monotonic()
     asked = connections.sign_out_of_product(user_id=user.id, product_code=code)
