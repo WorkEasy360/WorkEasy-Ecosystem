@@ -495,7 +495,21 @@ def test_the_operator_command_attests_first_party_hostnames(staff_factory):
     )
     call_command("register_products", actor=staff_user.email, activate_integrations=True)
     assert set(ProductDomain.objects.values_list("method", flat=True)) == {"attested"}
-    assert _audited("ecosystem.integration.domain_attested") == 4
+    # One first-party hostname per registered product (each on its own host).
+    from pathlib import Path
+    from urllib.parse import urlsplit
+
+    registry = json.loads(
+        (
+            Path(__file__).resolve().parents[3] / "infra" / "ecosystem" / "products.json"
+        ).read_text(encoding="utf-8")
+    )["products"]
+    hostnames = {
+        (p["code"], urlsplit(u).hostname)
+        for p in registry
+        for u in [p["integration"]["launch_url"], *p["integration"]["redirect_uris"]]
+    }
+    assert _audited("ecosystem.integration.domain_attested") == len(hostnames) == 8
 
 
 # --- the staff API -------------------------------------------------------------------------

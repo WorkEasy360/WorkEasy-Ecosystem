@@ -94,7 +94,18 @@ def test_product_twenty_is_registered_sold_and_launched_without_code_changes(
     _staff_post(staff, f"plans/{plan['id']}/status", {"status": "available"})
 
     # 4. The product registers its integration (manifest + credential).
-    register_product(CODE)
+    registration = register_product(CODE)
+
+    # 4a. Onboarding proves a sign-in works before customers can buy it
+    # (2026-11-18): the product team signs in once with a test organization.
+    # What the token endpoint records for that redemption:
+    from django.utils import timezone
+
+    from workeasy360.platform.ecosystem.models import ProductIntegration
+
+    ProductIntegration.objects.filter(pk=registration["integration"].pk).update(
+        last_token_at=timezone.now()
+    )
 
     # 4b. Staff complete the listing (category, logo) and publish it: the
     # checklist now finds a launch destination, a plan and a sales channel.
