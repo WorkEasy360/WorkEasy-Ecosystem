@@ -14,7 +14,9 @@ import { AdminAuthFrame } from "./AdminLogin";
 import { PARTNER_SIGN_IN, PartnerAuthFrame } from "./PartnerLogin";
 import { UserAuthFrame } from "./UserLogin";
 import { usePortalRouter } from "@/lib/portalRouter";
-import { takeStoreReturn } from "@/features/store/storeReturn";
+import { usePortals } from "@/lib/portalContext";
+import { portalForHost, portalSignInPath, storeSignsInThroughAccounts, type PortalOrigins } from "@/lib/portals";
+import { rememberStoreReturn, safeStorePath, takeStoreReturn } from "@/features/store/storeReturn";
 
 /**
  * Self-service accounts (Phase 9): sign up, confirm the address, recover a
@@ -139,6 +141,13 @@ export function SignupScreen() {
   useEffect(() => {
     const plan = params.get("plan");
     if (plan) rememberIntent({ plan, interval: params.get("interval") ?? undefined });
+  }, [params]);
+
+  // ADR-073: a sign-up the Store sent here (`?next=/store/...`, its checkout with
+  // what was chosen) goes back to that Store page once the address is confirmed.
+  useEffect(() => {
+    const back = safeStorePath(params.get("next"));
+    if (back) rememberStoreReturn(back);
   }, [params]);
 
   return (
@@ -266,7 +275,11 @@ function CheckYourEmail({ email }: { email: string }) {
 // --- verify ---------------------------------------------------------------------------------
 
 /** Where a finished verification or sign-in goes. Only internal paths. */
-async function finishSignIn(router: ReturnType<typeof usePortalRouter>, organizationId: string | null) {
+async function finishSignIn(
+  router: ReturnType<typeof usePortalRouter>,
+  organizationId: string | null,
+  origins: PortalOrigins | null = null,
+) {
   let referral: string | null = null;
   try {
     referral = sessionStorage.getItem(REFERRAL_TOKEN);
@@ -281,11 +294,19 @@ async function finishSignIn(router: ReturnType<typeof usePortalRouter>, organiza
   }
   // ADR-065: a sign-up started in the Store goes back to the Store page it left
   // (its checkout, with what was chosen) - a Store path only (storeReturn.ts).
-  router.replace(takeStoreReturn() ?? "/dashboard");
+  const back = takeStoreReturn();
+  if (back && storeSignsInThroughAccounts(origins) && origins && portalForHost(window.location.host, origins) === "auth") {
+    // ADR-073: confirmed on WorkEasy360 Accounts, which is now signed in - the
+    // Store's own sign-in hands that sign-in to the Store without a password.
+    window.location.replace(`${origins.store}${portalSignInPath("store", back)}`);
+    return;
+  }
+  router.replace(back ?? "/dashboard");
 }
 
 export function VerifyEmailScreen() {
   const router = usePortalRouter();
+  const origins = usePortals();
   const token = useFragmentToken();
   const errorId = useId();
   const [password, setPassword] = useState("");
@@ -316,7 +337,7 @@ export function VerifyEmailScreen() {
     setProblems([]);
     try {
       const result = await publicApi.verifyEmail(token ?? "", password);
-      await finishSignIn(router, result.organization_id);
+      await finishSignIn(router, result.organization_id, origins);
     } catch (err) {
       if (err instanceof ApiError && err.code === "link_invalid") {
         setProblems(["This link is not valid or has expired. Sign in to have a new one sent."]);

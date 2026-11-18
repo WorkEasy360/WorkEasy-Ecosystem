@@ -88,7 +88,9 @@ SURFACE_RULES: Final[tuple[tuple[str, bool, frozenset[str]], ...]] = (
     # central sign-in host, whose session it may end.
     ("/api/v1/auth/switch-account/finish", True, frozenset({portals.AUTH})),
     ("/api/v1/auth/switch-account", True, frozenset(portals.ACCOUNT_PORTALS)),
-    ("/api/v1/auth/handoff/redeem", True, frozenset(portals.DESTINATIONS)),
+    # ADR-073: and on the Store, which redeems only while it signs in through
+    # WorkEasy360 Accounts (the view answers 404 there otherwise, as here).
+    ("/api/v1/auth/handoff/redeem", True, frozenset(portals.HANDOFF_DESTINATIONS)),
     # ADR-065: the Store's "My Account" - issued on the Store, spent on User Admin.
     ("/api/v1/auth/account-pass/enter", True, frozenset({portals.APP})),
     ("/api/v1/auth/account-pass", True, frozenset({portals.STORE})),

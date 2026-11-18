@@ -9,6 +9,8 @@ import {
   servesPage,
   signInUrl,
   stateCookieName,
+  storeSignInUrl,
+  storeSignsInThroughAccounts,
   type Destination,
   type Portal,
   type PortalOrigins,
@@ -154,8 +156,15 @@ export function routePortalRequest(args: {
     }
     const mode = parseMode(params.get("mode"));
     // ADR-065: the Store's own host signs its customers in itself - with or
-    // without `?mode=user`, which names the same people.
-    if (portal === "store" && (mode === null || mode === "user")) return { kind: "serve" };
+    // without `?mode=user`, which names the same people. ADR-073: while
+    // WorkEasy360 Accounts hosts identity, through Accounts instead - the same
+    // hand-off as the customer portal's, bound to the Store's host and landing
+    // back on the Store page `next` names (its checkout, with what was chosen).
+    if (portal === "store" && (mode === null || mode === "user")) {
+      if (!storeSignsInThroughAccounts(origins)) return { kind: "serve" };
+      const state = args.newState ? args.newState() : "";
+      return { kind: "redirect", location: storeSignInUrl(origins, params.get("next"), state), bind: state };
+    }
     if (identity) {
       // ADR-071: WorkEasy360 Accounts signs in for itself (no mode) and for the
       // customer portal (`mode=user`, with the customer portal's binding value).

@@ -76,10 +76,16 @@ def identity_url(portal: str | None = None) -> str:
 
     ADR-071: with ``W360_ACCOUNTS_IDENTITY`` on, the customer portal's are
     WorkEasy360 Accounts' (``W360_AUTH_ORIGIN``); the Admin and Partner portals
-    and the Store keep their own. Off, exactly :func:`account_url` (ADR-059).
+    keep their own, and (ADR-073) the Store's are Accounts' too. Off, exactly
+    :func:`account_url` (ADR-059).
     Invitations are not identity pages: accepting one joins an organization on
     the customer portal, so they keep :func:`account_url`."""
     if accounts_identity() and portal in (None, portals.APP):
+        return origin(portals.AUTH)
+    if accounts_identity() and portal == portals.STORE:
+        # ADR-073: the Store signs in and up through Accounts too, so its
+        # emailed identity links open there (the Store's own identity pages
+        # move there with a 302, keeping the fragment).
         return origin(portals.AUTH)
     return account_url(portal)
 
