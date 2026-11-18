@@ -347,3 +347,104 @@ def main_source(rows: list[dict[str, Any]], product_code: str) -> dict[str, Any]
         return (0 if row["effective_now"] else 1, order)
 
     return sorted(mine, key=rank)[0]
+
+
+# --- ADR-073 (G10): who could open a product through this organization -----------
+
+
+def _per_seat(product_codes: Any) -> set[str]:
+    """The codes licensed per seat, read through the catalog port exactly as
+    sign-in's seat check reads them (``authorization._holds_seat_if_required``):
+    a product the catalog does not know needs no seat."""
+    from workeasy360.contracts.enums import LicensingMode
+    from workeasy360.contracts.ports.catalog import get_product_directory
+    from workeasy360.contracts.values.identifiers import ProductCode
+
+    directory = get_product_directory()
+    found: set[str] = set()
+    for code in product_codes:
+        try:
+            descriptor = directory.get(ProductCode(code))
+        except ValueError:
+            continue
+        if descriptor is not None and descriptor.licensing_mode == LicensingMode.PER_SEAT:
+            found.add(str(code))
+    return found
+
+
+def _seat_holders(organization_id: UUID, pools: set[str]) -> dict[str, set[UUID]]:
+    """``{pool: {membership_id}}`` of unreleased assignments - over-limit ones
+    included: a pool whose capacity just went to zero still names who sat in it."""
+    from workeasy360.platform.entitlements.models import SeatAssignment
+    from workeasy360.platform.tenancy.db import organization_db_scope
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    held: dict[str, set[UUID]] = {pool: set() for pool in pools}
+    if not pools:
+        return held
+    with (
+        unscoped_access(
+            reason="Who held a seat in a product whose access ended",
+            module="platform.entitlements.selectors",
+        ),
+        organization_db_scope(organization_id),
+    ):
+        rows = SeatAssignment.unscoped.filter(
+            organization_id=organization_id,
+            released_at__isnull=True,
+            seat_grant__pool_key__in=sorted(pools),
+        ).values_list("seat_grant__pool_key", "membership_id")
+        for pool, membership_id in rows:
+            held[pool].add(membership_id)
+    return held
+
+
+def users_with_product_access(ctx: Any, product_codes: Any) -> dict[str, set[UUID]]:
+    """``{product_code: {user_id}}``: who could open each product through the
+    current organization (``ctx``, bound by the caller with its database scope)
+    - for a per-seat product the active members holding a seat in it, otherwise
+    every active member. Read when the organization's entitlement to those
+    products ends (ADR-073), so the products can be told at once."""
+    from workeasy360.platform.organizations.selectors import active_member_users
+
+    codes = [str(code) for code in dict.fromkeys(product_codes)]
+    if not codes:
+        return {}
+    members = active_member_users(ctx)
+    per_seat = _per_seat(codes)
+    holders = _seat_holders(ctx.organization_id, per_seat)
+    return {
+        code: (
+            {members[m] for m in holders.get(code, set()) if m in members}
+            if code in per_seat
+            else set(members.values())
+        )
+        for code in codes
+    }
+
+
+def products_reachable_by_member(
+    organization_id: UUID, membership_id: UUID
+) -> tuple[str, ...]:
+    """The products this member could open through this organization now: every
+    product the organization holds (any status but expired), less the per-seat
+    ones the member holds no seat in. Read *before* their seats are released,
+    when they are removed or suspended (ADR-073)."""
+    snapshot = stored_snapshot(organization_id)
+    if snapshot is None:
+        return ()
+    from workeasy360.contracts.enums import EntitlementStatus
+
+    held: list[str] = []
+    for code, entry in snapshot.products.items():
+        try:
+            if EntitlementStatus(entry.get("status", "")).allows_read:
+                held.append(str(code))
+        except ValueError:
+            continue
+    per_seat = _per_seat(held)
+    seated = _seat_holders(organization_id, per_seat)
+    member = UUID(str(membership_id))
+    return tuple(
+        sorted(code for code in held if code not in per_seat or member in seated[code])
+    )

@@ -454,6 +454,22 @@ def membership_for_user(ctx: TenantContext, user_id: UUID) -> dict[str, Any] | N
     return dict(row) if row is not None else None
 
 
+def active_member_users(ctx: TenantContext) -> dict[UUID, UUID]:
+    """``{membership_id: user_id}`` for every **active** member of the current
+    organization (ADR-073: who a product must be told has lost access when the
+    organization's entitlement ends). The caller binds the organization's
+    context and database scope - a reconciliation binds the routing context."""
+    from workeasy360.platform.organizations.models import Membership
+    from workeasy360.platform.tenancy.db import assert_tenant_scope
+
+    assert_tenant_scope(ctx.organization_id, what="active_member_users")
+    return dict(
+        Membership.objects.filter(status=MembershipStatus.ACTIVE.value).values_list(
+            "id", "user_id"
+        )
+    )
+
+
 def member_status_for_email(address: str) -> str | None:
     """The status of the current organization's membership for this
     (normalised) address, ignoring removed ones - or ``None``."""

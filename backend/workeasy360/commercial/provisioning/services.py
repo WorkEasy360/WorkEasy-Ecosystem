@@ -289,8 +289,15 @@ def reconcile(organization_id: UUID, *, at: datetime | None = None) -> int:
     identical rows. The snapshot version still advances, which is deliberate -
     it invalidates caches without requiring a diff to decide whether to.
     """
+    from django.db import transaction
+
     computed, state = _compute(organization_id, at)
-    version = apply_entitlements(computed)
+    # ADR-073: the entitlement rows and the logouts their loss owes products
+    # commit together (the ADR-069 outbox), never one without the other.
+    with transaction.atomic():
+        before = _stored_snapshot(organization_id).get("products", {})
+        version = apply_entitlements(computed)
+        _owe_access_ended(organization_id, before, computed)
     _write_summary(organization_id, computed, state, version)
     logger.info(
         "provisioning.reconciled",
@@ -323,7 +330,11 @@ def reconcile_and_report_drift(
         sorted(_differing_keys(before.get("features", {}), expected["features"]))
     )
 
-    version = apply_entitlements(computed)
+    from django.db import transaction
+
+    with transaction.atomic():
+        version = apply_entitlements(computed)
+        _owe_access_ended(organization_id, before.get("products", {}), computed)
     _write_summary(organization_id, computed, state, version)
     report = DriftReport(
         organization_id=organization_id,
@@ -383,6 +394,83 @@ def _write_summary(
         metrics.increment(SUMMARY_FAILURES)
         logger.error(
             "provisioning.summary.failed",
+            organization_id=str(organization_id),
+            error_type=type(exc).__name__,
+        )
+
+
+#: ADR-073: back-channel logouts owed because an entitlement ended, by outcome.
+ACCESS_ENDED = "provisioning_access_ended_total"
+
+
+def _granting(status: Any) -> bool:
+    try:
+        return EntitlementStatus(status).allows_read
+    except ValueError:
+        return False
+
+
+def lost_products(before: dict[str, Any], computed: ComputedEntitlements) -> list[str]:
+    """Products the organization held before this pass (any status that still
+    opens the product - by the stored snapshot, whether or not its end has
+    already passed by the clock) and holds no more. Pure."""
+    held_before = {
+        str(code)
+        for code, entry in (before or {}).items()
+        if _granting(entry.get("status"))
+    }
+    held_after = {p.product_code for p in computed.products if p.status.allows_read}
+    return sorted(held_before - held_after)
+
+
+def _owe_access_ended(
+    organization_id: UUID, before: dict[str, Any], computed: ComputedEntitlements
+) -> None:
+    """ADR-073 (G10): when this pass ended the organization's entitlement to a
+    product - expiry, cancellation, a line ended, a trial over, a grant revoked -
+    queue an ADR-069 back-channel logout to that product for each person who
+    could open it through this organization, in the caller's transaction.
+
+    Costs nothing when no product was lost (the comparison is in memory). Never
+    fails the reconciliation: losing the logouts only means the product finds
+    out at its next entitlement re-check, as before; failing here would leave
+    the access itself in place, which is worse. Its own savepoint keeps a
+    database error from poisoning the entitlement write.
+    """
+    lost = lost_products(before, computed)
+    if not lost:
+        return
+    from django.db import transaction
+
+    from workeasy360.contracts.ports.sign_ins import (
+        REASON_ENTITLEMENT_ENDED,
+        notify_access_ended,
+    )
+    from workeasy360.integration.scheduling.services import routing_context
+    from workeasy360.platform.entitlements.selectors import users_with_product_access
+    from workeasy360.platform.tenancy.context import tenant_context
+    from workeasy360.platform.tenancy.db import organization_db_scope
+
+    ctx = routing_context(organization_id)
+    if ctx is None:
+        return
+    try:
+        with (
+            tenant_context(ctx),
+            organization_db_scope(organization_id),
+            transaction.atomic(),
+        ):
+            for code, people in users_with_product_access(ctx, lost).items():
+                notify_access_ended(
+                    user_ids=sorted(people, key=str),
+                    product_codes=(code,),
+                    reason=REASON_ENTITLEMENT_ENDED,
+                )
+        metrics.increment(ACCESS_ENDED, outcome="recorded")
+    except Exception as exc:
+        metrics.increment(ACCESS_ENDED, outcome="failed")
+        logger.error(
+            "provisioning.access_ended.failed",
             organization_id=str(organization_id),
             error_type=type(exc).__name__,
         )
