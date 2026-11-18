@@ -1,0 +1,107 @@
+#!/bin/sh
+# Workeasy360 on the single host: release-image retention.
+#
+# Keeps the running release, the rollback release(s) named with --keep, their
+# "-flat" base images, and every image a container uses (running or stopped).
+# Removes every other workeasy360-frontend / workeasy360-backend tag, then the
+# untagged (dangling) images that no container uses.
+#
+# Never touches: containers, volumes, release directories, backups, or any
+# other repository (postgres, redis, alpine for the backup job, the stopped
+# Partner Panel's images). `docker rmi` runs without -f, so Docker itself
+# refuses to remove an image a container still uses.
+#
+# Dry run unless --apply:
+#   sudo /opt/workeasy360/bin/w360-prune-images --keep 2026.11.18-4a97b2a
+#   sudo /opt/workeasy360/bin/w360-prune-images --keep 2026.11.18-4a97b2a --apply
+set -eu
+ROOT="${W360_ROOT:-/opt/workeasy360}"
+REPOS="workeasy360-frontend workeasy360-backend"
+APPLY=0
+ROLLBACK=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --keep)
+      [ $# -ge 2 ] || { echo "--keep needs a release name" >&2; exit 2; }
+      ROLLBACK="$ROLLBACK $2"
+      shift 2
+      ;;
+    --apply) APPLY=1; shift ;;
+    -h | --help) sed -n '2,18p' "$0"; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+CURRENT="$(head -n 1 "$ROOT/current/RELEASE")"
+ENV_RELEASE="$(sed -n 's/^W360_RELEASE=//p' "$ROOT/env/production.env" | tail -n 1)"
+[ -n "$CURRENT" ] || { echo "refusing: $ROOT/current/RELEASE is empty" >&2; exit 1; }
+[ -n "$ROLLBACK" ] || { echo "refusing: name the rollback release with --keep <release>" >&2; exit 2; }
+KEEP="$CURRENT $ENV_RELEASE $ROLLBACK"
+
+# Every kept release must be on this host in full (both images), or nothing is removed.
+for r in $KEEP; do
+  for repo in $REPOS; do
+    docker image inspect "$repo:$r" >/dev/null 2>&1 || {
+      echo "refusing: $repo:$r is not on this host, so it could not be rolled back to" >&2
+      exit 1
+    }
+  done
+done
+
+# Image IDs any container uses, running or stopped.
+USED="$(docker ps -aq | xargs -r docker inspect --format '{{.Image}}' | sort -u)"
+is_used() { printf '%s\n' "$USED" | grep -qx "$1"; }
+is_kept() {
+  for r in $KEEP; do
+    [ "$1" = "$r" ] && return 0
+    [ "$1" = "$r-flat" ] && return 0
+  done
+  return 1
+}
+
+echo "Current release:  $CURRENT"
+echo "Rollback kept:   $ROLLBACK"
+echo "Disk before:"
+df -h / | sed -n '2p'
+docker system df | sed -n '1,2p'
+echo
+
+removed=0
+for repo in $REPOS; do
+  for tag in $(docker images "$repo" --format '{{.Tag}}' | grep -v '^<none>$' | sort); do
+    ref="$repo:$tag"
+    if is_kept "$tag"; then
+      echo "keep    $ref (current or rollback)"
+      continue
+    fi
+    id="$(docker image inspect --format '{{.Id}}' "$ref")"
+    if is_used "$id"; then
+      echo "keep    $ref (a container uses it)"
+      continue
+    fi
+    if [ "$APPLY" = 1 ]; then
+      if docker rmi "$ref" >/dev/null; then
+        echo "removed $ref"
+        removed=$((removed + 1))
+      else
+        echo "kept    $ref (docker refused)"
+      fi
+    else
+      echo "would remove $ref"
+    fi
+  done
+done
+
+echo
+if [ "$APPLY" = 1 ]; then
+  # Untagged images no container uses: no release can start them (compose names tags).
+  docker image prune -f
+  echo
+  echo "Removed $removed tag(s). Disk after:"
+  df -h / | sed -n '2p'
+  docker system df | sed -n '1,2p'
+else
+  echo "Dry run. Untagged images no container uses would be pruned too:"
+  docker images -f dangling=true --format '  {{.ID}} {{.CreatedSince}} {{.Size}}'
+  echo "Run again with --apply to remove."
+fi

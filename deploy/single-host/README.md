@@ -42,6 +42,19 @@ New release: build and load both images under a new tag, unpack the commit's `de
 
 Rollback (code): set `W360_RELEASE` back, re-point `current` to the previous release, `w360 up -d`. The schema stays (04-deployment.md §5-6).
 
+**Image retention (since 2026-11-18).** The host keeps two releases' images: the running one and one verified rollback. After a release is live and healthy, prune with the previous release as the rollback:
+
+    sudo /opt/workeasy360/bin/w360-prune-images --keep <previous-release>          # dry run: lists keep / would remove
+    sudo /opt/workeasy360/bin/w360-prune-images --keep <previous-release> --apply
+
+- **What it keeps:** the release in `current/RELEASE` and in `W360_RELEASE`, every `--keep` release with its `-flat` base, and every image a container uses (running or stopped).
+- **What it removes:** every other `workeasy360-frontend` / `workeasy360-backend` tag, then untagged images that no container uses.
+- **Refusals:** it removes nothing when a kept release is missing either image.
+- **What it never touches:** containers, volumes, release directories, backups, or other repositories. That includes `alpine:3` (the backup job's) and the stopped Partner Panel's images (see below).
+- **Patch builds:** a release built `FROM` an older one keeps the older one's layers alive. That costs no extra space, but flatten an image (export/import) before its layer count nears Docker's limit of about 125.
+- Older release directories stay; they are a few hundred KB each.
+- First run 2026-11-18, keeping 2026.11.18-fa88fcc (current) and 2026.11.18-4a97b2a (rollback): `/` went from 80 % used (3.7 GB free) to 62 % (7.0 GB free).
+
 Take WorkEasy360 off the host, data kept: `sudo /opt/workeasy360/bin/w360 down` - frees ports 80/443; volumes stay. Never `down -v` unless the data is meant to go.
 
 Restore test: `cd /opt/workeasy360/current && W360_BACKEND_IMAGE=workeasy360-backend:<tag> W360_ENV_FILE=/opt/workeasy360/env/production.env deploy/scripts/restore_verify.sh /opt/workeasy360/backups/<stamp> </dev/null`
