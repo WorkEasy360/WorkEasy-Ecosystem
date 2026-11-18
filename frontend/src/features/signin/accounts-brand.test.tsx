@@ -101,7 +101,7 @@ describe("WorkEasy360 Accounts", () => {
   it("the same product sign-in without portals (one host) keeps the platform's name", async () => {
     query = "resume=abc";
     render(<LoginScreen />);
-    expect(await screen.findByRole("heading", { level: 1, name: "Workeasy360" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "WorkEasy360" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "WorkEasy360 Accounts" })).not.toBeInTheDocument();
   });
 });

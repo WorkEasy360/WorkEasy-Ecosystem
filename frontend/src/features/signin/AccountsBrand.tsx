@@ -13,8 +13,8 @@ export function accountsTitle(page?: string): string {
 
 /**
  * The service's mark above a WorkEasy360 Accounts card: the WorkEasy360 logo
- * and the word "Accounts". The logo carries the name "Workeasy360" for
- * assistive technology, so the whole mark reads "Workeasy360 Accounts".
+ * and the word "Accounts". The logo carries the name "WorkEasy360" for
+ * assistive technology, so the whole mark reads "WorkEasy360 Accounts".
  */
 export function AccountsBrand() {
   return (

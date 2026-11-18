@@ -65,6 +65,25 @@ def account_url(portal: str | None = None) -> str:
     return origin(portal if portal in portals.ACCOUNT_PORTALS else portals.APP)
 
 
+def accounts_identity() -> bool:
+    """ADR-071: WorkEasy360 Accounts is the home of the person's identity."""
+    return enabled() and bool(getattr(settings, "W360_ACCOUNTS_IDENTITY", False))
+
+
+def identity_url(portal: str | None = None) -> str:
+    """Where an identity page for ``portal`` lives: sign-in, sign-up, email
+    verification, password reset, sign-in email confirmation.
+
+    ADR-071: with ``W360_ACCOUNTS_IDENTITY`` on, the customer portal's are
+    WorkEasy360 Accounts' (``W360_AUTH_ORIGIN``); the Admin and Partner portals
+    and the Store keep their own. Off, exactly :func:`account_url` (ADR-059).
+    Invitations are not identity pages: accepting one joins an organization on
+    the customer portal, so they keep :func:`account_url`."""
+    if accounts_identity() and portal in (None, portals.APP):
+        return origin(portals.AUTH)
+    return account_url(portal)
+
+
 def request_portal(request: Any) -> str:
     """The destination portal ``request`` arrived on - the portal whose own
     pages a link sent in answer to it should open - or the customer portal

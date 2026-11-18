@@ -162,12 +162,23 @@ describe("the hand-off landing on a portal", () => {
     expect(calls.find((c) => c.key === "POST /api/v1/auth/handoff/redeem")?.body).toEqual({ code: "c0de" });
   });
 
-  it("a spent or missing code says so and offers to sign in again", async () => {
+  it("a spent or missing code is retried once automatically, then says so and offers to sign in again", async () => {
+    // ADR-071: the first failure starts a fresh sign-in (Accounts, still signed
+    // in, hands straight back); only a second failure within two minutes shows
+    // the message - nobody is left on it by one dropped step.
+    window.sessionStorage.clear();
     vi.stubGlobal("location", { ...window.location, assign, replace, hash: "", pathname: "/auth/continue" });
     mockApi({});
+    const first = render(<ContinueSignInPage />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/login"));
+    expect(screen.queryByRole("heading", { name: "Sign-in couldn't be completed" })).not.toBeInTheDocument();
+    first.unmount();
+    replace.mockClear();
     render(<ContinueSignInPage />);
     expect(await screen.findByRole("heading", { name: "Sign-in couldn't be completed" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Sign in again" })).toHaveAttribute("href", "/login");
+    expect(replace).not.toHaveBeenCalled();
+    window.sessionStorage.clear();
   });
 
   it("never follows anything but a same-site path", async () => {

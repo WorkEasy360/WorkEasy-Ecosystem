@@ -9,6 +9,7 @@ import { usePortalRouter } from "@/lib/portalRouter";
 import { PORTAL_TO_MODE, type Portal } from "@/lib/portals";
 import { AdminLoginScreen } from "@/features/auth/AdminLogin";
 import { LoginForm } from "@/features/auth/LoginForm";
+import { continueFromAccounts } from "@/features/auth/accountsSignIn";
 import { PartnerLoginScreen } from "@/features/auth/PartnerLogin";
 import { UserLoginScreen } from "@/features/auth/UserLogin";
 import { destinationAfterSignIn, parseMode, type SignInMode } from "@/features/auth/signInMode";
@@ -83,7 +84,11 @@ function AlreadySignedInRedirect({ portal }: { portal: HostPortal }) {
     if (resume) {
       // eslint-disable-next-line @next/next/no-location-assign-relative-destination
       window.location.href = `/api/v1/integrations/oauth/resume?resume=${encodeURIComponent(resume)}`;
-    } else if (portal !== "auth") {
+    } else if (portal === "auth") {
+      // ADR-071: already signed in to WorkEasy360 Accounts - hand the sign-in to
+      // the customer portal that asked (no second password), or the account page.
+      void continueFromAccounts(searchParams);
+    } else {
       // Single-host mode: what the address names, as before (no mode lets the
       // dashboard decide).
       const mode = portal ? modeFor(portal, searchParams) : effectiveMode(searchParams);
@@ -115,7 +120,7 @@ function Heading({ brand, portal }: { brand: HostBrand | null; portal: HostPorta
   // sign-in never shows it - not even while that partner's brand is loading.
   const platform = !brand && !brandHostParam(searchParams.get("brand"));
   // ADR-067: the central sign-in host is WorkEasy360 Accounts.
-  const title = brand?.brand_name ?? (platform && portal === "auth" ? ACCOUNTS_NAME : "Workeasy360");
+  const title = brand?.brand_name ?? (platform && portal === "auth" ? ACCOUNTS_NAME : "WorkEasy360");
   return (
     <div className={styles.heading}>
       {platform && (
@@ -153,11 +158,14 @@ function SignInCard({ portal }: { portal: HostPortal }) {
       </div>
       {reauthenticating(searchParams) && (
         <p className={styles.note}>
-          The product you are opening asked Workeasy360 to check it is really you. Enter your Workeasy360 email and password
+          The product you are opening asked WorkEasy360 to check it is really you. Enter your WorkEasy360 email and password
           again - or sign in as someone else.
         </p>
       )}
-      <LoginForm mode={mode} />
+      <LoginForm
+        mode={mode}
+        onSignedIn={portal === "auth" && !searchParams.get("resume") ? () => void continueFromAccounts(searchParams) : undefined}
+      />
     </>
   );
 }
@@ -209,7 +217,7 @@ function StandardSignIn({ portal }: { portal?: Portal }) {
           fallback={
             <>
               <div className={styles.heading}>
-                <h1 className={styles.title}>Workeasy360</h1>
+                <h1 className={styles.title}>WorkEasy360</h1>
               </div>
               <div className={`w360-card ${styles.card}`}>
                 <p>Loading…</p>

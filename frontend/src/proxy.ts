@@ -7,6 +7,8 @@ import {
   portalSignInPath,
   readPortalOrigins,
   servesPage,
+  signInUrl,
+  stateCookieName,
   type Destination,
   type Portal,
   type PortalOrigins,
@@ -90,7 +92,20 @@ export function isPublicPath(pathname: string): boolean {
  * flight; no portal starts one any more (ADR-059). */
 const HANDOFF_LANDING = "/auth/continue";
 
-export type PortalRouting = { kind: "serve" } | { kind: "redirect"; location: string };
+/** A fresh binding value (ADR-043): 32 random bytes, base64url - the server's
+ * own rule (`identity.handoff.valid_state`). */
+export function newBindingValue(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  let text = "";
+  for (const b of bytes) text += String.fromCharCode(b);
+  return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** `bind`: a binding value (ADR-043) to set as this host's state cookie with
+ * the redirect - the customer portal signing in through WorkEasy360 Accounts
+ * (ADR-071). */
+export type PortalRouting = { kind: "serve" } | { kind: "redirect"; location: string; bind?: string };
 
 /**
  * The multi-portal routing decision for one page request (ADR-043), or `null`
@@ -112,8 +127,18 @@ export function routePortalRequest(args: {
   pathname: string;
   search: string;
   hasSession: boolean;
+  /** A fresh binding value, used only if this request starts a sign-in
+   * through WorkEasy360 Accounts (ADR-071). */
+  newState?: () => string;
 }): PortalRouting | null {
   const { origins, pathname, search, hasSession } = args;
+  const identity = Boolean(origins.accountsIdentity);
+  // ADR-071: the customer portal signs in through WorkEasy360 Accounts - the
+  // ADR-043 hand-off, bound to this host by a state cookie set with the redirect.
+  const throughAccounts = (next: string | null): PortalRouting => {
+    const state = args.newState ? args.newState() : "";
+    return { kind: "redirect", location: signInUrl(origins, "app", next, state), bind: state };
+  };
   const portal = portalForHost(args.host, origins);
   if (portal === null) return null;
   const params = new URLSearchParams(search);
@@ -131,6 +156,12 @@ export function routePortalRequest(args: {
     // ADR-065: the Store's own host signs its customers in itself - with or
     // without `?mode=user`, which names the same people.
     if (portal === "store" && (mode === null || mode === "user")) return { kind: "serve" };
+    if (identity) {
+      // ADR-071: WorkEasy360 Accounts signs in for itself (no mode) and for the
+      // customer portal (`mode=user`, with the customer portal's binding value).
+      if (portal === "auth" && (mode === null || mode === "user")) return { kind: "serve" };
+      if (portal === "app" && (mode === null || mode === "user")) return throughAccounts(params.get("next"));
+    }
     const target: Portal = mode ? MODE_TO_PORTAL[mode] : portal === "auth" ? "app" : portal;
     if (target === portal) return { kind: "serve" };
     // Another portal's sign-in page: the same address on its own host, less
@@ -146,7 +177,11 @@ export function routePortalRequest(args: {
     if (portal === "store") return { kind: "serve" };
     if (portal === "admin") return { kind: "redirect", location: `${origins.admin}/admin` };
     if (portal === "partner") return { kind: "redirect", location: `${origins.partner}/partner` };
-    if (portal === "auth") return { kind: "redirect", location: `${origins.app}/login` };
+    if (portal === "auth") {
+      return identity
+        ? { kind: "redirect", location: `${origins.auth}/account` }
+        : { kind: "redirect", location: `${origins.app}/login` };
+    }
     return { kind: "serve" }; // the public site's home, on the customer portal
   }
   if (!servesPage(portal, pathname, origins)) {
@@ -159,10 +194,14 @@ export function routePortalRequest(args: {
   if (!hasSession && !isPublic) {
     if (portal === "auth") {
       const resume = params.get("resume");
-      return resume
-        ? { kind: "redirect", location: `${origins.auth}/login?resume=${encodeURIComponent(resume)}` }
-        : { kind: "redirect", location: `${origins.app}/login` };
+      if (resume) return { kind: "redirect", location: `${origins.auth}/login?resume=${encodeURIComponent(resume)}` };
+      // ADR-071: Accounts' own pages (the account page) sign in on Accounts.
+      if (identity) {
+        return { kind: "redirect", location: `${origins.auth}/login?next=${encodeURIComponent(`${pathname}${search}`)}` };
+      }
+      return { kind: "redirect", location: `${origins.app}/login` };
     }
+    if (identity && portal === "app") return throughAccounts(`${pathname}${search}`);
     return signIn(portal, `${pathname}${search}`);
   }
   return { kind: "serve" };
@@ -290,9 +329,23 @@ export function proxy(request: NextRequest): NextResponse {
       pathname,
       search: request.nextUrl.search,
       hasSession: hasSessionCookie,
+      newState: newBindingValue,
     });
     if (routed?.kind === "redirect") {
-      return NextResponse.redirect(new URL(routed.location, request.url), 302);
+      const response = NextResponse.redirect(new URL(routed.location, request.url), 302);
+      if (routed.bind) {
+        // ADR-043/071: this host's binding value for the hand-off WorkEasy360
+        // Accounts sends back. Host-only, HttpOnly, 10 minutes; the server
+        // compares it with the code's on redemption.
+        response.cookies.set(stateCookieName(origins), routed.bind, {
+          httpOnly: true,
+          secure: origins.app.startsWith("https://"),
+          sameSite: "lax",
+          path: "/",
+          maxAge: 600,
+        });
+      }
+      return response;
     }
     if (routed?.kind === "serve") {
       return withSecurityHeaders(request, nonce, isDev, true, formTargetsFor(host, origins));

@@ -337,6 +337,11 @@ def test_the_frontend_contains_no_product_screens():
         # emailed change-of-sign-in-email link). Account pages, not screens.
         "switch-account",
         "confirm-email",
+        # ADR-071: /account (and /account/sign-in-preferences) on WorkEasy360
+        # Accounts - the person's own account: sign-in email, password,
+        # sessions, sign out everywhere, product sign-in preferences, and links
+        # to their organizations. An account page, not a product screen.
+        "account",
     }, top
     assert {p.name for p in (app / "auth").iterdir()} == {"continue"}
     site = {p.name for p in (app / "(site)").iterdir() if p.is_dir()}

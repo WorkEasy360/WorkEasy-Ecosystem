@@ -159,7 +159,7 @@ describe("the access chooser", () => {
 });
 
 describe("the sign-out confirmation", () => {
-  it("asks before signing out of Workeasy360, then returns to the product", async () => {
+  it("asks before signing out of WorkEasy360, then returns to the product", async () => {
     query = "request=sealed";
     const calls = mockApi({
       "GET /api/v1/auth/session": [SESSION],
@@ -167,11 +167,11 @@ describe("the sign-out confirmation", () => {
       "POST /api/v1/integrations/oauth/logout/confirm": [ok({ redirect_url: "https://crm.example.com/login?state=s" })],
     });
     const { container } = render(<SignOutConfirm />);
-    expect(await screen.findByRole("heading", { name: "Sign out of Workeasy360 too?" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sign out of WorkEasy360 too?" })).toBeInTheDocument();
     await expectNoViolations(container);
     // Opening the page signed no one out.
     expect(calls.some((c) => c.key.startsWith("POST"))).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: /Sign out of Workeasy360/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Sign out of WorkEasy360/ }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://crm.example.com/login?state=s"));
     expect(calls.at(-1)?.body).toEqual({ request: "sealed", sign_out: true });
   });
@@ -184,7 +184,7 @@ describe("the sign-out confirmation", () => {
       "POST /api/v1/integrations/oauth/logout/confirm": [ok({ redirect_url: "https://crm.example.com/login" })],
     });
     const { unmount } = render(<SignOutConfirm />);
-    fireEvent.click(await screen.findByRole("button", { name: /Stay signed in to Workeasy360/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Stay signed in to WorkEasy360/ }));
     await waitFor(() => expect(assign).toHaveBeenCalled());
     expect(calls.at(-1)?.body).toEqual({ request: "sealed", sign_out: false });
     unmount();
@@ -194,9 +194,9 @@ describe("the sign-out confirmation", () => {
       "GET /api/v1/integrations/oauth/logout/request": [ok({ product: { name: "Easy CRM" }, signed_in: false, account: null })],
     });
     render(<SignOutConfirm />);
-    expect(await screen.findByRole("heading", { name: "You're signed out of Workeasy360" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "You're signed out of WorkEasy360" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Return to Easy CRM" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Sign out of Workeasy360/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Sign out of WorkEasy360/ })).not.toBeInTheDocument();
   });
 });
 
@@ -322,7 +322,7 @@ describe("sign-in preferences", () => {
     });
     render(<SignInPreferencesScreen />);
     fireEvent.click(await screen.findByRole("button", { name: "Reset all to default" }));
-    expect(await screen.findByText("Reset. Workeasy360 will sign you in to every product automatically.")).toBeInTheDocument();
+    expect(await screen.findByText("Reset. WorkEasy360 will sign you in to every product automatically.")).toBeInTheDocument();
     expect(calls.some((c) => c.key === "DELETE /api/v1/auth/sign-in-preferences")).toBe(true);
   });
 

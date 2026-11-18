@@ -101,7 +101,7 @@ MEMBER_INVITED: Final = register(
         key="platform.member.invited",
         subject="You have been invited to join {organization_name}",
         body_text=(
-            "You have been invited to join {organization_name} on Workeasy360.\n\n"
+            "You have been invited to join {organization_name} on WorkEasy360.\n\n"
             "Accept the invitation: {invitation_url}\n\n"
             "This invitation expires on {expires_on}."
         ),
@@ -160,10 +160,10 @@ ORGANIZATION_REACTIVATED: Final = register(
 ACCOUNT_VERIFY_EMAIL: Final = register(
     Template(
         key="platform.account.verify_email",
-        subject="Confirm your email address for Workeasy360",
+        subject="Confirm your email address for WorkEasy360",
         body_text=(
             "Hello {name},\n\n"
-            "Confirm your email address to finish creating your Workeasy360 "
+            "Confirm your email address to finish creating your WorkEasy360 "
             "account: {verify_url}\n\n"
             "You will be asked for the password you chose. The link expires in "
             "{expires_in}.\n\n"
@@ -183,9 +183,9 @@ ACCOUNT_VERIFY_EMAIL: Final = register(
 ACCOUNT_SIGNUP_EXISTING: Final = register(
     Template(
         key="platform.account.signup_existing",
-        subject="You already have a Workeasy360 account",
+        subject="You already have a WorkEasy360 account",
         body_text=(
-            "Someone tried to create a Workeasy360 account with this email "
+            "Someone tried to create a WorkEasy360 account with this email "
             "address, but it already has one.\n\n"
             "Sign in: {sign_in_url}\n"
             "Forgotten your password? Reset it: {reset_url}\n\n"
@@ -207,9 +207,9 @@ ACCOUNT_SIGNUP_EXISTING: Final = register(
 ACCOUNT_PASSWORD_RESET: Final = register(
     Template(
         key="platform.account.password_reset",
-        subject="Reset your Workeasy360 password",
+        subject="Reset your WorkEasy360 password",
         body_text=(
-            "A password reset was requested for your Workeasy360 account.\n\n"
+            "A password reset was requested for your WorkEasy360 account.\n\n"
             "Choose a new password: {reset_url}\n\n"
             "The link expires in {expires_in} and can be used once. If you did "
             "not ask for this, ignore this email - your password is unchanged."
@@ -232,10 +232,10 @@ ACCOUNT_PASSWORD_RESET: Final = register(
 PARTNER_MEMBER_INVITED: Final = register(
     Template(
         key="platform.partner.member_invited",
-        subject="You have been set up on Workeasy360 for {partner_name}",
+        subject="You have been set up on WorkEasy360 for {partner_name}",
         body_text=(
             "Hello,\n\n"
-            "Workeasy360 has set you up as {role_name} for {partner_name}.\n\n"
+            "WorkEasy360 has set you up as {role_name} for {partner_name}.\n\n"
             "Choose your password to sign in: {setup_url}\n\n"
             "The link can be used once and expires in {expires_in}. If you were "
             "not expecting this, ignore this email - nothing changes until the "
@@ -258,9 +258,9 @@ PARTNER_MEMBER_INVITED: Final = register(
 CUSTOMER_OWNER_INVITED: Final = register(
     Template(
         key="platform.customer.owner_invited",
-        subject="{organization_name} is ready for you on Workeasy360",
+        subject="{organization_name} is ready for you on WorkEasy360",
         body_text=(
-            "{partner_name} has set up {organization_name} on Workeasy360 and "
+            "{partner_name} has set up {organization_name} on WorkEasy360 and "
             "named you as its owner.\n\n"
             "Activate your account and take ownership: {claim_url}\n\n"
             "The link can be used once and expires on {expires_on}. If you were "
@@ -288,9 +288,9 @@ CUSTOMER_OWNER_INVITED: Final = register(
 ACCOUNT_PASSWORD_CHANGED: Final = register(
     Template(
         key="platform.account.password_changed",
-        subject="Your Workeasy360 password was reset",
+        subject="Your WorkEasy360 password was reset",
         body_text=(
-            "The password for your Workeasy360 account was reset using an "
+            "The password for your WorkEasy360 account was reset using an "
             "emailed link, and every signed-in session was ended.\n\n"
             "If this was not you, reset your password again now and contact "
             "{support_email}."
@@ -309,10 +309,10 @@ ACCOUNT_PASSWORD_CHANGED: Final = register(
 ACCOUNT_CHANGE_EMAIL: Final = register(
     Template(
         key="platform.account.change_email",
-        subject="Confirm your new Workeasy360 sign-in email",
+        subject="Confirm your new WorkEasy360 sign-in email",
         body_text=(
             "Hello {name},\n\n"
-            "You asked to sign in to Workeasy360 with this address from now on.\n\n"
+            "You asked to sign in to WorkEasy360 with this address from now on.\n\n"
             "Confirm it: {confirm_url}\n\n"
             "The link expires in {expires_in} and can be used once. Until it is "
             "used, you keep signing in with your current address. If you did not "
@@ -334,10 +334,10 @@ ACCOUNT_CHANGE_EMAIL: Final = register(
 ACCOUNT_CHANGE_EMAIL_IN_USE: Final = register(
     Template(
         key="platform.account.change_email_in_use",
-        subject="This address already has a Workeasy360 account",
+        subject="This address already has a WorkEasy360 account",
         body_text=(
             "Someone asked to use this address as the sign-in email of another "
-            "Workeasy360 account. It already has an account, so nothing was "
+            "WorkEasy360 account. It already has an account, so nothing was "
             "changed.\n\n"
             "Sign in: {sign_in_url}\n"
             "Forgotten your password? Reset it: {reset_url}"
@@ -358,9 +358,9 @@ ACCOUNT_CHANGE_EMAIL_IN_USE: Final = register(
 ACCOUNT_EMAIL_CHANGED: Final = register(
     Template(
         key="platform.account.email_changed",
-        subject="Your Workeasy360 sign-in email was changed",
+        subject="Your WorkEasy360 sign-in email was changed",
         body_text=(
-            "The sign-in email of your Workeasy360 account was changed to "
+            "The sign-in email of your WorkEasy360 account was changed to "
             "{new_email_hint}. From now on, sign in with the new address.\n\n"
             "If this was not you, contact {support_email} now."
         ),
