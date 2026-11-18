@@ -228,8 +228,8 @@ def _end_refunded_access(
     ``cancel_subscription`` instead, since a subscription is not left with
     nothing in it. Keyed on the refund, so it happens once. A line whose
     subscription has already ended needs nothing."""
+    from workeasy360.commercial.subscriptions import selectors
     from workeasy360.commercial.subscriptions import services as subscriptions
-    from workeasy360.commercial.subscriptions.models import Subscription, SubscriptionItem
     from workeasy360.contracts.enums import SubscriptionStatus
     from workeasy360.contracts.errors import CommercialError
 
@@ -244,11 +244,10 @@ def _end_refunded_access(
     ended: list[str] = []
     cancelled: list[str] = []
     for item_id in items:
-        line = SubscriptionItem.objects.filter(id=item_id).first()
+        line = selectors.line_standing(item_id)
         if line is None:
             continue
-        subscription = Subscription.objects.get(id=line.subscription_id)
-        status = subscription.status_enum
+        status = line.subscription_status
         if status is SubscriptionStatus.EXPIRED or (
             status is SubscriptionStatus.CANCELLED and not immediate
         ):
@@ -270,12 +269,12 @@ def _end_refunded_access(
                 raise
             subscriptions.cancel_subscription(
                 rebound,
-                subscription_id=subscription.id,
-                idempotency_key=f"refund:{refund.id}:cancel:{subscription.id}",
+                subscription_id=line.subscription_id,
+                idempotency_key=f"refund:{refund.id}:cancel:{line.subscription_id}",
                 immediate=immediate,
                 reason_code="refund",
             )
-            cancelled.append(str(subscription.id))
+            cancelled.append(str(line.subscription_id))
     outcome = {
         "end_access": end_access,
         "ended_items": ended,
