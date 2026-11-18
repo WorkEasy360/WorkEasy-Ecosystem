@@ -497,7 +497,9 @@ def record_access_ended(
         return 0
     with transaction.atomic():
         rows = list(
-            ProductSignIn.objects.select_for_update()
+            # Only the sign-in rows are locked, never the integration joined to them:
+            # the token endpoint updates that row on every redemption.
+            ProductSignIn.objects.select_for_update(of=("self",))
             .filter(
                 user_id__in=list(user_ids),
                 ended_at__isnull=True,
