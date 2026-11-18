@@ -227,6 +227,42 @@ def change_quantity(
     return result
 
 
+@in_scope
+def end_product(
+    ctx: TenantContext,
+    organization_id: UUID,
+    item_id: UUID,
+    *,
+    reason: Any,
+    idempotency_key: Any,
+    immediate: bool = False,
+    expected_version: int | None = None,
+) -> Any:
+    """ADR-073 (G7): end one product line at the period end (default) or now,
+    keeping the subscription and the other products - the customer's own
+    command, run in the customer's scope, with a reason. Ending it now is the
+    bounded override, as cancelling a subscription now is."""
+    authz.require(ctx, MANAGE)
+    why = clean_reason(reason)
+    with organization_scope(ctx, organization_id) as customer:
+        result = subscription_services.end_product(
+            customer,
+            subscription_item_id=item_id,
+            idempotency_key=_key(ctx, idempotency_key),
+            immediate=bool(immediate),
+            reason_code=why[:64],
+            expected_version=expected_version,
+        )
+    _record(
+        ctx,
+        "end_product_now" if immediate else "end_product",
+        organization_id,
+        item_id,
+        why,
+    )
+    return result
+
+
 # --- entitlement overrides --------------------------------------------------
 
 

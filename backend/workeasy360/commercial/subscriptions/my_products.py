@@ -65,6 +65,8 @@ def holdings(*, at: datetime | None = None) -> dict[str, HoldingDTO]:
         for item in subscription.effective_items(moment):
             if not item.product_code:
                 continue
+            # ADR-073 (G7): a product ended on its own shows when it ends.
+            ends = _product_ends(subscription, item)
             plan = plans.get(item.plan_version_id)
             found[item.product_code] = HoldingDTO(
                 product_code=item.product_code,
@@ -75,10 +77,10 @@ def holdings(*, at: datetime | None = None) -> dict[str, HoldingDTO]:
                 trial_ends_at=subscription.trial_ends_at if on_trial else None,
                 renews_at=(
                     None
-                    if subscription.cancel_at or on_trial
+                    if subscription.cancel_at or on_trial or ends
                     else subscription.current_period_end
                 ),
-                cancel_at=subscription.cancel_at,
+                cancel_at=_earliest(subscription.cancel_at, ends),
             )
     paid = selectors.paid_product_codes(subscriptions, moment)
     for trial in trials:
@@ -96,3 +98,25 @@ def holdings(*, at: datetime | None = None) -> dict[str, HoldingDTO]:
             trial_id=str(trial.id),
         )
     return found
+
+
+def _earliest(*moments: datetime | None) -> datetime | None:
+    present = [m for m in moments if m is not None]
+    return min(present) if present else None
+
+
+def _product_ends(subscription: selectors.SubscriptionDTO, item) -> datetime | None:
+    """When this line's product stops being held by the subscription on its own -
+    ``None`` while a line for it runs on (a scheduled plan or quantity change
+    opens the next line where this one closes)."""
+    if item.removed_at is None:
+        return None
+    for other in subscription.items:
+        if (
+            other.product_code == item.product_code
+            and other.id != item.id
+            and other.added_at >= item.removed_at
+            and (other.removed_at is None or other.removed_at > other.added_at)
+        ):
+            return _product_ends(subscription, other)
+    return item.removed_at

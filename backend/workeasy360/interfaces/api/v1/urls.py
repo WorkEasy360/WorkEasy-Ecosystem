@@ -587,6 +587,12 @@ urlpatterns = [
         commercial_views.change_plan_view,
         name="subscription-change-plan",
     ),
+    # ADR-073: end one product at its period end, keeping the others.
+    path(
+        "orgs/<slug:org_slug>/subscription-items/<uuid:subscription_item_id>/end",
+        commercial_views.end_product_view,
+        name="subscription-item-end",
+    ),
     # --- remote product integration: the external trust boundary ---
     #
     # NOT under the tenant path shape, and that is the point. These endpoints
@@ -1254,6 +1260,12 @@ _admin = [
         "admin/customers/<uuid:organization_id>/items/<uuid:item_id>/change-quantity",
         admin_views.item_change_quantity_view,
         name="admin-item-change-quantity",
+    ),
+    # ADR-073: staff end one product at its period end or, with a reason, now.
+    path(
+        "admin/customers/<uuid:organization_id>/items/<uuid:item_id>/end",
+        admin_views.item_end_view,
+        name="admin-item-end",
     ),
     path(
         "admin/customers/<uuid:organization_id>/entitlement-overrides",
