@@ -70,3 +70,17 @@ paths = [
   '''(^|/)docs/phase-3/08-key-management\.md$''',
   '''(^|/)backend/workeasy360/commercial/pricing/models\.py$''',
 ]
+
+# Triaged 2026-11-18 (PR #7). The generic-api-key rule reads the NAME of a
+# sessionStorage entry as a key: frontend/src/app/auth/continue/page.tsx keeps
+# `const RETRY_KEY = "w360_handoff_retry"`, the marker of the one automatic
+# hand-off retry (ADR-071). It is a fixed storage-key name sent to no server,
+# not a credential. Only this exact assignment is exempt, and only from this
+# rule: the same name holding any other value is still reported (checked with
+# planted values when this entry was added).
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+description = "A sessionStorage key name, not a credential (ADR-071)"
+regexTarget = "match"
+regexes = ['''^RETRY_KEY = "w360_handoff_retry"$''']

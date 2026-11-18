@@ -1,0 +1,49 @@
+name: Dependency watch
+
+# Daily, on the default branch: the frontend dependency gate against today's
+# advisory database, and a check that every time-limited acceptance in
+# frontend/scripts/audit-gate.mjs still has no fixed version. A run that fails
+# here means an exception is ready to be removed (upgrade, then delete the ID),
+# has passed its review date, or a new advisory has appeared.
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend advisories and accepted exceptions
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Dependency gate (today's advisories)
+        run: |
+          npm audit --json > "$RUNNER_TEMP/npm-audit.json" || true
+          node scripts/audit-gate.mjs "$RUNNER_TEMP/npm-audit.json"
+      - name: Accepted advisories that now have a fix
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          fixed=0
+          for id in $(node scripts/audit-gate.mjs --time-limited); do
+            patched=$(gh api "advisories/$id" --jq '[.vulnerabilities[].first_patched_version | select(. != null)] | join(", ")')
+            if [ -n "$patched" ]; then
+              echo "::error::$id now has a fixed version ($patched): upgrade, then remove it from frontend/scripts/audit-gate.mjs"
+              fixed=1
+            else
+              echo "$id: still no fixed version"
+            fi
+          done
+          exit $fixed
