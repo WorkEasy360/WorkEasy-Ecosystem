@@ -7,7 +7,7 @@ The owner's brief of 2026-11-18 asks for a simpler Super Admin console (`/admin`
 | Step 0 — discovery | Reported 2026-11-18. The owner accepted the recommended answers to the 7 decisions. |
 | Phase 1 — flatten navigation | **Done 2026-11-18** (4a97b2a). |
 | Phase 2 — detail pages | **Done 2026-11-18** (the Customer page; Step-0 list D approved nothing else). |
-| Phase 3 — tables, filters & actions | **Done 2026-11-18** (with the server disk cleanup). |
+| Phase 3 — tables, filters & actions | **Done 2026-11-18** (bcff059, b10530e), with the server disk cleanup. Deployed as 2026.11.18-b10530e. |
 | Phases 4–5 | Not started. Each waits for the owner's approval of the previous phase. |
 
 ## Phase 1 — what changed
@@ -222,6 +222,41 @@ Tests: `backend/tests/admin_panel/test_list_date_filters.py`.
 - Every service stayed up and healthy, with all 10 volumes present. The API health check answered 200, and admin, partner, app and store answered 200.
 
 **Left as is (owner's call):** the stopped Partner Panel's images (`partner-panel-api` 1.07 GB, `partner-panel-web`, `postgres:16-alpine`) and its stopped containers. README › partner.workeasy360.com keeps them as its documented way back.
+
+### Deployment
+
+**Release.** 2026.11.18-b10530e has been live since 2026-11-18, about 16:05 IST. It is a patch build on the 2026.11.18-fa88fcc images:
+- the backend's Python and the frontend changed;
+- there is no migration;
+- requirements, package-lock and the Dockerfiles are unchanged, so it still runs Next 16.4.2.
+
+**Checks before the switch:**
+- The new code accepts the live environment.
+- The images keep the live images' settings and health check.
+- A throwaway web container served `/login` with 200.
+- A backup was taken: `20261118T103519Z`.
+
+**Checks after the switch:**
+- The API is healthy, with 0 unapplied migrations.
+- The API and web logs show 0 errors.
+- admin, partner, app and store each answer 200 and serve the new build.
+- An admin list called without a session answers 401, whatever its parameters.
+
+**Image retention** then kept b10530e and fa88fcc. `/` went to 54 % used (8.6 GB free).
+
+**Rollback:** switch the release back to 2026.11.18-fa88fcc. There is no schema change, and the new list parameters are additive.
+
+**Tests:**
+- Frontend: vitest 1,911/1,911 across 103 files. Each file touched by the date-format fix was re-run on b10530e.
+- Lint and type-check are clean, and `next build` plus the dynamic-rendering check pass.
+- Backend: the full suite passed in CI on bcff059. The backend did not change after that commit.
+- Browser: a fixture-backed check of a production build passed 223/223. It covered 5 widths, axe, the filters, Back from a record, the guest confirmation and Try again.
+
+**CI on the PR.** CI had been red since Phase 1 for reasons outside this work:
+- the npm audit gate, on Next 16.4.2 and on dev-only picomatch;
+- gitleaks, which scans every branch, on another branch's `RETRY_KEY` name.
+
+The fixes from `fix/next-16.4.6-advisory` were merged as a19617d. After that, all 13 CI checks passed, including the full backend suite and the frontend job on Next 16.4.6. Next 16.4.6 ships with the next release, because it changes `node_modules`.
 
 ## Old → new addresses
 
