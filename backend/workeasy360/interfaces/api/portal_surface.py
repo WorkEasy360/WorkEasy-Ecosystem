@@ -25,7 +25,10 @@ from django.conf import settings
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 
 from workeasy360.contracts.values import portals
+from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import metrics
+
+logger = get_logger(__name__)
 
 
 def _count_legacy(request: HttpRequest, answer: HttpResponse | None) -> None:
@@ -39,6 +42,9 @@ def _count_legacy(request: HttpRequest, answer: HttpResponse | None) -> None:
     else:
         kind = "refused"
     metrics.increment("accounts_legacy_host_requests_total", kind=kind)
+    # The durable record of the same thing: what w360_issuer_readiness reads from the API logs
+    # before the name is retired (the in-process counter resets with every restart).
+    logger.info("accounts.legacy_host.request", kind=kind)
 
 
 #: Staff control-plane administration that predates ``/api/v1/admin/`` and

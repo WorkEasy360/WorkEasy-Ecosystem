@@ -122,7 +122,19 @@ python scripts/verify_portal_dns_tls.py                       # every check PASS
 | **Issuer validation** | Strict on both sides: each product verifies exactly its own configured issuer, and a token from one name is refused by a product configured with the other. The platform accepts client assertions only for its own two token endpoints. Verified in a real browser: one product on each name, both signed in. |
 | **Sessions** | One central session on `accounts.` serves products on either name. Codes issued before the switch remain redeemable, and the `iss` is chosen where the code is redeemed. |
 | **Logout** | Each logout token is signed as the issuer that product **last redeemed a code under** (ADR-069 addendum), so a product on `auth.` and a product on `accounts.` are both signed out by "sign out everywhere" and by Switch Account. Verified in a real browser: delivered, `http_200`, each under its own issuer. |
-| **Rollback** | Back to a, but only while no product is configured with `accounts.`. Otherwise that product fails closed until it is configured back. |
+| **Rollback** | **Per product, never globally, once any product is on `accounts.`** (next section). The platform goes back to stage a only while no product is configured with `accounts.`; `w360 exec api python manage.py w360_issuer_readiness --retire https://accounts.workeasy360.com` names any product that last redeemed a code there. |
+
+### Rolling back with products on both names
+
+A global rollback to stage a would stop `accounts.` being an issuer, and every product already moved there would fail closed. So once one product has moved:
+
+1. **Roll back the product, not the platform.** The platform stays at stage b, which serves both names. In the product's rollback release:
+   - set `WORKEASY360_ISSUER` back to `https://auth.workeasy360.com`;
+   - move its identity links back with the same command, pointed the other way: `w360sso_move_issuer --from https://accounts.workeasy360.com` (dry run, then `--apply`), or Easy CRM's `move_workeasy360_issuer --from https://accounts.workeasy360.com --apply`.
+
+   People keep the same local accounts both ways. This is tested in the connector: `test_a_product_rolled_back_to_the_previous_name_keeps_its_people`, 18 November.
+2. Logout keeps working through the rollback. Logout tokens follow the issuer the product last redeemed a code under (ADR-069 addendum). The first sign-in after the rollback moves it back to `auth.`.
+3. Roll back the platform's code only to a release that still serves stage b, and only while some product is on `accounts.`. Every release since 2026.11.16 does. The database needs no rollback for this; `ecosystem` 0007 and 0008 stay, unused by older code. Rehearsed on 18 November with `Accounts/e2e/platform/rehearse_backup_restore.sh` (19/19). The run covered: the production backup script; `restore_verify.sh` with the production image (28/28); the upgrade, a re-run, rollback to 0006 with the production image starting again, and a migration blocked by a lock, which rolled back whole and then completed.
 
 ## Step 5: identity cutover (ADR-071): `W360_ACCOUNTS_IDENTITY=on`
 
@@ -186,10 +198,37 @@ Then sign out of WorkEasy360 on one device. The CRM session ends, and Integratio
 | Stage | When | What it does |
 |---|---|---|
 | c | The products that matter are on `accounts.` | Canonical issuer `accounts.`. `auth.` is still honoured on its own host. |
-| d | No `ecosystem.token.issued` naming `https://auth.workeasy360.com` for 30 days (`w360 logs api \| grep ecosystem.token.issued \| grep auth.workeasy360.com`, appended weekly to a file; the container keeps 5 x 50 MB) | `auth.` is no longer an issuer. A product still on it fails closed at discovery. Browsers are still forwarded. |
-| e | `accounts_legacy_host_requests_total` flat, and every product on `accounts.` | `auth.` is retired. **Delete the `auth` DNS record at the same time.** |
+| d | `w360_issuer_readiness` answers **READY** for `https://auth.workeasy360.com` (below) | `auth.` is no longer an issuer. A product still on it fails closed at discovery. Browsers are still forwarded. |
+| e | `w360_issuer_readiness` answers **READY** again after stage d, and the owner accepts the forwarded-browser count it reports | `auth.` stops being served. Delete the `auth` DNS record at the same time. |
 
 Each uses the stage command above with `--stage c|d|e`.
+
+**Retirement is decided by evidence, never by elapsed time.** The API logs are the evidence the database cannot hold. Keep them for the whole window: the container keeps only 5 x 50 MB, so append them to a file every week.
+
+```sh
+sudo /opt/workeasy360/bin/w360 logs --no-log-prefix --since 168h api >> /opt/workeasy360/evidence/api-logs.jsonl
+```
+
+Then:
+
+```sh
+sudo /opt/workeasy360/bin/w360 run --rm --no-deps -T -v /opt/workeasy360/evidence:/evidence:ro api \
+  python manage.py w360_issuer_readiness --retire https://auth.workeasy360.com --log /evidence/api-logs.jsonl --days 30
+```
+
+The exit status is the answer: **0** READY, **1** NOT READY, **2** NOT ENOUGH EVIDENCE. Nothing is changed. The command weighs four things:
+
+- **Configuration.** The name must no longer be the canonical issuer.
+- **The database.** It looks at every active product's last issuer.
+  - A product still on `auth.` blocks.
+  - So does a product with no recorded issuer, because nothing shows which name it trusts. Have it sign someone in once, or suspend it.
+- **The logs, over the whole window.**
+  - Blocking: any token issued as `auth.`, and any discovery, key-set or API request served or refused by the old host (`accounts.legacy_host.request`).
+  - Reported but not blocking: browsers forwarded from old links.
+  - Logs that do not cover the window mean NOT ENOUGH EVIDENCE.
+- **Refresh tokens.** None are issued; the token endpoint grants `authorization_code` only.
+
+**If the answer is not READY, keep `auth.`.** A working compatibility name costs nothing. Retiring it while something still depends on it breaks a live integration.
 
 ## Global logout: what is and is not covered
 
@@ -198,6 +237,8 @@ Each uses the stage command above with `--stage c|d|e`.
 | WorkEasy360 portals (User Admin, Accounts) | Yes. Sessions end directly; User Admin's handed-over session shares the Accounts sign-in. | real browser, 17 Nov |
 | Template products, the `workeasy360-sso` connector | Yes, by back-channel, under either issuer | real browser and live E2E, 17 Nov |
 | Easy CRM (connector, AI-CRM#19) | Yes, by back-channel, **once deployed and its URL registered** | live E2E (CRM backend), 17 Nov |
-| EasyBook, Easy Project, Easy Help Desk | **Not yet.** Back-channel work is on their branches, unreviewed and undeployed; until then their sessions end at their entitlement re-check | see the final status report |
+| EasyBook (connector, EasyBook#2) | Yes, by back-channel: access tokens are refused at once and refresh fails | live: `Accounts/e2e/run_global_logout.py`, 18 Nov |
+| Easy Project (Spring, Project-Module#1) | Yes, on **every instance**: the logout ends a shared sign-in record checked on each request. Delivered to instance B, it ended the session held by instance A | live, two instances, 18 Nov |
+| Easy Help Desk (NestJS, helpdesk-workeasy#1) | Yes: the per-request session check refuses the old access token at once, refresh fails, and open sockets are dropped | product e2e suite (two API instances); live, 18 Nov |
 
-**Global logout is not complete for the whole ecosystem** until every participating product has its receiver deployed, registered and tested.
+That evidence is from branches, run live against the platform locally. In production, global logout covers only what is deployed and registered. Each of these products still needs its PR reviewed, merged, deployed and its back-channel URL registered (Step 7 is CRM's). **Until then, global logout is not complete in production.**
