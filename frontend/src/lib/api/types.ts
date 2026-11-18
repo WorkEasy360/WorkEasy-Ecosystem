@@ -90,6 +90,10 @@ export interface AppDirectoryEntry {
   seats: { total: number; used: number } | null;
   renews_at: string | null;
   cancel_at: string | null;
+  /** ADR-073: a **paid** product whose access ended in the last 90 days - shown
+   * as Expired with a way to buy it again. The plan only to a member who may see
+   * subscriptions. Null when the product is held or was never paid for. */
+  lapsed?: { ended_at: string; plan: { code: string; name: string } | null } | null;
   /** ADR-044: how this person enters the product - whether Workeasy360
    * sign-in works for it, their own setting, and what therefore happens.
    * Decided by the server; null when the product has no registration. */
