@@ -13,7 +13,12 @@ from typing import Any
 
 from django.http import HttpRequest, JsonResponse
 
-from workeasy360.commercial.controlplane import product_domains, products, store
+from workeasy360.commercial.controlplane import (
+    integration_kit,
+    product_domains,
+    products,
+    store,
+)
 from workeasy360.contracts.errors import ManifestRejected
 from workeasy360.contracts.values import json_input
 from workeasy360.contracts.values.tenant import TenantContext
@@ -206,6 +211,23 @@ def integration_readiness_view(
     is missing (registration, callback, credential, domains, status,
     back-channel logout, health). Stored facts only; asks no product."""
     return JsonResponse(product_domains.sso_readiness(ctx, product_code=product_code))
+
+
+@staff_view(["GET"])
+def integration_kit_view(
+    request: HttpRequest, ctx: TenantContext, product_code: str
+) -> JsonResponse:
+    """The product's sign-in configuration for one framework
+    (``?framework=django|spring|node|other``), generated from its registration.
+    Holds no secret; each generation is audited."""
+    framework = str(request.GET.get("framework", "django"))
+    with acting_scope(ctx):
+        kit = integration_kit.integration_kit(
+            ctx, product_code=product_code, framework=framework
+        )
+    response = JsonResponse(kit)
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 @staff_view(["POST"])

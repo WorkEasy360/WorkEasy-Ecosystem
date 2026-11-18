@@ -611,10 +611,24 @@ def test_readiness_is_ready_when_everything_is_in_place(staff_login, staff, dns,
         manifest_version="2026-11-15",
         backchannel_logout_uri=f"{ORIGIN}/auth/backchannel-logout",
     )
-    from workeasy360.platform.ecosystem.models import ProductIntegration
+    from django.utils import timezone
 
+    from workeasy360.platform.ecosystem.models import (
+        BackchannelLogout,
+        ProductIntegration,
+    )
+
+    # "In place" includes the evidence (2026-11-18): a completed sign-in and an
+    # acknowledged logout, not only the configuration.
     ProductIntegration.objects.filter(pk=live["integration"].pk).update(
-        health_status="healthy"
+        health_status="healthy", last_token_at=timezone.now()
+    )
+    BackchannelLogout.objects.create(
+        integration_id=live["integration"].pk,
+        user_id=live["integration"].pk,
+        reason="signed_out",
+        status="delivered",
+        finished_at=timezone.now(),
     )
     body = client.get(READINESS).json()
     assert body["verdict"] == "ready", body

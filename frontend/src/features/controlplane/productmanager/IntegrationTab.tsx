@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import { adminApi, type ConsoleIntegration, type ConsoleProduct } from "@/lib/api/controlPlane";
+import { IntegrationKitCard } from "./IntegrationKitCard";
 import { AuthenticationEditor, AuthenticationFacts, CredentialsPanel, RegisterIntegration } from "../IntegrationAuthentication";
 import { FormPopup } from "../Modal";
 import { ReasonAction, Status, when } from "../ui";
@@ -373,6 +374,7 @@ export function IntegrationTab({
                 integration={p.integration}
                 manage={manageIntegration}
               />
+              <IntegrationKitCard code={p.code} />
             </>
           )}
         </>
