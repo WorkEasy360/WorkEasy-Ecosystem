@@ -85,9 +85,9 @@ The staff refund command takes `end_access: "keep" | "period_end" | "now"`. The 
 
 For `entitlement_ended`, the people told are those holding a seat (per-seat) or every active member (organization-wide). "Could open" means: every product the organization holds, less the per-seat ones the member holds no seat in.
 
-**Same outbox, same transaction.** For each (person, product) with a live `ProductSignIn` (products that take back-channel logout), one `BackchannelLogout` row is queued. It names `sub` only, and the sign-in rows are ended, in the transaction that took the access away. For a reconciliation, that is the entitlement write. The worker delivers it as for any ADR-069 logout.
+**Same outbox, same transaction.** For each (person, product) with a live `ProductSignIn` (products that take back-channel logout), one `BackchannelLogout` row is queued. It names `sub` only, and the sign-in rows are ended, in the transaction that took the access away. For a reconciliation, that is the entitlement write itself: `apply_entitlements(on_products_lost=...)` compares the snapshot row it is about to replace with the new one, under the organization's lock, and calls back inside its transaction. The worker delivers it as for any ADR-069 logout.
 
-- **A reconciliation that loses nothing** compares in memory and costs no query beyond reading the stored snapshot.
+- **A reconciliation that loses nothing** costs no query: the comparison is against the snapshot row the write reads anyway. Two racing passes queue each logout once, because the second sees the snapshot the first wrote.
 - **A failure to queue** is logged and counted (`provisioning_access_ended_total`). It never rolls the entitlement change back: the product then finds out at its next re-check, as before.
 
 **Accepted consequence.** A logout token names a person, not an organization. A product told this ends that person's sessions **in that product for every organization**, including one where they still hold it. That is safe: their Workeasy360 sign-in is untouched, so the next sign-in is passwordless and is checked again for the organization it names. Products that do not take back-channel logout still rely on the entitlement re-check.
