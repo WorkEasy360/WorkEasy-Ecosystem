@@ -1476,6 +1476,21 @@ _admin = [
         name="admin-product-integration-backchannel",
     ),
     path(
+        "admin/products/<str:product_code>/integration/domains",
+        admin_product_views.integration_domains_view,
+        name="admin-product-integration-domains",
+    ),
+    path(
+        "admin/products/<str:product_code>/integration/domains/verify",
+        admin_product_views.integration_domain_verify_view,
+        name="admin-product-integration-domain-verify",
+    ),
+    path(
+        "admin/products/<str:product_code>/integration/readiness",
+        admin_product_views.integration_readiness_view,
+        name="admin-product-integration-readiness",
+    ),
+    path(
         "admin/catalog/products/<uuid:product_id>/trial",
         admin_catalog_views.product_trial_view,
         name="admin-catalog-product-trial",

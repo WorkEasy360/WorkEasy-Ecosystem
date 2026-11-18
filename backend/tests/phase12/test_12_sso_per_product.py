@@ -86,6 +86,11 @@ def real_product(client, signing_key, product_client):
                 kind=FeatureKind.BOOLEAN,
             )
             integration = ecosystem.register_integration(ctx, manifest=_manifest(entry))
+            # ADR-070: as register_products --activate-integrations does, the
+            # operator vouches for the first-party hostnames before activating.
+            from workeasy360.platform.ecosystem import domains
+
+            domains.attest_domains(ctx, integration, reason="test fixture")
             ecosystem.transition(ctx, client_id=integration.client_id, to_status="active")
             private_pem, public_pem = keys.generate_key_pair("RS256")
             issued = ecosystem.create_credential(

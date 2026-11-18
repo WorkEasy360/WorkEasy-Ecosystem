@@ -681,6 +681,16 @@ export interface SessionRow {
   device_label: string;
 }
 
+/** ADR-069: what "sign out everywhere" really did. ``pending``: the product is still
+ * being told (the worker retries); ``failed``: it refused or could not be reached. Either
+ * way its sessions end at its next entitlement re-check at the latest. */
+export interface SignOutEverywhere {
+  ok: boolean;
+  workeasy360: { sessions_ended: number };
+  products: { product_code: string; name: string; status: "delivered" | "pending" | "failed" }[];
+  complete: boolean;
+}
+
 export interface AccountEvent {
   occurred_at: string;
   kind: string;
@@ -719,6 +729,10 @@ export const accountApi = {
     apiFetch<{ ok: boolean; ended: number }>("/api/v1/auth/sessions/revoke-others", {
       method: "POST",
     }),
+  /** Every session of this account, this one included, and every product session that
+   * takes back-channel logout (ADR-069). */
+  signOutEverywhere: () =>
+    apiFetch<SignOutEverywhere>("/api/v1/auth/sessions/sign-out-everywhere", { method: "POST" }),
   activity: () => apiFetch<{ events: AccountEvent[] }>("/api/v1/auth/activity"),
 
   /** POST, so the token never travels in a URL (or an access log). */

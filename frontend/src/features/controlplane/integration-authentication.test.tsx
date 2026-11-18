@@ -21,6 +21,12 @@ vi.mock("next/navigation", () => ({
 const ADMIN = "/api/v1/admin";
 const MANAGE = ["platform.staff_catalog.manage", "platform.staff_integration.manage"];
 const DETAIL = `GET ${ADMIN}/products/id-future_product`;
+/** The single sign-on reads the Integration tab makes when it opens a
+ * registered integration (ADR-069/068); covered in productmanager/sso-settings.test.tsx. */
+const SSO_READS = {
+  [`GET ${ADMIN}/products/future_product/integration/readiness`]: [ok({ verdict: "ready", checks: [] })],
+  [`GET ${ADMIN}/products/future_product/integration/domains`]: [ok({ domains: [], unverified: [], all_verified: true })],
+};
 
 function integration(overrides: Record<string, unknown> = {}) {
   return {
@@ -109,7 +115,7 @@ beforeEach(() => {
 
 describe("product integration in the Product Manager", () => {
   it("shows the sign-in declaration, client id, exact redirect URIs and scopes - never a secret", async () => {
-    mockApi({ [DETAIL]: [ok(detail(integration()))] });
+    mockApi({ ...SSO_READS, [DETAIL]: [ok(detail(integration()))] });
     const { container } = renderDetail();
     await screen.findByRole("heading", { level: 1, name: "Future Product" });
     expect(screen.getByText("Connected", { selector: "span" })).toBeInTheDocument(); // integration status
@@ -126,6 +132,7 @@ describe("product integration in the Product Manager", () => {
 
   it("edits the sign-in mode, sign-in page, redirect and sign-out URIs through the audited manifest write", async () => {
     const calls = mockApi({
+      ...SSO_READS,
       [DETAIL]: [ok(detail(integration()))],
       [`PATCH ${ADMIN}/products/future_product/integration`]: [ok(integration({ sign_in_mode: "sso_only" }))],
     });
@@ -151,6 +158,7 @@ describe("product integration in the Product Manager", () => {
 
   it("editing the launch settings sends only the fields shown, to the product's own code", async () => {
     const calls = mockApi({
+      ...SSO_READS,
       [DETAIL]: [ok(detail(integration()))],
       [`PATCH ${ADMIN}/products/future_product/integration`]: [ok(integration())],
     });
@@ -175,6 +183,7 @@ describe("product integration in the Product Manager", () => {
 
   it("suspending records a reason without asking; check now shows the probe's answer", async () => {
     const calls = mockApi({
+      ...SSO_READS,
       [DETAIL]: [ok(detail(integration()))],
       [`POST ${ADMIN}/products/future_product/integration/status`]: [ok(integration({ status: "suspended" }))],
       [`POST ${ADMIN}/products/future_product/integration/health-check`]: [ok({ status: "healthy", detail: "http_200" })],
@@ -217,6 +226,7 @@ describe("product integration in the Product Manager", () => {
 
   it("lists credentials by reference and shows a generated secret once", async () => {
     const calls = mockApi({
+      ...SSO_READS,
       [DETAIL]: [ok(detail(integration()))],
       [`GET ${ADMIN}/products/future_product/integration/credentials`]: [
         ok({ credentials: [] }),
@@ -257,6 +267,7 @@ describe("product integration in the Product Manager", () => {
   it("adds a public key in a popup, which keeps the key typed when the server refuses it", async () => {
     const PEM = "-----BEGIN PUBLIC KEY-----\nMFkw\n-----END PUBLIC KEY-----";
     const calls = mockApi({
+      ...SSO_READS,
       [DETAIL]: [ok(detail(integration()))],
       [`GET ${ADMIN}/products/future_product/integration/credentials`]: [ok({ credentials: [] })],
       [`POST ${ADMIN}/products/future_product/integration/credentials`]: [

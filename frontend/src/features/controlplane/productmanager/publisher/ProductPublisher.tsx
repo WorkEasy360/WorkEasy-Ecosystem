@@ -800,13 +800,27 @@ function AdvancedSection({
                     <span>Customers sign in through WorkEasy360 (single sign-on)</span>
                   </label>
                   {draft.ssoEnabled && (
-                    <Field label="Sign-in callback URL" htmlFor={f("cb")} error={problems.redirectUri} hint="The product's own OIDC callback address - the product must already support it.">
-                      <input id={f("cb")} className="w360-input" type="url" value={draft.redirectUri} disabled={busy} placeholder="https://.../api/auth/callback/workeasy360" aria-invalid={problems.redirectUri ? true : undefined} onChange={(e) => edit({ redirectUri: e.target.value })} />
-                    </Field>
+                    <>
+                      <Field label="Sign-in callback URL" htmlFor={f("cb")} error={problems.redirectUri} hint="The product's own OIDC callback address - the product must already support it.">
+                        <input id={f("cb")} className="w360-input" type="url" value={draft.redirectUri} disabled={busy} placeholder="https://.../api/auth/callback/workeasy360" aria-invalid={problems.redirectUri ? true : undefined} onChange={(e) => edit({ redirectUri: e.target.value })} />
+                      </Field>
+                      <Field
+                        label="Back-channel logout URL (optional)"
+                        htmlFor={f("bcl")}
+                        error={problems.backchannelUri}
+                        hint="Where WorkEasy360 sends a logout token when someone signs out, so the product's own session ends too. Same origin as the sign-in callback URL."
+                      >
+                        <input id={f("bcl")} className="w360-input" type="url" value={draft.backchannelUri} disabled={busy} placeholder="https://.../api/auth/backchannel-logout" aria-invalid={problems.backchannelUri ? true : undefined} onChange={(e) => edit({ backchannelUri: e.target.value })} />
+                      </Field>
+                    </>
                   )}
                   <Field label="Health check URL (optional)" htmlFor={f("health")} error={problems.healthUrl}>
                     <input id={f("health")} className="w360-input" type="url" value={draft.healthUrl} disabled={busy} placeholder="https://" onChange={(e) => edit({ healthUrl: e.target.value })} />
                   </Field>
+                  <p className={`${styles.notice} ${styles.span2}`} role="note">
+                    Before the integration can be activated, control of every hostname it uses (launch, callback, health and back-channel logout URLs) must be proven with a DNS
+                    TXT record. The records to publish are listed under Domains on the product&apos;s Integration tab after you save.
+                  </p>
                 </>
               )}
             </>

@@ -191,6 +191,13 @@ class DnsPythonResolver:
 _resolver: TxtResolver = DnsPythonResolver()
 
 
+def txt_resolver() -> TxtResolver:
+    """The resolver in use - shared with product domain verification
+    (``commercial/controlplane/product_domains.py``, ADR-070), so one DNS
+    configuration and one test double serve both."""
+    return _resolver
+
+
 def set_txt_resolver(resolver: TxtResolver) -> TxtResolver:
     """Swap the resolver (tests). Returns the previous one."""
     global _resolver
