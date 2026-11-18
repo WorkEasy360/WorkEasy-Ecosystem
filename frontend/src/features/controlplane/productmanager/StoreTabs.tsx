@@ -1,9 +1,11 @@
 "use client";
 
-import { LinkTabs, PageHeader } from "../kit";
+import { PageHeader } from "../kit";
 
-/** Super Admin → Store: the area's pages (ADR-056, coupons ADR-058), as one
- * page with underline tabs under its title (2026-11-07 design system). */
+/** Super Admin → Store: the area's pages (ADR-056, coupons ADR-058). Since
+ * 2026-11-18 (admin-ux phase 1) Store is one tab of Products & Pricing: its
+ * Overview is the tab, and the other three open from buttons in the Overview's
+ * header, with a breadcrumb back - no second row of tabs. */
 const TABS = [
   { key: "dashboard", href: "/admin/store/dashboard", label: "Overview", subtitle: "The store at a glance: catalog, sales and requests." },
   { key: "browse", href: "/admin/store", label: "Customer preview", subtitle: "Every product as customers find it in the store." },
@@ -14,17 +16,8 @@ const TABS = [
 
 export type StoreTab = (typeof TABS)[number]["key"];
 
-export function StoreTabs({ current }: { current: StoreTab }) {
-  return (
-    <LinkTabs
-      label="Store sections"
-      tabs={TABS.map((t) => ({ href: t.href, label: t.label, current: t.key === current }))}
-    />
-  );
-}
-
-/** The Store's header: title, the current tab's one-line subtitle, actions on
- * the right and the tabs below. Every Store tab uses it, so the title never moves. */
+/** The Store's header: its title and the page's one-line subtitle, actions on
+ * the right. Every Store page uses it, so the title never moves. */
 export function StoreHeader({
   current,
   primary,
@@ -37,14 +30,5 @@ export function StoreHeader({
   info?: React.ReactNode;
 }) {
   const tab = TABS.find((t) => t.key === current)!;
-  return (
-    <PageHeader
-      title="Store"
-      subtitle={tab.subtitle}
-      info={info}
-      primary={primary}
-      actions={actions}
-      tabs={<StoreTabs current={current} />}
-    />
-  );
+  return <PageHeader title="Store" subtitle={tab.subtitle} info={info} primary={primary} actions={actions} />;
 }

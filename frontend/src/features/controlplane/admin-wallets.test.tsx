@@ -15,8 +15,12 @@ import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call } from 
  */
 
 let query = "";
+// The lists keep their filters in the address (admin-ux phase 3): `replace` writes it.
+const replace = vi.fn((href: string) => {
+  query = href.split("?")[1] ?? "";
+});
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ replace, push: vi.fn(), refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(query),
   usePathname: () => "/admin/wallets",
 }));
@@ -150,8 +154,12 @@ async function openWallet(owner = "Acme Logistics") {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  replace.mockClear();
   query = "";
 });
+
+const headersOf = (table: HTMLElement) => within(table).getAllByRole("columnheader").map((h) => h.textContent?.trim());
+const lastCell = (row: HTMLElement) => within(row).getAllByRole("cell").at(-1);
 
 describe("the wallet lists", () => {
   it("shows real rows with links to their owners, money, the Low badge and the threshold; passes axe", async () => {
@@ -782,6 +790,149 @@ describe("Transaction Controls: usage events", () => {
     asStaff(VIEW, <TransactionControlsScreen />);
     fireEvent.click(await screen.findByRole("tab", { name: "Usage events" }));
     expect(await screen.findByText("No usage events yet")).toBeInTheDocument();
+  });
+});
+
+describe("tables, filters and actions (admin-ux phase 3)", () => {
+  it("puts History and actions in the one Actions column of a wallet list, last", async () => {
+    mockApi({ [`GET ${PLATFORM}`]: [page([wallet()])] });
+    asStaff(MANAGE, <PlatformWalletScreen />);
+    const table = await screen.findByRole("table", { name: "Platform Wallet wallets" });
+    expect(headersOf(table).at(-1)).toBe("Actions");
+    expect(headersOf(table).filter((h) => h === "Actions")).toHaveLength(1);
+    const row = within(table).getByRole("row", { name: /Acme Logistics/ });
+    expect(lastCell(row)).toContainElement(within(row).getByRole("button", { name: "History and actions for Acme Logistics's wallet" }));
+  });
+
+  it("writes the wallet filters to the address and reads them back", async () => {
+    const calls = mockApi({ [`GET ${PLATFORM}`]: [page([wallet()])] });
+    const first = asStaff(VIEW, <PlatformWalletScreen />);
+    await screen.findByRole("link", { name: "Acme Logistics" });
+    choose("Owner type", "Partners");
+    expect(replace).toHaveBeenLastCalledWith("/admin/wallets?owner_type=partner", { scroll: false });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Low balance only" }));
+    expect(replace).toHaveBeenLastCalledWith("/admin/wallets?owner_type=partner&low=1", { scroll: false });
+    await waitFor(() => expect(new URL(calls.at(-1)!.url, "http://x").searchParams.get("low")).toBe("1"));
+    first.unmount();
+
+    // A reload, or Back from the owner's page: the same filters.
+    const again = mockApi({ [`GET ${PLATFORM}`]: [page([wallet()])] });
+    asStaff(VIEW, <PlatformWalletScreen />);
+    await screen.findByRole("link", { name: "Acme Logistics" });
+    const sent = new URL(again[0].url, "http://x").searchParams;
+    expect(sent.get("owner_type")).toBe("partner");
+    expect(sent.get("low")).toBe("1");
+    expect(screen.getByRole("combobox", { name: "Owner type" })).toHaveTextContent("Partners");
+    expect(screen.getByRole("checkbox", { name: "Low balance only" })).toBeChecked();
+  });
+
+  it("lists the applied filters as tags; removing one, or Reset filters, clears it", async () => {
+    query = "owner_type=partner&q=BrightMart&low=1";
+    const calls = mockApi({ [`GET ${PLATFORM}`]: [page([partnerWallet])] });
+    asStaff(VIEW, <PlatformWalletScreen />);
+    await screen.findByRole("link", { name: "BrightMart Partners" });
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Search: “BrightMart”", "Owner: Partners", "Balance: Low only"]);
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Balance: Low only" }));
+    await waitFor(() => expect(new URL(calls.at(-1)!.url, "http://x").searchParams.get("low")).toBeNull());
+    expect(new URL(calls.at(-1)!.url, "http://x").searchParams.get("q")).toBe("BrightMart");
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    await waitFor(() => expect(new URL(calls.at(-1)!.url, "http://x").searchParams.get("q")).toBeNull());
+    expect(replace).toHaveBeenLastCalledWith("/admin/wallets", { scroll: false });
+  });
+
+  it("leaves out a filter value the list does not offer, never sends it, and says so", async () => {
+    query = "owner_type=robots&low=yes&q=Acme";
+    const calls = mockApi({ [`GET ${PLATFORM}`]: [page([wallet()])] });
+    asStaff(VIEW, <PlatformWalletScreen />);
+    await screen.findByRole("link", { name: "Acme Logistics" });
+    const sent = new URL(calls[0].url, "http://x").searchParams;
+    expect(sent.get("owner_type")).toBeNull();
+    expect(sent.get("low")).toBeNull();
+    expect(sent.get("q")).toBe("Acme");
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("offers Try again when a wallet list could not be loaded", async () => {
+    const calls = mockApi({ [`GET ${PLATFORM}`]: [{ status: 500, body: {} }, page([wallet()])] });
+    asStaff(VIEW, <PlatformWalletScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load these wallets.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("link", { name: "Acme Logistics" })).toBeInTheDocument();
+    expect(requests(calls, `GET ${PLATFORM}`)).toHaveLength(2);
+  });
+
+  it("puts Reverse in the Actions column, and reverses nothing until its dialog is confirmed", async () => {
+    const path = "POST /api/v1/admin/wallets/entries/e1111111-0000-0000-0000-000000000000/reverse";
+    const calls = mockApi({ [`GET ${RECONCILE}`]: [ok({ balanced: true, mismatches: [] })], [`GET ${ENTRIES}`]: [page([entry(), reversal])] });
+    asStaff(MANAGE, <TransactionControlsScreen />);
+    const table = await screen.findByRole("table", { name: "Wallet transactions" });
+    expect(headersOf(table).at(-1)).toBe("Actions");
+    const row = within(table).getByRole("row", { name: /Bank transfer received/ });
+    const reverse = within(row).getByRole("button", { name: "Reverse entry e1111111" });
+    expect(lastCell(row)).toContainElement(reverse);
+
+    fireEvent.click(reverse);
+    const box = screen.getByRole("dialog");
+    // The dialog is the confirmation: it says what will happen, and the action is red.
+    expect(within(box).getByText(/adds an opposite entry that names this one; the original stays in the ledger/)).toBeInTheDocument();
+    expect(requests(calls, path)).toHaveLength(0);
+    fireEvent.click(within(box).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(requests(calls, path)).toHaveLength(0);
+  });
+
+  it("keeps the transaction filters in the address beside its tab, as tags", async () => {
+    query = "tab=transactions&kind=ai_credits";
+    const calls = mockApi({ [`GET ${RECONCILE}`]: [ok({ balanced: true, mismatches: [] })], [`GET ${ENTRIES}`]: [page([entry()])] });
+    asStaff(VIEW, <TransactionControlsScreen />);
+    await screen.findByText("+₹500.00");
+    choose("Type", "Refund");
+    expect(replace).toHaveBeenLastCalledWith("/admin/wallets?tab=transactions&kind=ai_credits&type=refund", { scroll: false });
+    await waitFor(() => expect(new URL(requests(calls, `GET ${ENTRIES}`).at(-1)!.url, "http://x").searchParams.get("type")).toBe("refund"));
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Wallet: AI Credits", "Type: Refund"]);
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Wallet: AI Credits" }));
+    expect(replace).toHaveBeenLastCalledWith("/admin/wallets?tab=transactions&type=refund", { scroll: false });
+    await waitFor(() => expect(new URL(requests(calls, `GET ${ENTRIES}`).at(-1)!.url, "http://x").searchParams.get("kind")).toBeNull());
+  });
+
+  it("writes the chosen tab to the address, and each tab's filters under their own names", async () => {
+    const calls = mockApi({
+      [`GET ${RECONCILE}`]: [ok({ balanced: true, mismatches: [] })],
+      [`GET ${ENTRIES}`]: [page([])],
+      [`GET ${EVENTS}`]: [page([event()])],
+    });
+    asStaff(MANAGE, <TransactionControlsScreen />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Usage events" }));
+    expect(replace).toHaveBeenLastCalledWith("/admin/wallets?tab=events", { scroll: false });
+    await screen.findByRole("table", { name: "Usage events" });
+    choose("Outcome", "Failed");
+    expect(replace).toHaveBeenLastCalledWith("/admin/wallets?tab=events&outcome=failed", { scroll: false });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Not yet reviewed" }));
+    expect(replace).toHaveBeenLastCalledWith("/admin/wallets?tab=events&outcome=failed&unreviewed=1", { scroll: false });
+    await waitFor(() => expect(new URL(requests(calls, `GET ${EVENTS}`).at(-1)!.url, "http://x").searchParams.get("unreviewed")).toBe("1"));
+    expect(within(screen.getByRole("list", { name: "Active filters" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Outcome: Failed",
+      "Review: Not yet reviewed",
+    ]);
+
+    // Retry and Mark reviewed are in the one Actions column, last.
+    const table = await screen.findByRole("table", { name: "Usage events" });
+    await within(table).findByText("Insufficient balance");
+    expect(headersOf(table).at(-1)).toBe("Actions");
+    const row = within(table).getAllByRole("row").find((r) => within(r).queryByText("Insufficient balance"))!;
+    expect(lastCell(row)).toContainElement(within(row).getByRole("button", { name: /^Retry/ }));
+    expect(lastCell(row)).toContainElement(within(row).getByRole("button", { name: /^Mark reviewed/ }));
+  });
+
+  it("offers Try again when the transactions could not be loaded", async () => {
+    const calls = mockApi({ [`GET ${RECONCILE}`]: [ok({ balanced: true, mismatches: [] })], [`GET ${ENTRIES}`]: [{ status: 500, body: {} }, page([entry()])] });
+    asStaff(VIEW, <TransactionControlsScreen />);
+    expect(await screen.findByText(/Couldn't load transactions\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("+₹500.00")).toBeInTheDocument();
+    expect(requests(calls, `GET ${ENTRIES}`)).toHaveLength(2);
   });
 });
 

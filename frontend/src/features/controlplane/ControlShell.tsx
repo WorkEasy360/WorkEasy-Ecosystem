@@ -235,8 +235,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           }
           banner={banner}
         >
-          <ModuleNav permissions={state.permissions} />
-          {children}
+          <ModuleNav permissions={state.permissions}>{children}</ModuleNav>
         </SidebarShell>
       </ToastProvider>
     </AdminContext.Provider>
@@ -321,9 +320,11 @@ export function guestReturnUrl(
  * partner, of which type, who is looking, until when - with two ways out, each of
  * which ends the session on the server first:
  *
- * - **Return to Super Admin**: back to the Admin page it was started from (a
- *   partner list keeps its search and filters);
- * - **End Guest Session**: to that partner's own page in the Admin.
+ * - **Exit Guest Session** (named so by the 2026-11-18 brief; it was "Return to
+ *   Super Admin"): back to the Admin page it was started from (a partner list
+ *   keeps its search and filters);
+ * - **Exit to partner record** (was "End Guest Session"): to that partner's own
+ *   page in the Admin.
  *
  * The server makes the view read-only and ends it by itself; this only explains
  * it. The Admin's own session is untouched, so no new sign-in is needed. The
@@ -379,10 +380,10 @@ export function GuestViewBanner({ partner, guest }: { partner: PortalPartner; gu
       </span>{" "}
       <span className={guestStyles.actions}>
         <button type="button" className="w360-btn w360-btn-primary" onClick={() => void leave("return")} disabled={busy !== null} aria-busy={busy === "return" || undefined}>
-          {busy === "return" ? "Returning…" : "Return to Super Admin"}
+          {busy === "return" ? "Exiting…" : "Exit Guest Session"}
         </button>
         <button type="button" className="w360-btn w360-btn-secondary" onClick={() => void leave("end")} disabled={busy !== null} aria-busy={busy === "end" || undefined}>
-          {busy === "end" ? "Ending…" : "End Guest Session"}
+          {busy === "end" ? "Exiting…" : "Exit to partner record"}
         </button>
       </span>
       {failed && (

@@ -16,6 +16,7 @@ import { Section } from "./PartnerSection";
 import { FormPopup } from "./Modal";
 import { LoadGate, Status, Table, useAction, useLoad, when } from "./ui";
 import {
+  Alert,
   Button,
   DataTable,
   EmptyState,
@@ -26,9 +27,11 @@ import {
   SearchInput,
   Select,
   StatusChips,
+  droppedMessage,
   formatDate,
   formatNumber,
   kit,
+  type ActiveFilter,
   type Column,
 } from "./kit";
 import styles from "./ControlPlane.module.css";
@@ -71,14 +74,29 @@ const CHANNEL_NAMES: Record<string, string> = { affiliate: "affiliates", reselle
 
 const PAGE = 50;
 
+/** A value from the address, only if the list offers it ("" otherwise). */
+const offered = <V extends string>(options: { key: V }[], raw: string | null | undefined): V | "" =>
+  options.find((o) => o.key === raw)?.key ?? "";
+
 export function ProductRequestsConsole() {
   const params = useSearchParams();
   const router = useRouter();
   const pathname = usePathname() ?? "/admin/partners/product-requests";
-  const status = (params?.get("status") as PromotionRequestStatus | "all" | null) ?? "pending";
-  const q = params?.get("q") ?? "";
-  const kind = (params?.get("kind") as RequestKind | null) ?? "";
-  const offset = Number(params?.get("offset") ?? 0) || 0;
+  // The filters live in the address (status, q, kind, offset). A value the list does
+  // not offer (an old link, a hand-edited address) is left out, never sent, and said
+  // so (admin-ux phase 3).
+  const rawStatus = params?.get("status") ?? "";
+  const rawKind = params?.get("kind") ?? "";
+  const rawOffset = params?.get("offset") ?? "";
+  const status: PromotionRequestStatus | "all" = offered(TABS, rawStatus) || "pending";
+  const q = (params?.get("q") ?? "").slice(0, 80);
+  const kind: RequestKind | "" = offered(KINDS, rawKind);
+  const offset = /^\d{1,6}$/.test(rawOffset) ? Number(rawOffset) : 0;
+  const dropped = droppedMessage([
+    ...(rawStatus && !offered(TABS, rawStatus) ? ["status"] : []),
+    ...(rawKind && !kind ? ["kind"] : []),
+    ...(rawOffset && !/^\d{1,6}$/.test(rawOffset) ? ["offset"] : []),
+  ]);
   const open = params?.get("request") ?? null;
   const [load, reload] = useLoad(() => adminProgrammeApi.promotionRequests({ status, kind: kind || undefined, q: q || undefined, offset }),
     [status, kind, q, offset],
@@ -101,6 +119,11 @@ export function ProductRequestsConsole() {
     query.set("request", id);
     return `${pathname}?${query.toString()}`;
   };
+  // The applied filters, as tags. The status chips are the list itself, like tabs.
+  const active: ActiveFilter[] = [
+    ...(q ? [{ key: "q", label: "Search", value: `“${q}”`, onRemove: () => go({ q: null, offset: null }) }] : []),
+    ...(kind ? [{ key: "kind", label: "Type", value: KINDS.find((k) => k.key === kind)?.label ?? kind, onRemove: () => go({ kind: null, offset: null }) }] : []),
+  ];
 
   return (
     <Page>
@@ -109,13 +132,14 @@ export function ProductRequestsConsole() {
         subtitle="Affiliates asking to promote a Store product, and resellers asking to sell one."
         info="Approving lets that partner create links, codes and campaigns for that one product, or sell it to customers; it gives no other access."
       />
+      {dropped && <Alert tone="warning" title={dropped} />}
       <StatusChips
         label="Request status"
         value={status}
         onChange={(next) => go({ status: next, offset: null, request: null })}
         chips={TABS.map((t) => ({ value: t.key, label: t.label, count: t.key === "all" ? all : (counts?.[t.key] ?? null) }))}
       />
-      <FilterBar label="Filter requests" onClear={q || kind ? () => go({ q: null, kind: null, offset: null }) : undefined}>
+      <FilterBar label="Filter requests" onClear={active.length > 0 ? () => go({ q: null, kind: null, offset: null }) : undefined} active={active}>
         <SearchInput label="Search by partner or product" value={q} onSearch={(text) => go({ q: text.slice(0, 80) || null, offset: null })} />
         <Select label="Type" value={kind} options={KINDS.map((k) => ({ value: k.key, label: k.label }))} onChange={(v) => go({ kind: v || null, offset: null })} />
       </FilterBar>
@@ -158,21 +182,11 @@ function Queue({
         </span>
       ),
     },
-    { key: "type", header: "Type", value: (r) => r.kind, render: (r) => KIND_WORDS[r.kind].type },
+    { key: "type", header: "Type", priority: "medium", value: (r) => r.kind, render: (r) => KIND_WORDS[r.kind].type },
     { key: "product", header: "Product", value: (r) => r.product_name, render: (r) => r.product_name },
-    { key: "channel", header: "Channel", value: (r) => r.channel_label, render: (r) => r.channel_label },
-    { key: "requested", header: "Requested", value: (r) => r.requested_at, render: (r) => formatDate(r.requested_at) },
-    { key: "status", header: "Status", value: (r) => r.status, render: (r) => <AccessBadge status={r.status} /> },
-    {
-      key: "review",
-      header: "Action",
-      align: "right",
-      render: (r) => (
-        <Button size="sm" onClick={() => onOpen(r.id)}>
-          Review<span className="w360-visually-hidden"> the request from {r.partner_name} for {r.product_name}</span>
-        </Button>
-      ),
-    },
+    { key: "channel", header: "Channel", priority: "low", value: (r) => r.channel_label, render: (r) => r.channel_label },
+    { key: "requested", header: "Requested", priority: "medium", value: (r) => r.requested_at, render: (r) => formatDate(r.requested_at) },
+    { key: "status", header: "Status", priority: "essential", value: (r) => r.status, render: (r) => <AccessBadge status={r.status} /> },
   ];
   const last = data.offset + data.items.length;
   return (
@@ -183,6 +197,14 @@ function Queue({
         rows={data.items}
         rowKey={(r) => r.id}
         rowHref={(r) => rowHref(r.id)}
+        rowLabel={(r) => `the request from ${r.partner_name} for ${r.product_name}`}
+        // Review, in the one Actions column (admin-ux phase 3): the first cell links to
+        // the partner, so the request itself opens from here (or a click on the row).
+        actions={(r) => (
+          <Button size="sm" icon="eye" aria-label={`Review the request from ${r.partner_name} for ${r.product_name}`} onClick={() => onOpen(r.id)}>
+            Review
+          </Button>
+        )}
         pageSize={0}
         empty={
           <EmptyState

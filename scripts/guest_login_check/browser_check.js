@@ -1,6 +1,6 @@
 // Real-browser check: Partners → Affiliate / Reseller / White Label, and Login as Guest
 // across hosts (ADR-062; 2026-11-11: View and Login as Guest side by side, the detail
-// page's header actions, Return to Super Admin / End Guest Session). Chrome sees the
+// page's header actions, Exit Guest Session / Exit to partner record). Chrome sees the
 // real portal host names; edge.js keeps the
 // Host header, so the backend's per-host rules, the frontend's per-host CSP and the
 // host-only cookies are the production ones.
@@ -308,7 +308,7 @@ async function sidebarOrder(page) {
 
     // --- Login as Guest, for each type ----------------------------------------------------
     for (const kind of ["reseller", "affiliate", "white_label"]) {
-      // Started from a searched list: Return to Super Admin must bring the search back.
+      // Started from a searched list: Exit Guest Session must bring the search back.
       const listed = `${PAGE[kind]}?q=${encodeURIComponent(NAMES[kind])}`;
       await page.goto(`${ADMIN}${listed}`, { waitUntil: "networkidle2" });
       const loginButton = await page.waitForSelector(`button[aria-label="Login as Guest to ${NAMES[kind]}"]`, { timeout: 20000 });
@@ -328,9 +328,9 @@ async function sidebarOrder(page) {
       const text = banner ? await banner.evaluate((b) => b.innerText) : "";
       const ways = banner ? await banner.$$eval("button", (bs) => bs.map((x) => x.textContent.trim())) : [];
       check(
-        `L2 ${kind}: "Guest Session – Viewing Partner: <partner>" with its type, read only, Return to Super Admin and End Guest Session`,
+        `L2 ${kind}: "Guest Session – Viewing Partner: <partner>" with its type, read only, Exit Guest Session and Exit to partner record`,
         text.includes(`Guest Session – Viewing Partner: ${NAMES[kind]}`) && text.includes(`Partner type: ${TYPE[kind]}`) && text.includes("Read only") &&
-          JSON.stringify(ways) === JSON.stringify(["Return to Super Admin", "End Guest Session"]),
+          JSON.stringify(ways) === JSON.stringify(["Exit Guest Session", "Exit to partner record"]),
         `${text} | ${ways}`,
       );
       check(`L3 ${kind}: no ticket in the address or the history`, !report.tickets.some((t) => page.url().includes(t)), page.url());
@@ -369,20 +369,20 @@ async function sidebarOrder(page) {
         await page.reload({ waitUntil: "networkidle2" });
         await page.screenshot({ path: path.join(OUT, "guest-reseller-1366.png"), fullPage: false });
       }
-      // Reseller and affiliate: Return to Super Admin (the list, its search kept).
-      // White label: End Guest Session (that partner's own page in the Admin).
-      const way = kind === "white_label" ? "End Guest Session" : "Return to Super Admin";
+      // Reseller and affiliate: Exit Guest Session (the list, its search kept).
+      // White label: Exit to partner record (that partner's own page in the Admin).
+      const way = kind === "white_label" ? "Exit to partner record" : "Exit Guest Session";
       await page.waitForSelector(`${BANNER} button`);
       await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), clickIn(page, `${BANNER} button`, way)]);
       if (kind === "white_label") {
         const back = new URL(page.url());
-        check(`X1 ${kind}: End Guest Session opens the partner's page in the Admin`, back.host === "admin.workeasy360.com" && back.pathname === `/admin/partners/${IDS[kind]}`, page.url());
+        check(`X1 ${kind}: Exit to partner record opens the partner's page in the Admin`, back.host === "admin.workeasy360.com" && back.pathname === `/admin/partners/${IDS[kind]}`, page.url());
       } else {
         await page.waitForFunction(() => new URLSearchParams(location.search).has("q"), { timeout: 15000 }).catch(() => {});
         const back = new URL(page.url());
         const search = await page.$eval('input[type="search"], [role="search"] input', (i) => i.value).catch(() => "");
         check(
-          `X1 ${kind}: Return to Super Admin opens the list it started from, its search kept`,
+          `X1 ${kind}: Exit Guest Session opens the list it started from, its search kept`,
           back.host === "admin.workeasy360.com" && back.pathname === PAGE[kind] && back.searchParams.get("q") === NAMES[kind] && !back.searchParams.has("guest") && search === NAMES[kind],
           `${page.url()} search=${search}`,
         );
@@ -425,8 +425,8 @@ async function sidebarOrder(page) {
     await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), clickIn(page, '[role="dialog"] button', "Start guest session")]);
     check("D3 Login as Guest from the partner's page opens the guest session", new URL(page.url()).host === "partner.workeasy360.com", page.url());
     await page.waitForSelector(`${BANNER} button`);
-    await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), clickIn(page, `${BANNER} button`, "Return to Super Admin")]);
-    check("D4 Return to Super Admin goes back to the partner's page", new URL(page.url()).pathname === `/admin/partners/${IDS.reseller}`, page.url());
+    await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }), clickIn(page, `${BANNER} button`, "Exit Guest Session")]);
+    check("D4 Exit Guest Session goes back to the partner's page", new URL(page.url()).pathname === `/admin/partners/${IDS.reseller}`, page.url());
     const afterDetail = await session(browser, PARTNER);
     check("D5 nothing of the guest view stays signed in on the partner host", afterDetail.authenticated === false, JSON.stringify(afterDetail));
 

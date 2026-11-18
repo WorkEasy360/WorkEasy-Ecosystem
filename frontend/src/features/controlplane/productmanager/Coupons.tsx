@@ -5,11 +5,21 @@ import { adminApi } from "@/lib/api/controlPlane";
 import { storeAdminApi, type Coupon, type CouponInput } from "@/lib/api/store";
 import { toBasisPoints, toMinor } from "../amounts";
 import { dialog, FormPopup } from "../Modal";
-import { LoadGate, Status, Table, useAction, useLoad, when } from "../ui";
+import { LoadGate, Status, useAction, useLoad, when } from "../ui";
 import cp from "../ControlPlane.module.css";
 import { TextField } from "../widgets";
 import { StoreHeader } from "./StoreTabs";
-import { Page, SectionHeader } from "../kit";
+import {
+  Button,
+  DataTable,
+  EmptyState,
+  Page,
+  SectionHeader,
+  Stack,
+  Trunc,
+  useConfirm,
+  type Column,
+} from "../kit";
 import { iconLabel, popupButton } from "../kit/PopupLabel";
 import styles from "./ProductManager.module.css";
 
@@ -246,61 +256,143 @@ function CouponForm({
   );
 }
 
-function CouponRow({
-  coupon: c,
+/** The coupon list (admin-ux phase 3): the one table, with Enable / Disable in its
+ * Actions column. Disabling asks first: the code stops working at checkout at once. */
+function CouponTable({
+  coupons,
   names,
   onChanged,
 }: {
-  coupon: Coupon;
+  coupons: Coupon[];
   names: Record<string, string>;
   onChanged: () => void;
 }) {
   const { act, busy, feedback } = useAction(onChanged);
-  const next = c.status === "active" ? "disabled" : "active";
+  const confirm = useConfirm();
+
+  const enable = (c: Coupon) =>
+    void act(
+      () => storeAdminApi.updateCoupon(c.id, { status: "active" }),
+      `Coupon ${c.code} enabled.`,
+    );
+  const disable = (c: Coupon) =>
+    confirm.ask({
+      title: `Disable coupon ${c.code}?`,
+      message:
+        "Customers can no longer use this code on a new order, from now on. Uses already recorded stay as they are. You can enable it again later.",
+      confirmLabel: "Disable coupon",
+      danger: true,
+      onConfirm: () =>
+        act(
+          () => storeAdminApi.updateCoupon(c.id, { status: "disabled" }),
+          `Coupon ${c.code} disabled.`,
+        ),
+    });
+
+  const columns: Column<Coupon>[] = [
+    {
+      key: "code",
+      header: "Code",
+      value: (c) => c.code,
+      render: (c) => (
+        <Stack
+          main={<code>{c.code}</code>}
+          sub={c.description ? <Trunc max="md">{c.description}</Trunc> : undefined}
+        />
+      ),
+    },
+    { key: "discount", header: "Discount", value: (c) => c.label, render: (c) => c.label },
+    {
+      key: "products",
+      header: "Products",
+      priority: "medium",
+      value: (c) => c.product_codes.length,
+      render: (c) => (
+        <Trunc max="md">
+          {c.product_codes.length
+            ? c.product_codes.map((p) => names[p] ?? p).join(", ")
+            : "All products"}
+        </Trunc>
+      ),
+    },
+    {
+      key: "valid",
+      header: "Valid",
+      priority: "low",
+      value: (c) => c.starts_at ?? "",
+      render: (c) => (
+        <>
+          {c.starts_at ? when(c.starts_at) : "Now"} –{" "}
+          {c.ends_at ? when(c.ends_at) : "No end"}
+        </>
+      ),
+    },
+    {
+      key: "used",
+      header: "Used",
+      align: "right",
+      priority: "medium",
+      value: (c) => c.redemptions,
+      render: (c) => (
+        <Stack
+          main={`${c.redemptions}${c.max_redemptions ? ` / ${c.max_redemptions}` : ""}`}
+          sub={c.once_per_organization ? "once per customer" : undefined}
+        />
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      priority: "essential",
+      value: (c) => c.status,
+      render: (c) => <Status value={c.status} />,
+    },
+  ];
+
   return (
-    <tr>
-      <th scope="row">
-        <code>{c.code}</code>
-        {c.description && <div className={styles.muted}>{c.description}</div>}
-      </th>
-      <td>{c.label}</td>
-      <td>
-        {c.product_codes.length
-          ? c.product_codes.map((p) => names[p] ?? p).join(", ")
-          : "All products"}
-      </td>
-      <td>
-        {c.starts_at ? when(c.starts_at) : "Now"} –{" "}
-        {c.ends_at ? when(c.ends_at) : "No end"}
-      </td>
-      <td className={cp.num}>
-        {c.redemptions}
-        {c.max_redemptions ? ` / ${c.max_redemptions}` : ""}
-        {c.once_per_organization && (
-          <div className={styles.muted}>once per customer</div>
-        )}
-      </td>
-      <td>
-        <Status value={c.status} />
-      </td>
-      <td>
-        <button
-          type="button"
-          className="w360-btn w360-btn-secondary"
-          disabled={busy}
-          aria-label={`${next === "disabled" ? "Disable" : "Enable"} coupon ${c.code}`}
-          onClick={() =>
-            void act(
-              () => storeAdminApi.updateCoupon(c.id, { status: next }),
-              `Coupon ${c.code} ${next === "disabled" ? "disabled" : "enabled"}.`,
-            )
-          }
-        >
-          {next === "disabled" ? "Disable" : "Enable"}
-        </button>
-        {feedback}
-      </td>
-    </tr>
+    <>
+      {feedback}
+      <DataTable
+        caption="Coupons"
+        columns={columns}
+        rows={coupons}
+        rowKey={(c) => c.id}
+        rowLabel={(c) => `coupon ${c.code}`}
+        hideEmptyColumns={false}
+        actions={(c) =>
+          c.status === "active" ? (
+            <Button
+              size="sm"
+              icon="ban"
+              disabled={busy}
+              aria-label={`Disable coupon ${c.code}`}
+              onClick={() => disable(c)}
+            >
+              Disable
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              icon="play"
+              disabled={busy}
+              aria-label={`Enable coupon ${c.code}`}
+              onClick={() => enable(c)}
+            >
+              Enable
+            </Button>
+          )
+        }
+        empty={
+          <EmptyState
+            icon="box"
+            title="No coupons yet."
+            hint="Create a code customers can type at checkout."
+            compact
+          />
+        }
+      />
+      {confirm.dialog}
+    </>
   );
 }
 
@@ -326,30 +418,7 @@ export function Coupons() {
                 description="A coupon lowers the first payment only, before GST."
                 actions={<CouponForm products={list} onCreated={reload} />}
               />
-              <Table
-                caption="Coupons"
-                head={[
-                  "Code",
-                  "Discount",
-                  "Products",
-                  "Valid",
-                  "Used",
-                  "Status",
-                  "",
-                ]}
-                isEmpty={coupons.results.length === 0}
-                empty="No coupons yet."
-                emptyHint="Create a code customers can type at checkout."
-              >
-                {coupons.results.map((c) => (
-                  <CouponRow
-                    key={c.id}
-                    coupon={c}
-                    names={names}
-                    onChanged={reload}
-                  />
-                ))}
-              </Table>
+              <CouponTable coupons={coupons.results} names={names} onChanged={reload} />
             </>
           );
         }}

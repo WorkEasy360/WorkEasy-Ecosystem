@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import {
   USER_SEGMENTS,
@@ -10,16 +10,19 @@ import {
   type UserDetail,
   type UserRow,
 } from "@/lib/api/adminConsole";
+import { adminApi } from "@/lib/api/controlPlane";
 import { useSession } from "@/lib/auth/useSession";
 import { can, useAdmin } from "./ControlShell";
-import { LoadGate, ReasonAction, useAction, useLoad, usePaged } from "./ui";
+import { LoadGate, ReasonAction, pagedTable, useAction, useLoad, usePaged } from "./ui";
 import {
+  Alert,
   Avatar,
   Badge,
   BoolBadge,
   Button,
   Card,
   DataTable,
+  DateRangeFilter,
   DescriptionList,
   EmptyState,
   FilterBar,
@@ -34,16 +37,21 @@ import {
   Tooltip,
   Trunc,
   EMPTY,
+  droppedMessage,
   exactTime,
   formatDate,
   formatDateTime,
   formatMoney,
   formatRelative,
   productName,
+  rangeLabel,
   sentence,
   useConfirm,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
   type MenuItem,
+  usePageTrail,
 } from "./kit";
 import { downloadCsv } from "./kit/csv";
 import local from "./AdminPeople.module.css";
@@ -69,21 +77,16 @@ export function DateText({ iso, relative = false, never = EMPTY }: { iso: string
   );
 }
 
-const SIGNED_UP = [
-  { value: "", label: "Any time" },
-  { value: "7", label: "Last 7 days" },
-  { value: "30", label: "Last 30 days" },
-  { value: "90", label: "Last 90 days" },
-  { value: "365", label: "Last 12 months" },
-];
-
-/** The rows already loaded that fall inside `days` (client-side: the user
- * directory filters only by search and segment on the server). */
-function withinDays(iso: string, days: string, now: number): boolean {
-  if (!days) return true;
-  const t = Date.parse(iso);
-  return Number.isFinite(t) && now - t <= Number(days) * 24 * 60 * 60 * 1000;
-}
+/** The directory's filters, kept in its address (2026-11-18, admin-ux phase 3):
+ * search, segment, the product held (`product`) and the days of sign-up
+ * (`from`/`to`) - every one filtered by the server. */
+const USER_FILTERS = {
+  q: {},
+  segment: { options: USER_SEGMENTS.map((s) => s.key) },
+  product: { maxLength: 64 },
+  from: { date: true },
+  to: { date: true },
+};
 
 /**
  * Super Admin → Users (Phase 8 extension, Phase 9; 2026-11-07 design system):
@@ -94,29 +97,41 @@ function withinDays(iso: string, days: string, now: number): boolean {
  * to, so each action is confirmed and audited. Nobody is offered "Deactivate"
  * on their own account (the server refuses it too).
  *
- * `initialQuery`: a search arriving in the address (`/admin/users?q=...`).
+ * The list owns its address (2026-11-18, admin-ux phase 3): `/admin/users?q=...`
+ * (the console's search box) or `?segment=trial` (a link from Subscriptions) opens
+ * it filtered, and every filter it applies is written back there.
  */
-export function Users({ initialQuery = "", initialSegment = "" }: { initialQuery?: string; initialSegment?: string } = {}) {
+export function Users() {
   const { permissions } = useAdmin();
   const session = useSession();
   const me = session.status === "ready" ? session.session.user_id : undefined;
   const manage = can(permissions, "platform.staff_user.manage");
-  const [query, setQuery] = useState(initialQuery);
-  const [segment, setSegment] = useState(initialSegment);
-  const [product, setProduct] = useState("");
-  const [signedUp, setSignedUp] = useState("");
-  const [now] = useState(() => Date.now());
+  const filters = useUrlFilters(USER_FILTERS);
+  const { q: query, segment, product, from, to } = filters.values;
   const paged = usePaged(
-    (cursor) => adminConsoleApi.users({ q: query || undefined, segment: segment || undefined, cursor }),
-    [query, segment],
+    (cursor) =>
+      adminConsoleApi.users({
+        q: query || undefined,
+        segment: segment || undefined,
+        product: product || undefined,
+        from: from || undefined,
+        to: to || undefined,
+        cursor,
+      }),
+    [query, segment, product, from, to],
   );
   const { ask, dialog } = useConfirm();
-
-  const products = useMemo(() => [...new Set(paged.rows.flatMap((u) => u.products))].sort(), [paged.rows]);
-  const rows = useMemo(
-    () => paged.rows.filter((u) => (!product || u.products.includes(product)) && withinDays(u.created_at, signedUp, now)),
-    [paged.rows, product, signedUp, now],
-  );
+  // The products to choose from: the catalog's, for those who may read it, and any
+  // product a listed account holds.
+  const canCatalog = can(permissions, "platform.staff_catalog.view");
+  const [catalog] = useLoad(() => (canCatalog ? adminApi.products() : Promise.resolve({ results: [] })), [canCatalog]);
+  const catalogRows = catalog.status === "ready" ? catalog.data.results : [];
+  const productLabel = (code: string) => {
+    const found = catalogRows.find((p) => p.code === code);
+    return found ? productName(found.name) : productName(code);
+  };
+  const products = [...new Set([...catalogRows.map((p) => p.code), ...paged.rows.flatMap((u) => u.products), ...(product ? [product] : [])])].sort();
+  const rows = paged.rows;
 
   const act = (u: UserRow, action: UserAction, title: string, message: string, confirmLabel: string, done: string, danger = false) =>
     ask({
@@ -187,38 +202,44 @@ export function Users({ initialQuery = "", initialSegment = "" }: { initialQuery
     {
       key: "status",
       header: "Status",
+      priority: "essential",
       value: (u) => (u.locked ? "locked" : u.status),
       render: (u) => (u.locked ? <StatusBadge value="locked" /> : <StatusBadge value={u.status} />),
     },
     {
       key: "verified",
       header: "Verified",
+      priority: "low",
       value: (u) => (u.email_verified ? 1 : 0),
       render: (u) => <BoolBadge value={u.email_verified} yes="Verified" no="Unverified" />,
     },
-    { key: "lifecycle", header: "Lifecycle", value: (u) => lifecycle(u.lifecycle), render: (u) => lifecycle(u.lifecycle) },
+    { key: "lifecycle", header: "Lifecycle", priority: "medium", value: (u) => lifecycle(u.lifecycle), render: (u) => lifecycle(u.lifecycle) },
     {
       key: "orgs",
       header: "Organizations",
+      priority: "low",
       value: (u) => u.organization_names,
       render: (u) => <Trunc max="sm">{u.organization_names.join(", ")}</Trunc>,
     },
     {
       key: "products",
       header: "Products",
+      priority: "low",
       value: (u) => u.products,
       render: (u) => <Trunc max="sm">{u.products.map(productName).join(", ")}</Trunc>,
     },
     {
       key: "subscription",
       header: "Subscription",
+      priority: "medium",
       value: (u) => u.subscription_status,
       render: (u) => (u.subscription_status ? <StatusBadge value={u.subscription_status} /> : EMPTY),
     },
-    { key: "created", header: "Signed up", value: (u) => u.created_at, render: (u) => <DateText iso={u.created_at} /> },
+    { key: "created", header: "Signed up", priority: "low", value: (u) => u.created_at, render: (u) => <DateText iso={u.created_at} /> },
     {
       key: "active",
       header: "Last active",
+      priority: "medium",
       value: (u) => u.last_sign_in_at,
       render: (u) => <DateText iso={u.last_sign_in_at} relative never="Never" />,
     },
@@ -242,7 +263,14 @@ export function Users({ initialQuery = "", initialSegment = "" }: { initialQuery
       ]),
     );
 
-  const filtered = Boolean(query || product || signedUp);
+  const dropped = droppedMessage(filters.dropped);
+  // The applied filters, as tags (the segment is the chip row above).
+  const active: ActiveFilter[] = [
+    ...(query ? [{ key: "q", label: "Search", value: `“${query}”`, onRemove: () => filters.set({ q: "" }) }] : []),
+    ...(product ? [{ key: "product", label: "Product", value: productLabel(product), onRemove: () => filters.set({ product: "" }) }] : []),
+    ...(from || to ? [{ key: "signed-up", label: "Signed up", value: rangeLabel({ from, to }), onRemove: () => filters.set({ from: "", to: "" }) }] : []),
+  ];
+  const filtered = active.length > 0;
   return (
     <Page>
       <PageHeader
@@ -250,63 +278,43 @@ export function Users({ initialQuery = "", initialSegment = "" }: { initialQuery
         subtitle="Every account on the platform, with its organizations and subscriptions."
         info="Subscribed people pay for a product. The free tier is everyone else: on a trial (Trial) or with no product yet (Explorers)."
       />
+      {dropped && <Alert tone="warning" title={dropped} />}
       <StatusChips
         label="Segment"
         value={segment}
-        onChange={setSegment}
+        onChange={(next) => filters.set({ segment: next })}
         chips={USER_SEGMENTS.map((s) => ({ value: s.key, label: s.label }))}
       />
       <FilterBar
-        onClear={
-          filtered
-            ? () => {
-                setQuery("");
-                setProduct("");
-                setSignedUp("");
-              }
-            : undefined
-        }
+        label="Filter users"
+        active={active}
+        // The segment stays: it is the list, not a filter on it.
+        onClear={filtered ? () => filters.set({ q: "", product: "", from: "", to: "" }) : undefined}
         end={
           <Button icon="download" onClick={exportCsv} disabled={rows.length === 0}>
             Export CSV
           </Button>
         }
       >
-        <SearchInput label="Search by name or email" value={query} onSearch={setQuery} />
+        <SearchInput label="Search by name or email" value={query} onSearch={(q) => filters.set({ q })} />
         <Select
           label="Product"
           prefix="Product:"
           value={product}
-          onChange={setProduct}
-          options={[{ value: "", label: "Any" }, ...products.map((p) => ({ value: p, label: productName(p) }))]}
+          onChange={(next) => filters.set({ product: next })}
+          options={[{ value: "", label: "Any" }, ...products.map((p) => ({ value: p, label: productLabel(p) }))]}
         />
-        <Select label="Signed up" prefix="Signed up:" value={signedUp} onChange={setSignedUp} options={SIGNED_UP} />
+        <DateRangeFilter label="Signed up" value={{ from, to }} onApply={(range) => filters.set(range)} />
       </FilterBar>
       <DataTable
         caption="User accounts"
         columns={columns}
-        rows={rows}
+        {...pagedTable(paged, "users")}
         rowKey={(u) => u.user_id}
         rowHref={(u) => `/admin/users/${u.user_id}`}
         rowLabel={(u) => u.name || u.email}
         rowMenu={menu}
-        loading={paged.state === "loading"}
-        error={
-          paged.state === "forbidden"
-            ? "You don't have access to the user directory."
-            : paged.state === "error"
-              ? "Couldn't load users."
-              : null
-        }
-        onLoadMore={() => void paged.more()}
-        hasMore={paged.hasMore}
-        empty={
-          <EmptyState
-            icon="users"
-            title={paged.state === "forbidden" ? "You don't have access to the user directory." : paged.state === "error" ? "Couldn't load users." : "No users match."}
-            hint={filtered ? "Try another search or clear the filters." : undefined}
-          />
-        }
+        empty={<EmptyState icon="users" title="No users match." hint={filtered ? "Try another search or clear the filters." : undefined} />}
       />
       {dialog}
     </Page>
@@ -325,6 +333,7 @@ const PLATFORM_SIGN_IN: Record<StaffUserConnection["platform_sign_in"], string> 
 };
 
 export function UserDetailScreen({ userId }: { userId: string }) {
+  const trail = usePageTrail([{ label: "Users", href: "/admin/users" }]);
   const { permissions } = useAdmin();
   const session = useSession();
   const [load, reload] = useLoad(() => adminConsoleApi.user(userId), [userId]);
@@ -347,7 +356,7 @@ export function UserDetailScreen({ userId }: { userId: string }) {
           return (
             <>
               <PageHeader
-                crumbs={[{ label: "Users", href: "/admin/users" }, { label: name }]}
+                crumbs={[...trail, { label: name }]}
                 documentTitle={`${name} · Users`}
                 avatar={<Avatar name={name} size="lg" />}
                 title={name}

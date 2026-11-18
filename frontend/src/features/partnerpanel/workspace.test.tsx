@@ -296,7 +296,7 @@ describe("the affiliate workspace", () => {
 describe("a staff guest view (Super Admin → Guest login)", () => {
   const guestPartner = (guest: Record<string, unknown>) => partner({ role: "viewer", is_admin: false, guest });
 
-  it("says whose portal it is and its type, and Return to Super Admin ends it first, then goes back where it started", async () => {
+  it("says whose portal it is and its type, and Exit Guest Session ends it first, then goes back where it started", async () => {
     const leave = vi.fn();
     vi.stubGlobal("location", { ...window.location, replace: leave });
     const guest = {
@@ -315,8 +315,8 @@ describe("a staff guest view (Super Admin → Guest login)", () => {
     expect(banner).toHaveTextContent("Guest Session – Viewing Partner: Acme Partners Partner type: Affiliate Read only");
     // Which partner, of which type, and who is looking.
     expect(banner).toHaveTextContent("viewing as Sam Staff");
-    expect(within(banner).getAllByRole("button").map((b) => b.textContent)).toEqual(["Return to Super Admin", "End Guest Session"]);
-    fireEvent.click(within(banner).getByRole("button", { name: "Return to Super Admin" }));
+    expect(within(banner).getAllByRole("button").map((b) => b.textContent)).toEqual(["Exit Guest Session", "Exit to partner record"]);
+    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Session" }));
     // Back to the Admin list Login as Guest was chosen on, marked so the list
     // brings back its own search and filters; the guest page is replaced in history.
     await waitFor(() => expect(leave).toHaveBeenCalledWith("/admin/partners/affiliate?guest=ended"));
@@ -349,7 +349,7 @@ describe("a staff guest view (Super Admin → Guest login)", () => {
     expect(banner).not.toHaveTextContent("White-label");
   });
 
-  it("End Guest Session ends it first, then opens that partner's page in the Admin", async () => {
+  it("Exit to partner record ends it first, then opens that partner's page in the Admin", async () => {
     const leave = vi.fn();
     vi.stubGlobal("location", { ...window.location, replace: leave });
     const guest = { partner_id: ID, reason: "Support ticket 42", expires_at: "2026-03-01T10:30:00Z" };
@@ -359,7 +359,7 @@ describe("a staff guest view (Super Admin → Guest login)", () => {
       "POST /api/v1/partner/guest-view/end": [ok({ ended: true, return_url: "/admin/partners/affiliate" })],
     });
     const banner = await screen.findByRole("status", { name: "Guest Session" });
-    fireEvent.click(within(banner).getByRole("button", { name: "End Guest Session" }));
+    fireEvent.click(within(banner).getByRole("button", { name: "Exit to partner record" }));
     await waitFor(() => expect(leave).toHaveBeenCalledWith(`/admin/partners/${ID}`));
     expect(calls.filter((c) => c.key === "POST /api/v1/partner/guest-view/end")).toHaveLength(1);
     vi.unstubAllGlobals();
@@ -375,14 +375,14 @@ describe("a staff guest view (Super Admin → Guest login)", () => {
       "POST /api/v1/partner/guest-view/end": [ok({ ended: true, return_url: "https://evil.example.com/admin/partners/all" })],
     });
     const banner = await screen.findByRole("status", { name: "Guest Session" });
-    fireEvent.click(within(banner).getByRole("button", { name: "Return to Super Admin" }));
+    fireEvent.click(within(banner).getByRole("button", { name: "Exit Guest Session" }));
     await waitFor(() => expect(leave).toHaveBeenCalledWith(`/admin/partners/${ID}`));
     vi.unstubAllGlobals();
   });
 });
 
 describe("exiting a guest view that cannot be ended", () => {
-  for (const label of ["Return to Super Admin", "End Guest Session"]) {
+  for (const label of ["Exit Guest Session", "Exit to partner record"]) {
     it(`${label}: stays on the page and says so instead of pretending it was left`, async () => {
       const leave = vi.fn();
       vi.stubGlobal("location", { ...window.location, replace: leave, assign: leave });

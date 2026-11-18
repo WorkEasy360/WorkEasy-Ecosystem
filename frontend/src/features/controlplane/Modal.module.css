@@ -124,6 +124,54 @@
   }
 }
 
+/* drawer (2026-11-18): a panel along the right edge, as tall as the window; its
+   body scrolls inside it. It slides in a little from the right; nothing moves for
+   anyone who asked for reduced motion. Full width on a phone. */
+.backdrop.drawerBackdrop {
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: 0;
+  overflow: hidden;
+  overflow: clip;
+}
+
+.drawer {
+  display: flex;
+  flex-direction: column;
+  width: min(440px, 100%);
+  height: 100dvh;
+  margin: 0;
+  border-radius: 0;
+  overflow: hidden;
+  overflow: clip;
+  animation-name: w360-drawer-in;
+}
+
+@keyframes w360-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+
+.leaving .drawer {
+  animation-name: w360-drawer-out;
+}
+
+@keyframes w360-drawer-out {
+  to {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer,
+  .leaving .drawer {
+    animation: none;
+  }
+}
+
 /* A popup form's fields, lined up (2026-11-05): two equal columns, one gap,
    each label above its input, every input as wide as its column. */
 .dialogGrid {

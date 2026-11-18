@@ -81,4 +81,55 @@ describe("Super Admin coupons", () => {
     expect(await screen.findByText("LAUNCH40")).toBeInTheDocument();
     expect(calls.filter((c) => c.key === COUPONS)).toHaveLength(2);
   });
+
+  const DISABLED: Coupon = { ...CREATED, id: "c2", code: "OLD10", label: "10% off", status: "disabled" };
+  const listed = (extra: Record<string, { status: number; body?: unknown }[]> = {}) =>
+    mockApi({
+      [COUPONS]: [ok({ results: [CREATED, DISABLED] })],
+      [PRODUCTS]: [ok({ results: [{ id: "p1", code: "sample_app", name: "Sample App" }] })],
+      ...extra,
+    });
+
+  it("puts Enable and Disable in the one Actions column, last (admin-ux phase 3)", async () => {
+    listed();
+    const { container } = render(<Coupons />);
+    const table = await screen.findByRole("table", { name: "Coupons" });
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent?.trim());
+    expect(headers).toEqual(["Code", "Discount", "Products", "Valid", "Used", "Status", "Actions"]);
+    const active = within(table).getByRole("row", { name: /LAUNCH40/ });
+    expect(within(active).getAllByRole("cell").at(-1)).toContainElement(within(active).getByRole("button", { name: "Disable coupon LAUNCH40" }));
+    const off = within(table).getByRole("row", { name: /OLD10/ });
+    expect(within(off).getAllByRole("cell").at(-1)).toContainElement(within(off).getByRole("button", { name: "Enable coupon OLD10" }));
+    await expectNoViolations(container);
+  });
+
+  it("asks before disabling a coupon, says what happens, and sends nothing on Cancel", async () => {
+    const calls = listed();
+    const update = vi.spyOn(storeAdminApi, "updateCoupon");
+    render(<Coupons />);
+    fireEvent.click(await screen.findByRole("button", { name: "Disable coupon LAUNCH40" }));
+    const confirm = screen.getByRole("dialog", { name: "Disable coupon LAUNCH40?" });
+    expect(within(confirm).getByText(/can no longer use this code on a new order/)).toBeInTheDocument();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(update).not.toHaveBeenCalled();
+
+    update.mockResolvedValue({ ...CREATED, status: "disabled" });
+    fireEvent.click(screen.getByRole("button", { name: "Disable coupon LAUNCH40" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Disable coupon LAUNCH40?" })).getByRole("button", { name: "Disable coupon" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith("c1", { status: "disabled" }));
+    expect(await screen.findByText("Coupon LAUNCH40 disabled.")).toBeInTheDocument();
+    // The list is read again.
+    await waitFor(() => expect(calls.filter((c) => c.key === COUPONS)).toHaveLength(2));
+  });
+
+  it("enables a disabled coupon straight away", async () => {
+    listed();
+    const update = vi.spyOn(storeAdminApi, "updateCoupon").mockResolvedValue({ ...DISABLED, status: "active" });
+    render(<Coupons />);
+    fireEvent.click(await screen.findByRole("button", { name: "Enable coupon OLD10" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith("c2", { status: "active" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(await screen.findByText("Coupon OLD10 enabled.")).toBeInTheDocument();
+  });
 });

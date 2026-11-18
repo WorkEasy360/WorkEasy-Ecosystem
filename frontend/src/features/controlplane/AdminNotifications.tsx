@@ -22,38 +22,43 @@ const WHAT: Record<AttentionItem["key"], { title: string; href: string; action: 
 
 const COLUMNS: Column<AttentionItem>[] = [
   { key: "what", header: "What is waiting", render: (i) => WHAT[i.key].title, value: (i) => WHAT[i.key].title },
-  { key: "count", header: "Count", align: "right", render: (i) => i.count, value: (i) => i.count },
-  {
-    key: "open",
-    header: "Action",
-    align: "right",
-    render: (i) => (
-      <ButtonLink href={WHAT[i.key].href} size="sm">
-        {WHAT[i.key].action}
-      </ButtonLink>
-    ),
-  },
+  { key: "count", header: "Count", align: "right", priority: "essential", render: (i) => i.count, value: (i) => i.count },
 ];
+
+/** Where each kind of waiting work is dealt with, in the Actions column (admin-ux
+ * phase 3). A narrow table keeps the arrow and the link's name. */
+const openAction = (i: AttentionItem) => (
+  <ButtonLink href={WHAT[i.key].href} size="sm" iconEnd="chevronRight" aria-label={`${WHAT[i.key].action}: ${WHAT[i.key].title}`}>
+    {WHAT[i.key].action}
+  </ButtonLink>
+);
 
 /** Everything waiting for staff, in one list (the bell's "View all"). Only what
  * this staff member's grants cover is counted by the server. */
 export function AdminNotifications() {
-  const [load] = useLoad(() => adminApi.attention(), []);
+  const [load, reload] = useLoad(() => adminApi.attention(), []);
   const rows = load.status === "ready" ? load.data.items.filter((i) => WHAT[i.key] && i.count > 0) : [];
   return (
     <Page>
-      <PageHeader title="Notifications" subtitle="What is waiting for you across the console." />
+      <PageHeader
+        title="Notifications"
+        subtitle="What is waiting for you across the console."
+        crumbs={[{ label: "Dashboard", href: "/admin" }, { label: "Notifications" }]}
+      />
       <DataTable
-          caption="Notifications"
-          columns={COLUMNS}
-          rows={rows}
-          rowKey={(i) => i.key}
-          rowHref={(i) => WHAT[i.key].href}
-          loading={load.status === "loading"}
-          error={load.status === "error" ? load.message : load.status === "forbidden" ? "You don't have access to notifications." : null}
-          pageSize={0}
-          empty={<EmptyState icon="bell" title="You're all caught up" hint="Nothing is waiting for a decision right now." />}
-        />
+        caption="Notifications"
+        columns={COLUMNS}
+        rows={rows}
+        rowKey={(i) => i.key}
+        rowHref={(i) => WHAT[i.key].href}
+        rowLabel={(i) => WHAT[i.key].title}
+        actions={openAction}
+        loading={load.status === "loading"}
+        error={load.status === "error" ? load.message : load.status === "forbidden" ? "You don't have access to notifications." : null}
+        onRetry={load.status === "error" ? reload : undefined}
+        pageSize={0}
+        empty={<EmptyState icon="bell" title="You're all caught up" hint="Nothing is waiting for a decision right now." />}
+      />
     </Page>
   );
 }

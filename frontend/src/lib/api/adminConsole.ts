@@ -10,6 +10,7 @@
 
 import { apiFetch } from "./client";
 import type { Page } from "./controlPlane";
+import type { DayRangeQuery } from "./types";
 
 const json = (body: unknown): string => JSON.stringify(body);
 const idem = (key: string): HeadersInit => ({ "Idempotency-Key": key });
@@ -517,9 +518,11 @@ export const adminConsoleApi = {
     ),
 
   // users
-  users: (opts: { q?: string; segment?: string; cursor?: string; limit?: number } = {}) =>
+  /** `product` (a product code: people in an organization that holds it now) and the
+   * signed-up `from` / `to` days are filtered by the server (admin-ux phase 3). */
+  users: (opts: { q?: string; segment?: string; product?: string; cursor?: string; limit?: number } & DayRangeQuery = {}) =>
     apiFetch<Page<UserRow>>("/api/v1/admin/users", {
-      query: { q: opts.q, segment: opts.segment, cursor: opts.cursor, limit: opts.limit },
+      query: { q: opts.q, segment: opts.segment, product: opts.product, from: opts.from, to: opts.to, cursor: opts.cursor, limit: opts.limit },
     }),
   user: (userId: string) => apiFetch<UserDetail>(`/api/v1/admin/users/${userId}`),
   userAction: (userId: string, action: UserAction, reason: string) =>
@@ -548,9 +551,11 @@ export const adminConsoleApi = {
       { method: "POST" },
     ),
   // Phase 9: orders, platform settings, staff roles, billing terms
-  orders: (opts: { status?: string; channel?: string; cursor?: string; limit?: number } = {}) =>
+  /** `q` (order number or customer name) and the created `from` / `to` days are
+   * filtered by the server (admin-ux phase 3). */
+  orders: (opts: { status?: string; channel?: string; q?: string; cursor?: string; limit?: number } & DayRangeQuery = {}) =>
     apiFetch<Page<StaffOrderRow>>("/api/v1/admin/orders", {
-      query: { status: opts.status, channel: opts.channel, cursor: opts.cursor, limit: opts.limit },
+      query: { status: opts.status, channel: opts.channel, q: opts.q, from: opts.from, to: opts.to, cursor: opts.cursor, limit: opts.limit },
     }),
   settings: () => apiFetch<PlatformSettings>("/api/v1/admin/settings"),
   saveSettings: (body: {

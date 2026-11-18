@@ -16,7 +16,9 @@ from workeasy360.contracts.values import json_input
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.interfaces.api.v1.control_plane_http import (
     limited,
+    query_date_window,
     query_page_args,
+    query_product_code,
     staff_view,
 )
 from workeasy360.platform.administration import staff_users
@@ -52,7 +54,9 @@ def _version(body: dict[str, Any]) -> int | None:
 @staff_view(["GET"])
 def users_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     """The user directory: search, and a segment (Explorers, Trial, Customers,
-    Unverified, Suspended, Deactivated) - Phase 9."""
+    Unverified, Suspended, Deactivated) - Phase 9. Admin UX Phase 3 adds
+    ``product`` (people in an organization holding that product now) and
+    ``from``/``to`` (accounts created in those days), both server-side."""
     from workeasy360.commercial.controlplane import users
 
     return JsonResponse(
@@ -60,6 +64,8 @@ def users_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             ctx,
             search=request.GET.get("q") or None,
             segment=request.GET.get("segment") or None,
+            product_code=query_product_code(request),
+            **query_date_window(request),
             **query_page_args(request),
         )
     )

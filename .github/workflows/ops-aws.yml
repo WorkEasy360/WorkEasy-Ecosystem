@@ -1,0 +1,121 @@
+name: Ops (AWS)
+
+# Operations on the production AWS account with short-lived credentials only: GitHub OIDC assumes the
+# role deploy/aws/github-oidc-bootstrap.yml created (one hour, no access key anywhere). Every run
+# goes through the `production-ops` environment - give it a required reviewer, so each run waits for
+# an explicit approval. Steps and order: deploy/aws/README.md.
+#
+# Repository variables (none is a secret): W360_OPS_ROLE_ARN, W360_OPS_CFN_ROLE_ARN, W360_AWS_REGION,
+# W360_ALERT_EMAIL, W360_INSTANCE_ID, W360_HOST_ROLE_NAME (empty: the stack creates a role),
+# W360_ADMIN_CIDR.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        type: choice
+        options:
+          - plan
+          - deploy-stacks
+          - install-host
+          - restore-drill
+          - restrict-origin-dry-run
+          - restrict-origin-apply
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ops-aws
+  cancel-in-progress: false
+
+jobs:
+  ops:
+    name: ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    environment: production-ops
+    timeout-minutes: 45
+    env:
+      REGION: ${{ vars.W360_AWS_REGION }}
+      INSTANCE: ${{ vars.W360_INSTANCE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the configuration
+        env:
+          ROLE: ${{ vars.W360_OPS_ROLE_ARN }}
+          CFN_ROLE: ${{ vars.W360_OPS_CFN_ROLE_ARN }}
+          ALERT: ${{ vars.W360_ALERT_EMAIL }}
+        run: |
+          missing=""
+          [ -n "$ROLE" ] || missing="$missing W360_OPS_ROLE_ARN"
+          [ -n "$CFN_ROLE" ] || missing="$missing W360_OPS_CFN_ROLE_ARN"
+          [ -n "$REGION" ] || missing="$missing W360_AWS_REGION"
+          [ -n "$INSTANCE" ] || missing="$missing W360_INSTANCE_ID"
+          [ -n "$ALERT" ] || missing="$missing W360_ALERT_EMAIL"
+          [ -z "$missing" ] || { echo "::error::repository variables not set:$missing (deploy/aws/README.md)"; exit 1; }
+      - uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4
+        with:
+          role-to-assume: ${{ vars.W360_OPS_ROLE_ARN }}
+          aws-region: ${{ vars.W360_AWS_REGION }}
+          role-duration-seconds: 3600
+
+      - name: Plan or deploy the stacks
+        if: inputs.action == 'plan' || inputs.action == 'deploy-stacks'
+        env:
+          CFN_ROLE: ${{ vars.W360_OPS_CFN_ROLE_ARN }}
+          ALERT: ${{ vars.W360_ALERT_EMAIL }}
+          HOST_ROLE: ${{ vars.W360_HOST_ROLE_NAME }}
+          EXECUTE: ${{ inputs.action == 'deploy-stacks' && 'yes' || 'no' }}
+        run: |
+          extra=""; [ "$EXECUTE" = yes ] || extra="--no-execute-changeset"
+          # shellcheck disable=SC2086
+          aws cloudformation deploy --region "$REGION" --stack-name workeasy360-ops \
+            --template-file deploy/aws/ops-single-host.yml --capabilities CAPABILITY_IAM \
+            --role-arn "$CFN_ROLE" $extra --no-fail-on-empty-changeset \
+            --parameter-overrides "AlertEmail=$ALERT" "InstanceId=$INSTANCE" "ExistingInstanceRoleName=$HOST_ROLE"
+          # shellcheck disable=SC2086
+          aws cloudformation deploy --region us-east-1 --stack-name workeasy360-uptime \
+            --template-file deploy/aws/ops-uptime-us-east-1.yml \
+            --role-arn "$CFN_ROLE" $extra --no-fail-on-empty-changeset \
+            --parameter-overrides "AlertEmail=$ALERT"
+          aws cloudformation describe-stacks --region "$REGION" --stack-name workeasy360-ops \
+            --query 'Stacks[0].Outputs' --output table || true
+
+      - name: Install the host side (scripts, cron, ops.env) through Systems Manager
+        if: inputs.action == 'install-host'
+        run: |
+          out() { aws cloudformation describe-stacks --region "$REGION" --stack-name workeasy360-ops \
+            --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
+          BUCKET="$(out BackupBucketName)"; KEY="$(out BackupKeyArn)"; GROUP="$(out LogGroupName)"
+          [ -n "$BUCKET" ] && [ "$BUCKET" != None ] || { echo "::error::deploy the stacks first"; exit 1; }
+          cat > commands.json <<JSON
+          {"commands": [
+            "set -eu",
+            "D=/opt/workeasy360/current/deploy/single-host",
+            "install -m 0755 \$D/w360-backup-offsite \$D/w360-restore-drill \$D/w360-healthwatch /opt/workeasy360/bin/",
+            "install -m 0644 \$D/workeasy360-ops.cron /etc/cron.d/workeasy360-ops",
+            "printf 'W360_AWS_REGION=$REGION\\\\nW360_BACKUP_BUCKET=$BUCKET\\\\nW360_BACKUP_KMS_KEY=$KEY\\\\nW360_LOG_GROUP=$GROUP\\\\n' > /opt/workeasy360/env/ops.env",
+            "chmod 0640 /opt/workeasy360/env/ops.env",
+            "/opt/workeasy360/bin/w360-backup-offsite",
+            "/opt/workeasy360/bin/w360-healthwatch"
+          ]}
+          JSON
+          deploy/aws/run-on-host.sh "$REGION" "$INSTANCE" commands.json
+
+      - name: Restore drill from the off-instance copy
+        if: inputs.action == 'restore-drill'
+        run: |
+          echo '{"commands": ["/opt/workeasy360/bin/w360-restore-drill"]}' > commands.json
+          deploy/aws/run-on-host.sh "$REGION" "$INSTANCE" commands.json
+
+      - name: Restrict the origin to Cloudflare (dry run or apply)
+        if: startsWith(inputs.action, 'restrict-origin')
+        env:
+          ADMIN: ${{ vars.W360_ADMIN_CIDR }}
+          APPLY: ${{ inputs.action == 'restrict-origin-apply' && '--apply' || '' }}
+        run: |
+          args=(--region "$REGION" --instance "$INSTANCE")
+          [ -n "$ADMIN" ] && args+=(--admin-cidr "$ADMIN")
+          [ -n "$APPLY" ] && args+=("$APPLY")
+          bash deploy/aws/restrict-origin.sh "${args[@]}"

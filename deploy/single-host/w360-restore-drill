@@ -1,0 +1,49 @@
+#!/bin/sh
+# WorkEasy360 on the single host: the weekly restore drill, from the off-instance copy.
+#
+# A backup that has not been restored is not a backup. This downloads the newest archive this
+# host put in S3 (w360-backup-offsite), checks its SHA-256 against the value recorded at upload
+# and the backup's own SHA256SUMS, and runs deploy/scripts/restore_verify.sh on it: a throwaway
+# PostgreSQL, a single-transaction restore, row counts, the startup gate, check --deploy and
+# migrate --check with the running release's image. Publishes RestoreVerified (1 or 0).
+# Nothing touches the production database.
+set -eu
+ROOT="${W360_ROOT:-/opt/workeasy360}"
+# shellcheck source=/dev/null # the operator's env/ops.env, outside the repository
+[ -f "$ROOT/env/ops.env" ] && . "$ROOT/env/ops.env"
+: "${W360_BACKUP_BUCKET:?W360_BACKUP_BUCKET is not set (env/ops.env)}"
+: "${W360_AWS_REGION:?W360_AWS_REGION is not set (env/ops.env)}"
+HOST="${W360_HOSTNAME:-$(hostname -s 2>/dev/null || hostname)}"
+endpoint=""
+[ -n "${W360_S3_ENDPOINT:-}" ] && endpoint="--endpoint-url $W360_S3_ENDPOINT"
+
+verified=0
+metric() {
+  [ -n "${W360_S3_ENDPOINT:-}" ] && return 0
+  aws cloudwatch put-metric-data --region "$W360_AWS_REGION" --namespace WorkEasy360 \
+    --metric-name RestoreVerified --value "$verified" >/dev/null 2>&1 || true
+}
+work="$(mktemp -d)"
+trap 'metric; rm -rf "$work"' EXIT
+
+# shellcheck disable=SC2086
+key="$(aws s3api list-objects-v2 $endpoint --region "$W360_AWS_REGION" --bucket "$W360_BACKUP_BUCKET" \
+  --prefix "$HOST/" --query 'sort_by(Contents, &LastModified)[-1].Key' --output text)"
+[ -n "$key" ] && [ "$key" != "None" ] || { echo "[drill] no backup of $HOST in S3" >&2; exit 1; }
+# shellcheck disable=SC2086
+want="$(aws s3api head-object $endpoint --region "$W360_AWS_REGION" --bucket "$W360_BACKUP_BUCKET" --key "$key" \
+  --query 'Metadata.sha256' --output text)"
+# shellcheck disable=SC2086
+aws s3 cp $endpoint --region "$W360_AWS_REGION" --only-show-errors "s3://$W360_BACKUP_BUCKET/$key" "$work/backup.tar"
+got="$(sha256sum "$work/backup.tar" | cut -d' ' -f1)"
+[ "$got" = "$want" ] || { echo "[drill] $key: sha256 $got, recorded $want" >&2; exit 1; }
+mkdir "$work/backup"
+tar -C "$work/backup" -xf "$work/backup.tar"
+
+release="${W360_RELEASE:-$(head -n 1 "$ROOT/current/RELEASE")}"
+cd "$ROOT/current"
+W360_BACKEND_IMAGE="${W360_BACKEND_IMAGE:-workeasy360-backend:$release}" \
+W360_ENV_FILE="${W360_ENV_FILE:-$ROOT/env/production.env}" \
+  deploy/scripts/restore_verify.sh "$work/backup" </dev/null
+verified=1
+echo "[drill] $key restored and verified with $release"

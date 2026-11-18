@@ -10,14 +10,19 @@ import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call, type R
  * customer's page asks for nothing more on its first render.
  */
 
+const nav = vi.hoisted(() => ({ router: { replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }, query: "", pathname: "/admin/customers" }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
-  usePathname: () => "/admin/customers",
+  useRouter: () => nav.router,
+  useSearchParams: () => new URLSearchParams(nav.query),
+  usePathname: () => nav.pathname,
 }));
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  nav.router.replace.mockReset();
+  nav.query = "";
+  nav.pathname = "/admin/customers";
+  window.location.hash = "";
 });
 
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -116,6 +121,87 @@ describe("a new customer", () => {
   });
 });
 
+const ROW = {
+  organization_id: ORG,
+  slug: "acme-ltd",
+  display_name: "Acme Ltd",
+  status: "active",
+  created_at: T,
+  owner_email: "asha@acme.example",
+  subscription_status: "active",
+  products: ["easy_crm"],
+  seat_capacity: 5,
+  summary_as_of: T,
+  partner: null,
+};
+const ROWS = ok({ results: [ROW], next_cursor: null, has_more: false });
+const sentOf = (calls: Call[], i: number) => Object.fromEntries(new URL(calls.filter((c) => c.key === `GET ${LIST}`).at(i)!.url, "https://x.invalid").searchParams);
+
+describe("the customer directory (admin-ux phase 3)", () => {
+  it("keeps search, status and the created days in the address, sends them to the server and lists them as removable tags", async () => {
+    const calls = mockApi({ [`GET ${LIST}`]: [ROWS] });
+    open(VIEW, <Customers />);
+    await screen.findByRole("table", { name: "Customer organizations" });
+    fireEvent.click(screen.getByRole("combobox", { name: "Status" }));
+    fireEvent.click(screen.getByRole("option", { name: "Suspended" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/customers?status=suspended", { scroll: false });
+    await waitFor(() => expect(sentOf(calls, -1)).toEqual({ status: "suspended" }));
+    fireEvent.change(screen.getByLabelText("Search by name or slug"), { target: { value: "acme" } });
+    await waitFor(() => expect(sentOf(calls, -1)).toEqual({ q: "acme", status: "suspended" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Created: Any time/ }));
+    const panel = screen.getByRole("dialog", { name: "Created between" });
+    fireEvent.change(within(panel).getByLabelText("From"), { target: { value: "2026-11-01" } });
+    fireEvent.change(within(panel).getByLabelText("To"), { target: { value: "2026-11-10" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(sentOf(calls, -1)).toEqual({ q: "acme", status: "suspended", from: "2026-11-01", to: "2026-11-10" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/customers?q=acme&status=suspended&from=2026-11-01&to=2026-11-10", { scroll: false });
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((t) => t.textContent)).toEqual([
+      "Search: “acme”",
+      "Status: Suspended",
+      expect.stringMatching(/^Created: .*1.*Nov.*2026.*10.*Nov.*2026$/),
+    ]);
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Status: Suspended" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/customers?q=acme&from=2026-11-01&to=2026-11-10", { scroll: false });
+    await waitFor(() => expect(sentOf(calls, -1)).toEqual({ q: "acme", from: "2026-11-01", to: "2026-11-10" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/customers", { scroll: false });
+  });
+
+  it("reads its filters back from the address, and drops what it does not know", async () => {
+    nav.query = "q=acme&status=active&from=2026-11-01&to=2026-11-10";
+    let calls = mockApi({ [`GET ${LIST}`]: [ROWS] });
+    const view = open(VIEW, <Customers />);
+    await screen.findByRole("table", { name: "Customer organizations" });
+    expect(sentOf(calls, 0)).toEqual({ q: "acme", status: "active", from: "2026-11-01", to: "2026-11-10" });
+    expect(screen.getByLabelText("Search by name or slug")).toHaveValue("acme");
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent("Active");
+    expect(screen.getByRole("button", { name: /^Created: .*Nov.*2026/ })).toBeInTheDocument();
+    view.unmount();
+
+    nav.query = "status=closed&from=2026-11-10&to=2026-11-01";
+    calls = mockApi({ [`GET ${LIST}`]: [ROWS] });
+    open(VIEW, <Customers />);
+    await screen.findByRole("table", { name: "Customer organizations" });
+    expect(sentOf(calls, 0)).toEqual({});
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("offers Try again when the directory cannot be read, and folds secondary columns first", async () => {
+    const calls = mockApi({ [`GET ${LIST}`]: [{ status: 500, body: {} }, ROWS] });
+    open(VIEW, <Customers />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load customers.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    const table = await screen.findByRole("table", { name: "Customer organizations" });
+    expect(calls.filter((c) => c.key === `GET ${LIST}`)).toHaveLength(2);
+    // A narrow table keeps the name and the status; the rest opens under "Show details".
+    fireEvent.click(within(table).getByRole("button", { name: "Show details of Acme Ltd" }));
+    const toggle = within(table).getByRole("button", { name: "Hide details of Acme Ltd" });
+    const details = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    expect(within(details).getAllByRole("term").map((t) => t.textContent)).toEqual(["Subscription", "Products", "Seats", "Partner", "Created"]);
+  });
+});
+
 const DETAIL = {
   organization: { id: ORG, display_name: "Acme Ltd", slug: "acme-ltd", status: "active", created_at: T, suspension_reason: "" },
   members: { owner: 1 },
@@ -190,17 +276,121 @@ async function openDetail(permissions: string[]) {
   return view;
 }
 
+/** Opens one of the customer page's tabs (admin-ux phase 2). */
+const openTab = (name: string) => fireEvent.click(screen.getByRole("tab", { name }));
+
+describe("a customer's page in tabs (admin-ux phase 2)", () => {
+  const MANAGER = [...VIEW, "platform.staff_customer.manage", "platform.staff_subscription.manage"];
+  const PARTNER = { partner_id: "p1", display_name: "North Resellers", link_status: "active" };
+
+  it("has the brief's six tabs, opens on Overview and keeps the chosen tab in the address", async () => {
+    nav.pathname = `/admin/customers/${ORG}`;
+    mockApi(detailRoutes());
+    const { container } = await openDetail(VIEW);
+    const tabs = screen.getByRole("tablist", { name: "Customer sections" });
+    expect(within(tabs).getAllByRole("tab").map((t) => t.textContent)).toEqual([
+      "Overview",
+      "Products & access",
+      "Billing",
+      "Members",
+      "Activity",
+      "Troubleshoot",
+    ]);
+    expect(within(tabs).getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "Subscription" })).toBeInTheDocument();
+    // One tab at a time: the audit trail and the check are on their own tabs.
+    expect(screen.queryByRole("heading", { name: "Recent audit trail" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Why can't someone launch a product?" })).not.toBeInTheDocument();
+    await expectNoViolations(container);
+    openTab("Activity");
+    expect(screen.getByRole("heading", { name: "Recent audit trail" })).toBeInTheDocument();
+    expect(nav.router.replace).toHaveBeenLastCalledWith(`/admin/customers/${ORG}?tab=activity`, { scroll: false });
+    openTab("Troubleshoot");
+    expect(screen.getByRole("heading", { name: "Why can't someone launch a product?" })).toBeInTheDocument();
+    openTab("Overview");
+    expect(nav.router.replace).toHaveBeenLastCalledWith(`/admin/customers/${ORG}`, { scroll: false });
+  });
+
+  it("opens the tab the address names, and Billing for an old #billing-h link", async () => {
+    nav.query = "tab=troubleshoot";
+    mockApi(detailRoutes());
+    const first = await openDetail(VIEW);
+    expect(screen.getByRole("tab", { name: "Troubleshoot" })).toHaveAttribute("aria-selected", "true");
+    first.unmount();
+
+    nav.query = "tab=nonsense";
+    window.location.hash = "#billing-h";
+    mockApi(detailRoutes({ [`GET ${HISTORY}`]: [ok({ results: [] })] }));
+    await openDetail(VIEW);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Billing" })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("heading", { name: "Billing account" })).toBeInTheDocument();
+  });
+
+  it("puts Assign plan first in the header and the organization's actions under More actions", async () => {
+    mockApi(detailRoutes({ [`POST ${CUSTOMER}/suspend`]: [ok({})] }));
+    await openDetail(MANAGER);
+    const header = screen.getByRole("heading", { level: 1, name: "Acme Ltd" }).closest("header") as HTMLElement;
+    expect(within(header).getByRole("button", { name: "Assign plan" }).className).toMatch(/primary/);
+    // No longer buttons on the page.
+    expect(screen.queryByRole("button", { name: "Suspend organization" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reset network allow-list" })).not.toBeInTheDocument();
+    fireEvent.click(within(header).getByRole("button", { name: "More actions" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Reset network allow-list", "Suspend organization"]);
+    // Suspend keeps its confirmation and its optional reason.
+    fireEvent.click(screen.getByRole("menuitem", { name: "Suspend organization" }));
+    const ask = screen.getByRole("dialog", { name: "Suspend organization?" });
+    expect(within(ask).getByLabelText(/^Reason \(optional/)).toHaveValue("");
+    expect(within(ask).getByText("Every member loses access to the organization's products until it is reactivated.")).toBeInTheDocument();
+  });
+
+  it("offers no header actions to view-only staff", async () => {
+    mockApi(detailRoutes());
+    await openDetail(VIEW);
+    expect(screen.queryByRole("button", { name: "Assign plan" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More actions" })).not.toBeInTheDocument();
+  });
+
+  it("offers Reactivate, not Suspend, for a suspended organization", async () => {
+    mockApi(detailRoutes({ [`GET ${CUSTOMER}`]: [ok({ ...DETAIL, organization: { ...DETAIL.organization, status: "suspended" } })] }));
+    await openDetail(MANAGER);
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Reset network allow-list", "Reactivate organization"]);
+  });
+
+  it("names the partner once: in its own card for those who may see partners, a line otherwise", async () => {
+    mockApi(detailRoutes({ [`GET ${CUSTOMER}`]: [ok({ ...DETAIL, partner: PARTNER })] }));
+    const first = await openDetail(VIEW);
+    expect(screen.getAllByRole("link", { name: "North Resellers" })).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Members and partner" })).toBeInTheDocument();
+    first.unmount();
+
+    mockApi(
+      detailRoutes({
+        [`GET ${CUSTOMER}`]: [ok({ ...DETAIL, partner: PARTNER })],
+        [`GET ${CUSTOMER}/partner`]: [ok({ current: null, history: [], may_manage: false })],
+      }),
+    );
+    await openDetail([...VIEW, "platform.staff_partner.view"]);
+    expect(await screen.findByRole("heading", { name: "Partner" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Members" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "North Resellers" })).not.toBeInTheDocument();
+    expect(screen.getByText("1 owner")).toBeInTheDocument();
+  });
+});
+
 describe("a customer's members and history", () => {
-  it("are not asked for until opened", async () => {
+  it("are not asked for until their tab is opened", async () => {
     const calls = mockApi(detailRoutes());
     await openDetail(VIEW);
     expect(calls.map((c) => c.key)).toEqual([`GET ${CUSTOMER}`]);
   });
 
-  it("lists the members when opened, and passes axe", async () => {
+  it("lists the members on the Members tab, and passes axe", async () => {
     mockApi(detailRoutes({ [`GET ${MEMBERS}`]: [ok({ results: [MEMBER, { ...MEMBER, membership_id: "m2", email: "sam@acme.example", name: "", status: "suspended", is_owner: false }] })] }));
     const { container } = await openDetail(VIEW);
-    fireEvent.click(screen.getByRole("button", { name: "Show members" }));
+    openTab("Members");
+    // The tab was the asking: no Show button.
+    expect(screen.queryByRole("button", { name: "Show members" })).not.toBeInTheDocument();
     const table = await screen.findByRole("table", { name: "Members of this customer" });
     const owner = within(table).getByRole("row", { name: /Asha Rao/ });
     expect(owner).toHaveTextContent("asha@acme.example");
@@ -208,27 +398,27 @@ describe("a customer's members and history", () => {
     expect(owner).toHaveTextContent("Owner");
     expect(within(table).getAllByRole("row", { name: /sam@acme.example/ })[0]).toHaveTextContent("Suspended");
     await expectNoViolations(container);
-    fireEvent.click(screen.getByRole("button", { name: "Hide members" }));
+    openTab("Overview");
     expect(screen.queryByRole("table", { name: "Members of this customer" })).not.toBeInTheDocument();
   });
 
   it("has an empty and an error state for members", async () => {
     mockApi(detailRoutes({ [`GET ${MEMBERS}`]: [ok({ results: [] })] }));
     const { unmount } = await openDetail(VIEW);
-    fireEvent.click(screen.getByRole("button", { name: "Show members" }));
+    openTab("Members");
     expect(await screen.findByText("No members")).toBeInTheDocument();
     unmount();
 
     mockApi(detailRoutes({ [`GET ${MEMBERS}`]: [{ status: 500, body: { detail: "Members are unavailable." } }] }));
     await openDetail(VIEW);
-    fireEvent.click(screen.getByRole("button", { name: "Show members" }));
+    openTab("Members");
     expect(await screen.findByRole("alert")).toHaveTextContent("Members are unavailable.");
   });
 
-  it("lists the assignment history when opened", async () => {
+  it("lists the assignment history on the Billing tab", async () => {
     mockApi(detailRoutes({ [`GET ${HISTORY}`]: [ok({ results: [LINE, { ...LINE, item_id: "i2", plan_code: "crm_old", removed_at: "2026-10-01T10:00:00Z" }] })] }));
     await openDetail(VIEW);
-    fireEvent.click(screen.getByRole("button", { name: "Show history" }));
+    openTab("Billing");
     const table = await screen.findByRole("table", { name: "Assignment history" });
     const line = within(table).getAllByRole("row")[1];
     expect(line).toHaveTextContent("Easy CRM");
@@ -242,13 +432,13 @@ describe("a customer's members and history", () => {
   it("has an empty and an error state for history", async () => {
     mockApi(detailRoutes({ [`GET ${HISTORY}`]: [ok({ results: [] })] }));
     const { unmount } = await openDetail(VIEW);
-    fireEvent.click(screen.getByRole("button", { name: "Show history" }));
+    openTab("Billing");
     expect(await screen.findByText("No plan has been assigned")).toBeInTheDocument();
     unmount();
 
     mockApi(detailRoutes({ [`GET ${HISTORY}`]: [{ status: 403, body: {} }] }));
     await openDetail(VIEW);
-    fireEvent.click(screen.getByRole("button", { name: "Show history" }));
+    openTab("Billing");
     expect(await screen.findByRole("alert")).toHaveTextContent("You don't have access to this customer's assignment history.");
   });
 });
@@ -305,7 +495,7 @@ describe("assigning a plan", () => {
   it("says when nothing waits for payment, and refreshes an open history", async () => {
     const calls = mockApi(detailRoutes({ [`GET ${CATALOG}`]: [ok(OVERVIEW)], [`POST ${ASSIGN}`]: [placed(false)], [`GET ${HISTORY}`]: [ok({ results: [] })] }));
     await openDetail(SUBSCRIPTIONS);
-    fireEvent.click(screen.getByRole("button", { name: "Show history" }));
+    openTab("Billing");
     await screen.findByText("No plan has been assigned");
     const popup = await openPopup();
     fireEvent.change(within(popup).getByLabelText("Reason"), { target: { value: "Agreed on the renewal call." } });

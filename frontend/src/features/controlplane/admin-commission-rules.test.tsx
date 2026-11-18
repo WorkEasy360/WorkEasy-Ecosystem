@@ -126,6 +126,25 @@ describe("the rules", () => {
     expect(screen.queryByRole("table", { name: "Commission rules" })).toBeNull();
   });
 
+  it("offers Try again when the rules can't be loaded (admin-ux phase 3)", async () => {
+    const calls = mockApi(routes({ [`GET ${ADMIN}/commission/rules`]: [{ status: 500, body: { detail: "Rules are unavailable." } }, ok({ results: [RULE] })] }));
+    mount([VIEW]);
+    expect(await screen.findByText("Rules are unavailable.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("row", { name: /programme v2/ })).toBeInTheDocument();
+    expect(calls.filter((c) => c.key === `GET ${ADMIN}/commission/rules`)).toHaveLength(2);
+  });
+
+  it("keeps Change in the row's menu, in the one Actions column, last", async () => {
+    mockApi(routes());
+    mount(ALL);
+    const table = await screen.findByRole("table", { name: "Commission rules" });
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent?.trim());
+    expect(headers.at(-1)).toBe("Actions");
+    const row = within(table).getByRole("row", { name: /programme v2/ });
+    expect(within(row).getAllByRole("cell").at(-1)).toContainElement(within(row).getByRole("button", { name: "Actions for programme version 2" }));
+  });
+
   it("asks the server for replaced versions rather than filtering what it has", async () => {
     const calls = mockApi(routes({ [`GET ${ADMIN}/commission/rules`]: [ok({ results: [RULE] }), ok({ results: [RULE, { ...RULE, id: "r0", version: 1, retired_at: "2026-01-01T00:00:00+00:00" }] })] }));
     mount([VIEW]);

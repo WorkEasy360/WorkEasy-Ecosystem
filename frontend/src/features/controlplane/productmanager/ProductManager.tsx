@@ -7,6 +7,7 @@ import { adminApi, productMediaUrl, type ConsoleProduct, type ProductsConsole } 
 import { can, useAdmin } from "../ControlShell";
 import { LoadGate, useAction, useLoad } from "../ui";
 import {
+  Alert,
   Badge,
   Button,
   DataTable,
@@ -20,8 +21,11 @@ import {
   StatGrid,
   Trunc,
   UrlCell,
+  droppedMessage,
   formatDate,
   useConfirm,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
   type MenuItem,
   type Tone,
@@ -71,6 +75,28 @@ export function listingOf(p: ConsoleProduct): ListingPreview {
 type StatusFilter = "all" | ManagerStatus;
 type VisibilityFilter = "all" | "published" | "hidden";
 
+const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "draft", label: "Draft" },
+  { value: "active", label: "Active" },
+  { value: "archived", label: "Archived" },
+];
+
+const VISIBILITY_OPTIONS: { value: VisibilityFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "published", label: "Published" },
+  { value: "hidden", label: "Hidden" },
+];
+
+/** The list's filters, kept in its address (admin-ux phase 3) so they come back after
+ * opening a product. Every product is loaded in one request, so they filter here. */
+const PRODUCT_FILTERS = {
+  q: {},
+  status: { options: ["draft", "active", "archived"] },
+  visibility: { options: ["published", "hidden"] },
+  category: { maxLength: 120 },
+};
+
 function matches(p: ConsoleProduct, q: string, status: StatusFilter, visibility: VisibilityFilter, category: string): boolean {
   const text = q.trim().toLowerCase();
   if (text && ![p.name, p.slug, p.code, p.category].some((v) => v.toLowerCase().includes(text))) return false;
@@ -116,10 +142,12 @@ export function ProductManager({ openNew = false }: { openNew?: boolean } = {}) 
   );
   const { act, busy, feedback } = useAction(reload);
   const confirm = useConfirm();
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState<StatusFilter>("all");
-  const [visibility, setVisibility] = useState<VisibilityFilter>("all");
-  const [category, setCategory] = useState("all");
+  const filters = useUrlFilters(PRODUCT_FILTERS);
+  const q = filters.values.q;
+  const status = (filters.values.status || "all") as StatusFilter;
+  const visibility = (filters.values.visibility || "all") as VisibilityFilter;
+  const category = filters.values.category || "all";
+  const dropped = droppedMessage(filters.dropped);
   const [preview, setPreview] = useState<ConsoleProduct | null>(null);
   // 2026-11-16: the category list, managed in a popup; the page reloads after.
   const [managingCategories, setManagingCategories] = useState(false);
@@ -143,27 +171,31 @@ export function ProductManager({ openNew = false }: { openNew?: boolean } = {}) 
         );
       },
     },
-    { key: "category", header: "Category", value: (p) => p.category, render: (p) => <Trunc max="sm">{p.category}</Trunc> },
-    { key: "status", header: "Status", value: (p) => p.manager_status, render: (p) => <ManagerStatusBadge status={p.manager_status} /> },
+    { key: "category", header: "Category", priority: "medium", value: (p) => p.category, render: (p) => <Trunc max="sm">{p.category}</Trunc> },
+    { key: "status", header: "Status", priority: "essential", value: (p) => p.manager_status, render: (p) => <ManagerStatusBadge status={p.manager_status} /> },
     {
       key: "visibility",
       header: "Store visibility",
+      priority: "high",
       value: (p) => visibilityOf(p.listing),
       render: (p) => <VisibilityBadge visibility={visibilityOf(p.listing)} />,
     },
     {
       key: "trial",
       header: "Trial",
+      priority: "low",
       value: (p) => (p.channels.trial?.enabled ? p.channels.trial.duration_days : null),
       render: (p) => trialLabel(p.channels.trial),
     },
-    { key: "plans", header: "Plans", align: "right", value: (p) => p.plans.length, render: (p) => p.plans.length },
+    { key: "plans", header: "Plans", align: "right", priority: "low", value: (p) => p.plans.length, render: (p) => p.plans.length },
     {
       key: "launch",
       header: "Launch URL",
+      priority: "low",
+      value: (p) => p.launch_url,
       render: (p) => (p.launch_url ? <UrlCell url={p.launch_url} /> : <span className={styles.muted}>Not set</span>),
     },
-    { key: "updated", header: "Last updated", value: (p) => p.updated_at, render: (p) => formatDate(p.updated_at) },
+    { key: "updated", header: "Last updated", priority: "medium", value: (p) => p.updated_at, render: (p) => formatDate(p.updated_at) },
   ];
 
   const menu = (p: ConsoleProduct): MenuItem[] => {
@@ -185,7 +217,15 @@ export function ProductManager({ openNew = false }: { openNew?: boolean } = {}) 
         icon: "eyeOff",
         disabled: busy,
         when: manage && shown === "published",
-        onSelect: () => void act(() => adminApi.productLifecycle(p.id, "unpublish"), `${p.name} is hidden from the store.`),
+        // Asks first (admin-ux phase 3): it takes the product off the store at once.
+        onSelect: () =>
+          confirm.ask({
+            title: `Unpublish ${p.name}?`,
+            message:
+              "It is hidden from the store at once, so customers can no longer find it there. Its status, its customers and its partners are not changed: it can still be sold by staff and partners, and published again.",
+            confirmLabel: "Unpublish",
+            onConfirm: () => act(() => adminApi.productLifecycle(p.id, "unpublish"), `${p.name} is hidden from the store.`),
+          }),
       },
       {
         label: "Archive",
@@ -226,6 +266,7 @@ export function ProductManager({ openNew = false }: { openNew?: boolean } = {}) 
         }
       />
       {feedback}
+      {dropped && <Alert tone="warning" title={dropped} />}
       <LoadGate load={load} what="products">
         {(d: ProductsConsole) => catalog(d)}
       </LoadGate>
@@ -248,7 +289,7 @@ export function ProductManager({ openNew = false }: { openNew?: boolean } = {}) 
             setManagingCategories(false);
             if (categoriesChanged) {
               setCategoriesChanged(false);
-              setCategory("all");
+              if (filters.values.category) filters.set({ category: "" });
               reload();
             }
           }}
@@ -263,6 +304,15 @@ export function ProductManager({ openNew = false }: { openNew?: boolean } = {}) 
     const rows = data.products.filter((p) => matches(p, q, status, visibility, category));
     const count = (s: ManagerStatus) => data.products.filter((p) => p.manager_status === s).length;
     const filtered = q !== "" || status !== "all" || visibility !== "all" || category !== "all";
+    const label = (options: { value: string; label: string }[], value: string) => options.find((o) => o.value === value)?.label ?? value;
+    const active: ActiveFilter[] = [
+      ...(q ? [{ key: "q", label: "Search", value: `“${q}”`, onRemove: () => filters.set({ q: "" }) }] : []),
+      ...(status !== "all" ? [{ key: "status", label: "Status", value: label(STATUS_OPTIONS, status), onRemove: () => filters.set({ status: "" }) }] : []),
+      ...(visibility !== "all"
+        ? [{ key: "visibility", label: "Store visibility", value: label(VISIBILITY_OPTIONS, visibility), onRemove: () => filters.set({ visibility: "" }) }]
+        : []),
+      ...(category !== "all" ? [{ key: "category", label: "Category", value: category, onRemove: () => filters.set({ category: "" }) }] : []),
+    ];
     return (
       <>
         <StatGrid label="Catalog summary">
@@ -274,16 +324,8 @@ export function ProductManager({ openNew = false }: { openNew?: boolean } = {}) 
 
         <FilterBar
           label="Filter products"
-          onClear={
-            filtered
-              ? () => {
-                  setQ("");
-                  setStatus("all");
-                  setVisibility("all");
-                  setCategory("all");
-                }
-              : undefined
-          }
+          onClear={filtered ? filters.reset : undefined}
+          active={active}
           end={
             <span className={styles.muted} aria-live="polite">
               {rows.length === data.products.length
@@ -292,35 +334,26 @@ export function ProductManager({ openNew = false }: { openNew?: boolean } = {}) 
             </span>
           }
         >
-          <SearchInput label="Search products" placeholder="Name, slug or category" value={q} onSearch={setQ} />
+          <SearchInput label="Search products" placeholder="Name, slug or category" value={q} onSearch={(text) => filters.set({ q: text.slice(0, 80) })} />
           <Select<StatusFilter>
             label="Status"
             prefix="Status:"
             value={status}
-            onChange={setStatus}
-            options={[
-              { value: "all", label: "All" },
-              { value: "draft", label: "Draft" },
-              { value: "active", label: "Active" },
-              { value: "archived", label: "Archived" },
-            ]}
+            onChange={(value) => filters.set({ status: value === "all" ? "" : value })}
+            options={STATUS_OPTIONS}
           />
           <Select<VisibilityFilter>
             label="Store visibility"
             prefix="Visibility:"
             value={visibility}
-            onChange={setVisibility}
-            options={[
-              { value: "all", label: "All" },
-              { value: "published", label: "Published" },
-              { value: "hidden", label: "Hidden" },
-            ]}
+            onChange={(value) => filters.set({ visibility: value === "all" ? "" : value })}
+            options={VISIBILITY_OPTIONS}
           />
           <Select
             label="Category"
             prefix="Category:"
             value={category}
-            onChange={setCategory}
+            onChange={(value) => filters.set({ category: value === "all" ? "" : value })}
             options={[{ value: "all", label: "All categories" }, ...data.categories.map((c) => ({ value: c, label: c }))]}
           />
         </FilterBar>

@@ -66,7 +66,9 @@ from workeasy360.interfaces.api.v1 import commercial_views as legacy
 from workeasy360.interfaces.api.v1.control_plane_http import (
     limited,
     page_response,
+    query_date_window,
     query_page_args,
+    query_product_code,
     staff_view,
 )
 from workeasy360.platform.authz.control_plane import acting_scope
@@ -173,7 +175,8 @@ def customers_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     """The customer directory. Phase 9 adds commercial filters, which the
     Subscriptions and Entitlements pages use: ``subscription`` (a subscription
     status, or ``none``), ``access`` (``customer``/``trial``/``none``) and
-    ``product`` (holds this product now)."""
+    ``product`` (holds this product now). ``from``/``to`` narrow it to the customers
+    created in those days (Admin UX Phase 3)."""
     page = cp_customers.directory(
         ctx,
         search=request.GET.get("q") or None,
@@ -182,7 +185,8 @@ def customers_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             request, "subscription", {s.value for s in SubscriptionStatus}
         ),
         access_class=_choice(request, "access", {"customer", "trial"}),
-        product_code=_product_filter(request),
+        product_code=query_product_code(request),
+        **query_date_window(request),
         **query_page_args(request),
     )
     return page_response(page)
@@ -198,18 +202,6 @@ def _choice(request: HttpRequest, name: str, allowed: set[str]) -> str | None:
     if raw not in allowed:
         raise CatalogValidationError(f"Unknown {name} filter.", field=name)
     return raw
-
-
-def _product_filter(request: HttpRequest) -> str | None:
-    from workeasy360.contracts.values.identifiers import ProductCode
-
-    raw = request.GET.get("product")
-    if not raw:
-        return None
-    try:
-        return str(ProductCode(raw))
-    except ValueError as exc:
-        raise CatalogValidationError("Unknown product filter.", field="product") from exc
 
 
 @staff_view(["GET"])
@@ -509,7 +501,8 @@ def partners_recent_view(request: HttpRequest, ctx: TenantContext) -> JsonRespon
 def partner_resellers_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
     """The reseller list: partners wearing the Reseller label (a filter over
     capability grants), or every partner with ``scope=all``; ``category``
-    (ADR-062) narrows it to the partners listed under one type."""
+    (ADR-062) narrows it to the partners listed under one type; ``from``/``to``
+    to the partners created in those days."""
     return page_response(
         partner_console.resellers_page(
             ctx,
@@ -522,6 +515,7 @@ def partner_resellers_view(request: HttpRequest, ctx: TenantContext) -> JsonResp
             profile=request.GET.get("profile") or None,
             kyc_filter=request.GET.get("kyc") or None,
             category=request.GET.get("category") or None,
+            **query_date_window(request),
             **query_page_args(request),
         )
     )
@@ -1483,12 +1477,14 @@ def commission_terms_view(request, ctx, **_kw: Any) -> JsonResponse:
 
 @staff_view(["GET"])
 def commission_accruals_view(request, ctx, **_kw: Any) -> JsonResponse:
+    """Ledger entries; ``from``/``to`` keep those whose earning event fell in those days."""
     return page_response(
         cp_reads.accruals(
             ctx,
             partner_id=_optional_uuid(request, "partner_id"),
             kind=request.GET.get("kind") or None,
             unpaid=request.GET.get("unpaid") == "1",
+            **query_date_window(request),
             **query_page_args(request),
         )
     )
@@ -1530,11 +1526,13 @@ def commission_reconcile_view(request, ctx, **_kw: Any) -> JsonResponse:
 @staff_view(["GET", "POST"])
 def payouts_view(request, ctx, **_kw: Any) -> JsonResponse:
     if request.method == "GET":
+        # ``from``/``to``: the payouts prepared in those days.
         return page_response(
             cp_reads.payouts_list(
                 ctx,
                 partner_id=_optional_uuid(request, "partner_id"),
                 status=request.GET.get("status") or None,
+                **query_date_window(request),
                 **query_page_args(request),
             )
         )

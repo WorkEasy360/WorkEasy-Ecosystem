@@ -41,7 +41,11 @@ from workeasy360.commercial.payments import selectors as payment_selectors
 from workeasy360.contracts.errors import AuthenticationRequired, PaymentValidationError
 from workeasy360.contracts.values import json_input
 from workeasy360.contracts.values.tenant import TenantContext
-from workeasy360.interfaces.api.v1.control_plane_http import limited, staff_view
+from workeasy360.interfaces.api.v1.control_plane_http import (
+    limited,
+    query_date_window,
+    staff_view,
+)
 
 
 def _body(request: HttpRequest) -> dict[str, Any]:
@@ -275,7 +279,8 @@ def events_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
 
 @staff_view(["GET"])
 def staff_orders_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
-    """Every order across customers (Phase 9)."""
+    """Every order across customers (Phase 9). ``q`` matches the order number or
+    the customer's name; ``from``/``to`` keep the orders placed in those days."""
     from workeasy360.commercial.partners.selectors import partner_names
     from workeasy360.contracts.values.cursor import clamp_limit
 
@@ -283,8 +288,10 @@ def staff_orders_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
         ctx,
         status=request.GET.get("status") or None,
         channel=request.GET.get("channel") or None,
+        search=request.GET.get("q") or None,
         cursor=request.GET.get("cursor") or None,
         limit=clamp_limit(request.GET.get("limit"), maximum=orders.MAX_PAGE),
+        **query_date_window(request),
     )
     # The source reference by name: payments sits below partners, so the names
     # are added here, one query for the page.

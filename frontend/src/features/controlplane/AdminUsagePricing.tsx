@@ -111,34 +111,37 @@ export function UsageRatesScreen() {
     {
       key: "price",
       header: "Price",
+      priority: "essential",
       sortable: false,
       render: (l) => (l.rate ? priceText(l.rate) : <Badge tone="neutral">Not charged: no rate set</Badge>),
     },
-    { key: "included", header: "Included each month", sortable: false, render: (l) => (l.rate ? includedText(l.rate) : EMPTY) },
-    { key: "from", header: "Effective from", value: (l) => l.rate?.effective_from, render: (l) => (l.rate ? formatDateTime(l.rate.effective_from) : EMPTY) },
-    ...(manage
-      ? ([
-          {
-            key: "actions",
-            header: "Actions",
-            align: "right",
-            hideable: false,
-            render: (l) => (
-              <span className={styles.cellActions}>
-                <Button size="sm" aria-haspopup="dialog" aria-label={`Set rate for ${l.label}${l.rate?.currency ? ` in ${l.rate.currency}` : ""}`} onClick={() => setSetting({ meter: l.meter, rate: l.rate })}>
-                  Set rate
-                </Button>
-                {l.rate && (
-                  <Button size="sm" variant="danger" aria-label={`Remove rate for ${l.label}${l.rate.currency ? ` in ${l.rate.currency}` : ""}`} onClick={() => removeRate(l, l.rate as UsageRateRow)}>
-                    Remove rate
-                  </Button>
-                )}
-              </span>
-            ),
-          },
-        ] as Column<RateLine>[])
-      : []),
+    { key: "included", header: "Included each month", priority: "medium", sortable: false, render: (l) => (l.rate ? includedText(l.rate) : EMPTY) },
+    {
+      key: "from",
+      header: "Effective from",
+      priority: "medium",
+      value: (l) => l.rate?.effective_from,
+      render: (l) => (l.rate ? formatDateTime(l.rate.effective_from) : EMPTY),
+    },
   ];
+
+  // Set rate and Remove rate, in the one Actions column (admin-ux phase 3); only with the
+  // pricing grant. Remove rate asks first and says what stops.
+  const rowActions = (l: RateLine) => {
+    const where = l.rate?.currency ? ` in ${l.rate.currency}` : "";
+    return (
+      <>
+        <Button size="sm" icon="edit" aria-haspopup="dialog" aria-label={`Set rate for ${l.label}${where}`} onClick={() => setSetting({ meter: l.meter, rate: l.rate })}>
+          Set rate
+        </Button>
+        {l.rate && (
+          <Button size="sm" variant="danger" icon="trash" aria-label={`Remove rate for ${l.label}${where}`} onClick={() => removeRate(l, l.rate as UsageRateRow)}>
+            Remove rate
+          </Button>
+        )}
+      </>
+    );
+  };
 
   return (
     <Page>
@@ -172,6 +175,8 @@ export function UsageRatesScreen() {
                 columns={columns}
                 rows={lines}
                 rowKey={(l) => l.rate?.id ?? l.meter}
+                rowLabel={(l) => `${l.label}${l.rate?.currency ? ` in ${l.rate.currency}` : ""}`}
+                actions={manage ? rowActions : undefined}
                 pageSize={0}
                 maxHeight={false}
                 hideEmptyColumns={false}
@@ -331,51 +336,57 @@ export function CreditPacksScreen() {
     { key: "name", header: "Name", value: (p) => p.name, render: (p) => <Stack main={p.name} sub={p.code} /> },
     { key: "credits", header: "Credits", align: "right", value: (p) => p.credits, render: (p) => creditsText(p.credits) },
     { key: "price", header: "Price", align: "right", value: (p) => p.price_minor, render: (p) => formatMoney(p.price_minor, p.currency) },
-    { key: "status", header: "Status", value: (p) => p.status, render: (p) => <StatusBadge value={p.status} label={p.status === "active" ? "On sale" : "Archived"} /> },
-    ...(manage
-      ? ([
-          {
-            key: "actions",
-            header: "Actions",
-            align: "right",
-            hideable: false,
-            render: (p) => (
-              <span className={styles.cellActions}>
-                <Button size="sm" aria-haspopup="dialog" aria-label={`Edit ${p.name}`} onClick={() => setEditing({ pack: p })}>
-                  Edit
-                </Button>
-                {p.status === "active" ? (
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    aria-label={`Archive ${p.name}`}
-                    onClick={() =>
-                      ask({
-                        title: `Archive ${p.name}?`,
-                        message: "It comes off sale at once. Customers who already bought it keep their credits.",
-                        confirmLabel: "Archive pack",
-                        danger: true,
-                        onConfirm: async () => {
-                          await usagePricingApi.updatePack(p.id, bodyOf(p, "archived"));
-                          reload();
-                          return `${p.name} is archived.`;
-                        },
-                      })
-                    }
-                  >
-                    Archive
-                  </Button>
-                ) : (
-                  <Button size="sm" disabled={busy} aria-label={`Put ${p.name} back on sale`} onClick={() => void act(() => usagePricingApi.updatePack(p.id, bodyOf(p, "active")), `${p.name} is back on sale.`)}>
-                    Put back on sale
-                  </Button>
-                )}
-              </span>
-            ),
-          },
-        ] as Column<CreditPackRow>[])
-      : []),
+    {
+      key: "status",
+      header: "Status",
+      priority: "essential",
+      value: (p) => p.status,
+      render: (p) => <StatusBadge value={p.status} label={p.status === "active" ? "On sale" : "Archived"} />,
+    },
   ];
+
+  // Edit, Archive (asks first) and Put back on sale, in the one Actions column
+  // (admin-ux phase 3); only with the pricing grant.
+  const rowActions = (p: CreditPackRow) => (
+    <>
+      <Button size="sm" icon="edit" aria-haspopup="dialog" aria-label={`Edit ${p.name}`} onClick={() => setEditing({ pack: p })}>
+        Edit
+      </Button>
+      {p.status === "active" ? (
+        <Button
+          size="sm"
+          variant="danger"
+          icon="box"
+          aria-label={`Archive ${p.name}`}
+          onClick={() =>
+            ask({
+              title: `Archive ${p.name}?`,
+              message: "It comes off sale at once. Customers who already bought it keep their credits.",
+              confirmLabel: "Archive pack",
+              danger: true,
+              onConfirm: async () => {
+                await usagePricingApi.updatePack(p.id, bodyOf(p, "archived"));
+                reload();
+                return `${p.name} is archived.`;
+              },
+            })
+          }
+        >
+          Archive
+        </Button>
+      ) : (
+        <Button
+          size="sm"
+          icon="play"
+          disabled={busy}
+          aria-label={`Put ${p.name} back on sale`}
+          onClick={() => void act(() => usagePricingApi.updatePack(p.id, bodyOf(p, "active")), `${p.name} is back on sale.`)}
+        >
+          Put back on sale
+        </Button>
+      )}
+    </>
+  );
 
   return (
     <Page>
@@ -399,6 +410,8 @@ export function CreditPacksScreen() {
             columns={columns}
             rows={results}
             rowKey={(p) => p.id}
+            rowLabel={(p) => p.name}
+            actions={manage ? rowActions : undefined}
             pageSize={0}
             maxHeight={false}
             hideEmptyColumns={false}

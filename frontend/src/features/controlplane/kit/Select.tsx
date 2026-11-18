@@ -8,9 +8,23 @@ import k from "./Kit.module.css";
 
 const noSubscription = () => () => {};
 
+/** The options in their order, in runs of one group (`undefined`: no heading). */
+function groupsOf<V extends string>(options: SelectOption<V>[]) {
+  const runs: { name: string | undefined; items: { option: SelectOption<V>; index: number }[] }[] = [];
+  options.forEach((option, index) => {
+    const last = runs[runs.length - 1];
+    if (last && last.name === option.group) last.items.push({ option, index });
+    else runs.push({ name: option.group, items: [{ option, index }] });
+  });
+  return runs;
+}
+
 export interface SelectOption<V extends string = string> {
   value: V;
   label: string;
+  /** The heading this option is listed under (2026-11-18, the report selector):
+   * consecutive options with the same group are one group of the list. */
+  group?: string;
 }
 
 /**
@@ -161,27 +175,41 @@ export function Select<V extends string = string>({
             className={k.listbox}
             tabIndex={-1}
           >
-            {options.map((option, index) => (
-              <li
-                key={option.value}
-                id={`${listId}-${index}`}
-                data-index={index}
-                role="option"
-                aria-selected={option.value === value}
-                data-active={index === active || undefined}
-                className={k.option}
-                onMouseEnter={() => setActive(index)}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => choose(index)}
-              >
-                <span>{option.label}</span>
-                {option.value === value && (
-                  <span className={k.optionCheck}>
-                    <Icon name="check" size={16} />
+            {groupsOf(options).map(({ name, items }) => {
+              const rows = items.map(({ option, index }) => (
+                <li
+                  key={option.value}
+                  id={`${listId}-${index}`}
+                  data-index={index}
+                  role="option"
+                  aria-selected={option.value === value}
+                  data-active={index === active || undefined}
+                  className={k.option}
+                  onMouseEnter={() => setActive(index)}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => choose(index)}
+                >
+                  <span>{option.label}</span>
+                  {option.value === value && (
+                    <span className={k.optionCheck}>
+                      <Icon name="check" size={16} />
+                    </span>
+                  )}
+                </li>
+              ));
+              if (name === undefined) return rows;
+              const headingId = `${listId}-group-${items[0].index}`;
+              return (
+                <li key={`group-${name}-${items[0].index}`} role="group" aria-labelledby={headingId} className={k.optionGroup}>
+                  <span id={headingId} className={k.optionGroupLabel}>
+                    {name}
                   </span>
-                )}
-              </li>
-            ))}
+                  <ul role="none" className={k.optionGroupList}>
+                    {rows}
+                  </ul>
+                </li>
+              );
+            })}
           </ul>,
           document.body,
         )}

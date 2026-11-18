@@ -206,6 +206,8 @@ def resellers_page(
     cursor: str | None = None,
     kyc_filter: str | None = None,
     category: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> Page:
     """One page of partners with the aggregates the partner lists show.
 
@@ -222,6 +224,9 @@ def resellers_page(
     ``category`` (ADR-062: Partners → Affiliate, Reseller, White Label) lists
     the partners whose type is that one - the type each row shows - so every
     partner is under exactly one; it composes with every other filter.
+
+    ``start``/``end`` (Admin UX Phase 3) keep the partners created in
+    ``[start, end)``, composed with every other filter and the cursor.
     """
     from workeasy360.commercial.controlplane import profile_completion
 
@@ -260,6 +265,8 @@ def resellers_page(
         page_size=page_size,
         extra=wanted_profile,
         category=wanted_category,
+        created_from=start,
+        created_before=end,
     )
     facts = _aggregates([r.id for r in rows], now)
     completion = profile_completion.for_partners(

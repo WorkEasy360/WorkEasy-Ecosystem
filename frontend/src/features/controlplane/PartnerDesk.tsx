@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { adminDeskApi, type PendingMethod } from "@/lib/api/adminDesk";
+import { adminDeskApi, type PendingMethod, type StaffWithdrawal } from "@/lib/api/adminDesk";
 import type { Ticket, TicketDetail } from "@/lib/api/partnerPanel";
 import { Sla } from "@/features/partnerpanel/Helpdesk";
 import { can, useAdmin } from "./ControlShell";
@@ -10,6 +10,7 @@ import { FormDialog, FormPopup } from "./Modal";
 import { LoadGate, Status, Table, money, useAction, useLoad, when } from "./ui";
 import { SelectField, TextAreaField, TextField } from "./widgets";
 import {
+  Alert,
   Badge,
   Button,
   Card,
@@ -20,12 +21,16 @@ import {
   PageHeader,
   SearchInput,
   SectionHeader,
+  Select,
   StatusChips,
   Tooltip,
+  droppedMessage,
   exactTime,
   formatRelative,
   kit,
   titleCase,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
 } from "./kit";
 import cp from "./ControlPlane.module.css";
@@ -51,6 +56,9 @@ const FILTERS = [
 
 type StaffTicketRow = Ticket & { partner_name: string };
 
+/** A priority's rank, so the Priority column sorts by urgency rather than by name. */
+const PRIORITY_RANK: Record<string, number> = { low: 1, normal: 2, high: 3, urgent: 4 };
+
 /** A ticket's priority: an urgent one carries its one-hour answer promise. */
 function Priority({ value }: { value: string }) {
   if (value === "urgent")
@@ -62,12 +70,25 @@ function Priority({ value }: { value: string }) {
   return <Badge tone={value === "high" ? "warning" : "neutral"}>{titleCase(value)}</Badge>;
 }
 
-export function PartnerTicketsScreen() {
-  const [status, setStatus] = useState("open");
-  const [search, setSearch] = useState("");
+/** The desk's filters, kept in its address (2026-11-18, admin-ux phase 3). No
+ * `?status=` is Open, the desk's first view. */
+const DESK_FILTERS = {
+  status: { options: ["", ...FILTERS.map((f) => f.value)] },
+  q: {},
+};
+
+/** Partners' tickets to Workeasy360, from the partner desk. `asTickets`: shown as
+ * Support › Tickets to a staff member who holds the partner grant but not the
+ * support grant - "Who asked" is then fixed at Partners, as that grant covers. */
+export function PartnerTicketsScreen({ asTickets = false }: { asTickets?: boolean } = {}) {
+  const filters = useUrlFilters(DESK_FILTERS);
+  const status = filters.values.status || "open";
+  const search = filters.values.q;
   const [open, setOpen] = useState<string | null>(null);
-  const [load] = useLoad(() => adminDeskApi.tickets(status, search || undefined), [status, search]);
+  const [load, reload] = useLoad(() => adminDeskApi.tickets(status, search || undefined), [status, search]);
   const counts = load.status === "ready" ? load.data.counts : {};
+  const dropped = droppedMessage(filters.dropped);
+  const active: ActiveFilter[] = search ? [{ key: "q", label: "Search", value: `“${search}”`, onRemove: () => filters.set({ q: "" }) }] : [];
   const columns: Column<StaffTicketRow>[] = [
     {
       key: "ticket",
@@ -80,13 +101,24 @@ export function PartnerTicketsScreen() {
       ),
     },
     { key: "partner", header: "Partner", value: (t) => t.partner_name, render: (t) => t.partner_name },
-    { key: "subject", header: "Subject", value: (t) => t.subject, render: (t) => <span className={kit.trunc} title={t.subject}>{t.subject}</span> },
-    { key: "priority", header: "Priority", value: (t) => t.priority, render: (t) => <Priority value={t.priority} /> },
-    { key: "status", header: "Status", value: (t) => t.status, render: (t) => <Status value={t.status} /> },
-    { key: "sla", header: "SLA", render: (t) => <Sla ticket={t} /> },
+    {
+      key: "subject",
+      header: "Subject",
+      priority: "medium",
+      value: (t) => t.subject,
+      render: (t) => (
+        <span className={kit.trunc} title={t.subject}>
+          {t.subject}
+        </span>
+      ),
+    },
+    { key: "priority", header: "Priority", priority: "medium", value: (t) => PRIORITY_RANK[t.priority] ?? 0, render: (t) => <Priority value={t.priority} /> },
+    { key: "status", header: "Status", priority: "essential", value: (t) => t.status, render: (t) => <Status value={t.status} /> },
+    { key: "sla", header: "SLA", value: (t) => t.sla?.state ?? "", render: (t) => <Sla ticket={t} /> },
     {
       key: "updated",
       header: "Updated",
+      priority: "low",
       value: (t) => t.updated_at,
       render: (t) => (
         <Tooltip content={exactTime(t.updated_at)}>
@@ -98,7 +130,7 @@ export function PartnerTicketsScreen() {
   return (
     <Page>
       <PageHeader
-        title="Partner tickets"
+        title={asTickets ? "Tickets" : "Partner tickets"}
         subtitle="Tickets partners raise from their dashboard's Helpdesk."
         info="Urgent tickets must be answered within an hour; the SLA column says whether each is on track."
       />
@@ -106,22 +138,32 @@ export function PartnerTicketsScreen() {
         <StaffTicket ticketId={open} onClose={() => setOpen(null)} />
       ) : (
         <>
+          {dropped && <Alert tone="warning" title={dropped} />}
           <StatusChips
             label="Ticket status"
             value={status}
-            onChange={setStatus}
+            onChange={(next) => filters.set({ status: next === "open" ? "" : next })}
             chips={FILTERS.map((f) => ({ ...f, count: counts[f.value as keyof typeof counts] ?? null }))}
           />
-          <FilterBar label="Filter tickets" onClear={search ? () => setSearch("") : undefined}>
-            <SearchInput label="Search partner, subject or #number" value={search} onSearch={setSearch} />
+          <FilterBar label="Filter tickets" active={active} onClear={search ? () => filters.set({ q: "" }) : undefined}>
+            <SearchInput label="Search partner, subject or #number" value={search} onSearch={(q) => filters.set({ q })} />
+            {asTickets && (
+              <Tooltip content="Your access covers partners' tickets only.">
+                <span tabIndex={0}>
+                  <Select label="Who asked" prefix="Who asked:" value="partner" onChange={() => undefined} options={[{ value: "partner", label: "Partners" }]} disabled />
+                </span>
+              </Tooltip>
+            )}
           </FilterBar>
           <DataTable
             caption="Partner tickets, newest activity first"
             columns={columns}
             rows={load.status === "ready" ? (load.data.items as StaffTicketRow[]) : []}
             rowKey={(t) => t.id}
+            rowLabel={(t) => `${t.reference} ${t.subject}`}
             loading={load.status === "loading"}
             error={load.status === "error" ? load.message : load.status === "forbidden" ? "You don't have access to partner tickets." : null}
+            onRetry={load.status === "error" ? reload : undefined}
             empty={<EmptyState icon="ticket" title="No tickets here." hint={search ? "Try another search." : "Tickets partners raise appear here."} />}
           />
         </>
@@ -225,15 +267,91 @@ const WITHDRAWAL_FILTERS = [
   { value: "all", label: "All" },
 ];
 
+/** The queue's status, kept in the address (2026-11-18, admin-ux phase 3). No
+ * `?status=` is Waiting, the queue's first view. */
+const WITHDRAWAL_SPEC = {
+  status: { options: ["", ...WITHDRAWAL_FILTERS.map((f) => f.value)] },
+};
+
 export function WithdrawalsScreen() {
   const { permissions } = useAdmin();
-  const [status, setStatus] = useState("requested");
+  const filters = useUrlFilters(WITHDRAWAL_SPEC);
+  const status = filters.values.status || "requested";
   const [load, reload] = useLoad(() => adminDeskApi.withdrawals(status), [status]);
   const { act, busy, feedback } = useAction(reload);
   const [rejecting, setRejecting] = useState<{ id: string; partner: string } | null>(null);
   const [note, setNote] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const manage = can(permissions, "platform.staff_payout.manage");
+  const dropped = droppedMessage(filters.dropped);
+
+  const columns: Column<StaffWithdrawal>[] = [
+    {
+      key: "partner",
+      header: "Partner",
+      value: (w) => w.partner.name,
+      render: (w) => <Link href={`/admin/partners/${w.partner.id}`}>{w.partner.name}</Link>,
+    },
+    { key: "requested", header: "Requested", priority: "medium", value: (w) => w.requested_at, render: (w) => when(w.requested_at) },
+    { key: "amount", header: "Amount", align: "right", value: (w) => w.amount_minor, render: (w) => money(w.amount_minor, w.currency) },
+    {
+      key: "tds",
+      header: "TDS",
+      align: "right",
+      priority: "low",
+      value: (w) => w.tds_minor,
+      render: (w) => (w.tds_minor ? money(w.tds_minor, w.currency) : "—"),
+    },
+    { key: "net", header: "Net", align: "right", priority: "medium", value: (w) => w.net_minor, render: (w) => money(w.net_minor, w.currency) },
+    { key: "to", header: "To", priority: "low", value: (w) => w.destination, render: (w) => w.destination },
+    {
+      key: "status",
+      header: "Status",
+      priority: "essential",
+      value: (w) => w.status,
+      render: (w) => (
+        <>
+          <Status value={w.status} />
+          {w.decision_note && <span className={cp.muted}> {w.decision_note}</span>}
+        </>
+      ),
+    },
+  ];
+
+  // The row's actions (admin-ux phase 3): Start payout and Reject, only on a
+  // request still waiting, only for staff who may move money.
+  const actions = (w: StaffWithdrawal) =>
+    w.status === "requested" ? (
+      <>
+        <Button
+          size="sm"
+          variant="primary"
+          icon="play"
+          aria-label={`Start payout for ${w.partner.name}`}
+          disabled={busy}
+          onClick={() => {
+            setNotice(null);
+            void act(() => adminDeskApi.startPayout(w.id), "Payout prepared. Approve and pay it on the partner's Payouts tab.");
+          }}
+        >
+          Start payout
+        </Button>
+        <Button
+          size="sm"
+          icon="ban"
+          aria-haspopup="dialog"
+          aria-label={`Reject the withdrawal of ${w.partner.name}`}
+          onClick={() => {
+            setNotice(null);
+            setNote("");
+            setRejecting({ id: w.id, partner: w.partner.name });
+          }}
+        >
+          Reject…
+        </Button>
+      </>
+    ) : null;
+
   return (
     <Page>
       <PageHeader
@@ -243,9 +361,11 @@ export function WithdrawalsScreen() {
       />
       {feedback}
       {notice && <p role="status">{notice}</p>}
+      {dropped && <Alert tone="warning" title={dropped} />}
       {rejecting && (
         <FormDialog
           title={`Reject the withdrawal of ${rejecting.partner}`}
+          intro="The request is closed and no money is sent. The partner reads your reason in their wallet and can ask again."
           size="sm"
           submitLabel="Reject"
           danger
@@ -291,61 +411,20 @@ export function WithdrawalsScreen() {
               <StatusChips
                 label="Withdrawal status"
                 value={status}
-                onChange={setStatus}
+                onChange={(next) => filters.set({ status: next === "requested" ? "" : next })}
                 chips={WITHDRAWAL_FILTERS.map((f) => ({ ...f, count: f.value === "requested" || f.value === "processing" ? (d.counts[f.value] ?? 0) : null }))}
               />
-              <Table
+              <DataTable
                 caption="Withdrawal requests"
-                head={["Partner", "Requested", "Amount", "TDS", "Net", "To", "Status", "Actions"]}
-                numeric={["Amount", "TDS", "Net"]}
-                isEmpty={d.items.length === 0}
-                empty="No requests here."
-              >
-                {d.items.map((w) => (
-                  <tr key={w.id}>
-                    <th scope="row">
-                      <Link href={`/admin/partners/${w.partner.id}`}>{w.partner.name}</Link>
-                    </th>
-                    <td>{when(w.requested_at)}</td>
-                    <td className={cp.num}>{money(w.amount_minor, w.currency)}</td>
-                    <td className={cp.num}>{w.tds_minor ? money(w.tds_minor, w.currency) : "—"}</td>
-                    <td className={cp.num}>{money(w.net_minor, w.currency)}</td>
-                    <td>{w.destination}</td>
-                    <td>
-                      <Status value={w.status} />
-                      {w.decision_note && <span className={cp.muted}> {w.decision_note}</span>}
-                    </td>
-                    <td>
-                      {manage && w.status === "requested" && (
-                        <span className={styles.rowActions}>
-                          <Button
-                            size="sm"
-                            variant="primary"
-                            disabled={busy}
-                            onClick={() => {
-                              setNotice(null);
-                              void act(() => adminDeskApi.startPayout(w.id), "Payout prepared. Approve and pay it on the partner's Payouts tab.");
-                            }}
-                          >
-                            Start payout
-                          </Button>
-                          <Button
-                            size="sm"
-                            aria-haspopup="dialog"
-                            onClick={() => {
-                              setNotice(null);
-                              setNote("");
-                              setRejecting({ id: w.id, partner: w.partner.name });
-                            }}
-                          >
-                            Reject…
-                          </Button>
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </Table>
+                columns={columns}
+                rows={d.items}
+                rowKey={(w) => w.id}
+                rowLabel={(w) => `the withdrawal of ${w.partner.name}`}
+                actions={manage ? actions : undefined}
+                pageSize={0}
+                hideEmptyColumns={false}
+                empty={<EmptyState icon="wallet" title="No requests here." compact />}
+              />
             </section>
           </>
         )}
@@ -391,6 +470,7 @@ function MethodRow({ m, manage, onDone }: { m: PendingMethod; manage: boolean; o
               buttonClassName="w360-btn w360-btn-secondary"
               buttonAriaLabel={`Reject the payout details of ${m.partner.name}`}
               title={`Reject the payout details of ${m.partner.name}`}
+              intro="The partner reads your reason and must update their payout details. No withdrawal can be requested until new details are verified."
               size="sm"
               submitLabel="Reject"
               danger

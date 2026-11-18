@@ -316,6 +316,10 @@ export interface ResellerFilters {
   profile?: string;
   /** "legacy", "ready", "approved" or "not_approved". */
   kyc?: string;
+  /** Created on or after this day (`YYYY-MM-DD`, UTC; admin-ux phase 3). */
+  from?: string;
+  /** Created on or before this day (`YYYY-MM-DD`, UTC). */
+  to?: string;
   cursor?: string;
 }
 

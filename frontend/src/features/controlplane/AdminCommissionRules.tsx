@@ -217,15 +217,20 @@ function RulesCard({ manage }: { manage: boolean }) {
   const [products] = useLoad(() => (manage ? adminApi.products() : Promise.resolve({ results: [] })), [manage]);
   const [now] = useState(() => Date.now());
 
+  // Priorities (admin-ux phase 3): the state never folds away; the scope, renewals and
+  // start move into a row's details first on a narrow screen. "Pays" mixes percentages
+  // and fixed amounts in several currencies, so it does not sort.
   const columns: Column<RuleRow>[] = [
     { key: "code", header: "Rule", render: (r) => `${r.code} v${r.version}`, value: (r) => r.code, sortable: true },
-    { key: "applies", header: "Applies to", render: appliesTo, wrap: true },
+    { key: "applies", header: "Applies to", priority: "medium", render: appliesTo, value: appliesTo, wrap: true },
     { key: "pays", header: "Pays", render: pays },
-    { key: "renewals", header: "Renewals", render: renewals },
-    { key: "from", header: "Starts", render: (r) => formatDate(r.effective_from), value: (r) => r.effective_from, sortable: true },
+    { key: "renewals", header: "Renewals", priority: "medium", render: renewals, value: renewals },
+    { key: "from", header: "Starts", priority: "medium", render: (r) => formatDate(r.effective_from), value: (r) => r.effective_from, sortable: true },
     {
       key: "state",
       header: "State",
+      priority: "essential",
+      value: (r) => stateOf(r, now).label,
       render: (r) => {
         const state = stateOf(r, now);
         return <Badge tone={state.tone}>{state.label}</Badge>;

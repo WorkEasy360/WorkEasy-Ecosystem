@@ -295,7 +295,7 @@ export function PartnerCustomers() {
               );
             })}
           </Table>
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+          <MoreButton hasMore={paged.hasMore} onMore={paged.more} loading={paged.loadingMore} failed={paged.moreError} />
         </>
       )}
     </div>
@@ -658,7 +658,7 @@ export function PartnerCommissions() {
               </tr>
             ))}
           </Table>
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+          <MoreButton hasMore={paged.hasMore} onMore={paged.more} loading={paged.loadingMore} failed={paged.moreError} />
         </>
       )}
     </div>
@@ -690,7 +690,7 @@ export function PartnerPayouts() {
               </tr>
             ))}
           </Table>
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+          <MoreButton hasMore={paged.hasMore} onMore={paged.more} loading={paged.loadingMore} failed={paged.moreError} />
         </>
       )}
     </div>

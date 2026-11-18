@@ -26,10 +26,13 @@ import {
   StatusChips,
   Trunc,
   EMPTY,
+  droppedMessage,
   formatDateTime,
   productName,
   sentence,
   useToast,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
   type Tone,
 } from "./kit";
@@ -54,6 +57,13 @@ const SETUP_STATUS: Record<SetupRecordRow["status"], { label: string; tone: Tone
 
 const STATUS_KEYS = Object.keys(SETUP_STATUS) as SetupRecordRow["status"][];
 
+/** The queue's filters, kept in its address (2026-11-18, admin-ux phase 3). The
+ * product is checked by the server: the catalog may not be readable here. */
+const SETUP_FILTERS = {
+  status: { options: ["", ...STATUS_KEYS] },
+  product: { maxLength: 64 },
+};
+
 type Decision = { record: SetupRecordRow; decision: "approve" | "request_correction" };
 
 export function CustomerSetupScreen() {
@@ -62,9 +72,13 @@ export function CustomerSetupScreen() {
   const managesRequirements = can(permissions, "platform.staff_catalog.manage");
   const readsRequirements = managesRequirements || can(permissions, "platform.staff_catalog.view");
   const toast = useToast();
-  const [status, setStatus] = useState("");
-  const [product, setProduct] = useState("");
-  const [offset, setOffset] = useState(0);
+  const filters = useUrlFilters(SETUP_FILTERS);
+  const { status, product } = filters.values;
+  // The page of the list: a new filter (here or from the address) starts again on the first.
+  const filterKey = `${status}|${product}`;
+  const [paging, setPaging] = useState({ key: filterKey, offset: 0 });
+  const offset = paging.key === filterKey ? paging.offset : 0;
+  const setOffset = (next: number) => setPaging({ key: filterKey, offset: next });
   // The last answer: the chips and the pager stay put, and keep focus, while the next one loads.
   const [seen, setSeen] = useState<{ counts: Record<string, number>; total: number; limit: number; shown: number } | null>(null);
   const [deciding, setDeciding] = useState<Decision | null>(null);
@@ -92,10 +106,11 @@ export function CustomerSetupScreen() {
         </Link>
       ),
     },
-    { key: "product", header: "Product", value: (r) => r.product_code, render: (r) => productLabel(r.product_code) },
+    { key: "product", header: "Product", priority: "high", value: (r) => r.product_code, render: (r) => productLabel(r.product_code) },
     {
       key: "status",
       header: "Setup status",
+      priority: "essential",
       value: (r) => r.status,
       render: (r) => (
         <Stack
@@ -112,43 +127,55 @@ export function CustomerSetupScreen() {
       key: "answers",
       header: "Answers",
       wrap: true,
+      priority: "medium",
       render: (r) => <Answers record={r} requirements={page?.requirements ?? []} />,
     },
-    { key: "reason", header: "Reason", wrap: true, value: (r) => r.decision_reason, render: (r) => r.decision_reason || EMPTY },
-    {
-      key: "actions",
-      header: "Actions",
-      render: (r) =>
-        decides && r.status === "submitted" ? (
-          <span className={styles.cellActions}>
-            <Button size="sm" variant="primary" onClick={() => setDeciding({ record: r, decision: "approve" })} aria-label={`Approve ${r.organization_name} ${productLabel(r.product_code)}`}>
-              Approve
-            </Button>
-            <Button size="sm" onClick={() => setDeciding({ record: r, decision: "request_correction" })} aria-label={`Request correction from ${r.organization_name} for ${productLabel(r.product_code)}`}>
-              Request correction
-            </Button>
-          </span>
-        ) : (
-          EMPTY
-        ),
-    },
+    { key: "reason", header: "Reason", wrap: true, priority: "low", value: (r) => r.decision_reason, render: (r) => r.decision_reason || EMPTY },
   ];
+
+  // The decisions, in the Actions column (admin-ux phase 3): only on a submitted
+  // record, and only for staff who may decide.
+  const actions = (r: SetupRecordRow) =>
+    decides && r.status === "submitted" ? (
+      <>
+        <Button
+          size="sm"
+          variant="primary"
+          icon="check"
+          onClick={() => setDeciding({ record: r, decision: "approve" })}
+          aria-label={`Approve ${r.organization_name} ${productLabel(r.product_code)}`}
+        >
+          Approve
+        </Button>
+        <Button
+          size="sm"
+          icon="edit"
+          onClick={() => setDeciding({ record: r, decision: "request_correction" })}
+          aria-label={`Request correction from ${r.organization_name} for ${productLabel(r.product_code)}`}
+        >
+          Request correction
+        </Button>
+      </>
+    ) : null;
 
   const counts = seen?.counts;
   const allCount = counts ? Object.values(counts).reduce((sum, n) => sum + n, 0) : undefined;
+  const dropped = droppedMessage(filters.dropped);
+  // The applied filters, as tags (the status is the chip row above).
+  const active: ActiveFilter[] = product
+    ? [{ key: "product", label: "Product", value: productLabel(product), onRemove: () => filters.set({ product: "" }) }]
+    : [];
   return (
     <Page>
       <PageHeader title="Setup" subtitle="What customers must tell us before a product is fully set up." />
       <Alert tone="info">
         Setup is separate from subscription status. Approving or correcting setup never changes a subscription, and a subscription never waits on setup.
       </Alert>
+      {dropped && <Alert tone="warning" title={dropped} />}
       <StatusChips
         label="Setup status"
         value={status}
-        onChange={(next) => {
-          setStatus(next);
-          setOffset(0);
-        }}
+        onChange={(next) => filters.set({ status: next })}
         // The counts are of every record: with a product chosen they would not match the rows.
         chips={[
           { value: "", label: "All", count: product ? undefined : allCount },
@@ -159,27 +186,22 @@ export function CustomerSetupScreen() {
           })),
         ]}
       />
-      {catalog.length > 0 && (
-        <FilterBar
-          onClear={
-            product
-              ? () => {
-                  setProduct("");
-                  setOffset(0);
-                }
-              : undefined
-          }
-        >
-          <Select
-            label="Product"
-            prefix="Product:"
-            value={product}
-            onChange={(next) => {
-              setProduct(next);
-              setOffset(0);
-            }}
-            options={[{ value: "", label: "All products" }, ...catalog.map((p) => ({ value: p.code, label: productName(p.name) }))]}
-          />
+      {(catalog.length > 0 || product) && (
+        <FilterBar label="Filter setup records" active={active} onClear={product ? () => filters.set({ product: "" }) : undefined}>
+          {catalog.length > 0 && (
+            <Select
+              label="Product"
+              prefix="Product:"
+              value={product}
+              onChange={(next) => filters.set({ product: next })}
+              options={[
+                { value: "", label: "All products" },
+                ...catalog.map((p) => ({ value: p.code, label: productName(p.name) })),
+                // A product from the address that the catalog does not list stays shown.
+                ...(product && !catalog.some((p) => p.code === product) ? [{ value: product, label: sentence(product) }] : []),
+              ]}
+            />
+          )}
         </FilterBar>
       )}
       <DataTable
@@ -187,9 +209,12 @@ export function CustomerSetupScreen() {
         columns={columns}
         rows={page?.results ?? []}
         rowKey={(r) => r.id}
+        rowLabel={(r) => `${r.organization_name || r.organization_id}, ${productLabel(r.product_code)}`}
+        actions={decides ? actions : undefined}
         pageSize={0}
         hideEmptyColumns={false}
         {...tableState(load, "customer setup")}
+        onRetry={load.status === "error" ? reload : undefined}
         empty={
           <EmptyState
             icon="check"
@@ -313,20 +338,6 @@ function SetupRequirements({
       render: (r) => <BoolBadge value={r.is_active} yes="Active" no="Inactive" noTone="neutral" />,
     },
     { key: "order", header: "Order", align: "right", value: (r) => r.display_order, render: (r) => r.display_order },
-    ...(manage
-      ? [
-          {
-            key: "edit",
-            header: "Edit",
-            align: "right",
-            render: (r: SetupRequirementRow) => (
-              <Button size="sm" icon="edit" onClick={() => setEditing(r)} aria-label={`Edit ${r.label}`}>
-                Edit
-              </Button>
-            ),
-          } satisfies Column<SetupRequirementRow>,
-        ]
-      : []),
   ];
 
   return (
@@ -346,10 +357,22 @@ function SetupRequirements({
         columns={columns}
         rows={load.status === "ready" ? load.data.results : []}
         rowKey={(r) => r.id}
+        rowLabel={(r) => r.label}
+        // Edit, in the Actions column (admin-ux phase 3), for those who may change requirements.
+        actions={
+          manage
+            ? (r) => (
+                <Button size="sm" icon="edit" onClick={() => setEditing(r)} aria-label={`Edit ${r.label}`}>
+                  Edit
+                </Button>
+              )
+            : undefined
+        }
         pageSize={0}
         maxHeight={false}
         hideEmptyColumns={false}
         {...tableState(load, "setup requirements")}
+        onRetry={load.status === "error" ? reload : undefined}
         empty={<EmptyState icon="file" title="No setup requirements" hint="With none entered, no product needs setup and no record appears." compact />}
       />
       {editing && (

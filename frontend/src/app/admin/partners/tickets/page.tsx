@@ -1,8 +1,8 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { PartnerTicketsScreen } from "@/features/controlplane/PartnerDesk";
-
-/** Partners -> Partner Tickets (2026-11-03): partners' tickets to Workeasy360. */
+/** Old address (2026-11-03): Partner tickets are in Support › Tickets now, with Who
+ * asked set to Partners (admin-ux phase 1). Staff who hold only the partner grant
+ * see the same partner desk there as here before. */
 export default function Page() {
-  return <PartnerTicketsScreen />;
+  redirect("/admin/tickets?audience=partner");
 }

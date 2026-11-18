@@ -101,35 +101,94 @@ export function SearchInput({
   );
 }
 
+/** One applied filter, as the active-filters row shows it ("Status: Active ×"). */
+export interface ActiveFilter {
+  key: string;
+  /** What is filtered ("Status", "Created"). */
+  label: string;
+  /** The value it is filtered to, in words ("Active", "1 Nov 2026 – 18 Nov 2026"). */
+  value: string;
+  onRemove: () => void;
+}
+
 /**
- * One row above a table: search first, then filters, "Clear filters" when any
- * is set, and the right side for Export or the column picker. Wraps cleanly
- * on a narrow screen.
+ * One row above a table: search first, then filters, and the right side for
+ * Export or the column picker. Wraps cleanly on a narrow screen.
+ *
+ * With `active` (2026-11-18, admin-ux phase 3) the applied filters are listed
+ * under the controls as tags, each with its own remove button, and "Reset
+ * filters" clears them all (`onClear`). Without it, "Clear filters" sits after
+ * the controls while `onClear` is given.
  */
 export function FilterBar({
   children,
   end,
   onClear,
   label = "Filters",
+  active,
 }: {
   children: React.ReactNode;
   /** Right-aligned controls (Export CSV, Columns). */
   end?: React.ReactNode;
-  /** Shown as "Clear filters" when given (pass it only while a filter is set). */
+  /** Clears every filter (pass it only while a filter is set). */
   onClear?: () => void;
   label?: string;
+  /** The applied filters, listed as removable tags. */
+  active?: ActiveFilter[];
 }) {
+  const root = useRef<HTMLDivElement | null>(null);
+  // A removed tag takes its button with it: keep the keyboard in the filter bar.
+  const refocus = () => window.requestAnimationFrame(() => root.current?.focus());
   return (
-    <div className={k.filterBar} role="group" aria-label={label}>
+    <div ref={root} className={k.filterBar} role="group" aria-label={label} tabIndex={-1}>
       <div className={k.filterGrow}>
         {children}
-        {onClear && (
+        {onClear && !active && (
           <Button variant="link" onClick={onClear}>
             Clear filters
           </Button>
         )}
       </div>
       {end && <div className={k.filterEnd}>{end}</div>}
+      {active && active.length > 0 && (
+        <div className={k.activeFilters}>
+          <span className={k.activeFiltersLabel} aria-hidden="true">
+            Filtered by
+          </span>
+          <ul className={k.activeFiltersList} aria-label="Active filters">
+            {active.map((f) => (
+              <li key={f.key} className={k.filterTag}>
+                <span>
+                  {f.label}: <strong>{f.value}</strong>
+                </span>
+                <button
+                  type="button"
+                  className={k.filterTagRemove}
+                  aria-label={`Remove filter ${f.label}: ${f.value}`}
+                  title="Remove this filter"
+                  onClick={() => {
+                    f.onRemove();
+                    refocus();
+                  }}
+                >
+                  <Icon name="x" size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
+          {onClear && (
+            <Button
+              variant="link"
+              onClick={() => {
+                onClear();
+                refocus();
+              }}
+            >
+              Reset filters
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

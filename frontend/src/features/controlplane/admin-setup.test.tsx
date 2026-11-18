@@ -11,14 +11,18 @@ import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call, type R
  * asks for the catalog grant.
  */
 
+// One router object, as Next.js returns; the address is the test's to set.
+const nav = vi.hoisted(() => ({ router: { replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }, query: "" }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => nav.router,
+  useSearchParams: () => new URLSearchParams(nav.query),
   usePathname: () => "/admin/customers/setup",
 }));
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  nav.router.replace.mockReset();
+  nav.query = "";
 });
 
 const SETUP = "/api/v1/admin/setup";
@@ -185,12 +189,84 @@ describe("the setup queue", () => {
     await screen.findByRole("row", { name: /BrightMart/ });
     expect(screen.queryByRole("button", { name: /^Approve / })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Request correction/ })).not.toBeInTheDocument();
+    // Nothing to do: no Actions column.
+    expect(within(screen.getByRole("table", { name: "Customer setup" })).queryByRole("columnheader", { name: "Actions" })).not.toBeInTheDocument();
     unmount();
 
     mockApi(routes({ [`GET ${SETUP}`]: [queue([{ ...RECORD, status: "pending", answers: {} }])] }));
     open(DECIDE);
     expect(await screen.findByRole("row", { name: /BrightMart/ })).toHaveTextContent("Nothing sent yet");
     expect(screen.queryByRole("button", { name: /^Approve / })).not.toBeInTheDocument();
+  });
+
+  it("puts Approve and Request correction in the Actions column, last (admin-ux phase 3)", async () => {
+    mockApi(routes());
+    open(DECIDE);
+    const table = await screen.findByRole("table", { name: "Customer setup" });
+    const row = await within(table).findByRole("row", { name: /BrightMart/ });
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Organization", "Product", "Setup status", "Answers", "Reason", "Actions"]);
+    const cells = within(row).getAllByRole("cell");
+    const last = cells[cells.length - 1];
+    expect(within(last).getByRole("button", { name: /^Approve BrightMart/ })).toHaveTextContent("Approve");
+    expect(within(last).getByRole("button", { name: /^Request correction from BrightMart/ })).toHaveTextContent("Request correction");
+  });
+
+  it("keeps the status and the product in the address, with the product as a removable tag (admin-ux phase 3)", async () => {
+    const calls = mockApi(routes());
+    open(VIEW);
+    await screen.findByRole("row", { name: /BrightMart/ });
+    fireEvent.click(within(screen.getByRole("group", { name: "Setup status" })).getByRole("button", { name: /^Submitted/ }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/customers/setup?status=submitted", { scroll: false });
+    await waitFor(() => expect(lastUrl(calls).searchParams.get("status")).toBe("submitted"));
+    fireEvent.click(await screen.findByRole("combobox", { name: "Product" }));
+    fireEvent.click(screen.getByRole("option", { name: "EasyBook" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/customers/setup?status=submitted&product=easybook", { scroll: false });
+    await waitFor(() => expect(lastUrl(calls).searchParams.get("product")).toBe("easybook"));
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getByRole("listitem")).toHaveTextContent("Product: EasyBook");
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Product: EasyBook" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/customers/setup?status=submitted", { scroll: false });
+    await waitFor(() => expect(lastUrl(calls).searchParams.get("product")).toBeNull());
+  });
+
+  it("reads the status and the product back from the address, and drops a status it does not know", async () => {
+    nav.query = "status=approved&product=easybook";
+    let calls = mockApi(routes());
+    const view = open(VIEW);
+    await screen.findByRole("row", { name: /BrightMart/ });
+    const first = new URL(calls.find((c) => c.key === `GET ${SETUP}`)!.url, "https://x.invalid").searchParams;
+    expect(Object.fromEntries(first)).toEqual({ status: "approved", product: "easybook", limit: "25", offset: "0" });
+    expect(within(screen.getByRole("group", { name: "Setup status" })).getByRole("button", { name: /^Approved/ })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByRole("combobox", { name: "Product" })).toHaveTextContent("EasyBook");
+    view.unmount();
+
+    nav.query = "status=done";
+    calls = mockApi(routes());
+    open(VIEW);
+    await screen.findByRole("row", { name: /BrightMart/ });
+    expect(new URL(calls.find((c) => c.key === `GET ${SETUP}`)!.url, "https://x.invalid").searchParams.get("status")).toBeNull();
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("starts again on the first page when a filter changes", async () => {
+    const calls = mockApi(routes({ [`GET ${SETUP}`]: [queue([RECORD], { total: 40 })] }));
+    open(VIEW);
+    await screen.findByText("Showing 1–1 of 40");
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(lastUrl(calls).searchParams.get("offset")).toBe("25"));
+    await screen.findByRole("row", { name: /BrightMart/ });
+    fireEvent.click(within(screen.getByRole("group", { name: "Setup status" })).getByRole("button", { name: /^Pending setup/ }));
+    await waitFor(() => expect(lastUrl(calls).searchParams.get("status")).toBe("pending"));
+    expect(lastUrl(calls).searchParams.get("offset")).toBe("0");
+  });
+
+  it("offers Try again when the queue cannot be read", async () => {
+    const calls = mockApi(routes({ [`GET ${SETUP}`]: [{ status: 500, body: { detail: "Setup is unavailable." } }, queue([RECORD])] }));
+    open(VIEW);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Setup is unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("row", { name: /BrightMart/ })).toBeInTheDocument();
+    expect(calls.filter((c) => c.key === `GET ${SETUP}`)).toHaveLength(2);
   });
 });
 
@@ -209,6 +285,26 @@ describe("setup requirements", () => {
     expect(await screen.findByRole("row", { name: /Where you sell\./ })).toHaveTextContent("Sales region");
     expect(screen.queryByRole("button", { name: "Add requirement" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit Sales region" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("table", { name: "Setup requirements" })).queryByRole("columnheader", { name: "Actions" })).not.toBeInTheDocument();
+  });
+
+  it("offer Edit in the Actions column, last (admin-ux phase 3)", async () => {
+    mockApi(routes());
+    open(CATALOG_MANAGE);
+    const table = await screen.findByRole("table", { name: "Setup requirements" });
+    const row = await within(table).findByRole("row", { name: /Where you sell\./ });
+    expect(within(table).getAllByRole("columnheader").at(-1)).toHaveTextContent("Actions");
+    const cells = within(row).getAllByRole("cell");
+    expect(within(cells[cells.length - 1]).getByRole("button", { name: "Edit Sales region" })).toBeInTheDocument();
+  });
+
+  it("offer Try again when they cannot be read", async () => {
+    const calls = mockApi(routes({ [`GET ${REQUIREMENTS}`]: [{ status: 500, body: { detail: "Requirements are unavailable." } }, ok({ results: [REQUIREMENT] })] }));
+    open(CATALOG_VIEW);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Requirements are unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("row", { name: /Where you sell\./ })).toBeInTheDocument();
+    expect(calls.filter((c) => c.key === `GET ${REQUIREMENTS}`)).toHaveLength(2);
   });
 
   it("explain what having none means", async () => {

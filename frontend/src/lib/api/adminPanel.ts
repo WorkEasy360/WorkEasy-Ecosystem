@@ -5,6 +5,7 @@
  */
 
 import { apiFetch } from "./client";
+import type { DayRangeQuery } from "./types";
 
 const post = (body?: unknown): RequestInit => ({
   method: "POST",
@@ -190,7 +191,7 @@ export interface KycApplicationDetail extends KycQueueRow {
 }
 
 export const kycApi = {
-  queue: (query: { status?: string; q?: string; limit?: number; offset?: number }) =>
+  queue: (query: { status?: string; q?: string; limit?: number; offset?: number } & DayRangeQuery) =>
     apiFetch<{
       results: KycQueueRow[];
       total: number;
@@ -394,7 +395,7 @@ export interface SubscriptionRow {
   lines: SubscriptionLine[];
 }
 
-type PageQuery = { limit?: number; cursor?: string };
+type PageQuery = { limit?: number; cursor?: string } & DayRangeQuery;
 
 export const billingApi = {
   invoices: (query: PageQuery & { status?: string; q?: string }) =>
@@ -655,7 +656,7 @@ export interface HelpArticleRow {
 }
 
 export const supportApi = {
-  tickets: (query: { audience?: string; status?: string; assigned?: string; q?: string; limit?: number; offset?: number }) =>
+  tickets: (query: { audience?: string; status?: string; assigned?: string; q?: string; limit?: number; offset?: number } & DayRangeQuery) =>
     apiFetch<{ items: TicketRow[]; counts: Record<string, number>; total: number; limit: number; offset: number }>("/api/v1/admin/tickets", { query }),
   ticket: (id: string) => apiFetch<TicketDetail>(`/api/v1/admin/tickets/${id}`),
   reply: (id: string, body: { message?: string; status?: string; internal?: boolean }) =>
