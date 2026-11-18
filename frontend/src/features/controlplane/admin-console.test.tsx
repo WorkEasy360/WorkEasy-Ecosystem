@@ -238,6 +238,11 @@ async function confirmReason(label: string) {
   expect(screen.queryByLabelText(/^Reason/)).not.toBeInTheDocument();
 }
 
+/** Opens one of the customer page's tabs (admin-ux phase 2). */
+async function openTab(name: string) {
+  fireEvent.click(await screen.findByRole("tab", { name }));
+}
+
 /** Chooses an option of a styled select. */
 function choose(name: string | RegExp, option: string | RegExp) {
   fireEvent.click(screen.getByRole("combobox", { name }));
@@ -250,6 +255,7 @@ describe("a customer's billing", () => {
   it("lists invoices with attempts and refunds, and passes axe", async () => {
     mockApi(billingRoutes());
     const { container } = asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Billing");
     const invoices = await screen.findByRole("table", { name: "Invoices" });
     expect(within(invoices).getByRole("row", { name: /INV-1/ })).toHaveTextContent("reminder 1");
     const payments = screen.getByRole("table", { name: "Payments for invoice INV-2" });
@@ -265,12 +271,17 @@ describe("a customer's billing", () => {
     mockApi(billingRoutes());
     const { unmount } = asStaff(["platform.staff_customer.view"], <CustomerDetailScreen organizationId={ORG} />);
     await screen.findByRole("heading", { level: 1 });
+    await openTab("Billing");
+    // The billing account line stays; the invoices section needs payment access.
+    expect(screen.getByRole("heading", { name: "Billing account" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Billing" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Reset network allow-list" })).not.toBeInTheDocument();
+    // No manage grant: no More actions at all.
+    expect(screen.queryByRole("button", { name: "More actions" })).not.toBeInTheDocument();
     unmount();
 
     mockApi(billingRoutes());
     asStaff(["platform.staff_customer.view", "platform.staff_payment.view"], <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Billing");
     await screen.findByRole("table", { name: "Invoices" });
     expect(screen.queryByRole("button", { name: /Void|Mark|Refund/ })).not.toBeInTheDocument();
   });
@@ -278,6 +289,7 @@ describe("a customer's billing", () => {
   it("mark paid sends the reference, a recorded reason and the invoice version", async () => {
     const calls = mockApi(billingRoutes());
     asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Billing");
     fireEvent.change(await screen.findByLabelText("Payment reference for INV-1"), { target: { value: "TRF-2026-001" } });
     await confirmReason("Mark INV-1 paid");
     await screen.findByText("Invoice INV-1 is marked paid.");
@@ -291,6 +303,7 @@ describe("a customer's billing", () => {
   it("void sends a recorded reason and the invoice version", async () => {
     const calls = mockApi(billingRoutes());
     asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Billing");
     await confirmReason("Void INV-1");
     await screen.findByText("Invoice INV-1 is void.");
     expect(bodyOf(calls, `POST /api/v1/admin/customers/${ORG}/invoices/inv-1/void`)).toEqual({
@@ -302,6 +315,7 @@ describe("a customer's billing", () => {
   it("refund sends integer minor units within what remains, with a recorded reason and a command id", async () => {
     const calls = mockApi(billingRoutes());
     asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Billing");
     const amount = await screen.findByLabelText("Refund amount (INR) on INV-2");
     expect(amount).toHaveValue("800.00"); // 1000.00 paid, 200.00 already refunded
     fireEvent.change(amount, { target: { value: "900" } });
@@ -314,10 +328,12 @@ describe("a customer's billing", () => {
     expect(refund.headers["idempotency-key"]).toBeTruthy();
   });
 
-  it("the network break-glass records a reason without asking for one", async () => {
+  it("the network break-glass, under More actions, records a reason without asking for one", async () => {
     const calls = mockApi(billingRoutes());
     asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
-    await confirmReason("Reset network allow-list");
+    fireEvent.click(await screen.findByRole("button", { name: "More actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reset network allow-list" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await screen.findByText(/allow-list is off/);
     expect(bodyOf(calls, `POST /api/v1/admin/customers/${ORG}/network-policy/reset`)).toEqual({
       reason: recorded("Reset network allow-list"),
@@ -330,6 +346,7 @@ describe("a customer's billing", () => {
       [`POST /api/v1/admin/customers/${ORG}/entitlement-overrides`]: [{ status: 201, body: {} }],
     });
     asStaff([...BILLING_STAFF, "platform.staff_subscription.manage"], <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Products & access");
     fireEvent.click(await screen.findByRole("button", { name: "Grant override" }));
     const popup = screen.getByRole("dialog", { name: "Grant an override" });
     const grant = within(popup).getByRole("button", { name: "Grant override" });
@@ -655,7 +672,7 @@ describe("staff orders", () => {
     const row = within(table).getByRole("row", { name: /ORD-000008/ });
     expect(row).toHaveTextContent("Partner activation");
     expect(within(row).getByRole("link", { name: "North Resellers" })).toHaveAttribute("href", "/admin/partners/p-9");
-    expect(within(row).getByRole("link", { name: "Verify payment" })).toHaveAttribute("href", `/admin/customers/${ORG}#billing-h`);
+    expect(within(row).getByRole("link", { name: "Verify payment" })).toHaveAttribute("href", `/admin/customers/${ORG}?tab=billing#billing-h`);
     choose("Purchase source", "Partner activation");
     await waitFor(() => expect(calls.some((c) => c.url.includes("channel=partner"))).toBe(true));
   });
@@ -942,6 +959,7 @@ describe("a customer's partner and product trials (2026-11-10)", () => {
       ],
     });
     asStaff(["platform.staff_customer.view"], <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Products & access");
     const trials = await screen.findByRole("table", { name: "Product trials" });
     // Past its end: ended, even while the record still says active.
     expect(within(trials).getByRole("row", { name: /easy_crm/ })).toHaveTextContent("Ended");

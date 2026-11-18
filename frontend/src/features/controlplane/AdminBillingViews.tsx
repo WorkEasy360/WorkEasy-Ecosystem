@@ -212,7 +212,7 @@ const FAILED_COLUMNS: Column<PaymentRow>[] = [
     key: "resolve",
     header: "Resolve",
     render: (p) => (
-      <ButtonLink size="sm" href={`${customerHref(p.organization_id)}#billing-h`} aria-label={`Open billing for ${p.organization_name || "this customer"}`}>
+      <ButtonLink size="sm" href={`${customerHref(p.organization_id)}?tab=billing#billing-h`} aria-label={`Open billing for ${p.organization_name || "this customer"}`}>
         Open billing
       </ButtonLink>
     ),

@@ -190,7 +190,7 @@ export function StaffOrdersScreen({ initialQuery = "", initialSource = "" }: { i
         ) : o.status === "pending_payment" ? (
           // Payment verification (an offline payment marked as received) happens on
           // the customer's invoice, where the reference and reason are recorded.
-          <Link href={`/admin/customers/${o.organization_id}#billing-h`}>Verify payment</Link>
+          <Link href={`/admin/customers/${o.organization_id}?tab=billing#billing-h`}>Verify payment</Link>
         ) : (
           "Not paid"
         ),

@@ -5,8 +5,9 @@ The owner's brief of 2026-11-18 asks for a simpler Super Admin console (`/admin`
 | Phase | State |
 |---|---|
 | Step 0 — discovery | Reported 2026-11-18. The owner accepted the recommended answers to the 7 decisions. |
-| Phase 1 — flatten navigation | **Done 2026-11-18** (this commit). |
-| Phases 2–5 | Not started. Each waits for the owner's approval of the previous phase. |
+| Phase 1 — flatten navigation | **Done 2026-11-18** (4a97b2a). |
+| Phase 2 — detail pages | **Done 2026-11-18** (the Customer page; Step-0 list D approved nothing else). |
+| Phases 3–5 | Not started. Each waits for the owner's approval of the previous phase. |
 
 ## Phase 1 — what changed
 
@@ -55,6 +56,30 @@ The owner's brief of 2026-11-18 asks for a simpler Super Admin console (`/admin`
 **Billing count:**
 - Needs attention shows the bell's `failed_payments` number, which counts failed invoices, stuck activations and refunds waiting. It is not the table's row count.
 - The bell publishes what it reads (`attentionStore.ts`), so there is no extra request.
+
+## Phase 2 — what changed
+
+**Customer page (`/admin/customers/:id`):** six tabs in place of ten stacked blocks.
+
+| Tab | What it holds |
+|---|---|
+| Overview | Subscription; Partner (its card for `partner.view`, else one line); member counts |
+| Products & access | Entitlements and seats, staff overrides, product trials |
+| Billing | Billing account; invoices (`payment.view`); plan history |
+| Members | The members table |
+| Activity | The customer's audit trail |
+| Troubleshoot | "Why can't someone launch a product?" |
+
+- **The tab is in the address:** `?tab=products|billing|members|activity|troubleshoot`, with Overview having no parameter.
+  - The old `#billing-h` links open Billing and scroll to the invoices.
+  - Failed & stuck's "Open billing" and the orders list's "Verify payment" now link to `?tab=billing#billing-h`.
+- **A tab's data is read when it opens.** Members and plan history no longer need a "Show" click inside their own tab.
+- **The partner appears once.** Staff with `partner.view` see the Partner card. Everyone else sees one "Partner" line, so no one loses sight of it.
+- **Header:**
+  - The primary action is "Assign plan" (`subscription.manage`).
+  - "More actions" holds Reset network allow-list and Suspend / Reactivate organization (`customer.manage`).
+  - Suspend keeps its confirmation with the optional reason.
+  - Reset and Reactivate run at once, recording the automatic reason, as their buttons did before. The owner's decision of 2026-10-27 means no reason prompts.
 
 ## Old → new addresses
 

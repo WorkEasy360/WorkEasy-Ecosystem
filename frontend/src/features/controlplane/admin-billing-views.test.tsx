@@ -211,7 +211,7 @@ describe("Failed & stuck", () => {
     expect(row).toHaveTextContent("Razorpay");
     expect(row).toHaveTextContent("₹500.00");
     expect(row).toHaveTextContent("card_declined");
-    expect(within(row).getByRole("link", { name: "Open billing for Acme Ltd" })).toHaveAttribute("href", "/admin/customers/o1#billing-h");
+    expect(within(row).getByRole("link", { name: "Open billing for Acme Ltd" })).toHaveAttribute("href", "/admin/customers/o1?tab=billing#billing-h");
     expect(calls.find((c) => c.key === "GET /api/v1/admin/payments/all")!.url).toContain("failed=1");
     expect(screen.getByRole("button", { name: "About this page" })).toBeInTheDocument();
     expect(screen.getByText(/A failure later paid by a retry leaves this list/)).toBeInTheDocument();

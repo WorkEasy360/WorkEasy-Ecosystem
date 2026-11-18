@@ -10,14 +10,19 @@ import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call, type R
  * customer's page asks for nothing more on its first render.
  */
 
+const nav = vi.hoisted(() => ({ router: { replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }, query: "", pathname: "/admin/customers" }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
-  usePathname: () => "/admin/customers",
+  useRouter: () => nav.router,
+  useSearchParams: () => new URLSearchParams(nav.query),
+  usePathname: () => nav.pathname,
 }));
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  nav.router.replace.mockReset();
+  nav.query = "";
+  nav.pathname = "/admin/customers";
+  window.location.hash = "";
 });
 
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -190,17 +195,121 @@ async function openDetail(permissions: string[]) {
   return view;
 }
 
+/** Opens one of the customer page's tabs (admin-ux phase 2). */
+const openTab = (name: string) => fireEvent.click(screen.getByRole("tab", { name }));
+
+describe("a customer's page in tabs (admin-ux phase 2)", () => {
+  const MANAGER = [...VIEW, "platform.staff_customer.manage", "platform.staff_subscription.manage"];
+  const PARTNER = { partner_id: "p1", display_name: "North Resellers", link_status: "active" };
+
+  it("has the brief's six tabs, opens on Overview and keeps the chosen tab in the address", async () => {
+    nav.pathname = `/admin/customers/${ORG}`;
+    mockApi(detailRoutes());
+    const { container } = await openDetail(VIEW);
+    const tabs = screen.getByRole("tablist", { name: "Customer sections" });
+    expect(within(tabs).getAllByRole("tab").map((t) => t.textContent)).toEqual([
+      "Overview",
+      "Products & access",
+      "Billing",
+      "Members",
+      "Activity",
+      "Troubleshoot",
+    ]);
+    expect(within(tabs).getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "Subscription" })).toBeInTheDocument();
+    // One tab at a time: the audit trail and the check are on their own tabs.
+    expect(screen.queryByRole("heading", { name: "Recent audit trail" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Why can't someone launch a product?" })).not.toBeInTheDocument();
+    await expectNoViolations(container);
+    openTab("Activity");
+    expect(screen.getByRole("heading", { name: "Recent audit trail" })).toBeInTheDocument();
+    expect(nav.router.replace).toHaveBeenLastCalledWith(`/admin/customers/${ORG}?tab=activity`, { scroll: false });
+    openTab("Troubleshoot");
+    expect(screen.getByRole("heading", { name: "Why can't someone launch a product?" })).toBeInTheDocument();
+    openTab("Overview");
+    expect(nav.router.replace).toHaveBeenLastCalledWith(`/admin/customers/${ORG}`, { scroll: false });
+  });
+
+  it("opens the tab the address names, and Billing for an old #billing-h link", async () => {
+    nav.query = "tab=troubleshoot";
+    mockApi(detailRoutes());
+    const first = await openDetail(VIEW);
+    expect(screen.getByRole("tab", { name: "Troubleshoot" })).toHaveAttribute("aria-selected", "true");
+    first.unmount();
+
+    nav.query = "tab=nonsense";
+    window.location.hash = "#billing-h";
+    mockApi(detailRoutes({ [`GET ${HISTORY}`]: [ok({ results: [] })] }));
+    await openDetail(VIEW);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Billing" })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("heading", { name: "Billing account" })).toBeInTheDocument();
+  });
+
+  it("puts Assign plan first in the header and the organization's actions under More actions", async () => {
+    mockApi(detailRoutes({ [`POST ${CUSTOMER}/suspend`]: [ok({})] }));
+    await openDetail(MANAGER);
+    const header = screen.getByRole("heading", { level: 1, name: "Acme Ltd" }).closest("header") as HTMLElement;
+    expect(within(header).getByRole("button", { name: "Assign plan" }).className).toMatch(/primary/);
+    // No longer buttons on the page.
+    expect(screen.queryByRole("button", { name: "Suspend organization" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reset network allow-list" })).not.toBeInTheDocument();
+    fireEvent.click(within(header).getByRole("button", { name: "More actions" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Reset network allow-list", "Suspend organization"]);
+    // Suspend keeps its confirmation and its optional reason.
+    fireEvent.click(screen.getByRole("menuitem", { name: "Suspend organization" }));
+    const ask = screen.getByRole("dialog", { name: "Suspend organization?" });
+    expect(within(ask).getByLabelText(/^Reason \(optional/)).toHaveValue("");
+    expect(within(ask).getByText("Every member loses access to the organization's products until it is reactivated.")).toBeInTheDocument();
+  });
+
+  it("offers no header actions to view-only staff", async () => {
+    mockApi(detailRoutes());
+    await openDetail(VIEW);
+    expect(screen.queryByRole("button", { name: "Assign plan" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More actions" })).not.toBeInTheDocument();
+  });
+
+  it("offers Reactivate, not Suspend, for a suspended organization", async () => {
+    mockApi(detailRoutes({ [`GET ${CUSTOMER}`]: [ok({ ...DETAIL, organization: { ...DETAIL.organization, status: "suspended" } })] }));
+    await openDetail(MANAGER);
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Reset network allow-list", "Reactivate organization"]);
+  });
+
+  it("names the partner once: in its own card for those who may see partners, a line otherwise", async () => {
+    mockApi(detailRoutes({ [`GET ${CUSTOMER}`]: [ok({ ...DETAIL, partner: PARTNER })] }));
+    const first = await openDetail(VIEW);
+    expect(screen.getAllByRole("link", { name: "North Resellers" })).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Members and partner" })).toBeInTheDocument();
+    first.unmount();
+
+    mockApi(
+      detailRoutes({
+        [`GET ${CUSTOMER}`]: [ok({ ...DETAIL, partner: PARTNER })],
+        [`GET ${CUSTOMER}/partner`]: [ok({ current: null, history: [], may_manage: false })],
+      }),
+    );
+    await openDetail([...VIEW, "platform.staff_partner.view"]);
+    expect(await screen.findByRole("heading", { name: "Partner" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Members" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "North Resellers" })).not.toBeInTheDocument();
+    expect(screen.getByText("1 owner")).toBeInTheDocument();
+  });
+});
+
 describe("a customer's members and history", () => {
-  it("are not asked for until opened", async () => {
+  it("are not asked for until their tab is opened", async () => {
     const calls = mockApi(detailRoutes());
     await openDetail(VIEW);
     expect(calls.map((c) => c.key)).toEqual([`GET ${CUSTOMER}`]);
   });
 
-  it("lists the members when opened, and passes axe", async () => {
+  it("lists the members on the Members tab, and passes axe", async () => {
     mockApi(detailRoutes({ [`GET ${MEMBERS}`]: [ok({ results: [MEMBER, { ...MEMBER, membership_id: "m2", email: "sam@acme.example", name: "", status: "suspended", is_owner: false }] })] }));
     const { container } = await openDetail(VIEW);
-    fireEvent.click(screen.getByRole("button", { name: "Show members" }));
+    openTab("Members");
+    // The tab was the asking: no Show button.
+    expect(screen.queryByRole("button", { name: "Show members" })).not.toBeInTheDocument();
     const table = await screen.findByRole("table", { name: "Members of this customer" });
     const owner = within(table).getByRole("row", { name: /Asha Rao/ });
     expect(owner).toHaveTextContent("asha@acme.example");
@@ -208,27 +317,27 @@ describe("a customer's members and history", () => {
     expect(owner).toHaveTextContent("Owner");
     expect(within(table).getAllByRole("row", { name: /sam@acme.example/ })[0]).toHaveTextContent("Suspended");
     await expectNoViolations(container);
-    fireEvent.click(screen.getByRole("button", { name: "Hide members" }));
+    openTab("Overview");
     expect(screen.queryByRole("table", { name: "Members of this customer" })).not.toBeInTheDocument();
   });
 
   it("has an empty and an error state for members", async () => {
     mockApi(detailRoutes({ [`GET ${MEMBERS}`]: [ok({ results: [] })] }));
     const { unmount } = await openDetail(VIEW);
-    fireEvent.click(screen.getByRole("button", { name: "Show members" }));
+    openTab("Members");
     expect(await screen.findByText("No members")).toBeInTheDocument();
     unmount();
 
     mockApi(detailRoutes({ [`GET ${MEMBERS}`]: [{ status: 500, body: { detail: "Members are unavailable." } }] }));
     await openDetail(VIEW);
-    fireEvent.click(screen.getByRole("button", { name: "Show members" }));
+    openTab("Members");
     expect(await screen.findByRole("alert")).toHaveTextContent("Members are unavailable.");
   });
 
-  it("lists the assignment history when opened", async () => {
+  it("lists the assignment history on the Billing tab", async () => {
     mockApi(detailRoutes({ [`GET ${HISTORY}`]: [ok({ results: [LINE, { ...LINE, item_id: "i2", plan_code: "crm_old", removed_at: "2026-10-01T10:00:00Z" }] })] }));
     await openDetail(VIEW);
-    fireEvent.click(screen.getByRole("button", { name: "Show history" }));
+    openTab("Billing");
     const table = await screen.findByRole("table", { name: "Assignment history" });
     const line = within(table).getAllByRole("row")[1];
     expect(line).toHaveTextContent("Easy CRM");
@@ -242,13 +351,13 @@ describe("a customer's members and history", () => {
   it("has an empty and an error state for history", async () => {
     mockApi(detailRoutes({ [`GET ${HISTORY}`]: [ok({ results: [] })] }));
     const { unmount } = await openDetail(VIEW);
-    fireEvent.click(screen.getByRole("button", { name: "Show history" }));
+    openTab("Billing");
     expect(await screen.findByText("No plan has been assigned")).toBeInTheDocument();
     unmount();
 
     mockApi(detailRoutes({ [`GET ${HISTORY}`]: [{ status: 403, body: {} }] }));
     await openDetail(VIEW);
-    fireEvent.click(screen.getByRole("button", { name: "Show history" }));
+    openTab("Billing");
     expect(await screen.findByRole("alert")).toHaveTextContent("You don't have access to this customer's assignment history.");
   });
 });
@@ -305,7 +414,7 @@ describe("assigning a plan", () => {
   it("says when nothing waits for payment, and refreshes an open history", async () => {
     const calls = mockApi(detailRoutes({ [`GET ${CATALOG}`]: [ok(OVERVIEW)], [`POST ${ASSIGN}`]: [placed(false)], [`GET ${HISTORY}`]: [ok({ results: [] })] }));
     await openDetail(SUBSCRIPTIONS);
-    fireEvent.click(screen.getByRole("button", { name: "Show history" }));
+    openTab("Billing");
     await screen.findByText("No plan has been assigned");
     const popup = await openPopup();
     fireEvent.change(within(popup).getByLabelText("Reason"), { target: { value: "Agreed on the renewal call." } });
