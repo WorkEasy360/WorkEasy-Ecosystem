@@ -92,6 +92,11 @@ urlpatterns = [
     path("auth/email", account_views.email_change_view, name="auth-email"),
     path("auth/sessions", account_views.sessions_view, name="auth-sessions"),
     path(
+        "auth/sessions/sign-out-everywhere",
+        account_views.sign_out_everywhere_view,
+        name="auth-sessions-sign-out-everywhere",
+    ),
+    path(
         "auth/sessions/revoke-others",
         account_views.sessions_revoke_others_view,
         name="auth-sessions-revoke-others",
@@ -1464,6 +1469,11 @@ _admin = [
         "admin/products/<str:product_code>/integration/health-check",
         admin_product_views.integration_health_check_view,
         name="admin-product-integration-health",
+    ),
+    path(
+        "admin/products/<str:product_code>/integration/backchannel",
+        admin_product_views.integration_backchannel_view,
+        name="admin-product-integration-backchannel",
     ),
     path(
         "admin/catalog/products/<uuid:product_id>/trial",

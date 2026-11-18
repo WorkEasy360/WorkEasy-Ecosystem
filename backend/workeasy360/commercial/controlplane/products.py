@@ -34,7 +34,11 @@ from workeasy360.commercial.commissions import selectors as commission_selectors
 from workeasy360.commercial.controlplane import catalog as plan_builder
 from workeasy360.commercial.partners import console_reads as partner_reads
 from workeasy360.contracts.errors import ManifestRejected
-from workeasy360.contracts.values.manifest import MANIFEST_VERSION, from_stored_manifest
+from workeasy360.contracts.values.manifest import (
+    BACKCHANNEL_MANIFEST_VERSION,
+    MANIFEST_VERSION,
+    from_stored_manifest,
+)
 from workeasy360.contracts.values.sign_in import ProductDoors
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.authz import services as authz
@@ -63,9 +67,24 @@ EDITABLE_INTEGRATION_FIELDS = (
     "login_url",
     "post_logout_redirect_uris",
     "scopes",
+    # ADR-069: where the product receives back-channel logout tokens.
+    "backchannel_logout_uri",
 )
 #: Optional in the manifest: an empty value removes the key.
-_OPTIONAL = frozenset({"health_url", "contact_email", "login_url"})
+_OPTIONAL = frozenset(
+    {"health_url", "contact_email", "login_url", "backchannel_logout_uri"}
+)
+
+
+def _manifest_version_for(manifest: dict[str, Any]) -> str:
+    """The version a console write stamps. Each is a superset of the one
+    before; ``2026-11-15`` only when the manifest uses its one new field, so
+    an integration that does not take back-channel logout reads exactly as
+    it did (ADR-069)."""
+    if manifest.get("backchannel_logout_uri"):
+        return BACKCHANNEL_MANIFEST_VERSION
+    return MANIFEST_VERSION
+
 
 #: The fields a new integration may be registered with from the console.
 REGISTRATION_FIELDS = (*EDITABLE_INTEGRATION_FIELDS, "token_endpoint_auth_method")
@@ -169,6 +188,7 @@ def _integration_json(dto: Any) -> dict[str, Any]:
         "post_logout_redirect_uris": list(parsed.post_logout_redirect_uris),
         "scopes": list(parsed.scopes),
         "token_endpoint_auth_method": parsed.token_endpoint_auth_method,
+        "backchannel_logout_uri": parsed.backchannel_logout_uri,
         "sso_state": doors.sso_state,
         "health": {
             "status": dto.health_status,
@@ -291,7 +311,7 @@ def update_integration(
     # Every console edit writes the current manifest version: each version
     # is a superset of the one before (fields are only ever added), and the
     # whole manifest is re-validated under today's rules by update_manifest.
-    manifest["manifest_version"] = MANIFEST_VERSION
+    manifest["manifest_version"] = _manifest_version_for(manifest)
     ecosystem_services.update_manifest(
         ctx, client_id=current.client_id, manifest=manifest
     )
@@ -350,6 +370,7 @@ def register_integration(
         if key in _OPTIONAL and value in ("", None):
             continue
         manifest[key] = value
+    manifest["manifest_version"] = _manifest_version_for(manifest)
     ecosystem_services.register_integration(ctx, manifest=manifest)
     refreshed = ecosystem_selectors.integration_for_product(
         ctx, product_code=product_code

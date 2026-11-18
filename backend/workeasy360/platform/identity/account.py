@@ -25,6 +25,13 @@ from workeasy360.contracts.errors import (
     PasswordPolicyViolation,
     SessionNotFound,
 )
+from workeasy360.contracts.ports.sign_ins import (
+    REASON_OTHER_SESSIONS_REVOKED,
+    REASON_PASSWORD_CHANGED,
+    REASON_SESSION_REVOKED,
+    REASON_SIGNED_OUT_EVERYWHERE,
+    notify_sign_ins_ended,
+)
 from workeasy360.contracts.values.access_policy import password_meets
 from workeasy360.platform.observability.logging import get_logger
 from workeasy360.platform.observability.metrics import metrics
@@ -142,11 +149,20 @@ def revoke_session(
     from workeasy360.platform.identity.models import AccountEvent, UserSession
 
     with transaction.atomic():
+        sign_in_ids = list(
+            UserSession.objects.filter(user_id=user_id, public_id=public_id).values_list(
+                "sign_in_id", flat=True
+            )
+        )
         deleted, _ = UserSession.objects.filter(
             user_id=user_id, public_id=public_id
         ).delete()
         if not deleted:
             raise SessionNotFound("No such session.")
+        # ADR-069: the products that sign-in opened are told, in this commit.
+        notify_sign_ins_ended(
+            user_id=user_id, sign_in_ids=sign_in_ids, reason=REASON_SESSION_REVOKED
+        )
         record_account_event(
             user_id,
             AccountEvent.Kind.SESSION_REVOKED,
@@ -169,9 +185,25 @@ def revoke_other_sessions(
 
     with transaction.atomic():
         rows = UserSession.objects.filter(user_id=user_id)
+        kept_sign_in = None
         if keep_public_id is not None:
+            kept_sign_in = (
+                UserSession.objects.filter(user_id=user_id, public_id=keep_public_id)
+                .values_list("sign_in_id", flat=True)
+                .first()
+            )
             rows = rows.exclude(public_id=keep_public_id)
+        # The caller's own sign-in stays (its portal sessions included), so
+        # products it opened are not signed out; every other sign-in's are.
+        ended_sign_ins = {
+            s for s in rows.values_list("sign_in_id", flat=True) if s != kept_sign_in
+        }
         deleted, _ = rows.delete()
+        notify_sign_ins_ended(
+            user_id=user_id,
+            sign_in_ids=ended_sign_ins,
+            reason=REASON_OTHER_SESSIONS_REVOKED,
+        )
         record_account_event(
             user_id,
             AccountEvent.Kind.OTHER_SESSIONS_REVOKED,
@@ -193,6 +225,10 @@ def sign_out_everywhere(user_id: Any) -> int:
         user = User.objects.select_for_update().get(pk=user_id)
         user.revoke_sessions()
         deleted, _ = UserSession.objects.filter(user_id=user_id).delete()
+        # ADR-069: every product the person is signed in to, from any device.
+        notify_sign_ins_ended(
+            user_id=user_id, everywhere=True, reason=REASON_SIGNED_OUT_EVERYWHERE
+        )
         record_account_event(user_id, AccountEvent.Kind.SIGNED_OUT_EVERYWHERE)
     metrics.increment("identity_sessions_revoked_total", scope="everywhere")
     return deleted
@@ -274,6 +310,11 @@ def change_password(
         # Every other session dies now; the caller's own is re-issued by the
         # view (update_session_auth_hash rotates its key).
         UserSession.objects.filter(user_id=user_id).delete()
+        # ADR-069: a new password ends every product session too, this
+        # browser's included - SSO signs this person straight back in.
+        notify_sign_ins_ended(
+            user_id=user_id, everywhere=True, reason=REASON_PASSWORD_CHANGED
+        )
         record_account_event(
             user_id,
             AccountEvent.Kind.PASSWORD_CHANGED,

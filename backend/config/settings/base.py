@@ -110,6 +110,8 @@ INTEGRATION_APPS = [
     # above egress (its only way out) and beside the rest: nothing imports it
     # and it changes no access decision.
     "workeasy360.integration.health",
+    # ADR-069: OpenID Connect Back-Channel Logout delivery to products.
+    "workeasy360.integration.backchannel",
 ]
 
 # Phase 8 (ADR-030/031/032). The shared AI, RAG and analytics platform:
@@ -706,6 +708,18 @@ CELERY_BEAT_SCHEDULE = {
         "task": "integration.health.check_all",
         "schedule": env.float("W360_BEAT_PRODUCT_HEALTH_S", 300.0),
         "options": {"queue": "heavy", "expires": 240},
+    },
+    # ADR-069. The sign-out kick usually delivers first; this is the guarantee
+    # (and the retry clock). Short, because a person is waiting on a sign-out.
+    "backchannel-logout-deliver": {
+        "task": "integration.backchannel.deliver_due",
+        "schedule": env.float("W360_BEAT_BACKCHANNEL_S", 15.0),
+        "options": {"queue": "default", "expires": 14},
+    },
+    "backchannel-logout-purge": {
+        "task": "integration.backchannel.purge_finished",
+        "schedule": env.float("W360_BEAT_BACKCHANNEL_PURGE_S", 86400.0),
+        "options": {"queue": "heavy", "expires": 3600},
     },
     "integration-prune": {
         "task": "integration.routing.prune",

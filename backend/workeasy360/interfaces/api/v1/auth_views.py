@@ -192,7 +192,11 @@ def establish_session(request: HttpRequest, user: Any, *, password: str) -> None
         request.session[SESSION_SIGN_IN_ID_KEY] = previous_sign_in
     else:
         if previous_user is not None and previous_sign_in:
-            handoff.end_sign_in(previous_user, previous_sign_in)
+            from workeasy360.contracts.ports.sign_ins import REASON_ACCOUNT_SWITCHED
+
+            handoff.end_sign_in(
+                previous_user, previous_sign_in, reason=REASON_ACCOUNT_SWITCHED
+            )
         request.session[SESSION_SIGN_IN_ID_KEY] = uuid.uuid4().hex
     request.session[SESSION_PASSWORD_NONCOMPLIANT_KEY] = [
         organization_id

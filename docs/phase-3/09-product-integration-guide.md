@@ -12,6 +12,15 @@ The executable version of this guide is
 ~300 lines that imports nothing from `workeasy360`, enforced by a test. If
 this document and that file ever disagree, the file is right.
 
+## 0. Django products: use the connector
+
+A Django product should not implement sections 3-7 by hand. Install
+`workeasy360-sso` (or start from `workeasy360-django-product-template`): it
+implements this guide, the completion-design rules for sessions and
+entitlement, and back-channel logout ([04 section 3.3](04-oidc-contract.md)),
+and `manage.py w360sso_check` proves a deployment's configuration against the
+live provider. The sections below remain the contract for every other stack.
+
 ## 1. What you will be given
 
 | | |
