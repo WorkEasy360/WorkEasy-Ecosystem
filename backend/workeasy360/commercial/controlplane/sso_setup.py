@@ -68,7 +68,7 @@ PROOF_TYPE: Final = "w360-sso-setup+jwt"
 #: A proof may live at most this long (the connector issues 120 s).
 PROOF_MAX_AGE_S: Final = 300
 CLOCK_LEEWAY_S: Final = 60
-MAX_DOCUMENT_BYTES: Final = 65536
+MAX_DOCUMENT_BYTES: Final = 65536  # integration.health.sign_in_document caps the body
 #: The Django connector release that serves the document.
 CONNECTOR_NAME: Final = "workeasy360-sso"
 MIN_CONNECTOR_VERSION: Final = (0, 4, 0)
@@ -436,10 +436,11 @@ def _application_url_problem(url: str) -> str:
 
 def _register_draft(
     ctx: Any, *, product_code: str, name: str, application_url: str
-) -> Any:
-    """The product's one OIDC client, as a draft on the application's origin.
-    Idempotent: an existing integration (registered by the wizard, by hand or
-    by a concurrent setup) is returned untouched."""
+) -> tuple[Any, bool]:
+    """The product's one OIDC client, as a draft on the application's origin,
+    and whether this call registered it. Idempotent: an existing integration
+    (registered by the wizard, by hand or by a concurrent setup) is returned
+    untouched."""
     from workeasy360.commercial.controlplane import products as console
     from workeasy360.contracts.enums import ProductSignInMode
     from workeasy360.contracts.errors import ProductIntegrationError
@@ -447,7 +448,7 @@ def _register_draft(
 
     existing = domains.integration_by_code(product_code)
     if existing is not None:
-        return existing
+        return existing, False
     try:
         with transaction.atomic():
             console.register_integration(
@@ -465,8 +466,8 @@ def _register_draft(
             )
     except ProductIntegrationError:
         # Lost a race to another registration of the same product: use it.
-        pass
-    return domains.integration_by_code(product_code)
+        return domains.integration_by_code(product_code), False
+    return domains.integration_by_code(product_code), True
 
 
 def prepare(ctx: Any, *, product_code: str) -> None:
@@ -475,20 +476,15 @@ def prepare(ctx: Any, *, product_code: str) -> None:
     check is queued for after it commits."""
     from workeasy360.commercial.catalog import selectors as catalog_selectors
     from workeasy360.contracts.errors import PermissionDenied
-    from workeasy360.platform.ecosystem import domains
-    from workeasy360.platform.ecosystem.models import ProductSignInSetup
+    from workeasy360.platform.ecosystem import domains, sign_in_setup
 
     facts = catalog_selectors.application_facts(product_code) or {}
-    now = timezone.now()
-    setup, _created = ProductSignInSetup.objects.select_for_update().get_or_create(
-        product_code=str(product_code),
-        defaults={"requested_by_id": ctx.user_id, "next_check_at": now},
-    )
     application_url = str(facts.get("application_url") or "").strip()
     integration = domains.integration_by_code(product_code)
+    created = False
     if integration is None and not _application_url_problem(application_url):
         try:
-            integration = _register_draft(
+            integration, created = _register_draft(
                 ctx,
                 product_code=str(product_code),
                 name=str(facts.get("name") or ""),
@@ -499,21 +495,21 @@ def prepare(ctx: Any, *, product_code: str) -> None:
             # the client is prepared by the first check made by someone who
             # holds it ("Check now"), and the setup says so.
             integration = None
-    setup.requested_by_id = ctx.user_id
-    setup.integration = integration
-    setup.application_url = application_url
-    setup.next_check_at = now
-    if integration is None:
-        setup.state = "pending_configuration"
-        setup.checks = [
+    sign_in_setup.prepared(
+        str(product_code),
+        requested_by_id=ctx.user_id,
+        application_url=application_url,
+        integration=integration,
+        created_integration=created,
+        pending_checks=[
             {
                 "key": "application_url",
                 "label": "Application URL",
                 "status": PENDING,
-                "detail": "Add the product's application URL (https://...) to prepare its sign-in.",
+                "detail": "Add the application URL (https://...) to prepare the sign-in.",
             }
-        ]
-    setup.save()
+        ],
+    )
     code = str(product_code)
     transaction.on_commit(lambda: _enqueue(code))
 
@@ -533,46 +529,10 @@ def _enqueue(product_code: str) -> None:
 
 
 def _fetch_document(url: str) -> tuple[str, bytes, str]:
-    """``(outcome, body, detail)``: ``ok``, ``unreachable``, ``missing``,
-    ``refused`` or ``too_large``. Never raises."""
-    from workeasy360.integration.egress.client import (
-        EgressFailure,
-        OutboundRequest,
-        Timeouts,
-        send,
-    )
-    from workeasy360.integration.egress.policy import EgressRejected
+    """``(outcome, body, detail)`` (``integration.health.sign_in_document``)."""
+    from workeasy360.integration.health import sign_in_document
 
-    request = OutboundRequest(
-        url=url,
-        body=b"",
-        method="GET",
-        headers=(
-            ("accept", "application/json"),
-            ("user-agent", "WorkEasy360-SSO-Setup/1.0"),
-        ),
-    )
-    try:
-        response = send(
-            request,
-            timeouts=Timeouts(connect=3.0, read=5.0, total=8.0, dns=2.0),
-            max_response_bytes=MAX_DOCUMENT_BYTES,
-        )
-    except EgressRejected as exc:
-        return (
-            "refused",
-            b"",
-            f"WorkEasy360's outbound rules refuse that address ({exc.reason})",
-        )
-    except EgressFailure as exc:
-        return "unreachable", b"", f"could not be reached ({exc.category})"
-    if response.truncated:
-        return "too_large", b"", f"is larger than {MAX_DOCUMENT_BYTES} bytes"
-    if response.status in (404, 410):
-        return "missing", b"", f"answered HTTP {response.status}"
-    if response.status != 200:
-        return "unreachable", b"", f"answered HTTP {response.status}"
-    return "ok", response.body, ""
+    return sign_in_document.fetch(url)
 
 
 #: Injectable for tests (the module test replaces it; nothing else does).
@@ -614,19 +574,14 @@ def _differs(current: dict[str, Any], proposed: dict[str, Any]) -> bool:
 
 
 def _sync_keys(
-    ctx: Any, setup: Any, integration: Any, keys: list[PublishedKey]
+    ctx: Any, record: Any, integration: Any, keys: list[PublishedKey]
 ) -> tuple[str, str]:
     """Register published keys under their own ids; revoke this setup's keys
     that stopped being published - after several misses, never the last."""
     from workeasy360.platform.ecosystem import services as ecosystem
-    from workeasy360.platform.ecosystem.models import IntegrationCredential
+    from workeasy360.platform.ecosystem import sign_in_setup
 
-    rows = {
-        c.credential_id: c
-        for c in IntegrationCredential.objects.filter(
-            integration=integration, kind="public_key"
-        )
-    }
+    rows = sign_in_setup.public_keys(integration)
     added, problems = [], []
     for key in keys:
         row = rows.get(key.kid)
@@ -643,32 +598,28 @@ def _sync_keys(
             added.append(key.kid)
         elif row.public_key_pem.strip() != key.public_key_pem.strip():
             problems.append(
-                f"key id {key.kid} is registered with a different key: publish the new key under a new key id"
+                f"key id {key.kid} is registered with a different key: "
+                "publish the new key under a new key id"
             )
-        elif not row.is_usable:
+        elif not row.usable:
             problems.append(
                 f"key {key.kid} is revoked or expired here: publish a new key id"
             )
     published = {k.kid for k in keys}
     absences = {
         kid: n
-        for kid, n in dict(setup.key_absences or {}).items()
+        for kid, n in dict(record.key_absences or {}).items()
         if kid not in published
     }
     # Re-read: what this integration can authenticate with *now*, among the
     # published keys. Revocation is only ever considered while one remains.
-    current = {
-        c.credential_id: c
-        for c in IntegrationCredential.objects.filter(
-            integration=integration, kind="public_key"
-        )
-    }
+    current = sign_in_setup.public_keys(integration)
     usable_published = [
-        kid for kid in published if kid in current and current[kid].is_usable
+        kid for kid in published if kid in current and current[kid].usable
     ]
     revoked = []
     for kid, row in current.items():
-        if kid in published or row.label != AUTOMATIC_LABEL or not row.is_usable:
+        if kid in published or row.label != AUTOMATIC_LABEL or not row.usable:
             continue
         absences[kid] = int(absences.get(kid, 0)) + 1
         if absences[kid] >= KEY_ABSENCES_BEFORE_REVOKE and usable_published:
@@ -676,11 +627,12 @@ def _sync_keys(
                 ctx,
                 client_id=integration.client_id,
                 credential_id=kid,
-                reason="No longer published in the product's compatibility document (automatic setup, ADR-074).",
+                reason="No longer published in the compatibility document "
+                "(automatic setup, ADR-074).",
             )
             revoked.append(kid)
             absences.pop(kid)
-    setup.key_absences = absences
+    record.key_absences = absences
     if problems:
         return FAILED, "; ".join(problems) + "."
     detail = "Registered: " + ", ".join(sorted(published)) + "."
@@ -742,9 +694,11 @@ class _Outcome:
     checks: list[dict[str, str]]
     connector: dict[str, str] = field(default_factory=dict)
     activated: bool = False
+    integration: Any = None
+    created_integration: bool = False
 
 
-def _run(ctx: Any, setup: Any) -> _Outcome:
+def _run(ctx: Any, record: Any) -> _Outcome:
     from workeasy360.commercial.catalog import selectors as catalog_selectors
     from workeasy360.contracts.errors import (
         ManifestRejected,
@@ -755,7 +709,7 @@ def _run(ctx: Any, setup: Any) -> _Outcome:
     from workeasy360.platform.ecosystem import services as ecosystem
 
     checks = _Checks()
-    facts = catalog_selectors.application_facts(setup.product_code)
+    facts = catalog_selectors.application_facts(record.product_code)
     if facts is None:
         checks.add(
             "application_url",
@@ -765,34 +719,47 @@ def _run(ctx: Any, setup: Any) -> _Outcome:
         )
         return _Outcome("failed", checks.rows)
     application_url = str(facts.get("application_url") or "").strip()
-    setup.application_url = application_url
-    integration = setup.integration or domains.integration_by_code(setup.product_code)
+    record.application_url = application_url
+    integration = domains.integration_by_code(record.product_code)
     live = integration is not None and integration.status == "active"
 
+    def outcome(
+        state: str, connector: dict[str, str] | None = None, **extra: Any
+    ) -> _Outcome:
+        return _Outcome(
+            state,
+            checks.rows,
+            connector or {},
+            integration=integration,
+            created_integration=created,
+            **extra,
+        )
+
+    created = False
     problem = _application_url_problem(application_url)
     if problem:
         checks.add(
             "application_url",
             "Application URL",
             PENDING,
-            f"The application URL is {problem}: add the product's https:// address on this tab.",
+            f"The application URL is {problem}: add the https:// address on this tab.",
         )
-        return _Outcome("active" if live else "pending_configuration", checks.rows)
+        return outcome("active" if live else "pending_configuration")
     checks.add("application_url", "Application URL", PASSED, application_url)
 
     if integration is None:
-        integration = _register_draft(
+        integration, created = _register_draft(
             ctx,
-            product_code=setup.product_code,
+            product_code=record.product_code,
             name=str(facts.get("name") or ""),
             application_url=application_url,
         )
-    setup.integration = integration
     checks.add(
         "client",
         "OIDC client",
         PASSED,
-        f"Client id {integration.client_id} ({integration.status}). Configure the product with it.",
+        f"Client id {integration.client_id} ({integration.status}). "
+        "Configure the product with it.",
     )
     if integration.status in ("suspended", "retired"):
         checks.add(
@@ -801,17 +768,17 @@ def _run(ctx: Any, setup: Any) -> _Outcome:
             PENDING,
             f"{integration.status.title()} by staff. Automatic setup never resumes or changes it.",
         )
-        return _Outcome("configured", checks.rows)
+        return outcome("configured")
 
     challenge = secrets.token_urlsafe(32)
     document_url = f"{_origin(application_url)}{WELL_KNOWN_PATH}"
-    outcome, body, detail = fetch_document(f"{document_url}?challenge={challenge}")
-    if outcome != "ok":
-        status = FAILED if outcome in ("refused", "too_large") else PENDING
+    fetched, body, detail = fetch_document(f"{document_url}?challenge={challenge}")
+    if fetched != "ok":
+        status = FAILED if fetched in ("refused", "too_large") else PENDING
         advice = (
             " Install workeasy360-sso 0.4.0 or later and add *well_known() to the root URLconf, "
             "or serve the document (connector docs/compatibility.md)."
-            if outcome in ("missing", "unreachable")
+            if fetched in ("missing", "unreachable")
             else ""
         )
         checks.add(
@@ -821,11 +788,11 @@ def _run(ctx: Any, setup: Any) -> _Outcome:
             f"Pending integration: {document_url} {detail}.{advice}",
         )
         state = "failed" if status == FAILED else "pending_configuration"
-        return _Outcome("active" if live else state, checks.rows)
+        return outcome("active" if live else state)
 
     evaluation = evaluate_document(
         body,
-        product_code=setup.product_code,
+        product_code=record.product_code,
         client_id=integration.client_id,
         issuers=tokens.issuers(),
         application_url=application_url,
@@ -833,7 +800,7 @@ def _run(ctx: Any, setup: Any) -> _Outcome:
     )
     checks.rows.extend(evaluation.checks)
     if not evaluation.ok:
-        return _Outcome("active" if live else "failed", checks.rows, evaluation.connector)
+        return outcome("active" if live else "failed", evaluation.connector)
 
     host = (urlsplit(application_url).hostname or "").lower()
     proven = _domains_step(ctx, integration, [host], checks)
@@ -856,23 +823,21 @@ def _run(ctx: Any, setup: Any) -> _Outcome:
         )
     except (ManifestRejected, ProductDomainUnverified, ProductIntegrationError) as exc:
         checks.add("registration", "Registration matches the product", FAILED, str(exc))
-        return _Outcome("active" if live else "failed", checks.rows, evaluation.connector)
+        return outcome("active" if live else "failed", evaluation.connector)
     try:
-        status, detail = _sync_keys(ctx, setup, integration, evaluation.keys)
+        status, detail = _sync_keys(ctx, record, integration, evaluation.keys)
     except ProductIntegrationError as exc:
         status, detail = FAILED, str(exc)
     checks.add("credentials", "Credentials", status, detail)
     if status == FAILED:
-        return _Outcome("active" if live else "failed", checks.rows, evaluation.connector)
+        return outcome("active" if live else "failed", evaluation.connector)
 
     if not proven:
         checks.add(
             "activation", "Sign-in active", PENDING, "Waiting for the domain proof."
         )
-        return _Outcome(
-            "active" if live else "verification_required",
-            checks.rows,
-            evaluation.connector,
+        return outcome(
+            "active" if live else "verification_required", evaluation.connector
         )
 
     activated = False
@@ -882,14 +847,14 @@ def _run(ctx: Any, setup: Any) -> _Outcome:
             activated = True
         except ProductDomainUnverified as exc:
             checks.add("activation", "Sign-in active", PENDING, str(exc))
-            return _Outcome("verification_required", checks.rows, evaluation.connector)
+            return outcome("verification_required", evaluation.connector)
     checks.add(
         "activation",
         "Sign-in active",
         PASSED,
         "Activated now: every check passed." if activated else "Active.",
     )
-    return _Outcome("active", checks.rows, evaluation.connector, activated=activated)
+    return outcome("active", evaluation.connector, activated=activated)
 
 
 def _next_check(state: str, attempts: int) -> Any:
@@ -897,6 +862,20 @@ def _next_check(state: str, attempts: int) -> Any:
     if state == "active":
         return now + timedelta(hours=24)  # keys and addresses follow the document
     return now + min(timedelta(minutes=5) * (2 ** min(attempts, 7)), timedelta(hours=6))
+
+
+def _actor_refused(detail: str) -> _Outcome:
+    return _Outcome(
+        "failed",
+        [
+            {
+                "key": "actor",
+                "label": "Acting staff member",
+                "status": FAILED,
+                "detail": detail,
+            }
+        ],
+    )
 
 
 def check(*, product_code: str, actor_user_id: Any = None) -> dict[str, Any]:
@@ -908,105 +887,75 @@ def check(*, product_code: str, actor_user_id: Any = None) -> dict[str, Any]:
     from workeasy360.contracts.errors import PermissionDenied
     from workeasy360.platform.audit import services as audit
     from workeasy360.platform.authz.control_plane import acting_scope, platform_context
-    from workeasy360.platform.ecosystem.models import ProductSignInSetup
+    from workeasy360.platform.ecosystem import sign_in_setup
 
-    with transaction.atomic():
-        setup, _ = ProductSignInSetup.objects.select_for_update().get_or_create(
-            product_code=str(product_code)
+    record = sign_in_setup.ensure(str(product_code), requested_by_id=actor_user_id)
+    ctx = None
+    if record.requested_by_id is None:
+        result = _actor_refused(
+            "Nobody is recorded to act for these checks: choose Check now."
         )
-        if actor_user_id is not None:
-            setup.requested_by_id = actor_user_id
-            setup.save(update_fields=["requested_by_id", "updated_at"])
-    if setup.requested_by_id is None:
-        outcome = _Outcome(
-            "failed",
-            [
-                {
-                    "key": "actor",
-                    "label": "Acting staff member",
-                    "status": FAILED,
-                    "detail": "Nobody is recorded to act for these checks: choose Check now.",
-                }
-            ],
-        )
-        ctx = None
     else:
-        ctx = platform_context(user_id=setup.requested_by_id)
+        ctx = platform_context(user_id=record.requested_by_id)
         try:
             with acting_scope(ctx):
-                outcome = _run(ctx, setup)
+                result = _run(ctx, record)
         except PermissionDenied:
-            outcome = _Outcome(
-                "failed",
-                [
-                    {
-                        "key": "actor",
-                        "label": "Acting staff member",
-                        "status": FAILED,
-                        "detail": "The staff member these checks act for may no longer manage "
-                        "integrations: someone who may should choose Check now.",
-                    }
-                ],
+            result = _actor_refused(
+                "The staff member these checks act for may no longer manage integrations: "
+                "someone who may should choose Check now."
             )
 
-    now = timezone.now()
+    attempts = 0 if result.state == "active" else record.attempts + 1
     # The result and its audit entry are written as the person the checks act
     # for, in the platform organization's scope - the scheduled run has no
     # request to provide one.
     scope = acting_scope(ctx) if ctx is not None else contextlib.nullcontext()
     with scope, transaction.atomic():
-        row = ProductSignInSetup.objects.select_for_update().get(pk=setup.pk)
-        row.integration = setup.integration
-        row.application_url = setup.application_url
-        row.key_absences = setup.key_absences
-        row.state = outcome.state
-        row.checks = outcome.checks
-        if outcome.connector:
-            row.connector_name = outcome.connector.get("name", "")
-            row.connector_version = outcome.connector.get("version", "")
-        row.attempts = 0 if outcome.state == "active" else row.attempts + 1
-        row.last_checked_at = now
-        row.next_check_at = _next_check(outcome.state, row.attempts)
-        if outcome.activated:
-            row.activated_at = now
-        row.save()
-        if ctx is not None and row.integration_id is not None:
+        stored = sign_in_setup.record_result(
+            record.pk,
+            state=result.state,
+            checks=result.checks,
+            application_url=record.application_url,
+            integration=result.integration,
+            created_integration=result.created_integration,
+            key_absences=record.key_absences,
+            connector=result.connector,
+            activated=result.activated,
+            next_check_at=_next_check(result.state, attempts),
+        )
+        if ctx is not None and stored.integration_id is not None:
             audit.record(
                 ctx,
                 "ecosystem.integration.sign_in_setup_checked",
                 resource_type="ProductIntegration",
-                resource_id=row.integration_id,
+                resource_id=stored.integration_id,
                 changes={
-                    "product_code": row.product_code,
-                    "state": row.state,
-                    "activated": outcome.activated,
+                    "product_code": stored.product_code,
+                    "state": stored.state,
+                    "activated": result.activated,
                     "automatic": actor_user_id is None,
                     "not_passed": [
-                        c["key"] for c in outcome.checks if c["status"] != PASSED
+                        c["key"] for c in result.checks if c["status"] != PASSED
                     ],
                 },
             )
-    metrics.increment(CHECKS_TOTAL, state=outcome.state)
+    metrics.increment(CHECKS_TOTAL, state=result.state)
     logger.info(
         "ecosystem.sign_in_setup.checked",
         product_code=str(product_code),
-        state=outcome.state,
-        activated=outcome.activated,
+        state=result.state,
+        activated=result.activated,
     )
     return setup_json(str(product_code))
 
 
 def sweep(*, limit: int = 50) -> dict[str, int]:
     """The scheduled run: every setup whose next check is due."""
-    from workeasy360.platform.ecosystem.models import ProductSignInSetup
+    from workeasy360.platform.ecosystem import sign_in_setup
 
-    due = list(
-        ProductSignInSetup.objects.filter(next_check_at__lte=timezone.now())
-        .order_by("next_check_at")
-        .values_list("product_code", flat=True)[:limit]
-    )
     counts: dict[str, int] = {}
-    for code in due:
+    for code in sign_in_setup.due(limit=limit):
         try:
             state = check(product_code=code)["state"]
         except Exception as exc:
@@ -1026,37 +975,39 @@ def sweep(*, limit: int = 50) -> dict[str, int]:
 def setup_json(product_code: str) -> dict[str, Any]:
     """The setup as Super Admin's Integration tab shows it. Stored facts only:
     the result of the last check, never a label the browser computed."""
-    from workeasy360.platform.ecosystem import domains
-    from workeasy360.platform.ecosystem.models import ProductSignInSetup
+    from workeasy360.platform.ecosystem import domains, sign_in_setup
 
-    row = ProductSignInSetup.objects.filter(product_code=str(product_code)).first()
-    integration = (row.integration if row else None) or domains.integration_by_code(
-        product_code
-    )
-    application_url = row.application_url if row else ""
+    stored = sign_in_setup.view(product_code)
+    integration = domains.integration_by_code(product_code)
+    application_url = stored["application_url"] if stored else ""
 
     def iso(value: Any) -> str | None:
         return value.isoformat() if value else None
 
     return {
         "product_code": str(product_code),
-        "automatic": row is not None,
-        "state": row.state if row else None,
-        "state_label": STATE_LABELS.get(row.state, "") if row else "Set up by hand",
-        "checks": list(row.checks) if row else [],
+        "automatic": stored is not None,
+        "state": stored["state"] if stored else None,
+        "state_label": STATE_LABELS.get(stored["state"], "")
+        if stored
+        else "Set up by hand",
+        "checks": stored["checks"] if stored else [],
         "application_url": application_url,
         "document_url": (_origin(application_url) + WELL_KNOWN_PATH)
         if application_url
         else "",
         "client_id": integration.client_id if integration else "",
         "integration_status": integration.status if integration else "",
-        "connector": {"name": row.connector_name, "version": row.connector_version}
-        if row
+        "connector": {
+            "name": stored["connector_name"],
+            "version": stored["connector_version"],
+        }
+        if stored
         else None,
-        "attempts": row.attempts if row else 0,
-        "last_checked_at": iso(row.last_checked_at) if row else None,
-        "next_check_at": iso(row.next_check_at) if row else None,
-        "activated_at": iso(row.activated_at) if row else None,
+        "attempts": stored["attempts"] if stored else 0,
+        "last_checked_at": iso(stored["last_checked_at"]) if stored else None,
+        "next_check_at": iso(stored["next_check_at"]) if stored else None,
+        "activated_at": iso(stored["activated_at"]) if stored else None,
     }
 
 

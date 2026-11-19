@@ -1037,6 +1037,11 @@ class ProductSignInSetup(models.Model):
         blank=True,
         related_name="sign_in_setup",
     )
+    #: The integration was registered by this setup (Add Product), not by
+    #: staff. Until it is activated, the publish checklist's sign-in gate does
+    #: not apply to it (``selectors.sign_in_proven``): preparing a client must
+    #: not stop a product that does not use WorkEasy360 sign-in from publishing.
+    created_integration = models.BooleanField(default=False)
     state = models.CharField(
         max_length=32,
         choices=_choices(SignInSetupState),

@@ -109,8 +109,16 @@ def test_only_the_delivery_pipeline_can_send():
     minted for that product alone. It is a delivery pipeline in its own right:
     rows leased with SKIP LOCKED, its own retry schedule and terminal states
     (``platform.ecosystem.backchannel``), and nothing it sends is customer- or
-    request-supplied."""
+    request-supplied.
+
+    ADR-074 adds ``integration/health/sign_in_document.py``, of
+    ``probe.py``'s kind: a bounded (64 KB, 8 s), read-only GET of a product's
+    compatibility document at its *registered* application URL's origin
+    (entered by staff, never customer- or request-supplied), called only by the
+    sign-in setup sweep or a staff "Check now". Every egress guarantee applies;
+    judging the answer is the caller's."""
     allowed = {
+        "integration/health/sign_in_document.py",
         "integration/webhooks/pipeline.py",
         "intelligence/ai/transport.py",
         "commercial/payments/transport.py",

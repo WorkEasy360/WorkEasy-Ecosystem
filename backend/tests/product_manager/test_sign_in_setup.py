@@ -632,3 +632,20 @@ def test_evaluate_document_refuses_what_is_not_a_document():
             challenge="c" * 43,
         )
         assert not result.ok and result.checks[0]["status"] == "failed"
+
+
+def test_a_prepared_draft_does_not_hold_back_publishing_until_it_is_activated(admin, product, dns):
+    """Preparing a client at Add Product must not stop a product that does not
+    (yet) use WorkEasy360 sign-in from publishing - as before ADR-074, when it
+    had no integration. Once setup activates it, the publish checklist's
+    "WorkEasy360 sign-in verified" applies, as for any active integration."""
+    from workeasy360.platform.ecosystem import selectors
+
+    client, _user = admin
+    _add(client)
+    assert _integration().status == "draft"
+    assert selectors.sign_in_proven("orchard_planner") is None
+    product.client_id = _integration().client_id
+    dns.publish_for("orchard_planner")
+    assert _check(client)["state"] == "active"
+    assert selectors.sign_in_proven("orchard_planner") is False

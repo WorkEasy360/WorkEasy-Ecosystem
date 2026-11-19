@@ -14,30 +14,30 @@ import { AdminContextForTest, expectNoViolations, mockApi, ok } from "../testSup
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams("tab=integration"),
-  usePathname: () => "/admin/products/id-orchard",
+  usePathname: () => "/admin/products/id-future",
 }));
 
-const BASE = "/api/v1/admin/products/orchard_planner/integration/sign-in-setup";
+const BASE = "/api/v1/admin/products/future_product/integration/sign-in-setup";
 
 function setup(overrides: Partial<SignInSetup> = {}): SignInSetup {
   return {
-    product_code: "orchard_planner",
+    product_code: "future_product",
     automatic: true,
     state: "verification_required",
     state_label: "Verification Required",
     checks: [
-      { key: "application_url", label: "Application URL", status: "passed", detail: "https://orchard.example.com" },
+      { key: "application_url", label: "Application URL", status: "passed", detail: "https://future.example.com" },
       { key: "proof", label: "Key possession proof", status: "passed", detail: "The application holds the key it publishes." },
       {
         key: "domain",
         label: "Domain ownership",
         status: "pending",
-        detail: 'Publish TXT _w360-product-verify.orchard.example.com = "w360-product-verify=abc", then Check now.',
+        detail: 'Publish TXT _w360-product-verify.future.example.com = "w360-product-verify=abc", then Check now.',
       },
     ],
-    application_url: "https://orchard.example.com",
-    document_url: "https://orchard.example.com/.well-known/workeasy360-sso",
-    client_id: "cid-orchard",
+    application_url: "https://future.example.com",
+    document_url: "https://future.example.com/.well-known/workeasy360-sso",
+    client_id: "cid-future",
     integration_status: "draft",
     connector: { name: "workeasy360-sso", version: "0.4.0" },
     attempts: 1,
@@ -51,7 +51,7 @@ function setup(overrides: Partial<SignInSetup> = {}): SignInSetup {
 function renderCard(permissions: string[], manage: boolean) {
   return render(
     <AdminContextForTest permissions={permissions}>
-      <SignInSetupCard code="orchard_planner" manage={manage} />
+      <SignInSetupCard code="future_product" manage={manage} />
     </AdminContextForTest>,
   );
 }
@@ -63,13 +63,13 @@ describe("Automatic sign-in setup", () => {
     mockApi({ [`GET ${BASE}`]: [ok(setup())] });
     const { container } = renderCard(["platform.staff_integration.manage"], true);
     expect(await screen.findByText("Verification Required")).toBeInTheDocument();
-    expect(screen.getByText("cid-orchard")).toBeInTheDocument();
-    expect(screen.getByText("https://orchard.example.com/.well-known/workeasy360-sso")).toBeInTheDocument();
+    expect(screen.getByText("cid-future")).toBeInTheDocument();
+    expect(screen.getByText("https://future.example.com/.well-known/workeasy360-sso")).toBeInTheDocument();
     expect(screen.getByText("workeasy360-sso 0.4.0")).toBeInTheDocument();
     const checks = within(screen.getByRole("list", { name: "Sign-in setup checks" })).getAllByRole("listitem");
     expect(checks).toHaveLength(3);
     expect(checks[2]).toHaveTextContent("Domain ownership");
-    expect(checks[2]).toHaveTextContent("TXT _w360-product-verify.orchard.example.com");
+    expect(checks[2]).toHaveTextContent("TXT _w360-product-verify.future.example.com");
     expect(checks[2]).toHaveTextContent("Waiting");
     await expectNoViolations(container);
   });

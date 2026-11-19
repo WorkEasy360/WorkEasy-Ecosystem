@@ -31,6 +31,7 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("product_code", models.CharField(max_length=32, unique=True)),
+                ("created_integration", models.BooleanField(default=False)),
                 (
                     "state",
                     models.CharField(
