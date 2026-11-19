@@ -404,7 +404,7 @@ urlpatterns = [
     path(
         "orgs/<slug:org_slug>/apps/<str:product_code>/sign-in",
         launcher_views.sign_in_view,
-        name="launcher-sign-in",
+        name="launcher-sign-in-destination",
     ),
     path(
         "orgs/<slug:org_slug>/apps/<str:product_code>/seats",
