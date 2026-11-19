@@ -758,8 +758,7 @@ def _run(ctx: Any, record: Any) -> _Outcome:
         "client",
         "OIDC client",
         PASSED,
-        f"Client id {integration.client_id} ({integration.status}). "
-        "Configure the product with it.",
+        f"Client id {integration.client_id}. Configure the product with it.",
     )
     if integration.status in ("suspended", "retired"):
         checks.add(
