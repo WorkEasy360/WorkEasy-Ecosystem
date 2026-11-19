@@ -181,7 +181,22 @@ def _explore_listing(ctx: Any) -> dict[str, Any]:
             shown.append(product)
         listing["products"] = shown
     _apply_portal_presentation(ctx, listing)
+    _mark_sign_in(ctx, listing)
     return listing
+
+
+def _mark_sign_in(ctx: Any, listing: dict[str, Any]) -> None:
+    """ADR-074: each product's ``sign_in`` - ``available``, ``suspended`` or
+    ``unavailable`` - read from the registry, so Explore Products offers "Sign
+    in" for exactly the products WorkEasy360 sign-in can reach, held or not.
+    A fact about the product, never about the organization's access."""
+    from workeasy360.platform.launcher.access import sign_in_states
+
+    products = listing.get("products") or []
+    states = sign_in_states(ctx, [p["code"] for p in products])
+    for product in products:
+        state = states.get(product["code"])
+        product["sign_in"] = state.value if state is not None else "unavailable"
 
 
 def _apply_portal_presentation(ctx: Any, listing: dict[str, Any]) -> None:

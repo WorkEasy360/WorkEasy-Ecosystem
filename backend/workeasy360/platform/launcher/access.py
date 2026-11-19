@@ -195,3 +195,95 @@ def can_launch_product(
         status=status,
         product_login_url=target.product_login_url,
     )
+
+
+class SignInState(StrEnum):
+    """Whether a product can be *signed in to* through WorkEasy360 right now
+    (ADR-074) - a different question from :class:`AppAccessState`'s "may this
+    member use it". Closed, and rendered as-is by Explore Products."""
+
+    #: An active integration that offers WorkEasy360 sign-in and holds a
+    #: credential the token endpoint accepts.
+    AVAILABLE = "available"
+    #: Registered and reversibly stopped by staff.
+    SUSPENDED = "suspended"
+    #: Never registered, still a draft, retired, or registered without
+    #: WorkEasy360 sign-in (or without a usable credential).
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True, slots=True)
+class SignInTarget:
+    """Where "Sign in" sends a browser for one product, and nothing else.
+
+    ``launch_url`` is populated only for ``AVAILABLE`` and, like
+    :class:`AppAccessDecision`'s, is never serialised to a listing."""
+
+    product_code: str
+    state: SignInState
+    launch_url: str = ""
+    product_login_url: str = ""
+
+
+def sign_in_states(
+    ctx: TenantContext, product_codes: list[str]
+) -> dict[str, SignInState]:
+    """:class:`SignInState` for each code.
+
+    **Not an access decision, by design** (ADR-074). It never reads an
+    entitlement or a seat: "Sign in" is offered for any configured product so
+    the person reaches WorkEasy360's account chooser whether or not their
+    organization bought it. Access is still decided where it always was - the
+    authorization endpoint refuses ``product_not_entitled`` / ``product_no_seat``
+    after the chooser and issues no code, and the product shows its own "no
+    access" page. Nothing here can make a refused sign-in succeed.
+    """
+    from workeasy360.platform.ecosystem import selectors as ecosystem_selectors
+    from workeasy360.platform.ecosystem import sign_in
+
+    codes = sorted({str(code) for code in product_codes})
+    if not codes:
+        return {}
+    # One query for every registered product's doors (drafts and retired
+    # products are absent: neither can be entered).
+    doors = sign_in.product_sign_in(ctx.user_id, codes)
+    states: dict[str, SignInState] = {}
+    for code in codes:
+        found = doors.get(code)
+        if found is None:
+            states[code] = SignInState.UNAVAILABLE
+        elif found.doors.sso_available:
+            states[code] = SignInState.AVAILABLE
+        else:
+            # Registered but not enterable through WorkEasy360: suspended by
+            # staff, or offering no WorkEasy360 sign-in / no usable credential.
+            target = ecosystem_selectors.launch_target(code)
+            states[code] = (
+                SignInState.SUSPENDED
+                if target is not None and target.is_suspended
+                else SignInState.UNAVAILABLE
+            )
+    return states
+
+
+def sign_in_target(ctx: TenantContext, product_code: str) -> SignInTarget:
+    """Re-read immediately before "Sign in" sends a browser at a product -
+    the same no-trusting-the-page rule as ``services.launch``."""
+    from workeasy360.platform.ecosystem import selectors as ecosystem_selectors
+
+    try:
+        code = str(ProductCode(product_code))
+    except ValueError:
+        return SignInTarget(product_code=str(product_code), state=SignInState.UNAVAILABLE)
+    state = sign_in_states(ctx, [code])[code]
+    if state is not SignInState.AVAILABLE:
+        return SignInTarget(product_code=code, state=state)
+    target = ecosystem_selectors.launch_target(code)
+    if target is None or not target.can_authenticate:  # changed in between
+        return SignInTarget(product_code=code, state=SignInState.UNAVAILABLE)
+    return SignInTarget(
+        product_code=code,
+        state=SignInState.AVAILABLE,
+        launch_url=target.launch_url,
+        product_login_url=target.product_login_url,
+    )

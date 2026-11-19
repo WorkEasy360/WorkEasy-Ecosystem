@@ -51,10 +51,10 @@ describe("the access chooser", () => {
     expect(screen.getByText("Ana Rao")).toBeInTheDocument();
     expect(screen.getByText("ana@example.com")).toBeInTheDocument();
     expect(screen.getByText("ABC Ltd.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Continue with Same Account/ })).toHaveAccessibleDescription(
+    expect(screen.getByRole("button", { name: /Continue as Ana Rao/ })).toHaveAccessibleDescription(
       "Continue using your existing WorkEasy360 login.",
     );
-    expect(screen.getByRole("button", { name: /Use Different Account/ })).toHaveAccessibleDescription(
+    expect(screen.getByRole("button", { name: /Use another account/ })).toHaveAccessibleDescription(
       "Sign in using another WorkEasy360 email/account.",
     );
     expect(screen.getByRole("button", { name: /Create New Account/ })).toBeInTheDocument();
@@ -63,7 +63,7 @@ describe("the access chooser", () => {
     );
     // Same account first: the primary choice.
     const buttons = within(screen.getByRole("group", { name: "How would you like to continue?" })).getAllByRole("button");
-    expect(buttons[0]).toHaveAccessibleName(/Continue with Same Account/);
+    expect(buttons[0]).toHaveAccessibleName(/Continue as Ana Rao/);
     expect(screen.getByRole("checkbox", { name: "Remember my choice for Easy CRM" })).not.toBeChecked();
     await expectNoViolations(container);
   });
@@ -77,7 +77,7 @@ describe("the access chooser", () => {
     });
     render(<ProductAccessChooser />);
     fireEvent.click(await screen.findByRole("checkbox", { name: "Remember my choice for Easy CRM" }));
-    fireEvent.click(screen.getByRole("button", { name: /Continue with Same Account/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Continue as Ana Rao/ }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/api/v1/integrations/oauth/resume?resume=tok123"));
     const answer = calls.find((c) => c.key === "POST /api/v1/integrations/oauth/pending/choose");
     expect(answer?.body).toEqual({ resume: "tok123", choice: "workeasy360", remember: true });
@@ -108,8 +108,8 @@ describe("the access chooser", () => {
     });
     render(<ProductAccessChooser />);
     expect(await screen.findByRole("heading", { level: 1, name: "Welcome to WorkEasy360" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Continue with Same Account/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Use Different Account/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Continue as Ana Rao/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Use another account/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /EasyBook sign-in/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Create New Account/ })).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Don't ask me again for EasyBook" })).toBeInTheDocument();
@@ -139,7 +139,7 @@ describe("the access chooser", () => {
       ],
     });
     render(<ProductAccessChooser />);
-    fireEvent.click(await screen.findByRole("button", { name: /Use Different Account/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Use another account/ }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/login?resume=fresh"));
     expect(calls.at(-1)?.body).toMatchObject({ choice: "switch_account" });
   });

@@ -402,6 +402,11 @@ urlpatterns = [
         name="launcher-launch",
     ),
     path(
+        "orgs/<slug:org_slug>/apps/<str:product_code>/sign-in",
+        launcher_views.sign_in_view,
+        name="launcher-sign-in",
+    ),
+    path(
         "orgs/<slug:org_slug>/apps/<str:product_code>/seats",
         launcher_views.seat_overview_view,
         name="launcher-seats",

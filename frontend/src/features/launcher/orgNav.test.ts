@@ -45,7 +45,7 @@ const PAGES: [path: string, menu: string, entry: string | null, tab: string | nu
   ["dashboard", "Dashboard", null, null],
   ["apps", "My Products", "All Products", null],
   ["store", "My Products", "WorkEasy360 Store", null],
-  ["explore", "My Products", "Plans & Trials", null],
+  ["explore", "My Products", "Explore Products", null],
   ["settings/billing", "Billing & Subscriptions", "Subscriptions", null],
   ["orders", "Billing & Subscriptions", "Orders & Payments", null],
   ["settings/billing/profile", "Billing & Subscriptions", "Billing Profile", null],
@@ -138,7 +138,7 @@ describe("the User Admin Panel sidebar (seven menus, 2026-11-11)", () => {
     expect(nav.find((i) => i.label === "My Products")?.children?.map((c) => c.label)).toEqual([
       "All Products",
       "WorkEasy360 Store",
-      "Plans & Trials",
+      "Explore Products",
     ]);
     // One entry: a plain link to it.
     expect(nav.find((i) => i.label === "Organization & Team")).toMatchObject({ href: "/o/acme/settings/organization" });
