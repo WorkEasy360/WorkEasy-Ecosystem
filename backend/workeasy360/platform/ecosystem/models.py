@@ -989,3 +989,89 @@ class ProductDomain(models.Model):
     @property
     def status_enum(self) -> ProductDomainStatus:
         return ProductDomainStatus(self.status)
+
+
+class SignInSetupState(StrEnum):
+    """Where a product's automatic sign-in setup stands (ADR-074). The five
+    words Super Admin shows; each is the *result of a check* the platform ran,
+    never a label a browser chose.
+
+    - ``pending_configuration`` something the product must still provide: an
+      application URL, or the compatibility document at
+      ``/.well-known/workeasy360-sso`` (the connector, or its equivalent).
+    - ``configured``            the document was read and matches; the
+      registration is being brought in line with it (transient).
+    - ``verification_required`` everything matches but control of a hostname
+      is not proven yet (ADR-070's DNS TXT record).
+    - ``active``                every mandatory check passed and the
+      integration authenticates.
+    - ``failed``                a check found something wrong that the product
+      must fix (a mismatched client id, an address off the verified domain, a
+      published private key...). Nothing is activated.
+    """
+
+    PENDING_CONFIGURATION = "pending_configuration"
+    CONFIGURED = "configured"
+    VERIFICATION_REQUIRED = "verification_required"
+    ACTIVE = "active"
+    FAILED = "failed"
+
+
+class ProductSignInSetup(models.Model):
+    """The automatic sign-in setup of one catalog product (ADR-074).
+
+    One row per product code, created when Super Admin adds the product, and
+    linked to the product's one integration - which the setup prepares at
+    once, so a retried or concurrent setup can never register a second OIDC
+    client (``ProductIntegration.product_code`` is unique). The checks
+    themselves run in ``commercial.controlplane.sso_setup`` (they need the
+    network); this row records what they found.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    product_code = models.CharField(max_length=32, unique=True)
+    integration = models.OneToOneField(
+        ProductIntegration,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="sign_in_setup",
+    )
+    state = models.CharField(
+        max_length=32,
+        choices=_choices(SignInSetupState),
+        default=SignInSetupState.PENDING_CONFIGURATION.value,
+    )
+    #: ``[{"key", "label", "status": passed|pending|failed, "detail"}]``, in order.
+    checks = models.JSONField(default=list, blank=True)
+    #: The application address the last check read (the catalog's application URL).
+    application_url = models.CharField(max_length=500, blank=True, default="")
+    connector_name = models.CharField(max_length=64, blank=True, default="")
+    connector_version = models.CharField(max_length=32, blank=True, default="")
+    #: ``{kid: consecutive checks it was missing}`` for keys this setup
+    #: registered. A key is revoked only after several misses in a row, so a
+    #: rolling deploy that serves the old and the new document side by side
+    #: never loses the key its old instances still sign with.
+    key_absences = models.JSONField(default=dict, blank=True)
+    #: The staff identity the checks act for: who added the product, or who
+    #: last chose "Check now". Every write is authorized for them, live.
+    requested_by_id = models.UUIDField(null=True, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+    last_checked_at = models.DateTimeField(null=True, blank=True)
+    next_check_at = models.DateTimeField(null=True, blank=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ecosystem_product_sign_in_setup"
+        indexes = [
+            models.Index(fields=["state", "next_check_at"], name="ix_sign_in_setup_due"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - display only
+        return f"{self.product_code} ({self.state})"
+
+    @property
+    def state_enum(self) -> SignInSetupState:
+        return SignInSetupState(self.state)

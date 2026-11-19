@@ -9,6 +9,7 @@ import { ReasonAction, Status, when } from "../ui";
 import { TextField } from "../widgets";
 import { AppLinksPanel } from "./AppLinksPanel";
 import { INTEGRATION_BADGE, INTEGRATION_LABEL, domainBlockOf, integrationState, looksLikeHttps, type DomainBlock } from "./model";
+import { SignInSetupCard } from "./SignInSetupCard";
 import { BackchannelCard, DomainsCard, SsoReadinessCard, useSsoState } from "./SsoSettings";
 import cp from "../ControlPlane.module.css";
 import styles from "./ProductManager.module.css";
@@ -352,6 +353,7 @@ export function IntegrationTab({
       <AppLinksPanel product={p} manage={manageCatalog} busy={busy} reload={reload} />
       {canSeeIntegrations ? (
         <>
+          <SignInSetupCard code={p.code} manage={manageIntegration} onChecked={ssoReload} />
           {p.integration && <SsoReadinessCard load={sso.readiness} onRefresh={sso.refresh} />}
           <section className={styles.card} aria-label="Launch, sign-in and credentials">
             <IntegrationPanel

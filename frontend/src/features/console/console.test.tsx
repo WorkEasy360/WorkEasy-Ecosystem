@@ -2181,3 +2181,79 @@ describe("my apps and product access", () => {
     await expectNoViolations(container);
   });
 });
+
+describe("explore products: sign in to any configured product (ADR-074)", () => {
+  it("offers Sign in for a product the organization does not hold, and says it is not held", async () => {
+    mockApi({
+      [`GET ${ORG}/marketplace`]: [{ status: 200, body: offers() }],
+      [`GET ${ORG}/explore`]: [
+        {
+          status: 200,
+          body: explore({
+            products: [
+              exploreProduct("easy_crm", "Easy CRM", { sign_in: "available" }),
+              exploreProduct("easybook", "EasyBook", { sign_in: "available", trial_state: "owned", holding: "subscription" }),
+              exploreProduct("new_thing", "New Thing", { sign_in: "unavailable" }),
+            ],
+          }),
+        },
+      ],
+    });
+    const { container } = renderOrg(<ExploreScreen />, []);
+    expect(await screen.findByRole("heading", { level: 1, name: "Explore Products" })).toBeInTheDocument();
+    const crm = card("Easy CRM");
+    expect(within(crm).getByRole("button", { name: "Sign in to Easy CRM" })).toHaveClass("w360-btn-primary");
+    expect(crm).toHaveTextContent("Not in your organization yet. You can still sign in");
+    // A held product keeps its Open; no second way in.
+    const book = card("EasyBook");
+    expect(within(book).getByRole("button", { name: "Open EasyBook" })).toBeInTheDocument();
+    expect(within(book).queryByRole("button", { name: /Sign in to/ })).not.toBeInTheDocument();
+    expect(book).toHaveTextContent("In My Products");
+    // Not reachable through WorkEasy360 sign-in: nothing to click, said plainly.
+    const later = card("New Thing");
+    expect(within(later).queryByRole("button", { name: /Sign in to|Open/ })).not.toBeInTheDocument();
+    expect(later).toHaveTextContent("Not in your organization yet.");
+    await expectNoViolations(container);
+  });
+
+  it("an owner who could buy sees Buy first, and Sign in beside it", async () => {
+    mockApi({
+      [`GET ${ORG}/marketplace`]: [{ status: 200, body: offers() }],
+      [`GET ${ORG}/explore`]: [{ status: 200, body: explore({ products: [exploreProduct("easy_crm", "Easy CRM", { sign_in: "available" })] }) }],
+    });
+    renderOrg(<ExploreScreen />, ["commercial.subscription.manage"]);
+    const crm = await screen.findByRole("article", { name: "Easy CRM" });
+    expect(within(crm).getByRole("button", { name: "Buy now: Easy CRM" })).toHaveClass("w360-btn-primary");
+    expect(within(crm).getByRole("button", { name: "Sign in to Easy CRM" })).toHaveClass("w360-btn-secondary");
+  });
+
+  it("goes where the server says, and explains a refusal in words", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    const calls = mockApi({
+      [`GET ${ORG}/marketplace`]: [{ status: 200, body: offers() }],
+      [`GET ${ORG}/explore`]: [
+        {
+          status: 200,
+          body: explore({
+            products: [
+              exploreProduct("easy_crm", "Easy CRM", { sign_in: "available" }),
+              exploreProduct("desk", "Desk", { sign_in: "available" }),
+            ],
+          }),
+        },
+      ],
+      [`POST ${ORG}/apps/easy_crm/sign-in`]: [
+        { status: 200, body: { redirect_url: "https://crm.example.com/?organization=o1", state: "available", sign_in: "workeasy360" } },
+      ],
+      [`POST ${ORG}/apps/desk/sign-in`]: [{ status: 409, body: { code: "sign_in_unavailable", state: "suspended", product_code: "desk" } }],
+    });
+    renderOrg(<ExploreScreen />, []);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in to Easy CRM" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://crm.example.com/?organization=o1"));
+    expect(calls.find((c) => c.key === `POST ${ORG}/apps/easy_crm/sign-in`)?.headers["idempotency-key"]).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Sign in to Desk" }));
+    expect(await within(card("Desk")).findByRole("alert")).toHaveTextContent("temporarily unavailable");
+    vi.unstubAllGlobals();
+  });
+});

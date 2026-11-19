@@ -1552,6 +1552,16 @@ _admin = [
         name="admin-product-integration-kit",
     ),
     path(
+        "admin/products/<str:product_code>/integration/sign-in-setup",
+        admin_product_views.integration_sign_in_setup_view,
+        name="admin-product-integration-sign-in-setup",
+    ),
+    path(
+        "admin/products/<str:product_code>/integration/sign-in-setup/check",
+        admin_product_views.integration_sign_in_setup_check_view,
+        name="admin-product-integration-sign-in-setup-check",
+    ),
+    path(
         "admin/catalog/products/<uuid:product_id>/trial",
         admin_catalog_views.product_trial_view,
         name="admin-catalog-product-trial",

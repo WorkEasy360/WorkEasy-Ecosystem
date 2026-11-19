@@ -213,13 +213,19 @@ describe("SSO readiness", () => {
     expect(calls.filter((c) => c.key === READINESS)).toHaveLength(2);
   });
 
-  it("a product with no integration makes no single sign-on reads", async () => {
-    const calls = mockApi({ [DETAIL]: [ok(detail(null))] });
+  it("a product with no integration makes no single sign-on reads but its setup state", async () => {
+    // ADR-074: automatic setup has a state before any integration exists
+    // ("Pending Configuration"), so its one read is the only one made.
+    const SETUP = `GET ${ADMIN}/products/future_product/integration/sign-in-setup`;
+    const calls = mockApi({
+      [DETAIL]: [ok(detail(null))],
+      [SETUP]: [ok({ product_code: "future_product", automatic: false, state: null, state_label: "Set up by hand", checks: [] })],
+    });
     renderDetail();
     expect(await screen.findByRole("button", { name: "Register integration" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "SSO readiness" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Domains" })).not.toBeInTheDocument();
-    expect(calls.map((c) => c.key)).toEqual([DETAIL]);
+    await waitFor(() => expect(calls.map((c) => c.key).sort()).toEqual([DETAIL, SETUP].sort()));
   });
 });
 

@@ -758,6 +758,13 @@ CELERY_BEAT_SCHEDULE = {
     # ADR-070. DNS-proven product domains are re-checked; a missing record on
     # repeated checks marks the domain lapsed (shown to staff, never a silent
     # suspension). Heavy for the same reason as the partner re-check.
+    # ADR-074: automatic product sign-in setup - due checks only, so a quiet
+    # catalog costs one indexed query per run.
+    "products-sign-in-setup": {
+        "task": "commercial.controlplane.sweep_sign_in_setups",
+        "schedule": env.float("W360_BEAT_SIGN_IN_SETUP_S", 300.0),
+        "options": {"queue": "heavy", "expires": 280},
+    },
     "products-recheck-domains": {
         "task": "commercial.controlplane.recheck_product_domains",
         "schedule": env.float("W360_BEAT_PRODUCT_DOMAIN_RECHECK_S", 21600.0),
@@ -1577,6 +1584,9 @@ CONTROL_PLANE_RATE_LIMITS.update(
         # ADR-070: each verify is a DNS lookup the platform makes.
         "product_domain_verify_user": (env.int("W360_RL_PRODUCT_DOMAIN_USER", 10), 60),
         "product_domain_verify_ip": (env.int("W360_RL_PRODUCT_DOMAIN_IP", 30), 60),
+        # ADR-074 "Check now": a document fetch and a DNS lookup each.
+        "product_sign_in_setup_user": (env.int("W360_RL_SIGN_IN_SETUP_USER", 10), 60),
+        "product_sign_in_setup_ip": (env.int("W360_RL_SIGN_IN_SETUP_IP", 30), 60),
         # ADR-051: Product Manager image uploads (each stores and scans a file).
         "product_media_upload_user": (env.int("W360_RL_PRODUCT_MEDIA_USER", 60), 60),
         "product_media_upload_ip": (env.int("W360_RL_PRODUCT_MEDIA_IP", 120), 60),
