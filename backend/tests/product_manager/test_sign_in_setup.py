@@ -333,7 +333,8 @@ def _wrong_key(product: FakeProduct) -> None:
         ),
         (
             lambda p: p.overrides.update(
-                launch_url="https://user:pw@orchard.workeasy360.com/"
+                # A fake credential in an address the setup must refuse.
+                launch_url="https://user:pw@orchard.workeasy360.com/"  # pragma: allowlist secret
             ),
             "addresses",
         ),
