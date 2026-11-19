@@ -17,6 +17,14 @@ and every step denies:
        park the request for Workeasy360's access chooser first
    11. Only then: mint a code
 
+ADR-074 changes *when* the answers to steps 8 and 9 are delivered, never what
+they are. Both are asked in order (``commercial_refusal``), but an interactive
+request whose preference asks which account to use goes to the chooser first
+and the refusal is delivered after it, at resume, for whoever answered. So
+"Continue as" and "Use another account" appear whether or not the
+organization bought the product, and no code is minted for an organization
+that did not.
+
 Steps 1 and 2 come first because until both hold, **the platform does not
 know where the browser is allowed to go**, and every later error must be
 rendered rather than redirected (RFC 6749 section 4.1.2.1). Getting that
@@ -598,6 +606,42 @@ def require_seat(subject: ResolvedSubject, product_code: str) -> None:
         "This organization holds this product, but you have not been "
         "assigned a seat. Ask an administrator to assign you one.",
     )
+
+
+#: The refusals ``commercial_refusal`` answers: whether the organization holds
+#: the product, and whether this member holds a seat in it.
+COMMERCIAL_REFUSALS: frozenset[str] = frozenset(
+    {protocol.PRODUCT_NOT_ENTITLED, protocol.PRODUCT_NO_SEAT}
+)
+
+
+def commercial_refusal(
+    subject: ResolvedSubject, product_code: str
+) -> protocol.OAuthError | None:
+    """Steps 8 and 9 as an *answer*, not a raise: the refusal the caller must
+    deliver, or ``None`` when the organization holds the product and (for a
+    per-seat product) this member holds a seat.
+
+    ADR-074. The authorization endpoint asks the person which account to use
+    *before* it delivers this answer, so someone signed in to an account
+    without the product is offered "Use another account" instead of being
+    sent straight to the product's "no access" page. The answer itself is
+    unchanged and still decides: a request that is refused here is refused
+    after the chooser too, because the resume re-runs this for whoever
+    answered (``ecosystem_views.resume``), and no code is ever issued while it
+    is not ``None``.
+
+    Only these two refusals are returned. Anything else either check raises
+    (an entitlement read that failed, say) propagates exactly as before.
+    """
+    try:
+        require_entitlement(subject, product_code)
+        require_seat(subject, product_code)
+    except protocol.OAuthError as exc:
+        if exc.error not in COMMERCIAL_REFUSALS:
+            raise
+        return exc
+    return None
 
 
 def _holds_seat_if_required(subject: ResolvedSubject, product_code: str) -> bool:

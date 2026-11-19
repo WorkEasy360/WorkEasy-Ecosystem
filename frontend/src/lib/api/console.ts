@@ -419,6 +419,10 @@ export interface ExploreProduct {
   trial_ends_at: string | null;
   trial_days_left: number | null;
   trial_outcome: "expired" | "cancelled" | "converted" | "ended" | null;
+  /** ADR-074: whether WorkEasy360 sign-in can reach this product right now -
+   * a registry fact, never the organization's access. `available` offers
+   * "Sign in" whether or not the organization holds the product. */
+  sign_in?: "available" | "suspended" | "unavailable";
 }
 
 export interface ExploreCatalog {

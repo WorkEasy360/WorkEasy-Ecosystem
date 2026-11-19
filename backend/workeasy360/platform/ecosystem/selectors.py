@@ -343,6 +343,13 @@ def sign_in_proven(product_code: str) -> bool | None:
     )
     if row is None or (row["manifest"] or {}).get("sign_in_mode") == "local_only":
         return None
+    # ADR-074: a draft that automatic setup prepared at Add Product, and has not
+    # activated, is not yet a sign-in the product offers - as before ADR-074,
+    # when such a product had no integration at all.
+    from workeasy360.platform.ecosystem import sign_in_setup
+
+    if row["last_token_at"] is None and sign_in_setup.awaiting_activation(product_code):
+        return None
     return row["last_token_at"] is not None
 
 

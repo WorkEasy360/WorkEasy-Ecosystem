@@ -25,7 +25,7 @@ from django.views.decorators.http import require_http_methods
 
 from workeasy360.platform.identity import portals as portal_links
 from workeasy360.platform.launcher import selectors, services
-from workeasy360.platform.launcher.access import AppAccessDecision
+from workeasy360.platform.launcher.access import AppAccessDecision, SignInState
 from workeasy360.platform.observability.metrics import metrics
 
 
@@ -145,6 +145,41 @@ def launch_view(request: HttpRequest, org_slug: str, product_code: str) -> HttpR
             }
         )
     return HttpResponseRedirect(route.url)
+
+
+@require_http_methods(["POST"])
+def sign_in_view(request: HttpRequest, org_slug: str, product_code: str) -> JsonResponse:
+    """Explore Products' "Sign in" (ADR-074): send the browser to a configured
+    product through WorkEasy360 sign-in, **whether or not this organization
+    holds it**.
+
+    The same shape as ``launch_view``'s JSON answer, and the same rules: a
+    POST (CSRF applies), the destination built here from the registry with
+    ``organization=<uuid>``, never from the request. What it does *not* do is
+    read an entitlement - that is the point. The product starts its own
+    authorization request; WorkEasy360 shows "Continue as" / "Use another
+    account"; then the authorization endpoint refuses ``product_not_entitled``
+    or ``product_no_seat`` exactly as before, issues no code, and the product
+    shows its own "no access" page. So this route can reach the chooser for an
+    unbought product but can never let anyone into one.
+    """
+    ctx = request.tenant_context  # type: ignore[attr-defined]
+    target = services.sign_in_to_product(ctx, product_code)
+    if target.state is not SignInState.AVAILABLE:
+        metrics.increment("launcher_sign_in_denied_total", state=target.state.value)
+        return JsonResponse(
+            {
+                "code": "sign_in_unavailable",
+                "state": target.state.value,
+                "product_code": product_code,
+            },
+            status=409,
+        )
+    route = services.sign_in_route(ctx, target)
+    metrics.increment("launcher_sign_in_total", sign_in=route.sign_in)
+    return JsonResponse(
+        {"redirect_url": route.url, "state": target.state.value, "sign_in": route.sign_in}
+    )
 
 
 @require_http_methods(["GET"])

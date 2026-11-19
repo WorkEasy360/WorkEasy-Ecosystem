@@ -17,6 +17,7 @@ from workeasy360.commercial.controlplane import (
     integration_kit,
     product_domains,
     products,
+    sso_setup,
     store,
 )
 from workeasy360.contracts.errors import ManifestRejected
@@ -257,3 +258,31 @@ def integration_health_check_view(
         # A draft or retired integration has nothing to check yet.
         return JsonResponse({"status": "unknown", "detail": "not_launchable"})
     return JsonResponse({"status": result.status.value, "detail": result.detail})
+
+
+@staff_view(["GET"])
+def integration_sign_in_setup_view(
+    request: HttpRequest, ctx: TenantContext, product_code: str
+) -> JsonResponse:
+    """Automatic sign-in setup (ADR-074): its state - Pending Configuration,
+    Configured, Verification Required, Active or Failed - and every check, as
+    the last check recorded them. Stored facts only; asks no product."""
+    return JsonResponse(sso_setup.setup_for_staff(ctx, product_code=product_code))
+
+
+@staff_view(["POST"])
+def integration_sign_in_setup_check_view(
+    request: HttpRequest, ctx: TenantContext, product_code: str
+) -> JsonResponse:
+    """*Check now*: fetch the product's compatibility document, look up its
+    domain proof and - when everything passes - configure and activate its
+    sign-in, acting for the person who asked. Rate-limited: each call is a
+    network fetch and a DNS lookup."""
+    blocked = limited(request, "product_sign_in_setup", user=request.user)
+    if blocked is not None:
+        return blocked
+    with acting_scope(ctx):
+        body = sso_setup.check_for_staff(ctx, product_code=product_code)
+    response = JsonResponse(body)
+    response["Cache-Control"] = "no-store"
+    return response

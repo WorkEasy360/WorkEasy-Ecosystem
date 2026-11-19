@@ -7,6 +7,7 @@ import { consoleApi, type ExploreProduct, type ListPrice, type MarketplaceOffers
 import { ApiError } from "@/lib/api/client";
 import { ProductIcon, productIconKnown } from "@/components/ProductIcon";
 import { LaunchButton } from "@/features/launcher/LaunchButton";
+import { SignInButton } from "@/features/launcher/SignInButton";
 import { LoadGate, money, useAction, useLoad } from "@/features/controlplane/ui";
 import cp from "@/features/controlplane/ControlPlane.module.css";
 import styles from "./Console.module.css";
@@ -30,14 +31,19 @@ type Plan = MarketplaceOffers["plans"][number];
 type Bundle = MarketplaceOffers["bundles"][number];
 
 /**
- * Explore products (Phase 9; extended Phase 11). Two sections:
+ * Explore Products (Phase 9; extended Phase 11 and ADR-074). Two sections:
  *
  * - **Products** (`ExploreProducts`): every product in the catalog, as a
  *   card - icon, category, its trial (offered, running with the days left,
  *   or expired), and the server's own price. A product already owned shows
  *   only "Open product"; a running trial shows Open and Upgrade; an expired
  *   one says so and offers Buy. Days left come from the server, never from
- *   this browser's clock (multi-portal brief, Parts 12, 16, 19).
+ *   this browser's clock (multi-portal brief, Parts 12, 16, 19). ADR-074: a
+ *   product WorkEasy360 sign-in can reach (`sign_in: "available"`) that the
+ *   organization does not hold also offers "Sign in to <product>": the
+ *   account chooser comes next, and the product applies its own access rules.
+ *   Whether the organization holds a product is shown on every card, so
+ *   being able to sign in is never mistaken for having bought it.
  * - **Plans & bundles** (`Offers`, unchanged): the existing plan-and-bundle
  *   marketplace, for add-ons and bundled packages that span several products.
  *
@@ -56,8 +62,8 @@ export function ExploreScreen() {
   return (
     <div className={styles.page}>
       <PageHeader
-        title="Plans & Trials"
-        lead="Every Workeasy360 product's plans, bundles and free trials. Prices are in your billing currency, before any tax."
+        title="Explore Products"
+        lead="Every WorkEasy360 product, whether your organization has it or not. Sign in with your WorkEasy360 account, or buy a plan or start a trial to get access. Prices are in your billing currency, before any tax."
         actions={
           <ButtonLink href={`/o/${slug}/store`} icon="store">
             Open the Store
@@ -179,6 +185,17 @@ export function trialBadge(product: ExploreProduct, trialOffered: boolean): { la
   return null;
 }
 
+/** One line on every card saying whether the organization has the product and
+ * whether WorkEasy360 sign-in reaches it - from the server's facts only, so
+ * "you can sign in" is never read as "you have bought it" (ADR-074). */
+export function holdingLine(product: ExploreProduct): string {
+  const held = product.trial_state === "owned" || product.trial_state === "active";
+  if (held) return "In My Products: your organization has this product.";
+  if (product.availability === "coming_soon") return "Not available yet.";
+  if (product.sign_in === "available") return "Not in your organization yet. You can still sign in; the product decides what you can use.";
+  return "Not in your organization yet.";
+}
+
 /** What a product card offers this organization - the trial plan, the plan
  * "Buy" buys and at which cycle - from the server's facts only. Explore and
  * the Store both read it, so their buttons can never differ. */
@@ -222,9 +239,15 @@ export interface ExploreActionProps {
 export function ExploreActions({ slug, product, canBuy, busy, hasAccount, onStartTrial, onBuy, inCart, onAddToCart }: ExploreActionProps) {
   const { trialPlan, held, buyPlan, priceInterval, buyLabel } = exploreOffer(product, hasAccount);
   const days = product.trial.duration_days;
+  // ADR-074: sign in to a product the organization does not hold. Primary
+  // only when nothing else here is: an owner offered a trial or a purchase
+  // sees those first.
+  const signIn = !held && product.sign_in === "available";
+  const offersPurchase = canBuy && product.availability === "available" && Boolean(trialPlan || buyPlan);
   return (
     <>
       {held && <LaunchButton orgSlug={slug} productCode={product.code} productName={product.name} />}
+      {signIn && <SignInButton orgSlug={slug} productCode={product.code} productName={product.name} primary={!offersPurchase} />}
       {canBuy && product.availability === "available" && !held && trialPlan && (
         <button
           type="button"
@@ -304,6 +327,9 @@ function ExploreProductCard(props: ExploreActionProps) {
           <li className={`w360-badge ${badge.tone}`}>{badge.label}</li>
         </ul>
       )}
+      <p className={local.caption} data-testid="explore-holding">
+        {holdingLine(product)}
+      </p>
       {product.availability === "coming_soon" ? (
         <p className={local.priceNote}>Coming soon</p>
       ) : product.starting_price ? (

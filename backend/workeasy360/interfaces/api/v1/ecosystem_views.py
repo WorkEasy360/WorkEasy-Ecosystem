@@ -200,18 +200,24 @@ def authorize(request: HttpRequest) -> HttpResponse:
             organization_id=organization_id,
             facts=_session_facts(request, organization_id),
         )
-        authorization.require_entitlement(subject, parsed.integration.product_code)
-        authorization.require_seat(subject, parsed.integration.product_code)
+        # Steps 8-9, answered now and delivered below (ADR-074): whether the
+        # organization holds the product is a *commercial* answer, and the
+        # person is asked which account first, so "Use another account" is
+        # offered to someone signed in to an account without it. Every other
+        # refusal (membership, organization status, access policy) has
+        # already been raised by ``resolve_subject``.
+        commercial_refusal = authorization.commercial_refusal(
+            subject, parsed.integration.product_code
+        )
 
-        # Step 10 (ADR-044): only now, with every refusal already delivered,
-        # the person's own preference. A preference never reaches a request
-        # that was going to be refused, and it can only *add* a question.
+        # Step 10 (ADR-044): the person's own preference. It can only *add* a
+        # question; it never turns a refusal into access.
         decision, doors = sign_in.decision_at_authorize(user.pk, parsed.integration)
         if not doors.sso_available:
             # Active but not SSO-ready (no usable credential): a code would be
             # one the product can never redeem. Refused, never offered - the
             # chooser must not pretend Workeasy360 sign-in works here.
-            raise protocol.OAuthError(
+            raise commercial_refusal or protocol.OAuthError(
                 protocol.UNAUTHORIZED_CLIENT,
                 "This product is not ready for Workeasy360 sign-in.",
             )
@@ -220,11 +226,18 @@ def authorize(request: HttpRequest) -> HttpResponse:
             entered_this_sign_in=sign_in.entered_this_sign_in(request, product_code)
         ):
             if parsed.prompt_none:
-                raise protocol.OAuthError(
+                # No page may be shown: the commercial refusal, when there is
+                # one, is the more useful answer to the product.
+                raise commercial_refusal or protocol.OAuthError(
                     protocol.INTERACTION_REQUIRED,
                     "Workeasy360 needs to ask this person how to sign in.",
                 )
+            # Parked whether or not the organization holds the product: the
+            # resume re-runs every check for whoever answers and delivers a
+            # refusal to the product then (ADR-074).
             return _park_for_choice(parsed, user.pk)
+        if commercial_refusal is not None:
+            raise commercial_refusal
         # No record_entry here: a silent code means Automatic, or Ask once
         # already recorded. The record is written where the account is chosen -
         # the chooser's answer or a sign-in for the request - both at resume.
@@ -372,24 +385,25 @@ def resume(request: HttpRequest) -> HttpResponse:
             organization_id=organization_id,
             facts=_session_facts(request, organization_id),
         )
-        authorization.require_entitlement(
+        # ADR-074: the commercial answer is delivered after the account
+        # question, exactly as at ``authorize``.
+        commercial_refusal = authorization.commercial_refusal(
             subject, pending_request.integration.product_code
         )
-        authorization.require_seat(subject, pending_request.integration.product_code)
         if parked.user_id is None and parked.signed_in_before_parking(
             _session_authenticated_at(request)
         ):
             # Parked for sign-in or for the organization chooser by a person
             # who was ALREADY signed in: nothing was typed for this flow, so
-            # their preference applies exactly as at ``authorize`` (step 10,
-            # after every check). Without this a resume link opened in a
-            # signed-in browser, or an organization chosen by someone set to
-            # "Ask me each time", completed with no question.
+            # their preference applies exactly as at ``authorize`` (step 10).
+            # Without this a resume link opened in a signed-in browser, or an
+            # organization chosen by someone set to "Ask me each time",
+            # completed with no question.
             decision, doors = sign_in.decision_at_authorize(
                 user.pk, pending_request.integration
             )
             if not doors.sso_available:
-                raise protocol.OAuthError(
+                raise commercial_refusal or protocol.OAuthError(
                     protocol.UNAUTHORIZED_CLIENT,
                     "This product is not ready for Workeasy360 sign-in.",
                 )
@@ -403,6 +417,8 @@ def resume(request: HttpRequest) -> HttpResponse:
                 # Parked as the product sent it: a chosen or implied
                 # organization is this person's, not the request's.
                 return _park_for_choice(pending_request, user.pk)
+        if commercial_refusal is not None:
+            raise commercial_refusal
         granted = authorization.issue_code(
             pending_request, subject, sign_in_id=_sign_in_id(request)
         )

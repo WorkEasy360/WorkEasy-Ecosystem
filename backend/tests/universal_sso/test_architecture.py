@@ -188,53 +188,74 @@ def test_there_is_one_identity_provider():
     assert minters == ["interfaces/api/v1/ecosystem_views.py"]
 
 
-def test_the_preference_is_read_only_after_every_access_check():
-    """In ``authorize``, entitlement and seat are decided before the
-    preference is read: a preference can add a question, never remove a
-    refusal."""
+def _calls_and_raises(function_name: str) -> tuple[dict[str, int], list[int]]:
+    """Line of each attribute call in ``function_name`` of ecosystem_views, and
+    the lines of every ``raise commercial_refusal``."""
     tree = ast.parse(
         (BACKEND / "interfaces" / "api" / "v1" / "ecosystem_views.py").read_text(
             encoding="utf-8"
         )
     )
-    authorize = next(
+    function = next(
         n
         for n in ast.walk(tree)
-        if isinstance(n, ast.FunctionDef) and n.name == "authorize"
+        if isinstance(n, ast.FunctionDef) and n.name == function_name
     )
-    order = [
-        n.func.attr
-        for n in ast.walk(authorize)
-        if isinstance(n, ast.Call)
-        and isinstance(n.func, ast.Attribute)
-        and n.func.attr
-        in {
+    lines: dict[str, int] = {}
+    for n in ast.walk(function):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+            lines.setdefault(n.func.attr, n.lineno)
+    raises = [
+        n.lineno
+        for n in ast.walk(function)
+        if isinstance(n, ast.Raise)
+        and isinstance(n.exc, ast.Name)
+        and n.exc.id == "commercial_refusal"
+    ]
+    return lines, raises
+
+
+def test_every_access_check_is_asked_before_the_preference_and_decides_before_a_code():
+    """ADR-074 (was ADR-044's "preference only after every check").
+
+    In ``authorize`` and ``resume``: membership, organization and policy
+    (``resolve_subject``) are decided first; the commercial answer
+    (``commercial_refusal``: entitlement, then seat) is *asked* before the
+    preference is read; and it is *delivered* - raised - before any code is
+    issued. The preference may only move the account question in front of
+    that answer, never remove it.
+    """
+    for name in ("authorize", "resume"):
+        lines, raises = _calls_and_raises(name)
+        assert {
             "resolve_subject",
-            "require_entitlement",
-            "require_seat",
+            "commercial_refusal",
             "decision_at_authorize",
             "issue_code",
-        }
-    ]
-    lines = {
-        n.func.attr: n.lineno
-        for n in ast.walk(authorize)
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        } <= set(lines), name
+        assert (
+            lines["resolve_subject"]
+            < lines["commercial_refusal"]
+            < lines["decision_at_authorize"]
+            < lines["issue_code"]
+        ), name
+        # The refusal is raised on the silent path, before the code.
+        assert any(
+            lines["decision_at_authorize"] < line < lines["issue_code"] for line in raises
+        ), name
+        # Steps 8-9 are reached only through the one answer function.
+        assert "require_entitlement" not in lines and "require_seat" not in lines, name
+
+
+def test_the_commercial_answer_is_the_only_refusal_the_chooser_may_precede():
+    """``commercial_refusal`` returns only product_not_entitled and
+    product_no_seat; every other refusal still raises before the chooser."""
+    from workeasy360.platform.ecosystem import authorization, protocol
+
+    assert authorization.COMMERCIAL_REFUSALS == {
+        protocol.PRODUCT_NOT_ENTITLED,
+        protocol.PRODUCT_NO_SEAT,
     }
-    assert set(order) >= {
-        "resolve_subject",
-        "require_entitlement",
-        "require_seat",
-        "decision_at_authorize",
-        "issue_code",
-    }
-    assert (
-        lines["resolve_subject"]
-        < lines["require_entitlement"]
-        < lines["require_seat"]
-        < lines["decision_at_authorize"]
-        < lines["issue_code"]
-    )
 
 
 def test_the_hostname_grants_nothing_in_the_sign_in_machinery():

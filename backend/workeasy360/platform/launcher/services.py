@@ -11,7 +11,12 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from workeasy360.contracts.values.tenant import TenantContext
-from workeasy360.platform.launcher.access import AppAccessDecision, can_launch_product
+from workeasy360.platform.launcher.access import (
+    AppAccessDecision,
+    SignInTarget,
+    can_launch_product,
+    sign_in_target,
+)
 
 
 def launch(ctx: TenantContext, product_code: str) -> AppAccessDecision:
@@ -58,19 +63,44 @@ def launch_route(ctx: TenantContext, decision: AppAccessDecision) -> LaunchRoute
     Re-read live at every launch; the preference grants nothing (the access
     decision has already said yes).
     """
+    return _route(
+        ctx,
+        product_code=decision.product_code,
+        launch_url=decision.launch_url,
+        product_login_url=decision.product_login_url,
+    )
+
+
+def sign_in_to_product(ctx: TenantContext, product_code: str) -> SignInTarget:
+    """Explore Products' "Sign in" (ADR-074): re-read whether the product can
+    be signed in to through WorkEasy360, immediately before the browser goes.
+    Deliberately *not* ``launch``: no entitlement is read here, because the
+    authorization endpoint decides access after the account chooser."""
+    return sign_in_target(ctx, product_code)
+
+
+def sign_in_route(ctx: TenantContext, target: SignInTarget) -> LaunchRoute:
+    """For an ``AVAILABLE`` target only: the destination ``launch_route``
+    builds, by the same rule (the person's own sign-in preference)."""
+    return _route(
+        ctx,
+        product_code=target.product_code,
+        launch_url=target.launch_url,
+        product_login_url=target.product_login_url,
+    )
+
+
+def _route(
+    ctx: TenantContext, *, product_code: str, launch_url: str, product_login_url: str
+) -> LaunchRoute:
     from workeasy360.platform.ecosystem import sign_in
 
-    found = sign_in.product_sign_in(ctx.user_id, [decision.product_code]).get(
-        decision.product_code
-    )
+    found = sign_in.product_sign_in(ctx.user_id, [product_code]).get(product_code)
     if found is not None and not found.decision.uses_sso:
-        return LaunchRoute(
-            sign_in=SIGN_IN_PRODUCT,
-            url=decision.product_login_url or decision.launch_url,
-        )
+        return LaunchRoute(sign_in=SIGN_IN_PRODUCT, url=product_login_url or launch_url)
     return LaunchRoute(
         sign_in=SIGN_IN_WORKEASY360,
-        url=_with_organization(decision.launch_url, ctx.organization_id),
+        url=_with_organization(launch_url, ctx.organization_id),
     )
 
 

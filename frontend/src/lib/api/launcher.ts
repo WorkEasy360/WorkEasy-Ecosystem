@@ -49,6 +49,26 @@ export function launchProduct(orgSlug: string, productCode: string): Promise<Lau
   });
 }
 
+export const SIGN_IN_PATH = (orgSlug: string, productCode: string): string =>
+  `/api/v1/orgs/${orgSlug}/apps/${productCode}/sign-in`;
+
+/**
+ * Explore Products' "Sign in" (ADR-074): the same contract as
+ * `launchProduct` - a same-origin POST answered with one server-built
+ * destination, then an explicit top-level navigation by the caller - for a
+ * product the organization may not hold. The backend reads no entitlement
+ * here: WorkEasy360's account chooser comes next, then the authorization
+ * endpoint decides access and the product shows its own "no access" page when
+ * the answer is no. A 409 means the product cannot be signed in to through
+ * WorkEasy360 right now; its `body.state` is `suspended` or `unavailable`.
+ */
+export function signInToProduct(orgSlug: string, productCode: string): Promise<LaunchResult> {
+  return apiFetch(SIGN_IN_PATH(orgSlug, productCode), {
+    method: "POST",
+    headers: { "Idempotency-Key": crypto.randomUUID() },
+  });
+}
+
 export function getSeatOverview(
   orgSlug: string,
   productCode: string,

@@ -584,6 +584,18 @@ def product_facts_by_id(product_id: Any) -> dict[str, Any] | None:
     return Product.objects.filter(id=product_id).values("code", "name", "status").first()
 
 
+def application_facts(product_code: str) -> dict[str, Any] | None:
+    """``{code, name, status, application_url}`` of one product by code, or
+    ``None`` - what automatic sign-in setup reads (ADR-074)."""
+    from workeasy360.commercial.catalog.models import Product
+
+    return (
+        Product.objects.filter(code=str(product_code))
+        .values("code", "name", "status", "application_url")
+        .first()
+    )
+
+
 def readiness_for(product_id: Any) -> list[dict[str, Any]] | None:
     """``publish_readiness`` by id, or ``None`` for no such product."""
     from workeasy360.commercial.catalog.models import Product

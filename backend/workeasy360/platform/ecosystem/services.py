@@ -33,6 +33,7 @@ them (docs/phase-3/11-security-threat-model.md section 7).
 
 from __future__ import annotations
 
+import re
 import secrets
 from dataclasses import dataclass
 from typing import Any
@@ -371,6 +372,10 @@ def transition(
 # --- credentials ---------------------------------------------------------
 
 
+#: A product-chosen key id (ADR-074): safe in a JWT header, a log line and a URL.
+CREDENTIAL_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{4,64}$")
+
+
 def create_credential(
     ctx: TenantContext,
     *,
@@ -380,8 +385,14 @@ def create_credential(
     algorithm: str = "",
     label: str = "",
     valid_days: int = DEFAULT_CREDENTIAL_DAYS,
+    credential_id: str = "",
 ) -> IssuedCredential:
     """Issue a credential. Does **not** revoke any existing one.
+
+    ``credential_id`` (public keys only, ADR-074): the key id the product
+    already signs its assertions with - the ``kid`` of the key it publishes in
+    its compatibility document. Empty means a random one, as before. A key id
+    this integration already holds is refused, never overwritten.
 
     Overlap is the point. A product rotates by creating the new credential,
     deploying it, verifying it works, and only then revoking the old one. A
@@ -424,7 +435,23 @@ def create_credential(
                     f"Supported: {', '.join(keys.SUPPORTED_ALGORITHMS)}."
                 )
             _assert_usable_public_key(public_key_pem, algorithm)
-            credential_reference = keys.new_kid()
+            if credential_id:
+                if not CREDENTIAL_ID_RE.match(credential_id):
+                    raise ProductIntegrationError(
+                        "A key id is 4-64 letters, digits, '.', '_', ':' or '-'.",
+                        product_code=integration.product_code,
+                    )
+                if IntegrationCredential.objects.filter(
+                    integration=integration,
+                    kind=target_kind.value,
+                    credential_id=credential_id,
+                ).exists():
+                    raise ProductIntegrationError(
+                        f"This integration already has a key with id {credential_id!r}. "
+                        "Publish a new key id to rotate.",
+                        product_code=integration.product_code,
+                    )
+            credential_reference = credential_id or keys.new_kid()
             credential = IntegrationCredential.objects.create(
                 integration=integration,
                 kind=target_kind.value,

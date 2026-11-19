@@ -39,7 +39,7 @@ from django.utils import timezone
 
 from workeasy360.commercial.catalog import selectors as catalog
 from workeasy360.commercial.catalog import services as catalog_services
-from workeasy360.commercial.controlplane import product_manager
+from workeasy360.commercial.controlplane import product_manager, sso_setup
 from workeasy360.commercial.pricing import selectors as price_selectors
 from workeasy360.contracts.enums import (
     BillingInterval,
@@ -747,6 +747,7 @@ def save(ctx: TenantContext, product_id: UUID | None, body: Any) -> dict[str, An
             rest = {k: v for k, v in rest.items() if v not in ("", None, [])}
             if rest:
                 catalog_services.update_product(ctx, product_id=product_id, changes=rest)
+            application_url_changed = "application_url" in rest
         else:
             facts = catalog.product_facts_by_id(product_id)
             if facts is None:
@@ -759,6 +760,7 @@ def save(ctx: TenantContext, product_id: UUID | None, body: Any) -> dict[str, An
                 catalog_services.update_product(
                     ctx, product_id=product_id, changes=changes
                 )
+            application_url_changed = "application_url" in changes
             if body.get("trial") is not None:
                 trial = product_manager._trial_terms(body["trial"])
                 if trial is not None:
@@ -775,6 +777,9 @@ def save(ctx: TenantContext, product_id: UUID | None, body: Any) -> dict[str, An
                         )
         facts = catalog.product_facts_by_id(product_id) or {}
         code = str(facts.get("code") or "")
+        if application_url_changed and code:
+            # ADR-074: a new application address restarts the sign-in setup.
+            sso_setup.prepare(ctx, product_code=code)
         _apply_plans(ctx, product_id=product_id, product_code=code, plans=plans)
         if facts.get("status") == "available":
             _make_plans_available(ctx, product_code=code)

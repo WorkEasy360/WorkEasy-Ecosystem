@@ -32,6 +32,7 @@ from tests.universal_sso.conftest import (
     authorize_query,
     path_of,
     query_of,
+    refused_after_chooser,
     resume_token_of,
 )
 from workeasy360.platform.ecosystem import protocol
@@ -58,12 +59,14 @@ def _codes(registration) -> int:
 def test_the_default_is_no_way_around_entitlement(
     client, signing_key, sso_product, organization_factory, signed_in
 ):
+    """ADR-074: the default asks which account first; "Continue as" then
+    meets ``product_not_entitled``, and no code is ever minted."""
     crm = sso_product("crm")
     org, _membership, user = organization_factory()
     signed_in(user, sign_in_preference=None)
-    assert query_of(_authorize(client, crm, str(org.id)))["error"] == [
-        protocol.PRODUCT_NOT_ENTITLED
-    ]
+    refused_after_chooser(
+        client, _authorize(client, crm, str(org.id)), protocol.PRODUCT_NOT_ENTITLED
+    )
     assert _codes(crm) == 0
 
 
@@ -73,9 +76,9 @@ def test_the_default_is_no_way_around_a_seat(
     crm = sso_product("crm")
     org = entitled_org("crm", seat=False)
     signed_in(org["user"], sign_in_preference=None)
-    assert query_of(_authorize(client, crm, org["organization_id"]))["error"] == [
-        protocol.PRODUCT_NO_SEAT
-    ]
+    refused_after_chooser(
+        client, _authorize(client, crm, org["organization_id"]), protocol.PRODUCT_NO_SEAT
+    )
     assert _codes(crm) == 0
 
 
@@ -98,7 +101,7 @@ def test_the_default_is_no_way_past_the_end_of_a_trial(
 ):
     """Trial access requires an active trial: while the 7-day trial runs the
     default (Ask once) shows the chooser; from ``ends_at`` (server time, before
-    any sweeper) refused - before any question."""
+    any sweeper) "Continue as" is refused (ADR-074: after the question)."""
     from django.utils import timezone
 
     books = sso_product("books")
@@ -110,9 +113,12 @@ def test_the_default_is_no_way_past_the_end_of_a_trial(
 
     monkeypatch.setattr(timezone, "now", lambda: trial["ends_at"] + timedelta(seconds=1))
     signed_in(trial["user"], sign_in_preference=None)
-    assert query_of(_authorize(client, books, trial["organization_id"]))["error"] == [
-        protocol.PRODUCT_NOT_ENTITLED
-    ]
+    refused_after_chooser(
+        client,
+        _authorize(client, books, trial["organization_id"]),
+        protocol.PRODUCT_NOT_ENTITLED,
+    )
+    assert _codes(books) == 0
 
 
 def test_the_default_is_no_way_into_a_product_that_is_not_ready(
@@ -174,12 +180,12 @@ def test_the_only_organization_is_checked_like_a_named_one(
     crm = sso_product("crm")
     _org, _membership, user = organization_factory()
     signed_in(user, sign_in_preference=None)
-    assert query_of(_authorize(client, crm, None))["error"] == [
-        protocol.PRODUCT_NOT_ENTITLED
-    ]
+    refused_after_chooser(
+        client, _authorize(client, crm, None), protocol.PRODUCT_NOT_ENTITLED
+    )
     unseated = entitled_org("crm", seat=False)
     signed_in(unseated["user"], sign_in_preference=None)
-    assert query_of(_authorize(client, crm, None))["error"] == [protocol.PRODUCT_NO_SEAT]
+    refused_after_chooser(client, _authorize(client, crm, None), protocol.PRODUCT_NO_SEAT)
     assert _codes(crm) == 0
 
 
@@ -487,7 +493,11 @@ GUARDS = {
         ("test_one_login_guards", "test_the_default_is_no_way_around_entitlement"),
         (
             "test_architecture",
-            "test_the_preference_is_read_only_after_every_access_check",
+            "test_every_access_check_is_asked_before_the_preference_and_decides_before_a_code",
+        ),
+        (
+            "test_authorize",
+            "test_the_chooser_comes_before_a_commercial_refusal_which_still_decides",
         ),
     ],
     "trial access requires an active trial": [

@@ -74,6 +74,36 @@ def resume_token_of(response) -> str:
     return query_of(response)["resume"][0]
 
 
+def choose_at_chooser(client, asked, choice: str) -> str:
+    """ADR-074: ``asked`` must be the access chooser. Answer it; return the
+    server's destination for the browser."""
+    assert path_of(asked) == "/product-access", asked["Location"]
+    answered = client.post(
+        CHOOSE,
+        {"resume": resume_token_of(asked), "choice": choice, "remember": False},
+        content_type="application/json",
+    )
+    assert answered.status_code == 200, answered.content
+    return answered.json()["redirect_url"]
+
+
+def answer_chooser(client, asked):
+    """Answer the chooser with "Continue as" and follow the server's
+    destination - the resume, which runs every check again for whoever
+    answered. Returns the resume's response."""
+    return client.get(choose_at_chooser(client, asked, "workeasy360"))
+
+
+def refused_after_chooser(client, asked, error: str) -> None:
+    """The chooser came first, and "Continue as" then delivers ``error`` to the
+    product with no code (ADR-074: a refusal is delivered after the account
+    question, never turned into access)."""
+    resumed = answer_chooser(client, asked)
+    found = query_of(resumed)
+    assert found.get("error") == [error], resumed["Location"]
+    assert "code" not in found
+
+
 @pytest.fixture
 def sso_product(register_product):
     """Register a product with an ADR-044 sign-in declaration.
