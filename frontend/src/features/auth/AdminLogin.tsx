@@ -9,6 +9,7 @@ import { login } from "@/lib/api/auth";
 import { useSession } from "@/lib/auth/useSession";
 import { loginErrorMessage } from "./LoginForm";
 import { destinationAfterSignIn } from "./signInMode";
+import { TwoStepSignIn, twoStepChallenge } from "./TwoStepSignIn";
 import styles from "./AdminLogin.module.css";
 
 const FEATURES = [
@@ -200,6 +201,9 @@ export function AdminLoginScreen() {
   const [remember, setRemember] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [challenge, setChallenge] = useState<string | null>(null);
+
+  const proceed = () => router.replace(destinationAfterSignIn("admin", searchParams.get("next")));
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -210,9 +214,15 @@ export function AdminLoginScreen() {
     setBusy(true);
     try {
       await login(email.trim(), password, { remember });
-      router.replace(destinationAfterSignIn("admin", searchParams.get("next")));
+      proceed();
     } catch (err) {
-      setError(loginErrorMessage(err));
+      const next = twoStepChallenge(err);
+      if (next) {
+        setPassword("");
+        setChallenge(next);
+      } else {
+        setError(loginErrorMessage(err));
+      }
       setBusy(false);
     }
   }
@@ -225,77 +235,89 @@ export function AdminLoginScreen() {
       footer={<Ecosystem />}
     >
       <PortalBadge />
-      <form method="post" onSubmit={submit} noValidate className={styles.form}>
-        <div>
-          <label className={styles.label} htmlFor={emailId}>
-            Email Address
-          </label>
-          <span className={styles.inputWrap}>
-            <Icon name="mail" size={18} />
-            <input
-              id={emailId}
-              className={styles.input}
-              type="email"
-              name="email"
-              autoComplete="username"
-              placeholder="Enter your email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              aria-describedby={described}
-              aria-invalid={error ? true : undefined}
-            />
-          </span>
-        </div>
-        <div>
-          <label className={styles.label} htmlFor={passwordId}>
-            Password
-          </label>
-          <span className={styles.inputWrap}>
-            <Icon name="lock" size={18} />
-            <input
-              id={passwordId}
-              className={styles.input}
-              type={show ? "text" : "password"}
-              name="password"
-              autoComplete="current-password"
-              placeholder="Enter your password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              aria-describedby={described}
-              aria-invalid={error ? true : undefined}
-            />
-            <button
-              type="button"
-              className={styles.reveal}
-              aria-pressed={show}
-              aria-label={show ? "Hide password" : "Show password"}
-              onClick={() => setShow((v) => !v)}
-            >
-              <Icon name={show ? "eye" : "eyeOff"} size={18} />
-            </button>
-          </span>
-        </div>
-        <div className={styles.row}>
-          <label className={styles.check}>
-            <input type="checkbox" name="remember" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-            Remember Me
-          </label>
-          <Link href="/forgot-password?mode=admin" className={styles.forgot}>
-            Forgot Password?
-          </Link>
-        </div>
-        {error && (
-          <p id={errorId} className={styles.error} role="alert">
-            {error}
-          </p>
-        )}
-        <button type="submit" className={styles.submit} disabled={busy}>
-          <Icon name="login" size={20} />
-          {busy ? "Signing in…" : "Sign In to Admin"}
-        </button>
-      </form>
+      {challenge ? (
+        <TwoStepSignIn
+          look="split"
+          challenge={challenge}
+          onSignedIn={proceed}
+          onRestart={(message) => {
+            setChallenge(null);
+            setError(message);
+          }}
+        />
+      ) : (
+        <form method="post" onSubmit={submit} noValidate className={styles.form}>
+          <div>
+            <label className={styles.label} htmlFor={emailId}>
+              Email Address
+            </label>
+            <span className={styles.inputWrap}>
+              <Icon name="mail" size={18} />
+              <input
+                id={emailId}
+                className={styles.input}
+                type="email"
+                name="email"
+                autoComplete="username"
+                placeholder="Enter your email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                aria-describedby={described}
+                aria-invalid={error ? true : undefined}
+              />
+            </span>
+          </div>
+          <div>
+            <label className={styles.label} htmlFor={passwordId}>
+              Password
+            </label>
+            <span className={styles.inputWrap}>
+              <Icon name="lock" size={18} />
+              <input
+                id={passwordId}
+                className={styles.input}
+                type={show ? "text" : "password"}
+                name="password"
+                autoComplete="current-password"
+                placeholder="Enter your password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                aria-describedby={described}
+                aria-invalid={error ? true : undefined}
+              />
+              <button
+                type="button"
+                className={styles.reveal}
+                aria-pressed={show}
+                aria-label={show ? "Hide password" : "Show password"}
+                onClick={() => setShow((v) => !v)}
+              >
+                <Icon name={show ? "eye" : "eyeOff"} size={18} />
+              </button>
+            </span>
+          </div>
+          <div className={styles.row}>
+            <label className={styles.check}>
+              <input type="checkbox" name="remember" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+              Remember Me
+            </label>
+            <Link href="/forgot-password?mode=admin" className={styles.forgot}>
+              Forgot Password?
+            </Link>
+          </div>
+          {error && (
+            <p id={errorId} className={styles.error} role="alert">
+              {error}
+            </p>
+          )}
+          <button type="submit" className={styles.submit} disabled={busy}>
+            <Icon name="login" size={20} />
+            {busy ? "Signing in…" : "Sign In to Admin"}
+          </button>
+        </form>
+      )}
     </AdminAuthFrame>
   );
 }

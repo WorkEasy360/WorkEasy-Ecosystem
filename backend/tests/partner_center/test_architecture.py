@@ -192,8 +192,12 @@ def test_no_new_tables_for_partners_staff_or_identity():
         # 0009 adds the change-of-sign-in-email link (ADR-066) - tests/unified_login
         # pins what it does. 0010 adds no table and no column: two new
         # AccountEvent kinds, product sign-in and product signed out (ADR-072);
-        # tests/accounts_center pins what they record.
-        "platform/identity": "0010_account_event_product_sign_in.py",
+        # tests/accounts_center pins what they record. 0011 adds the person's own
+        # account tables of Accounts V3 - photo, two-step method, recovery codes,
+        # sign-in code step, notification choices, account-support case - and
+        # profile columns (ADR-075); none is a partner or staff table, and
+        # tests/accounts_v3 pins what each does.
+        "platform/identity": "0011_accounts_v3.py",
     }
     for app, newest in expected.items():
         found = sorted(p.name for p in (PACKAGE / app / "migrations").glob("0*.py"))[-1]

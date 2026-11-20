@@ -12,11 +12,19 @@ import { describeError, when } from "@/features/controlplane/ui";
 import styles from "./Console.module.css";
 import local from "./ConsoleScreens.module.css";
 import { usePortalRouter } from "@/lib/portalRouter";
+import { portalSignInPath } from "@/lib/portals";
+
+/** Where a signed-out invitee comes back to after signing in. Only the page: the
+ * one-time token lives in the link's fragment and is never put in an address that
+ * reaches a server, so the person opens the emailed link once more (now signed in). */
+export const INVITATION_SIGN_IN = portalSignInPath("app", "/invitations/accept");
 
 
 type View =
   | { status: "loading" }
   | { status: "invalid" }
+  /** No token at all - e.g. back from signing in, which never carries the token. */
+  | { status: "missing" }
   | { status: "error"; message: string }
   | { status: "ready"; preview: InvitationPreview; token: string };
 
@@ -48,7 +56,7 @@ export function AcceptInvitation() {
     let cancelled = false;
     const run = async () => {
       if (!value) {
-        setView({ status: "invalid" });
+        setView({ status: "missing" });
         return;
       }
       try {
@@ -78,7 +86,19 @@ export function AcceptInvitation() {
             <p aria-live="polite">Checking your invitation…</p>
           </>
         )}
-        {view.status === "invalid" && (
+        {view.status === "missing" && signedInAs && (
+          <>
+            <h1 className={styles.gateTitle}>Open your invitation link again</h1>
+            <p>
+              You&apos;re signed in as {signedInAs}. To join, open the invitation link from your email once more - the link itself is what
+              lets you in, so it is never kept in an address.
+            </p>
+            <p>
+              <Link href="/dashboard">Go to your dashboard</Link>
+            </p>
+          </>
+        )}
+        {(view.status === "invalid" || (view.status === "missing" && !signedInAs)) && (
           <>
             <h1 className={styles.gateTitle}>This invitation can&apos;t be used</h1>
             <p role="alert">
@@ -245,7 +265,7 @@ function Invitation({
           again.
         </p>
         <p>
-          <Link className="w360-btn w360-btn-primary" href="/login">
+          <Link className="w360-btn w360-btn-primary" href={INVITATION_SIGN_IN}>
             Sign in
           </Link>
         </p>

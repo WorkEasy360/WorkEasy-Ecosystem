@@ -6,10 +6,11 @@ import { LoadGate, MoreButton, Table, useAction, useLoad, usePaged, when } from 
 import { Badge, Button, useConfirm } from "@/features/controlplane/kit";
 import { Panel } from "@/features/console/consoleUi";
 import { describeAccountEvent } from "@/features/console/MySecurityScreen";
-import { CenterShell } from "./CenterShell";
 import styles from "./Account.module.css";
 
-/** Active Sessions: one row per WorkEasy360 sign-in (a device), never one per portal. */
+/** Devices & Sessions -> Active Sessions: one row per WorkEasy360 sign-in (a device),
+ * never one per portal. Signing one out ends it everywhere it was signed in, and tells
+ * the products it opened. */
 export function ActiveSessions() {
   const confirm = useConfirm();
   const [load, reload] = useLoad(() => accountCenterApi.sessions(), []);
@@ -21,11 +22,7 @@ export function ActiveSessions() {
   const revoke = (s: SignInRow) =>
     void act(() => accountApi.revokeSession(s.session_id), `Signed out ${s.device_label}, on every host it was signed in to.`);
   return (
-    <CenterShell
-      current="sessions"
-      title="Active Sessions"
-      lead="Every device and browser where this account is signed in to WorkEasy360. Signing one out ends it everywhere it was signed in, and tells the products it opened."
-    >
+    <>
       {confirm.dialog}
       <Panel title="Where you're signed in">
         <p id={noteId} className={styles.muted}>
@@ -156,19 +153,19 @@ export function ActiveSessions() {
           </>
         )}
       </Panel>
-    </CenterShell>
+    </>
   );
 }
 
-/** Login History: every sign-in, refused or kept, to WorkEasy360 and to products. */
+/** Devices & Sessions -> Login History: every sign-in, refused or kept, to WorkEasy360
+ * and to products. */
 export function LoginHistory() {
   const [scope, setScope] = useState<"sign_ins" | "all">("sign_ins");
   const page = usePaged((cursor) => accountCenterApi.history(cursor, scope), [scope]);
   return (
-    <CenterShell
-      current="history"
+    <Panel
       title="Login History"
-      lead="Successful and failed sign-ins, and the products you signed in to with WorkEasy360. Kept for about 13 months."
+      description="Successful and failed sign-ins, and the products you signed in to with WorkEasy360. Kept for about 13 months."
     >
       <div role="group" aria-label="Show" className={styles.filters}>
         <button type="button" className="w360-btn w360-btn-secondary" aria-pressed={scope === "sign_ins"} onClick={() => setScope("sign_ins")}>
@@ -178,7 +175,7 @@ export function LoginHistory() {
           All security events
         </button>
       </div>
-      <Panel title={scope === "all" ? "Security events" : "Sign-ins"}>
+      <div className={styles.section}>
         {page.state === "loading" ? (
           <p className={styles.muted}>Loading your history…</p>
         ) : page.state !== "ready" ? (
@@ -204,7 +201,7 @@ export function LoginHistory() {
             <MoreButton hasMore={page.hasMore} onMore={() => void page.more()} />
           </>
         )}
-      </Panel>
-    </CenterShell>
+      </div>
+    </Panel>
   );
 }

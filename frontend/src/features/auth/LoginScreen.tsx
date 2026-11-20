@@ -156,6 +156,12 @@ function SignInCard({ portal }: { portal: HostPortal }) {
           {reauthenticating(searchParams) ? "Confirm it's you" : platform || mode === "admin" ? SIGN_IN_TITLE[mode] : "Sign in"}
         </h2>
       </div>
+      {searchParams.get("closed") === "1" && (
+        // Accounts V3: the person has just closed their account (Settings -> Close account).
+        <p role="status" className={styles.note}>
+          Your account is closed.
+        </p>
+      )}
       {reauthenticating(searchParams) && (
         <p className={styles.note}>
           The product you are opening asked WorkEasy360 to check it is really you. Enter your WorkEasy360 email and password

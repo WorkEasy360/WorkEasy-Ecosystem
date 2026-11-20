@@ -92,17 +92,118 @@ def login_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"code": outcome.reason}, status=401)
 
     user = outcome.user
-    establish_session(request, user, password=password)
-    if user.is_staff:
-        from workeasy360.platform.administration.staff_users import record_staff_session
+    from workeasy360.platform.identity import two_step
 
-        record_staff_session(user, signed_in=True, where=connection_facts(request))
+    if two_step.is_enabled(user.id):
+        # ADR-075: the password was right; the session waits for the code.
+        # What this step learnt travels with the challenge - never the password.
+        remember = body.get("remember")
+        challenge = two_step.open_challenge(
+            user,
+            auth_state={
+                "remember": remember if isinstance(remember, bool) else None,
+                "noncompliant": noncompliant_organizations(user, password),
+            },
+        )
+        metrics.increment("identity_login_two_step_required_total")
+        return JsonResponse(
+            {
+                "code": "two_step_required",
+                "challenge": challenge,
+                "detail": "Enter the 6-digit code from your authenticator app.",
+            },
+            status=401,
+        )
+    establish_session(request, user, password=password)
+    _after_sign_in(request, user)
     _apply_remember_me(request, body.get("remember"))
 
     metrics.increment("identity_login_success_total")
     return JsonResponse(
         {"user_id": str(user.id), "email": user.email, "name": user.full_name}
     )
+
+
+@require_http_methods(["POST"])
+def login_two_step_view(request: HttpRequest) -> JsonResponse:
+    """The second half of a sign-in with two-step verification on (ADR-075):
+    the challenge from ``login_view`` and a code from the authenticator app
+    (or a recovery code). Answers exactly what a successful ``login_view``
+    does. CSRF-protected like the password step."""
+    from workeasy360.interfaces.api.v1.control_plane_http import limited
+    from workeasy360.platform.identity import two_step
+
+    body = _body(request)
+    token = body.get("challenge")
+    owner = two_step.challenge_user(token)
+    for bucket in ("two_step_login", "two_step_login_daily"):
+        blocked = limited(request, bucket, user=owner)
+        if blocked is not None:
+            return blocked
+    from workeasy360.contracts.errors import TwoStepCodeInvalid
+
+    try:
+        passed = two_step.pass_challenge(token, body.get("code"))
+    except TwoStepCodeInvalid:
+        if owner is not None:
+            from workeasy360.platform.administration import account_security
+
+            where = connection_facts(request)
+            account_security.two_step_code_refused(
+                owner, ip_prefix=where["ip_prefix"], device_label=where["device_label"]
+            )
+        raise
+    user = passed.user
+    establish_session(
+        request,
+        user,
+        password="",
+        noncompliant=list(passed.auth_state.get("noncompliant") or []),
+        second_factor_checked=True,
+    )
+    where = connection_facts(request)
+    if passed.used == "recovery_code":
+        from workeasy360.platform.administration import account_security
+
+        account_security.recovery_code_spent_at_sign_in(
+            user, ip_prefix=where["ip_prefix"], device_label=where["device_label"]
+        )
+    _after_sign_in(request, user)
+    _apply_remember_me(request, passed.auth_state.get("remember"))
+    metrics.increment("identity_login_success_total")
+    return JsonResponse(
+        {"user_id": str(user.id), "email": user.email, "name": user.full_name}
+    )
+
+
+def _after_sign_in(request: HttpRequest, user: Any) -> None:
+    """What follows every interactive sign-in: the staff audit entry and the
+    new-device alert (ADR-075). Neither can fail the sign-in."""
+    where = connection_facts(request)
+    if user.is_staff:
+        from workeasy360.platform.administration.staff_users import record_staff_session
+
+        record_staff_session(user, signed_in=True, where=where)
+    from workeasy360.platform.administration import account_security
+
+    account_security.alert_if_new_device(
+        user, ip_prefix=where["ip_prefix"], device_label=where["device_label"]
+    )
+
+
+def noncompliant_organizations(user: Any, password: str) -> list[str]:
+    """The organizations whose password minimum ``password`` falls short of -
+    judged now, while the password is in hand (it is never available again)."""
+    from workeasy360.contracts.values.access_policy import password_meets
+    from workeasy360.platform.organizations.selectors import (
+        password_min_lengths_for_user,
+    )
+
+    return [
+        organization_id
+        for organization_id, minimum in password_min_lengths_for_user(user.id).items()
+        if not password_meets(password, min_length=minimum)
+    ]
 
 
 def _apply_remember_me(request: HttpRequest, remember: Any) -> None:
@@ -133,7 +234,14 @@ def connection_facts(request: HttpRequest) -> dict[str, str]:
     }
 
 
-def establish_session(request: HttpRequest, user: Any, *, password: str) -> None:
+def establish_session(
+    request: HttpRequest,
+    user: Any,
+    *,
+    password: str,
+    noncompliant: list[str] | None = None,
+    second_factor_checked: bool = False,
+) -> None:
     """Sign ``user`` in on this request's session - the one place a session
     is established (the login form and an accepted invitation both use it).
 
@@ -147,7 +255,13 @@ def establish_session(request: HttpRequest, user: Any, *, password: str) -> None
     from django.contrib.auth import SESSION_KEY
 
     from workeasy360.contracts.values.access_policy import password_meets
-    from workeasy360.platform.identity import handoff
+
+    # Who was signed in on this browser session before, and under which
+    # sign-in (ADR-044: re-authentication for ``prompt=login``, and a
+    # different person signing in) - read before django_login flushes it.
+    # ADR-075, the safety net: whatever path got here, an account with
+    # two-step verification on is signed in only after its code.
+    from workeasy360.platform.identity import handoff, two_step
     from workeasy360.platform.identity.account import record_sign_in
     from workeasy360.platform.identity.sessions import (
         SESSION_DEVICE_KEY,
@@ -162,9 +276,11 @@ def establish_session(request: HttpRequest, user: Any, *, password: str) -> None
         SESSION_PASSWORD_NONCOMPLIANT_KEY,
     )
 
-    # Who was signed in on this browser session before, and under which
-    # sign-in (ADR-044: re-authentication for ``prompt=login``, and a
-    # different person signing in) - read before django_login flushes it.
+    if not second_factor_checked and two_step.is_enabled(user.pk):
+        from workeasy360.contracts.errors import TwoStepChallengeExpired
+
+        raise TwoStepChallengeExpired("Sign in with your password and your code.")
+
     previous_user = request.session.get(SESSION_KEY)
     previous_sign_in = request.session.get(SESSION_SIGN_IN_ID_KEY)
 
@@ -198,11 +314,17 @@ def establish_session(request: HttpRequest, user: Any, *, password: str) -> None
                 previous_user, previous_sign_in, reason=REASON_ACCOUNT_SWITCHED
             )
         request.session[SESSION_SIGN_IN_ID_KEY] = uuid.uuid4().hex
-    request.session[SESSION_PASSWORD_NONCOMPLIANT_KEY] = [
-        organization_id
-        for organization_id, minimum in password_min_lengths_for_user(user.id).items()
-        if not password_meets(password, min_length=minimum)
-    ]
+    # ADR-075: after a two-step code the password is long gone; the password
+    # step judged it and passed the answer on.
+    request.session[SESSION_PASSWORD_NONCOMPLIANT_KEY] = (
+        list(noncompliant)
+        if noncompliant is not None
+        else [
+            organization_id
+            for organization_id, minimum in password_min_lengths_for_user(user.id).items()
+            if not password_meets(password, min_length=minimum)
+        ]
+    )
     record_sign_in(user, ip_prefix=where["ip_prefix"], device_label=where["device_label"])
 
 

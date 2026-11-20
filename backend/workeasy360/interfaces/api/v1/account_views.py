@@ -365,3 +365,190 @@ def _sign_in_preferences(user_id: Any) -> dict[str, Any]:
         "default_choices": [c.value for c in DEFAULT_CHOICES],
         "products": rows,
     }
+
+
+# --- Accounts V3 (ADR-075): the pending email change ---------------------------------
+
+
+@require_http_methods(["GET", "DELETE"])
+@never_cache
+def email_pending_view(request: HttpRequest) -> JsonResponse:
+    """``GET``: the change of sign-in email waiting for its link, if any.
+    ``DELETE``: withdraw it. The current email keeps working throughout."""
+    from workeasy360.platform.administration import self_service
+
+    user = _user(request)
+    if request.method == "DELETE":
+        where = connection_facts(request)
+        self_service.cancel_email_change(
+            user.id, ip_prefix=where["ip_prefix"], device_label=where["device_label"]
+        )
+        return JsonResponse({"pending": None})
+    return JsonResponse({"pending": self_service.pending_email_change(user.id)})
+
+
+@require_http_methods(["POST"])
+@never_cache
+def email_pending_resend_view(request: HttpRequest) -> JsonResponse:
+    from workeasy360.platform.administration import self_service
+    from workeasy360.platform.identity import portals as portal_links
+
+    user = _user(request)
+    blocked = limited(request, "email_change_resend", user=user)
+    if blocked is not None:
+        return blocked
+    pending = self_service.resend_email_change(
+        user.id, portal=portal_links.request_portal(request)
+    )
+    return JsonResponse({"pending": pending}, status=202)
+
+
+# --- Accounts V3 (ADR-075): personal two-step verification ----------------------------
+
+
+def _two_step_limited(request: HttpRequest, user: Any) -> JsonResponse | None:
+    for bucket in ("two_step", "two_step_daily"):
+        blocked = limited(request, bucket, user=user)
+        if blocked is not None:
+            return blocked
+    return None
+
+
+def _code_refused(request: HttpRequest, user: Any) -> None:
+    """A wrong current code on an account change: counted toward the same
+    hourly notice as the sign-in's (someone holds the password and a live
+    session)."""
+    from workeasy360.platform.administration import account_security
+
+    where = connection_facts(request)
+    account_security.two_step_code_refused(
+        user,
+        ip_prefix=where["ip_prefix"],
+        device_label=where["device_label"],
+        at_sign_in=False,
+    )
+
+
+@require_http_methods(["GET"])
+@never_cache
+def two_step_view(request: HttpRequest) -> JsonResponse:
+    from workeasy360.platform.identity import two_step
+
+    user = _user(request)
+    return JsonResponse(two_step.status(user.id))
+
+
+@require_http_methods(["POST"])
+@never_cache
+def two_step_setup_view(request: HttpRequest) -> JsonResponse:
+    """Start setting up (or replacing) the authenticator. Password, and a
+    current code when two-step is already on. The secret is shown once."""
+    from workeasy360.platform.identity import two_step
+
+    user = _user(request)
+    blocked = _two_step_limited(request, user)
+    if blocked is not None:
+        return blocked
+    from workeasy360.contracts.errors import TwoStepCodeInvalid
+
+    body = _body(request)
+    try:
+        setup = two_step.begin_setup(
+            user.id, password=body.get("password"), code=body.get("code")
+        )
+    except TwoStepCodeInvalid:
+        _code_refused(request, user)
+        raise
+    return JsonResponse(
+        {
+            "secret": setup.secret,
+            "otpauth_uri": setup.otpauth_uri,
+            "qr_svg_data_uri": setup.qr_svg_data_uri,
+            "expires_at": setup.expires_at.isoformat(),
+        }
+    )
+
+
+@require_http_methods(["POST"])
+@never_cache
+def two_step_confirm_view(request: HttpRequest) -> JsonResponse:
+    """A code from the new authenticator turns it on. The recovery codes are
+    in this answer and nowhere else; every other session ends."""
+    from workeasy360.platform.administration import account_security
+
+    user = _user(request)
+    blocked = _two_step_limited(request, user)
+    if blocked is not None:
+        return blocked
+    body = _body(request)
+    where = connection_facts(request)
+    done = account_security.confirm_two_step(
+        user.id,
+        code=body.get("code"),
+        keep_public_id=session_public_id(request.session),
+        ip_prefix=where["ip_prefix"],
+        device_label=where["device_label"],
+    )
+    return JsonResponse(
+        {
+            "enabled": True,
+            "replaced": done.replaced,
+            "recovery_codes": done.recovery_codes,
+            "other_sessions_ended": done.other_sessions_ended,
+        }
+    )
+
+
+@require_http_methods(["POST"])
+@never_cache
+def two_step_recovery_codes_view(request: HttpRequest) -> JsonResponse:
+    from workeasy360.platform.administration import account_security
+
+    user = _user(request)
+    blocked = _two_step_limited(request, user)
+    if blocked is not None:
+        return blocked
+    from workeasy360.contracts.errors import TwoStepCodeInvalid
+
+    body = _body(request)
+    where = connection_facts(request)
+    try:
+        codes = account_security.regenerate_codes(
+            user.id,
+            password=body.get("password"),
+            code=body.get("code"),
+            ip_prefix=where["ip_prefix"],
+            device_label=where["device_label"],
+        )
+    except TwoStepCodeInvalid:
+        _code_refused(request, user)
+        raise
+    return JsonResponse({"recovery_codes": codes})
+
+
+@require_http_methods(["POST"])
+@never_cache
+def two_step_disable_view(request: HttpRequest) -> JsonResponse:
+    from workeasy360.platform.administration import account_security
+
+    user = _user(request)
+    blocked = _two_step_limited(request, user)
+    if blocked is not None:
+        return blocked
+    from workeasy360.contracts.errors import TwoStepCodeInvalid
+
+    body = _body(request)
+    where = connection_facts(request)
+    try:
+        ended = account_security.turn_off_two_step(
+            user.id,
+            password=body.get("password"),
+            code=body.get("code"),
+            keep_public_id=session_public_id(request.session),
+            ip_prefix=where["ip_prefix"],
+            device_label=where["device_label"],
+        )
+    except TwoStepCodeInvalid:
+        _code_refused(request, user)
+        raise
+    return JsonResponse({"enabled": False, "other_sessions_ended": ended})

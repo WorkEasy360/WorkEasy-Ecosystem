@@ -76,6 +76,8 @@ const PUBLIC_PATHS = [
   "/partner/accept-invitation",
   // 2026-11-10: "Continue as Guest" - a static preview, no session and no API call.
   "/partner/preview",
+  // Accounts V3: account-security help, for a person who cannot sign in.
+  "/help/account",
 ];
 
 /** ADR-053: a partner's branded Store (`/store/<partner>`) is browsable signed

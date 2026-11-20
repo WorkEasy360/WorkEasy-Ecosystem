@@ -358,6 +358,15 @@ def resume(request: HttpRequest) -> HttpResponse:
         organization_id = authorization.organization_for(
             user_id=user.pk, named=organization_id
         )
+        if organization_id is not None and parked.refused_organization_id is not None:
+            # ADR-075: the person could not open the organization the product
+            # asked for and has now chosen one of their own (or has exactly
+            # one): the product's own sign-in restarts with it.
+            restarted = _restart_with_own_organization(
+                request, user, pending_request, organization_id, answered=True
+            )
+            if restarted is not None:
+                return restarted
         if organization_id is None:
             # The chooser did not supply one either. Re-park under a fresh
             # token rather than fail to the product - the user is signed in
@@ -427,6 +436,17 @@ def resume(request: HttpRequest) -> HttpResponse:
         # Ask once does not ask it again (ADR-066).
         sign_in.record_entry(request, pending_request.integration.product_code)
     except protocol.OAuthError as exc:
+        offered = _offer_own_organization(
+            request,
+            user,
+            pending_request,
+            exc,
+            source,
+            answered=parked.user_id is not None
+            or not parked.signed_in_before_parking(_session_authenticated_at(request)),
+        )
+        if offered is not None:
+            return offered
         return _redirect_pending_error(pending_request, exc)
 
     _granted_log(pending_request, subject.organization_id, path="resumed", source=source)
@@ -434,6 +454,93 @@ def resume(request: HttpRequest) -> HttpResponse:
     return HttpResponseRedirect(
         _with_query(granted.redirect_uri, {"code": granted.code, "state": granted.state})
     )
+
+
+def _offer_own_organization(
+    request: HttpRequest,
+    user: Any,
+    pending_request: Any,
+    exc: Any,
+    source: str,
+    *,
+    answered: bool,
+) -> HttpResponseRedirect | None:
+    """ADR-075: a person who cannot open the organization the product named
+    (another person's, typically after "Use another account") is offered
+    their own organizations instead of a dead end - when they have any and the
+    product has a launch URL to restart from. Nothing of the named
+    organization is shown, and "no such organization" and "not a member" stay
+    one answer: both arrive here as ``membership_inactive``. The membership
+    of whatever they choose is checked again at resume."""
+    from dataclasses import replace
+
+    from workeasy360.platform.organizations.selectors import organizations_for_user
+
+    if source != "named" or exc.error != protocol.MEMBERSHIP_INACTIVE:
+        return None
+    if pending_request.organization_id is None:
+        return None
+    if not getattr(pending_request.integration.manifest_obj, "launch_url", ""):
+        return None
+    own = organizations_for_user(user.pk, limit=2).items
+    if not own:
+        return None
+    if len(own) == 1:
+        # One organization of their own: nothing to choose.
+        only = UUID(str(own[0]["organization_id"]))
+        restarted = _restart_with_own_organization(
+            request, user, pending_request, only, answered=answered
+        )
+        if restarted is not None:
+            return restarted
+    requeued = authorization.create_pending(
+        replace(pending_request, organization_id=None),
+        user_id=user.pk,
+        refused_organization_id=pending_request.organization_id,
+    )
+    metrics.increment("ecosystem_authorizations_total", result="own_organization_offered")
+    return HttpResponseRedirect(
+        f"{portal_links.auth_url()}/organizations/select?resume={requeued.token}"
+    )
+
+
+def _restart_with_own_organization(
+    request: HttpRequest,
+    user: Any,
+    pending_request: Any,
+    organization_id: UUID,
+    *,
+    answered: bool,
+) -> HttpResponseRedirect | None:
+    """ADR-075: restart the product's own sign-in for one of this person's
+    organizations - the product refuses a code for an organization other than
+    the one it asked for. The membership (and the organization's access
+    policy) is checked here first; the restart is recorded as this sign-in's
+    answer for the product, so the restarted request asks nothing again."""
+    try:
+        authorization.resolve_subject(
+            user_id=user.pk,
+            organization_id=organization_id,
+            facts=_session_facts(request, organization_id),
+        )
+    except protocol.OAuthError as exc:
+        return _redirect_pending_error(pending_request, exc)
+    restart = authorization.launch_with_organization(
+        pending_request.integration, organization_id
+    )
+    if restart is None:
+        return None
+    if answered:
+        # Only when this person said which account in this very flow (at the
+        # chooser, or by signing in for it): the restart then does not ask
+        # again. Otherwise their preference applies to the restart as usual.
+        sign_in.record_entry(request, pending_request.integration.product_code)
+    metrics.increment("ecosystem_authorizations_total", result="restarted")
+    logger.info(
+        "ecosystem.authorize.restarted_with_own_organization",
+        product_code=pending_request.integration.product_code,
+    )
+    return HttpResponseRedirect(restart)
 
 
 def _park_and_redirect(
@@ -836,7 +943,13 @@ def _token_response(redeemed: Any) -> dict[str, Any]:
             **_organization_claims(redeemed.organization_id, redeemed.scope),
         },
     )
-    access_token = tokens.issue_access_token(subject)
+    from workeasy360.platform.identity.selectors import session_epoch
+
+    access_token = tokens.issue_access_token(
+        subject,
+        session_epoch=session_epoch(redeemed.user_id),
+        sign_in_id=redeemed.sign_in_id,
+    )
     # Remembered only for products that take back-channel logout: who must be
     # told when this sign-in ends (ADR-069).
     backchannel.record_product_sign_in(
@@ -976,7 +1089,32 @@ def userinfo(request: HttpRequest) -> JsonResponse:
             )
         )
 
-    from workeasy360.platform.identity.selectors import profile_claims
+    from workeasy360.platform.identity.selectors import (
+        profile_claims,
+        session_epoch,
+        sign_in_is_live,
+    )
+
+    # ADR-075: revocation is effective on the next request. The account must
+    # still be active under the epoch the token was issued in, and a token
+    # that names its sign-in (``w360_sin``, every product's) needs that
+    # sign-in still open.
+    epoch = session_epoch(claims["sub"])
+    revoked = epoch is None
+    if not revoked and "w360_sep" in claims:
+        revoked = int(claims["w360_sep"]) != int(epoch)
+    if not revoked and claims.get("w360_sin"):
+        revoked = not sign_in_is_live(claims["sub"], claims["w360_sin"])
+    if revoked:
+        metrics.increment("ecosystem_userinfo_revoked_total")
+        return _error_response(
+            protocol.OAuthError(
+                protocol.INVALID_TOKEN,
+                "The access token is invalid or expired.",
+                http_status=401,
+                headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            )
+        )
 
     scopes = tuple(s for s in str(claims.get("scope", "")).split(" ") if s)
     body: dict[str, Any] = {"sub": claims["sub"]}

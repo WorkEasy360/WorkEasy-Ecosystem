@@ -506,3 +506,28 @@ env.check(
 )
 
 env.require_all(context="production configuration")
+
+
+def _fernet_key_ok(raw: bytes) -> bool:
+    import base64
+    import binascii
+
+    try:
+        return len(base64.urlsafe_b64decode(raw)) == 32
+    except (binascii.Error, ValueError):
+        return False
+
+
+# ADR-075: personal two-step verification is optional per deployment (absent =
+# unavailable), but a key that is set must be a real Fernet key and none of the
+# other secrets.
+env.check(
+    not TWO_STEP_KEY or _fernet_key_ok(TWO_STEP_KEY),
+    "W360_TWO_STEP_KEY must be a Fernet key: 32 bytes, url-safe base64 "
+    "(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())').",
+)
+env.check(
+    not TWO_STEP_KEY
+    or TWO_STEP_KEY.decode("ascii") not in {SECRET_KEY, FILE_URL_SIGNING_KEY},
+    "W360_TWO_STEP_KEY must differ from W360_SECRET_KEY and W360_FILE_URL_SIGNING_KEY.",
+)

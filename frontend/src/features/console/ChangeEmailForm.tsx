@@ -13,7 +13,16 @@ import { DialogHead, Modal, dialog } from "@/features/controlplane/Modal";
  * The current password is required. A button that opens the fields in a
  * popup (every form in a popup, 2026-11-05).
  */
-export function ChangeEmailForm({ currentEmail, onRequested }: { currentEmail: string; onRequested?: () => void }) {
+export function ChangeEmailForm({
+  currentEmail,
+  onRequested,
+  status,
+}: {
+  currentEmail: string;
+  onRequested?: () => void;
+  /** Accounts V3: shown after the address (its Verified badge). */
+  status?: React.ReactNode;
+}) {
   const emailId = useId();
   const passwordId = useId();
   const titleId = useId();
@@ -57,7 +66,7 @@ export function ChangeEmailForm({ currentEmail, onRequested }: { currentEmail: s
   return (
     <>
       <p>
-        You sign in with <strong>{currentEmail}</strong>.
+        You sign in with <strong>{currentEmail}</strong>.{status ? <> {status}</> : null}
       </p>
       <div>
         <button

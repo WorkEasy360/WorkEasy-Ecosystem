@@ -413,3 +413,91 @@ PARTNER_SUPPORT_REQUEST: Final = register(
         ),
     )
 )
+
+# --- Accounts V3 (ADR-075) ----------------------------------------------------------
+#
+# Security notices: always sent, whatever the person's notification choices.
+# None carries a link worth stealing.
+
+ACCOUNT_TWO_STEP_CHANGED: Final = register(
+    Template(
+        key="platform.account.two_step_changed",
+        subject="Two-step verification changed on your WorkEasy360 account",
+        body_text=(
+            "{change} on your WorkEasy360 account. Every other signed-in "
+            "session was ended.\n\n"
+            "If this was not you, reset your password now and contact {support_email}."
+        ),
+        required=("change", "support_email"),
+        description=(
+            "Sent when two-step verification is turned on, replaced, turned "
+            "off, or its recovery codes are renewed or used."
+        ),
+        samples=(
+            ("change", "Two-step verification was turned on"),
+            ("support_email", "support@example.com"),
+        ),
+    )
+)
+
+ACCOUNT_CLOSED: Final = register(
+    Template(
+        key="platform.account.closed",
+        subject="Your WorkEasy360 account is closed",
+        body_text=(
+            "Your WorkEasy360 account was closed at your request and every "
+            "session, in WorkEasy360 and in its products, was ended. Your "
+            "organizations, their subscriptions and their records are not "
+            "affected.\n\n"
+            "If this was not you, contact {support_email} now."
+        ),
+        required=("support_email",),
+        description="Sent when a person closes their own account.",
+        samples=(("support_email", "support@example.com"),),
+    )
+)
+
+ACCOUNT_NEW_SIGN_IN: Final = register(
+    Template(
+        key="platform.account.new_sign_in",
+        subject="New sign-in to your WorkEasy360 account",
+        body_text=(
+            "Your WorkEasy360 account was signed in to from a device it had not "
+            "been used on recently: {device}, network {network}.\n\n"
+            "If this was you, there is nothing to do. If not, change your "
+            "password and sign out of your other sessions on WorkEasy360 "
+            "Accounts, then contact {support_email}."
+        ),
+        required=("device", "network", "support_email"),
+        description=(
+            "Sent after a sign-in from a new device, unless the person turned "
+            "these alerts off."
+        ),
+        samples=(
+            ("device", "Chrome on Windows"),
+            ("network", "203.0.113.0/24"),
+            ("support_email", "support@example.com"),
+        ),
+    )
+)
+
+ACCOUNT_SUPPORT_RECEIVED: Final = register(
+    Template(
+        key="platform.account.support_received",
+        subject="We received your account request {reference}",
+        body_text=(
+            "WorkEasy360 account support received your request {reference}. "
+            "We reply from {support_email}. We never ask for your password or "
+            "your two-step codes."
+        ),
+        required=("reference", "support_email"),
+        description=(
+            "Sent to the address given on the account-security support form, "
+            "whether or not it has an account."
+        ),
+        samples=(
+            ("reference", "AS-7K2M9Q4D"),
+            ("support_email", "support@example.com"),
+        ),
+    )
+)

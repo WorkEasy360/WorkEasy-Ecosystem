@@ -12,6 +12,7 @@ The answers are deliberately uniform - see ``platform.administration.self_servic
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from django.conf import settings
@@ -90,18 +91,25 @@ def verify_email_view(request: HttpRequest) -> JsonResponse:
     body = _body(request)
     password = _text(body, "password")
     result = self_service.verify_email(_text(body, "token"), password)
-    establish_session(request, result.user, password=password)
+    from workeasy360.platform.identity import two_step
+
+    signed_in = not two_step.is_enabled(result.user.pk)
+    if signed_in:
+        establish_session(request, result.user, password=password)
+    # else ADR-075: an account with two-step on signs in with its code, on
+    # the sign-in page; a verification link never stands in for it.
     # ADR-053: the Registrations step of a referral - the visitor who followed
     # a link now has an account. Best-effort; it never affects the sign-up.
     referral_token = request.COOKIES.get(settings.REFERRAL_COOKIE_NAME, "")[:200]
     if referral_token:
         referrals.record_registration(referral_token)
-    return JsonResponse(
-        {
-            "organization_slug": result.organization_slug,
-            "organization_id": result.organization_id,
-        }
-    )
+    answer: dict[str, Any] = {
+        "organization_slug": result.organization_slug,
+        "organization_id": result.organization_id,
+    }
+    if not signed_in:
+        answer["sign_in_required"] = True
+    return JsonResponse(answer)
 
 
 @require_http_methods(["POST"])

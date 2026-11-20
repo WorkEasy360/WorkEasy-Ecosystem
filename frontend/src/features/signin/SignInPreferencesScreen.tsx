@@ -30,7 +30,7 @@ type Load = { status: "loading" } | { status: "error"; signedOut: boolean } | { 
  * nothing is signed out. The page shows what is saved; the choices are made in
  * an Edit popup (2026-11-05, every form in a popup).
  */
-export function SignInPreferencesScreen() {
+export function SignInPreferencesScreen({ embedded = false }: { embedded?: boolean } = {}) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [draftDefault, setDraftDefault] = useState<EffectiveSignIn>("ask_once");
   const [draftOverrides, setDraftOverrides] = useState<Record<string, SignInPreferenceValue>>({});
@@ -114,12 +114,18 @@ export function SignInPreferencesScreen() {
 
   const savedDefault = DEFAULT_LABELS[data.default]?.label ?? data.default;
 
+  const lead = "Choose how WorkEasy360 signs you in to its products. This is your own setting, in every organization. You can change it anytime.";
   return (
     <div className={styles.stack}>
-      <PageHeader
-        title="Sign-in preferences"
-        lead="Choose how WorkEasy360 signs you in to its products. This is your own setting, in every organization. You can change it anytime."
-      />
+      {embedded ? (
+        // Accounts V3: a section of Login & Security, under that page's own heading.
+        <div>
+          <h2 className={styles.embeddedTitle}>Product sign-in preferences</h2>
+          <p className={styles.muted}>{lead}</p>
+        </div>
+      ) : (
+        <PageHeader title="Sign-in preferences" lead={lead} />
+      )}
       <Panel title="WorkEasy360 product sign-in">
         <p>
           <span className={styles.productName}>Your default for every product:</span> {savedDefault}

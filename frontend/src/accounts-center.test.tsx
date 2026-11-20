@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { routePortalRequest } from "./proxy";
+import { isPublicPath, routePortalRequest } from "./proxy";
 import { pageOwner, type PortalOrigins } from "@/lib/portals";
 import { accountsPage } from "@/features/auth/accountsSignIn";
-import { CENTER_SECTIONS, centerOrigins } from "@/features/account/centerConfig";
+import { CENTER_SECTIONS, MOVED_SECTIONS, centerOrigins } from "@/features/account/centerConfig";
 import {
   assignmentLabel,
   connectionChips,
@@ -12,27 +12,46 @@ import {
   productSignOutMessage,
   sessionLabel,
 } from "@/features/account/centerCopy";
-import { CenterOverview, CenterSettings } from "@/features/account/AccountsCenter";
-import { CenterProducts, organizationRows } from "@/features/account/CenterProducts";
+import { CenterDevices, CenterLoginSecurity, CenterProfile, CenterSettings } from "@/features/account/AccountsCenter";
 import { ConnectedLogins } from "@/features/account/ConnectedLogins";
 import { ActiveSessions, LoginHistory } from "@/features/account/CenterSessions";
+import { photoScaler } from "@/features/account/ProfileForm";
+import { SignInEmailCard } from "@/features/account/SignInEmailCard";
 import { describeAccountEvent } from "@/features/console/MySecurityScreen";
-import type { CenterOrganization, ConnectedProduct } from "@/lib/api/console";
-import type { AppDirectoryEntry } from "@/lib/api/types";
-import { AdminContextForTest, expectNoViolations, mockApi, ok } from "@/features/controlplane/testSupport";
+import type { AccountProfile, ConnectedProduct } from "@/lib/api/console";
+import { AdminContextForTest, expectNoViolations, mockApi, ok, type Reply } from "@/features/controlplane/testSupport";
 import { UserDetailScreen } from "@/features/controlplane/AdminUsers";
+import { AccountSupportScreen } from "@/features/controlplane/AdminAccountSupport";
+import { AccountHelpScreen } from "@/features/account/AccountHelp";
+import ProductsPage from "@/app/account/products/page";
+import OrganizationsPage from "@/app/account/organizations/page";
+import ConnectedLoginsPage from "@/app/account/connected-logins/page";
+import HistoryPage from "@/app/account/history/page";
+import SignInPreferencesPage from "@/app/account/sign-in-preferences/page";
+
+const nav = vi.hoisted(() => ({
+  redirect: vi.fn((to: string) => {
+    throw new Error(`redirect:${to}`);
+  }),
+  notFound: vi.fn(() => {
+    throw new Error("not-found");
+  }),
+}));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
   usePathname: () => "/admin/users/u2",
+  redirect: nav.redirect,
+  notFound: nav.notFound,
 }));
 
 /**
- * ADR-072: the Accounts Control Center on WorkEasy360 Accounts. It exists only while
- * Accounts hosts identity (`W360_ACCOUNTS_IDENTITY`, ADR-071); every section reads its
- * own person-level endpoint; and nothing it says about a product session claims more
- * than the platform knows.
+ * ADR-072 + Accounts V3: the Accounts Control Center on WorkEasy360 Accounts. It exists
+ * only while Accounts hosts identity (`W360_ACCOUNTS_IDENTITY`, ADR-071); it has exactly
+ * four sections - My Profile, Login & Security, Devices & Sessions, Settings - and the
+ * earlier pages redirect into them; every section reads its own person-level endpoint;
+ * and nothing it says about a product session claims more than the platform knows.
  */
 
 const BASE = {
@@ -50,66 +69,7 @@ const ENV = {
   W360_AUTH_ORIGIN: BASE.auth,
 };
 const ORG_ID = "11111111-1111-4111-8111-111111111111";
-const BETA_ID = "22222222-2222-4222-8222-222222222222";
 const USER_ID = "33333333-3333-4333-8333-333333333333";
-
-function app(code: string, name: string, extra: Partial<AppDirectoryEntry> = {}): AppDirectoryEntry {
-  return {
-    product_code: code,
-    display_name: name,
-    description: "",
-    licensing_mode: "per_seat",
-    state: "active",
-    can_launch: true,
-    entitlement_status: "active",
-    slug: code,
-    tagline: "",
-    category: "",
-    icon: "",
-    sso: "enabled",
-    health: { status: "healthy", checked_at: null },
-    trial: null,
-    plan: null,
-    seats: null,
-    renews_at: null,
-    cancel_at: null,
-    sign_in: null,
-    ...extra,
-  } as AppDirectoryEntry;
-}
-
-const ACME: CenterOrganization = {
-  organization_id: ORG_ID,
-  slug: "acme",
-  name: "Acme Traders",
-  status: "active",
-  is_owner: true,
-  restricted: null,
-  roles: ["owner"],
-  may_manage_billing: true,
-  may_assign_seats: true,
-  apps: [app("easy_crm", "Easy CRM"), app("easybook", "EasyBook", { state: "no_entitlement", can_launch: false, entitlement_status: null })],
-  explore: [
-    { code: "easy_crm", trial_state: "owned", trial_outcome: null, trial_ends_at: null, plans: [] },
-    { code: "easybook", trial_state: "used", trial_outcome: "expired", trial_ends_at: "2026-11-01T00:00:00Z", plans: [] },
-  ],
-  setup: [],
-};
-const BETA: CenterOrganization = {
-  organization_id: BETA_ID,
-  slug: "beta",
-  name: "Beta Labs",
-  status: "active",
-  is_owner: false,
-  restricted: null,
-  roles: ["member"],
-  may_manage_billing: false,
-  may_assign_seats: false,
-  apps: [app("easy_crm", "Easy CRM", { state: "no_seat", can_launch: false, entitlement_status: "trial" })],
-  explore: [],
-  setup: [{ id: "s1", product_code: "easy_crm", status: "pending" }],
-};
-const PRODUCTS = { organizations: [ACME, BETA], app_origin: BASE.app, store_origin: "https://store.workeasy360.com" };
 
 function connected(extra: Partial<ConnectedProduct> = {}): ConnectedProduct {
   return {
@@ -139,7 +99,29 @@ function connected(extra: Partial<ConnectedProduct> = {}): ConnectedProduct {
   };
 }
 
+function profile(extra: Partial<AccountProfile> = {}): AccountProfile {
+  return {
+    user_id: USER_ID,
+    email: "ravi@example.com",
+    name: "Ravi",
+    email_verified: true,
+    created_at: "2026-01-01T00:00:00Z",
+    last_sign_in_at: null,
+    country: "",
+    language: "",
+    time_zone: "",
+    photo_url: null,
+    pending_email: null,
+    two_step_enabled: false,
+    ...extra,
+  };
+}
+
+const OPTIONS = { countries: ["IN", "GB", "US"], languages: ["en", "hi"], time_zones: ["Asia/Kolkata", "Europe/London"] };
 const SESSION = { authenticated: true, user_id: USER_ID, email: "ravi@example.com", name: "Ravi Kumar" };
+const PENDING = { new_email: "ravi.new@example.com", requested_at: "2026-11-19T09:00:00Z", expires_at: "2026-11-20T09:00:00Z" };
+const TWO_STEP_OFF = { available: true, enabled: false, method: null, enabled_at: null, recovery_codes_remaining: 0 };
+const PREFS = { default: "ask_once", default_is_set: false, default_choices: ["ask_once", "auto_sso"], products: [] };
 
 let assign: ReturnType<typeof vi.fn>;
 beforeEach(() => {
@@ -148,6 +130,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
@@ -158,16 +141,12 @@ describe("routing", () => {
     expect(centerOrigins({ ...ENV, W360_ACCOUNTS_IDENTITY: "on" })).toEqual({ appOrigin: BASE.app });
   });
 
-  it("every section is an Accounts page, signs in on Accounts and comes back", () => {
-    expect(CENTER_SECTIONS.map((s) => s.label)).toEqual([
-      "Overview",
-      "My Products",
-      "Connected Logins",
-      "Active Sessions",
-      "Login History",
-      "Organizations",
-      "Security",
-      "Account Settings",
+  it("has exactly four sections, My Profile first; each is an Accounts page that signs in on Accounts", () => {
+    expect(CENTER_SECTIONS.map((s) => [s.label, s.href])).toEqual([
+      ["My Profile", "/account"],
+      ["Login & Security", "/account/security"],
+      ["Devices & Sessions", "/account/sessions"],
+      ["Settings", "/account/settings"],
     ]);
     for (const { href } of CENTER_SECTIONS) {
       expect(pageOwner(href, ON), href).toBe("auth");
@@ -178,6 +157,28 @@ describe("routing", () => {
       const elsewhere = routePortalRequest({ origins: ON, host: "app.workeasy360.com", pathname: href, search: "", hasSession: true });
       expect(elsewhere).toEqual({ kind: "redirect", location: `${BASE.auth}${href}` });
     }
+  });
+
+  it("the earlier pages redirect to their new home while the Control Center is on", () => {
+    for (const [key, value] of Object.entries({ ...ENV, W360_ACCOUNTS_IDENTITY: "on" })) vi.stubEnv(key, value);
+    const pages: [string, () => unknown, string][] = [
+      ["/account/products", ProductsPage, "/account/settings"],
+      ["/account/organizations", OrganizationsPage, "/account/settings"],
+      ["/account/connected-logins", ConnectedLoginsPage, "/account/sessions"],
+      ["/account/history", HistoryPage, "/account/sessions"],
+      ["/account/sign-in-preferences", SignInPreferencesPage, "/account/security"],
+    ];
+    for (const [path, page, home] of pages) {
+      expect(MOVED_SECTIONS[path]).toBe(home);
+      expect(page, path).toThrow(`redirect:${home}`);
+    }
+  });
+
+  it("off, the moved pages stay not found (sign-in preferences stays ADR-071's page)", () => {
+    for (const [key, value] of Object.entries(ENV)) vi.stubEnv(key, value);
+    vi.stubEnv("W360_ACCOUNTS_IDENTITY", "");
+    for (const page of [ProductsPage, OrganizationsPage, ConnectedLoginsPage, HistoryPage]) expect(page).toThrow("not-found");
+    expect(() => SignInPreferencesPage()).not.toThrow();
   });
 });
 
@@ -220,68 +221,9 @@ describe("the words", () => {
     expect(productSignOutMessage("Easy CRM", "pending")).toMatch(/has not confirmed yet/);
     expect(describeAccountEvent({ kind: "product_sign_in", reason: "easy_crm" })).toBe("Signed in to a product with WorkEasy360");
   });
-
-  it("classifies with My Products' own rows: purchased, expired trial, pending setup", () => {
-    const acme = organizationRows(ACME);
-    expect(acme.map((r) => [r.app.product_code, r.held, r.expired])).toEqual([
-      ["easy_crm", true, false],
-      ["easybook", false, true],
-    ]);
-    const beta = organizationRows(BETA);
-    expect(beta[0].trial && beta[0].pendingSetup).toBe(true);
-  });
 });
 
 describe("the sections", () => {
-  it("Overview: the person, their organizations, what they can open and recent activity; passes axe", async () => {
-    mockApi({
-      "GET /api/v1/auth/account/profile": [
-        ok({ user_id: USER_ID, email: "ravi@example.com", name: "Ravi Kumar", email_verified: true, created_at: "2026-01-01T00:00:00Z", last_sign_in_at: null }),
-      ],
-      "GET /api/v1/auth/account/products": [ok(PRODUCTS)],
-      "GET /api/v1/auth/account/history": [
-        ok({ results: [{ occurred_at: "2026-11-19T09:00:00Z", kind: "product_sign_in", reason: "easy_crm", ip_prefix: "", device_label: "", product_name: "Easy CRM" }], next_cursor: null, has_more: false }),
-      ],
-      "POST /api/v1/auth/account/products/11111111-1111-4111-8111-111111111111/easy_crm/launch": [
-        ok({ redirect_url: `https://crm.workeasy360.com/launch?organization=${ORG_ID}`, state: "active", sign_in: "workeasy360" }),
-      ],
-    });
-    const { container } = render(<CenterOverview appOrigin={BASE.app} />);
-    expect(screen.getByRole("heading", { level: 1, name: "Your WorkEasy360 account" })).toBeInTheDocument();
-    expect(await screen.findByText(USER_ID)).toBeInTheDocument();
-    expect((await screen.findAllByRole("link", { name: "Acme Traders" }))[0]).toHaveAttribute("href", `${BASE.app}/o/acme`);
-    expect(await screen.findByText("Signed in to a product with WorkEasy360: Easy CRM")).toBeInTheDocument();
-    const nav = screen.getByRole("navigation", { name: "Your account" });
-    expect(within(nav).getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("button", { name: "Switch account" })).toBeInTheDocument();
-    // Only products open to the person, and only through the launcher's own route.
-    fireEvent.click(screen.getByRole("button", { name: "Open Easy CRM in Acme Traders" }));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith(`https://crm.workeasy360.com/launch?organization=${ORG_ID}`));
-    expect(screen.queryByRole("button", { name: /Open EasyBook/ })).not.toBeInTheDocument();
-    await expectNoViolations(container);
-  });
-
-  it("My Products: across organizations, filtered; a refused launch says why", async () => {
-    mockApi({
-      "GET /api/v1/auth/account/products": [ok(PRODUCTS)],
-    });
-    const { container } = render(<CenterProducts />);
-    const acme = await screen.findByRole("region", { name: "Acme Traders" });
-    expect(within(acme).getByText("Purchased")).toBeInTheDocument();
-    expect(within(acme).getByText("Seat assigned to you")).toBeInTheDocument();
-    expect(within(acme).getByText("Expired")).toBeInTheDocument();
-    expect(within(acme).getByRole("link", { name: "Billing in User Admin" })).toHaveAttribute("href", `${BASE.app}/o/acme/settings/billing`);
-    const beta = screen.getByRole("region", { name: "Beta Labs" });
-    expect(within(beta).getByText("Not assigned to you")).toBeInTheDocument();
-    expect(within(beta).getByText("Setup: Waiting for your details")).toBeInTheDocument();
-    expect(within(beta).queryByRole("button", { name: /Open/ })).not.toBeInTheDocument();
-    expect(within(beta).queryByRole("link", { name: "Billing in User Admin" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Expired" }));
-    expect(within(acme).queryByText("Easy CRM")).not.toBeInTheDocument();
-    expect(within(acme).getByText("EasyBook")).toBeInTheDocument();
-    await expectNoViolations(container);
-  });
-
   it("Connected Logins: what is known, and signing out of one product", async () => {
     const calls = mockApi({
       "GET /api/v1/auth/account/connections": [ok({ subject: USER_ID, products: [connected()] })],
@@ -349,27 +291,366 @@ describe("the sections", () => {
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
   });
 
-  it("Account Settings: the name is saved through the profile API; Switch account starts ADR-066", async () => {
-    const calls = mockApi({
-      "GET /api/v1/auth/session": [ok(SESSION)],
-      "GET /api/v1/auth/account/profile": [
-        ok({ user_id: USER_ID, email: "ravi@example.com", name: "Ravi", email_verified: true, created_at: null, last_sign_in_at: null }),
-      ],
-      "PATCH /api/v1/auth/account/profile": [
-        ok({ user_id: USER_ID, email: "ravi@example.com", name: "Ravi Kumar", email_verified: true, created_at: null, last_sign_in_at: null }),
-      ],
-      "POST /api/v1/auth/switch-account": [ok({ redirect_url: `${BASE.auth}/switch-account#handle=abc` })],
-    });
-    const { container } = render(<CenterSettings />);
-    const name = await screen.findByLabelText("Full name");
-    fireEvent.change(name, { target: { value: "Ravi Kumar" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save name" }));
-    expect(await screen.findByText("Your name is saved.")).toBeInTheDocument();
-    expect(calls.find((c) => c.key === "PATCH /api/v1/auth/account/profile")?.body).toEqual({ full_name: "Ravi Kumar" });
-    expect(screen.getByRole("link", { name: "Change how products sign you in" })).toHaveAttribute("href", "/account/sign-in-preferences");
+});
+
+describe("My Profile", () => {
+  it("opens first: photo or initials, name, verified email and WorkEasy360 ID; four menus only; Help & Support; passes axe", async () => {
+    mockApi({ "GET /api/v1/auth/account/profile": [ok(profile({ name: "Ravi Kumar" }))] });
+    const { container } = render(<CenterProfile />);
+    expect(screen.getByRole("heading", { level: 1, name: "My Profile" })).toBeInTheDocument();
+    expect(await screen.findByText(USER_ID)).toBeInTheDocument();
+    const header = screen.getByRole("region", { name: "Your WorkEasy360 account" });
+    expect(within(header).getByText("Ravi Kumar")).toBeInTheDocument();
+    expect(within(header).getByText("ravi@example.com")).toBeInTheDocument();
+    expect(within(header).getByText("Verified")).toBeInTheDocument();
+    expect(within(header).getByText("RK")).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Your account" });
+    expect(within(nav).getAllByRole("link").map((a) => a.textContent)).toEqual(["My Profile", "Login & Security", "Devices & Sessions", "Settings"]);
+    expect(within(nav).getByRole("link", { name: "My Profile" })).toHaveAttribute("aria-current", "page");
+    expect(container.textContent).not.toMatch(/My Products|Connected Logins|Wallet|Product Catalog/);
+    expect(screen.getByRole("link", { name: "Help & Support" })).toHaveAttribute("href", "/help/account");
+    expect(screen.getByRole("button", { name: "Switch account" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
     await expectNoViolations(container);
-    fireEvent.click(screen.getByRole("button", { name: "Use a different account" }));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith(`${BASE.auth}/switch-account#handle=abc`));
+  });
+
+  it("shows an unverified email and a pending change as such, and the photo when there is one", async () => {
+    mockApi({
+      "GET /api/v1/auth/account/profile": [
+        ok(profile({ email_verified: false, pending_email: PENDING, photo_url: "/api/v1/public/profile-photos/tok-1" })),
+      ],
+    });
+    render(<CenterProfile />);
+    const header = await screen.findByRole("region", { name: "Your WorkEasy360 account" });
+    expect(await within(header).findByText("Not verified")).toBeInTheDocument();
+    expect(within(header).getByText("Pending verification")).toBeInTheDocument();
+    expect(header.querySelector("img")).toHaveAttribute("src", "/api/v1/public/profile-photos/tok-1");
+  });
+
+  it("edits in place: Cancel restores the saved values and sends nothing; Save sends only what changed", async () => {
+    const calls = mockApi({
+      "GET /api/v1/auth/account/profile": [ok(profile())],
+      "GET /api/v1/auth/account/profile/options": [ok(OPTIONS)],
+      "PATCH /api/v1/auth/account/profile": [ok(profile({ name: "Ravi Kumar", country: "IN", language: "hi", time_zone: "Asia/Kolkata" }))],
+    });
+    const { container } = render(<CenterProfile />);
+    const card = await screen.findByRole("region", { name: "Profile" });
+    fireEvent.click(await within(card).findByRole("button", { name: "Edit" }));
+    fireEvent.change(await within(card).findByLabelText("Full name"), { target: { value: "Someone Else" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Cancel" }));
+    expect(within(card).queryByLabelText("Full name")).not.toBeInTheDocument();
+    expect(within(card).getByText("Ravi")).toBeInTheDocument();
+    fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
+    expect(await within(card).findByLabelText("Full name")).toHaveValue("Ravi");
+    // Names come from the browser for the server's codes.
+    expect(within(card).getByRole("option", { name: "India" })).toBeInTheDocument();
+    expect(within(card).getByRole("option", { name: "Hindi" })).toBeInTheDocument();
+    await expectNoViolations(container);
+    expect(calls.some((c) => c.key === "PATCH /api/v1/auth/account/profile")).toBe(false);
+
+    fireEvent.change(within(card).getByLabelText("Full name"), { target: { value: "  Ravi   Kumar " } });
+    fireEvent.change(within(card).getByLabelText("Country"), { target: { value: "IN" } });
+    fireEvent.change(within(card).getByLabelText("Language"), { target: { value: "hi" } });
+    fireEvent.change(within(card).getByLabelText("Time zone"), { target: { value: "Asia/Kolkata" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Save" }));
+    expect(await within(card).findByRole("status")).toHaveTextContent("Saved. Products show your new details the next time you open them.");
+    expect(calls.filter((c) => c.key === "PATCH /api/v1/auth/account/profile").map((c) => c.body)).toEqual([
+      { full_name: "Ravi Kumar", country: "IN", language: "hi", time_zone: "Asia/Kolkata" },
+    ]);
+    expect(within(card).getByText("India")).toBeInTheDocument();
+    expect(within(card).getByText("Hindi")).toBeInTheDocument();
+    expect(within(card).getByText("Asia / Kolkata")).toBeInTheDocument();
+    // The header follows what was saved.
+    expect(screen.getByRole("region", { name: "Your WorkEasy360 account" })).toHaveTextContent("Ravi Kumar");
+  });
+
+  it("says what the server refused, marks the field and stays in edit mode", async () => {
+    mockApi({
+      "GET /api/v1/auth/account/profile": [ok(profile())],
+      "GET /api/v1/auth/account/profile/options": [ok(OPTIONS)],
+      "PATCH /api/v1/auth/account/profile": [
+        { status: 400, body: { code: "profile_invalid", field: "time_zone", detail: "Choose a time zone from the list." } },
+      ],
+    });
+    render(<CenterProfile />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.change(await screen.findByLabelText("Time zone"), { target: { value: "Europe/London" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a time zone from the list.");
+    expect(screen.getByLabelText("Time zone")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Full name")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("scales the photo in the browser and sends the picture itself as the body; Remove photo deletes it", async () => {
+    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "image/webp" });
+    const scale = vi.spyOn(photoScaler, "scale").mockResolvedValue({ blob, preview: "data:image/webp;base64,AQID" });
+    const withPhoto = profile({ photo_url: "/api/v1/public/profile-photos/tok-1" });
+    const calls = mockApi({
+      "GET /api/v1/auth/account/profile": [ok(profile())],
+      "GET /api/v1/auth/account/profile/options": [ok(OPTIONS)],
+      "PUT /api/v1/auth/account/profile/photo": [ok(withPhoto)],
+      "DELETE /api/v1/auth/account/profile/photo": [ok(profile())],
+    });
+    render(<CenterProfile />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const file = new File(["raw camera bytes"], "me.jpg", { type: "image/jpeg" });
+    fireEvent.change(await screen.findByLabelText("Choose a photo"), { target: { files: [file] } });
+    expect(await screen.findByText(/New photo chosen/)).toBeInTheDocument();
+    expect(scale).toHaveBeenCalledWith(file);
+    // Nothing is sent before Save.
+    expect(calls.some((c) => c.key.startsWith("PUT "))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Saved.");
+    const put = (global.fetch as Mock).mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "PUT");
+    expect(put?.[0]).toBe("/api/v1/auth/account/profile/photo");
+    expect((put?.[1] as RequestInit).body).toBe(blob);
+    expect(calls.find((c) => c.key === "PUT /api/v1/auth/account/profile/photo")?.headers["content-type"]).toBe("image/webp");
+    expect(calls.some((c) => c.key === "PATCH /api/v1/auth/account/profile")).toBe(false);
+    expect(screen.getByRole("region", { name: "Your WorkEasy360 account" }).querySelector("img")).toHaveAttribute("src", withPhoto.photo_url);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Remove photo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(calls.some((c) => c.key === "DELETE /api/v1/auth/account/profile/photo")).toBe(true));
+    expect(await screen.findByText("None")).toBeInTheDocument();
+  });
+});
+
+describe("Login & Security", () => {
+  it("the sign-in email with its pending change (Resend, Cancel), no mobile sign-in, password, two-step and product sign-in", async () => {
+    const calls = mockApi({
+      "GET /api/v1/auth/account/profile": [ok(profile({ pending_email: PENDING }))],
+      "GET /api/v1/auth/email/pending": [ok({ pending: PENDING }), ok({ pending: PENDING }), ok({ pending: null })],
+      "POST /api/v1/auth/email/pending/resend": [{ status: 202, body: { pending: PENDING } }],
+      "DELETE /api/v1/auth/email/pending": [ok({ pending: null })],
+      "GET /api/v1/auth/two-step": [ok(TWO_STEP_OFF)],
+      "GET /api/v1/auth/sign-in-preferences": [ok(PREFS)],
+    });
+    const { container } = render(<CenterLoginSecurity />);
+    expect(screen.getByRole("heading", { level: 1, name: "Login & Security" })).toBeInTheDocument();
+    const email = await screen.findByRole("region", { name: "Sign-in email" });
+    expect(await within(email).findByText("ravi.new@example.com")).toBeInTheDocument();
+    expect(within(email).getByText("Verified")).toBeInTheDocument();
+    expect(within(email).getByText("Pending verification")).toBeInTheDocument();
+    expect(within(email).getByText("Sign-in with a mobile number is not available.")).toBeInTheDocument();
+    expect(container.querySelector('input[type="tel"]')).toBeNull();
+    expect(screen.getByRole("link", { name: "Reset it by email" })).toHaveAttribute("href", "/forgot-password");
+    expect(screen.getByRole("button", { name: "Change password" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Set up two-step verification" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Product sign-in preferences" })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(within(screen.getByRole("navigation", { name: "Your account" })).getByRole("link", { name: "Login & Security" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expectNoViolations(container);
+
+    fireEvent.click(within(email).getByRole("button", { name: "Resend link" }));
+    expect(await within(email).findByRole("status")).toHaveTextContent("Sent again to ravi.new@example.com");
+    fireEvent.click(within(email).getByRole("button", { name: "Cancel change" }));
+    expect(await within(email).findByText(/Change cancelled\. You keep signing in with ravi@example.com/)).toBeInTheDocument();
+    await waitFor(() => expect(within(email).queryByText("Pending verification")).not.toBeInTheDocument());
+    expect(calls.filter((c) => c.key === "POST /api/v1/auth/email/pending/resend")).toHaveLength(1);
+    expect(calls.filter((c) => c.key === "DELETE /api/v1/auth/email/pending")).toHaveLength(1);
+  });
+
+  it("a resend too soon says to wait", async () => {
+    mockApi({
+      "GET /api/v1/auth/email/pending": [ok({ pending: PENDING })],
+      "POST /api/v1/auth/email/pending/resend": [{ status: 429, body: { code: "throttled" } }],
+    });
+    render(<SignInEmailCard email="ravi@example.com" verified />);
+    fireEvent.click(await screen.findByRole("button", { name: "Resend link" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("A link was sent a moment ago");
+  });
+});
+
+describe("Devices & Sessions", () => {
+  it("one page: where you're signed in, the products you're signed in to, and login history", async () => {
+    mockApi({
+      "GET /api/v1/auth/account/sessions": [
+        ok({
+          sessions: [
+            { session_id: "here", current: true, signed_in_at: "2026-11-19T08:00:00Z", last_active_at: "2026-11-19T09:00:00Z", expires_at: "2026-12-19T08:00:00Z", ip_prefix: "203.0.113.0/24", device_label: "Chrome on Windows", portal_sessions: 1 },
+          ],
+        }),
+      ],
+      "GET /api/v1/auth/account/connections": [ok({ subject: USER_ID, products: [connected()] })],
+      "GET /api/v1/auth/account/history": [ok({ results: [], next_cursor: null, has_more: false })],
+    });
+    const { container } = render(<CenterDevices />);
+    expect(screen.getByRole("heading", { level: 1, name: "Devices & Sessions" })).toBeInTheDocument();
+    expect(await screen.findByText("This device")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Products you're signed in to" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Sign out of this product" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Login History" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign out everywhere" })).toBeInTheDocument();
+    expect(within(screen.getByRole("navigation", { name: "Your account" })).getByRole("link", { name: "Devices & Sessions" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expectNoViolations(container);
+  });
+});
+
+const NOTIFICATIONS = [
+  { key: "security", label: "Security notices", description: "New sign-ins, password and email changes.", enabled: true, required: true },
+  { key: "product_news", label: "Product news", description: "New features in the products you use.", enabled: false, required: false },
+];
+
+function settingsRoutes(closure: unknown, extra: Record<string, Reply[]> = {}): Record<string, Reply[]> {
+  return {
+    "GET /api/v1/auth/account/notifications": [ok({ preferences: NOTIFICATIONS })],
+    "GET /api/v1/auth/activity": [
+      ok({ events: [{ occurred_at: "2026-11-19T09:00:00Z", kind: "two_step_enabled", reason: "", ip_prefix: "203.0.113.0/24", device_label: "Chrome on Windows" }] }),
+    ],
+    "GET /api/v1/auth/account/organizations": [
+      ok({
+        organizations: [
+          { organization_id: ORG_ID, name: "Acme Traders", slug: "acme", status: "active", is_owner: true, roles: ["owner"], can_view_billing: true },
+          { organization_id: "o2", name: "Beta Labs", slug: "beta", status: "active", is_owner: false, roles: ["member"], can_view_billing: false },
+        ],
+      }),
+    ],
+    "GET /api/v1/auth/account/closure": [ok(closure)],
+    ...extra,
+  };
+}
+
+describe("Settings", () => {
+  it("notifications (security notices locked on), security activity, links to User Admin, and a closure blocked by sole ownership", async () => {
+    const calls = mockApi(
+      settingsRoutes(
+        { can_close: false, blocking_organizations: [{ name: "Acme Traders", slug: "acme" }], two_step_required: false },
+        {
+          "PATCH /api/v1/auth/account/notifications": [ok({ preferences: [NOTIFICATIONS[0], { ...NOTIFICATIONS[1], enabled: true }] })],
+        },
+      ),
+    );
+    const { container } = render(<CenterSettings appOrigin={BASE.app} />);
+    expect(screen.getByRole("heading", { level: 1, name: "Settings" })).toBeInTheDocument();
+    const security = await screen.findByRole("switch", { name: "Security notices" });
+    expect(security).toBeChecked();
+    expect(security).toBeDisabled();
+    expect(screen.getByText("Always sent")).toBeInTheDocument();
+    expect(await screen.findByText("Two-step verification turned on")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Open Acme Traders in User Admin" })).toHaveAttribute("href", `${BASE.app}/o/acme`);
+    expect(screen.getByRole("link", { name: "Subscriptions and billing of Acme Traders" })).toHaveAttribute("href", `${BASE.app}/o/acme/settings/billing`);
+    expect(screen.getByRole("link", { name: "Open Beta Labs in User Admin" })).toHaveAttribute("href", `${BASE.app}/o/beta`);
+    expect(screen.queryByRole("link", { name: "Subscriptions and billing of Beta Labs" })).not.toBeInTheDocument();
+    expect(await screen.findByText("You are the only owner of an organization")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Acme Traders" })).toHaveAttribute("href", `${BASE.app}/o/acme/settings/members`);
+    expect(screen.queryByRole("button", { name: "Close my account" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Get help with your account" })).toHaveAttribute("href", "/help/account");
+    await expectNoViolations(container);
+
+    const news = screen.getByRole("switch", { name: "Product news" });
+    expect(news).not.toBeChecked();
+    fireEvent.click(news);
+    expect(await screen.findByText("Saved. Product news: on.")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Product news" })).toBeChecked();
+    expect(calls.find((c) => c.key === "PATCH /api/v1/auth/account/notifications")?.body).toEqual({ product_news: true });
+  });
+
+  it("a refused notification change says so and keeps the saved choice", async () => {
+    mockApi(
+      settingsRoutes(
+        { can_close: true, blocking_organizations: [], two_step_required: false },
+        { "PATCH /api/v1/auth/account/notifications": [{ status: 400, body: { code: "preference_invalid", detail: "That setting cannot be changed." } }] },
+      ),
+    );
+    render(<CenterSettings appOrigin={BASE.app} />);
+    fireEvent.click(await screen.findByRole("switch", { name: "Product news" }));
+    expect(await screen.findByText(/Not saved\. That setting cannot be changed\./)).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Product news" })).not.toBeChecked();
+  });
+
+  it("closing the account asks for the password, the code and CLOSE, then goes to the sign-in page", async () => {
+    const calls = mockApi(
+      settingsRoutes(
+        { can_close: true, blocking_organizations: [], two_step_required: true },
+        {
+          "POST /api/v1/auth/account/closure": [
+            { status: 400, body: { code: "password_invalid", field: "password" } },
+            ok({ closed: true }),
+          ],
+        },
+      ),
+    );
+    render(<CenterSettings appOrigin={BASE.app} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Close my account" }));
+    const close = screen.getByRole("button", { name: "Close account permanently" });
+    expect(close).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "wrong" } });
+    fireEvent.change(screen.getByLabelText("6-digit code or a recovery code"), { target: { value: "123 456" } });
+    fireEvent.change(screen.getByLabelText("Type CLOSE to confirm"), { target: { value: "close" } });
+    expect(close).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Type CLOSE to confirm"), { target: { value: "CLOSE" } });
+    fireEvent.click(close);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The password is not correct.");
+    expect(assign).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "right" } });
+    fireEvent.click(screen.getByRole("button", { name: "Close account permanently" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login?closed=1"));
+    expect(calls.filter((c) => c.key === "POST /api/v1/auth/account/closure").map((c) => c.body)).toEqual([
+      { password: "wrong", code: "123456", confirmation: "CLOSE" }, // pragma: allowlist secret
+      { password: "right", code: "123456", confirmation: "CLOSE" }, // pragma: allowlist secret
+    ]);
+  });
+
+  it("a closure refused for sole ownership lists the organizations to resolve first", async () => {
+    mockApi(
+      settingsRoutes(
+        { can_close: true, blocking_organizations: [], two_step_required: false },
+        { "POST /api/v1/auth/account/closure": [{ status: 409, body: { code: "sole_owner", blocking_organizations: [{ name: "Acme Traders", slug: "acme" }] } }] },
+      ),
+    );
+    render(<CenterSettings appOrigin={BASE.app} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Close my account" }));
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
+    fireEvent.change(screen.getByLabelText("Type CLOSE to confirm"), { target: { value: "CLOSE" } });
+    fireEvent.click(screen.getByRole("button", { name: "Close account permanently" }));
+    expect(await screen.findByText("You are the only owner of an organization")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+    expect(assign).not.toHaveBeenCalled();
+  });
+});
+
+describe("Help & Support", () => {
+  it("anyone can ask account support and gets a reference; it says a request proves nothing and partners never see it", async () => {
+    const calls = mockApi({
+      "GET /api/v1/auth/session": [ok({ authenticated: false })],
+      "POST /api/v1/public/account-support": [{ status: 202, body: { reference: "AS-ABCD1234" } }],
+    });
+    const { container } = render(<AccountHelpScreen />);
+    expect(screen.getByRole("heading", { level: 1, name: "Help with your account" })).toBeInTheDocument();
+    expect(screen.getByText(/Partners and organization administrators do not see it/)).toBeInTheDocument();
+    expect(screen.getByText(/does not prove who owns an account by itself/)).toBeInTheDocument();
+    await expectNoViolations(container);
+    fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter the email address of the account.");
+    expect(calls.some((c) => c.key === "POST /api/v1/public/account-support")).toBe(false);
+    fireEvent.change(screen.getByLabelText("Email address of the account"), { target: { value: " lost@example.com " } });
+    fireEvent.change(screen.getByLabelText("Your name"), { target: { value: "Lost Person" } });
+    fireEvent.change(screen.getByLabelText("What do you need help with?"), { target: { value: "lost_two_step" } });
+    fireEvent.change(screen.getByLabelText("What happened?"), { target: { value: "My phone was stolen." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+    expect(await screen.findByText("AS-ABCD1234")).toBeInTheDocument();
+    expect(calls.find((c) => c.key === "POST /api/v1/public/account-support")?.body).toEqual({
+      email: "lost@example.com",
+      name: "Lost Person",
+      topic: "lost_two_step",
+      message: "My phone was stolen.",
+    });
+  });
+
+  it("fills in a signed-in person's own details and is open signed out", async () => {
+    mockApi({ "GET /api/v1/auth/session": [ok(SESSION)] });
+    render(<AccountHelpScreen />);
+    expect(await screen.findByDisplayValue("ravi@example.com")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Ravi Kumar")).toBeInTheDocument();
+    expect(isPublicPath("/help/account")).toBe(true);
   });
 });
 
@@ -437,5 +718,62 @@ describe("the Super Admin's view of a person", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Activity" }));
     expect(screen.getByRole("table", { name: "Sign-in history: WorkEasy360 and product sign-ins" })).toHaveTextContent("Easy CRM");
     await expectNoViolations(container);
+  });
+
+  it("Account support: lists open requests and resolves one with a note", async () => {
+    const CASE = {
+      id: "c1",
+      reference: "AS-12345678",
+      email: "lost@example.com",
+      name: "Lost Person",
+      topic: "lost_two_step",
+      message: "I lost my phone.",
+      status: "open",
+      created_at: T,
+      resolved_at: null,
+      note: "",
+    };
+    const calls = mockApi({
+      "GET /api/v1/auth/session": [ok({ authenticated: true, user_id: "u1", email: "s@example.com" })],
+      "GET /api/v1/admin/account-support": [ok({ results: [CASE] }), ok({ results: [] })],
+      "PATCH /api/v1/admin/account-support/c1": [ok({ ...CASE, status: "resolved", note: "Confirmed through the sign-in email." })],
+    });
+    const { container } = render(
+      <AdminContextForTest permissions={["platform.staff_user.view", "platform.staff_user.manage"]}>
+        <main>
+          <AccountSupportScreen />
+        </main>
+      </AdminContextForTest>,
+    );
+    expect(await screen.findByText("AS-12345678")).toBeInTheDocument();
+    expect(screen.getByText("Lost two-step verification")).toBeInTheDocument();
+    expect(calls[calls.length - 1].url).toContain("status=open");
+    await expectNoViolations(container);
+    fireEvent.click(screen.getByRole("button", { name: "Resolve AS-12345678" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("What was done"), { target: { value: "Confirmed through the sign-in email." } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Resolve" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.key === "PATCH /api/v1/admin/account-support/c1")?.body).toEqual({
+        status: "resolved",
+        note: "Confirmed through the sign-in email.",
+      }),
+    );
+    expect(await screen.findByText("No open requests.")).toBeInTheDocument();
+  });
+
+  it("Account support: a viewer without the manage grant sees no Resolve", async () => {
+    mockApi({
+      "GET /api/v1/admin/account-support": [
+        ok({ results: [{ id: "c1", reference: "AS-1", email: "a@example.com", name: "", topic: "other", message: "Help", status: "open", created_at: T, resolved_at: null, note: "" }] }),
+      ],
+    });
+    render(
+      <AdminContextForTest permissions={["platform.staff_user.view"]}>
+        <AccountSupportScreen />
+      </AdminContextForTest>,
+    );
+    expect(await screen.findByText("AS-1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Resolve AS/ })).not.toBeInTheDocument();
   });
 });

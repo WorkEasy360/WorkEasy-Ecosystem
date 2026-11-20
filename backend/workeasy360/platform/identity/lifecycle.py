@@ -208,6 +208,14 @@ def set_status(user: Any, status: UserStatus) -> None:
     user.save(update_fields=["status", "updated_at"])
 
 
+def close(user: Any, *, at: datetime | None = None) -> None:
+    """ADR-075: the person closed their own account - disabled, with the time
+    it was closed (which tells it apart from a staff action)."""
+    user.status = UserStatus.DISABLED.value
+    user.closed_at = at or timezone.now()
+    user.save(update_fields=["status", "closed_at", "updated_at"])
+
+
 def set_staff(user: Any, enabled: bool) -> None:
     """The staff designation. It confers nothing by itself - control-plane
     power is a ``StaffGrant`` - but grants are refused to non-staff accounts."""

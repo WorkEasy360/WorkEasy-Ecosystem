@@ -1,13 +1,13 @@
 import { notFound } from "next/navigation";
-import { ActiveSessions } from "@/features/account/CenterSessions";
+import { CenterDevices } from "@/features/account/AccountsCenter";
 import { centerOrigins } from "@/features/account/centerConfig";
 import { accountsTitle } from "@/features/signin/AccountsBrand";
 
-export const metadata = { title: accountsTitle("Active Sessions"), robots: { index: false } };
+export const metadata = { title: accountsTitle("Devices & Sessions"), robots: { index: false } };
 export const dynamic = "force-dynamic";
 
-/** ADR-072: where this person is signed in, one row per sign-in. */
+/** Accounts V3: active sessions, the products signed in to, and login history. */
 export default function AccountSessionsPage() {
   if (!centerOrigins()) notFound();
-  return <ActiveSessions />;
+  return <CenterDevices />;
 }

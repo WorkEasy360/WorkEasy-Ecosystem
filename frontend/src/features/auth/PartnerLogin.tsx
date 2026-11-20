@@ -11,6 +11,7 @@ import { publicApi } from "@/lib/api/public";
 import { AuthSplitFrame, LaptopArt, fieldProblem } from "./AdminLogin";
 import { loginErrorMessage } from "./LoginForm";
 import { destinationAfterSignIn } from "./signInMode";
+import { TwoStepSignIn, twoStepChallenge } from "./TwoStepSignIn";
 import adminStyles from "./AdminLogin.module.css";
 import styles from "./PartnerLogin.module.css";
 
@@ -164,6 +165,9 @@ export function PartnerLoginScreen() {
   const [unverified, setUnverified] = useState(false);
   const [resent, setResent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [challenge, setChallenge] = useState<string | null>(null);
+
+  const proceed = () => router.replace(destinationAfterSignIn("partner", searchParams.get("next")));
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -176,10 +180,16 @@ export function PartnerLoginScreen() {
     setBusy(true);
     try {
       await login(email.trim(), password, { remember });
-      router.replace(destinationAfterSignIn("partner", searchParams.get("next")));
+      proceed();
     } catch (err) {
-      setError(loginErrorMessage(err));
-      setUnverified(err instanceof ApiError && err.code === "email_not_verified");
+      const next = twoStepChallenge(err);
+      if (next) {
+        setPassword("");
+        setChallenge(next);
+      } else {
+        setError(loginErrorMessage(err));
+        setUnverified(err instanceof ApiError && err.code === "email_not_verified");
+      }
       setBusy(false);
     }
   }
@@ -192,89 +202,101 @@ export function PartnerLoginScreen() {
       footer={<Benefits />}
     >
       <PartnerPortalBadge />
-      <form method="post" onSubmit={submit} noValidate className={adminStyles.form}>
-        <div>
-          <label className={adminStyles.label} htmlFor={emailId}>
-            Email Address
-          </label>
-          <span className={adminStyles.inputWrap}>
-            <Icon name="mail" size={18} />
-            <input
-              id={emailId}
-              className={adminStyles.input}
-              type="email"
-              name="email"
-              autoComplete="username"
-              placeholder="Enter your email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              aria-describedby={described}
-              aria-invalid={error ? true : undefined}
-            />
-          </span>
-        </div>
-        <div>
-          <label className={adminStyles.label} htmlFor={passwordId}>
-            Password
-          </label>
-          <span className={adminStyles.inputWrap}>
-            <Icon name="lock" size={18} />
-            <input
-              id={passwordId}
-              className={adminStyles.input}
-              type={show ? "text" : "password"}
-              name="password"
-              autoComplete="current-password"
-              placeholder="Enter your password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              aria-describedby={described}
-              aria-invalid={error ? true : undefined}
-            />
-            <button
-              type="button"
-              className={adminStyles.reveal}
-              aria-pressed={show}
-              aria-label={show ? "Hide password" : "Show password"}
-              onClick={() => setShow((v) => !v)}
-            >
-              <Icon name={show ? "eye" : "eyeOff"} size={18} />
-            </button>
-          </span>
-        </div>
-        <div className={adminStyles.row}>
-          <label className={adminStyles.check}>
-            <input type="checkbox" name="remember" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-            Remember me
-          </label>
-          <Link href="/forgot-password?mode=partner" className={adminStyles.forgot}>
-            Forgot Password?
-          </Link>
-        </div>
-        {error && (
-          <p id={errorId} className={adminStyles.error} role="alert">
-            {error}
-          </p>
-        )}
-        {unverified && (
-          <p className={styles.resend}>
-            <button
-              type="button"
-              className="w360-btn w360-btn-secondary"
-              onClick={() => publicApi.resendVerification(email.trim()).then(() => setResent(true), () => setResent(true))}
-            >
-              Email me the link again
-            </button>
-            {resent && <span role="status"> Sent - only the newest link works.</span>}
-          </p>
-        )}
-        <button type="submit" className={adminStyles.submit} disabled={busy}>
-          <Icon name="login" size={20} />
-          {busy ? "Signing in…" : "Login to Partner Portal"}
-        </button>
-      </form>
+      {challenge ? (
+        <TwoStepSignIn
+          look="split"
+          challenge={challenge}
+          onSignedIn={proceed}
+          onRestart={(message) => {
+            setChallenge(null);
+            setError(message);
+          }}
+        />
+      ) : (
+        <form method="post" onSubmit={submit} noValidate className={adminStyles.form}>
+          <div>
+            <label className={adminStyles.label} htmlFor={emailId}>
+              Email Address
+            </label>
+            <span className={adminStyles.inputWrap}>
+              <Icon name="mail" size={18} />
+              <input
+                id={emailId}
+                className={adminStyles.input}
+                type="email"
+                name="email"
+                autoComplete="username"
+                placeholder="Enter your email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                aria-describedby={described}
+                aria-invalid={error ? true : undefined}
+              />
+            </span>
+          </div>
+          <div>
+            <label className={adminStyles.label} htmlFor={passwordId}>
+              Password
+            </label>
+            <span className={adminStyles.inputWrap}>
+              <Icon name="lock" size={18} />
+              <input
+                id={passwordId}
+                className={adminStyles.input}
+                type={show ? "text" : "password"}
+                name="password"
+                autoComplete="current-password"
+                placeholder="Enter your password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                aria-describedby={described}
+                aria-invalid={error ? true : undefined}
+              />
+              <button
+                type="button"
+                className={adminStyles.reveal}
+                aria-pressed={show}
+                aria-label={show ? "Hide password" : "Show password"}
+                onClick={() => setShow((v) => !v)}
+              >
+                <Icon name={show ? "eye" : "eyeOff"} size={18} />
+              </button>
+            </span>
+          </div>
+          <div className={adminStyles.row}>
+            <label className={adminStyles.check}>
+              <input type="checkbox" name="remember" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+              Remember me
+            </label>
+            <Link href="/forgot-password?mode=partner" className={adminStyles.forgot}>
+              Forgot Password?
+            </Link>
+          </div>
+          {error && (
+            <p id={errorId} className={adminStyles.error} role="alert">
+              {error}
+            </p>
+          )}
+          {unverified && (
+            <p className={styles.resend}>
+              <button
+                type="button"
+                className="w360-btn w360-btn-secondary"
+                onClick={() => publicApi.resendVerification(email.trim()).then(() => setResent(true), () => setResent(true))}
+              >
+                Email me the link again
+              </button>
+              {resent && <span role="status"> Sent - only the newest link works.</span>}
+            </p>
+          )}
+          <button type="submit" className={adminStyles.submit} disabled={busy}>
+            <Icon name="login" size={20} />
+            {busy ? "Signing in…" : "Login to Partner Portal"}
+          </button>
+        </form>
+      )}
       <p className={styles.divider}>
         <span>New to WorkEasy360?</span>
       </p>

@@ -43,7 +43,8 @@ export const PORTAL_ROOT: Record<Destination, string> = { admin: "/admin", partn
 const NEXT_PREFIXES: Record<Destination, readonly string[]> = {
   admin: ["/admin"],
   partner: ["/partner"],
-  app: ["/dashboard", "/o", "/organizations", "/onboarding", "/billing", "/settings", "/store"],
+  // Accounts V3: `/invitations` - a signed-out invitee returns to the invitation page.
+  app: ["/dashboard", "/o", "/organizations", "/onboarding", "/billing", "/settings", "/store", "/invitations"],
   store: ["/store"],
 };
 

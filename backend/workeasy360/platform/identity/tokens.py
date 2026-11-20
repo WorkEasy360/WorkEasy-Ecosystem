@@ -88,6 +88,17 @@ def consume(row: Any) -> None:
     row.save(update_fields=["used_at"])
 
 
+def spend_open(user_id: Any, purpose: str) -> int:
+    """ADR-075: spend the account's unused, unexpired links of ``purpose``
+    (a withdrawn email change). Returns how many were spent."""
+    from workeasy360.platform.identity.models import AccountToken
+
+    now = timezone.now()
+    return AccountToken.objects.filter(
+        user_id=user_id, purpose=purpose, used_at__isnull=True, expires_at__gt=now
+    ).update(used_at=now)
+
+
 def spend_all(user_id: Any) -> None:
     """Every outstanding link of the account, of any purpose, is spent - after
     the mailbox has just been proved, a stale link is only a liability."""

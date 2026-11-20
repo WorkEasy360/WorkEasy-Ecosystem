@@ -1,13 +1,10 @@
-import { notFound } from "next/navigation";
-import { ConnectedLogins } from "@/features/account/ConnectedLogins";
-import { centerOrigins } from "@/features/account/centerConfig";
-import { accountsTitle } from "@/features/signin/AccountsBrand";
+import { notFound, redirect } from "next/navigation";
+import { MOVED_SECTIONS, centerOrigins } from "@/features/account/centerConfig";
 
-export const metadata = { title: accountsTitle("Connected Logins"), robots: { index: false } };
 export const dynamic = "force-dynamic";
 
-/** ADR-072: the products this person can use or has signed in to with WorkEasy360. */
-export default function AccountConnectedLoginsPage() {
+/** ADR-072's page, moved by Accounts V3 into one of the four sections. */
+export default function MovedAccountPage() {
   if (!centerOrigins()) notFound();
-  return <ConnectedLogins />;
+  redirect(MOVED_SECTIONS["/account/connected-logins"]);
 }

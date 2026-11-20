@@ -388,6 +388,21 @@ export interface SenderSettings {
   version: number;
 }
 
+/** Accounts V3: a signed-out or signed-in person's account-security request. A ticket
+ * never proves who owns an account by itself. */
+export interface AccountSupportCase {
+  id: string;
+  reference: string;
+  email: string;
+  name: string;
+  topic: string;
+  message: string;
+  status: "open" | "resolved";
+  created_at: string;
+  resolved_at: string | null;
+  note: string;
+}
+
 export const adminConsoleApi = {
   // plan builder
   catalogOverview: (product?: string) =>
@@ -593,4 +608,10 @@ export const adminConsoleApi = {
   sender: () => apiFetch<SenderSettings>("/api/v1/admin/communication/sender"),
   saveSender: (body: { sender_name: string; reply_to: string; version: number }) =>
     apiFetch<SenderSettings>("/api/v1/admin/communication/sender", { method: "PUT", body: json(body) }),
+
+  // Accounts V3: personal account-security cases (restricted central support)
+  accountSupport: (status: AccountSupportCase["status"]) =>
+    apiFetch<{ results: AccountSupportCase[] }>("/api/v1/admin/account-support", { query: { status } }),
+  updateAccountSupport: (id: string, body: { status: AccountSupportCase["status"]; note: string }) =>
+    apiFetch<AccountSupportCase>(`/api/v1/admin/account-support/${encodeURIComponent(id)}`, { method: "PATCH", body: json(body) }),
 };
