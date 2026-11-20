@@ -41,7 +41,9 @@ def test_a_wrong_password_on_a_two_step_action_is_counted(member, enroll, path):
     member.refresh_from_db()
     before = member.failed_login_count
     refused = post(
-        browser, f"{TWO_STEP}/{path}", {"password": "not it", "code": "000000"}
+        browser,
+        f"{TWO_STEP}/{path}",
+        {"password": "not it", "code": "000000"},  # pragma: allowlist secret
     )
     assert (
         refused.status_code == 400

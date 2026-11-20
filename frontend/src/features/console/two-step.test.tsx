@@ -138,7 +138,7 @@ describe("two-step verification", () => {
     fireEvent.change(screen.getByLabelText("6-digit code or a recovery code"), { target: { value: "111222" } });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("img", { name: /QR code/ })).toBeInTheDocument();
-    expect(calls.find((c) => c.key === "POST /api/v1/auth/two-step/setup")?.body).toEqual({ password: "pw", code: "111222" });
+    expect(calls.find((c) => c.key === "POST /api/v1/auth/two-step/setup")?.body).toEqual({ password: "pw", code: "111222" }); // pragma: allowlist secret
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(await screen.findByText("On")).toBeInTheDocument();
     expect(calls.some((c) => c.key === "POST /api/v1/auth/two-step/setup/confirm")).toBe(false);
