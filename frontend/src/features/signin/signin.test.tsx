@@ -23,6 +23,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   query = "";
+  // The chooser's screen 2 is a history entry: each test starts from a clean address.
+  window.history.replaceState(null, "", "/");
 });
 
 const SESSION: Reply = ok({ authenticated: true, user_id: "u1", email: "ana@example.com" });
@@ -39,36 +41,30 @@ function pending(overrides: Partial<PendingAccess> = {}): PendingAccess {
 }
 
 describe("the access chooser", () => {
-  it("welcomes, names the signed-in account and organization, and offers same, different or new account", async () => {
+  it("screen 1: continue to the product, naming the signed-in account and organization, with only two choices", async () => {
     query = "resume=tok123";
     mockApi({ "GET /api/v1/auth/session": [SESSION], "GET /api/v1/integrations/oauth/pending": [ok(pending())] });
     const { container } = render(<ProductAccessChooser />);
-    // The unified-login brief 5.1 (ADR-066).
-    expect(await screen.findByRole("heading", { level: 1, name: "Welcome to WorkEasy360" })).toBeInTheDocument();
-    expect(screen.getByText("How would you like to continue?")).toBeInTheDocument();
-    expect(screen.getByText("Opening Easy CRM")).toBeInTheDocument();
-    expect(screen.getByText("Currently signed in as")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Continue to Easy CRM" })).toBeInTheDocument();
+    expect(screen.getByText("Signed in as")).toBeInTheDocument();
     expect(screen.getByText("Ana Rao")).toBeInTheDocument();
     expect(screen.getByText("ana@example.com")).toBeInTheDocument();
     expect(screen.getByText("ABC Ltd.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Continue as Ana Rao/ })).toHaveAccessibleDescription(
-      "Continue using your existing WorkEasy360 login.",
-    );
-    expect(screen.getByRole("button", { name: /Use another account/ })).toHaveAccessibleDescription(
-      "Sign in using another WorkEasy360 email/account.",
-    );
-    expect(screen.getByRole("button", { name: /Create New Account/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Use Easy CRM sign-in/ })).toHaveAccessibleDescription(
-      "Use the product's separate sign-in page.",
-    );
-    // Same account first: the primary choice.
-    const buttons = within(screen.getByRole("group", { name: "How would you like to continue?" })).getAllByRole("button");
+    const buttons = within(screen.getByRole("group", { name: "Continue to Easy CRM" })).getAllByRole("button");
+    expect(buttons).toHaveLength(2);
     expect(buttons[0]).toHaveAccessibleName(/Continue as Ana Rao/);
-    expect(screen.getByRole("checkbox", { name: "Remember my choice for Easy CRM" })).not.toBeChecked();
+    expect(buttons[0]).toHaveAccessibleDescription("No password needed: you're already signed in.");
+    expect(buttons[1]).toHaveAccessibleName("Use another account");
+    // No sign-up, log-in, organization or product sign-in choices on the first screen.
+    expect(screen.queryByRole("button", { name: /Create new account/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Log in to another account/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Easy CRM sign-in/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/organization/i, { selector: "button" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Don't ask me again for Easy CRM" })).not.toBeChecked();
     await expectNoViolations(container);
   });
 
-  it("continues with Workeasy360, remembering the choice, and goes where the server says", async () => {
+  it("continues with WorkEasy360, remembering the choice, and goes where the server says", async () => {
     query = "resume=tok123";
     const calls = mockApi({
       "GET /api/v1/auth/session": [SESSION],
@@ -76,7 +72,7 @@ describe("the access chooser", () => {
       "POST /api/v1/integrations/oauth/pending/choose": [ok({ redirect_url: "/api/v1/integrations/oauth/resume?resume=tok123" })],
     });
     render(<ProductAccessChooser />);
-    fireEvent.click(await screen.findByRole("checkbox", { name: "Remember my choice for Easy CRM" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Don't ask me again for Easy CRM" }));
     fireEvent.click(screen.getByRole("button", { name: /Continue as Ana Rao/ }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/api/v1/integrations/oauth/resume?resume=tok123"));
     const answer = calls.find((c) => c.key === "POST /api/v1/integrations/oauth/pending/choose");
@@ -85,7 +81,102 @@ describe("the access chooser", () => {
     expect(calls[0].key).toBe("GET /api/v1/auth/session");
   });
 
-  it("sends a person who prefers the product's sign-in to the page the server names", async () => {
+  it("Use another account opens screen 2 without asking the server anything; Back returns unchanged", async () => {
+    query = "resume=tok123";
+    const calls = mockApi({ "GET /api/v1/auth/session": [SESSION], "GET /api/v1/integrations/oauth/pending": [ok(pending())] });
+    const push = vi.spyOn(window.history, "pushState");
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
+    const { container } = render(<ProductAccessChooser />);
+    fireEvent.click(await screen.findByRole("button", { name: "Use another account" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Choose how to continue" })).toBeInTheDocument();
+    expect(screen.getByText("Opening Easy CRM. You'll be signed out of Ana Rao first.")).toBeInTheDocument();
+    const buttons = within(screen.getByRole("group", { name: "Choose how to continue" })).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual([
+      expect.stringContaining("Log in to another account"),
+      expect.stringContaining("Create new account"),
+    ]);
+    expect(String(push.mock.calls.at(-1)?.[2])).toContain("view=another");
+    await expectNoViolations(container);
+    // Nothing was answered: no sign-out has happened.
+    expect(calls.some((c) => c.key.startsWith("POST"))).toBe(false);
+
+    // Back is the browser's own Back, so screen 1 is not in the history twice.
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(back).toHaveBeenCalledTimes(1);
+    fireEvent.popState(window);
+    expect(await screen.findByRole("heading", { level: 1, name: "Continue to Easy CRM" })).toBeInTheDocument();
+    expect(calls.some((c) => c.key.startsWith("POST"))).toBe(false);
+    push.mockRestore();
+    back.mockRestore();
+  });
+
+  it("the browser's Back on screen 2 returns to screen 1", async () => {
+    query = "resume=tok123";
+    mockApi({ "GET /api/v1/auth/session": [SESSION], "GET /api/v1/integrations/oauth/pending": [ok(pending())] });
+    render(<ProductAccessChooser />);
+    fireEvent.click(await screen.findByRole("button", { name: "Use another account" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Choose how to continue" })).toBeInTheDocument();
+    fireEvent.popState(window);
+    expect(await screen.findByRole("heading", { level: 1, name: "Continue to Easy CRM" })).toBeInTheDocument();
+  });
+
+  it("opens screen 2 directly from its address, and Back then stays on this page", async () => {
+    query = "resume=tok123&view=another";
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
+    mockApi({ "GET /api/v1/auth/session": [SESSION], "GET /api/v1/integrations/oauth/pending": [ok(pending())] });
+    render(<ProductAccessChooser />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Choose how to continue" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Continue to Easy CRM" })).toBeInTheDocument();
+    // Not the browser's Back: that would leave this page.
+    expect(back).not.toHaveBeenCalled();
+    back.mockRestore();
+  });
+
+  it("Log in to another account: the server signs this account out and names the sign-in page", async () => {
+    query = "resume=tok123";
+    const calls = mockApi({
+      "GET /api/v1/auth/session": [SESSION],
+      "GET /api/v1/integrations/oauth/pending": [ok(pending())],
+      "POST /api/v1/integrations/oauth/pending/choose": [ok({ redirect_url: "/login?resume=fresh" })],
+    });
+    render(<ProductAccessChooser />);
+    fireEvent.click(await screen.findByRole("button", { name: "Use another account" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Log in to another account/ }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login?resume=fresh"));
+    expect(calls.at(-1)?.body).toEqual({ resume: "tok123", choice: "switch_account", remember: false });
+  });
+
+  it("Create new account: the server signs this account out and names the sign-up page", async () => {
+    query = "resume=tok123";
+    const calls = mockApi({
+      "GET /api/v1/auth/session": [SESSION],
+      "GET /api/v1/integrations/oauth/pending": [ok(pending())],
+      "POST /api/v1/integrations/oauth/pending/choose": [ok({ redirect_url: "https://store.example.com/signup?next=%2Fstore%2Fproduct%2Feasy-crm" })],
+    });
+    render(<ProductAccessChooser />);
+    fireEvent.click(await screen.findByRole("button", { name: "Use another account" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Create new account/ }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://store.example.com/signup?next=%2Fstore%2Fproduct%2Feasy-crm"));
+    expect(calls.at(-1)?.body).toMatchObject({ choice: "create_account", remember: false });
+  });
+
+  it("a remembered 'don't ask again' never travels with another account's choices", async () => {
+    query = "resume=tok123";
+    const calls = mockApi({
+      "GET /api/v1/auth/session": [SESSION],
+      "GET /api/v1/integrations/oauth/pending": [ok(pending())],
+      "POST /api/v1/integrations/oauth/pending/choose": [ok({ redirect_url: "/login?resume=fresh" })],
+    });
+    render(<ProductAccessChooser />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Don't ask me again for Easy CRM" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use another account" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Log in to another account/ }));
+    await waitFor(() => expect(assign).toHaveBeenCalled());
+    expect(calls.at(-1)?.body).toEqual({ resume: "tok123", choice: "switch_account", remember: false });
+  });
+
+  it("offers the product's own sign-in only on screen 2, and only where there is one", async () => {
     query = "resume=tok123";
     const calls = mockApi({
       "GET /api/v1/auth/session": [SESSION],
@@ -93,12 +184,15 @@ describe("the access chooser", () => {
       "POST /api/v1/integrations/oauth/pending/choose": [ok({ redirect_url: "https://crm.example.com/login" })],
     });
     render(<ProductAccessChooser />);
-    fireEvent.click(await screen.findByRole("button", { name: /Use Easy CRM sign-in/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Use another account" }));
+    const productDoor = await screen.findByRole("button", { name: "Use Easy CRM sign-in" });
+    expect(productDoor).toHaveAccessibleDescription("Use the product's separate sign-in page.");
+    fireEvent.click(productDoor);
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://crm.example.com/login"));
-    expect(calls.at(-1)?.body).toEqual({ resume: "tok123", choice: "product", remember: false });
+    expect(calls.at(-1)?.body).toMatchObject({ choice: "product" });
   });
 
-  it("offers no product sign-in where there is none, and no new account while sign-up is closed", async () => {
+  it("with sign-up closed and no product sign-in, screen 2 says so and offers only the log-in", async () => {
     query = "resume=tok123";
     mockApi({
       "GET /api/v1/auth/session": [SESSION],
@@ -107,41 +201,39 @@ describe("the access chooser", () => {
       ],
     });
     render(<ProductAccessChooser />);
-    expect(await screen.findByRole("heading", { level: 1, name: "Welcome to WorkEasy360" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Continue as Ana Rao/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Use another account/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /EasyBook sign-in/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Create New Account/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Continue to EasyBook" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Don't ask me again for EasyBook" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use another account" }));
+    expect(await screen.findByRole("button", { name: /Create new account/ })).toBeDisabled();
+    expect(screen.getByText("New accounts can't be created right now.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Log in to another account/ })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /EasyBook sign-in/ })).not.toBeInTheDocument();
   });
 
-  it("creates a new account through the server, which signs this one out first", async () => {
+  it("cancels through the server, never by itself", async () => {
     query = "resume=tok123";
     const calls = mockApi({
       "GET /api/v1/auth/session": [SESSION],
       "GET /api/v1/integrations/oauth/pending": [ok(pending())],
-      "POST /api/v1/integrations/oauth/pending/choose": [ok({ redirect_url: "https://store.example.com/signup?next=%2Fstore%2Fproduct%2Feasy-crm" })],
+      "POST /api/v1/integrations/oauth/pending/choose": [ok({ redirect_url: "https://crm.example.com/cb?error=access_denied" })],
     });
     render(<ProductAccessChooser />);
-    fireEvent.click(await screen.findByRole("button", { name: /Create New Account/ }));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://store.example.com/signup?next=%2Fstore%2Fproduct%2Feasy-crm"));
-    expect(calls.at(-1)?.body).toMatchObject({ choice: "create_account" });
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://crm.example.com/cb?error=access_denied"));
+    expect(calls.at(-1)?.body).toMatchObject({ choice: "cancel" });
   });
 
-  it("switches account and cancels through the server, never by itself", async () => {
+  it("a session that ended while the page was open asks for the password again, never continues", async () => {
     query = "resume=tok123";
-    const calls = mockApi({
+    mockApi({
       "GET /api/v1/auth/session": [SESSION],
       "GET /api/v1/integrations/oauth/pending": [ok(pending())],
-      "POST /api/v1/integrations/oauth/pending/choose": [
-        ok({ redirect_url: "/login?resume=fresh" }),
-        ok({ redirect_url: "https://crm.example.com/cb?error=access_denied" }),
-      ],
+      "POST /api/v1/integrations/oauth/pending/choose": [{ status: 401, body: { code: "login_required" } }],
     });
     render(<ProductAccessChooser />);
-    fireEvent.click(await screen.findByRole("button", { name: /Use another account/ }));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login?resume=fresh"));
-    expect(calls.at(-1)?.body).toMatchObject({ choice: "switch_account" });
+    fireEvent.click(await screen.findByRole("button", { name: /Continue as Ana Rao/ }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login?resume=tok123"));
+    expect(assign).toHaveBeenCalledTimes(1);
   });
 
   it("says an expired or spent link is expired, and sends a signed-out person to sign in", async () => {
