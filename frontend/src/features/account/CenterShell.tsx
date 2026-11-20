@@ -4,15 +4,15 @@ import { useState } from "react";
 import { logout, switchAccount } from "@/lib/api/auth";
 import { Button } from "@/features/controlplane/kit";
 import { AccountsBrand } from "@/features/signin/AccountsBrand";
-import { CENTER_SECTIONS, type CenterSection } from "./centerConfig";
+import { ACCOUNT_HELP_HREF, CENTER_SECTIONS, type CenterSection } from "./centerConfig";
 import styles from "./Account.module.css";
 
 /**
- * The Accounts Control Center (ADR-072): one person's WorkEasy360 account on
- * WorkEasy360 Accounts - their products in every organization, the products they have
- * signed in to, where they are signed in, their sign-in history, their organizations,
- * their security and their settings. Organization administration (members, seats,
- * billing) stays on User Admin and buying in the Store; this links there.
+ * The Accounts Control Center (ADR-072; Accounts V3): one person's WorkEasy360 account
+ * on WorkEasy360 Accounts, in exactly four sections - My Profile, Login & Security,
+ * Devices & Sessions and Settings. Organization administration (members, seats,
+ * subscriptions, billing) stays on User Admin and buying in the Store; Settings links
+ * there. Every page carries Help & Support.
  */
 export function CenterShell({
   current,
@@ -78,6 +78,10 @@ export function CenterShell({
         {error && <p role="alert">{error}</p>}
         {children}
       </main>
+      <footer className={styles.footer}>
+        <a href={ACCOUNT_HELP_HREF}>Help &amp; Support</a>
+        <span className={styles.muted}>Can&apos;t sign in, lost your authenticator, or think someone else is using your account?</span>
+      </footer>
     </div>
   );
 }

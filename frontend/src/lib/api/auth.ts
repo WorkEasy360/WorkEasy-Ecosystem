@@ -28,6 +28,18 @@ export function login(email: string, password: string, options: { remember?: boo
   });
 }
 
+/** Accounts V3: the second step of a sign-in for an account with two-step
+ * verification on. `challenge` is the opaque value the password step's 401
+ * `two_step_required` carried (never put in a URL or stored); `code` is a
+ * 6-digit authenticator code or a recovery code. Answers what `login` answers,
+ * and the session is then established - with the password step's `remember`. */
+export function loginTwoStep(challenge: string, code: string): Promise<LoginResult> {
+  return apiFetch<LoginResult>("/api/v1/auth/login/two-step", {
+    method: "POST",
+    body: JSON.stringify({ challenge, code }),
+  });
+}
+
 /** Ends this sign-in everywhere it was handed to: the central sign-in host
  * and every portal (ADR-043). */
 export function logout(): Promise<void> {

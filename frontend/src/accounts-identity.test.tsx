@@ -207,6 +207,7 @@ describe("the account page", () => {
       ],
       "GET /api/v1/auth/sessions": [ok({ sessions: [] })],
       "GET /api/v1/auth/activity": [ok({ events: [] })],
+      "GET /api/v1/auth/two-step": [ok({ available: true, enabled: false, method: null, enabled_at: null, recovery_codes_remaining: 0 })],
     });
     const { container } = render(<AccountHome appOrigin="https://app.workeasy360.com" />);
     expect(await screen.findByRole("heading", { level: 1, name: "Your WorkEasy360 account" })).toBeInTheDocument();
@@ -218,6 +219,8 @@ describe("the account page", () => {
     expect(screen.getByRole("link", { name: "Account & security" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("button", { name: "Sign out everywhere" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    // Accounts V3: the shared security panels carry two-step verification here too.
+    expect(await screen.findByRole("button", { name: "Set up two-step verification" })).toBeInTheDocument();
     await expectNoViolations(container);
   });
 });

@@ -104,6 +104,8 @@ export const ADMIN_MODULES: AdminModule[] = [
     sections: [
       { label: "Organizations", pages: [{ href: "/admin/customers", label: "Organizations", needs: CUSTOMER_VIEW }] },
       { label: "Users", pages: [{ href: "/admin/users", label: "Users", needs: USER_VIEW }] },
+      // Accounts V3: personal account-security requests (central support, never a partner's).
+      { label: "Account support", pages: [{ href: "/admin/account-support", label: "Account support", needs: USER_VIEW }] },
       { label: "Product setup", pages: [{ href: "/admin/customers/setup", label: "Product setup", needs: CUSTOMER_VIEW }] },
       { label: "Product access", pages: [{ href: "/admin/entitlements", label: "Product access", needs: CUSTOMER_VIEW }] },
     ],

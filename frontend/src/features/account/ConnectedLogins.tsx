@@ -1,11 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { accountCenterApi, type ConnectedProduct } from "@/lib/api/console";
 import { LoadGate, Table, useLoad, when } from "@/features/controlplane/ui";
 import { Badge, Button, CopyButton, formatDateTime, useConfirm } from "@/features/controlplane/kit";
 import { Panel } from "@/features/console/consoleUi";
-import { CenterShell } from "./CenterShell";
 import {
   assignmentLabel,
   connectionChips,
@@ -124,16 +123,19 @@ function ProductCard({ product, onChanged }: { product: ConnectedProduct; onChan
   );
 }
 
-/** Connected Logins: every product you can use or have signed in to with WorkEasy360. */
+/** Devices & Sessions -> Products you're signed in to: every product you can use or
+ * have signed in to with WorkEasy360, each with "Sign out of this product". */
 export function ConnectedLogins() {
   const [load, reload] = useLoad(() => accountCenterApi.connections(), []);
+  const headingId = useId();
   return (
-    <CenterShell
-      current="connected-logins"
-      title="Connected Logins"
-      lead="Products you can use or have signed in to with this account. A product's own sign-out does not reach WorkEasy360, so a product session is never shown as active here: you see when you last signed in, when the product last checked your access, and whether the WorkEasy360 sign-in you opened it with is still open."
-    >
-      <LoadGate load={load} what="your connected logins">
+    <section className={styles.section} aria-labelledby={headingId}>
+      <h2 id={headingId}>Products you&apos;re signed in to</h2>
+      <p className={styles.muted}>
+        A product&apos;s own sign-out does not reach WorkEasy360, so a product session is never shown as active here: you see when you last
+        signed in, when the product last checked your access, and whether the WorkEasy360 sign-in you opened it with is still open.
+      </p>
+      <LoadGate load={load} what="the products you signed in to">
         {(d) => (
           <>
             <p className={styles.subject}>
@@ -141,13 +143,13 @@ export function ConnectedLogins() {
               <CopyButton value={d.subject} label="Copy WorkEasy360 ID" />
             </p>
             {d.products.length === 0 ? (
-              <p>No product yet. Products you open from My Products appear here.</p>
+              <p>No product yet. Products you open with this account appear here.</p>
             ) : (
               d.products.map((p) => <ProductCard key={p.product_code} product={p} onChanged={reload} />)
             )}
           </>
         )}
       </LoadGate>
-    </CenterShell>
+    </section>
   );
 }

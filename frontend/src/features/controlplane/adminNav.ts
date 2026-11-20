@@ -26,6 +26,7 @@ export const ADMIN_PAGE_TITLES: Record<string, string> = {
   "/admin": "Dashboard",
   "/admin/notifications": "Notifications",
   "/admin/users": "Users",
+  "/admin/account-support": "Account support",
   "/admin/subscriptions": "Subscriptions",
   "/admin/entitlements": "Product access",
   "/admin/customers": "Organizations",

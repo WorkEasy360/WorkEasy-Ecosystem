@@ -1,13 +1,10 @@
-import { notFound } from "next/navigation";
-import { CenterProducts } from "@/features/account/CenterProducts";
-import { centerOrigins } from "@/features/account/centerConfig";
-import { accountsTitle } from "@/features/signin/AccountsBrand";
+import { notFound, redirect } from "next/navigation";
+import { MOVED_SECTIONS, centerOrigins } from "@/features/account/centerConfig";
 
-export const metadata = { title: accountsTitle("My Products"), robots: { index: false } };
 export const dynamic = "force-dynamic";
 
-/** ADR-072: every product of every organization the person belongs to. */
-export default function AccountProductsPage() {
+/** ADR-072's page, moved by Accounts V3 into one of the four sections. */
+export default function MovedAccountPage() {
   if (!centerOrigins()) notFound();
-  return <CenterProducts />;
+  redirect(MOVED_SECTIONS["/account/products"]);
 }

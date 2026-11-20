@@ -257,6 +257,15 @@ export interface SignupRequest {
   company_name?: string;
 }
 
+export type AccountSupportTopic = "cannot_sign_in" | "lost_two_step" | "account_compromised" | "closure" | "other";
+
+export interface AccountSupportRequest {
+  email: string;
+  name: string;
+  topic: AccountSupportTopic;
+  message: string;
+}
+
 const post = <T>(path: string, body: unknown) =>
   apiFetch<T>(path, { method: "POST", body: JSON.stringify(body) });
 
@@ -289,6 +298,10 @@ export const publicApi = {
     }),
   resendVerification: (email: string) => post<{ status: string }>("/api/v1/public/signup/resend", { email }),
   forgotPassword: (email: string) => post<{ status: string }>("/api/v1/public/password/forgot", { email }),
+  /** Accounts V3: a personal account-security case for WorkEasy360's restricted
+   * account support (never a partner). The same answer whether or not an account
+   * exists; signed in or not. */
+  accountSupport: (body: AccountSupportRequest) => post<{ reference: string }>("/api/v1/public/account-support", body),
   /** ADR-066: the emailed change-of-sign-in-email link. */
   confirmEmailChange: (token: string) => post<{ status: string }>("/api/v1/public/email/confirm", { token }),
   resetPassword: (token: string, password: string) =>

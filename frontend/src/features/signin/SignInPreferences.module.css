@@ -138,3 +138,9 @@
     border-color: ButtonText;
   }
 }
+
+/* Accounts V3: the section's heading when the screen is part of Login & Security. */
+.embeddedTitle {
+  margin: 0 0 var(--w360-space-1, 4px);
+  font-size: 1.25rem;
+}

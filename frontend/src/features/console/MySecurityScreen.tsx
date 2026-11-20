@@ -13,6 +13,7 @@ import { useSession } from "@/lib/auth/useSession";
 import { ChangeEmailForm } from "./ChangeEmailForm";
 import { ChangePasswordForm } from "./ChangePasswordForm";
 import { PageHeader, Panel } from "./consoleUi";
+import { TwoStepPanel } from "./TwoStepPanel";
 
 const FAILURE_REASONS: Record<string, string> = {
   invalid_credentials: "wrong password",
@@ -60,7 +61,24 @@ export function describeAccountEvent(event: Pick<AccountEvent, "kind" | "reason"
     case "product_signed_out":
       return "Signed out of a product";
     case "profile_updated":
-      return "Name changed";
+      return "Profile changed";
+    // ADR-075 (Accounts V3).
+    case "two_step_enabled":
+      return "Two-step verification turned on";
+    case "two_step_replaced":
+      return "Authenticator app replaced";
+    case "two_step_disabled":
+      return "Two-step verification turned off";
+    case "recovery_codes_regenerated":
+      return "New recovery codes created";
+    case "recovery_code_used":
+      return "Signed in with a recovery code";
+    case "email_change_cancelled":
+      return "Change of sign-in email cancelled";
+    case "notifications_changed":
+      return "Notification settings changed";
+    case "account_closed":
+      return "Account closed";
     default:
       return event.kind.replace(/_/g, " ");
   }
@@ -167,6 +185,8 @@ export function AccountSecurityPanels({
         <ChangePasswordForm popup onChanged={refresh} />
       </Panel>
 
+      <TwoStepPanel />
+
       <Panel title="Sign-in methods">
         <ul className={local.methods}>
           <li>
@@ -256,27 +276,33 @@ export function AccountSecurityPanels({
 
       <Panel title="Recent security activity">
         <LoadGate load={activity} what="your recent activity">
-          {(d) => (
-            <Table
-              caption="Sign-ins, password changes and signed-out sessions, newest first"
-              head={["When", "What happened", "Device", "Network"]}
-              isEmpty={d.events.length === 0}
-              empty="No recent activity."
-            >
-              {d.events.map((e, i) => (
-                <tr key={`${e.occurred_at}-${i}`}>
-                  <td className={local.nowrap}>{when(e.occurred_at)}</td>
-                  <th scope="row">{describeAccountEvent(e)}</th>
-                  <td>{e.device_label || "—"}</td>
-                  <td className={cp.mono}>{e.ip_prefix || "—"}</td>
-                </tr>
-              ))}
-            </Table>
-          )}
+          {(d) => <ActivityTable events={d.events} />}
         </LoadGate>
       </Panel>
 
     </>
+  );
+}
+
+/** The person's own recent security activity, newest first - values already redacted by
+ * the server (a network prefix, never a full address). */
+export function ActivityTable({ events }: { events: AccountEvent[] }) {
+  return (
+    <Table
+      caption="Sign-ins, password changes and signed-out sessions, newest first"
+      head={["When", "What happened", "Device", "Network"]}
+      isEmpty={events.length === 0}
+      empty="No recent activity."
+    >
+      {events.map((e, i) => (
+        <tr key={`${e.occurred_at}-${i}`}>
+          <td className={local.nowrap}>{when(e.occurred_at)}</td>
+          <th scope="row">{describeAccountEvent(e)}</th>
+          <td>{e.device_label || "—"}</td>
+          <td className={cp.mono}>{e.ip_prefix || "—"}</td>
+        </tr>
+      ))}
+    </Table>
   );
 }
 

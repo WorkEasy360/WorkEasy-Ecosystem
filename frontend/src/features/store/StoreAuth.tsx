@@ -11,6 +11,7 @@ import { usePortals } from "@/lib/portalContext";
 import { storeSignsInThroughAccounts } from "@/lib/portals";
 import { fieldProblem } from "@/features/auth/AdminLogin";
 import { loginErrorMessage } from "@/features/auth/LoginForm";
+import { TwoStepSignIn, twoStepChallenge } from "@/features/auth/TwoStepSignIn";
 import { REFERRAL_TOKEN, SignupForm } from "@/features/auth/SelfService";
 import { StoreShell } from "./StoreShell";
 import { useStoreAccount } from "./account";
@@ -76,6 +77,7 @@ function StoreOwnSignInForm({ onSignedIn, compact = false }: { onSignedIn: () =>
   const [unverified, setUnverified] = useState(false);
   const [resent, setResent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [challenge, setChallenge] = useState<string | null>(null);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -90,11 +92,35 @@ function StoreOwnSignInForm({ onSignedIn, compact = false }: { onSignedIn: () =>
       setPassword("");
       onSignedIn();
     } catch (err) {
+      const next = twoStepChallenge(err);
+      if (next) {
+        setPassword("");
+        setChallenge(next);
+        return;
+      }
       setError(loginErrorMessage(err));
       setUnverified(err instanceof ApiError && err.code === "email_not_verified");
     } finally {
       setBusy(false);
     }
+  }
+
+  if (challenge) {
+    return (
+      <div className={`${styles.authForm} ${compact ? styles.authCompact : ""}`}>
+        <TwoStepSignIn
+          challenge={challenge}
+          onSignedIn={() => {
+            setChallenge(null);
+            onSignedIn();
+          }}
+          onRestart={(message) => {
+            setChallenge(null);
+            setError(message);
+          }}
+        />
+      </div>
+    );
   }
 
   return (
