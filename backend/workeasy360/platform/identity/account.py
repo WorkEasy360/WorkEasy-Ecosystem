@@ -538,27 +538,217 @@ def clean_full_name(raw: Any) -> str:
     return value
 
 
+#: "Not given" in a PATCH, as opposed to an empty value that clears the field.
+UNSET: Any = object()
+
+
+def clean_country(raw: Any) -> str:
+    from workeasy360.contracts.errors import ProfileInvalid
+    from workeasy360.contracts.values.countries import COUNTRY_CODES
+
+    if raw is None:
+        return ""
+    if not isinstance(raw, str):
+        raise ProfileInvalid("Choose a country from the list.", field="country")
+    value = raw.strip().upper()
+    if value and value not in COUNTRY_CODES:
+        raise ProfileInvalid("Choose a country from the list.", field="country")
+    return value
+
+
+def clean_language(raw: Any) -> str:
+    from workeasy360.contracts.errors import ProfileInvalid
+    from workeasy360.contracts.values.languages import LANGUAGE_CODES
+
+    if raw is None:
+        return ""
+    if not isinstance(raw, str):
+        raise ProfileInvalid("Choose a language from the list.", field="language")
+    value = raw.strip()
+    if value and value not in LANGUAGE_CODES:
+        raise ProfileInvalid("Choose a language from the list.", field="language")
+    return value
+
+
+def time_zone_names() -> list[str]:
+    """The zones the profile form offers: the canonical Area/City names."""
+    from zoneinfo import available_timezones
+
+    names = sorted(
+        name
+        for name in available_timezones()
+        if "/" in name
+        and not name.startswith(("Etc/", "SystemV/", "US/", "posix/", "right/"))
+    )
+    return [*names, "UTC"]
+
+
+def clean_time_zone(raw: Any) -> str:
+    from zoneinfo import available_timezones
+
+    from workeasy360.contracts.errors import ProfileInvalid
+
+    if raw is None:
+        return ""
+    if not isinstance(raw, str) or len(raw) > 64:
+        raise ProfileInvalid("Choose a time zone from the list.", field="time_zone")
+    value = raw.strip()
+    if value and value not in available_timezones():
+        raise ProfileInvalid("Choose a time zone from the list.", field="time_zone")
+    return value
+
+
 def update_profile(
-    user_id: Any, *, full_name: Any, ip_prefix: str = "", device_label: str = ""
+    user_id: Any,
+    *,
+    full_name: Any = UNSET,
+    country: Any = UNSET,
+    language: Any = UNSET,
+    time_zone: Any = UNSET,
+    ip_prefix: str = "",
+    device_label: str = "",
 ) -> Any:
-    """Change the person's own display name (ADR-072). Only the name: the
-    sign-in email has its own confirmed change (ADR-066) and the password its
-    own. Products read the new name from the ID token's ``name`` claim at the
-    next sign-in. A no-op (and no trail entry) when nothing changed."""
+    """Change the person's own profile (ADR-072, ADR-075): name, country,
+    language, time zone - only the fields given. The sign-in email has its own
+    confirmed change (ADR-066) and the password its own. Products read the new
+    values from the ID token and userinfo claims (``name``, ``picture``,
+    ``locale``, ``zoneinfo``, ``updated_at``) at their next sign-in or
+    userinfo call. Every field is validated before anything is written; a
+    no-op (and no trail entry) when nothing changed."""
     from workeasy360.platform.identity.models import AccountEvent, User
 
-    value = clean_full_name(full_name)
+    wanted: dict[str, str] = {}
+    if full_name is not UNSET:
+        wanted["full_name"] = clean_full_name(full_name)
+    if country is not UNSET:
+        wanted["country"] = clean_country(country)
+    if language is not UNSET:
+        wanted["language"] = clean_language(language)
+    if time_zone is not UNSET:
+        wanted["time_zone"] = clean_time_zone(time_zone)
     with transaction.atomic():
         user = User.objects.select_for_update().get(pk=user_id)
-        if user.full_name == value:
+        changed = [name for name, value in wanted.items() if getattr(user, name) != value]
+        if not changed:
             return user
-        user.full_name = value
-        user.save(update_fields=["full_name", "updated_at"])
+        for name in changed:
+            setattr(user, name, wanted[name])
+        user.save(update_fields=[*changed, "updated_at"])
         record_account_event(
             user_id,
             AccountEvent.Kind.PROFILE_UPDATED,
+            reason=",".join(sorted(changed)),
             ip_prefix=ip_prefix,
             device_label=device_label,
         )
-    logger.info("identity.profile.updated", user_id=str(user_id))
+    logger.info("identity.profile.updated", user_id=str(user_id), fields=sorted(changed))
     return user
+
+
+# --- profile photo (ADR-075) ------------------------------------------------------
+
+
+def sniff_image(data: bytes) -> str | None:
+    """The image type ``data`` really is, by its bytes (never by the header the
+    client sent), or ``None``: PNG, JPEG or WebP only."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if len(data) > 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def set_profile_photo(
+    user_id: Any,
+    data: bytes,
+    *,
+    declared_type: str = "",
+    ip_prefix: str = "",
+    device_label: str = "",
+) -> Any:
+    """Store (or replace) the person's photo. The URL token is new every time,
+    so the previous photo's URL stops working at once."""
+    import hashlib
+    import secrets
+
+    from django.conf import settings
+    from django.utils import timezone
+
+    from workeasy360.contracts.errors import PhotoInvalid
+    from workeasy360.platform.identity.models import AccountEvent, ProfilePhoto, User
+
+    limit = int(getattr(settings, "PROFILE_PHOTO_MAX_BYTES", 262144))
+    if not data or len(data) > limit:
+        raise PhotoInvalid()
+    kind = sniff_image(data)
+    declared = (declared_type or "").split(";")[0].strip().lower()
+    if kind is None or (declared and declared != kind):
+        raise PhotoInvalid()
+    with transaction.atomic():
+        user = User.objects.select_for_update().get(pk=user_id)
+        ProfilePhoto.objects.update_or_create(
+            user_id=user_id,
+            defaults={
+                "token": secrets.token_urlsafe(32),
+                "content_type": kind,
+                "data": data,
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "updated_at": timezone.now(),
+            },
+        )
+        user.save(update_fields=["updated_at"])
+        record_account_event(
+            user_id,
+            AccountEvent.Kind.PROFILE_UPDATED,
+            reason="photo",
+            ip_prefix=ip_prefix,
+            device_label=device_label,
+        )
+    logger.info("identity.profile.photo_set", user_id=str(user_id), size=len(data))
+    return user
+
+
+def remove_profile_photo(
+    user_id: Any, *, ip_prefix: str = "", device_label: str = ""
+) -> Any:
+    from workeasy360.platform.identity.models import AccountEvent, ProfilePhoto, User
+
+    with transaction.atomic():
+        user = User.objects.select_for_update().get(pk=user_id)
+        deleted, _ = ProfilePhoto.objects.filter(user_id=user_id).delete()
+        if deleted:
+            user.save(update_fields=["updated_at"])
+            record_account_event(
+                user_id,
+                AccountEvent.Kind.PROFILE_UPDATED,
+                reason="photo",
+                ip_prefix=ip_prefix,
+                device_label=device_label,
+            )
+    return user
+
+
+def profile_photo_token(user_id: Any) -> str | None:
+    from workeasy360.platform.identity.models import ProfilePhoto
+
+    return (
+        ProfilePhoto.objects.filter(user_id=user_id)
+        .values_list("token", flat=True)
+        .first()
+    )
+
+
+def profile_photo_by_token(token: Any) -> Any:
+    """The photo a capability URL names, of an active account only."""
+    from workeasy360.contracts.enums import UserStatus
+    from workeasy360.platform.identity.models import ProfilePhoto
+
+    if not isinstance(token, str) or not token or len(token) > 64:
+        return None
+    return (
+        ProfilePhoto.objects.filter(token=token, user__status=UserStatus.ACTIVE.value)
+        .only("content_type", "data", "sha256", "updated_at")
+        .first()
+    )

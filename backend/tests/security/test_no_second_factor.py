@@ -1,8 +1,12 @@
-"""There is no second factor anywhere in the platform (ADR-050).
+"""What ADR-050 removed stays removed (ADR-050, as amended by ADR-075).
 
-The owner removed two-step verification from the whole software: nobody is
-asked for a code, no action waits for one, no organization can require one, and
-no token says how strongly anyone signed in. These tests prove the absence from
+The owner removed two-step verification from the whole software on 2026-10-24.
+ADR-075 (Accounts V3) brings back exactly one thing: a person may turn on
+two-step verification for their own account (``identity.two_step``, tested in
+``tests/accounts_v3``). Everything else stays gone, and these tests keep it so:
+no action waits for a code, no organization can require one, nothing steps up,
+no token says how strongly anyone signed in, and the factors enrolled before
+ADR-050 stay dormant. These tests prove the absence from
 the outside (what an administrator, a partner and a product can do after a
 password sign-in) and from the inside (the source names none of it), so a later
 change cannot put a half of it back unnoticed.

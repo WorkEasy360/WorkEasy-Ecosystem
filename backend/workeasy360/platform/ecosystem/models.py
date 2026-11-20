@@ -655,6 +655,13 @@ class PendingAuthorization(models.Model):
     #: moment may resume - the product asked for a fresh sign-in, not for
     #: the one already in the browser.
     authenticated_after = models.DateTimeField(null=True, blank=True)
+    #: ADR-075: the organization the product asked for, which the person who
+    #: resumed could not open (another person's, after "Use another account").
+    #: The row is then parked for the organization chooser with no
+    #: organization; the one this person chooses restarts the product's own
+    #: sign-in with it (the product refuses a code for an organization other
+    #: than the one it asked for). Never shown to anyone.
+    refused_organization_id = models.UUIDField(null=True, blank=True)
 
     expires_at = models.DateTimeField()
     #: Set by a conditional UPDATE, exactly as `AuthorizationCode.redeemed_at`

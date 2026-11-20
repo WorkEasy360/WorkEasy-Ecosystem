@@ -84,6 +84,8 @@ SURFACE_RULES: Final[tuple[tuple[str, bool, frozenset[str]], ...]] = (
     # ADR-059: every web portal has its own sign-in page, so the one sign-in
     # endpoint answers on each of them (the session cookie is that host's).
     ("/api/v1/auth/login", True, frozenset(portals.WEB_PORTALS)),
+    # ADR-075: its code step, on the same hosts.
+    ("/api/v1/auth/login/two-step", True, frozenset(portals.WEB_PORTALS)),
     # ADR-072: the Accounts Control Center is WorkEasy360 Accounts' own - the
     # person's products, connected logins, sessions and history on that host
     # only (and only while it hosts identity: the views answer 404 otherwise).

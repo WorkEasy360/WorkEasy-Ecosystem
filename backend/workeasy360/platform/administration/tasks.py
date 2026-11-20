@@ -45,3 +45,17 @@ def prune_activity() -> dict[str, int]:
     }
     logger.info("administration.activity_pruned", **result)
     return result
+
+
+@shared_task(
+    base=CrossTenantTask,
+    queue="heavy",
+    soft_time_limit=300,
+    time_limit=600,
+    name="platform.identity.prune_two_step",
+)
+def prune_two_step() -> dict[str, int]:
+    """ADR-075: spent and expired sign-in code steps, and abandoned setups."""
+    from workeasy360.platform.identity import two_step
+
+    return {"challenges": two_step.prune_challenges()}

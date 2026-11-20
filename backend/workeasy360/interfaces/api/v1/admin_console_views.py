@@ -189,3 +189,47 @@ def network_reset_view(
     return JsonResponse(
         reset_network_as_staff(ctx, organization_id, reason=str(body.get("reason") or ""))
     )
+
+
+# --- ADR-075: central account-security support -----------------------------------------
+
+
+@staff_view(["GET"])
+def account_support_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """Requests sent to central account support. Staff who may view people."""
+    from workeasy360.platform.administration import account_security
+    from workeasy360.platform.authz.services import require_platform_staff
+
+    require_platform_staff(
+        ctx, operation="account_support.list", permission="platform.staff_user.view"
+    )
+    status = request.GET.get("status") or None
+    return JsonResponse({"results": account_security.support_cases(status=status)})
+
+
+@staff_view(["PATCH"])
+def account_support_case_view(
+    request: HttpRequest, ctx: TenantContext, case_id: UUID
+) -> JsonResponse:
+    from workeasy360.platform.administration import account_security
+    from workeasy360.platform.authz.services import require_platform_staff
+
+    require_platform_staff(
+        ctx, operation="account_support.update", permission="platform.staff_user.manage"
+    )
+    try:
+        body = json_input.loads(request.body or b"{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        body = None
+    if not isinstance(body, dict):
+        from workeasy360.contracts.errors import MembershipValidationError
+
+        raise MembershipValidationError("The body must be a JSON object.", field="body")
+    return JsonResponse(
+        account_security.update_support_case(
+            case_id,
+            status=body.get("status"),
+            note=body.get("note"),
+            staff_user_id=ctx.user_id,
+        )
+    )

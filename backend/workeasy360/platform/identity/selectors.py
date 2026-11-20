@@ -12,6 +12,7 @@ view, where the scope gate would be one refactor from being dropped.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 #: OIDC standard claims, mapped to the scope that releases each one.
@@ -20,7 +21,9 @@ from typing import Any
 #: scope actually release?" has a single, greppable answer and adding a claim
 #: requires choosing its scope.
 _SCOPE_CLAIMS: dict[str, tuple[str, ...]] = {
-    "profile": ("name",),
+    # ADR-075: the person's own profile on WorkEasy360 Accounts. ``updated_at``
+    # lets a product see that its copy is stale without comparing fields.
+    "profile": ("name", "picture", "locale", "zoneinfo", "updated_at"),
     "email": ("email", "email_verified"),
 }
 
@@ -57,11 +60,23 @@ def profile_claims(*, user_id: Any, scopes: tuple[str, ...]) -> dict[str, Any]:
     # scopes that membership's integration was registered for.
     row = (
         User.objects.filter(id=user_id)
-        .values("email", "email_original", "full_name", "email_verified_at")
+        .values(
+            "email",
+            "email_original",
+            "full_name",
+            "email_verified_at",
+            "language",
+            "time_zone",
+            "updated_at",
+            "profile_photo__token",
+        )
         .first()
     )
     if row is None:
         return {}
+    from workeasy360.platform.identity import portals
+
+    token = row["profile_photo__token"]
 
     available = {
         # The normalised address, which is the login identifier and the one
@@ -70,6 +85,15 @@ def profile_claims(*, user_id: Any, scopes: tuple[str, ...]) -> dict[str, Any]:
         "email": row["email"],
         "email_verified": row["email_verified_at"] is not None,
         "name": row["full_name"],
+        # A capability URL that changes with every new photo (ADR-075).
+        "picture": (
+            f"{portals.auth_url()}/api/v1/public/profile-photos/{token}"
+            if token
+            else None
+        ),
+        "locale": row["language"],
+        "zoneinfo": row["time_zone"],
+        "updated_at": int(row["updated_at"].timestamp()) if row["updated_at"] else None,
     }
     # Empty strings are omitted rather than sent: OIDC Core section 5.3.2 says
     # a claim with no value should be left out, and a product rendering ""
@@ -239,3 +263,28 @@ def display_names(user_ids: Any) -> dict[Any, str]:
         row["id"]: row["full_name"] or row["email"]
         for row in User.objects.filter(id__in=ids).values("id", "full_name", "email")
     }
+
+
+def session_epoch(user_id: Any) -> int | None:
+    """The account's ``session_epoch`` while it is active, else ``None``
+    (ADR-075: an access token names the epoch it was issued under, so a
+    password change or "sign out everywhere" stops it at once)."""
+    from workeasy360.contracts.enums import UserStatus
+    from workeasy360.platform.identity.models import User
+
+    return (
+        User.objects.filter(id=user_id, status=UserStatus.ACTIVE.value)
+        .values_list("session_epoch", flat=True)
+        .first()
+    )
+
+
+def sign_in_is_live(user_id: Any, sign_in_id: Any) -> bool:
+    """Whether this WorkEasy360 sign-in still has a session (ADR-075)."""
+    from workeasy360.platform.identity.account import live_sign_in_ids
+
+    try:
+        wanted = sign_in_id if isinstance(sign_in_id, uuid.UUID) else uuid.UUID(str(sign_in_id))
+    except (TypeError, ValueError):
+        return False
+    return wanted in live_sign_in_ids(user_id)

@@ -266,7 +266,9 @@ def issue_logout_token(
     return _sign(claims, ttl=LOGOUT_TOKEN_TTL_S, jose_type=LOGOUT_TOKEN_JOSE_TYPE)
 
 
-def issue_access_token(subject: TokenSubject) -> IssuedToken:
+def issue_access_token(
+    subject: TokenSubject, *, session_epoch: int | None = None
+) -> IssuedToken:
     """The credential for ``/userinfo``. Deliberately carries no org claim.
 
     Leaving ``organization_id`` out is not an oversight. The access token
@@ -278,6 +280,15 @@ def issue_access_token(subject: TokenSubject) -> IssuedToken:
     ttl = int(settings.OIDC_ACCESS_TOKEN_TTL_S)
     claims = _base_claims(subject, ttl=ttl, token_type=TYPE_ACCESS_TOKEN)
     claims["scope"] = subject.scope
+    # ADR-075: what userinfo re-checks, so a revoked sign-in's token stops at
+    # the next request instead of living out its 15 minutes. ``sid`` only
+    # where the ID token already carries it (back-channel products); the
+    # epoch for every product (it moves on a password change, a reset and
+    # "sign out everywhere").
+    if session_epoch is not None:
+        claims["w360_sep"] = int(session_epoch)
+    if subject.sid:
+        claims["sid"] = subject.sid
     return _sign(claims, ttl=ttl)
 
 

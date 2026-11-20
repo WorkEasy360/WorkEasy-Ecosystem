@@ -51,3 +51,10 @@ EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 KYC_MALWARE_SCAN_REQUIRED = env.bool("W360_KYC_MALWARE_SCAN_REQUIRED", False)
 
 env.require_all(context="development configuration")
+
+# ADR-075: a fixed development-only key, like the insecure SECRET_KEY default.
+from base64 import urlsafe_b64encode
+
+TWO_STEP_KEY = env.secret("W360_TWO_STEP_KEY", "").encode("ascii") or urlsafe_b64encode(
+    b"w360-dev-only-two-step-key-32by!"
+)

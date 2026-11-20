@@ -98,3 +98,11 @@ W360_TEST_PGBOUNCER_PORT = env.int("W360_DB_PORT", 6442)
 W360_TEST_THROUGH_PGBOUNCER = env.bool("W360_TEST_THROUGH_PGBOUNCER", True)
 
 env.require_all(context="test configuration")
+
+# ADR-075: a fixed, test-only key so personal two-step verification works in
+# the suite (never a real deployment's).
+from base64 import urlsafe_b64encode
+
+TWO_STEP_KEY = env.secret("W360_TWO_STEP_KEY", "").encode("ascii") or urlsafe_b64encode(
+    b"w360-test-two-step-key-32-bytes!"
+)

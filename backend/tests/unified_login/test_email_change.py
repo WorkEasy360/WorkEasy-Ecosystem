@@ -162,7 +162,10 @@ def test_an_address_another_account_holds_gets_the_same_answer_and_is_told(rahul
     taken = _ask(rahul["browser"], "priya@abccompany.com")
     free = _ask(rahul["browser"], "nobody@abccompany.com")
     assert (taken.status_code, taken.json()) == (free.status_code, free.json())
-    assert not AccountToken.objects.filter(new_email="priya@abccompany.com").exists()
+    # ADR-075: the request is recorded as a free address's is, so "pending"
+    # reads the same either way (no oracle); its link is never sent to anyone
+    # and is refused while the address is taken.
+    assert AccountToken.objects.filter(new_email="priya@abccompany.com").exists()
     notice = _mail_to("priya@abccompany.com")
     assert notice and "already has a workeasy360 account" in notice[-1].subject.lower()
     assert "#token=" not in notice[-1].body

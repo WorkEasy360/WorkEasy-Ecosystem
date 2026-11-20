@@ -895,6 +895,90 @@ class ProfileInvalid(AccountSecurityError):
         super().__init__(message or "That name cannot be used.", field=field, **context)
 
 
+# --- Accounts V3 (ADR-075) ------------------------------------------------------------
+
+
+class PhotoInvalid(AccountSecurityError):
+    """A profile photo that is not a PNG, JPEG or WebP image of the allowed size."""
+
+    code = "photo_invalid"
+
+    def __init__(self, message: str = "", **context: Any) -> None:
+        super().__init__(
+            message or "Use a PNG, JPEG or WebP picture of at most 256 KB.",
+            field="photo",
+            **context,
+        )
+
+
+class PreferenceInvalid(AccountSecurityError):
+    """An unknown notification choice, or one that cannot be turned off."""
+
+    code = "preference_invalid"
+
+
+class NoPendingEmailChange(AccountSecurityError):
+    code = "no_pending_email_change"
+    http_status = 404
+
+    def __init__(self, message: str = "", **context: Any) -> None:
+        super().__init__(message or "There is no email change waiting.", **context)
+
+
+class TwoStepUnavailable(AccountSecurityError):
+    """This deployment has no key to protect a second factor with."""
+
+    code = "two_step_unavailable"
+    http_status = 503
+
+    def __init__(self, message: str = "", **context: Any) -> None:
+        super().__init__(
+            message or "Two-step verification is not available right now.", **context
+        )
+
+
+class TwoStepCodeInvalid(AccountSecurityError):
+    """The code is not this person's current authenticator code or an unused
+    recovery code. Says nothing about which."""
+
+    code = "two_step_code_invalid"
+
+    def __init__(self, message: str = "", **context: Any) -> None:
+        super().__init__(message or "That code is not valid.", field="code", **context)
+
+
+class TwoStepChallengeExpired(AccountSecurityError):
+    """The code step of a sign-in is gone: expired, spent, out of attempts, or
+    voided by a password reset. Sign in with the password again."""
+
+    code = "two_step_challenge_expired"
+    http_status = 401
+
+    def __init__(self, message: str = "", **context: Any) -> None:
+        super().__init__(message or "Sign in again.", **context)
+
+
+class TwoStepStateConflict(AccountSecurityError):
+    """Two-step is not in the state the action needs (e.g. turning it off when
+    it is off, or confirming a setup that expired)."""
+
+    http_status = 409
+
+    def __init__(
+        self, message: str = "", *, code: str = "two_step_not_enabled", **context: Any
+    ) -> None:
+        super().__init__(message or "Two-step verification is not turned on.", **context)
+        self.code = code
+
+
+class SoleOwnerBlocksClosure(AccountSecurityError):
+    """The person is the only owner of an organization: closing the account
+    would orphan it. ``blocking_organizations`` names the person's own ones."""
+
+    code = "sole_owner"
+    http_status = 409
+
+
 class AccountLinkInvalid(AccountSecurityError):
     """No redeemable verification or reset link for this token. One answer for
     unknown, expired and already used, like ``InvitationInvalid``: the token

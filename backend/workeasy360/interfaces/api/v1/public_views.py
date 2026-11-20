@@ -309,3 +309,59 @@ def storefront_logo_view(request: HttpRequest, slug: str) -> HttpResponse:
     response["Content-Security-Policy"] = "default-src 'none'; sandbox"
     response["Content-Disposition"] = "inline"
     return response
+
+
+# --- ADR-075: the person's profile photo, and central account support --------------
+
+
+@require_http_methods(["GET", "HEAD"])
+def profile_photo_view(request: HttpRequest, token: str) -> HttpResponse:
+    """A profile photo by its capability URL (the ``picture`` claim). Served
+    only as the type its bytes were checked as, never sniffed, never run."""
+    from workeasy360.platform.identity import account
+
+    photo = account.profile_photo_by_token(token)
+    if photo is None:
+        return JsonResponse({"code": "not_found", "detail": "Not found."}, status=404)
+    response = HttpResponse(bytes(photo.data), content_type=photo.content_type)
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Content-Security-Policy"] = "default-src 'none'; sandbox"
+    response["Content-Disposition"] = "inline"
+    response["Cache-Control"] = "public, max-age=86400, immutable"
+    response["ETag"] = f'"{photo.sha256[:32]}"'
+    response["Cross-Origin-Resource-Policy"] = "cross-origin"
+    return response
+
+
+@require_http_methods(["POST"])
+@never_cache
+def account_support_view(request: HttpRequest) -> JsonResponse:
+    """Central account-security support (Accounts V3 10.3): signed out or in.
+    The same answer whether or not the address has an account."""
+    import json as _json
+
+    from workeasy360.contracts.errors import MembershipValidationError
+    from workeasy360.contracts.values import json_input
+    from workeasy360.platform.administration import account_security
+
+    try:
+        body = json_input.loads(request.body or b"{}")
+    except (_json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise MembershipValidationError("Malformed JSON body.", field="body") from exc
+    if not isinstance(body, dict):
+        raise MembershipValidationError("The body must be a JSON object.", field="body")
+    email = body.get("email")
+    blocked = limited(
+        request,
+        "account_support",
+        account_email=email.strip() if isinstance(email, str) and email.strip() else None,
+    )
+    if blocked is not None:
+        return blocked
+    reference = account_security.open_support_case(
+        email=email,
+        name=body.get("name"),
+        topic=body.get("topic"),
+        message=body.get("message"),
+    )
+    return JsonResponse({"reference": reference}, status=202)

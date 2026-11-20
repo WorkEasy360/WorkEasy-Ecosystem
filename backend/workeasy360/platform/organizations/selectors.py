@@ -958,3 +958,36 @@ def member_rows_in_scope() -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+def sole_owned_organizations(user_id: UUID) -> list[dict[str, Any]]:
+    """The organizations this person is the **only** active owner of (ADR-075):
+    closing their account would leave each without an owner. Read from the
+    access-directory projection (control plane, no RLS), which holds one row
+    per active membership, filtered by the caller's own verified id."""
+    from workeasy360.platform.organizations.models import UserOrganizationAccess
+
+    closed = {OrganizationStatus.DELETED.value, OrganizationStatus.PENDING_DELETION.value}
+    owned = list(
+        UserOrganizationAccess.objects.filter(user_id=user_id, is_owner=True)
+        .exclude(organization_status__in=closed)
+        .values("organization_id", "organization_display_name", "organization_slug")
+    )
+    if not owned:
+        return []
+    co_owned = set(
+        UserOrganizationAccess.objects.filter(
+            organization_id__in=[row["organization_id"] for row in owned], is_owner=True
+        )
+        .exclude(user_id=user_id)
+        .values_list("organization_id", flat=True)
+    )
+    return [
+        {
+            "organization_id": str(row["organization_id"]),
+            "name": row["organization_display_name"],
+            "slug": row["organization_slug"],
+        }
+        for row in owned
+        if row["organization_id"] not in co_owned
+    ]

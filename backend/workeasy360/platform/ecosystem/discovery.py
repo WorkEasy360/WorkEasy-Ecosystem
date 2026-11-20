@@ -148,6 +148,11 @@ def document() -> dict[str, Any]:
             "email",
             "email_verified",
             "name",
+            # ADR-075: the rest of the person's profile, under ``profile``.
+            "picture",
+            "locale",
+            "zoneinfo",
+            "updated_at",
             "organization_name",
         ],
         # ADR-069: OpenID Connect Back-Channel Logout 1.0, for integrations
