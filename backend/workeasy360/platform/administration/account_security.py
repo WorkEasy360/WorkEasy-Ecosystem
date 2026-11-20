@@ -26,7 +26,6 @@ from django.utils import timezone
 
 from workeasy360.contracts.enums import UserStatus
 from workeasy360.contracts.errors import (
-    CurrentPasswordIncorrect,
     MembershipValidationError,
     SoleOwnerBlocksClosure,
     TwoStepCodeInvalid,
@@ -123,8 +122,9 @@ def regenerate_codes(
 ) -> list[str]:
     from workeasy360.platform.identity.models import AccountEvent
 
+    two_step.check_password_counted(user_id, password)
     with transaction.atomic():
-        codes = two_step.regenerate_recovery_codes(user_id, password=password, code=code)
+        codes = two_step.regenerate_recovery_codes(user_id, password=None, code=code)
         account.record_account_event(
             user_id,
             AccountEvent.Kind.RECOVERY_CODES_REGENERATED,
@@ -151,8 +151,9 @@ def turn_off_two_step(
 ) -> int:
     from workeasy360.platform.identity.models import AccountEvent
 
+    two_step.check_password_counted(user_id, password)
     with transaction.atomic():
-        two_step.disable(user_id, password=password, code=code)
+        two_step.disable(user_id, password=None, code=code)
         ended = account.revoke_other_sessions(
             user_id,
             keep_public_id=keep_public_id,
@@ -193,6 +194,43 @@ def recovery_code_spent_at_sign_in(
         {"change": "A recovery code was used to sign in"},
         f"account:{user.id}:two-step:recovery-used:{secrets.token_hex(8)}",
     )
+
+
+#: After this many wrong sign-in codes in an hour, the person is told.
+WRONG_CODES_NOTICE_AT = 5
+
+
+def two_step_code_refused(user: Any, *, ip_prefix: str, device_label: str) -> None:
+    """A wrong code at the code step of a sign-in: someone has the password.
+    On the person's trail every time; mailed once an hour from the fifth."""
+    from django.core.cache import cache
+
+    from workeasy360.platform.identity.models import AccountEvent
+
+    try:
+        account.record_account_event(
+            user.id,
+            AccountEvent.Kind.SIGN_IN_FAILED,
+            reason="two_step_code_invalid",
+            ip_prefix=ip_prefix,
+            device_label=device_label,
+        )
+        hour = timezone.now().strftime("%Y%m%d%H")
+        key = f"w360:two-step-wrong:{user.id}:{hour}"
+        cache.add(key, 0, timeout=3600)
+        count = cache.incr(key)
+        if count == WRONG_CODES_NOTICE_AT:
+            _notify(
+                user,
+                TWO_STEP_CHANGED_TEMPLATE,
+                {
+                    "change": "Several wrong two-step codes were entered after your "
+                    "correct password - someone may know your password"
+                },
+                f"account:{user.id}:two-step:wrong-codes:{hour}",
+            )
+    except Exception:  # recording never changes the answer
+        logger.exception("identity.two_step_refusal_record_failed", user_id=str(user.id))
 
 
 # --- new sign-in alerts -----------------------------------------------------------
@@ -242,17 +280,25 @@ def alert_if_new_device(user: Any, *, ip_prefix: str, device_label: str) -> bool
 # --- account closure ----------------------------------------------------------------
 
 
+def _holds_staff_grants(user_id: Any) -> bool:
+    """Whether the person holds any live control-plane grant: such an account
+    is closed by a security administrator, never by itself."""
+    from workeasy360.platform.authz.staff import staff_permissions
+
+    return bool(staff_permissions(user_id))
+
+
 def closure_check(user_id: Any) -> dict[str, Any]:
     from workeasy360.platform.organizations.selectors import sole_owned_organizations
 
     blocking = sole_owned_organizations(user_id)
-    user = _user(user_id)
+    staff = _holds_staff_grants(user_id)
     return {
-        "can_close": not blocking and not user.is_staff,
+        "can_close": not blocking and not staff,
         "blocking_organizations": [
             {"name": o["name"], "slug": o["slug"]} for o in blocking
         ],
-        "staff_account": bool(user.is_staff),
+        "staff_account": staff,
         "two_step_required": two_step.is_enabled(user_id),
     }
 
@@ -281,32 +327,28 @@ def close_account(
       the products.
     """
     from workeasy360.platform.identity import lifecycle
-    from workeasy360.platform.identity.models import AccountEvent, User
-    from workeasy360.platform.identity.services import _record_failure
+    from workeasy360.platform.identity.models import AccountEvent
     from workeasy360.platform.organizations.selectors import sole_owned_organizations
 
     if confirmation != CLOSURE_CONFIRMATION:
         raise MembershipValidationError(
             f"Type {CLOSURE_CONFIRMATION} to confirm.", field="confirmation"
         )
+    # Outside the transaction, so a wrong password stays counted (lockout).
+    two_step.check_password_counted(user_id, password)
     with transaction.atomic():
-        user = User.objects.select_for_update().get(pk=user_id)
+        user = lifecycle.lock(user_id)
         if user.status != UserStatus.ACTIVE.value:
             raise MembershipValidationError(
                 "This account cannot be closed.", field="body"
             )
-        if user.is_staff:
+        if _holds_staff_grants(user_id):
             raise MembershipValidationError(
                 "A staff account is closed by a security administrator.", field="body"
             )
-        if not isinstance(password, str) or not user.check_password(password):
-            _record_failure(user)
-            raise CurrentPasswordIncorrect(
-                "The password is not correct.", field="password"
-            )
         if two_step.is_enabled(user_id) and two_step.verify_code(user_id, code) is None:
             raise TwoStepCodeInvalid()
-        blocking = sole_owned_organizations(user_id)
+        blocking = sole_owned_organizations(user_id, lock=True)
         if blocking:
             raise SoleOwnerBlocksClosure(
                 "You are the only owner of an organization. Make someone else its "
@@ -332,7 +374,7 @@ def close_account(
 
 
 def _reference() -> str:
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # pragma: allowlist secret - an alphabet, not a secret
     return "AS-" + "".join(secrets.choice(alphabet) for _ in range(8))
 
 

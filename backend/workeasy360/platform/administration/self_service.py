@@ -624,16 +624,12 @@ def cancel_email_change(
     """Withdraw the pending change: its link stops working. The current
     sign-in email was never touched."""
     from workeasy360.contracts.errors import NoPendingEmailChange
+    from workeasy360.platform.identity import tokens
     from workeasy360.platform.identity.account import record_account_event
     from workeasy360.platform.identity.models import AccountEvent, AccountToken
 
     with transaction.atomic():
-        spent = AccountToken.objects.filter(
-            user_id=user_id,
-            purpose=AccountToken.Purpose.CHANGE_EMAIL,
-            used_at__isnull=True,
-            expires_at__gt=timezone.now(),
-        ).update(used_at=timezone.now())
+        spent = tokens.spend_open(user_id, AccountToken.Purpose.CHANGE_EMAIL)
         if not spent:
             raise NoPendingEmailChange()
         record_account_event(

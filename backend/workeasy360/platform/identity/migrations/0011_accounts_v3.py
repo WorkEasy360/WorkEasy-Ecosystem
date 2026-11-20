@@ -8,6 +8,11 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+    #: Reviewed (ADR-075): the AlterField of ``accountevent.kind`` changes its
+    #: choices only - no column type, nullability or default changes - and the
+    #: previous release writes only kinds that still exist. Every other
+    #: operation is a new table or a nullable / ``db_default`` column.
+    overlap_safety = "choices-only AlterField; additive otherwise"
     dependencies = [
         ("identity", "0010_account_event_product_sign_in"),
     ]

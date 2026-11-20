@@ -363,7 +363,7 @@ def resume(request: HttpRequest) -> HttpResponse:
             # asked for and has now chosen one of their own (or has exactly
             # one): the product's own sign-in restarts with it.
             restarted = _restart_with_own_organization(
-                request, user, pending_request, organization_id
+                request, user, pending_request, organization_id, answered=True
             )
             if restarted is not None:
                 return restarted
@@ -436,7 +436,15 @@ def resume(request: HttpRequest) -> HttpResponse:
         # Ask once does not ask it again (ADR-066).
         sign_in.record_entry(request, pending_request.integration.product_code)
     except protocol.OAuthError as exc:
-        offered = _offer_own_organization(request, user, pending_request, exc, source)
+        offered = _offer_own_organization(
+            request,
+            user,
+            pending_request,
+            exc,
+            source,
+            answered=parked.user_id is not None
+            or not parked.signed_in_before_parking(_session_authenticated_at(request)),
+        )
         if offered is not None:
             return offered
         return _redirect_pending_error(pending_request, exc)
@@ -449,7 +457,13 @@ def resume(request: HttpRequest) -> HttpResponse:
 
 
 def _offer_own_organization(
-    request: HttpRequest, user: Any, pending_request: Any, exc: Any, source: str
+    request: HttpRequest,
+    user: Any,
+    pending_request: Any,
+    exc: Any,
+    source: str,
+    *,
+    answered: bool,
 ) -> HttpResponseRedirect | None:
     """ADR-075: a person who cannot open the organization the product named
     (another person's, typically after "Use another account") is offered
@@ -474,7 +488,9 @@ def _offer_own_organization(
     if len(own) == 1:
         # One organization of their own: nothing to choose.
         only = UUID(str(own[0]["organization_id"]))
-        restarted = _restart_with_own_organization(request, user, pending_request, only)
+        restarted = _restart_with_own_organization(
+            request, user, pending_request, only, answered=answered
+        )
         if restarted is not None:
             return restarted
     requeued = authorization.create_pending(
@@ -489,7 +505,12 @@ def _offer_own_organization(
 
 
 def _restart_with_own_organization(
-    request: HttpRequest, user: Any, pending_request: Any, organization_id: UUID
+    request: HttpRequest,
+    user: Any,
+    pending_request: Any,
+    organization_id: UUID,
+    *,
+    answered: bool,
 ) -> HttpResponseRedirect | None:
     """ADR-075: restart the product's own sign-in for one of this person's
     organizations - the product refuses a code for an organization other than
@@ -509,7 +530,11 @@ def _restart_with_own_organization(
     )
     if restart is None:
         return None
-    sign_in.record_entry(request, pending_request.integration.product_code)
+    if answered:
+        # Only when this person said which account in this very flow (at the
+        # chooser, or by signing in for it): the restart then does not ask
+        # again. Otherwise their preference applies to the restart as usual.
+        sign_in.record_entry(request, pending_request.integration.product_code)
     metrics.increment("ecosystem_authorizations_total", result="restarted")
     logger.info(
         "ecosystem.authorize.restarted_with_own_organization",

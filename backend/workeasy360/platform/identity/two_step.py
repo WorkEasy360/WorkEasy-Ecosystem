@@ -257,12 +257,29 @@ def verify_code(user_id: Any, code: Any, *, allow_recovery: bool = True) -> str 
     return "totp"
 
 
-def _check_password(user: Any, password: Any) -> None:
-    """A wrong password counts toward the lockout, as on the password form."""
+def check_password_counted(user_id: Any, password: Any) -> None:
+    """Reauthentication for a security action (Accounts V3 8.3).
+
+    A wrong password counts toward the account lockout exactly as on the
+    sign-in form, and a locked account is refused without checking. It must be
+    called **outside** any transaction: the count is written in autocommit, so
+    the refusal that follows cannot roll it back (``change_password`` and
+    ``verify_email`` do the same)."""
+    from workeasy360.platform.identity.models import User
     from workeasy360.platform.identity.services import _record_failure
 
+    user = User.objects.get(pk=user_id)
+    if user.locked_until is not None and user.locked_until > timezone.now():
+        raise CurrentPasswordIncorrect("The password is not correct.", field="password")
     if not isinstance(password, str) or not user.check_password(password):
         _record_failure(user)
+        raise CurrentPasswordIncorrect("The password is not correct.", field="password")
+
+
+def _check_password_locked(user: Any, password: Any) -> None:
+    """Inside a transaction, for a caller that did not check first: refuses a
+    wrong password (not counted - use :func:`check_password_counted` first)."""
+    if not isinstance(password, str) or not user.check_password(password):
         raise CurrentPasswordIncorrect("The password is not correct.", field="password")
 
 
@@ -293,9 +310,9 @@ def begin_setup(user_id: Any, *, password: Any, code: Any = None) -> Setup:
 
     if not available():
         raise TwoStepUnavailable()
+    check_password_counted(user_id, password)
     with transaction.atomic():
         user = User.objects.select_for_update().get(pk=user_id)
-        _check_password(user, password)
         if _confirmed(user_id) is not None:
             _require_code(user_id, code)
         TwoStepMethod.objects.filter(user_id=user_id, confirmed_at__isnull=True).delete()
@@ -378,13 +395,16 @@ def confirm_setup(user_id: Any, *, code: Any) -> Confirmed:
 
 
 def regenerate_recovery_codes(user_id: Any, *, password: Any, code: Any) -> list[str]:
+    """New recovery codes. The caller has run :func:`check_password_counted`
+    (outside its transaction) when ``password`` is ``None``."""
     from workeasy360.platform.identity.models import User
 
     with transaction.atomic():
         user = User.objects.select_for_update().get(pk=user_id)
         if _confirmed(user_id) is None:
             raise TwoStepStateConflict()
-        _check_password(user, password)
+        if password is not None:
+            _check_password_locked(user, password)
         _require_code(user_id, code)
         codes = _replace_recovery_codes(user_id)
     logger.info("identity.two_step.recovery_codes_regenerated", user_id=str(user_id))
@@ -405,7 +425,8 @@ def disable(user_id: Any, *, password: Any, code: Any) -> None:
         user = User.objects.select_for_update().get(pk=user_id)
         if _confirmed(user_id) is None:
             raise TwoStepStateConflict()
-        _check_password(user, password)
+        if password is not None:
+            _check_password_locked(user, password)
         _require_code(user_id, code)
         TwoStepMethod.objects.filter(user_id=user_id).delete()
         TwoStepRecoveryCode.objects.filter(user_id=user_id).delete()

@@ -136,16 +136,30 @@ def login_two_step_view(request: HttpRequest) -> JsonResponse:
     body = _body(request)
     token = body.get("challenge")
     owner = two_step.challenge_user(token)
-    blocked = limited(request, "two_step_login", user=owner)
-    if blocked is not None:
-        return blocked
-    passed = two_step.pass_challenge(token, body.get("code"))
+    for bucket in ("two_step_login", "two_step_login_daily"):
+        blocked = limited(request, bucket, user=owner)
+        if blocked is not None:
+            return blocked
+    from workeasy360.contracts.errors import TwoStepCodeInvalid
+
+    try:
+        passed = two_step.pass_challenge(token, body.get("code"))
+    except TwoStepCodeInvalid:
+        if owner is not None:
+            from workeasy360.platform.administration import account_security
+
+            where = connection_facts(request)
+            account_security.two_step_code_refused(
+                owner, ip_prefix=where["ip_prefix"], device_label=where["device_label"]
+            )
+        raise
     user = passed.user
     establish_session(
         request,
         user,
         password="",
         noncompliant=list(passed.auth_state.get("noncompliant") or []),
+        second_factor_checked=True,
     )
     where = connection_facts(request)
     if passed.used == "recovery_code":
@@ -226,6 +240,7 @@ def establish_session(
     *,
     password: str,
     noncompliant: list[str] | None = None,
+    second_factor_checked: bool = False,
 ) -> None:
     """Sign ``user`` in on this request's session - the one place a session
     is established (the login form and an accepted invitation both use it).
@@ -240,7 +255,13 @@ def establish_session(
     from django.contrib.auth import SESSION_KEY
 
     from workeasy360.contracts.values.access_policy import password_meets
-    from workeasy360.platform.identity import handoff
+
+    # Who was signed in on this browser session before, and under which
+    # sign-in (ADR-044: re-authentication for ``prompt=login``, and a
+    # different person signing in) - read before django_login flushes it.
+    # ADR-075, the safety net: whatever path got here, an account with
+    # two-step verification on is signed in only after its code.
+    from workeasy360.platform.identity import handoff, two_step
     from workeasy360.platform.identity.account import record_sign_in
     from workeasy360.platform.identity.sessions import (
         SESSION_DEVICE_KEY,
@@ -255,9 +276,11 @@ def establish_session(
         SESSION_PASSWORD_NONCOMPLIANT_KEY,
     )
 
-    # Who was signed in on this browser session before, and under which
-    # sign-in (ADR-044: re-authentication for ``prompt=login``, and a
-    # different person signing in) - read before django_login flushes it.
+    if not second_factor_checked and two_step.is_enabled(user.pk):
+        from workeasy360.contracts.errors import TwoStepChallengeExpired
+
+        raise TwoStepChallengeExpired("Sign in with your password and your code.")
+
     previous_user = request.session.get(SESSION_KEY)
     previous_sign_in = request.session.get(SESSION_SIGN_IN_ID_KEY)
 

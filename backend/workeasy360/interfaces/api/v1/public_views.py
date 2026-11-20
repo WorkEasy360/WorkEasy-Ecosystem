@@ -327,7 +327,8 @@ def profile_photo_view(request: HttpRequest, token: str) -> HttpResponse:
     response["X-Content-Type-Options"] = "nosniff"
     response["Content-Security-Policy"] = "default-src 'none'; sandbox"
     response["Content-Disposition"] = "inline"
-    response["Cache-Control"] = "public, max-age=86400, immutable"
+    # Short: a removed photo (or a closed account's) leaves caches soon.
+    response["Cache-Control"] = "public, max-age=300"
     response["ETag"] = f'"{photo.sha256[:32]}"'
     response["Cross-Origin-Resource-Policy"] = "cross-origin"
     return response

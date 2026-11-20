@@ -225,11 +225,15 @@ def account_support_case_view(
         from workeasy360.contracts.errors import MembershipValidationError
 
         raise MembershipValidationError("The body must be a JSON object.", field="body")
-    return JsonResponse(
-        account_security.update_support_case(
+    from workeasy360.platform.identity.models import AccountSupportCase
+
+    try:
+        updated = account_security.update_support_case(
             case_id,
             status=body.get("status"),
             note=body.get("note"),
             staff_user_id=ctx.user_id,
         )
-    )
+    except AccountSupportCase.DoesNotExist:
+        return JsonResponse({"code": "not_found", "detail": "Not found."}, status=404)
+    return JsonResponse(updated)

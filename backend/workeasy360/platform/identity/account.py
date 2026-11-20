@@ -660,6 +660,72 @@ def sniff_image(data: bytes) -> str | None:
     return None
 
 
+def strip_image_metadata(data: bytes, kind: str) -> bytes:
+    """The image without its metadata (camera, GPS, comments), by its
+    container format alone - the pixels are untouched. A malformed container
+    raises ``ValueError``.
+
+    - JPEG: every APP1-APP15 and COM segment goes (APP0/JFIF stays).
+    - PNG: every ancillary text/metadata chunk goes (tEXt, zTXt, iTXt, eXIf, tIME).
+    - WebP: the EXIF and XMP chunks go (the VP8X flags are left; readers
+      ignore a flag whose chunk is absent).
+    """
+    import struct
+
+    if kind == "image/jpeg":
+        out = bytearray(data[:2])
+        i = 2
+        while i < len(data):
+            if data[i] != 0xFF:
+                raise ValueError("not a JPEG marker")
+            marker = data[i + 1]
+            if marker == 0xDA:  # start of scan: the rest is image data
+                out += data[i:]
+                return bytes(out)
+            if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                out += data[i : i + 2]
+                i += 2
+                continue
+            (length,) = struct.unpack(">H", data[i + 2 : i + 4])
+            segment = data[i : i + 2 + length]
+            if len(segment) < 2 + length:
+                raise ValueError("truncated JPEG segment")
+            if not (0xE1 <= marker <= 0xEF or marker == 0xFE):
+                out += segment
+            i += 2 + length
+        raise ValueError("JPEG without image data")
+    if kind == "image/png":
+        out = bytearray(data[:8])
+        i = 8
+        while i < len(data):
+            (length,) = struct.unpack(">I", data[i : i + 4])
+            chunk_type = data[i + 4 : i + 8]
+            chunk = data[i : i + 12 + length]
+            if len(chunk) < 12 + length:
+                raise ValueError("truncated PNG chunk")
+            if chunk_type not in (b"tEXt", b"zTXt", b"iTXt", b"eXIf", b"tIME"):
+                out += chunk
+            i += 12 + length
+            if chunk_type == b"IEND":
+                return bytes(out)
+        raise ValueError("PNG without IEND")
+    if kind == "image/webp":
+        out = bytearray()
+        i = 12
+        while i + 8 <= len(data):
+            chunk_type = data[i : i + 4]
+            (length,) = struct.unpack("<I", data[i + 4 : i + 8])
+            padded = length + (length & 1)
+            chunk = data[i : i + 8 + padded]
+            if len(chunk) < 8 + length:
+                raise ValueError("truncated WebP chunk")
+            if chunk_type not in (b"EXIF", b"XMP "):
+                out += chunk
+            i += 8 + padded
+        return b"RIFF" + struct.pack("<I", 4 + len(out)) + b"WEBP" + bytes(out)
+    raise ValueError("unsupported image type")
+
+
 def set_profile_photo(
     user_id: Any,
     data: bytes,
@@ -686,6 +752,10 @@ def set_profile_photo(
     declared = (declared_type or "").split(";")[0].strip().lower()
     if kind is None or (declared and declared != kind):
         raise PhotoInvalid()
+    try:
+        data = strip_image_metadata(data, kind)
+    except ValueError as exc:
+        raise PhotoInvalid() from exc
     with transaction.atomic():
         user = User.objects.select_for_update().get(pk=user_id)
         ProfilePhoto.objects.update_or_create(

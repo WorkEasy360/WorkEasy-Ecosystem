@@ -1641,6 +1641,12 @@ CONTROL_PLANE_RATE_LIMITS.update(
         # codes also end one challenge).
         "two_step_login_ip": (env.int("W360_RL_TWO_STEP_LOGIN_IP", 30), 60),
         "two_step_login_user": (env.int("W360_RL_TWO_STEP_LOGIN_USER", 10), 300),
+        # A day's budget per person: with a challenge for every 5 wrong codes, the
+        # 5-minute bucket alone would allow ~2,900 guesses a day.
+        "two_step_login_daily_user": (
+            env.int("W360_RL_TWO_STEP_LOGIN_DAILY_USER", 30),
+            86400,
+        ),
         # Setting up, replacing, regenerating, turning off: password + code.
         "two_step_user": (env.int("W360_RL_TWO_STEP_USER", 10), 300),
         "two_step_ip": (env.int("W360_RL_TWO_STEP_IP", 30), 60),

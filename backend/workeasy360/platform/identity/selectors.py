@@ -284,7 +284,11 @@ def sign_in_is_live(user_id: Any, sign_in_id: Any) -> bool:
     from workeasy360.platform.identity.account import live_sign_in_ids
 
     try:
-        wanted = sign_in_id if isinstance(sign_in_id, uuid.UUID) else uuid.UUID(str(sign_in_id))
+        wanted = (
+            sign_in_id
+            if isinstance(sign_in_id, uuid.UUID)
+            else uuid.UUID(str(sign_in_id))
+        )
     except (TypeError, ValueError):
         return False
     return wanted in live_sign_in_ids(user_id)
