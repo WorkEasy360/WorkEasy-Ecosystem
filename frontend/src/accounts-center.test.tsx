@@ -594,8 +594,8 @@ describe("Settings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close account permanently" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/login?closed=1"));
     expect(calls.filter((c) => c.key === "POST /api/v1/auth/account/closure").map((c) => c.body)).toEqual([
-      { password: "wrong", code: "123456", confirmation: "CLOSE" },
-      { password: "right", code: "123456", confirmation: "CLOSE" },
+      { password: "wrong", code: "123456", confirmation: "CLOSE" }, // pragma: allowlist secret
+      { password: "right", code: "123456", confirmation: "CLOSE" }, // pragma: allowlist secret
     ]);
   });
 

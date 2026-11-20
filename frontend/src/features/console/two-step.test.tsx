@@ -19,7 +19,7 @@ vi.mock("next/navigation", () => ({
 const OFF = { available: true, enabled: false, method: null, enabled_at: null, recovery_codes_remaining: 0 };
 const ON = { available: true, enabled: true, method: "totp", enabled_at: "2026-11-01T09:00:00Z", recovery_codes_remaining: 2 };
 const SETUP = {
-  secret: "JBSWY3DPEHPK3PXP",
+  secret: "JBSWY3DPEHPK3PXP", // pragma: allowlist secret
   otpauth_uri: "otpauth://totp/WorkEasy360:ravi%40example.com?secret=JBSWY3DPEHPK3PXP&issuer=WorkEasy360",
   qr_svg_data_uri: "data:image/svg+xml;base64,PHN2Zy8+",
   expires_at: "2026-11-20T10:00:00Z",
@@ -60,7 +60,7 @@ describe("two-step verification", () => {
     expect(qr).toHaveAttribute("src", SETUP.qr_svg_data_uri);
     expect(screen.getByText("JBSW Y3DP EHPK 3PXP")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /authenticator app on this device/ })).toHaveAttribute("href", SETUP.otpauth_uri);
-    expect(calls.find((c) => c.key === "POST /api/v1/auth/two-step/setup")?.body).toEqual({ password: "my passphrase" });
+    expect(calls.find((c) => c.key === "POST /api/v1/auth/two-step/setup")?.body).toEqual({ password: "my passphrase" }); // pragma: allowlist secret
     // Nothing in the address bar, nothing stored.
     expect(window.location.href).not.toContain(SETUP.secret);
     expect(JSON.stringify({ ...window.localStorage })).not.toContain(SETUP.secret);
@@ -106,7 +106,7 @@ describe("two-step verification", () => {
     fireEvent.change(screen.getByLabelText("6-digit code or a recovery code"), { target: { value: "654 321" } });
     fireEvent.click(screen.getByRole("button", { name: "Make new codes" }));
     expect(await screen.findByText(NEW[0])).toBeInTheDocument();
-    expect(calls.find((c) => c.key === "POST /api/v1/auth/two-step/recovery-codes")?.body).toEqual({ password: "pw", code: "654321" });
+    expect(calls.find((c) => c.key === "POST /api/v1/auth/two-step/recovery-codes")?.body).toEqual({ password: "pw", code: "654321" }); // pragma: allowlist secret
     fireEvent.click(screen.getByLabelText("I saved these codes somewhere safe"));
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(await screen.findByText("New recovery codes are ready. The old ones no longer work.")).toBeInTheDocument();
@@ -122,8 +122,8 @@ describe("two-step verification", () => {
     expect(await screen.findByText(/Two-step verification is off/)).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Set up two-step verification" })).toBeInTheDocument();
     expect(calls.filter((c) => c.key === "POST /api/v1/auth/two-step/disable").map((c) => c.body)).toEqual([
-      { password: "wrong", code: "abcde-12345" },
-      { password: "right", code: "abcde-12345" },
+      { password: "wrong", code: "abcde-12345" }, // pragma: allowlist secret
+      { password: "right", code: "abcde-12345" }, // pragma: allowlist secret
     ]);
   });
 

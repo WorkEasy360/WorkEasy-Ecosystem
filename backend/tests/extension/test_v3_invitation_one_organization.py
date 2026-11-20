@@ -36,7 +36,8 @@ def test_accepting_an_invitation_creates_no_organization(console_org, login, cli
     assert accepted.json()["organization_slug"] == org["slug"]
     assert Organization.objects.count() == before
     joined = list(
-        UserOrganizationAccess.objects.filter(user__email="employee.one@example.com")
-        .values_list("organization_id", "is_owner")
+        UserOrganizationAccess.objects.filter(
+            user__email="employee.one@example.com"
+        ).values_list("organization_id", "is_owner")
     )
     assert joined == [(org["org"].id, False)]

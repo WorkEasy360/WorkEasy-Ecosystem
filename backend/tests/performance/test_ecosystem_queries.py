@@ -220,6 +220,10 @@ def test_the_token_endpoint_has_a_bounded_query_budget(
     savepoint-guarded insert that a concurrent first sign-in cannot double -
     and their Login History entry. Once per product sign-in, like the rest of
     this budget; a failure to record never costs the product its tokens.
+
+    **ADR-075:** +1. The account's session epoch, read once and put in the
+    access token, so userinfo stops answering the moment a password change or
+    "sign out everywhere" moves it (revocation on the next request).
     """
     registration = register_product("crm")
     org = entitled_org("crm")
@@ -229,7 +233,7 @@ def test_the_token_endpoint_has_a_bounded_query_budget(
     granted = client.get(AUTHORIZE, _authorize_params(registration, org, challenge))
     code = parse_qs(urlsplit(granted["Location"]).query)["code"][0]
 
-    with django_assert_max_num_queries(34):
+    with django_assert_max_num_queries(35):
         response = client.post(
             TOKEN,
             {

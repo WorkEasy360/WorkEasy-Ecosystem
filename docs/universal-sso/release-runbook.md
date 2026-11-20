@@ -93,6 +93,53 @@ Then, in a browser, with a test organization that buys nothing:
 - **The setup sweep misbehaves:** set `W360_BEAT_SIGN_IN_SETUP_S` to a very large value and restart beat. Nothing else depends on it.
 - **Explore's *Sign in* must be withdrawn quickly:** roll the code back (step 1 above). No data depends on it.
 
+## Release R3 (prepared 20 November): Accounts V3 (ADR-075, PR #15)
+
+R3 follows R2 (it is stacked on `feat/universal-login-complete`). **Nothing here has been run in production.** The gates of R2 apply unchanged: an independent review of the PR, CI green on the merge commit, a fresh backup with a restore drill that passed this week, and the owner's written approval for each step.
+
+**Migrations (two, additive):**
+
+- `identity.0011_accounts_v3`: five new tables, four `User` columns (nullable or `db_default=''`), and event choices.
+- `ecosystem.0012_pending_refused_organization`: one nullable column.
+
+The four `ALTER TABLE identity_user` steps take a brief exclusive lock. Run `migrate` with `PGOPTIONS='-c lock_timeout=5s'`, so it fails fast rather than queueing behind a long transaction. If it fails, retry.
+
+**Environment (names only):**
+
+| Name | Value | Why |
+|---|---|---|
+| `W360_TWO_STEP_KEY` | a new Fernet key: `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'` | personal two-step verification; absent = "not available yet" |
+
+Rules for `W360_TWO_STEP_KEY`:
+
+- It must differ from `W360_SECRET_KEY` and `W360_FILE_URL_SIGNING_KEY`; the production settings refuse otherwise.
+- It must be **backed up with the env file**. Losing it turns off every person's two-step verification: their sign-ins fail closed until support resets them.
+- It cannot be rotated without everyone setting up again.
+- It is not the retired `MFA` key of ADR-050.
+
+**New image dependency:** `segno` (QR code), already in `requirements.txt`.
+
+**Smoke tests after R3** (read-only, then a disposable account):
+
+```sh
+curl -s https://accounts.workeasy360.com/.well-known/openid-configuration | python3 -c 'import json,sys; d=json.load(sys.stdin); print("zoneinfo" in d["claims_supported"])'   # True
+curl -s -o /dev/null -w '%{http_code}
+' -X POST https://accounts.workeasy360.com/api/v1/auth/login/two-step   # 403 (CSRF), never 200
+```
+
+Then, in a browser, with a test account (`W360_ACCOUNTS_IDENTITY=on`, stage b or later):
+
+1. Accounts shows four menus, My Profile first.
+2. Turning on two-step shows a QR code and ten recovery codes.
+3. Signing out and in again asks for the code.
+4. Devices & Sessions signs the other device out.
+
+**Rollback:**
+
+- **Code:** go back to R2's release. The new tables and columns stay, unused.
+- **People who turned two-step on:** under R2 they sign in by password alone again, because R2 has no code step. Say so before rolling back.
+- **Schema, only if needed:** `migrate ecosystem 0011_product_sign_in_setup` and `migrate identity 0010_account_event_product_sign_in`, with the new release, before the old one starts.
+
 ## The target
 
 | Host | Role |

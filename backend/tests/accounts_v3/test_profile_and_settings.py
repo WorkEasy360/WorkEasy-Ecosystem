@@ -367,7 +367,8 @@ def test_a_member_closes_their_account_and_nothing_of_the_organization_goes(
     )
     assert no_word.status_code == 400
     wrong = here.post(
-        f"{ACCOUNT_API}/closure", {"password": "nope", "confirmation": "CLOSE"}
+        f"{ACCOUNT_API}/closure",
+        {"password": "nope", "confirmation": "CLOSE"},  # pragma: allowlist secret
     )
     assert wrong.status_code == 400
     mail.outbox.clear()

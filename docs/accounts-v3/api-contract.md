@@ -42,7 +42,7 @@ PATCH takes any subset of `full_name`, `country` (ISO 3166-1 alpha-2), `language
 
 - `GET auth/two-step` -> `{"available": bool, "enabled": bool, "method": "totp"|null, "enabled_at": "iso|null", "recovery_codes_remaining": int}`.
   `available: false` = this deployment has no two-step key configured: show "not available yet", no setup button.
-- `POST auth/two-step/setup {password, code?}` -> `{"secret": "BASE32", "otpauth_uri": "otpauth://totp/...", "qr_svg_data_uri": "data:image/svg+xml;base64,...", "expires_at": "iso"}`.
+- `POST auth/two-step/setup {password, code?}` -> `{"secret": "BASE32", "otpauth_uri": "otpauth://totp/...", "qr_svg_data_uri": "data:image/svg+xml;base64,...", "expires_at": "iso"}`. <!-- pragma: allowlist secret -->
   `code` (current authenticator code or a recovery code) is required when two-step is already on: that is "replace my authenticator". Nothing changes until confirm.
 - `POST auth/two-step/setup/confirm {code}` -> `{"enabled": true, "recovery_codes": ["abcde-12345", ... 10], "other_sessions_ended": true}`.
   Show the codes once, with copy/download, and a checkbox "I saved these codes" before closing.

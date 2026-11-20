@@ -97,3 +97,18 @@ The V3 note keeps the Universal Login journey of ADR-074 and asks the Accounts p
 - **Pushing profile changes to products:** it needs a new product-side receiver in every product (a connector release). Claims at sign-in plus userinfo are standard OIDC and need nothing new.
 - **Deleting a closed account's data at once:** the platform has no person-erasure policy beyond event retention. Inventing one here would destroy organization history V3 says to keep.
 - **A mobile number field:** there is no SMS provider. V3 8.2 says not to imply phone sign-in that does not exist.
+
+## Review findings fixed before merge (20 November)
+
+An automated, read-only security review of `bfa271a..` (an agent separate from the author, not a human reviewer) found two medium and four low issues. All six are fixed, and each has a regression test in `tests/accounts_v3/test_review_fixes.py`:
+
+| Finding | Fix |
+|---|---|
+| **M1:** a wrong password on two-step setup, renewal, turning off or closure was rolled back with the refusal, so it never counted toward the lockout | `two_step.check_password_counted` runs before any transaction, and a locked account is refused |
+| **M2:** closure counted a closed or disabled co-owner as an owner; two co-owners closing at once could both pass | Only active co-owners count, and the owner rows are locked in a fixed order inside the closing transaction |
+| **L1:** wrong sign-in codes had no daily bound and no signal | A per-person daily budget (`two_step_login_daily_user`, 30). Each wrong code goes on the person's trail; the fifth in an hour mails them |
+| **L2:** an old verification link could sign in an account that has two-step on | `establish_session` refuses such an account unless the code was checked, verification no longer signs it in, and invitation activation spends the signup's links |
+| **L3:** the organization restart recorded "Ask once" without the person answering in this flow | Recorded only when they answered at the chooser or signed in for this flow |
+| **L4:** photo metadata (EXIF and GPS) was kept, and the cache lifetime was one day | JPEG APP1-15/COM, PNG text and eXIf chunks, and WebP EXIF/XMP are stripped; the cache lifetime is 5 minutes |
+
+The minor finding is fixed too: an unknown support case answers 404, not 500.
