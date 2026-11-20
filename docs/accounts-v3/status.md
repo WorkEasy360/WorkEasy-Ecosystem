@@ -33,7 +33,7 @@ Evidence paths are relative to `backend/workeasy360/` or `frontend/src/`.
 | 8.3 | Sessions revoked after a sensitive change | **Tested** for password change and reset; email change by design keeps sessions (ADR-066) | `tests/universal_sso/test_backchannel_logout.py` | two-step changes end the other sessions |
 | 3.1 | Sessions list, device, last active, current | **Tested** | `tests/accounts_center/test_sessions_history_profile.py` | moved under Devices & Sessions |
 | 3.2 | Sign out one / all others / everywhere | **Tested** | `tests/accounts_center/test_session_revoke.py`, `test_backchannel_logout.py` | kept |
-| 9.2 | Next protected request rejects a revoked session | **Tested** on the platform; **Partial** for products: userinfo answered 15 min; a code minted before revoke was still redeemable | `ecosystem_views.userinfo`, `authorization.redeem_code` | epoch/sid check in userinfo; sign-in check at redeem |
+| 9.2 | Next protected request rejects a revoked session | **Tested** on the platform; **Partial** for products: userinfo answered 15 min; a code minted before revoke was still redeemable | `ecosystem_views.userinfo`, `authorization.redeem_code` | epoch and sign-in (`w360_sin`, every product) checked in userinfo; sign-in check at redeem |
 | 9.2 | Refresh cannot restore a revoked session | **Tested** (no refresh tokens) | `ecosystem/tests/test_oidc_flow.py` | kept |
 | 4.1 | Personal notification preferences | **Missing** (only per-membership console alerts) | `notifications/preferences.py` | `PersonalPreference`; security notices locked |
 | 4.2 | Recent security activity (redacted) | **Tested** | `tests/extension/test_account_sessions.py` | on Settings |
@@ -67,7 +67,7 @@ Code complete is not tested; tested is not deploy-ready; deploy-ready is not mer
 
 | Stage | State |
 |---|---|
-| Code complete | **Yes**: PR #15 (`feat/accounts-v3`, head `fb35256`), plus Easy CRM name refresh on AI-CRM#19 (`9be589b`) |
+| Code complete | **Yes**: PR #15 (`feat/accounts-v3`), plus Easy CRM name refresh on AI-CRM#19 (`9be589b`) |
 | Tested | **Yes**, with the limits below |
 | Deploy-ready | **No**: owner gates open (below) |
 | Merged | **No**: PRs #4-#15 are all open drafts |
@@ -78,10 +78,11 @@ Code complete is not tested; tested is not deploy-ready; deploy-ready is not mer
 
 - **CI on `fb35256`:** 13/13 checks green. Backend **6,209 passed, 0 failed**. Frontend lint, types, vitest and build green. CodeQL, image vulnerability scan, secret scan and dependency audit green.
 - **New backend tests:**
-  - `tests/accounts_v3`: 46 tests across profile, photo, claims, pending email, two-step (RFC vectors, replay, attempts, expiry, fail-closed key, recovery codes, replace and turn off), notifications, closure (only owner, member, two-step), support, boundaries and the review regressions;
+  - `tests/accounts_v3`: 48 tests across profile, photo, claims, pending email, two-step (RFC vectors, replay, attempts, expiry, fail-closed key, recovery codes, replace and turn off), notifications, closure (only owner, member, two-step), support, boundaries and the review regressions;
   - `tests/universal_sso/test_v3_own_organization_and_revocation.py`;
   - `tests/extension/test_v3_invitation_one_organization.py`.
 - **Frontend:** vitest 2,029 tests in 111 files.
+- **Second review (20 November, automated, not human):** it found M1 (userinfo kept answering a token whose one sign-in had ended, for products without back-channel logout) and L1 (no daily budget or notice for wrong codes on account changes). Both are fixed, with four regression tests that fail without the fix (ADR-075, "Review findings").
 
 **Browser acceptance** (real platform, edge, CRM, template products, Chrome; harness `e2e/run_universal_acceptance.py` with `W360_ULC_V3=1`)
 

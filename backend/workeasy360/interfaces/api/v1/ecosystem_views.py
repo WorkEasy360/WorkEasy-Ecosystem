@@ -946,7 +946,9 @@ def _token_response(redeemed: Any) -> dict[str, Any]:
     from workeasy360.platform.identity.selectors import session_epoch
 
     access_token = tokens.issue_access_token(
-        subject, session_epoch=session_epoch(redeemed.user_id)
+        subject,
+        session_epoch=session_epoch(redeemed.user_id),
+        sign_in_id=redeemed.sign_in_id,
     )
     # Remembered only for products that take back-channel logout: who must be
     # told when this sign-in ends (ADR-069).
@@ -1095,13 +1097,14 @@ def userinfo(request: HttpRequest) -> JsonResponse:
 
     # ADR-075: revocation is effective on the next request. The account must
     # still be active under the epoch the token was issued in, and a token
-    # that names its sign-in needs that sign-in still open.
+    # that names its sign-in (``w360_sin``, every product's) needs that
+    # sign-in still open.
     epoch = session_epoch(claims["sub"])
     revoked = epoch is None
     if not revoked and "w360_sep" in claims:
         revoked = int(claims["w360_sep"]) != int(epoch)
-    if not revoked and claims.get("sid"):
-        revoked = not sign_in_is_live(claims["sub"], claims["sid"])
+    if not revoked and claims.get("w360_sin"):
+        revoked = not sign_in_is_live(claims["sub"], claims["w360_sin"])
     if revoked:
         metrics.increment("ecosystem_userinfo_revoked_total")
         return _error_response(

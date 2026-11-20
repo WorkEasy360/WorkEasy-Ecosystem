@@ -1650,6 +1650,9 @@ CONTROL_PLANE_RATE_LIMITS.update(
         # Setting up, replacing, regenerating, turning off: password + code.
         "two_step_user": (env.int("W360_RL_TWO_STEP_USER", 10), 300),
         "two_step_ip": (env.int("W360_RL_TWO_STEP_IP", 30), 60),
+        # And a day's budget per person, as at sign-in: the 5-minute bucket
+        # alone would allow ~2,900 code guesses a day from a live session.
+        "two_step_daily_user": (env.int("W360_RL_TWO_STEP_DAILY_USER", 30), 86400),
         # Resending the email-change link: each one mails the new address.
         "email_change_resend_user": (
             env.int("W360_RL_EMAIL_CHANGE_RESEND_USER", 3),

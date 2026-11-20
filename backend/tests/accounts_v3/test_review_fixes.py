@@ -16,6 +16,7 @@ from tests.accounts_v3.conftest import (
     PASSWORD,
     TWO_STEP,
     add_member,
+    delivered,
     post,
 )
 
@@ -122,6 +123,48 @@ def test_wrong_codes_have_a_daily_budget_per_person(member, enroll, settings):
                 ).status_code
             )
     assert answers[-1] == 429
+
+
+# --- Second review (20 November), L1: code checks on account changes ------------------------
+
+
+def test_account_two_step_changes_have_a_daily_budget_per_person(
+    member, enroll, settings
+):
+    limits = dict(settings.CONTROL_PLANE_RATE_LIMITS)
+    limits["two_step_daily_user"] = (4, 86400)
+    limits["two_step_user"] = (100, 300)
+    settings.CONTROL_PLANE_RATE_LIMITS = limits
+    browser = Client()
+    browser.force_login(member)
+    enroll(member, browser)  # setup and confirm: two of the four
+    answers = [
+        post(
+            browser, f"{TWO_STEP}/disable", {"password": PASSWORD, "code": "000000"}
+        ).status_code
+        for _ in range(3)
+    ]
+    assert answers == [400, 400, 429]
+
+
+def test_wrong_codes_on_account_changes_are_told_to_the_person(member, enroll):
+    from workeasy360.platform.identity.models import AccountEvent
+
+    browser = Client()
+    browser.force_login(member)
+    enroll(member, browser)
+    delivered()  # the "turned on" notice
+    for _ in range(5):
+        refused = post(
+            browser,
+            f"{TWO_STEP}/recovery-codes",
+            {"password": PASSWORD, "code": "000000"},
+        )
+        assert refused.status_code == 400
+        assert refused.json()["code"] == "two_step_code_invalid"
+    assert any("Several wrong two-step codes" in m.body for m in delivered())
+    # An account change, not a sign-in: nothing on the sign-in trail.
+    assert not AccountEvent.objects.filter(user=member, kind="sign_in_failed").exists()
 
 
 # --- L2: no path signs a two-step account in without its code ------------------------------------

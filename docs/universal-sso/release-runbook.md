@@ -109,6 +109,7 @@ The four `ALTER TABLE identity_user` steps take a brief exclusive lock. Run `mig
 | Name | Value | Why |
 |---|---|---|
 | `W360_TWO_STEP_KEY` | a new Fernet key: `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'` | personal two-step verification; absent = "not available yet" |
+| `W360_RL_TWO_STEP_DAILY_USER` | absent (default 30 per day) | code checks on account changes, per person |
 
 Rules for `W360_TWO_STEP_KEY`:
 

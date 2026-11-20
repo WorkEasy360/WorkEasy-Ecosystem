@@ -72,7 +72,7 @@ The V3 note keeps the Universal Login journey of ADR-074 and asks the Accounts p
    - **Intake:** `POST public/account-support`, open signed out. It gives the same answer for any address, is throttled per address and per inbox, and sends a receipt mail.
    - **Who sees it:** listed for staff with `platform.staff_user.view`, changed with `.manage`. It never goes to a partner or an organization, and a case grants nothing.
 8. **Revocation on the next request:**
-   - **Access tokens** carry the account's session epoch (`w360_sep`). Back-channel products, whose ID token already carries it, also get `sid`.
+   - **Access tokens** carry the account's session epoch (`w360_sep`) and, for every product, the WorkEasy360 sign-in that authorized (`w360_sin`, a private claim). `sid` stays an ID-token claim for back-channel products only (ADR-069).
    - **userinfo** refuses a token whose epoch moved or whose sign-in ended, or of an inactive account.
    - **The token endpoint** refuses a code whose sign-in has no live session. Such a code would otherwise open a product session that no logout covers.
 9. **Your own organization after "Use another account"** (`ecosystem.0012`, `PendingAuthorization.refused_organization_id`):
@@ -112,3 +112,10 @@ An automated, read-only security review of `bfa271a..` (an agent separate from t
 | **L4:** photo metadata (EXIF and GPS) was kept, and the cache lifetime was one day | JPEG APP1-15/COM, PNG text and eXIf chunks, and WebP EXIF/XMP are stripped; the cache lifetime is 5 minutes |
 
 The minor finding is fixed too: an unknown support case answers 404, not 500.
+
+A second automated review of the whole stack (#4 to #15, also not a human) found two issues in this ADR's code. Both are fixed, each with regression tests that fail without the fix:
+
+| Finding | Fix |
+|---|---|
+| **M1:** only back-channel products got the sign-in in their access token. "Sign out this device", "sign out other devices" and a two-step change move no epoch, so for every other product userinfo kept answering that sign-in's token for up to 15 minutes | Every access token names its sign-in (`w360_sin`); userinfo refuses it once that sign-in has no live session. Tests: `tests/universal_sso/test_v3_own_organization_and_revocation.py` |
+| **L1:** the code checks on account changes (replacing the authenticator, new recovery codes, turning it off) had only the 5-minute bucket, and wrong codes sent no notice | A per-person daily budget (`two_step_daily_user`, 30), and wrong codes count toward the same hourly notice as the sign-in's. They are not put on the sign-in trail. Tests: `tests/accounts_v3/test_review_fixes.py` |

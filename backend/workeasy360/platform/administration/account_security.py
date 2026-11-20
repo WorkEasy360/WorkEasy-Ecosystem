@@ -200,21 +200,27 @@ def recovery_code_spent_at_sign_in(
 WRONG_CODES_NOTICE_AT = 5
 
 
-def two_step_code_refused(user: Any, *, ip_prefix: str, device_label: str) -> None:
-    """A wrong code at the code step of a sign-in: someone has the password.
-    On the person's trail every time; mailed once an hour from the fifth."""
+def two_step_code_refused(
+    user: Any, *, ip_prefix: str, device_label: str, at_sign_in: bool = True
+) -> None:
+    """A wrong two-step code: at the code step of a sign-in (someone has the
+    password), or on an account change (``at_sign_in=False``: replacing the
+    authenticator, new recovery codes, turning it off - someone has the
+    password and a live session). A sign-in's is on the person's trail every
+    time; both count toward one hourly notice, mailed from the fifth."""
     from django.core.cache import cache
 
     from workeasy360.platform.identity.models import AccountEvent
 
     try:
-        account.record_account_event(
-            user.id,
-            AccountEvent.Kind.SIGN_IN_FAILED,
-            reason="two_step_code_invalid",
-            ip_prefix=ip_prefix,
-            device_label=device_label,
-        )
+        if at_sign_in:
+            account.record_account_event(
+                user.id,
+                AccountEvent.Kind.SIGN_IN_FAILED,
+                reason="two_step_code_invalid",
+                ip_prefix=ip_prefix,
+                device_label=device_label,
+            )
         hour = timezone.now().strftime("%Y%m%d%H")
         key = f"w360:two-step-wrong:{user.id}:{hour}"
         cache.add(key, 0, timeout=3600)

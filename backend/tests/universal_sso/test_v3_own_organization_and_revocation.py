@@ -200,6 +200,44 @@ def test_userinfo_stops_answering_after_sign_out_everywhere(
     assert refused.status_code == 401
 
 
+@pytest.mark.parametrize("ended_by", ["this_device", "other_devices"])
+def test_userinfo_stops_answering_when_only_that_sign_in_ends(
+    ended_by,
+    client,
+    signing_key,
+    sso_product,
+    entitled_org,
+    password_login,
+    product_client,
+):
+    """Second review, M1: a product without back-channel logout. Ending one
+    sign-in moves no epoch, so its access token names the sign-in
+    (``w360_sin``) and userinfo checks that it is still open."""
+    import jwt as pyjwt
+
+    from workeasy360.platform.identity import account
+    from workeasy360.platform.identity.models import UserSession
+
+    org, product, verifier, granted = _signed_in_product(
+        client, sso_product, entitled_org, password_login
+    )
+    issued = product_client(product).exchange_code(
+        code=query_of(granted)["code"][0], code_verifier=verifier
+    )
+    claims = pyjwt.decode(issued["access_token"], options={"verify_signature": False})
+    assert claims["w360_sin"] and "sid" not in claims
+    bearer = {"HTTP_AUTHORIZATION": f"Bearer {issued['access_token']}"}
+    assert Client().get(USERINFO, **bearer).status_code == 200
+
+    user_id = org["user"].pk
+    if ended_by == "this_device":
+        session = UserSession.objects.filter(user_id=user_id).first()
+        assert account.revoke_session(user_id, session.public_id) >= 1
+    else:
+        assert account.revoke_other_sessions(user_id, keep_public_id=None) >= 1
+    assert Client().get(USERINFO, **bearer).status_code == 401
+
+
 def test_a_code_minted_just_before_its_sign_in_ended_is_not_redeemed(
     client, signing_key, sso_product, entitled_org, password_login, product_client
 ):

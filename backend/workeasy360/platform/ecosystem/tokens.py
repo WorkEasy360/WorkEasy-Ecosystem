@@ -267,7 +267,10 @@ def issue_logout_token(
 
 
 def issue_access_token(
-    subject: TokenSubject, *, session_epoch: int | None = None
+    subject: TokenSubject,
+    *,
+    session_epoch: int | None = None,
+    sign_in_id: UUID | None = None,
 ) -> IssuedToken:
     """The credential for ``/userinfo``. Deliberately carries no org claim.
 
@@ -281,14 +284,19 @@ def issue_access_token(
     claims = _base_claims(subject, ttl=ttl, token_type=TYPE_ACCESS_TOKEN)
     claims["scope"] = subject.scope
     # ADR-075: what userinfo re-checks, so a revoked sign-in's token stops at
-    # the next request instead of living out its 15 minutes. ``sid`` only
-    # where the ID token already carries it (back-channel products); the
-    # epoch for every product (it moves on a password change, a reset and
-    # "sign out everywhere").
+    # the next request instead of living out its 15 minutes.
+    # - ``w360_sep``, the account's epoch: it moves on a password change, a
+    #   reset and "sign out everywhere".
+    # - ``w360_sin``, the WorkEasy360 sign-in that authorized, for every
+    #   product, back-channel logout or not: ending that one sign-in ("sign
+    #   out this device", "sign out other devices", a two-step change) stops
+    #   its token too. A private claim, so ``sid`` keeps its Back-Channel
+    #   Logout meaning on the ID token and its absence there for other
+    #   products (ADR-069).
     if session_epoch is not None:
         claims["w360_sep"] = int(session_epoch)
-    if subject.sid:
-        claims["sid"] = subject.sid
+    if sign_in_id is not None:
+        claims["w360_sin"] = str(sign_in_id)
     return _sign(claims, ttl=ttl)
 
 
