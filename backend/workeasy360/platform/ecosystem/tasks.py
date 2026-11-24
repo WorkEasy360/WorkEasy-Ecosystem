@@ -57,4 +57,12 @@ def prune_authorization_codes(older_than_seconds: int | None = None) -> int:
     pending = prune_expired_pending(older_than_seconds=retention)
     if pending:
         logger.info("ecosystem.pending_authorizations.pruned", count=pending)
+    # ADR-072: a person's product connections outlive their last sign-in or
+    # activity by the security trail's retention, no longer. One indexed range
+    # delete; not counted in the return value (codes and parked requests).
+    from workeasy360.platform.ecosystem.connections import purge_stale
+
+    stale = purge_stale()
+    if stale:
+        logger.info("ecosystem.product_connections.pruned", count=stale)
     return deleted + pending

@@ -105,10 +105,19 @@ def directory(
     return page
 
 
-def detail(ctx: TenantContext, user_id: UUID) -> dict[str, Any]:
+def detail(
+    ctx: TenantContext, user_id: UUID, *, record_view: bool = False
+) -> dict[str, Any]:
     """The person, their organizations with what each holds, and - for a
-    viewer who may see payments - the recent orders of those organizations."""
+    viewer who may see payments - the recent orders of those organizations.
+
+    ADR-072, while WorkEasy360 Accounts hosts identity: also the person's seats
+    per organization, their product connections (Connected Logins), their
+    sign-in history and their sign-ins grouped per device - and, when
+    ``record_view`` (the HTTP view), one control-plane audit entry per staff
+    member per person per window."""
     from workeasy360.commercial.payments.orders import recent_orders_for_organizations
+    from workeasy360.platform.identity import portals as portal_links
 
     data = staff_users.detail(ctx, user_id)
     organization_ids = [UUID(m["organization_id"]) for m in data["memberships"]]
@@ -125,4 +134,114 @@ def detail(ctx: TenantContext, user_id: UUID) -> dict[str, Any]:
     data["orders"] = []
     if authz.check(ctx, "platform.staff_payment.view").allowed:
         data["orders"] = recent_orders_for_organizations(organization_ids)
+    if portal_links.accounts_identity():
+        data.update(_accounts_view(ctx, user_id, data["memberships"]))
+        if record_view:
+            staff_users.record_view(
+                ctx,
+                user_id,
+                sections=[
+                    "organizations",
+                    "products",
+                    "connections",
+                    "sign_in_history",
+                    "sessions",
+                ],
+            )
     return data
+
+
+def _accounts_view(
+    ctx: TenantContext, user_id: UUID, memberships: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """ADR-072: the Accounts Control Center's facts about one person, for
+    ``platform.staff_user.view`` (already required by ``staff_users.detail``).
+    No password, token, session key or full address: the session rows carry
+    public ids and network prefixes only, exactly as the person sees them."""
+    from workeasy360.commercial.catalog import selectors as catalog
+    from workeasy360.contracts.errors import CommercialRecordNotFound
+    from workeasy360.platform.authz.control_plane import organization_scope
+    from workeasy360.platform.ecosystem import connections
+    from workeasy360.platform.entitlements.services.seats import pools_held_by_member
+    from workeasy360.platform.identity import account
+
+    member_ids = {
+        str(o["organization_id"]): o["membership_id"]
+        for o in org_selectors.organizations_for_user(
+            user_id, limit=org_selectors.MAX_PAGE_SIZE
+        ).items
+    }
+    for membership in memberships:
+        held: list[str] = []
+        membership_id = member_ids.get(membership["organization_id"])
+        if membership_id:
+            try:
+                with organization_scope(ctx, UUID(membership["organization_id"])):
+                    held = sorted(
+                        pools_held_by_member(
+                            UUID(membership["organization_id"]),
+                            membership_id=UUID(membership_id),
+                        )
+                    )
+            except CommercialRecordNotFound:
+                # The organization is gone (or is the platform's own): no seats.
+                held = []
+        membership["membership_id"] = membership_id
+        membership["seats"] = held
+
+    names = {m["organization_id"]: m["name"] for m in memberships}
+    known = connections.connections_for_user(
+        user_id, live_sign_in_ids=account.live_sign_in_ids(user_id)
+    )
+    history = account.account_event_page(user_id, kinds=account.SIGN_IN_KINDS, limit=50)
+    codes = sorted(
+        set(known)
+        | {
+            r["reason"]
+            for r in history["results"]
+            if r["kind"] == "product_sign_in" and r["reason"]
+        }
+    )
+    shown = catalog.product_presentations(codes) if codes else {}
+
+    def name_of(code: str, fallback: str = "") -> str:
+        return shown.get(code, {}).get("name") or fallback or code
+
+    for row in history["results"]:
+        row["product_name"] = (
+            name_of(row["reason"]) if row["kind"] == "product_sign_in" else None
+        )
+    return {
+        "central_user_id": str(user_id),
+        "connections": [
+            {
+                "product_code": code,
+                "name": name_of(code, entry.display_name),
+                "domain": {"host": entry.launch_host, "verified": entry.domain_verified},
+                "takes_backchannel_logout": entry.takes_backchannel_logout,
+                "platform_sign_in": entry.platform_sign_in,
+                "platform_sign_in_since": _iso(entry.platform_sign_in_since),
+                "platform_sign_in_ended_at": _iso(entry.platform_sign_in_ended_at),
+                "last_sign_out": entry.last_sign_out,
+                "organizations": [
+                    {
+                        "organization_id": str(o.organization_id),
+                        "name": names.get(str(o.organization_id), ""),
+                        "first_sign_in_at": _iso(o.first_sign_in_at),
+                        "last_sign_in_at": _iso(o.last_sign_in_at),
+                        "sign_in_count": o.sign_in_count,
+                        "last_activity_at": _iso(o.last_activity_at),
+                    }
+                    for o in entry.organizations
+                ],
+            }
+            for code, entry in sorted(known.items())
+            if entry.organizations
+        ],
+        "sign_in_history": history["results"],
+        "sign_ins": account.list_sign_ins(user_id, current_public_id=None),
+    }
+
+
+def _iso(value: Any) -> str | None:
+    return value.isoformat() if value is not None else None

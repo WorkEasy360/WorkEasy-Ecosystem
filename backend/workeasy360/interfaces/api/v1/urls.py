@@ -18,6 +18,7 @@ from django.urls import path
 
 from workeasy360.interfaces.api.v1 import (
     account_views,
+    accounts_center_views,
     admin_catalog_views,
     admin_console_views,
     admin_panel_views,
@@ -112,6 +113,44 @@ urlpatterns = [
         "auth/sign-in-preferences",
         account_views.sign_in_preferences_view,
         name="auth-sign-in-preferences",
+    ),
+    # ADR-072: the Accounts Control Center - the person's own account on
+    # WorkEasy360 Accounts (served there only, and only while it hosts
+    # identity: W360_ACCOUNTS_IDENTITY).
+    path(
+        "auth/account/products",
+        accounts_center_views.products_view,
+        name="auth-account-products",
+    ),
+    path(
+        "auth/account/products/<uuid:organization_id>/<str:product_code>/launch",
+        accounts_center_views.launch_view,
+        name="auth-account-product-launch",
+    ),
+    path(
+        "auth/account/connections",
+        accounts_center_views.connections_view,
+        name="auth-account-connections",
+    ),
+    path(
+        "auth/account/connections/<str:product_code>/sign-out",
+        accounts_center_views.product_sign_out_view,
+        name="auth-account-connection-sign-out",
+    ),
+    path(
+        "auth/account/sessions",
+        accounts_center_views.sessions_view,
+        name="auth-account-sessions",
+    ),
+    path(
+        "auth/account/history",
+        accounts_center_views.history_view,
+        name="auth-account-history",
+    ),
+    path(
+        "auth/account/profile",
+        accounts_center_views.profile_view,
+        name="auth-account-profile",
     ),
     # The invitee's side of an invitation: reached before any membership
     # exists, so not under the tenant path. POST for both, so the token never

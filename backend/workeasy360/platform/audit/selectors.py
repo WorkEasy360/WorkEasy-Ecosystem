@@ -103,3 +103,20 @@ def audit_page(
         else None,
         has_more=has_more,
     )
+
+
+def recorded_since(
+    *, action: str, actor_user_id: Any, resource_id: Any, since: Any
+) -> bool:
+    """Whether this actor already has an entry of ``action`` about
+    ``resource_id`` at or after ``since``, in the current scope - so a read
+    that is audited (ADR-072: a staff member viewing a person) is recorded
+    once per window rather than once per page load. One indexed probe."""
+    from workeasy360.platform.audit.models import AuditEvent
+
+    return AuditEvent.objects.filter(
+        action=str(action)[:128],
+        actor_user_id=actor_user_id,
+        resource_id=str(resource_id),
+        occurred_at__gte=since,
+    ).exists()

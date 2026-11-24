@@ -51,10 +51,18 @@ const FILTERS: { value: ProductFilter; label: string }[] = [
 
 const HELD = new Set<AppDirectoryEntry["state"]>(["active", "no_seat", "integration_suspended"]);
 
-export interface ProductRow {
+/** What `productRows` reads of Explore and of the setup desk - all of it, so the
+ * Accounts Control Center (ADR-072) classifies a person's products with this same
+ * function from the same facts, organization by organization. */
+export type ExploreFacts = Pick<ExploreProduct, "code" | "trial_state" | "trial_outcome"> & {
+  plans: { plan_code: string; billing_type: string; prices: { amount_minor: number | null }[] }[];
+};
+export type SetupFacts = Pick<SetupRecord, "product_code" | "status">;
+
+export interface ProductRow<E extends ExploreFacts = ExploreProduct, S extends SetupFacts = SetupRecord> {
   app: AppDirectoryEntry;
-  explore: ExploreProduct | null;
-  setup: SetupRecord | null;
+  explore: E | null;
+  setup: S | null;
   held: boolean;
   trial: boolean;
   free: boolean;
@@ -63,7 +71,7 @@ export interface ProductRow {
 }
 
 /** A plan whose every price is zero (a free plan, not a trial of a paid one). */
-function freePlan(explore: ExploreProduct | null, planCode: string | undefined): boolean {
+function freePlan(explore: ExploreFacts | null, planCode: string | undefined): boolean {
   if (!explore || !planCode) return false;
   const plan = explore.plans.find((p) => p.plan_code === planCode);
   if (!plan || plan.billing_type === "free_trial") return false;
@@ -72,19 +80,19 @@ function freePlan(explore: ExploreProduct | null, planCode: string | undefined):
 }
 
 /** The products this organization is associated with, classified for the filters. */
-export function productRows(
+export function productRows<E extends ExploreFacts = ExploreProduct, S extends SetupFacts = SetupRecord>(
   apps: AppDirectoryEntry[],
-  explore: ExploreProduct[] | null,
-  setup: SetupRecord[] | null,
-): ProductRow[] {
+  explore: E[] | null,
+  setup: S[] | null,
+): ProductRow<E, S>[] {
   const byCode = new Map((explore ?? []).map((p) => [p.code, p]));
-  const setupBy = new Map<string, SetupRecord>();
+  const setupBy = new Map<string, S>();
   for (const r of setup ?? []) {
     const known = setupBy.get(r.product_code);
     // The record still asking for something wins over an approved one.
     if (!known || (!setupOpen(known) && setupOpen(r))) setupBy.set(r.product_code, r);
   }
-  const rows: ProductRow[] = [];
+  const rows: ProductRow<E, S>[] = [];
   for (const app of apps) {
     const e = byCode.get(app.product_code) ?? null;
     const record = setupBy.get(app.product_code) ?? null;
@@ -108,7 +116,7 @@ export function productRows(
   return rows;
 }
 
-export function matches(row: ProductRow, filter: ProductFilter): boolean {
+export function matches(row: ProductRow<ExploreFacts, SetupFacts>, filter: ProductFilter): boolean {
   switch (filter) {
     case "active":
       return row.held && !row.trial;

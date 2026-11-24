@@ -115,6 +115,21 @@ def held_by(organization_id: UUID, *, pool_key: str) -> set[UUID]:
     )
 
 
+def pools_held_by_member(organization_id: UUID, *, membership_id: UUID) -> set[str]:
+    """Every pool (product) in which this one membership holds a seat, in one
+    query (ADR-072: the Super Admin's view of a person, per organization). The
+    caller has entered the organization's scope."""
+    from workeasy360.platform.entitlements.models import SeatAssignment
+
+    return set(
+        SeatAssignment.objects.filter(
+            organization_id=organization_id,
+            membership_id=membership_id,
+            released_at__isnull=True,
+        ).values_list("seat_grant__pool_key", flat=True)
+    )
+
+
 def assign_seat(
     organization_id: UUID,
     *,
