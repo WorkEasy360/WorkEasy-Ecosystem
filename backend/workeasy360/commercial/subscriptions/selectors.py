@@ -567,6 +567,35 @@ def item_codes(subscription_item_id: UUID) -> tuple[str, str] | None:
     return (row[0], row[1]) if row is not None else None
 
 
+@dataclass(frozen=True, slots=True)
+class LineStandingDTO:
+    """Where one line stands: its subscription, that subscription's status, and
+    when the line ends (``None`` while it runs on)."""
+
+    subscription_id: UUID
+    subscription_status: SubscriptionStatus
+    removed_at: datetime | None
+
+
+def line_standing(subscription_item_id: UUID) -> LineStandingDTO | None:
+    """One line of the current tenant (ADR-073: a refund deciding what ending
+    its access means), or None - another tenant's line id resolves to nothing."""
+    from workeasy360.commercial.subscriptions.models import SubscriptionItem
+
+    row = (
+        SubscriptionItem.objects.filter(id=subscription_item_id)
+        .values_list("subscription_id", "subscription__status", "removed_at")
+        .first()
+    )
+    if row is None:
+        return None
+    return LineStandingDTO(
+        subscription_id=row[0],
+        subscription_status=SubscriptionStatus(row[1]),
+        removed_at=row[2],
+    )
+
+
 def subscriptions_for_organization() -> tuple[SubscriptionDTO, ...]:
     """Every subscription visible in the current tenant context."""
     from workeasy360.commercial.subscriptions.models import Subscription

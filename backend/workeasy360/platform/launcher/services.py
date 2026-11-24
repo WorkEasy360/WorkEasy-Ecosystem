@@ -167,6 +167,8 @@ def release_seat(
     released = seat_services.release_seat(
         ctx.organization_id, pool_key=str(product_code), membership_id=membership_id
     )
+    if released:
+        _owe_seat_logout(ctx, product_code=str(product_code), membership_id=membership_id)
     audit.record(
         ctx,
         "launcher.seat.released",
@@ -179,3 +181,35 @@ def release_seat(
         "product_code": str(product_code),
         "released": bool(released),
     }
+
+
+def _owe_seat_logout(
+    ctx: TenantContext, *, product_code: str, membership_id: Any
+) -> None:
+    """ADR-073: a seat taken back from a per-seat product is owed to that product
+    as a back-channel logout for the person, in the release's own transaction.
+    For a product licensed organization-wide a seat grants nothing, so its
+    release ends nothing and nobody is told."""
+    from workeasy360.contracts.enums import LicensingMode
+    from workeasy360.contracts.ports.catalog import get_product_directory
+    from workeasy360.contracts.ports.sign_ins import (
+        REASON_SEAT_RELEASED,
+        notify_access_ended,
+    )
+    from workeasy360.contracts.values.identifiers import ProductCode
+    from workeasy360.platform.organizations import selectors as org_selectors
+
+    try:
+        descriptor = get_product_directory().get(ProductCode(product_code))
+    except ValueError:
+        return
+    if descriptor is None or descriptor.licensing_mode != LicensingMode.PER_SEAT:
+        return
+    row = org_selectors.member(ctx, membership_id)
+    if row is None:
+        return
+    notify_access_ended(
+        user_ids=(row["user_id"],),
+        product_codes=(product_code,),
+        reason=REASON_SEAT_RELEASED,
+    )

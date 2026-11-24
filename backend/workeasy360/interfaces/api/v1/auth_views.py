@@ -446,6 +446,15 @@ def _refused(code: str, status: int) -> JsonResponse:
     return JsonResponse({"code": code}, status=status)
 
 
+def _store_signs_in_through_accounts() -> bool:
+    """ADR-073: the Store has its own host and WorkEasy360 Accounts hosts
+    identity (ADR-071) - then, and only then, the Store's sign-in is Accounts'
+    hand-off. Otherwise (production today) the Store signs in itself (ADR-065)."""
+    from workeasy360.platform.identity import portals as identity_portals
+
+    return identity_portals.accounts_identity() and identity_portals.store_enabled()
+
+
 def _guest_hand_off(request: HttpRequest) -> Any | None:
     """This sign-in's live guest view, if the staff member may still hold it
     (the guest permission in force). ``None`` otherwise. The hand-off is kept,
@@ -499,7 +508,13 @@ def handoff_view(request: HttpRequest) -> JsonResponse:
         return limited
 
     body = _body(request)
-    portal = portals.MODE_TO_PORTAL.get(str(body.get("mode") or ""))
+    mode = str(body.get("mode") or "")
+    portal = portals.MODE_TO_PORTAL.get(mode)
+    if mode == portals.STORE_HANDOFF_MODE and _store_signs_in_through_accounts():
+        # ADR-073: the Store's sign-in, done on Accounts - any account the Store
+        # serves (the same customers as User Admin); the Store re-checks every
+        # request, as every portal does.
+        portal = portals.STORE
     state = body.get("state")
     if portal is None or not handoff.valid_state(state):
         return _refused("handoff_invalid", 400)
@@ -584,9 +599,9 @@ def handoff_redeem_view(request: HttpRequest) -> JsonResponse:
         return limited
 
     host = request.get_host().lower()
-    if (
-        portals.portal_for_host(host, settings.W360_PORTAL_ORIGINS)
-        not in portals.DESTINATIONS
+    destination = portals.portal_for_host(host, settings.W360_PORTAL_ORIGINS)
+    if destination not in portals.DESTINATIONS and not (
+        destination == portals.STORE and _store_signs_in_through_accounts()
     ):
         return _refused("not_found", 404)
     body = _body(request)

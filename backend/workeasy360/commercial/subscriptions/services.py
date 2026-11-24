@@ -1068,6 +1068,137 @@ def cancel_subscription(
     return subscription
 
 
+def end_product(
+    ctx: TenantContext,
+    *,
+    subscription_item_id: UUID,
+    idempotency_key: str,
+    immediate: bool = False,
+    reason_code: str = "customer_request",
+    expected_version: int | None = None,
+) -> Any:
+    """End one product - its plan line, or a bundle line with every product the
+    bundle includes - and keep the subscription and every other product
+    (ADR-073, G7: "cancel EasyBook, keep CRM").
+
+    The line-ending mechanics a period-end downgrade already uses, nothing new:
+    the line's ``removed_at`` is set to the end of the period the customer paid
+    for (or, with ``immediate``, now), so provisioning withdraws the product at
+    that moment and the next period's invoice no longer includes it. A change
+    already scheduled for the product (its successor line) ends with it. No
+    proration and no refund: the current period stays paid for and usable.
+
+    Refused for a product included in a bundle (it ends with the bundle) and
+    for the subscription's last product (that is cancelling the subscription).
+    Idempotent on the key; ending a product already ending at or before that
+    moment changes nothing.
+    """
+    from django.db.models import Q
+
+    from workeasy360.commercial.subscriptions.models import SubscriptionItem
+
+    authz.require(ctx, MANAGE)
+    now = timezone.now()
+
+    with transaction.atomic():
+        claim = idempotency.claim(
+            organization_id=ctx.organization_id,
+            scope="commercial.subscription.end_product",
+            key=idempotency_key,
+            arguments={
+                "subscription_item_id": subscription_item_id,
+                "immediate": immediate,
+            },
+        )
+        if claim.is_replay:
+            return _resolve_item_ref(claim.result_ref)
+
+        owner = (
+            SubscriptionItem.objects.filter(id=subscription_item_id)
+            .values_list("subscription_id", flat=True)
+            .first()
+        )
+        if owner is None:
+            raise CommercialRecordNotFound(
+                f"No subscription item {subscription_item_id}.",
+                subscription_item_id=str(subscription_item_id),
+            )
+        # The subscription first, then its lines: the order every command here
+        # takes, so two of them can never deadlock - and the lines are read
+        # *after* the lock, so a concurrent end or change is seen, not raced.
+        subscription = _lock(owner, expected_version=expected_version)
+        assert_mutable(subscription.status_enum, operation="end_product")
+        _assert_member_may_change(ctx, subscription, operation="end_product")
+        item = SubscriptionItem.objects.get(id=subscription_item_id)
+        if item.parent_item_id is not None:
+            raise CommercialError(
+                "This product is part of a bundle and ends with it. End the bundle "
+                "instead.",
+                subscription_item_id=str(subscription_item_id),
+                reason="bundle_component",
+            )
+
+        effective_at = now if immediate else max(subscription.current_period_end, now)
+        still_running = Q(removed_at__isnull=True) | Q(removed_at__gt=effective_at)
+        lines = SubscriptionItem.objects.filter(subscription=subscription).filter(
+            still_running
+        )
+        if item.bundle_version_id is not None:
+            ending = list(lines.filter(Q(id=item.id) | Q(parent_item_id=item.id)))
+            what = item.bundle_code
+        else:
+            ending = list(
+                lines.filter(product_code=item.product_code, parent_item__isnull=True)
+            )
+            what = item.product_code
+        if not ending:
+            # Already ending at or before that moment: nothing to change.
+            idempotency.complete(claim, result_ref=f"subscriptions.item:{item.id}")
+            return item
+        others = (
+            lines.filter(parent_item__isnull=True)
+            .exclude(id__in=[line.id for line in ending])
+            .exists()
+        )
+        if not others:
+            raise CommercialError(
+                "This is the subscription's only product. Cancel the subscription "
+                "instead.",
+                subscription_item_id=str(subscription_item_id),
+                reason="last_product",
+            )
+
+        for line in ending:
+            # Never before the line began: a scheduled successor ends with a
+            # zero-width window, which grants nothing (as change_plan clamps).
+            line.removed_at = max(effective_at, line.added_at)
+            line.save(update_fields=["removed_at", "updated_at"])
+
+        audit.record(
+            ctx,
+            "commercial.subscription.product_ended",
+            resource_type="subscriptions.item",
+            resource_id=item.id,
+            changes={
+                "product": what,
+                "lines": [str(line.id) for line in ending],
+                "immediate": immediate,
+                "effective_at": effective_at.isoformat(),
+                "reason_code": reason_code,
+            },
+        )
+        idempotency.complete(claim, result_ref=f"subscriptions.item:{item.id}")
+        _bump(subscription, [])
+
+    metrics.increment(
+        "commercial_subscription_products_ended_total",
+        timing="immediate" if immediate else "period_end",
+    )
+    notify_commercial_change(ctx.organization_id)
+    item.refresh_from_db()
+    return item
+
+
 def suspend_subscription(
     ctx: TenantContext,
     *,

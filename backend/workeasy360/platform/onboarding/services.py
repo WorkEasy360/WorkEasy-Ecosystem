@@ -206,8 +206,17 @@ def remove_member(ctx: TenantContext, membership_id: UUID) -> None:
 
     authz.require(ctx, "platform.member.remove")
 
+    from workeasy360.contracts.ports.sign_ins import (
+        REASON_MEMBERSHIP_REMOVED,
+        notify_access_ended,
+    )
+    from workeasy360.platform.entitlements.selectors import products_reachable_by_member
+
     # The membership and its chooser row.
     member = mark_membership_removed(ctx.organization_id, membership_id)
+    # ADR-073: what they could open through this organization, read while
+    # their seats still say so.
+    reachable = products_reachable_by_member(ctx.organization_id, member.membership_id)
 
     # Same transaction as the removal. Found by the Phase 5 final audit: the
     # seat stayed assigned to the removed member, and since the seat screen
@@ -215,6 +224,13 @@ def remove_member(ctx: TenantContext, membership_id: UUID) -> None:
     # seated member permanently shrank the organization's usable seats.
     released_seats = seats.release_all_seats(
         ctx.organization_id, membership_id=member.membership_id
+    )
+    # ADR-073: and those products are owed a back-channel logout for this
+    # person, in this same transaction - not at their next re-check.
+    notify_access_ended(
+        user_ids=(member.user_id,),
+        product_codes=reachable,
+        reason=REASON_MEMBERSHIP_REMOVED,
     )
 
     from workeasy360.platform.audit import services as audit

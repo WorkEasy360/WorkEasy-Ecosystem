@@ -35,6 +35,14 @@ class EcosystemConfig(AppConfig):
 
         register_sign_ins_ended_listener(SignInsEndedRecorder())
 
+        # ADR-073: a person losing a product (removed, seat taken back, the
+        # organization's entitlement ended) is told to that product the same way,
+        # in the transaction that took the access away.
+        from workeasy360.contracts.ports.sign_ins import register_access_ended_listener
+        from workeasy360.platform.ecosystem.backchannel import AccessEndedRecorder
+
+        register_access_ended_listener(AccessEndedRecorder())
+
         # A "deep" probe, never a readiness one.
         #
         # This is the rule product outages depend on. Readiness decides

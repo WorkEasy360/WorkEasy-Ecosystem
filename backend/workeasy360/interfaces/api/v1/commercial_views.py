@@ -519,6 +519,34 @@ def _subscription_payload(
 
 
 @require_http_methods(["POST"])
+def end_product_view(
+    request: HttpRequest, org_slug: str, subscription_item_id: UUID
+) -> HttpResponse:
+    """ADR-073 (G7): end one product at the end of the period it is paid for,
+    keeping the subscription and the organization's other products. Always at
+    the period end from here (the customer has paid for it); ending one now is
+    a staff decision (``admin/customers/<org>/items/<id>/end``)."""
+    ctx = request.tenant_context  # type: ignore[attr-defined]
+    body = _body(request)
+    item = subscription_services.end_product(
+        ctx,
+        subscription_item_id=subscription_item_id,
+        idempotency_key=_idempotency_key(request, body),
+        immediate=False,
+        reason_code=str(body.get("reason_code", "customer_request"))[:64],
+        expected_version=_int(body, "expected_version"),
+    )
+    return JsonResponse(
+        {
+            "subscription_item_id": str(item.id),
+            "product_code": item.product_code,
+            "bundle_code": item.bundle_code,
+            "ends_at": item.removed_at.isoformat() if item.removed_at else None,
+        }
+    )
+
+
+@require_http_methods(["POST"])
 def change_plan_view(
     request: HttpRequest, org_slug: str, subscription_item_id: UUID
 ) -> HttpResponse:

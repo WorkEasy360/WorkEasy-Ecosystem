@@ -47,6 +47,14 @@ ACCOUNT_PORTALS: Final = (ADMIN, PARTNER, APP, STORE)
 #: and the portal re-checks on every request.
 MODE_TO_PORTAL: Final = {"admin": ADMIN, "partner": PARTNER, "user": APP}
 
+#: ADR-073: while WorkEasy360 Accounts hosts identity (ADR-071,
+#: ``W360_ACCOUNTS_IDENTITY``) the Store signs in through it too, with the same
+#: hand-off - ``mode=store`` on Accounts' sign-in, redeemed on the Store's own
+#: host. Only then: off, the Store signs its customers in itself (ADR-065) and
+#: no hand-off names it.
+STORE_HANDOFF_MODE: Final = "store"
+HANDOFF_DESTINATIONS: Final = (*DESTINATIONS, STORE)
+
 #: Where each destination opens when no (valid) page was asked for.
 PORTAL_ROOT: Final = {
     ADMIN: "/admin",
