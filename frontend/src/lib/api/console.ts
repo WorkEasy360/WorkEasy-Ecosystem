@@ -938,7 +938,10 @@ export interface AccountOrganization {
 
 export interface ClosureCheck {
   can_close: boolean;
-  blocking_organizations: { name: string; slug: string }[];
+  /** `pending`: the person was invited to own it and has not accepted yet. */
+  blocking_organizations: { name: string; slug: string; pending?: boolean }[];
+  /** Active partners whose last working administrator is this person. */
+  blocking_partners?: { name: string }[];
   two_step_required: boolean;
 }
 

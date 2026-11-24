@@ -16,6 +16,7 @@ action, a partner API or a product credential (Accounts V3 10.3).
 from __future__ import annotations
 
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -26,6 +27,7 @@ from django.utils import timezone
 
 from workeasy360.contracts.enums import UserStatus
 from workeasy360.contracts.errors import (
+    LastPartnerAdminBlocksClosure,
     MembershipValidationError,
     SoleOwnerBlocksClosure,
     TwoStepCodeInvalid,
@@ -294,16 +296,46 @@ def _holds_staff_grants(user_id: Any) -> bool:
     return bool(staff_permissions(user_id))
 
 
+#: ``(user_id, *, lock) -> [{"name": ...}, ...]``: the partners this person is
+#: the last working administrator of. Partner administration lives in
+#: ``commercial``, which ``platform`` may not import (F-4), so it registers
+#: its answer here from ``ready()`` (ADR-075 review M-1).
+PartnerAdminCheck = Callable[..., list[dict[str, Any]]]
+_PARTNER_ADMIN_CHECKS: list[PartnerAdminCheck] = []
+
+
+def register_partner_admin_check(check: PartnerAdminCheck) -> None:
+    """Called from an app's ``ready()``; registering twice is a no-op."""
+    if check not in _PARTNER_ADMIN_CHECKS:
+        _PARTNER_ADMIN_CHECKS.append(check)
+
+
+def _partners_left_without_admin(
+    user_id: Any, *, lock: bool = False
+) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    for check in list(_PARTNER_ADMIN_CHECKS):
+        found.extend(check(user_id, lock=lock))
+    return [{"name": p["name"]} for p in found]
+
+
+def _blocking_organizations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {"name": o["name"], "slug": o["slug"], "pending": bool(o.get("pending"))}
+        for o in rows
+    ]
+
+
 def closure_check(user_id: Any) -> dict[str, Any]:
     from workeasy360.platform.organizations.selectors import sole_owned_organizations
 
     blocking = sole_owned_organizations(user_id)
+    partners = _partners_left_without_admin(user_id)
     staff = _holds_staff_grants(user_id)
     return {
-        "can_close": not blocking and not staff,
-        "blocking_organizations": [
-            {"name": o["name"], "slug": o["slug"]} for o in blocking
-        ],
+        "can_close": not blocking and not partners and not staff,
+        "blocking_organizations": _blocking_organizations(blocking),
+        "blocking_partners": partners,
         "staff_account": staff,
         "two_step_required": two_step.is_enabled(user_id),
     }
@@ -324,7 +356,11 @@ def close_account(
       typed word.
     - Never orphans an organization: an only owner is refused, with their
       organizations named, until ownership moves or the organization closes
-      (those are User Admin's and support's, never a side effect here).
+      (those are User Admin's and support's, never a side effect here). An
+      owner still INVITED counts: they are the organization's only owner.
+    - Never locks a partner out: the last working administrator of an active
+      partner is refused, with the partners named, until another administrator
+      is added (the same rule ``partners.remove_member`` keeps).
     - Closing is not leaving: memberships, subscriptions and every
       organization-owned record stay; the account is disabled, so it opens
       nothing. Records are kept under the existing retention policy
@@ -359,9 +395,14 @@ def close_account(
             raise SoleOwnerBlocksClosure(
                 "You are the only owner of an organization. Make someone else its "
                 "owner or close the organization first.",
-                blocking_organizations=[
-                    {"name": o["name"], "slug": o["slug"]} for o in blocking
-                ],
+                blocking_organizations=_blocking_organizations(blocking),
+            )
+        partners = _partners_left_without_admin(user_id, lock=True)
+        if partners:
+            raise LastPartnerAdminBlocksClosure(
+                "You are the last administrator of a partner. Add another "
+                "administrator in the Partner portal first.",
+                blocking_partners=partners,
             )
         lifecycle.close(user)
         account.record_account_event(
