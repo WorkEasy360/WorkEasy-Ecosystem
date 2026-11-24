@@ -402,6 +402,11 @@ urlpatterns = [
         name="launcher-launch",
     ),
     path(
+        "orgs/<slug:org_slug>/apps/<str:product_code>/sign-in",
+        launcher_views.sign_in_view,
+        name="launcher-sign-in-destination",
+    ),
+    path(
         "orgs/<slug:org_slug>/apps/<str:product_code>/seats",
         launcher_views.seat_overview_view,
         name="launcher-seats",
@@ -1545,6 +1550,16 @@ _admin = [
         "admin/products/<str:product_code>/integration/kit",
         admin_product_views.integration_kit_view,
         name="admin-product-integration-kit",
+    ),
+    path(
+        "admin/products/<str:product_code>/integration/sign-in-setup",
+        admin_product_views.integration_sign_in_setup_view,
+        name="admin-product-integration-sign-in-setup",
+    ),
+    path(
+        "admin/products/<str:product_code>/integration/sign-in-setup/check",
+        admin_product_views.integration_sign_in_setup_check_view,
+        name="admin-product-integration-sign-in-setup-check",
     ),
     path(
         "admin/catalog/products/<uuid:product_id>/trial",

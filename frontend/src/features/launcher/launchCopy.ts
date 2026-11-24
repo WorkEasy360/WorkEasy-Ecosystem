@@ -14,6 +14,10 @@ export const LAUNCH_DENIAL_COPY: Record<AppDirectoryEntry["state"] | string, str
   // with an error *code*, not a launcher state.
   organization_not_writable:
     "Your organization is read-only at the moment, so products can't be opened. An administrator can contact Workeasy360 support.",
+  // ADR-074: Explore Products' "Sign in" (`SignInButton`), whose refusals are
+  // about the product's sign-in, never about the organization's access.
+  sign_in_suspended: "That product is temporarily unavailable. Please try again shortly.",
+  sign_in_unavailable: "WorkEasy360 sign-in isn't available for that product yet.",
 };
 
 export function launchDenialMessage(state: string | null | undefined): string {

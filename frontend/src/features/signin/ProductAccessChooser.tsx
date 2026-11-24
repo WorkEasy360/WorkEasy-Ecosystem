@@ -17,16 +17,20 @@ type Load = { status: "loading" } | { status: "invalid" } | { status: "error" } 
 /**
  * The access chooser (ADR-044, docs/universal-sso/design.md section 3.3; the
  * unified-login brief section 5, ADR-066): "Welcome to WorkEasy360 - how would
- * you like to continue?" with the account that is signed in, and Continue with
- * Same Account / Use Different Account / Create New Account. Shown the first
- * time a product is opened in a sign-in (the Ask once default), every time
- * for "Ask me each time", or when the product asks to confirm the account.
+ * you like to continue?" with the account that is signed in, and Continue as
+ * <name> / Use another account / Create New Account. Shown the first time a
+ * product is opened in a sign-in (the Ask once default), every time for "Ask
+ * me each time", or when the product asks to confirm the account.
  *
  * It only *answers*. The request it answers was verified and parked by the
- * authorization endpoint after every check - membership, entitlement, seat,
- * access policy - had already passed, and "Continue" sends the browser to
- * the resume endpoint, which runs them all again before any code exists.
- * Every destination comes back from the server; this page never builds one.
+ * authorization endpoint after membership, organization and access policy
+ * had passed. Whether the organization holds the product is asked too but
+ * delivered after this page (ADR-074), so the page appears whether or not it
+ * was bought and "Use another account" is offered to someone signed in to an
+ * account without it. "Continue" sends the browser to the resume endpoint,
+ * which runs every check again - entitlement and seat included - before any
+ * code exists; a refusal goes to the product's own "no access" page. Every
+ * destination comes back from the server; this page never builds one.
  */
 export function ProductAccessChooser() {
   const searchParams = useSearchParams();
@@ -157,7 +161,7 @@ export function ProductAccessChooser() {
               disabled={busy !== null}
               onClick={() => void choose("workeasy360")}
             >
-              <span className={styles.choiceLabel}>{busy === "workeasy360" ? "Continuing…" : "Continue with Same Account"}</span>
+              <span className={styles.choiceLabel}>{busy === "workeasy360" ? "Continuing…" : `Continue as ${shownName}`}</span>
               <span id={sameHintId} className={styles.choiceHint}>
                 Continue using your existing WorkEasy360 login.
               </span>
@@ -169,7 +173,7 @@ export function ProductAccessChooser() {
               disabled={busy !== null}
               onClick={() => void choose("switch_account")}
             >
-              <span className={styles.choiceLabel}>{busy === "switch_account" ? "Signing out…" : "Use Different Account"}</span>
+              <span className={styles.choiceLabel}>{busy === "switch_account" ? "Signing out…" : "Use another account"}</span>
               <span id={otherHintId} className={styles.choiceHint}>
                 Sign in using another WorkEasy360 email/account.
               </span>

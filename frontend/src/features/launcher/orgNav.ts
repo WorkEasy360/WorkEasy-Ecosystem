@@ -59,7 +59,7 @@ export function organizationModules(can: (permission: string) => boolean): OrgMo
       sections: [
         { label: "All Products", tabs: [{ path: "apps", label: "My Products" }] },
         { label: "WorkEasy360 Store", tabs: [{ path: "store", label: "Store", nested: true }] },
-        { label: "Plans & Trials", tabs: [{ path: "explore", label: "Plans & Trials" }] },
+        { label: "Explore Products", tabs: [{ path: "explore", label: "Explore Products" }] },
       ],
     },
     {

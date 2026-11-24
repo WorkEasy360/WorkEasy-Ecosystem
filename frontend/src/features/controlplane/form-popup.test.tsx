@@ -62,7 +62,9 @@ describe("FormPopup", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(save).toHaveBeenCalledWith("Alpha");
     expect(screen.getByRole("status")).toHaveTextContent("Thing Alpha created.");
-    expect(opener).toHaveFocus();
+    // Focus is given back when the popup's exit timer has run and its effect
+    // cleaned up - a tick after the dialog leaves the DOM on a loaded machine.
+    await waitFor(() => expect(opener).toHaveFocus());
   });
 
   it("keeps a failure and the typed values inside the popup", async () => {

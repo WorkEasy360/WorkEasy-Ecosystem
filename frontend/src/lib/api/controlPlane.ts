@@ -487,6 +487,27 @@ export interface SsoReadiness {
   checks: SsoReadinessCheck[];
 }
 
+/** Automatic sign-in setup (ADR-074): the state and checks the platform
+ * recorded at its last check of the product's compatibility document. Never a
+ * label this browser computed. `state` is null for a product registered by
+ * hand that nobody has asked to check. */
+export interface SignInSetup {
+  product_code: string;
+  automatic: boolean;
+  state: "pending_configuration" | "configured" | "verification_required" | "active" | "failed" | null;
+  state_label: string;
+  checks: { key: string; label: string; status: "passed" | "pending" | "failed"; detail: string }[];
+  application_url: string;
+  document_url: string;
+  client_id: string;
+  integration_status: string;
+  connector: { name: string; version: string } | null;
+  attempts: number;
+  last_checked_at: string | null;
+  next_check_at: string | null;
+  activated_at: string | null;
+}
+
 /** A product credential by its public reference (ADR-044) - a secret is
  * never stored, so it can never be listed. */
 export interface ConsoleCredential {
@@ -973,6 +994,9 @@ export const adminApi = {
     }),
   /** Whether people can sign in to the product through WorkEasy360, and what is missing. */
   integrationReadiness: (productCode: string) => apiFetch<SsoReadiness>(`${admin}/products/${productCode}/integration/readiness`),
+  signInSetup: (productCode: string) => apiFetch<SignInSetup>(`${admin}/products/${productCode}/integration/sign-in-setup`),
+  checkSignInSetup: (productCode: string) =>
+    apiFetch<SignInSetup>(`${admin}/products/${productCode}/integration/sign-in-setup/check`, { method: "POST", body: json({}) }),
   /** The integration kit for one framework (audited; holds no secret). */
   integrationKit: (productCode: string, framework: IntegrationKitFramework) =>
     apiFetch<IntegrationKit>(`${admin}/products/${productCode}/integration/kit`, { query: { framework } }),

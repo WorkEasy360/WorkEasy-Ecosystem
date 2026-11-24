@@ -4,7 +4,94 @@ Written for: the operator of the single production host, and the owner who appro
 
 **Nothing in this runbook has been run in production.** Every step below needs the owner's explicit approval before it is run: merges, deploys, DNS, stage changes, the identity cutover and product releases. Each step is reversible on its own, and its rollback is given with it.
 
-**Live today (16 November):** ADR-067 at **stage off** (release `2026.11.16-fe495b7`). `auth.workeasy360.com` is the sign-in and the issuer. `accounts.workeasy360.com` does not resolve (NXDOMAIN on 17 November). The other portal records are Cloudflare-proxied.
+**Live today (19 November):** ADR-067 at **stage off** (release `2026.11.18-b10530e`). `auth.workeasy360.com` is the sign-in and the issuer.
+
+- `accounts.workeasy360.com` resolves since 19 November: the owner added the proxied Cloudflare record, an A record to the same origin as `auth.`.
+- It answers **Cloudflare 525** until stage a. The edge at stage off has no site for that name, so the TLS handshake to the origin fails.
+- The fix is stage a itself (step 4), which gives the edge its `accounts.` site with a certificate.
+- Do not weaken Cloudflare's SSL mode to hide it. Do not point `accounts.` anywhere else.
+
+## Release R2 (prepared 19 November): Universal Login completion
+
+This release carries #4, #5, #7, #9, #10, #11, #12 and `feat/universal-login-complete` (ADR-074), as merged into `main` in that order. The steps below are steps 1-5 of the table under "Order, and why", with this release's additions. **Nothing here has been run in production.**
+
+**Gates before any production step (owner):**
+
+1. An independent review of each PR (none has one; the agent wrote them under the owner's account).
+2. CI green on the merge commit.
+3. A fresh database backup (`w360-backup`) with a restore drill (`w360-restore-drill`) that passed this week.
+4. The owner's written approval for each numbered step.
+
+**Migrations (six, all additive):**
+
+- `ecosystem.0007_backchannel_logout`
+- `ecosystem.0008_product_domains`: existing hostnames are carried over as `pre_existing`, verified.
+- `ecosystem.0009_product_last_sign_in`
+- `ecosystem.0010_product_connection`
+- `ecosystem.0011_product_sign_in_setup`: a new table only.
+- `identity.0010_account_event_product_sign_in`
+
+Rehearsed against the production image: see "Evidence" in the report of 19 November.
+
+**Environment checklist (production env file; names only, no values here).** Check each with `make_env.py get <NAME>` before the release:
+
+| Name | Value at this release | Why |
+|---|---|---|
+| `W360_ACCOUNTS_IDENTITY` | `off` for step 2; `on` only at step 5 | ADR-071 cutover is its own step |
+| `W360_AUTH_ORIGIN` / `W360_AUTH_LEGACY_ORIGIN` | set by `make_env.py accounts --stage a/b` | ADR-067 stages; never edited by hand |
+| `W360_OIDC_ISSUER`, `W360_OIDC_TRANSITION_ISSUERS` | set by the stage command | strict issuer validation |
+| `W360_BEAT_SIGN_IN_SETUP_S` | absent (default 300 s) | ADR-074 sweep |
+| `W360_RL_SIGN_IN_SETUP_USER` / `_IP` | absent (defaults 10 and 30 per minute) | *Check now* rate limits |
+| `INTEGRATION_EGRESS_ALLOW_HTTP` / `_ALLOW_LOOPBACK` | **absent or false** | the setup fetch is https-only and never reaches private addresses in production |
+| `W360_PAYMENTS_FAKE_PROVIDER` | **absent** | test provider is development-only |
+
+No new secret is introduced. Automatic setup reads only public documents and public keys.
+
+**Commands (operator, after approval).** These are the commands of step 2, plus this release's checks:
+
+```sh
+sudo /opt/workeasy360/bin/w360-backup
+E=/opt/workeasy360/env/production.env
+sudo cp -p $E $E.before-r2-$(date -u +%Y%m%dT%H%M%SZ)
+# unpack the release's deploy/ with: git -c core.autocrlf=false archive <sha> deploy | tar -x -C /opt/workeasy360/releases/<tag>
+sudo python3 /opt/workeasy360/releases/<tag>/deploy/single-host/make_env.py set W360_RELEASE --env $E   # value: <tag>
+sudo ln -sfn /opt/workeasy360/releases/<tag> /opt/workeasy360/current
+sudo /opt/workeasy360/bin/w360 up -d
+sudo /opt/workeasy360/bin/w360 exec api python manage.py showmigrations ecosystem identity </dev/null | grep -E "0007|0008|0009|0010|0011"
+sudo /opt/workeasy360/bin/w360 logs --tail 80 beat | grep -E "products-sign-in-setup|products-recheck-domains|backchannel-logout-deliver"
+```
+
+**Smoke tests after step 2 (read-only, then one disposable sign-in):**
+
+```sh
+curl -s https://auth.workeasy360.com/.well-known/openid-configuration | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["issuer"], d.get("backchannel_logout_supported"))'
+curl -sI https://app.workeasy360.com/ | head -1                      # 200
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://app.workeasy360.com/api/v1/orgs/x/apps/y/sign-in   # 401/403/404, never 200
+```
+
+Then, in a browser, with a test organization that buys nothing:
+
+1. Explore Products lists the catalog; a configured product offers **Sign in to <product>**.
+2. Choosing it shows **Continue as <name>** / **Use another account**.
+3. *Continue as* ends on the product's "no access" page.
+4. Super Admin, a product's Integration tab: **Automatic sign-in setup** shows "Set up by hand" for every existing product (nothing changed them).
+
+**After step 4 (stage a):** `curl -sI https://accounts.workeasy360.com/login | head -1` answers 200. This is the end of the 525.
+
+**Rollback:**
+
+1. **Code:** put `W360_RELEASE` and `current` back to `2026.11.18-b10530e`, then `w360 up -d`. The new tables and columns stay, unused by the old code. The chooser order and Explore's *Sign in* revert with the code.
+2. **Schema, only if you must:**
+   1. Stop the workers and beat.
+   2. With the new release, run `migrate ecosystem 0006_sign_in_ask_once` and `migrate identity 0009_email_change`.
+   3. Redeploy the old release.
+3. **A product activated by automatic setup that must stop:** *Suspend* it on its Integration tab. Automatic setup never resumes a suspended integration.
+
+**Post-deployment recovery:**
+
+- **A product's sign-in fails after the release:** its Integration tab shows SSO readiness and the setup checks with their reasons. Its credentials and addresses are audited (`ecosystem.integration.*`).
+- **The setup sweep misbehaves:** set `W360_BEAT_SIGN_IN_SETUP_S` to a very large value and restart beat. Nothing else depends on it.
+- **Explore's *Sign in* must be withdrawn quickly:** roll the code back (step 1 above). No data depends on it.
 
 ## The target
 

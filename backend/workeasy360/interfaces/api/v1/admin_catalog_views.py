@@ -83,12 +83,19 @@ def product_detail_view(
     request: HttpRequest, ctx: TenantContext, product_id: UUID
 ) -> JsonResponse:
     """Edit a product's presentation and listing (Phase 9)."""
-    from workeasy360.commercial.catalog.selectors import product_row
+    from django.db import transaction
 
-    with acting_scope(ctx):
+    from workeasy360.commercial.catalog.selectors import product_row
+    from workeasy360.commercial.controlplane import sso_setup
+
+    changes = _body(request)
+    with acting_scope(ctx), transaction.atomic():
         product = catalog_services.update_product(
-            ctx, product_id=product_id, changes=_body(request)
+            ctx, product_id=product_id, changes=changes
         )
+        if isinstance(changes, dict) and "application_url" in changes:
+            # ADR-074: a new application address restarts the sign-in setup.
+            sso_setup.prepare(ctx, product_code=product.code)
     row = product_row(product)
     row["id"] = str(row["id"])
     return JsonResponse(row)

@@ -4,8 +4,9 @@ The default is Ask once: the first time a product is opened in a Workeasy360
 sign-in, the access chooser names the signed-in account and offers "Continue
 with the same account", "Use a different account" and "Create a new account";
 for the rest of that sign-in the product opens with no question. These suites
-pin when the question comes and when it does not (section 5.5), that it never
-comes before a refusal, and what each answer does.
+pin when the question comes and when it does not (section 5.5), that a
+refusal is delivered after it and still decides (ADR-074), and what each
+answer does.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from tests.universal_sso.conftest import (
     authorize_query,
     path_of,
     query_of,
+    refused_after_chooser,
     resume_token_of,
 )
 from workeasy360.platform.ecosystem import protocol
@@ -150,15 +152,21 @@ def test_signing_in_for_the_request_is_the_answer_and_counts_as_entry(
     assert _granted(_authorize(client, crm, org["organization_id"]), crm)
 
 
-def test_a_refusal_always_comes_before_the_question(
+def test_the_question_comes_before_a_seat_refusal_and_the_refusal_still_decides(
     client, signing_key, sso_product, entitled_org, signed_in
 ):
+    """ADR-074 (was "a refusal always comes before the question"): the person
+    is asked which account first, so "Use another account" is on offer, and
+    "Continue as" then meets the same ``product_no_seat`` - no code."""
     crm = sso_product("crm")
     org = entitled_org("crm", seat=False)
     signed_in(org["user"], sign_in_preference=None)
-    assert query_of(_authorize(client, crm, org["organization_id"]))["error"] == [
-        protocol.PRODUCT_NO_SEAT
-    ]
+    refused_after_chooser(
+        client, _authorize(client, crm, org["organization_id"]), protocol.PRODUCT_NO_SEAT
+    )
+    # Refused, so not entered: the next open asks again rather than going
+    # silently to the same refusal.
+    assert path_of(_authorize(client, crm, org["organization_id"])) == "/product-access"
 
 
 def test_a_product_asking_to_confirm_the_account_is_always_asked(

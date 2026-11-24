@@ -9,8 +9,10 @@ from tests.universal_sso.conftest import (
     AUTHORIZE,
     CHOOSE,
     authorize_query,
+    choose_at_chooser,
     path_of,
     query_of,
+    refused_after_chooser,
     resume_token_of,
 )
 from workeasy360.platform.ecosystem import protocol
@@ -253,16 +255,51 @@ def test_automatic_sign_in_is_no_way_into_another_organization(
     assert query_of(response)["error"] == [protocol.MEMBERSHIP_INACTIVE]
 
 
-def test_a_refusal_is_never_hidden_behind_the_chooser(
+def test_the_chooser_comes_before_a_commercial_refusal_which_still_decides(
     client, signing_key, sso_product, organization_factory, signed_in
 ):
-    """Asked or not, a person without access learns it at once - the chooser
-    is only ever shown for a request that would otherwise succeed."""
+    """ADR-074 (was "a refusal is never hidden behind the chooser"). Whether
+    the organization bought the product is delivered *after* the account
+    question, so someone signed in to the wrong account can choose "Use
+    another account". The answer is unchanged: "Continue as" meets
+    ``product_not_entitled`` and no code exists. Automatic still asks
+    nothing, and ``prompt=none`` is refused at once."""
+    from workeasy360.platform.ecosystem.models import AuthorizationCode
+
     crm = sso_product("crm")
     org, _membership, user = organization_factory()
     signed_in(user, sign_in_preference="ask")
-    response = _authorize(client, crm, str(org.id))
-    assert query_of(response)["error"] == [protocol.PRODUCT_NOT_ENTITLED]
+    refused_after_chooser(
+        client, _authorize(client, crm, str(org.id)), protocol.PRODUCT_NOT_ENTITLED
+    )
+
+    signed_in(user, sign_in_preference="auto_sso")
+    assert query_of(_authorize(client, crm, str(org.id)))["error"] == [
+        protocol.PRODUCT_NOT_ENTITLED
+    ]
+    signed_in(user, sign_in_preference="ask")
+    assert query_of(_authorize(client, crm, str(org.id), prompt="none"))["error"] == [
+        protocol.PRODUCT_NOT_ENTITLED
+    ]
+    assert not AuthorizationCode.objects.filter(
+        integration__client_id=crm["client_id"]
+    ).exists()
+
+
+def test_use_another_account_is_offered_to_an_account_without_the_product(
+    client, signing_key, sso_product, organization_factory, signed_in
+):
+    """Why ADR-074 moved the question: signed in to an account whose
+    organization does not hold the product, the chooser offers "Use another
+    account" - which signs this one out and asks for the other."""
+    crm = sso_product("crm")
+    org, _membership, user = organization_factory()
+    signed_in(user, sign_in_preference=None)
+    destination = choose_at_chooser(
+        client, _authorize(client, crm, str(org.id)), "switch_account"
+    )
+    assert destination.startswith("/login?resume="), destination
+    assert not client.session.get("_auth_user_id")
 
 
 def test_staff_and_partner_standing_grant_no_product_access(

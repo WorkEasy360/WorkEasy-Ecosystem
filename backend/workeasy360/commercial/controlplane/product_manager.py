@@ -29,6 +29,7 @@ from workeasy360.commercial.catalog import selectors as catalog_selectors
 from workeasy360.commercial.catalog import services as catalog_services
 from workeasy360.commercial.catalog.domain import code_for_slug, validate_slug
 from workeasy360.commercial.controlplane import products as console
+from workeasy360.commercial.controlplane import sso_setup
 from workeasy360.contracts.enums import ProductListing, ProductSignInMode
 from workeasy360.contracts.errors import CatalogValidationError, CommercialRecordNotFound
 from workeasy360.contracts.values.cursor import Page
@@ -171,6 +172,10 @@ def create(ctx: TenantContext, body: dict[str, Any]) -> dict[str, Any]:
             console.register_integration(ctx, product_code=str(code), spec=integration)
         if trial is not None:
             catalog_services.configure_product_trial(ctx, product_id=product.id, **trial)
+        # ADR-074: the product's sign-in setup starts now - its one OIDC client
+        # prepared as a draft once there is an application URL, and the first
+        # check queued for after this transaction commits.
+        sso_setup.prepare(ctx, product_code=str(code))
     return detail(ctx, product.id)
 
 
