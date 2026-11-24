@@ -192,3 +192,31 @@ def is_active_owner(*, user_id: UUID, organization_id: UUID) -> bool:
             is_owner=True,
             status=MembershipStatus.ACTIVE.value,
         ).exists()
+
+
+def is_invited_owner(*, user_id: UUID, organization_id: UUID, lock: bool = False) -> bool:
+    """Whether this user is the **invited, not yet accepted** owner of this
+    organization (ADR-075 review M-2: closing their account would leave it with
+    no one who can ever accept). Read from ``Membership``, the authority, in
+    the organization's own RLS scope; ``lock`` locks the row for the caller's
+    transaction."""
+    from workeasy360.platform.organizations.models import Membership
+    from workeasy360.platform.tenancy.db import organization_db_scope
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    with (
+        unscoped_access(
+            reason="Account closure: is this person the invited owner of an organization",
+            module="platform.organizations.resolver",
+        ),
+        organization_db_scope(organization_id),
+    ):
+        rows = Membership.unscoped.filter(
+            organization_id=organization_id,
+            user_id=user_id,
+            is_owner=True,
+            status=MembershipStatus.INVITED.value,
+        )
+        if lock:
+            rows = rows.select_for_update()
+        return bool(list(rows.values_list("pk", flat=True)))

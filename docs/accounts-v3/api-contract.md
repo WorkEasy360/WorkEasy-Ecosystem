@@ -49,6 +49,7 @@ PATCH takes any subset of `full_name`, `country` (ISO 3166-1 alpha-2), `language
 - `POST auth/two-step/recovery-codes {password, code}` -> `{"recovery_codes": [...10]}` (old codes stop working).
 - `POST auth/two-step/disable {password, code}` -> `{"enabled": false}`.
 - Errors: 400 `two_step_code_invalid` (field `code`), 400 `password_invalid` (field `password`), 409 `two_step_not_enabled` / `two_step_setup_missing`, 429 throttled, 503 `two_step_unavailable`.
+- Limits: every attempt counts toward a 5-minute bucket; a per-person day budget (`W360_RL_TWO_STEP_DAILY_USER`, 30) counts **wrong codes only**, shared with account closure. Wrong codes count toward the hourly "several wrong codes" notice.
 
 ### Sign-in with two-step (every login form: customer/Accounts/product sign-in, Admin, Partner)
 
@@ -56,7 +57,7 @@ PATCH takes any subset of `full_name`, `country` (ISO 3166-1 alpha-2), `language
 `401 {"code": "two_step_required", "challenge": "<opaque>", "detail": "Enter the 6-digit code from your authenticator app."}` - no session yet.
 
 `POST auth/login/two-step {challenge, code}` -> exactly what a successful `auth/login` answers (`{user_id, email, name}`), session established. `code` is a 6-digit authenticator code or a recovery code (`xxxxx-xxxxx`).
-Errors: 401 `two_step_code_invalid` (try again), 401 `two_step_challenge_expired` (start again from the password), 429 throttled.
+Errors: 401 `two_step_code_invalid` (try again), 401 `two_step_challenge_expired` (start again from the password), 429 throttled. The day budget (`W360_RL_TWO_STEP_LOGIN_DAILY_USER`, 30) counts wrong codes only: signing in often with the right code never locks a person out.
 The `remember` choice made on the password step is kept by the server.
 
 Mobile number: there is no mobile sign-in and no SMS provider. Do not offer a phone field. One line under the email card: "Sign-in with a mobile number is not available."
@@ -75,9 +76,16 @@ Mobile number: there is no mobile sign-in and no SMS provider. Do not offer a ph
 - `POST auth/account/closure {password, code?, confirmation: "CLOSE"}` -> `{"closed": true}`. The session is ended by the server; go to `/login?closed=1`.
   409 `sole_owner` with `blocking_organizations` when the person is the only owner of an organization. An owner still invited counts.
   409 `last_partner_admin` with `blocking_partners` when the person is the last working administrator of an active partner.
+  400 `two_step_code_invalid` for a wrong code: it spends the two-step day budget (429 once spent) and counts toward the hourly notice, as on the two-step endpoints.
 
 ### Account-security support (signed-out or signed-in)
 
 - `POST public/account-support {email, name, topic, message}` -> 202 `{"reference": "AS-XXXXXXXX"}`. Same answer whether or not an account exists. `topic`: `cannot_sign_in` | `lost_two_step` | `account_compromised` | `closure` | `other`. 429 throttled.
 - Super Admin: `GET admin/account-support?status=open|resolved` -> `{"results": [{"id","reference","email","name","topic","message","status","created_at","resolved_at","note"}]}`; `PATCH admin/account-support/<id> {status, note}`.
   Permission: `platform.staff_user.view` to list, `platform.staff_user.manage` to change.
+
+## Notes for products and the sign-up pages
+
+- **Verify email** (`POST public/signup/verify`): when the account has two-step on, the answer carries `"sign_in_required": true` and **no session** is made. Show the sign-in page (`/login?verified=1`, which says the address is confirmed and the code comes next); never open a portal as if signed in.
+- **Password change and userinfo:** a new password ends every product session, this browser's included (back-channel logout, ADR-069), and access tokens issued before it answer `401 invalid_token` at userinfo. The browser stays signed in to WorkEasy360, so a product that starts its sign-in again is let straight back in with a new token. A product treats that 401 as "sign in again", not as an error.
+- **Own organization restart:** when a person cannot open the organization a product named and their own organization cannot be opened either, the product's request is answered `membership_inactive` about the organization it asked for, never with another organization's refusal.

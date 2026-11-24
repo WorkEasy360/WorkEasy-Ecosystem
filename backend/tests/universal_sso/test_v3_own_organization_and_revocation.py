@@ -253,3 +253,74 @@ def test_a_code_minted_just_before_its_sign_in_ended_is_not_redeemed(
     with pytest.raises(Exception) as refused:
         reference.exchange_code(code=code, code_verifier=verifier)
     assert "invalid, expired or already used" in str(refused.value)
+
+
+# --- Third review (24 November) -----------------------------------------------------------
+
+
+def test_own_organization_refused_answers_the_product_about_its_own_request(
+    client, ravi_asked, organization_factory, with_password, password_login
+):
+    """L-5: Priya's only organization refuses her network. The product asked
+    for Ravi's organization, so it is told she cannot open that one -
+    never a refusal about an organization it did not ask for."""
+    from workeasy360.platform.organizations.models import Organization
+
+    _org, _membership, priya = organization_factory()
+    Organization.objects.filter(id=_org.id).update(
+        ip_allowlist_enabled=True, ip_allowlist=["10.0.0.0/8"]
+    )
+    priya = with_password(priya)
+    answered = _choose(client, ravi_asked["token"], "switch_account")
+    target = answered.json()["redirect_url"]
+    password_login(client, priya)
+    resumed = client.get(f"{RESUME}?resume={target.split('resume=', 1)[1]}")
+
+    answer = query_of(resumed)
+    assert answer["error"] == ["membership_inactive"]
+    assert "access_policy_denied" not in resumed["Location"]
+    assert str(_org.id) not in resumed["Location"]
+    assert "code" not in answer
+
+
+def test_a_password_change_stops_old_product_tokens_and_sso_signs_straight_back_in(
+    client, signing_key, sso_product, entitled_org, password_login, product_client
+):
+    """L-4, by design (ADR-069/075): a new password ends every product
+    session, this browser's included, so the old access token answers 401 at
+    userinfo. The browser stays signed in to WorkEasy360, so the product's
+    next sign-in goes straight through and its new token answers."""
+    from tests.universal_sso.conftest import PASSWORD
+
+    org, product, verifier, granted = _signed_in_product(
+        client, sso_product, entitled_org, password_login
+    )
+    reference = product_client(product)
+    first = reference.exchange_code(
+        code=query_of(granted)["code"][0], code_verifier=verifier
+    )
+    old = {"HTTP_AUTHORIZATION": f"Bearer {first['access_token']}"}
+    assert Client().get(USERINFO, **old).status_code == 200
+
+    changed = client.post(
+        "/api/v1/auth/password",
+        {
+            "current_password": PASSWORD,
+            "new_password": "An entirely new passphrase 8812!",  # pragma: allowlist secret
+        },
+        content_type="application/json",
+    )
+    assert changed.status_code == 200
+    refused = Client().get(USERINFO, **old)
+    assert refused.status_code == 401
+    assert 'error="invalid_token"' in refused["WWW-Authenticate"]
+
+    verifier, query = authorize_query(
+        product, org["organization_id"], scope="openid profile"
+    )
+    again = client.get(AUTHORIZE, query)
+    second = reference.exchange_code(
+        code=query_of(again)["code"][0], code_verifier=verifier
+    )
+    new = {"HTTP_AUTHORIZATION": f"Bearer {second['access_token']}"}
+    assert Client().get(USERINFO, **new).status_code == 200

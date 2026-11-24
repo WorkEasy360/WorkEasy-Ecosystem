@@ -622,17 +622,26 @@ class TwoStepMethod(models.Model):
 
 class TwoStepRecoveryCode(models.Model):
     """One single-use recovery code (ADR-075). Only a keyed hash is stored;
-    the codes are shown to the person once."""
+    the codes are shown to the person once.
+
+    Unique per person, not across everyone (review L-3): a code is only ever
+    looked up with its owner, and two people drawing the same random 40-bit
+    code must not turn the second person's new codes into a 500."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="+")
-    code_hash = models.CharField(max_length=64, unique=True)
+    code_hash = models.CharField(max_length=64)
     used_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         db_table = "identity_two_step_recovery_code"
         indexes = [models.Index(fields=["user", "used_at"], name="ix_recovery_user_used")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "code_hash"], name="uq_recovery_code_per_user"
+            ),
+        ]
 
     def __str__(self) -> str:  # pragma: no cover - display only
         return f"recovery code of {self.user_id}"

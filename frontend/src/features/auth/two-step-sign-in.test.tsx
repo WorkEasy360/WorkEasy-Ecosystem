@@ -250,4 +250,15 @@ describe("the shared pieces", () => {
     );
     expect(await screen.findByText("Your account is closed.")).toBeInTheDocument();
   });
+
+  it("after confirming the address of a two-step account, the sign-in page says the code comes next", async () => {
+    mockApi({ "GET /api/v1/auth/session": [SIGNED_OUT] });
+    query = "verified=1";
+    render(
+      <PortalsProvider origins={ORIGINS}>
+        <LoginScreen portal="auth" />
+      </PortalsProvider>,
+    );
+    expect(await screen.findByText(/Your email address is confirmed\./)).toBeInTheDocument();
+  });
 });

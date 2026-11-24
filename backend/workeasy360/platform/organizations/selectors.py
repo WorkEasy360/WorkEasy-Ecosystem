@@ -1032,10 +1032,10 @@ def pending_owned_organizations(
     (``uq_one_owner_per_org``), so an invited owner is the organization's only
     owner: closing their account would leave it with no one who can ever
     accept. A candidate counts only when its own ``Membership`` row, read in
-    that organization's RLS scope, says so; ``lock`` locks that row."""
-    from workeasy360.platform.organizations.models import Membership, Organization
-    from workeasy360.platform.tenancy.db import organization_db_scope
-    from workeasy360.platform.tenancy.unscoped import unscoped_access
+    that organization's RLS scope, says so (``resolver.is_invited_owner``);
+    ``lock`` locks that row."""
+    from workeasy360.platform.organizations.models import Organization
+    from workeasy360.platform.organizations.resolver import is_invited_owner
 
     candidates: set[UUID] = set()
     for source in list(_PENDING_OWNER_SOURCES):
@@ -1043,35 +1043,21 @@ def pending_owned_organizations(
     if not candidates:
         return []
     closed = {OrganizationStatus.DELETED.value, OrganizationStatus.PENDING_DELETION.value}
+    organizations = list(
+        Organization.objects.filter(id__in=candidates)
+        .exclude(status__in=closed)
+        .order_by("pk")
+        .values("id", "display_name", "slug")
+    )
     found: list[dict[str, Any]] = []
-    with unscoped_access(
-        reason="Account closure: is this person the invited owner of an organization",
-        module="platform.organizations.selectors",
-    ):
-        organizations = list(
-            Organization.objects.filter(id__in=candidates)
-            .exclude(status__in=closed)
-            .order_by("pk")
-            .values("id", "display_name", "slug")
-        )
-        for org in organizations:
-            with organization_db_scope(org["id"]):
-                rows = Membership.unscoped.filter(
-                    organization_id=org["id"],
-                    user_id=user_id,
-                    is_owner=True,
-                    status=MembershipStatus.INVITED.value,
-                )
-                if lock:
-                    rows = rows.select_for_update()
-                invited = bool(list(rows.values_list("pk", flat=True)))
-            if invited:
-                found.append(
-                    {
-                        "organization_id": str(org["id"]),
-                        "name": org["display_name"],
-                        "slug": org["slug"],
-                        "pending": True,
-                    }
-                )
+    for org in organizations:
+        if is_invited_owner(user_id=user_id, organization_id=org["id"], lock=lock):
+            found.append(
+                {
+                    "organization_id": str(org["id"]),
+                    "name": org["display_name"],
+                    "slug": org["slug"],
+                    "pending": True,
+                }
+            )
     return found

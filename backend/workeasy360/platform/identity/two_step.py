@@ -161,8 +161,11 @@ def match_step(secret: bytes, code: str, *, at: float | None = None) -> int | No
 
 
 def generate_recovery_codes(count: int = RECOVERY_CODE_COUNT) -> list[str]:
-    """Plaintext codes, returned to the person exactly once. 40 bits each."""
-    raw = (secrets.token_hex(5) for _ in range(count))
+    """Plaintext codes, returned to the person exactly once. 40 bits each, and
+    distinct within the set (one person's codes are unique together)."""
+    raw: dict[str, None] = {}
+    while len(raw) < count:
+        raw[secrets.token_hex(5)] = None
     return [f"{code[:5]}-{code[5:]}" for code in raw]
 
 

@@ -695,18 +695,39 @@ def closure_view(request: HttpRequest, user: Any) -> JsonResponse:
 
     if request.method == "GET":
         return JsonResponse(account_security.closure_check(user.id))
+    from workeasy360.contracts.errors import TwoStepCodeInvalid
+    from workeasy360.interfaces.api.v1.control_plane_http import (
+        failures_exhausted,
+        spend_failure,
+    )
+
     blocked = limited(request, "account_closure", user=user)
+    if blocked is not None:
+        return blocked
+    # ADR-075 review L-1: closure checks the two-step code too, so it shares
+    # the account changes' day budget for wrong codes and their hourly notice.
+    blocked = failures_exhausted("two_step_daily", user=user)
     if blocked is not None:
         return blocked
     body = _body(request)
     where = connection_facts(request)
-    account_security.close_account(
-        user.id,
-        password=body.get("password"),
-        code=body.get("code"),
-        confirmation=body.get("confirmation"),
-        ip_prefix=where["ip_prefix"],
-        device_label=where["device_label"],
-    )
+    try:
+        account_security.close_account(
+            user.id,
+            password=body.get("password"),
+            code=body.get("code"),
+            confirmation=body.get("confirmation"),
+            ip_prefix=where["ip_prefix"],
+            device_label=where["device_label"],
+        )
+    except TwoStepCodeInvalid:
+        spend_failure("two_step_daily", user=user)
+        account_security.two_step_code_refused(
+            user,
+            ip_prefix=where["ip_prefix"],
+            device_label=where["device_label"],
+            at_sign_in=False,
+        )
+        raise
     django_logout(request)
     return JsonResponse({"closed": True})

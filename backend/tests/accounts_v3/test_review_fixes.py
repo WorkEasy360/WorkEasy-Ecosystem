@@ -137,14 +137,16 @@ def test_account_two_step_changes_have_a_daily_budget_per_person(
     settings.CONTROL_PLANE_RATE_LIMITS = limits
     browser = Client()
     browser.force_login(member)
-    enroll(member, browser)  # setup and confirm: two of the four
+    # Setup and confirm succeed: the day's budget counts wrong codes only
+    # (third review, L-2), so they spend none of the four.
+    enroll(member, browser)
     answers = [
         post(
             browser, f"{TWO_STEP}/disable", {"password": PASSWORD, "code": "000000"}
         ).status_code
-        for _ in range(3)
+        for _ in range(5)
     ]
-    assert answers == [400, 400, 429]
+    assert answers == [400, 400, 400, 400, 429]
 
 
 def test_wrong_codes_on_account_changes_are_told_to_the_person(member, enroll):

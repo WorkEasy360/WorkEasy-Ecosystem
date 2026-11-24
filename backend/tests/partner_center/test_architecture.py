@@ -196,8 +196,10 @@ def test_no_new_tables_for_partners_staff_or_identity():
         # account tables of Accounts V3 - photo, two-step method, recovery codes,
         # sign-in code step, notification choices, account-support case - and
         # profile columns (ADR-075); none is a partner or staff table, and
-        # tests/accounts_v3 pins what each does.
-        "platform/identity": "0011_accounts_v3.py",
+        # tests/accounts_v3 pins what each does. 0012 adds no table and no
+        # column: a recovery code becomes unique per person instead of across
+        # everyone (ADR-075 review L-3); tests/accounts_v3 pins it.
+        "platform/identity": "0012_recovery_code_unique_per_user.py",
     }
     for app, newest in expected.items():
         found = sorted(p.name for p in (PACKAGE / app / "migrations").glob("0*.py"))[-1]
