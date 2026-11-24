@@ -71,9 +71,10 @@ Mobile number: there is no mobile sign-in and no SMS provider. Do not offer a ph
 - `PATCH auth/account/notifications {"<key>": bool, ...}` -> same shape. 400 `preference_invalid` for an unknown or required key.
 - `GET auth/activity` (existing): recent security activity.
 - `GET auth/account/organizations` -> `{"organizations": [{"organization_id","name","slug","status","is_owner","roles":[...],"can_view_billing": bool}]}` for the links to User Admin (`<app origin>/o/<slug>`), subscriptions and billing (only when `can_view_billing`).
-- `GET auth/account/closure` -> `{"can_close": bool, "blocking_organizations": [{"name","slug"}], "two_step_required": bool}`.
+- `GET auth/account/closure` -> `{"can_close": bool, "blocking_organizations": [{"name","slug","pending": bool}], "blocking_partners": [{"name"}], "staff_account": bool, "two_step_required": bool}`. `pending: true` marks an organization the person was invited to own and has not accepted (still its only owner).
 - `POST auth/account/closure {password, code?, confirmation: "CLOSE"}` -> `{"closed": true}`. The session is ended by the server; go to `/login?closed=1`.
-  409 `sole_owner` with `blocking_organizations` when the person is the only owner of an organization.
+  409 `sole_owner` with `blocking_organizations` when the person is the only owner of an organization. An owner still invited counts.
+  409 `last_partner_admin` with `blocking_partners` when the person is the last working administrator of an active partner.
 
 ### Account-security support (signed-out or signed-in)
 

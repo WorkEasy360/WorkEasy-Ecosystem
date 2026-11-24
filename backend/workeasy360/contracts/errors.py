@@ -979,6 +979,15 @@ class SoleOwnerBlocksClosure(AccountSecurityError):
     http_status = 409
 
 
+class LastPartnerAdminBlocksClosure(AccountSecurityError):
+    """The person is the last working administrator of an active partner:
+    closing the account would lock the partner out of its own portal
+    (ADR-075 review M-1). ``blocking_partners`` names those partners."""
+
+    code = "last_partner_admin"
+    http_status = 409
+
+
 class AccountLinkInvalid(AccountSecurityError):
     """No redeemable verification or reset link for this token. One answer for
     unknown, expired and already used, like ``InvitationInvalid``: the token

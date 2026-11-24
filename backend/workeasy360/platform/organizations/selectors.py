@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -982,8 +983,11 @@ def sole_owned_organizations(
         .exclude(organization_status__in=closed)
         .values("organization_id", "organization_display_name", "organization_slug")
     )
+    # ADR-075 review M-2: an owner still INVITED has no row in the projection,
+    # yet is the organization's only owner.
+    pending = pending_owned_organizations(user_id, lock=lock)
     if not owned:
-        return []
+        return pending
     owners = UserOrganizationAccess.objects.filter(
         organization_id__in=[row["organization_id"] for row in owned], is_owner=True
     )
@@ -1002,4 +1006,72 @@ def sole_owned_organizations(
         }
         for row in owned
         if row["organization_id"] not in co_owned
-    ]
+    ] + pending
+
+
+#: Who may know that a person is the *invited* owner of an organization. The
+#: access projection holds active memberships only, and ``Membership`` is
+#: under RLS, so "every organization this person was invited to own" cannot be
+#: asked here across tenants. A layer above (partner provisioning, ADR-075
+#: review M-2) names the candidate organizations; ``Membership`` decides.
+PendingOwnerSource = Callable[[UUID], Iterable[UUID]]
+_PENDING_OWNER_SOURCES: list[PendingOwnerSource] = []
+
+
+def register_pending_owner_source(source: PendingOwnerSource) -> None:
+    """Called from an app's ``ready()``; registering twice is a no-op."""
+    if source not in _PENDING_OWNER_SOURCES:
+        _PENDING_OWNER_SOURCES.append(source)
+
+
+def pending_owned_organizations(
+    user_id: UUID, *, lock: bool = False
+) -> list[dict[str, Any]]:
+    """The organizations this person is the **invited, not yet accepted**
+    owner of (ADR-075 review M-2). One owner per organization
+    (``uq_one_owner_per_org``), so an invited owner is the organization's only
+    owner: closing their account would leave it with no one who can ever
+    accept. A candidate counts only when its own ``Membership`` row, read in
+    that organization's RLS scope, says so; ``lock`` locks that row."""
+    from workeasy360.platform.organizations.models import Membership, Organization
+    from workeasy360.platform.tenancy.db import organization_db_scope
+    from workeasy360.platform.tenancy.unscoped import unscoped_access
+
+    candidates: set[UUID] = set()
+    for source in list(_PENDING_OWNER_SOURCES):
+        candidates.update(source(user_id))
+    if not candidates:
+        return []
+    closed = {OrganizationStatus.DELETED.value, OrganizationStatus.PENDING_DELETION.value}
+    found: list[dict[str, Any]] = []
+    with unscoped_access(
+        reason="Account closure: is this person the invited owner of an organization",
+        module="platform.organizations.selectors",
+    ):
+        organizations = list(
+            Organization.objects.filter(id__in=candidates)
+            .exclude(status__in=closed)
+            .order_by("pk")
+            .values("id", "display_name", "slug")
+        )
+        for org in organizations:
+            with organization_db_scope(org["id"]):
+                rows = Membership.unscoped.filter(
+                    organization_id=org["id"],
+                    user_id=user_id,
+                    is_owner=True,
+                    status=MembershipStatus.INVITED.value,
+                )
+                if lock:
+                    rows = rows.select_for_update()
+                invited = bool(list(rows.values_list("pk", flat=True)))
+            if invited:
+                found.append(
+                    {
+                        "organization_id": str(org["id"]),
+                        "name": org["display_name"],
+                        "slug": org["slug"],
+                        "pending": True,
+                    }
+                )
+    return found

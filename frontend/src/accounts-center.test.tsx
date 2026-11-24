@@ -615,6 +615,40 @@ describe("Settings", () => {
     expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
     expect(assign).not.toHaveBeenCalled();
   });
+
+  it("a closure refused for the last partner administrator names the partners", async () => {
+    mockApi(
+      settingsRoutes(
+        { can_close: true, blocking_organizations: [], blocking_partners: [], two_step_required: false },
+        { "POST /api/v1/auth/account/closure": [{ status: 409, body: { code: "last_partner_admin", blocking_partners: [{ name: "Northwind Resellers" }] } }] },
+      ),
+    );
+    render(<CenterSettings appOrigin={BASE.app} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Close my account" }));
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
+    fireEvent.change(screen.getByLabelText("Type CLOSE to confirm"), { target: { value: "CLOSE" } });
+    fireEvent.click(screen.getByRole("button", { name: "Close account permanently" }));
+    expect(await screen.findByText("You are the last administrator of a partner")).toBeInTheDocument();
+    expect(screen.getByText("Northwind Resellers")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("an invited owner is told to accept or ask the partner, without a User Admin link", async () => {
+    mockApi(
+      settingsRoutes({
+        can_close: false,
+        blocking_organizations: [{ name: "Pending Ltd", slug: "pending-ltd", pending: true }],
+        blocking_partners: [],
+        two_step_required: false,
+      }),
+    );
+    render(<CenterSettings appOrigin={BASE.app} />);
+    expect(await screen.findByText("You were invited to own an organization")).toBeInTheDocument();
+    expect(screen.getByText("Pending Ltd").closest("a")).toBeNull();
+    expect(screen.queryByText("You are the only owner of an organization")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close my account" })).not.toBeInTheDocument();
+  });
 });
 
 describe("Help & Support", () => {

@@ -159,25 +159,60 @@ export function YourOrganizations({ appOrigin }: { appOrigin: string }) {
 /** After closing: the server has ended the session; the sign-in page says so. */
 export const closedNavigation = { assign: (url: string) => window.location.assign(url) };
 
-function BlockingOrganizations({ organizations, appOrigin }: { organizations: ClosureCheck["blocking_organizations"]; appOrigin: string }) {
+/** What stops the account closing: organizations it is the only owner of, partners it is the last administrator of. */
+interface ClosureBlockers {
+  organizations: ClosureCheck["blocking_organizations"];
+  partners: NonNullable<ClosureCheck["blocking_partners"]>;
+}
+
+function BlockingOrganizations({ blockers, appOrigin }: { blockers: ClosureBlockers; appOrigin: string }) {
+  const owned = blockers.organizations.filter((o) => !o.pending);
+  const invited = blockers.organizations.filter((o) => o.pending);
   return (
-    <Alert tone="warning" title="You are the only owner of an organization">
-      <p>Before you can close your account, make someone else an owner of each of these organizations, or close the organization, in User Admin:</p>
-      <ul className={styles.list}>
-        {organizations.map((o) => (
-          <li key={o.slug}>
-            <a href={orgHref(appOrigin, o.slug, "/settings/members")}>{o.name}</a>
-          </li>
-        ))}
-      </ul>
-    </Alert>
+    <>
+      {owned.length > 0 && (
+        <Alert tone="warning" title="You are the only owner of an organization">
+          <p>Before you can close your account, make someone else an owner of each of these organizations, or close the organization, in User Admin:</p>
+          <ul className={styles.list}>
+            {owned.map((o) => (
+              <li key={o.slug}>
+                <a href={orgHref(appOrigin, o.slug, "/settings/members")}>{o.name}</a>
+              </li>
+            ))}
+          </ul>
+        </Alert>
+      )}
+      {invited.length > 0 && (
+        <Alert tone="warning" title="You were invited to own an organization">
+          <p>
+            You are the owner named for each of these organizations and have not accepted yet. Accept the invitation from your email and make someone else the owner, or ask the
+            partner that set it up to name another owner:
+          </p>
+          <ul className={styles.list}>
+            {invited.map((o) => (
+              <li key={o.slug}>{o.name}</li>
+            ))}
+          </ul>
+        </Alert>
+      )}
+      {blockers.partners.length > 0 && (
+        <Alert tone="warning" title="You are the last administrator of a partner">
+          <p>Before you can close your account, add another administrator to each of these partners in the Partner portal:</p>
+          <ul className={styles.list}>
+            {blockers.partners.map((p) => (
+              <li key={p.name}>{p.name}</li>
+            ))}
+          </ul>
+        </Alert>
+      )}
+    </>
   );
 }
 
 export function CloseAccount({ appOrigin }: { appOrigin: string }) {
   const [load] = useLoad(() => accountCenterApi.closure(), []);
   const [open, setOpen] = useState(false);
-  const [blocked, setBlocked] = useState<ClosureCheck["blocking_organizations"] | null>(null);
+  const [blocked, setBlocked] = useState<ClosureBlockers | null>(null);
   return (
     <Panel title="Close account" description="Permanently close this WorkEasy360 account.">
       <div className={`${styles.section} ${styles.danger}`}>
@@ -190,8 +225,8 @@ export function CloseAccount({ appOrigin }: { appOrigin: string }) {
         </ul>
         <LoadGate load={load} what="whether this account can be closed">
           {(check) => {
-            const blocking = blocked ?? (check.can_close ? [] : check.blocking_organizations);
-            if (blocking.length > 0) return <BlockingOrganizations organizations={blocking} appOrigin={appOrigin} />;
+            const blocking = blocked ?? (check.can_close ? { organizations: [], partners: [] } : { organizations: check.blocking_organizations, partners: check.blocking_partners ?? [] });
+            if (blocking.organizations.length > 0 || blocking.partners.length > 0) return <BlockingOrganizations blockers={blocking} appOrigin={appOrigin} />;
             if (!check.can_close) return <p role="note">This account cannot be closed right now. Ask Help &amp; Support.</p>;
             return open ? (
               <ClosureForm twoStep={check.two_step_required} onCancel={() => setOpen(false)} onBlocked={setBlocked} />
@@ -216,7 +251,7 @@ function ClosureForm({
 }: {
   twoStep: boolean;
   onCancel: () => void;
-  onBlocked: (organizations: ClosureCheck["blocking_organizations"]) => void;
+  onBlocked: (blockers: ClosureBlockers) => void;
 }) {
   const id = useId();
   const [password, setPassword] = useState("");
@@ -240,9 +275,15 @@ function ClosureForm({
     } catch (err) {
       setBusy(false);
       if (err instanceof ApiError) {
-        const body = err.body as { detail?: string; blocking_organizations?: ClosureCheck["blocking_organizations"] } | undefined;
+        const body = err.body as
+          | { detail?: string; blocking_organizations?: ClosureCheck["blocking_organizations"]; blocking_partners?: ClosureCheck["blocking_partners"] }
+          | undefined;
         if (err.code === "sole_owner" && body?.blocking_organizations?.length) {
-          onBlocked(body.blocking_organizations);
+          onBlocked({ organizations: body.blocking_organizations, partners: [] });
+          return;
+        }
+        if (err.code === "last_partner_admin" && body?.blocking_partners?.length) {
+          onBlocked({ organizations: [], partners: body.blocking_partners });
           return;
         }
         if (err.code === "password_invalid" || err.code === "current_password_incorrect") {
