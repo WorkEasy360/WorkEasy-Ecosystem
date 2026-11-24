@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
+import { createContext, useContext, useEffect, useId, useRef } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/sidebar/icons";
 import { ButtonLink, CopyButton } from "./Button";
@@ -46,10 +46,36 @@ export interface Crumb {
 }
 
 /**
- * Every page's header, at the same place: breadcrumb (detail pages), the
+ * Where the page on screen sits in its console (2026-11-18, admin-ux phase 1),
+ * told by the console's shell: `trail` is the breadcrumb to it (Section › Tab),
+ * `related` the other pages of its tab, offered as buttons in its header. Outside
+ * a shell that says, nothing changes.
+ */
+export interface PagePlace {
+  trail: Crumb[];
+  related: { href: string; label: string }[];
+  /** A record's own page: it names itself after the trail (`usePageTrail`). */
+  detail: boolean;
+}
+
+export const PagePlaceContext = createContext<PagePlace | null>(null);
+
+/** The breadcrumb to a record's page, before its own name: the shell's trail
+ * (Customers › Organizations) - or `fallback` where no shell tells one. */
+export function usePageTrail(fallback: Crumb[]): Crumb[] {
+  const place = useContext(PagePlaceContext);
+  return place && place.trail.length > 0 ? place.trail : fallback;
+}
+
+/**
+ * Every page's header, at the same place: breadcrumb, the
  * title, ONE line of subtitle (a longer explanation goes in `info`, behind an
  * (i)), the primary action on the right with secondary actions in a "More"
  * menu, and optional tabs below. Also sets the browser tab's title.
+ *
+ * Inside the Admin shell a page that names no breadcrumb gets its place's
+ * (Partners › Applications), and the first page of a tab gets a button for each
+ * of the tab's other pages (KYC requirements).
  */
 export function PageHeader({
   title,
@@ -86,19 +112,31 @@ export function PageHeader({
   documentTitle?: string;
 }) {
   usePageTitle(documentTitle ?? (typeof title === "string" ? title : null));
+  const place = useContext(PagePlaceContext);
+  const shownCrumbs = crumbs ?? (place && !place.detail && place.trail.length > 1 ? place.trail : undefined);
+  const related =
+    place && !place.detail && place.related.length > 0 ? (
+      <>
+        {place.related.map((r) => (
+          <ButtonLink key={r.href} href={r.href} variant="secondary">
+            {r.label}
+          </ButtonLink>
+        ))}
+      </>
+    ) : null;
   const hasSecondary = secondary && secondary.some((i) => i.when !== false);
   return (
     <header className={k.header}>
-      {crumbs && crumbs.length > 0 && (
+      {shownCrumbs && shownCrumbs.length > 0 && (
         <nav aria-label="Breadcrumb">
           <ol className={k.crumbs}>
-            {crumbs.map((c, i) => (
+            {shownCrumbs.map((c, i) => (
               <li key={`${c.label}-${i}`}>
                 {i > 0 && <Icon name="chevronRight" size={12} />}
-                {c.href && i < crumbs.length - 1 ? (
+                {c.href && i < shownCrumbs.length - 1 ? (
                   <Link href={c.href}>{c.label}</Link>
                 ) : (
-                  <span aria-current={i === crumbs.length - 1 ? "page" : undefined}>{c.label}</span>
+                  <span aria-current={i === shownCrumbs.length - 1 ? "page" : undefined}>{c.label}</span>
                 )}
               </li>
             ))}
@@ -126,9 +164,10 @@ export function PageHeader({
             </ul>
           )}
         </div>
-        {(primary || actions || hasSecondary) && (
+        {(primary || actions || hasSecondary || related) && (
           <div className={k.headActions}>
             {hasSecondary && <Menu label="More actions" items={secondary!} icon="more" showLabel={false} />}
+            {related}
             {actions}
             {primary}
           </div>

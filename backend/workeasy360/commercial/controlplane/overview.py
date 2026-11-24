@@ -101,13 +101,22 @@ def period(
 def optional_window(
     raw_from: str | None, raw_to: str | None
 ) -> tuple[datetime | None, datetime | None]:
-    """Whole UTC days for a list's date filter; either end may be open."""
+    """Whole UTC days for a list's date filter; either end may be open.
+
+    ``(start, end)``: rows on or after ``start`` and before ``end``, which is the day
+    after ``to``, so ``to`` is included. A range that ends before it starts is refused
+    rather than answered with an empty list."""
     first = _parse_day(raw_from, "from")
     last = _parse_day(raw_to, "to")
-    return (
-        _at(first) if first else None,
-        _at(last + timedelta(days=1)) if last else None,
-    )
+    if first is not None and last is not None and first > last:
+        raise CatalogValidationError(
+            "The date range ends before it starts.", field="from"
+        )
+    try:
+        end = _at(last + timedelta(days=1)) if last else None
+    except OverflowError as exc:  # 9999-12-31 has no day after it
+        raise CatalogValidationError("Use a date like 2026-11-09.", field="to") from exc
+    return (_at(first) if first else None, end)
 
 
 def change_percent(now: int, before: int) -> float | None:

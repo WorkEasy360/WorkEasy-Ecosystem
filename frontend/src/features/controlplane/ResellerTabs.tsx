@@ -444,7 +444,7 @@ export function CustomersTab({ partnerId, rev }: TabProps) {
             empty="No customers yet."
             actions={manage ? (row) => <StaffOwnerActions row={row} onDone={paged.reload} /> : undefined}
           />
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+          <MoreButton hasMore={paged.hasMore} onMore={paged.more} loading={paged.loadingMore} failed={paged.moreError} />
         </>
       )}
     </div>
@@ -1065,7 +1065,7 @@ export function SubscriptionsTab({ partnerId, rev }: TabProps) {
               </tr>
             ))}
           </Table>
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+          <MoreButton hasMore={paged.hasMore} onMore={paged.more} loading={paged.loadingMore} failed={paged.moreError} />
         </>
       )}
     </div>
@@ -1114,7 +1114,7 @@ export function CommissionsTab({ partnerId, rev }: TabProps) {
               </tr>
             ))}
           </Table>
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+          <MoreButton hasMore={paged.hasMore} onMore={paged.more} loading={paged.loadingMore} failed={paged.moreError} />
         </>
       )}
     </div>
@@ -1180,7 +1180,7 @@ export function PayoutsTab({ partnerId, rev, bump }: TabProps) {
               <PayoutRowView key={p.id} payout={p} manage={manage} approve={approve} busy={busy} act={act} />
             ))}
           </Table>
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+          <MoreButton hasMore={paged.hasMore} onMore={paged.more} loading={paged.loadingMore} failed={paged.moreError} />
         </>
       )}
     </div>
@@ -1392,7 +1392,7 @@ export function ActivityTab({ partnerId, rev }: TabProps) {
               </tr>
             ))}
           </Table>
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+          <MoreButton hasMore={paged.hasMore} onMore={paged.more} loading={paged.loadingMore} failed={paged.moreError} />
         </>
       )}
     </div>
@@ -1471,7 +1471,7 @@ export function ReferralsTab({ partnerId, rev }: TabProps) {
               </tr>
             ))}
           </Table>
-          <MoreButton hasMore={paged.hasMore} onMore={paged.more} />
+          <MoreButton hasMore={paged.hasMore} onMore={paged.more} loading={paged.loadingMore} failed={paged.moreError} />
           {trail && (
             <ReferralTrailPanel
               referralId={trail}

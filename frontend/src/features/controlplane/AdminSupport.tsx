@@ -3,18 +3,23 @@
 import { useId, useState } from "react";
 import Link from "next/link";
 import { POLICIES } from "@/features/store/links";
+import { Sla } from "@/features/partnerpanel/Helpdesk";
+import type { Ticket } from "@/lib/api/partnerPanel";
 import { supportApi, type HelpArticleRow, type TicketDetail, type TicketRow } from "@/lib/api/adminPanel";
 import { can, useAdmin } from "./ControlShell";
 import { DateText } from "./AdminUsers";
 import { OffsetPager } from "./AdminListParts";
+import { PartnerTicketsScreen } from "./PartnerDesk";
 import { DialogHead, FormDialog, FormPopup, Modal, dialog } from "./Modal";
 import { LoadGate, useAction, useLoad } from "./ui";
 import { TextAreaField, TextField } from "./widgets";
 import {
+  Alert,
   Badge,
   Card,
   Button,
   DataTable,
+  DateRangeFilter,
   DescriptionList,
   EmptyState,
   FilterBar,
@@ -27,11 +32,16 @@ import {
   StatusChips,
   Trunc,
   EMPTY,
+  droppedMessage,
   formatDateTime,
+  rangeLabel,
   sentence,
   useConfirm,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
   type MenuItem,
+  usePageTrail,
 } from "./kit";
 import local from "./AdminPeople.module.css";
 import styles from "./AdminSupport.module.css";
@@ -45,6 +55,8 @@ import styles from "./AdminSupport.module.css";
  */
 
 const MANAGE = "platform.staff_support.manage";
+const SUPPORT_VIEW = "platform.staff_support.view";
+const PARTNER_VIEW = "platform.staff_partner.view";
 const LIMIT = 25;
 
 // --- the ticket list ----------------------------------------------------------------
@@ -60,6 +72,25 @@ const ASSIGNED = [
   { value: "me", label: "Me" },
   { value: "none", label: "Unassigned" },
 ];
+
+const TICKET_STATUSES = ["open", "in_progress", "waiting", "resolved", "closed", "all"];
+
+/**
+ * The ticket list's filters, kept in its address (2026-11-18, admin-ux phase 3).
+ * `?audience=` is the server's own word for Who asked: a link opens the list with it
+ * chosen - the old Partner tickets page opens Partners; none (or `all`) is everyone.
+ * No `?status=` is Open, the list's first view.
+ */
+const TICKET_FILTERS = {
+  status: { options: ["", ...TICKET_STATUSES] },
+  audience: { options: ["", ...AUDIENCES.map((a) => a.value)] },
+  assigned: { options: ASSIGNED.map((a) => a.value) },
+  q: {},
+  from: { date: true },
+  to: { date: true },
+};
+
+const labelOf = (options: { value: string; label: string }[], value: string) => options.find((o) => o.value === value)?.label ?? value;
 
 /** The server's "open" means every ticket still waiting for someone, so its chip counts
  * all three of those statuses: the number always matches the rows it opens. */
@@ -104,45 +135,86 @@ function Asker({ t }: { t: TicketRow }) {
   );
 }
 
+/** A priority's rank, so the Priority column sorts by urgency rather than by name. */
+const PRIORITY_RANK: Record<string, number> = { low: 1, normal: 2, high: 3, urgent: 4 };
+
 const TICKET_COLUMNS: Column<TicketRow>[] = [
-  { key: "reference", header: "Reference", render: (t) => <Link href={`/admin/tickets/${t.id}`}>{t.reference}</Link> },
-  { key: "subject", header: "Subject", render: (t) => <Trunc max="lg">{t.subject}</Trunc> },
-  { key: "asker", header: "Who asked", render: (t) => <Asker t={t} /> },
-  { key: "category", header: "Category", render: (t) => sentence(t.category) },
-  { key: "priority", header: "Priority", render: (t) => <StatusBadge value={t.priority} /> },
-  { key: "status", header: "Status", render: (t) => <StatusBadge value={t.status} /> },
-  { key: "assignee", header: "Assignee", render: (t) => t.assigned_to_name || "Unassigned" },
-  { key: "updated", header: "Updated", render: (t) => <DateText iso={t.updated_at} relative /> },
+  { key: "reference", header: "Reference", value: (t) => t.number, render: (t) => <Link href={`/admin/tickets/${t.id}`}>{t.reference}</Link> },
+  { key: "subject", header: "Subject", value: (t) => t.subject, render: (t) => <Trunc max="lg">{t.subject}</Trunc> },
+  { key: "asker", header: "Who asked", priority: "medium", value: (t) => askedBy(t), render: (t) => <Asker t={t} /> },
+  { key: "category", header: "Category", priority: "low", value: (t) => sentence(t.category), render: (t) => sentence(t.category) },
+  {
+    key: "priority",
+    header: "Priority",
+    priority: "medium",
+    value: (t) => PRIORITY_RANK[t.priority] ?? 0,
+    render: (t) => <StatusBadge value={t.priority} />,
+  },
+  { key: "status", header: "Status", priority: "essential", value: (t) => t.status, render: (t) => <StatusBadge value={t.status} /> },
+  { key: "assignee", header: "Assignee", priority: "low", value: (t) => t.assigned_to_name || "Unassigned", render: (t) => t.assigned_to_name || "Unassigned" },
+  { key: "updated", header: "Updated", priority: "medium", value: (t) => t.updated_at, render: (t) => <DateText iso={t.updated_at} relative /> },
 ];
 
+/** Partners' tickets carry their answer promise (the old Partner tickets list's
+ * SLA column), from the same ticket row. */
+const SLA_COLUMN: Column<TicketRow> = {
+  key: "sla",
+  header: "SLA",
+  priority: "medium",
+  value: (t) => (t.sla && typeof t.sla.state === "string" ? t.sla.state : ""),
+  render: (t) => (t.sla && typeof t.sla.state === "string" ? <Sla ticket={t as unknown as Ticket} /> : EMPTY),
+};
+
+/**
+ * Support › Tickets (2026-11-18, admin-ux phase 1): every ticket to WorkEasy360,
+ * partners' included - "Who asked" chooses (`?audience=`). Read with the support
+ * grant. A staff member who holds only the partner grant (platform.staff_partner.view)
+ * reads partners' tickets the way that grant always allowed - the partner desk's list,
+ * answered with partner management - with Who asked fixed at Partners.
+ */
 export function TicketsScreen() {
-  const [audience, setAudience] = useState("all");
-  const [status, setStatus] = useState("open");
-  const [assigned, setAssigned] = useState("");
-  const [query, setQuery] = useState("");
-  const [offset, setOffset] = useState(0);
+  const { permissions } = useAdmin();
+  if (!can(permissions, SUPPORT_VIEW) && can(permissions, PARTNER_VIEW)) return <PartnerTicketsScreen asTickets />;
+  return <SupportTickets />;
+}
+
+function SupportTickets() {
+  const filters = useUrlFilters(TICKET_FILTERS);
+  const { assigned, q: query, from, to } = filters.values;
+  const status = filters.values.status || "open";
+  const audience = filters.values.audience || "all";
+  // The page of the list: a new filter (here or from the address) starts again on the first.
+  const filterKey = [status, audience, assigned, query, from, to].join("|");
+  const [paging, setPaging] = useState({ key: filterKey, offset: 0 });
+  const offset = paging.key === filterKey ? paging.offset : 0;
+  const setOffset = (next: number) => setPaging({ key: filterKey, offset: next });
   const [counts, setCounts] = useState<Record<string, number> | null>(null);
-  const [load] = useLoad(
+  const [load, reload] = useLoad(
     () =>
       supportApi.tickets({
         audience: audience === "all" ? undefined : audience,
         status,
         assigned: assigned || undefined,
         q: query || undefined,
+        from: from || undefined,
+        to: to || undefined,
         limit: LIMIT,
         offset,
       }),
-    [audience, status, assigned, query, offset],
+    [audience, status, assigned, query, from, to, offset],
   );
   // The chips keep their numbers while the next page loads.
   if (load.status === "ready" && load.data.counts !== counts) setCounts(load.data.counts);
 
-  /** A new filter starts again on the first page. */
-  const first = <T,>(set: (value: T) => void) => (value: T) => {
-    set(value);
-    setOffset(0);
-  };
-  const filtered = Boolean(query || assigned || audience !== "all");
+  const dropped = droppedMessage(filters.dropped);
+  // The applied filters, as tags (the status is the chip row above).
+  const active: ActiveFilter[] = [
+    ...(query ? [{ key: "q", label: "Search", value: `“${query}”`, onRemove: () => filters.set({ q: "" }) }] : []),
+    ...(audience !== "all" ? [{ key: "audience", label: "Who asked", value: labelOf(AUDIENCES, audience), onRemove: () => filters.set({ audience: "" }) }] : []),
+    ...(assigned ? [{ key: "assigned", label: "Assigned", value: labelOf(ASSIGNED, assigned), onRemove: () => filters.set({ assigned: "" }) }] : []),
+    ...(from || to ? [{ key: "opened", label: "Opened", value: rangeLabel({ from, to }), onRemove: () => filters.set({ from: "", to: "" }) }] : []),
+  ];
+  const filtered = active.length > 0;
   const rows = load.status === "ready" ? load.data.items : [];
 
   return (
@@ -152,32 +224,40 @@ export function TicketsScreen() {
         subtitle="What customers and partners have asked WorkEasy360, newest activity first."
         info="Open counts every ticket still waiting for someone: open, in progress or waiting."
       />
-      <StatusChips label="Ticket status" value={status} onChange={first(setStatus)} chips={statusChips(counts)} />
+      {dropped && <Alert tone="warning" title={dropped} />}
+      <StatusChips
+        label="Ticket status"
+        value={status}
+        onChange={(next) => filters.set({ status: next === "open" ? "" : next })}
+        chips={statusChips(counts)}
+      />
       <FilterBar
         label="Filter tickets"
-        onClear={
-          filtered
-            ? () => {
-                setAudience("all");
-                setAssigned("");
-                setQuery("");
-                setOffset(0);
-              }
-            : undefined
-        }
+        active={active}
+        // The status stays: it is the chip row, not a filter on it.
+        onClear={filtered ? () => filters.set({ audience: "", assigned: "", q: "", from: "", to: "" }) : undefined}
       >
-        <SearchInput label="Search subject, partner or #number" value={query} onSearch={first(setQuery)} />
-        <Select label="Who asked" prefix="Who asked:" value={audience} onChange={first(setAudience)} options={AUDIENCES} />
-        <Select label="Assigned" prefix="Assigned:" value={assigned} onChange={first(setAssigned)} options={ASSIGNED} />
+        <SearchInput label="Search subject, partner or #number" value={query} onSearch={(q) => filters.set({ q })} />
+        <Select
+          label="Who asked"
+          prefix="Who asked:"
+          value={audience}
+          onChange={(next) => filters.set({ audience: next === "all" ? "" : next })}
+          options={AUDIENCES}
+        />
+        <Select label="Assigned" prefix="Assigned:" value={assigned} onChange={(next) => filters.set({ assigned: next })} options={ASSIGNED} />
+        <DateRangeFilter label="Opened" value={{ from, to }} onApply={(range) => filters.set(range)} />
       </FilterBar>
       <DataTable
         caption="Tickets, newest activity first"
-        columns={TICKET_COLUMNS}
+        columns={audience === "partner" ? [...TICKET_COLUMNS.slice(0, -1), SLA_COLUMN, TICKET_COLUMNS[TICKET_COLUMNS.length - 1]] : TICKET_COLUMNS}
         rows={rows}
         rowKey={(t) => t.id}
         rowHref={(t) => `/admin/tickets/${t.id}`}
+        rowLabel={(t) => `${t.reference} ${t.subject}`}
         loading={load.status === "loading"}
         error={load.status === "error" ? load.message : load.status === "forbidden" ? "You don't have access to tickets." : null}
+        onRetry={load.status === "error" ? reload : undefined}
         pageSize={0}
         hideEmptyColumns={false}
         empty={
@@ -198,11 +278,12 @@ export function TicketsScreen() {
 const TICKET_CRUMBS = [{ label: "Tickets", href: "/admin/tickets" }];
 
 export function TicketScreen({ ticketId }: { ticketId: string }) {
+  const trail = usePageTrail(TICKET_CRUMBS);
   const [load, reload] = useLoad(() => supportApi.ticket(ticketId), [ticketId]);
   if (load.status === "ready") return <TicketView t={load.data} reload={reload} />;
   return (
     <Page>
-      <PageHeader title="Ticket" crumbs={[...TICKET_CRUMBS, { label: "Ticket" }]} />
+      <PageHeader title="Ticket" crumbs={[...trail, { label: "Ticket" }]} />
       <LoadGate load={load} what="this ticket">
         {() => null}
       </LoadGate>
@@ -220,6 +301,7 @@ const SET_STATUS = [
 ];
 
 function TicketView({ t, reload }: { t: TicketDetail; reload: () => void }) {
+  const trail = usePageTrail(TICKET_CRUMBS);
   const closed = t.status === "closed";
   const answering = t.may_answer && !closed;
   const asker = askedBy(t);
@@ -228,7 +310,7 @@ function TicketView({ t, reload }: { t: TicketDetail; reload: () => void }) {
     <Page>
       <PageHeader
         title={`${t.reference} ${t.subject}`}
-        crumbs={[...TICKET_CRUMBS, { label: t.reference }]}
+        crumbs={[...trail, { label: t.reference }]}
         badges={
           <>
             <StatusBadge value={t.status} />
@@ -418,12 +500,18 @@ const STATUS_FILTER = [
 const KIND_OPTIONS = KIND_FILTER.slice(1) as { value: HelpArticleRow["kind"]; label: string }[];
 const AUDIENCE_OPTIONS = (Object.keys(AUDIENCE_LABEL) as HelpArticleRow["audience"][]).map((value) => ({ value, label: AUDIENCE_LABEL[value] }));
 
+/** The library's filters, kept in its address (2026-11-18, admin-ux phase 3). */
+const ARTICLE_FILTERS = {
+  status: { options: STATUS_FILTER.map((s) => s.value) },
+  kind: { options: KIND_FILTER.map((k) => k.value) },
+  q: {},
+};
+
 export function HelpContentScreen() {
   const { permissions } = useAdmin();
   const manage = can(permissions, MANAGE);
-  const [kind, setKind] = useState("");
-  const [status, setStatus] = useState("");
-  const [query, setQuery] = useState("");
+  const filters = useUrlFilters(ARTICLE_FILTERS);
+  const { kind, status, q: query } = filters.values;
   const [load, reload] = useLoad(() => supportApi.articles({ kind: kind || undefined, status: status || undefined, q: query || undefined }), [kind, status, query]);
   const { act, busy, feedback } = useAction(reload);
   const { ask, dialog: confirm } = useConfirm();
@@ -438,19 +526,38 @@ export function HelpContentScreen() {
 
   const columns: Column<HelpArticleRow>[] = [
     { key: "title", header: "Title", value: (a) => a.title, render: (a) => <Trunc max="lg">{a.title}</Trunc> },
-    { key: "kind", header: "Kind", value: (a) => a.kind, render: (a) => KIND_LABEL[a.kind] },
-    { key: "audience", header: "For", value: (a) => a.audience, render: (a) => AUDIENCE_LABEL[a.audience] },
-    { key: "product", header: "Product", render: (a) => a.product_code || "All products" },
-    { key: "status", header: "Status", value: (a) => a.status, render: (a) => <StatusBadge value={a.status} /> },
-    { key: "order", header: "Order", align: "right", value: (a) => a.display_order, render: (a) => a.display_order },
-    { key: "updated", header: "Updated", value: (a) => a.updated_at, render: (a) => <DateText iso={a.updated_at} relative /> },
+    { key: "kind", header: "Kind", priority: "medium", value: (a) => KIND_LABEL[a.kind], render: (a) => KIND_LABEL[a.kind] },
+    { key: "audience", header: "For", priority: "medium", value: (a) => AUDIENCE_LABEL[a.audience], render: (a) => AUDIENCE_LABEL[a.audience] },
+    { key: "product", header: "Product", priority: "low", value: (a) => a.product_code || "All products", render: (a) => a.product_code || "All products" },
+    { key: "status", header: "Status", priority: "essential", value: (a) => a.status, render: (a) => <StatusBadge value={a.status} /> },
+    { key: "order", header: "Order", align: "right", priority: "low", value: (a) => a.display_order, render: (a) => a.display_order },
+    { key: "updated", header: "Updated", priority: "medium", value: (a) => a.updated_at, render: (a) => <DateText iso={a.updated_at} relative /> },
   ];
 
   const menu = (a: HelpArticleRow): MenuItem[] => [
     { label: "Read", icon: "eye", onSelect: () => setReading(a) },
     { label: "Edit", icon: "edit", when: manage, onSelect: () => setEditing(a) },
     { label: "Publish", icon: "send", when: manage && a.status === "draft", disabled: busy, onSelect: () => move(a, "published", "Published. Readers can see it now.") },
-    { label: "Unpublish to draft", icon: "history", when: manage && a.status === "published", disabled: busy, onSelect: () => move(a, "draft", "Back to draft. Readers no longer see it.") },
+    {
+      label: "Unpublish to draft",
+      icon: "history",
+      when: manage && a.status === "published",
+      disabled: busy,
+      // Readers lose it at once: asked first (admin-ux phase 3), like Archive.
+      onSelect: () =>
+        ask({
+          title: `Unpublish "${a.title}"?`,
+          message: "Readers stop seeing it at once. It goes back to draft, where it can be edited and published again.",
+          confirmLabel: "Unpublish",
+          danger: true,
+          onConfirm: async () => {
+            setNotice(null);
+            await supportApi.setArticleStatus(a.id, "draft");
+            setNotice("Back to draft. Readers no longer see it.");
+            reload();
+          },
+        }),
+    },
     { label: "Back to draft", icon: "history", when: manage && a.status === "archived", disabled: busy, onSelect: () => move(a, "draft", "Back to draft.") },
     {
       label: "Archive",
@@ -475,6 +582,12 @@ export function HelpContentScreen() {
 
   const filtered = Boolean(kind || query || status);
   const rows = load.status === "ready" ? load.data.results : [];
+  const dropped = droppedMessage(filters.dropped);
+  // The applied filters, as tags (the status is the chip row above).
+  const active: ActiveFilter[] = [
+    ...(query ? [{ key: "q", label: "Search", value: `“${query}”`, onRemove: () => filters.set({ q: "" }) }] : []),
+    ...(kind ? [{ key: "kind", label: "Kind", value: labelOf(KIND_FILTER, kind), onRemove: () => filters.set({ kind: "" }) }] : []),
+  ];
   return (
     <Page>
       <PageHeader
@@ -498,20 +611,16 @@ export function HelpContentScreen() {
       />
       {notice && <p role="status">{notice}</p>}
       {feedback}
-      <StatusChips label="Article status" value={status} onChange={setStatus} chips={STATUS_FILTER} />
+      {dropped && <Alert tone="warning" title={dropped} />}
+      <StatusChips label="Article status" value={status} onChange={(next) => filters.set({ status: next })} chips={STATUS_FILTER} />
       <FilterBar
         label="Filter articles"
-        onClear={
-          kind || query
-            ? () => {
-                setKind("");
-                setQuery("");
-              }
-            : undefined
-        }
+        active={active}
+        // The status stays: it is the chip row, not a filter on it.
+        onClear={kind || query ? () => filters.set({ kind: "", q: "" }) : undefined}
       >
-        <SearchInput label="Search title or text" value={query} onSearch={setQuery} />
-        <Select label="Kind" prefix="Kind:" value={kind} onChange={setKind} options={KIND_FILTER} />
+        <SearchInput label="Search title or text" value={query} onSearch={(q) => filters.set({ q })} />
+        <Select label="Kind" prefix="Kind:" value={kind} onChange={(next) => filters.set({ kind: next })} options={KIND_FILTER} />
       </FilterBar>
       <DataTable
         caption="Help articles"
@@ -522,6 +631,7 @@ export function HelpContentScreen() {
         rowMenu={menu}
         loading={load.status === "loading"}
         error={load.status === "error" ? load.message : load.status === "forbidden" ? "You don't have access to help content." : null}
+        onRetry={load.status === "error" ? reload : undefined}
         hideEmptyColumns={false}
         empty={<EmptyState icon="book" title="No articles here" hint={filtered ? "Try another status or clear the filters." : "FAQs and setup guides you write appear here, as drafts first."} />}
       />

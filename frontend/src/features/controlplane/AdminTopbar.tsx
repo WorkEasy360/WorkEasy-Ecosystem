@@ -5,10 +5,10 @@ import Link from "next/link";
 import { Icon } from "@/components/sidebar/icons";
 import { adminPanelApi } from "@/lib/api/adminPanel";
 import { adminApi, type AttentionItem } from "@/lib/api/controlPlane";
-import { usePortals } from "@/lib/portalContext";
-import { portalHref } from "@/lib/portals";
 import { usePortalRouter } from "@/lib/portalRouter";
 import { adminModules } from "./adminModules";
+import { publishAttention } from "./attentionStore";
+import { HelpDrawer } from "./HelpDrawer";
 import { Modal } from "./Modal";
 import { Menu, type MenuItem } from "./kit/Menu";
 import { initialsOf } from "./kit/Layout";
@@ -20,9 +20,10 @@ const can = (permissions: string[], key: string) => permissions.includes(key);
 
 /**
  * The Admin's top bar (2026-11-09): the command palette (Ctrl/⌘K), the Create
- * menu, notifications, help and the settings shortcut. Everything
- * here is a way to a page the staff member could already reach from the menu -
- * each page and each request behind it checks the grant again.
+ * menu, notifications and help. Everything here is a way to a page the staff
+ * member could already reach from the menu - each page and each request behind
+ * it checks the grant again. 2026-11-18 (admin-ux phase 1): no settings gear -
+ * Settings is in the sidebar - and help opens a drawer of published help articles.
  */
 export function AdminTools({ permissions }: { permissions: string[] }) {
   return (
@@ -31,37 +32,28 @@ export function AdminTools({ permissions }: { permissions: string[] }) {
       <div className={styles.spacer} />
       <NewMenu permissions={permissions} />
       <Bell permissions={permissions} />
-      <HelpLink permissions={permissions} />
-      {can(permissions, "platform.staff_settings.view") && (
-        <Link href="/admin/settings" className={styles.iconButton} aria-label="Platform settings" title="Platform settings">
-          <Icon name="settings" size={20} />
-        </Link>
-      )}
+      <HelpButton permissions={permissions} />
     </>
   );
 }
 
-/** Help: the console's own help library for those who may read it, otherwise the
- * same help page the account menu offers. */
-function HelpLink({ permissions }: { permissions: string[] }) {
-  const portals = usePortals();
-  const icon = <Icon name="help" size={20} />;
-  if (can(permissions, "platform.staff_support.view")) {
-    return (
-      <Link href="/admin/help-content" className={styles.iconButton} aria-label="Help" title="Help">
-        {icon}
-      </Link>
-    );
-  }
-  const href = portalHref(portals, "app", "/contact");
-  return /^https?:/.test(href) ? (
-    <a href={href} className={styles.iconButton} aria-label="Help" title="Help">
-      {icon}
-    </a>
-  ) : (
-    <Link href={href} className={styles.iconButton} aria-label="Help" title="Help">
-      {icon}
-    </Link>
+/** Help: a drawer of the published help articles, to read without leaving the page. */
+function HelpButton({ permissions }: { permissions: string[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        className={styles.iconButton}
+        aria-label="Help"
+        title="Help"
+        aria-haspopup="dialog"
+        onClick={() => setOpen(true)}
+      >
+        <Icon name="help" size={20} />
+      </button>
+      {open && <HelpDrawer permissions={permissions} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 
@@ -100,20 +92,31 @@ function remember(result: Result) {
   }
 }
 
-/** Every page this staff member may open, with the module it sits in. */
+/** Every page this staff member may open, with where it sits (Partners › Payouts),
+ * then the ways into a page with a filter set (Reseller partners, Sales report). */
 function pagesFor(permissions: string[]): Result[] {
-  return adminModules(permissions).flatMap((module) =>
-    module.sections.flatMap((section) =>
+  return adminModules(permissions).flatMap((module) => {
+    const group = (module.key === "settings" ? "Settings" : "Pages") as Group;
+    const pages = module.sections.flatMap((section) =>
       section.pages.map((page) => ({
         id: `page-${page.href}`,
-        group: (module.key === "settings" ? "Settings" : "Pages") as Group,
+        group,
         label: page.label,
-        hint: module.label,
+        hint: section.label !== page.label && module.sections.length > 1 ? `${module.label} › ${section.label}` : module.label,
         href: page.href,
         icon: module.icon,
       })),
-    ),
-  );
+    );
+    const shortcuts = (module.shortcuts ?? []).map((shortcut) => ({
+      id: `page-${shortcut.href}`,
+      group,
+      label: shortcut.label,
+      hint: module.label,
+      href: shortcut.href,
+      icon: module.icon,
+    }));
+    return [...pages, ...shortcuts];
+  });
 }
 
 const KIND_TO_GROUP: Record<string, { group: Group; icon: string }> = {
@@ -417,8 +420,14 @@ function Bell({ permissions }: { permissions: string[] }) {
         if (!live) return;
         setItems(r.items);
         setCheckedAt(Date.now());
+        // The same answer for a tab's count (Billing › Needs attention).
+        publishAttention(r.items);
       },
-      () => live && setItems(null),
+      () => {
+        if (!live) return;
+        setItems(null);
+        publishAttention(null);
+      },
     );
     return () => {
       live = false;

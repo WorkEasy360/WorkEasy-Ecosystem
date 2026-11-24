@@ -16,10 +16,12 @@ number of queries whatever the page size.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from workeasy360.commercial.provisioning.selectors import (
+    organization_ids_matching,
     organization_ids_with_access,
     summaries_for_organizations,
 )
@@ -80,7 +82,14 @@ def directory(
     segment: str | None = None,
     limit: int = 25,
     cursor: str | None = None,
+    product_code: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> dict[str, Any]:
+    """``product_code`` keeps the people in an organization that holds that product
+    now (the summary projection, as the customer directory's product filter);
+    ``start``/``end`` the accounts created - signed up or invited - in
+    ``[start, end)``. Both are applied by the database, under the cursor."""
     page = staff_users.directory(
         ctx,
         search=search,
@@ -89,6 +98,11 @@ def directory(
         cursor=cursor,
         customer_orgs=organization_ids_with_access("customer"),
         trial_orgs=organization_ids_with_access("trial"),
+        product_orgs=(
+            organization_ids_matching(product_code=product_code) if product_code else None
+        ),
+        created_from=start,
+        created_before=end,
     )
     rows = page["results"]
     access = org_selectors.access_rows_for_users([UUID(r["user_id"]) for r in rows])

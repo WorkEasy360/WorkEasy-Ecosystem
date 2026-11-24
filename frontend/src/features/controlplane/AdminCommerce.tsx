@@ -1,19 +1,21 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useId, useState } from "react";
 import Link from "next/link";
 import { adminApi, type CatalogProduct, type CustomerRow, type ProductSource } from "@/lib/api/controlPlane";
 import { adminConsoleApi, type PlatformSettings, type StaffOrderRow, type StaffRoleRow } from "@/lib/api/adminConsole";
 import { can, useAdmin } from "./ControlShell";
-import { LoadGate, autoReason, describeError, useLoad, usePaged } from "./ui";
+import { LoadGate, autoReason, describeError, pagedTable, useLoad, usePaged } from "./ui";
 import { DialogHead, Modal, dialog, FormPopup } from "./Modal";
 import { TextField } from "./widgets";
 import {
+  Alert,
   Avatar,
   Badge,
   Button,
   Card,
   DataTable,
+  DateRangeFilter,
   DescriptionList,
   EmptyState,
   FilterBar,
@@ -28,13 +30,18 @@ import {
   Trunc,
   kit,
   EMPTY,
+  droppedMessage,
   formatDate,
   formatMoney,
   productName,
+  rangeLabel,
   sentence,
   useConfirm,
   useToast,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
+  type FilterSpec,
 } from "./kit";
 import { downloadCsv } from "./kit/csv";
 import { DateText } from "./AdminUsers";
@@ -70,29 +77,14 @@ export function TableSection({
   );
 }
 
-/** The table props for a server-paged list. */
-function pagedProps<T>(paged: ReturnType<typeof usePaged<T>>, what: string) {
-  return {
-    loading: paged.state === "loading",
-    error:
-      paged.state === "forbidden" ? `You don't have access to ${what}.` : paged.state === "error" ? `Couldn't load ${what}.` : null,
-    onLoadMore: () => void paged.more(),
-    hasMore: paged.hasMore,
-  };
-}
+/** One applied filter as a removable tag; nothing while it is not set (admin-ux phase 3). */
+const tag = (key: string, label: string, value: string, onRemove: () => void): ActiveFilter[] =>
+  value ? [{ key, label, value, onRemove }] : [];
 
-const CREATED = [
-  { value: "", label: "Any time" },
-  { value: "1", label: "Today" },
-  { value: "7", label: "Last 7 days" },
-  { value: "30", label: "Last 30 days" },
-  { value: "90", label: "Last 90 days" },
-];
-
-function within(iso: string, days: string, now: number): boolean {
-  if (!days) return true;
-  const t = Date.parse(iso);
-  return Number.isFinite(t) && now - t <= Number(days) * 24 * 60 * 60 * 1000;
+/** Filters the address named that this list does not know were left out: say so. */
+function DroppedFilters({ dropped }: { dropped: string[] }) {
+  const message = droppedMessage(dropped);
+  return message ? <Alert tone="warning" title={message} /> : null;
 }
 
 // --- orders ---------------------------------------------------------------------------------
@@ -116,27 +108,32 @@ const SOURCES = [
 ];
 const SOURCE_TEXT: Record<string, string> = { direct: "Store", partner: "Partner activation", storefront: "Partner storefront" };
 
-/** `initialQuery`: an order number from the address (the command palette). */
-export function StaffOrdersScreen({ initialQuery = "", initialSource = "" }: { initialQuery?: string; initialSource?: string } = {}) {
-  const [status, setStatus] = useState("");
-  const [source, setSource] = useState(SOURCES.some((s) => s.value === initialSource) ? initialSource : "");
-  const [query, setQuery] = useState(initialQuery);
-  const [created, setCreated] = useState("");
-  const [now] = useState(() => Date.now());
+/** Every filter is the server's and lives in the address (admin-ux phase 3):
+ * `?q=` (an order number or a customer's name - the command palette links it),
+ * `?source=`, the status and the created dates. */
+const ORDER_FILTERS = {
+  status: { options: ORDER_TABS.map((t) => t.key) },
+  source: { options: SOURCES.map((s) => s.value) },
+  q: {},
+  from: { date: true },
+  to: { date: true },
+} satisfies FilterSpec;
+
+export function StaffOrdersScreen() {
+  const { values: f, set, reset, dropped } = useUrlFilters(ORDER_FILTERS);
   const paged = usePaged(
-    (cursor) => adminConsoleApi.orders({ status: status || undefined, channel: source || undefined, cursor }),
-    [status, source],
+    (cursor) =>
+      adminConsoleApi.orders({
+        status: f.status || undefined,
+        channel: f.source || undefined,
+        q: f.q || undefined,
+        from: f.from || undefined,
+        to: f.to || undefined,
+        cursor,
+      }),
+    [f.status, f.source, f.q, f.from, f.to],
   );
-  // The orders endpoint filters by status and purchase source: the search and the
-  // date range narrow the orders loaded so far.
-  const rows = useMemo(() => {
-    const needle = query.toLowerCase();
-    return paged.rows.filter(
-      (o) =>
-        (!needle || `${o.number} ${o.organization_name} ${o.description}`.toLowerCase().includes(needle)) &&
-        within(o.created_at, created, now),
-    );
-  }, [paged.rows, query, created, now]);
+  const rows = paged.rows;
 
   const columns: Column<StaffOrderRow>[] = [
     { key: "number", header: "Order #", value: (o) => o.number, render: (o) => o.number },
@@ -150,10 +147,11 @@ export function StaffOrdersScreen({ initialQuery = "", initialSource = "" }: { i
         </Link>
       ),
     },
-    { key: "item", header: "Item", value: (o) => o.description, render: (o) => <Trunc max="lg">{o.description}</Trunc> },
+    { key: "item", header: "Item", priority: "low", value: (o) => o.description, render: (o) => <Trunc max="lg">{o.description}</Trunc> },
     {
       key: "source",
       header: "Purchase source",
+      priority: "medium",
       value: (o) => o.channel ?? "direct",
       render: (o) => (
         <Stack
@@ -175,7 +173,7 @@ export function StaffOrdersScreen({ initialQuery = "", initialSource = "" }: { i
       value: (o) => o.amount_due_minor,
       render: (o) => (o.amount_due_minor ? formatMoney(o.amount_due_minor, o.currency) : EMPTY),
     },
-    { key: "status", header: "Status", value: (o) => o.status, render: (o) => <StatusBadge value={o.status} /> },
+    { key: "status", header: "Status", priority: "essential", value: (o) => o.status, render: (o) => <StatusBadge value={o.status} /> },
     {
       key: "payment",
       header: "Payment",
@@ -190,15 +188,22 @@ export function StaffOrdersScreen({ initialQuery = "", initialSource = "" }: { i
         ) : o.status === "pending_payment" ? (
           // Payment verification (an offline payment marked as received) happens on
           // the customer's invoice, where the reference and reason are recorded.
-          <Link href={`/admin/customers/${o.organization_id}#billing-h`}>Verify payment</Link>
+          <Link href={`/admin/customers/${o.organization_id}?tab=billing#billing-h`}>Verify payment</Link>
         ) : (
           "Not paid"
         ),
     },
-    { key: "created", header: "Created", value: (o) => o.created_at, render: (o) => <DateText iso={o.created_at} /> },
+    { key: "created", header: "Created", priority: "medium", value: (o) => o.created_at, render: (o) => <DateText iso={o.created_at} /> },
   ];
 
-  const filtered = Boolean(query || created || source);
+  const chips = ORDER_TABS.map((t) => ({ value: t.key, label: t.label }));
+  const active = [
+    ...tag("status", "Status", f.status && (chips.find((c) => c.value === f.status)?.label ?? f.status), () => set({ status: "" })),
+    ...tag("q", "Search", f.q ? `“${f.q}”` : "", () => set({ q: "" })),
+    ...tag("source", "Source", f.source && (SOURCES.find((s) => s.value === f.source)?.label ?? f.source), () => set({ source: "" })),
+    ...tag("created", "Created", f.from || f.to ? rangeLabel(f) : "", () => set({ from: "", to: "" })),
+  ];
+  const filtered = active.length > 0;
   return (
     <Page>
       <PageHeader
@@ -206,17 +211,12 @@ export function StaffOrdersScreen({ initialQuery = "", initialSource = "" }: { i
         subtitle="Every order across customers, newest first."
         info="Payment confirms an order; nothing is granted before it is paid."
       />
-      <StatusChips label="Order status" value={status} onChange={setStatus} chips={ORDER_TABS.map((t) => ({ value: t.key, label: t.label }))} />
+      <DroppedFilters dropped={dropped} />
+      <StatusChips label="Order status" value={f.status} onChange={(status) => set({ status })} chips={chips} />
       <FilterBar
-        onClear={
-          filtered
-            ? () => {
-                setQuery("");
-                setCreated("");
-                setSource("");
-              }
-            : undefined
-        }
+        label="Filter orders"
+        onClear={filtered ? reset : undefined}
+        active={active}
         end={
           <Button
             icon="download"
@@ -245,18 +245,18 @@ export function StaffOrdersScreen({ initialQuery = "", initialSource = "" }: { i
           </Button>
         }
       >
-        <SearchInput label="Search by order number or customer" value={query} onSearch={setQuery} />
-        <Select label="Created" prefix="Created:" value={created} onChange={setCreated} options={CREATED} />
-        <Select label="Purchase source" prefix="Source:" value={source} onChange={setSource} options={SOURCES} />
+        <SearchInput label="Search by order number or customer" value={f.q} onSearch={(q) => set({ q })} maxLength={80} />
+        <DateRangeFilter label="Created" value={{ from: f.from, to: f.to }} onApply={(range) => set(range)} />
+        <Select label="Purchase source" prefix="Source:" value={f.source} onChange={(source) => set({ source })} options={SOURCES} />
       </FilterBar>
       <DataTable
         caption="Orders"
         columns={columns}
-        rows={rows}
         rowKey={(o) => o.order_id}
         rowHref={(o) => `/admin/customers/${o.organization_id}`}
-        {...pagedProps(paged, "orders")}
-        empty={<EmptyState icon="receipt" title="No orders" hint={filtered || status ? "Try another status or clear the filters." : "Orders appear here when customers check out."} />}
+        rowLabel={(o) => `order ${o.number}`}
+        {...pagedTable(paged, "orders")}
+        empty={<EmptyState icon="receipt" title="No orders" hint={filtered ? "Try another status or clear the filters." : "Orders appear here when customers check out."} />}
       />
     </Page>
   );
@@ -324,10 +324,9 @@ export function SubscriptionsScreen() {
       <DataTable
         caption="Customers"
         columns={columns}
-        rows={paged.rows}
         rowKey={(c) => c.organization_id}
         rowHref={(c) => `/admin/customers/${c.organization_id}`}
-        {...pagedProps(paged, "subscriptions")}
+        {...pagedTable(paged, "subscriptions")}
         empty={<EmptyState icon="card" title="No customers" hint={status || query ? "Try another status or search." : undefined} />}
       />
     </Page>
@@ -336,11 +335,15 @@ export function SubscriptionsScreen() {
 
 // --- entitlements ------------------------------------------------------------------------------
 
+/** The product is kept in the address (`?product=`, admin-ux phase 3), so the
+ * list comes back as it was. It is checked against the catalog once that loads. */
+const ENTITLEMENT_FILTERS = { product: { maxLength: 64 } } satisfies FilterSpec;
+
 /** Who holds each product now. Changing one customer's access - an override -
  * is on the customer's page, audited. */
 export function EntitlementsScreen() {
   const [products] = useLoad(() => adminApi.products(), []);
-  const [chosen, setChosen] = useState("");
+  const { values: f, set, dropped } = useUrlFilters(ENTITLEMENT_FILTERS);
   return (
     <Page>
       <PageHeader
@@ -350,16 +353,20 @@ export function EntitlementsScreen() {
       />
       <LoadGate load={products} what="products">
         {({ results }: { results: CatalogProduct[] }) => {
-          const code = chosen || results[0]?.code || "";
+          // A product the catalog does not list (an old link) is left out, and said so.
+          const known = results.some((p) => p.code === f.product);
+          const code = known ? f.product : results[0]?.code || "";
+          const unknown = f.product && !known ? [...dropped, "product"] : dropped;
           if (!code) return <EmptyState icon="box" title="No products yet" hint="Products appear here once they are added to the catalog." />;
           return (
             <>
+              <DroppedFilters dropped={unknown} />
               <FilterBar>
                 <Select
                   label="Product"
                   prefix="Product:"
                   value={code}
-                  onChange={setChosen}
+                  onChange={(product) => set({ product })}
                   options={results.map((p) => ({ value: p.code, label: productName(p.name) }))}
                 />
               </FilterBar>
@@ -411,26 +418,33 @@ function Holders({ code, name }: { code: string; name: string }) {
     {
       key: "source",
       header: "Source",
+      priority: "essential",
       value: (c) => sourceLabel(c.product_source?.kind),
       render: (c) => <SourceBadge source={c.product_source} />,
     },
-    { key: "access", header: "Access", value: (c) => c.access_class, render: (c) => (c.access_class ? sentence(c.access_class) : EMPTY) },
+    {
+      key: "access",
+      header: "Access",
+      priority: "medium",
+      value: (c) => c.access_class,
+      render: (c) => (c.access_class ? sentence(c.access_class) : EMPTY),
+    },
     {
       key: "subscription",
       header: "Subscription",
       value: (c) => c.subscription_status,
       render: (c) => (c.subscription_status ? <StatusBadge value={c.subscription_status} /> : "No subscription"),
     },
-    { key: "seats", header: "Seats", align: "right", value: (c) => c.seat_capacity, render: (c) => c.seat_capacity ?? EMPTY },
+    { key: "seats", header: "Seats", align: "right", priority: "low", value: (c) => c.seat_capacity, render: (c) => c.seat_capacity ?? EMPTY },
   ];
   return (
     <DataTable
       caption={`Customers holding ${name}`}
       columns={columns}
-      rows={paged.rows}
       rowKey={(c) => c.organization_id}
       rowHref={(c) => `/admin/customers/${c.organization_id}`}
-      {...pagedProps(paged, "holders")}
+      rowLabel={(c) => c.display_name}
+      {...pagedTable(paged, "holders")}
       empty={
         <EmptyState icon="users" title="Nobody holds this product" hint="Customers appear here when a subscription, bundle, override or product trial gives them access." />
       }

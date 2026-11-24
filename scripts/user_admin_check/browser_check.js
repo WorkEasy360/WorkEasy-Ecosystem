@@ -387,23 +387,23 @@ const PAGES = [
       const banner = await text(s);
       check(
         `S4 ${type}: the partner's own dashboard under the Guest Session banner, with its type and both exits`,
-        banner.includes(`Partner type: ${type}`) && banner.includes("Return to Super Admin") && banner.includes("End Guest Session"),
+        banner.includes(`Partner type: ${type}`) && banner.includes("Exit Guest Session") && banner.includes("Exit to partner record"),
         s.url(),
       );
       if (list === "reseller") await shot(s, "guest-reseller", false);
       const write = await api(s, "POST", `/api/v1/partner/${IDS[list === "white-label" ? "white_label" : list]}/platform-wallet/top-up`, { amount: "100.00" });
       check(`S5 ${type}: a write in the guest session is refused`, write.status === 403, `${write.status} ${write.json?.reason ?? ""}`);
-      const exit = list === "affiliate" ? "End Guest Session" : "Return to Super Admin";
+      const exit = list === "affiliate" ? "Exit to partner record" : "Exit Guest Session";
       await Promise.all([s.waitForNavigation({ timeout: 60000 }).catch(() => {}), clickText(s, exit)]);
       await s.waitForFunction(() => location.host === "admin.workeasy360.com", { timeout: 60000 });
       await settle(s);
       const back = new URL(s.url());
-      if (exit === "End Guest Session") {
-        check(`S6 ${type}: End Guest Session opens the partner's page in the Admin, still signed in`, back.pathname === `/admin/partners/${IDS.affiliate}`, s.url());
+      if (exit === "Exit to partner record") {
+        check(`S6 ${type}: Exit to partner record opens the partner's page in the Admin, still signed in`, back.pathname === `/admin/partners/${IDS.affiliate}`, s.url());
       } else {
         await s.waitForSelector('input[type="search"]', { timeout: 30000 });
         const q = await s.$eval('input[type="search"]', (i) => i.value);
-        check(`S6 ${type}: Return to Super Admin goes back to the list, its search kept, still signed in`, back.pathname === `/admin/partners/${list}` && q === "UAP", `${s.url()} q=${q}`);
+        check(`S6 ${type}: Exit Guest Session goes back to the list, its search kept, still signed in`, back.pathname === `/admin/partners/${list}` && q === "UAP", `${s.url()} q=${q}`);
       }
     }
     // The partner host no longer opens the partner's data.

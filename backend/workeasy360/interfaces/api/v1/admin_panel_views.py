@@ -36,6 +36,7 @@ from workeasy360.interfaces.api.v1.commercial_views import _body as read_json_bo
 from workeasy360.interfaces.api.v1.control_plane_http import (
     limited,
     partner_view,
+    query_date_window,
     staff_view,
 )
 from workeasy360.platform.administration import help_content
@@ -112,6 +113,8 @@ def kyc_access_log_view(request: HttpRequest, ctx: TenantContext) -> JsonRespons
 
 @staff_view(["GET"])
 def kyc_applications_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
+    """The KYC queue: ``status`` (``all`` for every one), ``q``, and ``from``/``to``
+    (applications submitted in those days)."""
     return JsonResponse(
         kyc.queue(
             ctx,
@@ -119,6 +122,7 @@ def kyc_applications_view(request: HttpRequest, ctx: TenantContext) -> JsonRespo
             search=request.GET.get("q") or None,
             limit=request.GET.get("limit"),
             offset=request.GET.get("offset"),
+            **query_date_window(request),
         )
     )
 
@@ -288,6 +292,7 @@ def invoices_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             search=request.GET.get("q") or None,
             limit=request.GET.get("limit"),
             cursor=request.GET.get("cursor") or None,
+            **query_date_window(request),
         )
     )
 
@@ -328,6 +333,7 @@ def refunds_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             waiting=request.GET.get("waiting") == "1",
             limit=request.GET.get("limit"),
             cursor=request.GET.get("cursor") or None,
+            **query_date_window(request),
         )
     )
 
@@ -340,6 +346,7 @@ def credit_notes_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse:
             search=request.GET.get("q") or None,
             limit=request.GET.get("limit"),
             cursor=request.GET.get("cursor") or None,
+            **query_date_window(request),
         )
     )
 
@@ -355,6 +362,7 @@ def subscriptions_view(request: HttpRequest, ctx: TenantContext) -> JsonResponse
             search=request.GET.get("q") or None,
             limit=request.GET.get("limit"),
             cursor=request.GET.get("cursor") or None,
+            **query_date_window(request),
         )
     )
 
@@ -650,6 +658,7 @@ def support_tickets_view(request: HttpRequest, ctx: TenantContext) -> JsonRespon
             search=request.GET.get("q") or None,
             limit=request.GET.get("limit"),
             offset=request.GET.get("offset"),
+            **query_date_window(request),
         )
     )
 

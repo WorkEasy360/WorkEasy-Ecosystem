@@ -122,10 +122,18 @@ def subscriptions(
     search: Any = None,
     limit: Any = None,
     cursor: Any = None,
+    start: Any = None,
+    end: Any = None,
 ) -> dict[str, Any]:
-    """Subscriptions across customers, newest first, with their current lines."""
+    """Subscriptions across customers, newest first, with their current lines.
+    ``start``/``end`` keep those created in ``[start, end)`` - the order the list is
+    in, so the cursor pages within them."""
     authz.require(ctx, VIEW)
     rows = SubscriptionSummary.objects.all()
+    if start is not None:
+        rows = rows.filter(created_at__gte=start)
+    if end is not None:
+        rows = rows.filter(created_at__lt=end)
     if status:
         if status not in KNOWN_STATUSES:
             raise CatalogValidationError("Unknown status.", field="status")

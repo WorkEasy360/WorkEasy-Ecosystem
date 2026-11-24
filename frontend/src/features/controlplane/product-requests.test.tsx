@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-import { AdminContextForTest, expectNoViolations, mockApi, ok, type Reply } from "./testSupport";
+import { AdminContextForTest, expectNoViolations, mockApi, ok, type Call, type Reply } from "./testSupport";
 import { ProductRequestsConsole } from "./ProductRequests";
 import { CENTER_ITEMS, centerItems } from "./partnerCenterNav";
 
@@ -190,5 +190,64 @@ describe("Product Requests", () => {
     // Searched as typed (after a short pause), with no Search button.
     expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
     await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/partners/product-requests?q=acme"));
+  });
+});
+
+describe("Product Requests: table, filters and actions (admin-ux phase 3)", () => {
+  const listUrl = (calls: Call[]) => new URL(calls.filter((c) => c.key === `GET ${API}`).at(-1)!.url, "http://x").searchParams;
+
+  it("puts Review in the one Actions column, last, and it opens the request", async () => {
+    query = new URLSearchParams();
+    push.mockReset();
+    mockApi(routes());
+    mount();
+    const table = await screen.findByRole("table", { name: "Product requests: pending" });
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent?.trim());
+    expect(headers.at(-1)).toBe("Actions");
+    expect(headers).not.toContain("Action");
+    const row = within(table).getByRole("row", { name: /Acme Media/ });
+    const review = within(row).getByRole("button", { name: "Review the request from Acme Media for Easy CRM" });
+    expect(within(row).getAllByRole("cell").at(-1)).toContainElement(review);
+    fireEvent.click(review);
+    expect(push).toHaveBeenCalledWith("/admin/partners/product-requests?request=req1");
+  });
+
+  it("lists the search and type from the address as tags; removing one, or Reset filters, takes it out of the address", async () => {
+    query = new URLSearchParams("status=approved&q=acme&kind=sell");
+    push.mockReset();
+    const calls = mockApi(routes());
+    mount();
+    await screen.findByRole("table", { name: "Product requests: approved" });
+    expect(Object.fromEntries(listUrl(calls))).toMatchObject({ status: "approved", q: "acme", kind: "sell" });
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Search: “acme”", "Type: Reseller - sell"]);
+
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Type: Reseller - sell" }));
+    expect(push).toHaveBeenLastCalledWith("/admin/partners/product-requests?status=approved&q=acme");
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    // The status is the list, not a filter on it: it stays.
+    expect(push).toHaveBeenLastCalledWith("/admin/partners/product-requests?status=approved");
+  });
+
+  it("leaves out a status, type or page the list does not offer, and says so", async () => {
+    query = new URLSearchParams("status=bogus&kind=steal&offset=-4");
+    const calls = mockApi(routes());
+    mount();
+    await screen.findByRole("table", { name: "Product requests: pending" });
+    const sent = listUrl(calls);
+    expect(sent.get("status")).toBe("pending");
+    expect(sent.has("kind")).toBe(false);
+    expect(sent.get("offset") ?? "0").toBe("0");
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("offers Try again when the queue could not be loaded", async () => {
+    query = new URLSearchParams();
+    const calls = mockApi({ [`GET ${API}`]: [{ status: 500, body: { detail: "The queue is unavailable." } }, ok(QUEUE)] });
+    mount();
+    expect(await screen.findByRole("alert")).toHaveTextContent("The queue is unavailable.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("table", { name: "Product requests: pending" })).toBeInTheDocument();
+    expect(calls.filter((c) => c.key === `GET ${API}`)).toHaveLength(2);
   });
 });

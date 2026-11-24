@@ -8,7 +8,7 @@ import { can, useAdmin } from "../ControlShell";
 import { TypeBadges } from "../labels";
 import { CompletionMeter, SetupStatusBadge } from "../PartnerConsole";
 import { LoadGate, useLoad } from "../ui";
-import { Page, PageHeader } from "../kit";
+import { Page, PageHeader, usePageTrail } from "../kit";
 import { IdentityStep } from "../whitelabel/BrandSteps";
 import { DomainStep } from "../whitelabel/DomainStep";
 import { CommunicationStep } from "../whitelabel/PortalSteps";
@@ -49,6 +49,7 @@ import { STEP_SECTION, WHITE_LABEL_STEPS, stepLabel, stepsFor, type ProfileStepK
  * activation is a separate act by staff (Review step).
  */
 export function CompleteProfile({ partnerId }: { partnerId: string }) {
+  const trail = usePageTrail([{ label: "All partners", href: "/admin/partners/all" }]);
   const { permissions } = useAdmin();
   const manage = can(permissions, "platform.staff_partner.manage");
   const params = useSearchParams();
@@ -80,7 +81,7 @@ export function CompleteProfile({ partnerId }: { partnerId: string }) {
   if (!manage) {
     return (
       <Page>
-        <PageHeader title="Complete partner profile" crumbs={[{ label: "All partners", href: "/admin/partners/all" }, { label: "Complete partner profile" }]} />
+        <PageHeader title="Complete partner profile" crumbs={[...trail, { label: "Complete partner profile" }]} />
         <p role="alert">You need the permission to manage partners to set a partner up.</p>
       </Page>
     );
@@ -109,7 +110,7 @@ export function CompleteProfile({ partnerId }: { partnerId: string }) {
                 <>
                   <PageHeader
                     crumbs={[
-                      { label: "All partners", href: "/admin/partners/all" },
+                      ...trail,
                       { label: partner.display_name, href: `/admin/partners/${partnerId}` },
                       { label: "Complete partner profile" },
                     ]}

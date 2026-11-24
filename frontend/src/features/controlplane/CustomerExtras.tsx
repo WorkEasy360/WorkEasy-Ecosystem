@@ -89,12 +89,15 @@ function OnDemandCard({
   description,
   showLabel,
   hideLabel,
+  shown = false,
   children,
 }: {
   title: string;
   description: string;
   showLabel: string;
   hideLabel: string;
+  /** In a tab of its own (2026-11-18): the tab was the asking, so it shows at once, with no button. */
+  shown?: boolean;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -103,19 +106,21 @@ function OnDemandCard({
       title={title}
       description={description}
       actions={
-        <Button size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {open ? hideLabel : showLabel}
-        </Button>
+        shown ? undefined : (
+          <Button size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>
+            {open ? hideLabel : showLabel}
+          </Button>
+        )
       }
     >
-      {open ? children : null}
+      {open || shown ? children : null}
     </Card>
   );
 }
 
-export function CustomerMembersCard({ organizationId }: { organizationId: string }) {
+export function CustomerMembersCard({ organizationId, shown = false }: { organizationId: string; shown?: boolean }) {
   return (
-    <OnDemandCard title="Members" description="Who belongs to this customer and in what standing." showLabel="Show members" hideLabel="Hide members">
+    <OnDemandCard title="Members" description="Who belongs to this customer and in what standing." showLabel="Show members" hideLabel="Hide members" shown={shown}>
       <MembersTable organizationId={organizationId} />
     </OnDemandCard>
   );
@@ -150,9 +155,15 @@ function MembersTable({ organizationId }: { organizationId: string }) {
 }
 
 /** `refresh` changes when a plan is assigned, so an open history shows the new line. */
-export function AssignmentHistoryCard({ organizationId, refresh }: { organizationId: string; refresh: number }) {
+export function AssignmentHistoryCard({ organizationId, refresh, shown = false }: { organizationId: string; refresh: number; shown?: boolean }) {
   return (
-    <OnDemandCard title="Assignment history" description="Every plan this customer has held, newest first, and when each ended." showLabel="Show history" hideLabel="Hide history">
+    <OnDemandCard
+      title="Assignment history"
+      description="Every plan this customer has held, newest first, and when each ended."
+      showLabel="Show history"
+      hideLabel="Hide history"
+      shown={shown}
+    >
       <HistoryTable organizationId={organizationId} refresh={refresh} />
     </OnDemandCard>
   );
@@ -214,11 +225,20 @@ function assignablePlans(overview: CatalogOverview, now: number) {
     });
 }
 
-export function AssignPlanPopup({ organizationId, onAssigned }: { organizationId: string; onAssigned: (message: string | undefined) => void }) {
+export function AssignPlanPopup({
+  organizationId,
+  onAssigned,
+  variant,
+}: {
+  organizationId: string;
+  onAssigned: (message: string | undefined) => void;
+  /** "primary" where it is the page's main action (the customer's header). */
+  variant?: "primary" | "secondary";
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button icon="plus" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+      <Button icon="plus" variant={variant} aria-haspopup="dialog" onClick={() => setOpen(true)}>
         Assign plan
       </Button>
       {open && <AssignPlanDialog organizationId={organizationId} onDone={onAssigned} onClose={() => setOpen(false)} />}

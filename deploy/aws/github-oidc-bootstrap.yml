@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  WorkEasy360 - deployed ONCE by the account owner (CloudFormation console: Create stack, upload this
+  file). It lets the platform repository's `production-ops` GitHub environment, and nothing else,
+  operate the operations stacks with short-lived credentials (GitHub OIDC; no access key exists).
+  The GitHub role can only manage stacks named workeasy360-ops* / workeasy360-uptime* through a
+  CloudFormation execution role, adjust the host's security group, and run commands on the host
+  through Systems Manager.
+
+Parameters:
+  Repository:
+    Type: String
+    Default: WorkEasy360/WorkEasy-Ecosystem
+  Environment:
+    Type: String
+    Default: production-ops
+    Description: The GitHub environment whose jobs may assume the role (give it a required reviewer).
+  CreateOidcProvider:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      "false" if this account already has the token.actions.githubusercontent.com provider
+      (Easy CRM and EasyBook deploy with GitHub OIDC; if they use this account, it exists).
+  InstanceId:
+    Type: AWS::EC2::Instance::Id
+    Description: The production host (SSM commands may target only this instance).
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: The production host's security group (the only group whose ingress rules the role may change).
+
+Conditions:
+  CreateProvider: !Equals [!Ref CreateOidcProvider, "true"]
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  # What CloudFormation itself may create for the ops stacks (alarms, topic, bucket, key, log group,
+  # host policy and role, Route 53 health checks). The GitHub role can only pass this role.
+  CloudFormationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: workeasy360-ops-cfn-execution
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: cloudformation.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ops-stack-resources
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["sns:*", "cloudwatch:*", "logs:*", "route53:*HealthCheck*", "route53:ChangeTagsForResource", "route53:ListTagsForResource"]
+                Resource: "*"
+              - Effect: Allow
+                Action: ["s3:CreateBucket", "s3:PutBucket*", "s3:PutEncryptionConfiguration", "s3:PutLifecycleConfiguration", "s3:GetBucket*", "s3:GetEncryptionConfiguration", "s3:GetLifecycleConfiguration", "s3:ListBucket", "s3:PutBucketOwnershipControls", "s3:PutBucketPublicAccessBlock", "s3:GetBucketPublicAccessBlock"]
+                Resource: "arn:aws:s3:::workeasy360-backups-*"
+              - Effect: Allow
+                Action: ["kms:CreateKey", "kms:CreateAlias", "kms:DeleteAlias", "kms:UpdateAlias", "kms:DescribeKey", "kms:EnableKeyRotation", "kms:GetKeyPolicy", "kms:PutKeyPolicy", "kms:GetKeyRotationStatus", "kms:TagResource", "kms:ListResourceTags", "kms:ScheduleKeyDeletion"]
+                Resource: "*"
+              - Effect: Allow
+                Action: ["iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:TagRole", "iam:PassRole", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:CreatePolicy", "iam:DeletePolicy", "iam:GetPolicy", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion", "iam:ListPolicyVersions", "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile", "iam:GetInstanceProfile", "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile"]
+                Resource: "*"
+
+  GitHubOpsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: workeasy360-github-ops
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "token.actions.githubusercontent.com:aud": sts.amazonaws.com
+                "token.actions.githubusercontent.com:sub": !Sub "repo:${Repository}:environment:${Environment}"
+      Policies:
+        - PolicyName: operate-ops-stacks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: OpsStacksOnly
+                Effect: Allow
+                Action: ["cloudformation:CreateChangeSet", "cloudformation:ExecuteChangeSet", "cloudformation:DescribeChangeSet", "cloudformation:DeleteChangeSet", "cloudformation:DescribeStacks", "cloudformation:DescribeStackEvents", "cloudformation:GetTemplateSummary", "cloudformation:ListChangeSets"]
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:cloudformation:*:${AWS::AccountId}:stack/workeasy360-ops*/*"
+                  - !Sub "arn:${AWS::Partition}:cloudformation:*:${AWS::AccountId}:stack/workeasy360-uptime*/*"
+              - Sid: ValidateTemplates
+                Effect: Allow
+                Action: "cloudformation:ValidateTemplate"
+                Resource: "*"
+              - Sid: PassOnlyTheExecutionRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CloudFormationExecutionRole.Arn
+              - Sid: ReadTheHost
+                Effect: Allow
+                Action: ["ec2:DescribeInstances", "ec2:DescribeSecurityGroups", "ssm:DescribeInstanceInformation", "ssm:GetCommandInvocation", "ssm:ListCommandInvocations"]
+                Resource: "*"
+              - Sid: ChangeOnlyTheHostsSecurityGroupRules
+                Effect: Allow
+                Action: ["ec2:AuthorizeSecurityGroupIngress", "ec2:RevokeSecurityGroupIngress"]
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${SecurityGroupId}"
+              - Sid: RunCommandsOnlyOnTheHost
+                Effect: Allow
+                Action: ssm:SendCommand
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${InstanceId}"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}::document/AWS-RunShellScript"
+
+Outputs:
+  GitHubOpsRoleArn:
+    Description: Set as the repository variable W360_OPS_ROLE_ARN.
+    Value: !GetAtt GitHubOpsRole.Arn
+  CloudFormationExecutionRoleArn:
+    Description: Set as the repository variable W360_OPS_CFN_ROLE_ARN.
+    Value: !GetAtt CloudFormationExecutionRole.Arn

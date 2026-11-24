@@ -1,15 +1,9 @@
-"use client";
+import { redirect } from "next/navigation";
+import { typePageHref } from "@/features/controlplane/partnerCategories";
 
-import { Suspense } from "react";
-import { AllPartnersList } from "@/features/controlplane/PartnerConsole";
-
-/** Partners → Affiliate (ADR-062): the All Partners table, listing only the
- * partners whose type is Affiliate - the server filters, each partner is under
- * exactly one type. Suspense: the page reads its filters from the query. */
-export default function Page() {
-  return (
-    <Suspense fallback={<p aria-live="polite">Loading partners…</p>}>
-      <AllPartnersList category="affiliate" />
-    </Suspense>
-  );
+/** Old address (ADR-062): Partners → Affiliate is now Partners › Partners with the
+ * Affiliate chip chosen (admin-ux phase 1), keeping the filters it understands and a
+ * guest session's return. Still the path a guest session may come back to. */
+export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  redirect(typePageHref("affiliate", await searchParams));
 }

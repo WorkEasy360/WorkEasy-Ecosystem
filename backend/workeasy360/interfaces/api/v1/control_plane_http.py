@@ -25,9 +25,11 @@ from django.views.decorators.http import require_http_methods
 from workeasy360.commercial.partners import access
 from workeasy360.contracts.errors import (
     AuthenticationRequired,
+    CatalogValidationError,
     PartnerRecordNotFound,
     PermissionDenied,
 )
+from workeasy360.contracts.values.identifiers import ProductCode
 from workeasy360.contracts.values.tenant import TenantContext
 from workeasy360.platform.authz.control_plane import platform_context
 from workeasy360.platform.observability import throttle
@@ -319,3 +321,27 @@ def query_page_args(request: HttpRequest) -> dict[str, Any]:
         "limit": clamp_limit(request.GET.get("limit"), default=25, maximum=100),
         "cursor": request.GET.get("cursor") or None,
     }
+
+
+def query_date_window(request: HttpRequest) -> dict[str, Any]:
+    """A staff list's optional date filter, ``from`` and ``to``: whole UTC days
+    (``YYYY-MM-DD``), both included, either end open. As ``start``/``end`` keyword
+    arguments, ``end`` exclusive; both ``None`` when neither is given, so a list
+    without them answers exactly as before. A bad date, or a range that ends before
+    it starts, is a 400 naming the field."""
+    from workeasy360.commercial.controlplane.overview import optional_window
+
+    start, end = optional_window(request.GET.get("from"), request.GET.get("to"))
+    return {"start": start, "end": end}
+
+
+def query_product_code(request: HttpRequest) -> str | None:
+    """A staff list's ``product`` filter: a product code, or ``None``. A value that
+    cannot be a product code is a 400, never an empty list."""
+    raw = request.GET.get("product")
+    if not raw:
+        return None
+    try:
+        return str(ProductCode(raw))
+    except ValueError as exc:
+        raise CatalogValidationError("Unknown product filter.", field="product") from exc

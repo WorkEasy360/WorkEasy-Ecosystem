@@ -261,6 +261,8 @@ def _page(
 
 
 def _in_period(rows: Any, field: str, start: Any, end: Any) -> Any:
+    """``rows`` whose ``field`` is in ``[start, end)``; an open end is no bound. A
+    list's date filter (Admin UX Phase 3), applied before the cursor."""
     if start is not None:
         rows = rows.filter(**{f"{field}__gte": start})
     if end is not None:
@@ -303,7 +305,10 @@ def invoices(
     search: Any = None,
     limit: Any = None,
     cursor: Any = None,
+    start: Any = None,
+    end: Any = None,
 ) -> dict[str, Any]:
+    """Invoices across customers; ``start``/``end`` keep those issued in the window."""
     authz.require(ctx, VIEW)
     rows = InvoiceSummary.objects.all()
     chosen = _choice(status, {"open", "paid", "void"}, "status")
@@ -311,6 +316,7 @@ def invoices(
         rows = rows.filter(status=chosen)
     if search:
         rows = rows.filter(number__icontains=str(search).strip()[:40])
+    rows = _in_period(rows, "issued_at", start, end)
     page, token, more = _page(
         rows, limit=limit, cursor=cursor, time_field="issued_at", id_field="invoice_id"
     )
@@ -394,8 +400,11 @@ def refunds(
     waiting: bool = False,
     limit: Any = None,
     cursor: Any = None,
+    start: Any = None,
+    end: Any = None,
 ) -> dict[str, Any]:
-    """Refunds across customers, each naming the payment and invoice it answers."""
+    """Refunds across customers, each naming the payment and invoice it answers.
+    ``start``/``end`` keep those requested (created) in the window."""
     authz.require(ctx, VIEW)
     rows = refunds_waiting() if waiting else RefundSummary.objects.all()
     chosen = _choice(
@@ -405,6 +414,7 @@ def refunds(
     )
     if chosen:
         rows = rows.filter(status=chosen)
+    rows = _in_period(rows, "created_at", start, end)
     page, token, more = _page(
         rows, limit=limit, cursor=cursor, time_field="created_at", id_field="refund_id"
     )
@@ -453,13 +463,21 @@ def refunds(
 
 
 def credit_notes(
-    ctx: TenantContext, *, search: Any = None, limit: Any = None, cursor: Any = None
+    ctx: TenantContext,
+    *,
+    search: Any = None,
+    limit: Any = None,
+    cursor: Any = None,
+    start: Any = None,
+    end: Any = None,
 ) -> dict[str, Any]:
+    """Credit notes across customers; ``start``/``end`` keep those issued in the window."""
     authz.require(ctx, VIEW)
     rows = CreditNote.objects.all()
     if search:
         term = str(search).strip()[:40]
         rows = rows.filter(Q(number__icontains=term) | Q(invoice_number__icontains=term))
+    rows = _in_period(rows, "issued_at", start, end)
     page, token, more = _page(
         rows, limit=limit, cursor=cursor, time_field="issued_at", id_field="id"
     )

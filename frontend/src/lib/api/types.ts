@@ -250,3 +250,11 @@ export interface AutomationExecution {
   created_at: string;
   event: { event_type: string; event_version: number } | null;
 }
+
+/** A list's date filter (admin-ux phase 3): whole UTC days, `YYYY-MM-DD`, both
+ * included, either end optional. The server refuses a range that ends before it
+ * starts. */
+export type DayRangeQuery = {
+  from?: string;
+  to?: string;
+};

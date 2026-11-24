@@ -33,7 +33,10 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement, P extends 
     const width = p.offsetWidth || 200;
     const height = p.offsetHeight || 0;
     let left = align === "end" ? r.right - width : r.left;
-    left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+    // The visible width (the page's scrollbar excluded), so a panel near the right
+    // edge is never drawn under the scrollbar.
+    const room = document.documentElement.clientWidth || window.innerWidth;
+    left = Math.max(8, Math.min(left, room - width - 8));
     let top = r.bottom + 4;
     if (height && top + height > window.innerHeight - 8 && r.top - height - 4 > 8) top = r.top - height - 4;
     p.style.left = `${left}px`;

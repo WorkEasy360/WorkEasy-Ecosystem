@@ -1,0 +1,81 @@
+/* The help drawer (admin-ux phase 1): a search box, the articles' titles - each
+   opens its text beneath it - and the ways on at the bottom. Tokens only. */
+
+.body {
+  display: grid;
+  align-content: start;
+  gap: var(--w360-space-3);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--w360-space-4) var(--w360-space-4);
+}
+
+.list {
+  display: grid;
+  gap: var(--w360-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  border-bottom: 1px solid var(--w360-gray-200);
+}
+
+.title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--w360-space-3);
+  width: 100%;
+  padding: var(--w360-space-3) 0;
+  border: 0;
+  background: none;
+  color: var(--w360-text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.title:hover {
+  color: var(--w360-brand);
+}
+
+.title:focus-visible {
+  outline: 2px solid var(--w360-focus-ring);
+  outline-offset: 2px;
+}
+
+.kind {
+  flex: none;
+  color: var(--w360-text-muted);
+  font-size: var(--w360-fs-meta);
+  font-weight: 500;
+}
+
+.text {
+  margin: 0 0 var(--w360-space-3);
+  color: var(--w360-text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 0;
+  color: var(--w360-text-secondary);
+}
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w360-space-4);
+  padding: var(--w360-space-3) var(--w360-space-4);
+  border-top: 1px solid var(--w360-gray-200);
+}
+
+.footLink {
+  color: var(--w360-brand);
+  font-weight: 600;
+}

@@ -1,7 +1,8 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/sidebar/icons";
 import { adminApi, type AuditRow, type CustomerDetail, type CustomerRow, type Diagnosis, type ProductTrialView } from "@/lib/api/controlPlane";
 import { adminConsoleApi } from "@/lib/api/adminConsole";
@@ -9,18 +10,18 @@ import { accessApi } from "@/lib/api/adminPanel";
 import { can, useAdmin } from "./ControlShell";
 import { CustomerBilling } from "./AdminBilling";
 import { ROLES, StaffRolesPanel, TableSection, sourceLabel } from "./AdminCommerce";
-import { DateRange } from "./AdminListParts";
 import { DateText } from "./AdminUsers";
 import { AssignPlanPopup, AssignmentHistoryCard, CustomerMembersCard, NewCustomerPopup, PartnerAssignmentCard } from "./CustomerExtras";
 import { FormPopup } from "./Modal";
 import { TextField } from "./widgets";
-import { LoadGate, ReasonAction, autoReason, useAction, useLoad, usePaged } from "./ui";
+import { LoadGate, ReasonAction, autoReason, pagedTable, useAction, useLoad, usePaged } from "./ui";
 import {
   Alert,
   Badge,
   Button,
   Card,
   DataTable,
+  DateRangeFilter,
   DescriptionList,
   EmptyState,
   FilterBar,
@@ -37,13 +38,20 @@ import {
   Tabs,
   Trunc,
   EMPTY,
+  droppedMessage,
   eventLabel,
   formatDate,
   formatDateTime,
   productName,
+  rangeLabel,
   sentence,
   useConfirm,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
+  type MenuItem,
+  type StateTab,
+  usePageTrail,
 } from "./kit";
 import { downloadCsv } from "./kit/csv";
 import local from "./AdminPeople.module.css";
@@ -63,11 +71,37 @@ const CUSTOMER_STATUS = [
   { value: "suspended", label: "Suspended" },
 ];
 
+/** An option's words, for an active-filter tag. */
+const labelOf = (options: { value: string; label: string }[], value: string) => options.find((o) => o.value === value)?.label ?? value;
+
+/** The directory's filters, kept in its address (2026-11-18, admin-ux phase 3). */
+const CUSTOMER_FILTERS = {
+  q: {},
+  status: { options: CUSTOMER_STATUS.map((s) => s.value) },
+  from: { date: true },
+  to: { date: true },
+};
+
+/**
+ * Customers (2026-11-18, admin-ux phase 3): the server filters by search, status and
+ * the days a customer was created (`from`/`to`); the filters are kept in the address,
+ * so a filtered view survives a reload and Back from a customer.
+ */
 export function Customers() {
   const { permissions } = useAdmin();
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
-  const paged = usePaged((cursor) => adminApi.customers({ q: query || undefined, status: status || undefined, cursor }), [query, status]);
+  const filters = useUrlFilters(CUSTOMER_FILTERS);
+  const { q: query, status, from, to } = filters.values;
+  const paged = usePaged(
+    (cursor) => adminApi.customers({ q: query || undefined, status: status || undefined, from: from || undefined, to: to || undefined, cursor }),
+    [query, status, from, to],
+  );
+  const dropped = droppedMessage(filters.dropped);
+  const active: ActiveFilter[] = [
+    ...(query ? [{ key: "q", label: "Search", value: `“${query}”`, onRemove: () => filters.set({ q: "" }) }] : []),
+    ...(status ? [{ key: "status", label: "Status", value: labelOf(CUSTOMER_STATUS, status), onRemove: () => filters.set({ status: "" }) }] : []),
+    ...(from || to ? [{ key: "created", label: "Created", value: rangeLabel({ from, to }), onRemove: () => filters.set({ from: "", to: "" }) }] : []),
+  ];
+  const filtered = active.length > 0;
 
   const columns: Column<CustomerRow>[] = [
     {
@@ -85,17 +119,30 @@ export function Customers() {
         />
       ),
     },
-    { key: "status", header: "Status", value: (c) => c.status, render: (c) => <StatusBadge value={c.status} /> },
-    { key: "subscription", header: "Subscription", value: (c) => c.subscription_status, render: (c) => <StatusBadge value={c.subscription_status} /> },
-    { key: "products", header: "Products", value: (c) => c.products, render: (c) => <Trunc>{c.products.map(productName).join(", ")}</Trunc> },
-    { key: "seats", header: "Seats", align: "right", value: (c) => c.seat_capacity, render: (c) => c.seat_capacity ?? EMPTY },
+    { key: "status", header: "Status", priority: "essential", value: (c) => c.status, render: (c) => <StatusBadge value={c.status} /> },
+    {
+      key: "subscription",
+      header: "Subscription",
+      priority: "high",
+      value: (c) => c.subscription_status,
+      render: (c) => <StatusBadge value={c.subscription_status} />,
+    },
+    {
+      key: "products",
+      header: "Products",
+      priority: "medium",
+      value: (c) => c.products,
+      render: (c) => <Trunc>{c.products.map(productName).join(", ")}</Trunc>,
+    },
+    { key: "seats", header: "Seats", align: "right", priority: "low", value: (c) => c.seat_capacity, render: (c) => c.seat_capacity ?? EMPTY },
     {
       key: "partner",
       header: "Partner",
+      priority: "medium",
       value: (c) => c.partner?.partner_name ?? "Direct",
       render: (c) => (c.partner ? <Stack main={<Trunc>{c.partner.partner_name}</Trunc>} sub={sentence(c.partner.link_status)} /> : "Direct"),
     },
-    { key: "created", header: "Created", value: (c) => c.created_at, render: (c) => <DateText iso={c.created_at} /> },
+    { key: "created", header: "Created", priority: "low", value: (c) => c.created_at, render: (c) => <DateText iso={c.created_at} /> },
   ];
 
   return (
@@ -106,36 +153,20 @@ export function Customers() {
         info="Subscription, products and seats reflect the last reconciliation."
         primary={can(permissions, "platform.staff_customer.manage") ? <NewCustomerPopup onCreated={paged.reload} /> : undefined}
       />
-      <FilterBar
-        onClear={
-          query || status
-            ? () => {
-                setQuery("");
-                setStatus("");
-              }
-            : undefined
-        }
-      >
-        <SearchInput label="Search by name or slug" value={query} onSearch={setQuery} />
-        <Select label="Status" prefix="Status:" value={status} onChange={setStatus} options={CUSTOMER_STATUS} />
+      {dropped && <Alert tone="warning" title={dropped} />}
+      <FilterBar label="Filter customers" onClear={filtered ? filters.reset : undefined} active={active}>
+        <SearchInput label="Search by name or slug" value={query} onSearch={(q) => filters.set({ q })} />
+        <Select label="Status" prefix="Status:" value={status} onChange={(next) => filters.set({ status: next })} options={CUSTOMER_STATUS} />
+        <DateRangeFilter label="Created" value={{ from, to }} onApply={(range) => filters.set(range)} />
       </FilterBar>
       <DataTable
         caption="Customer organizations"
         columns={columns}
-        rows={paged.rows}
+        {...pagedTable(paged, "customers")}
         rowKey={(c) => c.organization_id}
         rowHref={(c) => `/admin/customers/${c.organization_id}`}
-        loading={paged.state === "loading"}
-        error={
-          paged.state === "forbidden"
-            ? "You don't have access to the customer directory."
-            : paged.state === "error"
-              ? "Couldn't load customers."
-              : null
-        }
-        onLoadMore={() => void paged.more()}
-        hasMore={paged.hasMore}
-        empty={<EmptyState icon="building" title="No customers match." hint={query || status ? "Try another search or clear the filters." : undefined} />}
+        rowLabel={(c) => c.display_name}
+        empty={<EmptyState icon="building" title="No customers match." hint={filtered ? "Try another search or clear the filters." : undefined} />}
       />
     </Page>
   );
@@ -143,24 +174,121 @@ export function Customers() {
 
 type Act = (action: () => Promise<unknown>, success: string) => Promise<void>;
 
+/** The customer page's tabs (2026-11-18, admin-ux phase 2), in the address as `?tab=`. */
+type CustomerTab = "overview" | "products" | "billing" | "members" | "activity" | "troubleshoot";
+const CUSTOMER_TABS: StateTab<CustomerTab>[] = [
+  { key: "overview", label: "Overview" },
+  { key: "products", label: "Products & access" },
+  { key: "billing", label: "Billing" },
+  { key: "members", label: "Members" },
+  { key: "activity", label: "Activity" },
+  { key: "troubleshoot", label: "Troubleshoot" },
+];
+const isCustomerTab = (value: string | null): value is CustomerTab => CUSTOMER_TABS.some((t) => t.key === value);
+/** Where the billing section used to be linked to (`#billing-h`), before the tabs. */
+const BILLING_ANCHOR = "#billing-h";
+
+/**
+ * One customer (2026-11-18, admin-ux phase 2): a header - its status, "Assign plan"
+ * and, under More actions, the network reset and suspend/reactivate - then six tabs:
+ * Overview (subscription, partner, members at a glance), Products & access
+ * (entitlements, temporary grants, trials), Billing (billing account, invoices,
+ * plan history), Members, Activity (its audit trail) and Troubleshoot. The tab is
+ * kept in the address (`?tab=billing`), so a link opens the right one; the old
+ * `#billing-h` links open Billing. A tab's data is read when it is opened.
+ */
 export function CustomerDetailScreen({ organizationId }: { organizationId: string }) {
   const { permissions } = useAdmin();
+  const trail = usePageTrail([{ label: "Customers", href: "/admin/customers" }]);
+  const params = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname() ?? `/admin/customers/${organizationId}`;
   const [load, reload] = useLoad(() => adminApi.customer(organizationId), [organizationId]);
   const { act, busy, feedback } = useAction(reload);
+  const confirm = useConfirm();
   const manage = can(permissions, "platform.staff_customer.manage");
   const subs = can(permissions, "platform.staff_subscription.manage");
   const payments = can(permissions, "platform.staff_payment.view");
+  const partners = can(permissions, "platform.staff_partner.view");
   const [assigned, setAssigned] = useState(0);
+  // An old link to the billing section (`#billing-h`) opens the Billing tab, and shows it.
+  // Read once, in the browser: the tabs are drawn only once the customer has loaded.
+  const [fromAnchor] = useState(() => typeof window !== "undefined" && window.location.hash === BILLING_ANCHOR);
+  const wanted = params.get("tab");
+  const [tab, setTabState] = useState<CustomerTab>(isCustomerTab(wanted) ? wanted : fromAnchor ? "billing" : "overview");
+  const setTab = (next: CustomerTab) => {
+    setTabState(next);
+    router.replace(next === "overview" ? pathname : `${pathname}?tab=${next}`, { scroll: false });
+  };
+  const ready = load.status === "ready";
+  useEffect(() => {
+    if (fromAnchor && ready && tab === "billing") document.getElementById(BILLING_ANCHOR.slice(1))?.scrollIntoView?.({ block: "start" });
+  }, [fromAnchor, ready, tab]);
 
   return (
     <Page>
       <LoadGate load={load} what="this customer">
         {(d) => {
           const org = d.organization;
+          const more: MenuItem[] = [
+            {
+              label: "Reset network allow-list",
+              icon: "refresh",
+              when: manage,
+              disabled: busy,
+              // As its button did: no confirmation, the automatic reason.
+              onSelect: () =>
+                void act(
+                  () => adminConsoleApi.resetNetworkPolicy(organizationId, autoReason("Reset network allow-list")),
+                  "The IP allow-list is off: members can sign in from any network again.",
+                ),
+            },
+            {
+              label: "Suspend organization",
+              icon: "pause",
+              danger: true,
+              separator: true,
+              when: manage && org.status === "active",
+              disabled: busy,
+              onSelect: () =>
+                confirm.ask({
+                  title: "Suspend organization?",
+                  message: "Every member loses access to the organization's products until it is reactivated.",
+                  confirmLabel: "Confirm suspend organization",
+                  danger: true,
+                  reason: true,
+                  groupLabel: "Confirm Suspend organization",
+                  actionName: "Suspend organization",
+                  onConfirm: (reason) => void act(() => adminApi.suspendCustomer(organizationId, reason), "Organization suspended."),
+                }),
+            },
+            {
+              label: "Reactivate organization",
+              icon: "play",
+              separator: true,
+              when: manage && org.status !== "active",
+              disabled: busy,
+              onSelect: () =>
+                void act(() => adminApi.reactivateCustomer(organizationId, autoReason("Reactivate organization")), "Organization reactivated."),
+            },
+          ];
+          const members = Object.entries(d.members).length
+            ? Object.entries(d.members)
+                .map(([k, v]) => `${v} ${k}`)
+                .join(", ")
+            : null;
+          const partnerLine = d.partner ? (
+            <span className={local.holders}>
+              <Link href={`/admin/partners/${d.partner.partner_id}`}>{d.partner.display_name}</Link>
+              <StatusBadge value={d.partner.link_status} />
+            </span>
+          ) : (
+            "None (direct customer)"
+          );
           return (
             <>
               <PageHeader
-                crumbs={[{ label: "Customers", href: "/admin/customers" }, { label: org.display_name }]}
+                crumbs={[...trail, { label: org.display_name }]}
                 documentTitle={`${org.display_name} · Customers`}
                 title={org.display_name}
                 badges={<StatusBadge value={org.status} />}
@@ -171,45 +299,10 @@ export function CustomerDetailScreen({ organizationId }: { organizationId: strin
                   </span>,
                   ...(org.suspension_reason ? [`Suspended: ${org.suspension_reason}`] : []),
                 ]}
-                actions={
-                  manage ? (
-                    <>
-                      <ReasonAction
-                        label="Reset network allow-list"
-                        busy={busy}
-                        onConfirm={(reason) =>
-                          act(
-                            () => adminConsoleApi.resetNetworkPolicy(organizationId, reason),
-                            "The IP allow-list is off: members can sign in from any network again.",
-                          )
-                        }
-                      />
-                      {org.status === "active" ? (
-                        <ReasonAction
-                          label="Suspend organization"
-                          danger
-                          busy={busy}
-                          message="Every member loses access to the organization's products until it is reactivated."
-                          onConfirm={(reason) => act(() => adminApi.suspendCustomer(organizationId, reason), "Organization suspended.")}
-                        />
-                      ) : (
-                        <ReasonAction
-                          label="Reactivate organization"
-                          busy={busy}
-                          onConfirm={(reason) => act(() => adminApi.reactivateCustomer(organizationId, reason), "Organization reactivated.")}
-                        />
-                      )}
-                    </>
-                  ) : undefined
-                }
-              />
-              {feedback}
-
-              <Card
-                title="Subscription"
-                actions={
+                primary={
                   subs ? (
                     <AssignPlanPopup
+                      variant="primary"
                       organizationId={organizationId}
                       // The customer's page announces it and reloads, with any new subscription listed.
                       onAssigned={(message) => {
@@ -219,111 +312,117 @@ export function CustomerDetailScreen({ organizationId }: { organizationId: strin
                     />
                   ) : undefined
                 }
-              >
-                <SubscriptionPanel detail={d} canManage={subs} busy={busy} act={act} organizationId={organizationId} />
-              </Card>
+                secondary={more}
+                tabs={<Tabs label="Customer sections" tabs={CUSTOMER_TABS} selected={tab} onSelect={setTab} />}
+              />
+              {feedback}
+              {confirm.dialog}
 
-              <Card
-                title="Entitlements and seats"
-                description="Rebuilt from subscriptions, bundles, staff overrides (time-boxed grants) and product trials. The Source column names which one gives each product."
-              >
-                <DataTable
-                  caption="Products this customer holds"
-                  columns={[
-                    { key: "product", header: "Product", value: ([code]) => code, render: ([code]) => productName(code) },
-                    { key: "status", header: "Status", value: ([, e]) => e.status, render: ([, e]) => <StatusBadge value={e.status} /> },
-                    { key: "source", header: "Source", value: ([, e]) => sourceLabel(e.source_kind), render: ([, e]) => sourceLabel(e.source_kind) },
-                    {
-                      key: "seats",
-                      header: "Seats",
-                      align: "right",
-                      value: ([code]) => d.licenses.find((l) => l.product_code === code)?.seats_total,
-                      render: ([code]) => d.licenses.find((l) => l.product_code === code)?.seats_total ?? EMPTY,
-                    },
-                    {
-                      key: "assigned",
-                      header: "Assigned",
-                      align: "right",
-                      value: ([code]) => d.licenses.find((l) => l.product_code === code)?.seats_assigned,
-                      render: ([code]) => d.licenses.find((l) => l.product_code === code)?.seats_assigned ?? EMPTY,
-                    },
-                    {
-                      key: "over",
-                      header: "Over limit",
-                      align: "right",
-                      render: ([code]) => d.licenses.find((l) => l.product_code === code)?.over_limit ?? 0,
-                    },
-                  ]}
-                  rows={Object.entries(d.entitlements)}
-                  rowKey={([code]) => code}
-                  pageSize={0}
-                  maxHeight={false}
-                  empty={<EmptyState icon="box" title="No entitlements" compact />}
-                />
-                <OverridePanel detail={d} canManage={subs} busy={busy} act={act} organizationId={organizationId} />
-              </Card>
+              {tab === "overview" && (
+                <>
+                  <Card title="Subscription">
+                    <SubscriptionPanel detail={d} canManage={subs} busy={busy} act={act} organizationId={organizationId} />
+                  </Card>
+                  {/* The partner once: its own card for those who may see partners, a line otherwise. */}
+                  {partners && <PartnerAssignmentCard organizationId={organizationId} onChanged={reload} />}
+                  <Card title={partners ? "Members" : "Members and partner"}>
+                    <DescriptionList
+                      items={[{ label: "Members", value: members }, ...(partners ? [] : [{ label: "Partner", value: partnerLine }])]}
+                    />
+                  </Card>
+                </>
+              )}
 
-              <ProductTrialsCard trials={d.product_trials ?? []} />
+              {tab === "products" && (
+                <>
+                  <Card
+                    title="Entitlements and seats"
+                    description="Rebuilt from subscriptions, bundles, staff overrides (time-boxed grants) and product trials. The Source column names which one gives each product."
+                  >
+                    <DataTable
+                      caption="Products this customer holds"
+                      columns={[
+                        { key: "product", header: "Product", value: ([code]) => code, render: ([code]) => productName(code) },
+                        { key: "status", header: "Status", value: ([, e]) => e.status, render: ([, e]) => <StatusBadge value={e.status} /> },
+                        { key: "source", header: "Source", value: ([, e]) => sourceLabel(e.source_kind), render: ([, e]) => sourceLabel(e.source_kind) },
+                        {
+                          key: "seats",
+                          header: "Seats",
+                          align: "right",
+                          value: ([code]) => d.licenses.find((l) => l.product_code === code)?.seats_total,
+                          render: ([code]) => d.licenses.find((l) => l.product_code === code)?.seats_total ?? EMPTY,
+                        },
+                        {
+                          key: "assigned",
+                          header: "Assigned",
+                          align: "right",
+                          value: ([code]) => d.licenses.find((l) => l.product_code === code)?.seats_assigned,
+                          render: ([code]) => d.licenses.find((l) => l.product_code === code)?.seats_assigned ?? EMPTY,
+                        },
+                        {
+                          key: "over",
+                          header: "Over limit",
+                          align: "right",
+                          render: ([code]) => d.licenses.find((l) => l.product_code === code)?.over_limit ?? 0,
+                        },
+                      ]}
+                      rows={Object.entries(d.entitlements)}
+                      rowKey={([code]) => code}
+                      pageSize={0}
+                      maxHeight={false}
+                      empty={<EmptyState icon="box" title="No entitlements" compact />}
+                    />
+                    <OverridePanel detail={d} canManage={subs} busy={busy} act={act} organizationId={organizationId} />
+                  </Card>
+                  <ProductTrialsCard trials={d.product_trials ?? []} />
+                </>
+              )}
 
-              {can(permissions, "platform.staff_partner.view") && <PartnerAssignmentCard organizationId={organizationId} onChanged={reload} />}
+              {tab === "billing" && (
+                <>
+                  <Card title="Billing account">
+                    <DescriptionList
+                      items={[
+                        {
+                          label: "Billing",
+                          value: d.billing ? (
+                            <Stack
+                              main={`${d.billing.currency}, ${sentence(d.billing.collection_mode)}${d.billing.billing_region ? `, ${d.billing.billing_region}` : ""}`}
+                              sub={d.billing.note}
+                            />
+                          ) : (
+                            "No billing account, or you don't hold billing access."
+                          ),
+                        },
+                      ]}
+                    />
+                  </Card>
+                  {payments && <CustomerBilling organizationId={organizationId} />}
+                  <AssignmentHistoryCard organizationId={organizationId} refresh={assigned} shown />
+                </>
+              )}
 
-              <Card title="Members, billing and partner">
-                <DescriptionList
-                  items={[
-                    {
-                      label: "Members",
-                      value: Object.entries(d.members).length
-                        ? Object.entries(d.members)
-                            .map(([k, v]) => `${v} ${k}`)
-                            .join(", ")
-                        : null,
-                    },
-                    {
-                      label: "Partner",
-                      value: d.partner ? (
-                        <span className={local.holders}>
-                          <Link href={`/admin/partners/${d.partner.partner_id}`}>{d.partner.display_name}</Link>
-                          <StatusBadge value={d.partner.link_status} />
-                        </span>
-                      ) : (
-                        "None (direct customer)"
-                      ),
-                    },
-                    {
-                      label: "Billing",
-                      value: d.billing ? (
-                        <Stack
-                          main={`${d.billing.currency}, ${sentence(d.billing.collection_mode)}${d.billing.billing_region ? `, ${d.billing.billing_region}` : ""}`}
-                          sub={d.billing.note}
-                        />
-                      ) : (
-                        "No billing account, or you don't hold billing access."
-                      ),
-                    },
-                  ]}
-                />
-              </Card>
+              {tab === "members" && <CustomerMembersCard organizationId={organizationId} shown />}
 
-              <CustomerMembersCard organizationId={organizationId} />
-              <AssignmentHistoryCard organizationId={organizationId} refresh={assigned} />
+              {tab === "activity" && (
+                <TableSection title="Recent audit trail">
+                  <DataTable
+                    caption="This customer's own audit log"
+                    columns={AUDIT_COLUMNS}
+                    rows={d.audit}
+                    rowKey={(a) => a.id}
+                    pageSize={0}
+                    maxHeight={false}
+                    empty={<EmptyState icon="audit" title="No entries" compact />}
+                  />
+                </TableSection>
+              )}
 
-              {payments && <CustomerBilling organizationId={organizationId} />}
-
-              <Card title="Why can't someone launch a product?" description="A read-only check of every step; nothing is changed.">
-                <DiagnosticForm organizationId={organizationId} />
-              </Card>
-
-              <TableSection title="Recent audit trail">
-                <DataTable
-                  caption="This customer's own audit log"
-                  columns={AUDIT_COLUMNS}
-                  rows={d.audit}
-                  rowKey={(a) => a.id}
-                  pageSize={0}
-                  maxHeight={false}
-                  empty={<EmptyState icon="audit" title="No entries" compact />}
-                />
-              </TableSection>
+              {tab === "troubleshoot" && (
+                <Card title="Why can't someone launch a product?" description="A read-only check of every step; nothing is changed.">
+                  <DiagnosticForm organizationId={organizationId} />
+                </Card>
+              )}
             </>
           );
         }}
@@ -720,10 +819,11 @@ const AUDIT_COLUMNS: Column<AuditRow>[] = [
     value: (a) => a.action,
     render: (a) => <Stack main={eventLabel(a.action)} sub={<KeyText>{a.action}</KeyText>} />,
   },
-  { key: "actor", header: "By", value: (a) => a.actor_kind, render: (a) => sentence(a.actor_kind) },
+  { key: "actor", header: "By", priority: "medium", value: (a) => a.actor_kind, render: (a) => sentence(a.actor_kind) },
   {
     key: "outcome",
     header: "Outcome",
+    priority: "essential",
     value: (a) => a.outcome,
     render: (a) => (a.outcome ? <StatusBadge value={a.outcome === "success" ? "succeeded" : a.outcome} label={sentence(a.outcome)} /> : EMPTY),
   },
@@ -742,12 +842,22 @@ const AUDIT_AREAS = [
 
 const PERSON_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** What the audit endpoint filters by, kept in the address (2026-11-18, admin-ux
+ * phase 3): an action prefix typed (`action`) or chosen (`area`), a person's ID
+ * (`person`) and the days (`from`/`to`). */
+const AUDIT_FILTERS = {
+  action: {},
+  area: { options: AUDIT_AREAS.map((a) => a.value) },
+  person: { maxLength: 36 },
+  from: { date: true },
+  to: { date: true },
+};
+
 export function AuditScreen() {
-  const [prefix, setPrefix] = useState("");
-  const [area, setArea] = useState("");
-  const [actorId, setActorId] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const filters = useUrlFilters(AUDIT_FILTERS);
+  const { action: prefix, area, person: actorId, from, to } = filters.values;
+  // "By" and "Resource" are not filters the audit endpoint has: they narrow the
+  // entries loaded so far, and are said to do so (kept out of the address).
   const [actor, setActor] = useState("");
   const [resource, setResource] = useState("");
   const action = prefix || area;
@@ -773,25 +883,34 @@ export function AuditScreen() {
     {
       key: "resource",
       header: "Resource",
+      priority: "medium",
       value: (a) => a.resource_type,
       render: (a) => (a.resource_type ? <Stack main={eventLabel(a.resource_type)} sub={<IdCell value={a.resource_id} label="Copy resource ID" />} /> : EMPTY),
     },
-    { key: "reason", header: "Reason", value: (a) => a.reason, render: (a) => <Trunc max="lg">{a.reason}</Trunc> },
+    { key: "reason", header: "Reason", priority: "low", value: (a) => a.reason, render: (a) => <Trunc max="lg">{a.reason}</Trunc> },
     AUDIT_COLUMNS[3],
   ];
-  const filtered = Boolean(prefix || area || actorId || from || to || actor || resource);
+  const dropped = droppedMessage(filters.dropped);
+  const active: ActiveFilter[] = [
+    ...(prefix ? [{ key: "action", label: "Action", value: `“${prefix}”`, onRemove: () => filters.set({ action: "" }) }] : []),
+    ...(area ? [{ key: "area", label: "Area", value: labelOf(AUDIT_AREAS, area), onRemove: () => filters.set({ area: "" }) }] : []),
+    ...(actorId ? [{ key: "person", label: "Person's ID", value: actorId, onRemove: () => filters.set({ person: "" }) }] : []),
+    ...(from || to ? [{ key: "date", label: "Date", value: rangeLabel({ from, to }), onRemove: () => filters.set({ from: "", to: "" }) }] : []),
+    ...(actor ? [{ key: "by", label: "By", value: sentence(actor), onRemove: () => setActor("") }] : []),
+    ...(resource ? [{ key: "resource", label: "Resource", value: eventLabel(resource), onRemove: () => setResource("") }] : []),
+  ];
+  const filtered = active.length > 0;
   return (
     <Page>
       <PageHeader title="Audit log" subtitle="Every staff action in the admin console, newest first." />
+      {dropped && <Alert tone="warning" title={dropped} />}
       <FilterBar
+        label="Filter the audit log"
+        active={active}
         onClear={
           filtered
             ? () => {
-                setPrefix("");
-                setArea("");
-                setActorId("");
-                setFrom("");
-                setTo("");
+                filters.reset();
                 setActor("");
                 setResource("");
               }
@@ -813,8 +932,13 @@ export function AuditScreen() {
           </Button>
         }
       >
-        <SearchInput label="Filter by action (e.g. payout., partner.)" value={prefix} onSearch={setPrefix} placeholder="Action, e.g. partner." />
-        <Select label="Area" prefix="Area:" value={area} onChange={setArea} options={AUDIT_AREAS} />
+        <SearchInput
+          label="Filter by action (e.g. payout., partner.)"
+          value={prefix}
+          onSearch={(text) => filters.set({ action: text })}
+          placeholder="Action, e.g. partner."
+        />
+        <Select label="Area" prefix="Area:" value={area} onChange={(next) => filters.set({ area: next })} options={AUDIT_AREAS} />
         <Select label="By" prefix="By:" value={actor} onChange={setActor} options={[{ value: "", label: "Anyone" }, ...actors.map((a) => ({ value: a, label: sentence(a) }))]} />
         <Select
           label="Resource"
@@ -823,23 +947,31 @@ export function AuditScreen() {
           onChange={setResource}
           options={[{ value: "", label: "Any" }, ...resources.map((r) => ({ value: r, label: eventLabel(r) }))]}
         />
-        <SearchInput label="Filter by the person's ID" value={actorId} onSearch={setActorId} placeholder="Person's ID" maxLength={36} />
-        <DateRange from={from} to={to} onFrom={setFrom} onTo={setTo} />
+        <SearchInput
+          label="Filter by the person's ID"
+          value={actorId}
+          onSearch={(text) => filters.set({ person: text })}
+          placeholder="Person's ID"
+          maxLength={36}
+        />
+        <DateRangeFilter label="Date" value={{ from, to }} onApply={(range) => filters.set(range)} />
       </FilterBar>
       {!actorValid && (
         <p className="w360-error-text" role="alert">
           Enter the person&apos;s whole ID, as shown on their user page.
         </p>
       )}
+      {(actor || resource) && paged.hasMore && (
+        <p className={local.note} role="status">
+          By and Resource narrow only the entries loaded so far. Load more to look further back.
+        </p>
+      )}
       <DataTable
         caption="Audit entries"
         columns={columns}
+        {...pagedTable(paged, "audit entries")}
         rows={rows}
         rowKey={(a) => a.id}
-        loading={paged.state === "loading"}
-        error={paged.state === "forbidden" ? "You don't have access to the audit trail." : paged.state === "error" ? "Couldn't load the audit trail." : null}
-        onLoadMore={() => void paged.more()}
-        hasMore={paged.hasMore}
         empty={<EmptyState icon="audit" title="No audit entries" hint={filtered ? "Try other filters." : undefined} />}
       />
     </Page>
@@ -909,9 +1041,10 @@ function NewAdminPopup({ onDone }: { onDone: () => void }) {
   );
 }
 
+/** Settings › Team & roles: roles, then individual permissions, as two sections of
+ * one page (2026-11-18, admin-ux phase 1: no tabs inside a tab). */
 export function SecurityScreen() {
   const { permissions } = useAdmin();
-  const [tab, setTab] = useState<"roles" | "permissions">("roles");
   // A new Admin changes who holds what: the lists below read it again.
   const [changes, setChanges] = useState(0);
   return (
@@ -921,19 +1054,9 @@ export function SecurityScreen() {
         subtitle="Who can do what in the admin console."
         info="Grants take effect and end immediately, a time-boxed grant ends on its own when it expires, and the last permanent security administrator cannot be removed."
         primary={can(permissions, "platform.staff_security.manage") ? <NewAdminPopup onDone={() => setChanges((n) => n + 1)} /> : undefined}
-        tabs={
-          <Tabs
-            label="Staff access"
-            selected={tab}
-            onSelect={setTab}
-            tabs={[
-              { key: "roles", label: "Roles" },
-              { key: "permissions", label: "Permissions" },
-            ]}
-          />
-        }
       />
-      {tab === "roles" ? <StaffRolesPanel key={changes} /> : <PermissionsPanel key={changes} />}
+      <StaffRolesPanel key={`roles-${changes}`} />
+      <PermissionsPanel key={`permissions-${changes}`} />
     </Page>
   );
 }

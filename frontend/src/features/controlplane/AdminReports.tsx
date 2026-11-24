@@ -1,16 +1,19 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/sidebar/icons";
 import { reportsApi, type ReportColumn, type ReportQuery } from "@/lib/api/adminPanel";
 import { adminApi } from "@/lib/api/controlPlane";
+import { REPORT_GROUPS } from "./adminModules";
 import { can, useAdmin } from "./ControlShell";
-import { DateRange, OffsetPager, dayBefore } from "./AdminListParts";
+import { OffsetPager, dayBefore } from "./AdminListParts";
 import { LoadGate, useLoad } from "./ui";
 import local from "./AdminListParts.module.css";
 import {
   Alert,
   DataTable,
+  DateRangeFilter,
   EmptyState,
   FilterBar,
   Page,
@@ -21,17 +24,23 @@ import {
   Trunc,
   EMPTY,
   buttonClass,
+  droppedMessage,
   formatDate,
   formatDateTime,
   formatMoney,
   formatNumber,
   productName,
+  rangeLabel,
   sentence,
+  useUrlFilters,
+  type ActiveFilter,
   type Column,
 } from "./kit";
 
 /**
- * Admin → Reports (2026-11-09): one screen for the eight standard reports. The server
+ * Admin → Reports (2026-11-09): one screen for the eight standard reports - since
+ * 2026-11-18 (admin-ux phase 1) one page, the report chosen in a grouped selector
+ * (`?report=`; the old /admin/reports/<report> addresses open it). The server
  * says what each report's columns are and how to write them. Money is shown per currency
  * as the row carries it and is never added up here; AI credits and units are whole numbers.
  * Every CSV export is recorded in the audit log by the server.
@@ -54,6 +63,23 @@ const REPORTS: Record<ReportKind, { label: string; search: string; product: bool
 
 const LIMIT = 25;
 const CATALOG_VIEW = "platform.staff_catalog.view";
+
+const isReport = (value: string | null): value is ReportKind => value !== null && Object.prototype.hasOwnProperty.call(REPORTS, value);
+
+/** The selector's choices: Money, Partners, Usage - every report once. */
+const REPORT_OPTIONS = REPORT_GROUPS.flatMap((group) =>
+  group.reports.filter((r) => isReport(r.kind)).map((r) => ({ value: r.kind as ReportKind, label: REPORTS[r.kind as ReportKind].label, group: group.label })),
+);
+
+/** Reports: the report the address names (`?report=`), Sales when it names none. */
+export function ReportsScreen() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const raw = params.get("report");
+  const kind: ReportKind = isReport(raw) ? raw : "sales";
+  // A new report starts with its own filters, as each report's page always did.
+  return <ReportScreen key={kind} kind={kind} onKind={(next) => router.replace(`/admin/reports?report=${next}`, { scroll: false })} />;
+}
 
 /** Columns holding a system key, written for a person. Names and references stay as they are. */
 const KEY_COLUMNS = new Set(["provider", "billing_interval", "renewal_policy", "earning", "reason_code", "meter"]);
@@ -84,28 +110,39 @@ function reportCell(column: ReportColumn, row: Row): React.ReactNode {
 /** A whole day from the server, on that day wherever the browser is. */
 const dayText = (day: string) => formatDate(`${day}T12:00:00`);
 
-export function ReportScreen({ kind }: { kind: ReportKind }) {
+/** A report's filters, kept in the address beside `?report=` (admin-ux phase 3). */
+const REPORT_FILTERS = {
+  from: { date: true },
+  to: { date: true },
+  product: { maxLength: 64 },
+  q: {},
+};
+
+export function ReportScreen({ kind, onKind }: { kind: ReportKind; onKind?: (kind: ReportKind) => void }) {
   const meta = REPORTS[kind];
+  const group = REPORT_OPTIONS.find((o) => o.value === kind)?.group;
   const { permissions } = useAdmin();
-  const [from, setFrom] = useState(() => dayBefore(29));
-  const [to, setTo] = useState(() => dayBefore(0));
-  const [product, setProduct] = useState("");
-  const [query, setQuery] = useState("");
-  const [offset, setOffset] = useState(0);
+  const url = useUrlFilters(REPORT_FILTERS);
+  // A report opens on the last 30 days: the period the address names, if it names one.
+  const [defaultRange] = useState(() => ({ from: dayBefore(29), to: dayBefore(0) }));
+  const chosenRange = Boolean(url.values.from || url.values.to);
+  const { from, to } = chosenRange ? url.values : defaultRange;
+  const query = url.values.q;
   const exportWhy = useId();
 
   // The catalog needs its own grant. Without it the report still runs, unfiltered by product.
   const offerProducts = meta.product && can(permissions, CATALOG_VIEW);
   const [products] = useLoad(() => (offerProducts ? adminApi.products() : Promise.resolve({ results: [] })), [offerProducts]);
+  const product = offerProducts ? url.values.product : "";
+
+  // The page is the filters' own: a new filter starts again on the first page.
+  const filterKey = `${from}|${to}|${product}|${query}`;
+  const [paging, setPaging] = useState({ key: filterKey, offset: 0 });
+  const offset = paging.key === filterKey ? paging.offset : 0;
+  const setOffset = (next: number) => setPaging({ key: filterKey, offset: next });
 
   const filters: ReportQuery = { from: from || undefined, to: to || undefined, product: product || undefined, q: query || undefined };
   const [load] = useLoad(() => reportsApi.run(kind, { ...filters, limit: LIMIT, offset }), [kind, from, to, product, query, offset]);
-
-  /** A new filter starts again on the first page. */
-  const first = (set: (value: string) => void) => (value: string) => {
-    set(value);
-    setOffset(0);
-  };
 
   const data = load.status === "ready" ? load.data : null;
   const rows = useMemo(() => (data ? data.results.map((cells, i) => ({ key: String(data.offset + i), cells })) : []), [data]);
@@ -120,21 +157,37 @@ export function ReportScreen({ kind }: { kind: ReportKind }) {
     [data],
   );
   const options = products.status === "ready" ? products.data.results : [];
+  const productLabel = (code: string) => {
+    const known = options.find((p) => p.code === code);
+    return known ? productName(known.name) : code;
+  };
+  // The applied filters, as tags. The last 30 days is where a report starts, not a filter.
+  const active: ActiveFilter[] = [
+    ...(query ? [{ key: "q", label: "Search", value: `“${query}”`, onRemove: () => url.set({ q: "" }) }] : []),
+    ...(chosenRange ? [{ key: "period", label: "Period", value: rangeLabel({ from, to }), onRemove: () => url.set({ from: "", to: "" }) }] : []),
+    ...(product ? [{ key: "product", label: "Product", value: productLabel(product), onRemove: () => url.set({ product: "" }) }] : []),
+  ];
+  const dropped = droppedMessage(url.dropped);
 
   return (
     <Page>
       <PageHeader
         title={data?.label ?? meta.label}
         subtitle={data?.description}
+        crumbs={onKind ? [{ label: "Reports" }, ...(group ? [{ label: group }] : []), { label: meta.label }] : undefined}
         meta={data ? [`Period: ${dayText(data.from)} to ${dayText(data.to)}`, `${formatNumber(data.total)} ${data.total === 1 ? "row" : "rows"}`] : undefined}
+        actions={onKind ? <Select label="Report" prefix="Report:" value={kind} onChange={onKind} options={REPORT_OPTIONS} /> : undefined}
       />
       {meta.earnings && (
         <Alert tone="info" title="Earnings, not wallet balances">
           These are records of what partners earned and were paid. They are not wallet balances and never appear in a wallet.
         </Alert>
       )}
+      {dropped && <Alert tone="warning" title={dropped} />}
       <FilterBar
         label="Filter the report"
+        onClear={active.length > 0 ? url.reset : undefined}
+        active={active}
         end={
           data && data.total > 0 ? (
             // A plain link: the server sends the file, and records the export in the audit log.
@@ -164,14 +217,14 @@ export function ReportScreen({ kind }: { kind: ReportKind }) {
           )
         }
       >
-        <SearchInput label={meta.search} value={query} onSearch={first(setQuery)} />
-        <DateRange from={from} to={to} onFrom={first(setFrom)} onTo={first(setTo)} />
+        <SearchInput label={meta.search} value={query} onSearch={(q) => url.set({ q: q.slice(0, 80) })} />
+        <DateRangeFilter label="Period" value={{ from, to }} onApply={(range) => url.set(range)} />
         {options.length > 0 && (
           <Select
             label="Product"
             prefix="Product:"
             value={product}
-            onChange={first(setProduct)}
+            onChange={(next) => url.set({ product: next })}
             options={[{ value: "", label: "All" }, ...options.map((p) => ({ value: p.code, label: productName(p.name) }))]}
           />
         )}
@@ -190,6 +243,7 @@ export function ReportScreen({ kind }: { kind: ReportKind }) {
           <OffsetPager total={data.total} limit={data.limit} offset={data.offset} shown={rows.length} onOffset={setOffset} />
         </>
       ) : (
+        // An error carries "Try again" (useLoad puts its retry on it).
         <LoadGate load={load} what="this report">
           {() => null}
         </LoadGate>

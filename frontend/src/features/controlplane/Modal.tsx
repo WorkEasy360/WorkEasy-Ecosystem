@@ -17,9 +17,11 @@ const openDialogs: object[] = [];
 /** sm: a short form in one column; md: a form in two columns; lg: content or a
  * long form; xl (2026-11-16): a whole page in a popup - a sheet with its title
  * fixed at the top, its own scrolling body and its actions fixed at the bottom
- * (the Product Publisher), full screen on a phone. */
-export type DialogSize = "sm" | "md" | "lg" | "xl";
-const SIZE_CLASS: Record<DialogSize, string> = { sm: "", md: styles.medium, lg: styles.wide, xl: styles.sheet };
+ * (the Product Publisher), full screen on a phone; drawer (2026-11-18): a panel
+ * along the right edge, as tall as the window (Help), full width on a phone. */
+export type DialogSize = "sm" | "md" | "lg" | "xl" | "drawer";
+const SIZE_CLASS: Record<DialogSize, string> = { sm: "", md: styles.medium, lg: styles.wide, xl: styles.sheet, drawer: styles.drawer };
+const BACKDROP_CLASS: Partial<Record<DialogSize, string>> = { xl: styles.sheetBackdrop, drawer: styles.drawerBackdrop };
 
 /** A modal dialog, drawn on the page's body (above the console's bars): focus
  * moves into it (the first field), stays inside it while it is open, Escape
@@ -93,7 +95,7 @@ export function Modal({
   if (!inBrowser) return null;
   const sized = size ?? (wide ? "lg" : "sm");
   return createPortal(
-    <div className={`${styles.backdrop} ${sized === "xl" ? styles.sheetBackdrop : ""} ${closing ? styles.leaving : ""}`.trim()} data-closing={closing || undefined}>
+    <div className={`${styles.backdrop} ${BACKDROP_CLASS[sized] ?? ""} ${closing ? styles.leaving : ""}`.trim()} data-closing={closing || undefined}>
       <div
         ref={box}
         role="dialog"

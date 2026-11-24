@@ -15,9 +15,11 @@ import { EntitlementsScreen, PlatformSettingsScreen, StaffOrdersScreen, StaffRol
  */
 
 let pathname = "/admin";
+// One router object, as Next.js returns; the address (`nav.query`) is the test's to set.
+const nav = vi.hoisted(() => ({ router: { replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }, query: "" }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => nav.router,
+  useSearchParams: () => new URLSearchParams(nav.query),
   usePathname: () => pathname,
 }));
 
@@ -72,6 +74,8 @@ const ORG = "22222222-2222-2222-2222-222222222222";
 beforeEach(() => {
   vi.restoreAllMocks();
   pathname = "/admin";
+  nav.router.replace.mockReset();
+  nav.query = "";
 });
 
 // --- navigation ------------------------------------------------------------------------
@@ -107,7 +111,7 @@ describe("the Admin navigation", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(modules()).toEqual(["Dashboard", "Customers", "Products & Pricing", "Billing & Subscriptions", "Settings"]);
+    expect(modules()).toEqual(["Dashboard", "Customers", "Products & Pricing", "Billing", "Settings"]);
   });
 
   it("hides them from staff without the grants", async () => {
@@ -123,7 +127,7 @@ describe("the Admin navigation", () => {
       </AdminShell>,
     );
     await screen.findByRole("heading", { name: "Page" });
-    expect(modules()).toEqual(["Dashboard", "Customers", "Billing & Subscriptions"]);
+    expect(modules()).toEqual(["Dashboard", "Customers", "Billing"]);
   });
 });
 
@@ -238,6 +242,11 @@ async function confirmReason(label: string) {
   expect(screen.queryByLabelText(/^Reason/)).not.toBeInTheDocument();
 }
 
+/** Opens one of the customer page's tabs (admin-ux phase 2). */
+async function openTab(name: string) {
+  fireEvent.click(await screen.findByRole("tab", { name }));
+}
+
 /** Chooses an option of a styled select. */
 function choose(name: string | RegExp, option: string | RegExp) {
   fireEvent.click(screen.getByRole("combobox", { name }));
@@ -250,6 +259,7 @@ describe("a customer's billing", () => {
   it("lists invoices with attempts and refunds, and passes axe", async () => {
     mockApi(billingRoutes());
     const { container } = asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Billing");
     const invoices = await screen.findByRole("table", { name: "Invoices" });
     expect(within(invoices).getByRole("row", { name: /INV-1/ })).toHaveTextContent("reminder 1");
     const payments = screen.getByRole("table", { name: "Payments for invoice INV-2" });
@@ -265,12 +275,17 @@ describe("a customer's billing", () => {
     mockApi(billingRoutes());
     const { unmount } = asStaff(["platform.staff_customer.view"], <CustomerDetailScreen organizationId={ORG} />);
     await screen.findByRole("heading", { level: 1 });
+    await openTab("Billing");
+    // The billing account line stays; the invoices section needs payment access.
+    expect(screen.getByRole("heading", { name: "Billing account" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Billing" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Reset network allow-list" })).not.toBeInTheDocument();
+    // No manage grant: no More actions at all.
+    expect(screen.queryByRole("button", { name: "More actions" })).not.toBeInTheDocument();
     unmount();
 
     mockApi(billingRoutes());
     asStaff(["platform.staff_customer.view", "platform.staff_payment.view"], <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Billing");
     await screen.findByRole("table", { name: "Invoices" });
     expect(screen.queryByRole("button", { name: /Void|Mark|Refund/ })).not.toBeInTheDocument();
   });
@@ -278,6 +293,7 @@ describe("a customer's billing", () => {
   it("mark paid sends the reference, a recorded reason and the invoice version", async () => {
     const calls = mockApi(billingRoutes());
     asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Billing");
     fireEvent.change(await screen.findByLabelText("Payment reference for INV-1"), { target: { value: "TRF-2026-001" } });
     await confirmReason("Mark INV-1 paid");
     await screen.findByText("Invoice INV-1 is marked paid.");
@@ -291,6 +307,7 @@ describe("a customer's billing", () => {
   it("void sends a recorded reason and the invoice version", async () => {
     const calls = mockApi(billingRoutes());
     asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Billing");
     await confirmReason("Void INV-1");
     await screen.findByText("Invoice INV-1 is void.");
     expect(bodyOf(calls, `POST /api/v1/admin/customers/${ORG}/invoices/inv-1/void`)).toEqual({
@@ -302,6 +319,7 @@ describe("a customer's billing", () => {
   it("refund sends integer minor units within what remains, with a recorded reason and a command id", async () => {
     const calls = mockApi(billingRoutes());
     asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Billing");
     const amount = await screen.findByLabelText("Refund amount (INR) on INV-2");
     expect(amount).toHaveValue("800.00"); // 1000.00 paid, 200.00 already refunded
     fireEvent.change(amount, { target: { value: "900" } });
@@ -314,10 +332,12 @@ describe("a customer's billing", () => {
     expect(refund.headers["idempotency-key"]).toBeTruthy();
   });
 
-  it("the network break-glass records a reason without asking for one", async () => {
+  it("the network break-glass, under More actions, records a reason without asking for one", async () => {
     const calls = mockApi(billingRoutes());
     asStaff(BILLING_STAFF, <CustomerDetailScreen organizationId={ORG} />);
-    await confirmReason("Reset network allow-list");
+    fireEvent.click(await screen.findByRole("button", { name: "More actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reset network allow-list" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await screen.findByText(/allow-list is off/);
     expect(bodyOf(calls, `POST /api/v1/admin/customers/${ORG}/network-policy/reset`)).toEqual({
       reason: recorded("Reset network allow-list"),
@@ -330,6 +350,7 @@ describe("a customer's billing", () => {
       [`POST /api/v1/admin/customers/${ORG}/entitlement-overrides`]: [{ status: 201, body: {} }],
     });
     asStaff([...BILLING_STAFF, "platform.staff_subscription.manage"], <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Products & access");
     fireEvent.click(await screen.findByRole("button", { name: "Grant override" }));
     const popup = screen.getByRole("dialog", { name: "Grant an override" });
     const grant = within(popup).getByRole("button", { name: "Grant override" });
@@ -363,7 +384,7 @@ describe("staff access", () => {
       "POST /api/v1/admin/security/grants/g1/revoke": [{ status: 200, body: {} }],
     });
     asStaff(["platform.staff_security.view", "platform.staff_security.manage"], <SecurityScreen />);
-    fireEvent.click(await screen.findByRole("tab", { name: "Permissions" }));
+    // Roles and individual permissions are two sections of one page (admin-ux phase 1).
     const table = await screen.findByRole("table", { name: "Active grants" });
     expect(within(table).getByText("Customer · View")).toBeInTheDocument();
     choose(/^Area/, "Audit");
@@ -382,9 +403,11 @@ describe("staff access", () => {
       "POST /api/v1/admin/security/grants": [{ status: 201, body: {} }],
     });
     const { container } = asStaff(["platform.staff_security.view", "platform.staff_security.manage"], <SecurityScreen />);
-    // Roles first; the individual permissions are their own tab.
-    expect(await screen.findByRole("tab", { name: "Roles" })).toHaveAttribute("aria-selected", "true");
-    fireEvent.click(screen.getByRole("tab", { name: "Permissions" }));
+    // Roles first, then the individual permissions, on one page - no tabs.
+    const headings = (await screen.findAllByRole("heading", { level: 2 })).map((h) => h.textContent);
+    expect(headings.indexOf("Roles")).toBeGreaterThanOrEqual(0);
+    expect(headings.indexOf("Roles")).toBeLessThan(headings.indexOf("Individual permissions"));
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Grant a permission" }));
     const popup = screen.getByRole("dialog", { name: "Grant a permission" });
     fireEvent.change(within(popup).getByLabelText(/Staff member.s email/), { target: { value: "pat@example.com" } });
@@ -587,6 +610,107 @@ describe("users by lifecycle", () => {
   });
 });
 
+describe("users: filters in the address, on the server (admin-ux phase 3)", () => {
+  const USERS = "GET /api/v1/admin/users";
+  const CATALOG = "GET /api/v1/admin/catalog/products";
+  const ONE = { status: 200, body: { results: [userDetail("u2")], next_cursor: null, has_more: false } };
+  const sent = (calls: Call[], i = -1) => Object.fromEntries(new URL(calls.filter((c) => c.key === USERS).at(i)!.url, "http://x").searchParams);
+
+  it("sends the segment, product and signed-up days to the server, keeps them in the address and lists them as removable tags", async () => {
+    pathname = "/admin/users";
+    const calls = mockApi({
+      [USERS]: [ONE],
+      [CATALOG]: [{ status: 200, body: { results: [{ id: "p1", code: "easy_crm", name: "Easy CRM (easy_crm)" }] } }],
+    });
+    asStaff(["platform.staff_user.view", "platform.staff_catalog.view"], <Users />);
+    const table = await screen.findByRole("table", { name: "User accounts" });
+    fireEvent.click(within(screen.getByRole("group", { name: "Segment" })).getByRole("button", { name: "Trial" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/users?segment=trial", { scroll: false });
+    await waitFor(() => expect(sent(calls)).toEqual({ segment: "trial" }));
+    // The product list is the catalog's: choosing one asks the server.
+    await waitFor(() => expect(calls.some((c) => c.key === CATALOG)).toBe(true));
+    choose("Product", "Easy CRM");
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/users?segment=trial&product=easy_crm", { scroll: false });
+    await waitFor(() => expect(sent(calls)).toEqual({ segment: "trial", product: "easy_crm" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Signed up: Any time/ }));
+    const panel = screen.getByRole("dialog", { name: "Signed up between" });
+    fireEvent.change(within(panel).getByLabelText("From"), { target: { value: "2026-11-01" } });
+    fireEvent.change(within(panel).getByLabelText("To"), { target: { value: "2026-11-10" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(sent(calls)).toEqual({ segment: "trial", product: "easy_crm", from: "2026-11-01", to: "2026-11-10" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/users?segment=trial&product=easy_crm&from=2026-11-01&to=2026-11-10", { scroll: false });
+    // The server decides who matches: the row it sent stays, whatever it holds or whenever it signed up.
+    expect(within(table).getByRole("link", { name: "Person u2" })).toBeInTheDocument();
+    const tags = screen.getByRole("list", { name: "Active filters" });
+    expect(within(tags).getAllByRole("listitem").map((t) => t.textContent)).toEqual([
+      "Product: Easy CRM",
+      expect.stringMatching(/^Signed up: .*1.*Nov.*2026.*10.*Nov.*2026$/),
+    ]);
+    fireEvent.click(within(tags).getByRole("button", { name: "Remove filter Product: Easy CRM" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/users?segment=trial&from=2026-11-01&to=2026-11-10", { scroll: false });
+    // Reset filters keeps the segment: it is the list, not a filter on it.
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin/users?segment=trial", { scroll: false });
+    await waitFor(() => expect(sent(calls)).toEqual({ segment: "trial" }));
+  });
+
+  it("reads its filters back from the address (the console's search box, a link to a segment), dropping what it does not know", async () => {
+    nav.query = "q=pat&segment=explorers&product=easy_crm&from=2026-11-01&to=2026-11-10";
+    let calls = mockApi({ [USERS]: [ONE] });
+    const view = asStaff(["platform.staff_user.view"], <Users />);
+    await screen.findByRole("table", { name: "User accounts" });
+    expect(sent(calls, 0)).toEqual({ q: "pat", segment: "explorers", product: "easy_crm", from: "2026-11-01", to: "2026-11-10" });
+    expect(within(screen.getByRole("group", { name: "Segment" })).getByRole("button", { name: "Explorers" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Search by name or email")).toHaveValue("pat");
+    expect(screen.getByRole("button", { name: /^Signed up: .*Nov.*2026/ })).toBeInTheDocument();
+    view.unmount();
+
+    nav.query = "segment=vip&from=2026-02-30&q=sam";
+    calls = mockApi({ [USERS]: [ONE] });
+    asStaff(["platform.staff_user.view"], <Users />);
+    await screen.findByRole("table", { name: "User accounts" });
+    expect(sent(calls, 0)).toEqual({ q: "sam" });
+    expect(screen.getByText(/were not recognised and were left out/)).toBeInTheDocument();
+  });
+
+  it("offers Try again when the directory cannot be read", async () => {
+    const calls = mockApi({ [USERS]: [{ status: 500, body: {} }, ONE] });
+    asStaff(["platform.staff_user.view"], <Users />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load users.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("link", { name: "Person u2" })).toBeInTheDocument();
+    expect(calls.filter((c) => c.key === USERS)).toHaveLength(2);
+  });
+
+  it("asks before Sign out everywhere and Reactivate, in the row's menu in the Actions column", async () => {
+    const calls = mockApi({
+      "GET /api/v1/auth/session": [SIGNED_IN],
+      [USERS]: [{ status: 200, body: { results: [userDetail("u2"), userDetail("u3", { status: "disabled" })], next_cursor: null, has_more: false } }],
+      "POST /api/v1/admin/users/u2/sign-out": [{ status: 200, body: userDetail("u2") }],
+      "POST /api/v1/admin/users/u3/enable": [{ status: 200, body: userDetail("u3") }],
+    });
+    asStaff(["platform.staff_user.view", "platform.staff_user.manage"], <Users />);
+    const table = await screen.findByRole("table", { name: "User accounts" });
+    expect(within(table).getAllByRole("columnheader").at(-1)).toHaveTextContent("Actions");
+
+    fireEvent.click(within(table).getByRole("button", { name: "Actions for Person u2" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Sign out everywhere" }));
+    const signOut = screen.getByRole("dialog", { name: "Sign Person u2 out everywhere?" });
+    expect(within(signOut).getByText("Every session of this account ends now.")).toBeInTheDocument();
+    expect(calls.some((c) => c.key.startsWith("POST "))).toBe(false);
+    fireEvent.click(within(signOut).getByRole("button", { name: "Sign out everywhere" }));
+    await waitFor(() => expect(bodyOf(calls, "POST /api/v1/admin/users/u2/sign-out")).toEqual({ reason: recorded("Sign out everywhere") }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    fireEvent.click(within(table).getByRole("button", { name: "Actions for Person u3" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reactivate" }));
+    const reactivate = screen.getByRole("dialog", { name: "Reactivate Person u3?" });
+    expect(calls.some((c) => c.key === "POST /api/v1/admin/users/u3/enable")).toBe(false);
+    fireEvent.click(within(reactivate).getByRole("button", { name: "Reactivate" }));
+    await waitFor(() => expect(bodyOf(calls, "POST /api/v1/admin/users/u3/enable")).toEqual({ reason: recorded("Reactivate") }));
+  });
+});
+
 describe("staff orders", () => {
   it("lists orders across customers and filters by status", async () => {
     const calls = mockApi({
@@ -653,9 +777,95 @@ describe("staff orders", () => {
     const row = within(table).getByRole("row", { name: /ORD-000008/ });
     expect(row).toHaveTextContent("Partner activation");
     expect(within(row).getByRole("link", { name: "North Resellers" })).toHaveAttribute("href", "/admin/partners/p-9");
-    expect(within(row).getByRole("link", { name: "Verify payment" })).toHaveAttribute("href", `/admin/customers/${ORG}#billing-h`);
+    expect(within(row).getByRole("link", { name: "Verify payment" })).toHaveAttribute("href", `/admin/customers/${ORG}?tab=billing#billing-h`);
     choose("Purchase source", "Partner activation");
     await waitFor(() => expect(calls.some((c) => c.url.includes("channel=partner"))).toBe(true));
+  });
+
+  // Admin-ux phase 3: the search and the dates are the server's, never a filter over
+  // the orders loaded so far, and every filter is kept in the address.
+  const ORDER = {
+    order_id: "o-3",
+    organization_id: ORG,
+    organization_name: "Acme Ltd",
+    number: "ORD-000009",
+    kind: "plan",
+    status: "fulfilled",
+    description: "CRM Pro x1 (monthly)",
+    product_codes: ["crm"],
+    currency: "INR",
+    amount_due_minor: 99900,
+    created_at: T,
+    paid_at: T,
+  };
+  const ORDERS_PAGE: Reply = { status: 200, body: { results: [ORDER], next_cursor: null, has_more: false } };
+  const orderParams = (calls: Call[]) =>
+    calls.filter((c) => c.key === "GET /api/v1/admin/orders").map((c) => Object.fromEntries(new URL(c.url, "http://x").searchParams));
+  const orderTags = () => within(screen.getByRole("list", { name: "Active filters" })).getAllByRole("listitem").map((t) => t.textContent);
+
+  it("sends the search and the created dates to the server, keeps them in the address and lists them as tags", async () => {
+    const calls = mockApi({ "GET /api/v1/admin/orders": [ORDERS_PAGE] });
+    asStaff(["platform.staff_payment.view"], <StaffOrdersScreen />);
+    await screen.findByRole("row", { name: /ORD-000009/ });
+    expect(screen.queryByRole("combobox", { name: "Created" })).not.toBeInTheDocument();
+
+    // The server decides what matches: the order it sends stays, whatever the search says.
+    fireEvent.change(screen.getByLabelText("Search by order number or customer"), { target: { value: "Globex" } });
+    await waitFor(() => expect(orderParams(calls).at(-1)).toEqual({ q: "Globex" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin?q=Globex", { scroll: false });
+    expect(await screen.findByRole("row", { name: /ORD-000009/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Created: Any time" }));
+    const panel = screen.getByRole("dialog", { name: "Created between" });
+    fireEvent.change(within(panel).getByLabelText("From"), { target: { value: "2026-10-01" } });
+    fireEvent.change(within(panel).getByLabelText("To"), { target: { value: "2026-10-31" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(orderParams(calls).at(-1)).toEqual({ q: "Globex", from: "2026-10-01", to: "2026-10-31" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin?q=Globex&from=2026-10-01&to=2026-10-31", { scroll: false });
+
+    choose("Purchase source", "Partner storefront");
+    await waitFor(() => expect(orderParams(calls).at(-1)).toMatchObject({ channel: "storefront" }));
+    const tags = orderTags();
+    expect(tags.slice(0, 2)).toEqual(["Search: “Globex”", "Source: Partner storefront"]);
+    expect(tags[2]).toMatch(/^Created: .*2026.*–.*2026$/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove filter Search: “Globex”" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin?source=storefront&from=2026-10-01&to=2026-10-31", { scroll: false });
+    await waitFor(() => expect(orderParams(calls).at(-1)).toEqual({ channel: "storefront", from: "2026-10-01", to: "2026-10-31" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin", { scroll: false });
+    await waitFor(() => expect(orderParams(calls).at(-1)).toEqual({}));
+  });
+
+  it("reads its filters from the address, where the command palette's ?q and ?source links point", async () => {
+    nav.query = "q=ORD-000009&source=partner&status=fulfilled&from=2026-10-01&to=2026-10-31";
+    const calls = mockApi({ "GET /api/v1/admin/orders": [ORDERS_PAGE] });
+    asStaff(["platform.staff_payment.view"], <StaffOrdersScreen />);
+    await screen.findByRole("row", { name: /ORD-000009/ });
+    expect(orderParams(calls)[0]).toEqual({ status: "fulfilled", channel: "partner", q: "ORD-000009", from: "2026-10-01", to: "2026-10-31" });
+    expect(screen.getByLabelText("Search by order number or customer")).toHaveValue("ORD-000009");
+    expect(screen.getByRole("combobox", { name: "Purchase source" })).toHaveTextContent("Partner activation");
+    expect(within(screen.getByRole("group", { name: "Order status" })).getByRole("button", { name: "Fulfilled" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /^Created: .*2026/ })).toBeInTheDocument();
+  });
+
+  it("leaves out a source or a date the list does not know, and says so", async () => {
+    nav.query = "source=shop&from=yesterday&q=ORD-1";
+    const calls = mockApi({ "GET /api/v1/admin/orders": [ORDERS_PAGE] });
+    asStaff(["platform.staff_payment.view"], <StaffOrdersScreen />);
+    await screen.findByRole("row", { name: /ORD-000009/ });
+    expect(orderParams(calls)[0]).toEqual({ q: "ORD-1" });
+    expect(screen.getByRole("alert")).toHaveTextContent("Some filters in this page's address were not recognised and were left out.");
+  });
+
+  it("offers Try again when the orders can't be loaded", async () => {
+    const calls = mockApi({ "GET /api/v1/admin/orders": [{ status: 500, body: {} }, ORDERS_PAGE] });
+    asStaff(["platform.staff_payment.view"], <StaffOrdersScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load orders.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("row", { name: /ORD-000009/ })).toBeInTheDocument();
+    expect(orderParams(calls)).toHaveLength(2);
   });
 });
 
@@ -839,6 +1049,54 @@ describe("subscriptions and entitlements", () => {
     expect(within(table).getByRole("row", { name: /Beta/ })).not.toHaveTextContent("Override");
     expect(within(table).getByRole("row", { name: /Gamma/ })).toHaveTextContent("Staff override");
   });
+
+  // Admin-ux phase 3: the chosen product is kept in the address, and a list that
+  // can't be loaded offers Try again.
+  const TWO_PRODUCTS: Reply = {
+    status: 200,
+    body: {
+      results: [
+        { id: "p1", code: "easy_crm", name: "Easy CRM (easy_crm)", status: "active", licensing_mode: "seat" },
+        { id: "p2", code: "easy_project", name: "Easy Project", status: "active", licensing_mode: "seat" },
+      ],
+    },
+  };
+  const holderProducts = (calls: Call[]) =>
+    calls.filter((c) => c.key === "GET /api/v1/admin/customers").map((c) => new URL(c.url, "http://x").searchParams.get("product"));
+
+  it("reads the product from the address and writes a chosen one back", async () => {
+    nav.query = "product=easy_project";
+    const calls = mockApi({ "GET /api/v1/admin/catalog/products": [TWO_PRODUCTS], "GET /api/v1/admin/customers": [page([CUSTOMER_ROW])] });
+    asStaff(["platform.staff_customer.view"], <EntitlementsScreen />);
+    await screen.findByRole("table", { name: "Customers holding Easy Project" });
+    expect(holderProducts(calls)).toEqual(["easy_project"]);
+    expect(screen.getByRole("combobox", { name: "Product" })).toHaveTextContent("Easy Project");
+    choose("Product", "Easy CRM");
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin?product=easy_crm", { scroll: false });
+    await screen.findByRole("table", { name: "Customers holding Easy CRM" });
+    await waitFor(() => expect(holderProducts(calls).at(-1)).toBe("easy_crm"));
+  });
+
+  it("shows the first product when the address names one the catalog does not list, and says so", async () => {
+    nav.query = "product=retired_product";
+    const calls = mockApi({ "GET /api/v1/admin/catalog/products": [TWO_PRODUCTS], "GET /api/v1/admin/customers": [page([CUSTOMER_ROW])] });
+    asStaff(["platform.staff_customer.view"], <EntitlementsScreen />);
+    await screen.findByRole("table", { name: "Customers holding Easy CRM" });
+    expect(holderProducts(calls)).toEqual(["easy_crm"]);
+    expect(screen.getByRole("alert")).toHaveTextContent("Some filters in this page's address were not recognised and were left out.");
+  });
+
+  it("offers Try again when the holders can't be loaded", async () => {
+    const calls = mockApi({
+      "GET /api/v1/admin/catalog/products": [TWO_PRODUCTS],
+      "GET /api/v1/admin/customers": [{ status: 500, body: {} }, page([CUSTOMER_ROW])],
+    });
+    asStaff(["platform.staff_customer.view"], <EntitlementsScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load holders.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("row", { name: /Acme Ltd/ })).toBeInTheDocument();
+    expect(holderProducts(calls)).toEqual(["easy_crm", "easy_crm"]);
+  });
 });
 
 describe("diagnostics", () => {
@@ -940,6 +1198,7 @@ describe("a customer's partner and product trials (2026-11-10)", () => {
       ],
     });
     asStaff(["platform.staff_customer.view"], <CustomerDetailScreen organizationId={ORG} />);
+    await openTab("Products & access");
     const trials = await screen.findByRole("table", { name: "Product trials" });
     // Past its end: ended, even while the record still says active.
     expect(within(trials).getByRole("row", { name: /easy_crm/ })).toHaveTextContent("Ended");

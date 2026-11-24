@@ -240,9 +240,32 @@ describe("usage rates", () => {
   it("hides Set rate and Remove rate without the pricing grant", async () => {
     ratesApi();
     asStaff(VIEW, <UsageRatesScreen />);
-    await screen.findByRole("table", { name: "Usage rates by meter" });
+    const table = await screen.findByRole("table", { name: "Usage rates by meter" });
     expect(screen.queryByRole("button", { name: /^Set rate/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Remove rate/ })).not.toBeInTheDocument();
+    expect(within(table).queryByRole("columnheader", { name: "Actions" })).not.toBeInTheDocument();
+  });
+
+  it("puts Set rate and Remove rate in the one Actions column, last (admin-ux phase 3)", async () => {
+    ratesApi();
+    asStaff(MANAGE, <UsageRatesScreen />);
+    const table = await screen.findByRole("table", { name: "Usage rates by meter" });
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent?.trim());
+    expect(headers.at(-1)).toBe("Actions");
+    expect(headers.filter((h) => h === "Actions")).toHaveLength(1);
+    const row = within(table).getByRole("row", { name: /SMS messages/ });
+    const last = within(row).getAllByRole("cell").at(-1);
+    expect(last).toContainElement(within(row).getByRole("button", { name: "Set rate for SMS messages in INR" }));
+    expect(last).toContainElement(within(row).getByRole("button", { name: "Remove rate for SMS messages in INR" }));
+  });
+
+  it("offers Try again when the rates could not be loaded", async () => {
+    const calls = mockApi({ [`GET ${RATES}`]: [{ status: 500, body: {} }, ok({ meters: METERS, results: [rate()] })] });
+    asStaff(VIEW, <UsageRatesScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("table", { name: "Usage rates by meter" })).toBeInTheDocument();
+    expect(requests(calls, `GET ${RATES}`)).toHaveLength(2);
   });
 });
 
@@ -346,6 +369,34 @@ describe("credit packs", () => {
     for (const name of ["New credit pack", "Edit Starter", "Archive Starter", "Put Old pack back on sale"]) {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     }
+  });
+
+  it("puts Edit, Archive and Put back on sale in the one Actions column, and Archive sends nothing on Cancel", async () => {
+    const calls = mockApi({ [`GET ${PACKS}`]: [ok({ results: [pack(), archived] })] });
+    asStaff(MANAGE, <CreditPacksScreen />);
+    const table = await screen.findByRole("table", { name: "Credit packs" });
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent?.trim()).at(-1)).toBe("Actions");
+    const starter = within(table).getByRole("row", { name: /Starter/ });
+    const last = within(starter).getAllByRole("cell").at(-1);
+    expect(last).toContainElement(within(starter).getByRole("button", { name: "Edit Starter" }));
+    expect(last).toContainElement(within(starter).getByRole("button", { name: "Archive Starter" }));
+    const old = within(table).getByRole("row", { name: /Old pack/ });
+    expect(within(old).getAllByRole("cell").at(-1)).toContainElement(within(old).getByRole("button", { name: "Put Old pack back on sale" }));
+
+    fireEvent.click(within(starter).getByRole("button", { name: "Archive Starter" }));
+    const box = screen.getByRole("dialog", { name: "Archive Starter?" });
+    fireEvent.click(within(box).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(calls.some((c) => c.key.startsWith("PUT"))).toBe(false);
+  });
+
+  it("offers Try again when the packs could not be loaded", async () => {
+    const calls = mockApi({ [`GET ${PACKS}`]: [{ status: 500, body: {} }, ok({ results: [pack()] })] });
+    asStaff(VIEW, <CreditPacksScreen />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("table", { name: "Credit packs" })).toBeInTheDocument();
+    expect(requests(calls, `GET ${PACKS}`)).toHaveLength(2);
   });
 });
 

@@ -17,9 +17,11 @@ import { toMajor, toMinor } from "./amounts";
  */
 
 let pathname = "/admin";
+// One router object, as Next.js returns; the address (`nav.query`) is the test's to set.
+const nav = vi.hoisted(() => ({ router: { replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }, query: "" }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => nav.router,
+  useSearchParams: () => new URLSearchParams(nav.query),
   usePathname: () => pathname,
 }));
 
@@ -76,6 +78,8 @@ const EVIL = `<img src=x onerror="window.__pwned=1"><script>window.__pwned=2</sc
 beforeEach(() => {
   vi.restoreAllMocks();
   pathname = "/admin";
+  nav.router.replace.mockReset();
+  nav.query = "";
 });
 
 // --- navigation ------------------------------------------------------------------------
@@ -658,8 +662,34 @@ describe("payment providers", () => {
     await expectNoViolations(container);
 
     fireEvent.click(screen.getByRole("button", { name: "Switch to live mode: Stripe EU" }));
+    // A sensitive switch asks first, saying what it does; nothing is sent before (admin-ux phase 3).
+    const ask = screen.getByRole("dialog", { name: "Switch Stripe EU to live mode?" });
+    expect(ask).toHaveTextContent("will charge real money");
+    expect(calls.some((c) => c.key === "PATCH /api/v1/admin/payments/providers/stripe-eu")).toBe(false);
+    fireEvent.click(within(ask).getByRole("button", { name: "Switch to live" }));
     await screen.findByText("Stripe EU is now in live mode.");
     expect(bodyOf(calls, "PATCH /api/v1/admin/payments/providers/stripe-eu")).toEqual({ mode: "live", version: 4 });
+  });
+
+  it("asks before disabling a provider, and sends nothing on Cancel (admin-ux phase 3)", async () => {
+    const live = { ...provider, status: "enabled", webhook_secret_configured: true };
+    const calls = mockApi({
+      "GET /api/v1/admin/payments/providers": [{ status: 200, body: { results: [live] } }],
+      "GET /api/v1/admin/payments/events": [{ status: 200, body: { results: [] } }],
+      "PATCH /api/v1/admin/payments/providers/stripe-eu": [{ status: 200, body: { ...live, status: "disabled" } }],
+    });
+    asStaff(["platform.staff_payment.view", "platform.staff_payment.manage"], <PaymentsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Disable Stripe EU" }));
+    let ask = screen.getByRole("dialog", { name: "Disable Stripe EU?" });
+    expect(ask).toHaveTextContent("Checkout stops offering Stripe EU until it is enabled again.");
+    fireEvent.click(within(ask).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.some((c) => c.key === "PATCH /api/v1/admin/payments/providers/stripe-eu")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Disable Stripe EU" }));
+    ask = screen.getByRole("dialog", { name: "Disable Stripe EU?" });
+    fireEvent.click(within(ask).getByRole("button", { name: "Disable provider" }));
+    await screen.findByText("Stripe EU is now disabled.");
+    expect(bodyOf(calls, "PATCH /api/v1/admin/payments/providers/stripe-eu")).toEqual({ status: "disabled", version: 4 });
   });
 
   it("adds a provider by reference, with no field for a secret", async () => {
@@ -724,6 +754,75 @@ describe("payment providers", () => {
     await screen.findByText("Stripe EU: currencies updated.");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(bodyOf(calls, "PATCH /api/v1/admin/payments/providers/stripe-eu")).toEqual({ currencies: ["INR"], version: 4 });
+  });
+});
+
+describe("payment events (admin-ux phase 3)", () => {
+  const event = (id: string, provider: string, outcome: string) => ({
+    id,
+    provider,
+    event_id: `evt_${id}`,
+    kind: "payment_succeeded",
+    outcome,
+    organization_id: ORG,
+    attempt_id: "a1",
+    amount_minor: 1050,
+    currency: "EUR",
+    received_at: T,
+  });
+  const EVENTS = [event("e1", "stripe-eu", "applied"), event("e2", "razor-in", "rejected"), event("e3", "stripe-eu", "duplicate")];
+  const routes = (events: Reply[]) => ({
+    "GET /api/v1/admin/payments/providers": [{ status: 200, body: { results: [] } }],
+    "GET /api/v1/admin/payments/events": events,
+  });
+  const eventRows = (table: HTMLElement) => within(table).getAllByRole("row").slice(1);
+  const tags = () => within(screen.getByRole("list", { name: "Active filters" })).getAllByRole("listitem").map((t) => t.textContent);
+
+  it("loads the events in one request, filters them on screen, and keeps the filters in the address as tags", async () => {
+    const calls = mockApi(routes([{ status: 200, body: { results: EVENTS } }]));
+    asStaff(["platform.staff_payment.view"], <PaymentsScreen />);
+    const table = await screen.findByRole("table", { name: "Payment event log" });
+    expect(eventRows(table)).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Provider" }));
+    fireEvent.click(screen.getByRole("option", { name: "stripe-eu" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin?provider=stripe-eu", { scroll: false });
+    expect(eventRows(table)).toHaveLength(2);
+    fireEvent.click(screen.getByRole("combobox", { name: "Outcome" }));
+    fireEvent.click(screen.getByRole("option", { name: "Duplicate" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin?provider=stripe-eu&outcome=duplicate", { scroll: false });
+    expect(eventRows(table)).toHaveLength(1);
+    expect(tags()).toEqual(["Provider: stripe-eu", "Outcome: Duplicate"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove filter Provider: stripe-eu" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin?outcome=duplicate", { scroll: false });
+    expect(eventRows(table)).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(nav.router.replace).toHaveBeenLastCalledWith("/admin", { scroll: false });
+    expect(eventRows(table)).toHaveLength(3);
+    // Filtering never asks the server again: the log is one request.
+    expect(calls.filter((c) => c.key === "GET /api/v1/admin/payments/events")).toHaveLength(1);
+  });
+
+  it("reads the filters back from the address", async () => {
+    nav.query = "provider=razor-in&outcome=rejected";
+    mockApi(routes([{ status: 200, body: { results: EVENTS } }]));
+    asStaff(["platform.staff_payment.view"], <PaymentsScreen />);
+    const table = await screen.findByRole("table", { name: "Payment event log" });
+    expect(eventRows(table)).toHaveLength(1);
+    expect(within(eventRows(table)[0]).getByText("razor-in")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Provider" })).toHaveTextContent("razor-in");
+    expect(screen.getByRole("combobox", { name: "Outcome" })).toHaveTextContent("Rejected");
+    expect(tags()).toEqual(["Provider: razor-in", "Outcome: Rejected"]);
+  });
+
+  it("offers Try again when the event log can't be loaded, and shows it on the next try", async () => {
+    mockApi(routes([FAILED, { status: 200, body: { results: EVENTS } }]));
+    asStaff(["platform.staff_payment.view"], <PaymentsScreen />);
+    const events = await screen.findByRole("region", { name: "Payment events" });
+    expect(await within(events).findByRole("alert")).toHaveTextContent("Try again shortly.");
+    fireEvent.click(within(events).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("table", { name: "Payment event log" })).toBeInTheDocument();
   });
 });
 
